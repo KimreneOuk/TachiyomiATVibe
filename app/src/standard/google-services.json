@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "92781201584",
+    "project_id": "tachiyomi-at",
+    "storage_bucket": "tachiyomi-at.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:92781201584:android:8dc942f73e2c41c0f35375",
+        "android_client_info": {
+          "package_name": "app.kanade.tachiyomi.at"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBSCQd9Pds7-EkbPEIYf1Hp_m1ncCpZjqs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:92781201584:android:e9620fa2981fe2ddf35375",
+        "android_client_info": {
+          "package_name": "app.tachiyomi.at"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBSCQd9Pds7-EkbPEIYf1Hp_m1ncCpZjqs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
