@@ -343,11 +343,13 @@ class TranslationManager(
         // map free of dead jobs while leaving a genuine in-flight job alone.
         val existing = activePageJobs[jobKey]
         if (existing != null && existing.isActive) {
+            try { java.io.File("/sdcard/at_diag.txt").appendText("TM_SKIP_ACTIVE $jobKey\n") } catch (_: Exception) {}
             return
         }
         if (existing != null) {
             activePageJobs.remove(jobKey)
         }
+        try { java.io.File("/sdcard/at_diag.txt").appendText("TM_LAUNCH $jobKey\n") } catch (_: Exception) {}
         val job = scope.launch {
             try {
                 translator.translateSinglePage(manga, chapter, source, pageKey)

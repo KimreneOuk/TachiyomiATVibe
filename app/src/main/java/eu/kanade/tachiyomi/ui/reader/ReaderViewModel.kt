@@ -585,6 +585,7 @@ class ReaderViewModel @JvmOverloads constructor(
         if (translationPreferences.translationEnabled().get() &&
             translationPreferences.autoTranslate().get()
         ) {
+            try { java.io.File("/sdcard/at_diag.txt").appendText("AUTO_TRIGGERED page=${page.index}\n") } catch (_: Exception) {}
             handleAutoTranslation(page)
         }
 
@@ -1236,7 +1237,8 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     fun translateSinglePage(page: ReaderPage) {
-        val manga = manga ?: return
+        try { java.io.File("/sdcard/at_diag.txt").appendText("TSS_ENTER idx=${page.index}\n") } catch (_: Exception) {}
+        val manga = manga ?: run { try { java.io.File("/sdcard/at_diag.txt").appendText("TSS_MANGA_NULL\n") } catch (_: Exception) {}; return }
         // TachiyomiAT: use the page's own chapter context, not getCurrentChapter().
         // The global current-chapter may differ from the page's actual chapter
         // when a cross-chapter page-transition event fires before loadNewChapter
@@ -1268,12 +1270,10 @@ class ReaderViewModel @JvmOverloads constructor(
             chapter.name, chapter.scanlator, manga.title, manga.source,
         )
         if (page.originalStream == null && !pageChapterDownloaded && page.imageUrl == null) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT translate skipped: no reader stream, chapter not downloaded, " +
-                    "and no image URL (pageKey=$pageKey). Nothing to translate from."
-            }
+            try { java.io.File("/sdcard/at_diag.txt").appendText("TSS_GUARD_RETURN stream=${page.originalStream!=null} dl=${pageChapterDownloaded} imgUrl=${page.imageUrl!=null}\n") } catch (_: Exception) {}
             return
         }
+        try { java.io.File("/sdcard/at_diag.txt").appendText("TSS_GUARD_PASSED stream=${page.originalStream!=null} dl=${pageChapterDownloaded} imgUrl=${page.imageUrl!=null}\n") } catch (_: Exception) {}
         page.originalStream?.let { streamFn ->
             eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
                 manga,
