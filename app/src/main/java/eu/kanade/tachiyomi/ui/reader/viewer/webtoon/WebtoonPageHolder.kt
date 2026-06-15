@@ -13,7 +13,6 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
-import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
@@ -24,8 +23,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.launchIn
-import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
@@ -36,23 +33,21 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 class WebtoonPageHolder(
     private val frame: ReaderPageImageView,
     viewer: WebtoonViewer,
-    private val readerPreferences: ReaderPreferences = Injekt.get(),
 ) : WebtoonBaseHolder(frame, viewer) {
 
-    private var showTranslations = true
-
-    // TachiyomiAT: master gate for the per-page translate button. Updated live
-    // from the preference (collected in holderScope below) so the button
-    // appears/disappears the instant the user toggles translation, instead of
-    // only on the next setImage() pass.
-    private var translationEnabled =
-        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationEnabled().get()
+    // TachiyomiAT: these two app-global preferences are now read from the single
+    // shared observer on the owning WebtoonViewer (viewer.translationPrefs),
+    // which is cancelled when the viewer is destroyed. Previously each holder
+    // launched its own .changes() collector on holderScope (which was never
+    // cancelled), leaking one collector per recycled holder for the process
+    // lifetime. Delegate reads to the viewer; values refresh via
+    // refreshTranslation() which the viewer calls on visible holders.
+    private val showTranslations get() = viewer.translationPrefs.showTranslations
+    private val translationEnabled get() = viewer.translationPrefs.translationEnabled
 
     private val progressIndicator = createProgressIndicator()
 
@@ -76,34 +71,33 @@ class WebtoonPageHolder(
         frame.onImageLoadError = { setError() }
         frame.onScaleChanged = { viewer.activity.hideMenu() }
 
-        showTranslations = readerPreferences.showTranslations().get()
-        readerPreferences.showTranslations().changes().onEach {
-            showTranslations = it
-            page?.showTranslatedImage = it && page?.translatedStream != null
-            if (page?.originalStream != null && page?.translatedStream != null) {
-                setImage()
-            }
-        }.launchIn(holderScope)
-        // Reactively update the translate button when the master toggle flips,
-        // so it shows/hides immediately rather than waiting for the next
-        // setImage() pass. While a page is mid-translation the processing
-        // overlay stays up and the button stays hidden.
-        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
-            .translationEnabled().changes().onEach { enabled ->
-                translationEnabled = enabled
-                val current = page
-                val isBeingTranslated = current?.translation?.let { t ->
-                    (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-                        t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-                        t.renderedImageName == null && t.cleanedImageName == null
-                } ?: false
-                if (!isBeingTranslated) frame.showTranslateButton(enabled)
-            }.launchIn(holderScope)
+        // TachiyomiAT: the showTranslations() / translationEnabled() collectors
+        // used to live here per-holder and leaked (holderScope was never
+        // cancelled). They have been hoisted to WebtoonViewer.translationPrefs,
+        // which calls refreshTranslation() on visible holders on change.
         // Per-page translate button
         frame.onTranslateClicked = {
             page?.let { viewer.activity.viewModel.translateSinglePage(it) }
         }
+        // TachiyomiAT: cancel affordance shown while a translation is running
+        // for this page (the button re-purposes itself via setTranslating).
+        frame.onCancelTranslateClicked = {
+            page?.let { viewer.activity.viewModel.cancelSinglePageTranslation(it) }
+        }
     }
+
+    /**
+     * TachiyomiAT: true when the bound page has a RUNNING OCR/inpaint/translate/
+     * render stage and no rendered/cleaned result yet. Centralised here so
+     * [setImage] and [refreshTranslation] agree on the "is this page
+     * mid-translation" predicate that decides whether to show the cancel
+     * affordance vs. the translate affordance.
+     */
+    private fun isPageBeingTranslated(): Boolean = page?.translation?.let { t ->
+        (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
+            t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
+            t.renderedImageName == null && t.cleanedImageName == null
+    } ?: false
 
     fun bind(page: ReaderPage) {
         this.page = page
@@ -185,16 +179,15 @@ class WebtoonPageHolder(
         page?.showTranslatedImage = showTranslations && page?.translatedStream != null
         val streamFn = page?.stream ?: return
 
-        val isBeingTranslated = page?.translation?.let { t ->
-            (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-                t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && t.cleanedImageName == null
-        } ?: false
+        val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated) {
             frame.showProcessingOverlay(true)
-            frame.showTranslateButton(false)
+            // Show the cancel affordance instead of hiding the button, so the
+            // user gets feedback that translation is running and can cancel it.
+            frame.setTranslating(true)
         } else {
             frame.showTranslateButton(translationEnabled)
+            frame.setTranslating(false)
         }
 
         try {
@@ -230,28 +223,32 @@ class WebtoonPageHolder(
     fun refreshTranslation() {
         val currentPage = page ?: return
         val streamAvailable = currentPage.translatedStream != null
-        val isBeingTranslated = currentPage.translation?.let { t ->
-            (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-                t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && t.cleanedImageName == null
-        } ?: false
+        val isBeingTranslated = isPageBeingTranslated()
         when {
             isBeingTranslated -> {
                 frame.showProcessingOverlay(true)
-                frame.showTranslateButton(false)
+                // Cancel affordance while running, instead of hiding the button.
+                frame.setTranslating(true)
             }
             showTranslations && streamAvailable -> {
                 currentPage.showTranslatedImage = true
                 frame.showProcessingOverlay(false)
                 frame.showTranslateButton(translationEnabled)
+                frame.setTranslating(false)
                 loadJob?.cancel()
                 loadJob = holderScope.launch { setImage() }
             }
             else -> {
                 frame.showProcessingOverlay(false)
                 frame.showTranslateButton(translationEnabled)
+                frame.setTranslating(false)
             }
         }
+        // TachiyomiAT: surface translation errors — but only when the page is NOT
+        // currently running, to avoid showing stale errors from a prior failed
+        // attempt alongside the RUNNING overlay.
+        val errorMsg = if (!isBeingTranslated) currentPage.translation?.errorMessage else null
+        frame.showTranslationError(errorMsg)
     }
 
     private fun process(imageSource: BufferedSource): BufferedSource {

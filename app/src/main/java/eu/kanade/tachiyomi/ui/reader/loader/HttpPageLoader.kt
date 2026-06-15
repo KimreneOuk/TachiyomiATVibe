@@ -70,7 +70,14 @@ internal class HttpPageLoader(
         }
         return pages.mapIndexed { index, page ->
             // Don't trust sources and use our own indexing
-            ReaderPage(index, page.url, page.imageUrl)
+            ReaderPage(index, page.url, page.imageUrl).apply {
+                // TachiyomiAT: set sourceFileName so resolvePageKey() can use
+                // it as the preferred key when matching live translation store
+                // updates back to this page — more stable than the imageUrl
+                // fallback which can change across page-list refreshes.
+                sourceFileName = page.imageUrl?.substringAfterLast('/')?.substringBefore('?')
+                    ?: page.url.substringAfterLast('/').substringBefore('?')
+            }
         }
     }
 

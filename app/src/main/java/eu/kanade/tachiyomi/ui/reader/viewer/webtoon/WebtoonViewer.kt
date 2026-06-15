@@ -21,6 +21,8 @@ import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.launchIn
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -61,6 +63,21 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      * Configuration used by this viewer, like allow taps, or crop image borders.
      */
     val config = WebtoonConfig(scope)
+
+    /**
+     * TachiyomiAT: app-global translation preferences, collected ONCE on this
+     * viewer's scope instead of once per [WebtoonPageHolder]. Previously every
+     * holder launched its own `showTranslations().changes()` and
+     * `translationEnabled().changes()` collector on a holderScope that was
+     * never cancelled — so a long webtoon accumulated N leaked collectors for
+     * the life of the process. These are global prefs, so one observer on the
+     * viewer (which IS cancelled in [destroy]) is the right granularity.
+     *
+     * Holders read [showTranslations] / [translationEnabled] directly; the
+     * [onChanged] callback routes to [refreshTranslationPages] so visible
+     * holders re-evaluate their button + image when a pref flips.
+     */
+    val translationPrefs = WebtoonTranslationPrefs(this, scope)
 
     /**
      * Adapter of the recycler view.
@@ -373,3 +390,58 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
 
 // Double the cache size to reduce rebinds/recycles incurred by the extra layout space on scroll direction changes
 private const val RECYCLER_VIEW_CACHE_SIZE = 4
+
+/**
+ * TachiyomiAT: single shared observer for the app-global translation
+ * preferences that [WebtoonPageHolder] previously each collected on their own
+ * (leaking one collector per holder for the process lifetime because
+ * holderScope was never cancelled). Lives on the owning [WebtoonViewer]'s
+ * scope, which IS cancelled in [WebtoonViewer.destroy].
+ *
+ * Values are [Volatile] because holders read them from recycler layout passes
+ * while the collector writes from the viewer scope; both are main-thread in
+ * practice, but Volatile keeps it correct without assumption.
+ */
+class WebtoonTranslationPrefs(
+    private val viewer: WebtoonViewer,
+    private val scope: kotlinx.coroutines.CoroutineScope,
+) {
+    @Volatile
+    var showTranslations: Boolean =
+        Injekt.get<ReaderPreferences>().showTranslations().get()
+        private set
+
+    @Volatile
+    var translationEnabled: Boolean =
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationEnabled().get()
+        private set
+
+    init {
+        val readerPrefs = Injekt.get<ReaderPreferences>()
+        val translationPrefs = Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+
+        readerPrefs.showTranslations().changes()
+            .onEach {
+                showTranslations = it
+                refreshVisibleHolders()
+            }
+            .launchIn(scope)
+
+        translationPrefs.translationEnabled().changes()
+            .onEach {
+                translationEnabled = it
+                refreshVisibleHolders()
+            }
+            .launchIn(scope)
+    }
+
+    private fun refreshVisibleHolders() {
+        val recycler = viewer.recycler
+        for (i in 0 until recycler.childCount) {
+            val holder = recycler.getChildViewHolder(recycler.getChildAt(i))
+            if (holder is WebtoonPageHolder) {
+                holder.refreshTranslation()
+            }
+        }
+    }
+}

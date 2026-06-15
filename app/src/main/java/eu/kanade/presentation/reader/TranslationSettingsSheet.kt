@@ -58,6 +58,11 @@ import uy.kohesive.injekt.api.get
 @Composable
 fun TranslationSettingsSheet(
     onDismissRequest: () -> Unit,
+    // TachiyomiAT: backs the "Stop all translation" row. Lets the user cancel
+    // every in-flight single-page/auto/batch translation job from the reader
+    // settings sheet — previously there was no way to stop translation at all
+    // short of navigating away or disabling the master toggle.
+    onStopAllTranslation: () -> Unit = {},
 ) {
     val prefs = remember { Injekt.get<TranslationPreferences>() }
 
@@ -70,10 +75,20 @@ fun TranslationSettingsSheet(
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
         ) {
             TogglesSection(prefs)
+            StopAllSection(onStopAllTranslation)
             LanguagesSection(prefs)
             EngineSection(prefs)
         }
     }
+}
+
+@Composable
+private fun ColumnScope.StopAllSection(onStopAllTranslation: () -> Unit) {
+    TextPreferenceWidget(
+        title = stringResource(ATMR.strings.reader_translation_stop_all),
+        subtitle = stringResource(ATMR.strings.reader_translation_stop_all_summary),
+        onPreferenceClick = { onStopAllTranslation() },
+    )
 }
 
 @Composable

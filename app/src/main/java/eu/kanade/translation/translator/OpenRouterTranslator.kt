@@ -23,7 +23,15 @@ class OpenRouterTranslator(
     val maxOutputToken: Int,
     val temp: Float,
 ) : TextTranslator {
-    private val okHttpClient = OkHttpClient()
+    // TachiyomiAT: explicit 60s timeouts instead of OkHttpClient's default 10s,
+    // which is too short for batch AI calls. Consistent with DeepSeek's 60s.
+    // The batch path wraps every page in withTimeoutOrNull(120s), so if an HTTP
+    // call hangs, the translator permit is released within that window.
+    private val okHttpClient = OkHttpClient.Builder()
+        .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .build()
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
 
         try {
@@ -92,10 +100,22 @@ class OpenRouterTranslator(
                     "Bearer $apiKey",
                 ).header("Content-Type", "application/json").post(body).build()
             val response = okHttpClient.newCall(build).await()
+            // TachiyomiAT: null/shape-check the response. An error from the API
+            // (rate limit, bad key, server error) returns a JSON object with no
+            // "choices" array; the old code dereferenced rBody.string() and
+            // getJSONArray("choices") unconditionally and NPE/JSONException'd.
             val rBody = response.body
+                ?: throw IllegalStateException("Empty response body from OpenRouter API")
             val json2 = JSONObject(rBody.string())
-            val resJson =
-                JSONObject(json2.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content"))
+            val content = json2.optJSONArray("choices")?.optJSONObject(0)
+                ?.optJSONObject("message")?.optString("content")
+            if (content.isNullOrBlank()) {
+                throw IllegalStateException(
+                    "OpenRouter returned no content (choices missing or empty): " +
+                        json2.optString("error", json2.toString()),
+                )
+            }
+            val resJson = JSONObject(content)
 
             for ((k, v) in pages) {
                 v.blocks.forEachIndexed { i, b ->

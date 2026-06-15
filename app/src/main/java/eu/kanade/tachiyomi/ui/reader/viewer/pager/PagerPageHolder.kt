@@ -101,16 +101,53 @@ class PagerPageHolder(
         Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
             .translationEnabled().changes().onEach { enabled ->
                 translationEnabled = enabled
-                val isBeingTranslated = page.translation?.let { t ->
-                    (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-                        t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-                        t.renderedImageName == null && t.cleanedImageName == null
-                } ?: false
-                if (!isBeingTranslated) showTranslateButton(enabled)
+                // Re-evaluate the button: while running it shows the cancel
+                // affordance regardless of the toggle; when idle it follows the
+                // master enable preference.
+                if (!isPageBeingTranslated()) {
+                    showTranslateButton(enabled)
+                    setTranslating(false)
+                }
             }.launchIn(holderScope)
         // Per-page translate button
         onTranslateClicked = {
             viewer.activity.viewModel.translateSinglePage(page)
+        }
+        // TachiyomiAT: cancel affordance shown while a translation is running
+        // for this page (the button re-purposes itself via setTranslating).
+        onCancelTranslateClicked = {
+            viewer.activity.viewModel.cancelSinglePageTranslation(page)
+        }
+    }
+
+    /**
+     * TachiyomiAT: true when this page has a RUNNING OCR/inpaint/translate/render
+     * stage and no rendered/cleaned result yet. Centralised here so the init
+     * collector, [setImage] and [refreshTranslation] all agree on the
+     * "is this page mid-translation" predicate that decides whether to show the
+     * cancel affordance vs. the translate affordance.
+     */
+    private fun isPageBeingTranslated(): Boolean = page.translation?.let { t ->
+        (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
+            t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
+            t.renderedImageName == null && t.cleanedImageName == null
+    } ?: false
+
+    /**
+     * TachiyomiAT: pushes the current translation status of this page to the
+     * per-page button: cancel affordance while running, translate affordance
+     * (visible only when translation is enabled) when idle. Replaces the prior
+     * "hide the button entirely during work" behaviour, which gave the user no
+     * feedback and no way to cancel a slow page.
+     */
+    private fun syncTranslateButtonState() {
+        if (isPageBeingTranslated()) {
+            showProcessingOverlay(true)
+            setTranslating(true)
+        } else {
+            showProcessingOverlay(false)
+            showTranslateButton(translationEnabled)
+            setTranslating(false)
         }
     }
 
@@ -201,16 +238,15 @@ class PagerPageHolder(
         page.showTranslatedImage = showTranslations && page.translatedStream != null
         val streamFn = page.stream ?: return
 
-        val isBeingTranslated = page.translation?.let { t ->
-            (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-                t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && t.cleanedImageName == null
-        } ?: false
+        val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated) {
             showProcessingOverlay(true)
-            showTranslateButton(false)
+            // Show the cancel affordance instead of hiding the button, so the
+            // user gets feedback that translation is running and can cancel it.
+            setTranslating(true)
         } else {
             showTranslateButton(translationEnabled)
+            setTranslating(false)
         }
 
         try {
@@ -255,28 +291,34 @@ class PagerPageHolder(
 
     fun refreshTranslation() {
         val streamAvailable = page.translatedStream != null
-        val isBeingTranslated = page.translation?.let { t ->
-            (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-                t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && t.cleanedImageName == null
-        } ?: false
+        val isBeingTranslated = isPageBeingTranslated()
         when {
             isBeingTranslated -> {
                 showProcessingOverlay(true)
-                showTranslateButton(false)
+                // Cancel affordance while running, instead of hiding the button.
+                setTranslating(true)
             }
             showTranslations && streamAvailable -> {
                 page.showTranslatedImage = true
                 showProcessingOverlay(false)
                 showTranslateButton(translationEnabled)
+                setTranslating(false)
                 loadJob?.cancel()
                 loadJob = holderScope.launch { setImage() }
             }
             else -> {
                 showProcessingOverlay(false)
                 showTranslateButton(translationEnabled)
+                setTranslating(false)
             }
         }
+        // TachiyomiAT: surface translation errors to the user — but only when the
+        // page is NOT currently running. A page that's being retried may carry
+        // a stale errorMessage from a prior failed attempt; showing it alongside
+        // the RUNNING overlay is misleading. Only surface the error when the
+        // page is idle and actually has a terminal failure.
+        val errorMsg = if (!isBeingTranslated) page.translation?.errorMessage else null
+        showTranslationError(errorMsg)
     }
 
     private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {

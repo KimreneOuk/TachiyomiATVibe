@@ -330,11 +330,24 @@ class TranslationManager(
 
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) {
         val jobKey = "${chapter.id}:$pageKey"
-        // Replace any pending job for this same page instead of letting it queue
-        // behind itself (e.g. user double-taps the per-page button, or auto-mode
-        // re-enqueues on scroll). The translator also dedups via inFlightPageKeys
-        // once the permit is acquired; this avoids even the brief queue-up.
-        activePageJobs[jobKey]?.cancel()
+        // TachiyomiAT: do NOT cancel an in-flight job for this same page on a
+        // duplicate request. The previous `activePageJobs[jobKey]?.cancel()`
+        // here meant every repeated page-selection event (auto-mode firing on
+        // scroll, a page-holder re-binding, or a rapid double-tap) tore down and
+        // restarted the same translation — oscillating between cancel/restart,
+        // visibly blinking the processing overlay, and re-decoding the bitmap
+        // each time. The translator already dedups via inFlightPageKeys once the
+        // permit is acquired, so a second launch for the same page is a no-op
+        // for the expensive work. We only clear/replace a prior entry when it is
+        // no longer active (completed or already cancelled), keeping the
+        // map free of dead jobs while leaving a genuine in-flight job alone.
+        val existing = activePageJobs[jobKey]
+        if (existing != null && existing.isActive) {
+            return
+        }
+        if (existing != null) {
+            activePageJobs.remove(jobKey)
+        }
         val job = scope.launch {
             try {
                 translator.translateSinglePage(manga, chapter, source, pageKey)
@@ -350,6 +363,23 @@ class TranslationManager(
             }
         }
         activePageJobs[jobKey] = job
+    }
+
+    /**
+     * TachiyomiAT: cancels the in-flight single-page translation job for one
+     * specific [pageKey] within [chapterId], if any. This is the per-page
+     * granularity that [cancelPageTranslations] (chapter-scoped) is too coarse
+     * for: it backs the per-page button's cancel affordance, so a user can stop
+     * a single slow/stuck page without abandoning the whole chapter.
+     *
+     * Returns true if a job was actually cancelled, false if none was running
+     * for that page (e.g. it already finished or the translator deduped it).
+     */
+    fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean {
+        val jobKey = "$chapterId:$pageKey"
+        val job = activePageJobs.remove(jobKey)
+        job?.cancel()
+        return job != null
     }
 
     /**

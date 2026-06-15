@@ -114,6 +114,11 @@ class ReaderActivity : BaseActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
+
+        // TachiyomiAT: window after a double-tap during which touch events are
+        // swallowed so the SubsamplingScaleImageView's built-in double-tap-to-zoom
+        // can't also fire alongside the menu toggle.
+        private const val DOUBLE_TAP_SUPPRESS_MS = 280L
     }
 
     private val readerPreferences = Injekt.get<ReaderPreferences>()
@@ -325,6 +330,63 @@ class ReaderActivity : BaseActivity() {
     }
 
     /**
+     * TachiyomiAT: detect a double-tap anywhere on the screen to toggle the
+     * reader menu overlay. This catches the gesture at the Activity level via
+     * dispatchTouchEvent, before any child view can consume it.
+     *
+     * Why a separate detector here instead of the viewer's tapListener:
+     * The dialog_root ComposeView (which hosts the overlay bars and dialogs)
+     * sits above the viewer in the Z-order and consumes ACTION_DOWN for its
+     * own gesture tracking, starving the viewer's GestureDetectorWithLongTap
+     * of the down event it needs to fire onSingleTapConfirmed. By detecting
+     * double-tap in dispatchTouchEvent (which the framework calls on every
+     * touch before any child sees it), the gesture works from any screen
+     * region regardless of which child view is on top.
+     *
+     * We also need to suppress the SubsamplingScaleImageView's built-in
+     * double-tap-to-zoom. The library is third-party (can't be edited) and
+     * handles zoom internally via its own GestureDetector. To prevent the
+     * second tap of a double-tap from reaching it, we track recent double-tap
+     * timestamps and short-circuit ACTION_DOWN/UP within a 280ms window,
+     * returning true (consumed) so the SSIV never sees the triggering taps.
+     * Single-tap page navigation and pinch-zoom are unaffected because those
+     * gestures don't fall inside the double-tap window.
+     */
+    @Volatile
+    private var lastDoubleTapTime = 0L
+
+    private val doubleTapDetector by lazy {
+        android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                lastDoubleTapTime = android.os.SystemClock.uptimeMillis()
+                toggleMenu()
+                return true
+            }
+        })
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        doubleTapDetector.onTouchEvent(ev)
+        // Suppress the second tap of a double-tap so the
+        // SubsamplingScaleImageView's built-in double-tap-to-zoom doesn't
+        // also fire. For ~280ms after we detect a double-tap, swallow
+        // DOWN/UP/MOVE so the library's internal GestureDetector never
+        // completes its own double-tap recognition.
+        if (lastDoubleTapTime != 0L &&
+            android.os.SystemClock.uptimeMillis() - lastDoubleTapTime < DOUBLE_TAP_SUPPRESS_MS
+        ) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_MOVE, MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /**
      * Dispatches a generic motion event. If the viewer doesn't handle it, call the default
      * implementation.
      */
@@ -348,6 +410,13 @@ class ReaderActivity : BaseActivity() {
                 )
             }
         }
+
+// TachiyomiAT: dialog_root ComposeView is MATCH_PARENT and sits above
+        // the reader_container in the FrameLayout Z-order. Make it
+        // non-clickable/non-focusable so it doesn't steal touch ownership
+        // from the viewer below when no interactive composable is showing.
+        binding.dialogRoot.isClickable = false
+        binding.dialogRoot.isFocusable = false
 
         binding.dialogRoot.setComposeContent {
             val state by viewModel.state.collectAsState()
@@ -433,6 +502,9 @@ class ReaderActivity : BaseActivity() {
                 translationState = translationState,
                 translationProgress = translationProgress,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
+                // Disable the icon while work is running so taps can't queue up
+                // overlapping requests behind the singleton translator permit.
+                translateEnabled = translationState != Translation.State.TRANSLATING,
             )
 
             if (flashOnPageChange) {
@@ -469,6 +541,7 @@ class ReaderActivity : BaseActivity() {
                 is ReaderViewModel.Dialog.TranslationSettings -> {
                     TranslationSettingsSheet(
                         onDismissRequest = onDismissRequest,
+                        onStopAllTranslation = { viewModel.stopAllTranslation() },
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

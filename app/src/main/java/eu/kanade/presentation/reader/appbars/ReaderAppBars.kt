@@ -69,6 +69,9 @@ fun ReaderAppBars(
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     onClickTranslate: () -> Unit = {},
+    // TachiyomiAT: forwarded to BottomReaderBar to disable the translate icon
+    // while work is running.
+    translateEnabled: Boolean = true,
 ) {
     val isRtl = viewer is R2LPagerViewer
     val backgroundColor = MaterialTheme.colorScheme
@@ -194,6 +197,7 @@ fun ReaderAppBars(
                     translationState = translationState,
                     translationProgress = translationProgress,
                     onClickTranslate = onClickTranslate,
+                    translateEnabled = translateEnabled,
                 )
             }
         }

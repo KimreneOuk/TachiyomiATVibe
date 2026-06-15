@@ -52,6 +52,8 @@
     <string name="reader_translation_cancel">Cancel</string>
     <string name="reader_translation_delete">Delete translation</string>
     <string name="reader_translation_not_downloaded">Translation requires downloaded chapters</string>
+    <string name="reader_translation_stop_all">Stop all translation</string>
+    <string name="reader_translation_stop_all_summary">Cancels every page being translated right now</string>
 
     <!-- Reader overlay translation settings sheet -->
     <string name="translation_settings">Translation</string>

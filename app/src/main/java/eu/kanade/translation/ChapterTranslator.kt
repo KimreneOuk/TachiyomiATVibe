@@ -45,6 +45,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
+import mihon.core.archive.ArchiveReader
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.system.ImageUtil
@@ -99,12 +100,22 @@ class ChapterTranslator(
             readerPageStreams[readerPageStreamKey(manga, chapter, source, pageKey)] = streamFn
         }
 
-        private fun takeReaderPageStream(
+        /**
+         * Returns the registered reader stream for this page WITHOUT removing
+         * it. The stream is a `() -> InputStream` factory, so it can be invoked
+         * multiple times (once per retry); evicting it on first use (the old
+         * `readerPageStreams.remove(...)` behaviour) meant a failed translation
+         * could never be retried — the second attempt found no stream, fell
+         * through to findChapterDir()==null for streamed chapters, and silently
+         * wrote a FAILED placeholder. The stream is dropped only on chapter
+         * cleanup via [clearReaderPageStreams] (chapter change / reader exit).
+         */
+        private fun peekReaderPageStream(
             manga: Manga,
             chapter: Chapter,
             source: HttpSource,
             pageKey: String,
-        ): (() -> InputStream)? = readerPageStreams.remove(readerPageStreamKey(manga, chapter, source, pageKey))
+        ): (() -> InputStream)? = readerPageStreams[readerPageStreamKey(manga, chapter, source, pageKey)]
 
         /**
          * Evicts every reader page stream registered for [mangaId]/[sourceId] in
@@ -180,6 +191,15 @@ class ChapterTranslator(
     }
 
     private fun createRecognitionEngine(lang: TextRecognizerLanguage, mode: InpaintingMode): PageRecognitionEngine {
+        // TachiyomiAT: when a prior batch run hit repeated OOMs and flipped
+        // autoFallbackToFast, skip ONNX entirely for this batch/page so we
+        // don't keep re-OOM'ing after the threshold was already crossed.
+        // Previously this flag was written but never read (dead state), so
+        // pages kept retrying ONNX and each OOM filled the heap further.
+        if (autoFallbackToFast) {
+            logcat(LogPriority.WARN) { "autoFallbackToFast is set — skipping ONNX for $lang, using ML Kit directly" }
+            return MlKitFullPageRecognitionEngine(lang)
+        }
         val onnx = RoiPageRecognitionEngine(context, lang, mode)
         if (onnx.isAvailable) {
             logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang" }
@@ -451,7 +471,32 @@ class ChapterTranslator(
             }
             currentChapterPath = chapterPath
 
-            val streams = getChapterPages(chapterPath)
+            // TachiyomiAT: for archive chapters, share one ArchiveReader across
+            // the entire batch instead of reopening + full decompression per page
+            // (the old getChapterPages closures called archiveReader().use {}
+            // on every streamFn() invocation, O(pages) re-decompressions).
+            // Directory chapters use direct file opens, which is already cheap.
+            val streams: List<Pair<String, () -> InputStream>>
+            val sharedArchive: mihon.core.archive.ArchiveReader?
+            if (chapterPath.isFile) {
+                sharedArchive = chapterPath.archiveReader(context)
+                // Build the list eagerly; each closure reads from the shared
+                // reader. The reader is mmap'd so reads are seek-based, not
+                // re-decompressing.
+                streams = sharedArchive.useEntries { entries ->
+                    entries.filter { it.isFile && ImageUtil.isImage(it.name) }
+                        .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
+                        .map { entry ->
+                            Pair(entry.name) {
+                                sharedArchive.getInputStream(entry.name)
+                                    ?: throw java.io.IOException("Archive entry '${entry.name}' could not be opened (mmap)")
+                            }
+                        }.toList()
+                }
+            } else {
+                sharedArchive = null
+                streams = getChapterPages(chapterPath)
+            }
             var companionDir: UniFile? = null
             val renderer = PageTextRenderer(context)
 
@@ -502,88 +547,115 @@ class ChapterTranslator(
                         updatedAt = System.currentTimeMillis()
                     }
                 }
-                val pageTranslation: PageTranslation
-                try {
-                    pageTranslation = processSinglePage(
-                        fileName, bitmap, decoded, translation, store, streams,
-                    ) {
-                        val dir = provider.getCompanionImageDir(
+
+                // TachiyomiAT: the single-page path caps each page at
+                // SINGLE_PAGE_TIMEOUT_MS (currently 120s). The batch path had
+                // NO timeout before — a hung ONNX inference or stalled AI/HTTP
+                // request held the single translatorPermit indefinitely. Wrap
+                // the expensive recognition+render chain so a page that takes
+                // too long releases the permit and the next page can proceed.
+                val timedOut = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
+                    val pageTranslation: PageTranslation
+                    try {
+                        pageTranslation = processSinglePage(
+                            fileName, bitmap, decoded, translation, store, streams,
+                        ) {
+                            val dir = provider.getCompanionImageDir(
+                                translation.manga.title, translation.source,
+                                translation.chapter.name, translation.chapter.scanlator,
+                            )
+                            companionDir = dir
+                            dir
+                        }
+                    } finally {
+                        try {
+                            bitmap.recycle()
+                        } catch (_: Exception) {}
+                        companionDir = provider.getCompanionImageDir(
                             translation.manga.title, translation.source,
                             translation.chapter.name, translation.chapter.scanlator,
                         )
-                        companionDir = dir
-                        dir
+                        BitmapPool.releaseAll()
                     }
-                } finally {
-                    try {
-                        bitmap.recycle()
-                    } catch (_: Exception) {}
-                    companionDir = provider.getCompanionImageDir(
-                        translation.manga.title, translation.source,
-                        translation.chapter.name, translation.chapter.scanlator,
-                    )
+
+                    if (pageTranslation.blocks.isNotEmpty()) {
+                        try {
+                            pageTranslation.translationStatus = StageStatus.RUNNING
+                            textTranslator.translatePage(fileName, pageTranslation)
+                            pageTranslation.translationStatus = StageStatus.READY
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            pageTranslation.translationStatus = StageStatus.FAILED
+                            pageTranslation.errorMessage = e.message
+                            logcat(LogPriority.ERROR, e) { "Failed to translate text for $fileName" }
+                        }
+                    }
+
+                    if (pageTranslation.blocks.isNotEmpty() && pageTranslation.translationStatus == StageStatus.READY) {
+                        val cleanedBitmap = pageTranslation.cleanedBitmap
+                        if (cleanedBitmap != null) {
+                            try {
+                                pageTranslation.renderStatus = StageStatus.RUNNING
+                                renderer.render(cleanedBitmap, pageTranslation.blocks)
+
+                                val cDir = companionDir ?: provider.getCompanionImageDir(
+                                    translation.manga.title, translation.source,
+                                    translation.chapter.name, translation.chapter.scanlator,
+                                ).also { companionDir = it }
+                                val safeName = fileName.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                                val renderedFileName = "${safeName}.rendered.webp"
+                                val renderedFile = cDir?.createFile(renderedFileName)
+                                if (renderedFile != null) {
+                                    renderedFile.openOutputStream().use { os ->
+                                        cleanedBitmap.compress(Bitmap.CompressFormat.WEBP, 90, os)
+                                    }
+                                    pageTranslation.renderedImageName = renderedFileName
+                                    pageTranslation.renderStatus = StageStatus.READY
+                                    logcat(LogPriority.INFO) { "Saved rendered image: $renderedFileName for $fileName" }
+                                }
+                            } catch (e: Exception) {
+                                if (e is CancellationException) throw e
+                                pageTranslation.renderStatus = StageStatus.FAILED
+                                pageTranslation.errorMessage = e.message
+                                logcat(LogPriority.ERROR, e) { "Failed to render text for $fileName" }
+                            } finally {
+                                // Always recycle cleanedBitmap after the render attempt
+                                try { cleanedBitmap.recycle() } catch (_: Exception) {}
+                            }
+                        }
+                    } else {
+                        // No rendering needed (no blocks or translation not ready),
+                        // still recycle cleanedBitmap so it doesn't leak.
+                        pageTranslation.cleanedBitmap?.let {
+                            try { it.recycle() } catch (_: Exception) {}
+                        }
+                    }
+                    pageTranslation.cleanedBitmap = null
+                    pageTranslation.updatedAt = System.currentTimeMillis()
+
+                    persistPageWithOomRecovery(store, fileName, pageTranslation)
+
                     BitmapPool.releaseAll()
                 }
 
-                if (pageTranslation.blocks.isNotEmpty()) {
-                    try {
-                        pageTranslation.translationStatus = StageStatus.RUNNING
-                        textTranslator.translatePage(fileName, pageTranslation)
-                        pageTranslation.translationStatus = StageStatus.READY
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        pageTranslation.translationStatus = StageStatus.FAILED
-                        pageTranslation.errorMessage = e.message
-                        logcat(LogPriority.ERROR, e) { "Failed to translate text for $fileName" }
+                if (timedOut == null) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT batch page timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: $fileName"
                     }
+                    val placeholder = createFailedPagePlaceholder(
+                        fileName,
+                        "Translation timed out after ${SINGLE_PAGE_TIMEOUT_MS / 1000}s",
+                    )
+                    store.updatePage(fileName) { placeholder }
+                    // continue so the permit is released and the next page gets a turn
+                    continue
                 }
-
-                if (pageTranslation.blocks.isNotEmpty() && pageTranslation.translationStatus == StageStatus.READY) {
-                    val cleanedBitmap = pageTranslation.cleanedBitmap
-                    if (cleanedBitmap != null) {
-                        try {
-                            pageTranslation.renderStatus = StageStatus.RUNNING
-                            renderer.render(cleanedBitmap, pageTranslation.blocks)
-
-                            val cDir = companionDir ?: provider.getCompanionImageDir(
-                                translation.manga.title, translation.source,
-                                translation.chapter.name, translation.chapter.scanlator,
-                            ).also { companionDir = it }
-                            val safeName = fileName.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                            val renderedFileName = "${safeName}.rendered.webp"
-                            val renderedFile = cDir?.createFile(renderedFileName)
-                            if (renderedFile != null) {
-                                renderedFile.openOutputStream().use { os ->
-                                    cleanedBitmap.compress(Bitmap.CompressFormat.WEBP, 90, os)
-                                }
-                                pageTranslation.renderedImageName = renderedFileName
-                                pageTranslation.renderStatus = StageStatus.READY
-                                logcat(LogPriority.INFO) { "Saved rendered image: $renderedFileName for $fileName" }
-                            }
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            pageTranslation.renderStatus = StageStatus.FAILED
-                            pageTranslation.errorMessage = e.message
-                            logcat(LogPriority.ERROR, e) { "Failed to render text for $fileName" }
-                        } finally {
-                            // Always recycle cleanedBitmap after the render attempt
-                            try { cleanedBitmap.recycle() } catch (_: Exception) {}
-                        }
-                    }
-                } else {
-                    // No rendering needed (no blocks or translation not ready),
-                    // still recycle cleanedBitmap so it doesn't leak.
-                    pageTranslation.cleanedBitmap?.let {
-                        try { it.recycle() } catch (_: Exception) {}
-                    }
-                }
-                pageTranslation.cleanedBitmap = null
-                pageTranslation.updatedAt = System.currentTimeMillis()
-
-                persistPageWithOomRecovery(store, fileName, pageTranslation)
-
-                BitmapPool.releaseAll()
             }
+
+            // TachiyomiAT: close the shared archive that was opened once for the
+            // entire batch (instead of per-page). The directory path doesn't
+            // open one, so sharedArchive is null there.
+            try { sharedArchive?.close() } catch (_: Exception) {}
 
             if (consecutiveOomCount > 0) {
                 autoFallbackToFast = true
@@ -669,7 +741,7 @@ class ChapterTranslator(
         pageKey: String,
         readerStreamFn: (() -> InputStream)? = null,
     ) {
-        val streamFromReader = readerStreamFn ?: takeReaderPageStream(manga, chapter, source, pageKey)
+        val streamFromReader = readerStreamFn ?: peekReaderPageStream(manga, chapter, source, pageKey)
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
         val syntheticTranslation = Translation(source, manga, chapter, fromLang, toLang)
@@ -917,9 +989,23 @@ class ChapterTranslator(
                     decodeSampleSize = decoded.sampleSize,
                 )
             }
-            if (consecutiveOomCount >= 3 && !autoFallbackToFast) {
+            // TachiyomiAT: lowered from 3 to 2 so the auto-fallback kicks in
+            // after fewer blows to the heap. Every OOM is expensive (System.gc()
+            // + BitmapPool.releaseAll() above); waiting for 3 pages to fail
+            // before switching to the lightweight ML Kit path is too late for
+            // the user — they've already seen multiple "nothing happened"
+            // experiences by that point.
+            if (consecutiveOomCount >= 2 && !autoFallbackToFast) {
                 autoFallbackToFast = true
-                logcat(LogPriority.WARN) { "Auto-fallback to fast mode after ${consecutiveOomCount} OOMs" }
+                logcat(LogPriority.WARN) { "Auto-fallback to fast (ML Kit) mode after ${consecutiveOomCount} consecutive OOMs" }
+                // Surface the downgrade to the UI through the page that just
+                // failed so the user understands WHY subsequent pages may look
+                // different (no ONNX inpainting, ML Kit OCR only).
+                store.updatePage(fileName) {
+                    (it ?: PageTranslation()).apply {
+                        errorMessage = "ONNX recognition disabled due to memory pressure — using fast mode"
+                    }
+                }
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -1076,19 +1162,50 @@ class ChapterTranslator(
         if (chapterPath.isFile) {
             chapterPath.archiveReader(context).use { reader ->
                 return reader.useEntries { entries ->
-                    entries.filter { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
+                    entries.filter { entry ->
+                        // Null-safe: a corrupt/revoked archive can make
+                        // getInputStream return null; ImageUtil.isImage itself
+                        // handles a null name. Skip unreadable entries instead
+                        // of NPE'ing on the `!!` that used to be here.
+                        entry.isFile &&
+                            ImageUtil.isImage(entry.name) {
+                                reader.getInputStream(entry.name)
+                                    ?: throw java.io.IOException("Archive entry '${entry.name}' could not be opened")
+                            }
+                    }
                         .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }.map { entry ->
                             Pair(entry.name) {
                                 chapterPath.archiveReader(context).use { archive ->
-                                    archive.getInputStream(entry.name)!!.use { it.readBytes() }.inputStream()
+                                    // Null-safe stream: if the entry vanished or
+                                    // the archive is corrupt, throw an explicit,
+                                    // loggable IOException instead of an NPE so
+                                    // the caller's try/catch reports the real cause.
+                                    val stream = archive.getInputStream(entry.name)
+                                        ?: throw java.io.IOException(
+                                            "Archive entry '${entry.name}' could not be opened",
+                                        )
+                                    stream.use { it.readBytes() }.inputStream()
                                 }
                             }
                         }.toList()
                 }
             }
         } else {
-            return chapterPath.listFiles()!!.filter { ImageUtil.isImage(it.name) }.map { entry ->
-                Pair(entry.name!!) { entry.openInputStream() }
+            // listFiles() returns null on I/O error or a revoked SAF tree URI;
+            // return an empty list (the caller treats "no pages" as a clean
+            // no-op) instead of NPE'ing.
+            val files = chapterPath.listFiles() ?: run {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT getChapterPages: listFiles() returned null for ${chapterPath.filePath}"
+                }
+                return emptyList()
+            }
+            return files.mapNotNull { entry ->
+                // entry.name is nullable on some SAF providers; skip nameless
+                // entries instead of NPE'ing on entry.name!!.
+                val name = entry.name ?: return@mapNotNull null
+                if (!ImageUtil.isImage(name)) return@mapNotNull null
+                Pair(name) { entry.openInputStream() }
             }.sortedWith { f1, f2 -> f1.first.compareToCaseInsensitiveNaturalOrder(f2.first) }.toList()
         }
     }

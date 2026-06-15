@@ -86,7 +86,14 @@ internal class DownloadPageLoader(
             ReaderPage(
                 page.index, page.url, page.imageUrl,
                 null,
-                { context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)!! },
+                // TachiyomiAT: null-safe stream open — if the SAF URI is
+                // inaccessible (revoked permission, deleted file, etc.), throw
+                // an explicit IOException instead of an NPE so the reader's
+                // error-handling can surface it gracefully.
+                {
+                    context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)
+                        ?: throw java.io.IOException("Cannot open file for downloaded page: $fileName (uri=${page.uri})")
+                },
             ).apply {
                 sourceFileName = fileName
                 translation = translations[fileName]
