@@ -63,6 +63,20 @@ object TranslationMemoryBudget {
         return estimatedPeak <= singlePageBudgetBytes()
     }
 
+    fun canStartOnnxRecognition(pageWidth: Int, pageHeight: Int): Boolean {
+        if (pageWidth <= 0 || pageHeight <= 0) return false
+        val snapshot = snapshot()
+        val pageBytes = pageWidth.toLong() * pageHeight.toLong() * 4L
+        val minimumHeadroom = max(96L * MIB, snapshot.maxHeapBytes / 4L)
+        return snapshot.availableHeapBytes >= minimumHeadroom &&
+            pageBytes <= snapshot.availableHeapBytes * 30L / 100L
+    }
+
+    fun isCriticalHeap(): Boolean {
+        val snapshot = snapshot()
+        return snapshot.availableHeapBytes < max(32L * MIB, snapshot.maxHeapBytes / 10L)
+    }
+
     fun logSnapshot(tag: String, width: Int? = null, height: Int? = null, extra: String = "") {
         val snapshot = snapshot()
         val dims = if (width != null && height != null) " page=${width}x$height" else ""

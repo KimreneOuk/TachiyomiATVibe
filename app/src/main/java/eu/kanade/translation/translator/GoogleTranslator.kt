@@ -2,7 +2,7 @@ package eu.kanade.translation.translator
 
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.recognizer.TextRecognizerLanguage
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray

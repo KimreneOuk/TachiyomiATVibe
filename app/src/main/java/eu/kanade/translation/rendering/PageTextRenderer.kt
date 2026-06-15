@@ -262,9 +262,9 @@ class PageTextRenderer(context: Context) {
             } else {
                 block.strokeWidth
             }
-            return max(0.3f, scaled)
+            return max(1.0f, scaled)
         }
-        return max(0.5f, fontSizePx * 0.04f)
+        return max(1.5f, fontSizePx * 0.07f)
     }
 
     companion object {

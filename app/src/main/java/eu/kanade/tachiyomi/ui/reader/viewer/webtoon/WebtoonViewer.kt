@@ -360,13 +360,14 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         )
     }
 
-    override fun refreshTranslationPages() {
+    override fun refreshTranslationPages(pages: Set<ReaderPage>) {
         for (i in 0 until recycler.childCount) {
             val holder = recycler.getChildViewHolder(recycler.getChildAt(i))
             if (holder is WebtoonPageHolder) {
                 holder.refreshTranslation()
             }
         }
+        adapter.refreshTranslationPages(pages)
     }
 }
 

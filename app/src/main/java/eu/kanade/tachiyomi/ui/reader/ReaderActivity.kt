@@ -51,6 +51,7 @@ import eu.kanade.presentation.reader.PageIndicatorText
 import eu.kanade.presentation.reader.ReaderContentOverlay
 import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
+import eu.kanade.presentation.reader.TranslationSettingsSheet
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
@@ -236,7 +237,7 @@ class ReaderActivity : BaseActivity() {
                         onSetAsCoverResult(event.result)
                     }
                     is ReaderViewModel.Event.RefreshTranslationPages -> {
-                        viewModel.state.value.viewer?.refreshTranslationPages()
+                        viewModel.state.value.viewer?.refreshTranslationPages(event.pages)
                     }
                 }
             }
@@ -431,23 +432,7 @@ class ReaderActivity : BaseActivity() {
                 onClickSettings = viewModel::openSettingsDialog,
                 translationState = translationState,
                 translationProgress = translationProgress,
-                onClickTranslate = {
-                    when (translationState) {
-                        Translation.State.NOT_TRANSLATED, Translation.State.ERROR -> {
-                            if (viewModel.isCurrentChapterDownloaded()) {
-                                viewModel.startCurrentChapterTranslation()
-                            } else {
-                                toast(ATMR.strings.reader_translation_not_downloaded)
-                            }
-                        }
-                        Translation.State.QUEUE, Translation.State.TRANSLATING -> {
-                            viewModel.cancelCurrentChapterTranslation()
-                        }
-                        Translation.State.TRANSLATED -> {
-                            viewModel.deleteCurrentChapterTranslation()
-                        }
-                    }
-                },
+                onClickTranslate = { viewModel.openTranslationSettingsDialog() },
             )
 
             if (flashOnPageChange) {
@@ -479,6 +464,11 @@ class ReaderActivity : BaseActivity() {
                         onShowMenus = { setMenuVisibility(true) },
                         onHideMenus = { setMenuVisibility(false) },
                         screenModel = settingsScreenModel,
+                    )
+                }
+                is ReaderViewModel.Dialog.TranslationSettings -> {
+                    TranslationSettingsSheet(
+                        onDismissRequest = onDismissRequest,
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

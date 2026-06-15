@@ -23,7 +23,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -43,10 +42,17 @@ import uy.kohesive.injekt.api.get
 class WebtoonPageHolder(
     private val frame: ReaderPageImageView,
     viewer: WebtoonViewer,
-    readerPreferences: ReaderPreferences = Injekt.get(),
+    private val readerPreferences: ReaderPreferences = Injekt.get(),
 ) : WebtoonBaseHolder(frame, viewer) {
 
     private var showTranslations = true
+
+    // TachiyomiAT: master gate for the per-page translate button. Updated live
+    // from the preference (collected in holderScope below) so the button
+    // appears/disappears the instant the user toggles translation, instead of
+    // only on the next setImage() pass.
+    private var translationEnabled =
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationEnabled().get()
 
     private val progressIndicator = createProgressIndicator()
 
@@ -78,6 +84,21 @@ class WebtoonPageHolder(
                 setImage()
             }
         }.launchIn(holderScope)
+        // Reactively update the translate button when the master toggle flips,
+        // so it shows/hides immediately rather than waiting for the next
+        // setImage() pass. While a page is mid-translation the processing
+        // overlay stays up and the button stays hidden.
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+            .translationEnabled().changes().onEach { enabled ->
+                translationEnabled = enabled
+                val current = page
+                val isBeingTranslated = current?.translation?.let { t ->
+                    (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
+                        t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
+                        t.renderedImageName == null && t.cleanedImageName == null
+                } ?: false
+                if (!isBeingTranslated) frame.showTranslateButton(enabled)
+            }.launchIn(holderScope)
         // Per-page translate button
         frame.onTranslateClicked = {
             page?.let { viewer.activity.viewModel.translateSinglePage(it) }
@@ -111,7 +132,6 @@ class WebtoonPageHolder(
         frame.recycle()
         progressIndicator.setProgress(0)
         progressContainer.isVisible = true
-        holderScope.cancel()
     }
 
     private suspend fun loadPageAndProcessStatus() {
@@ -174,7 +194,7 @@ class WebtoonPageHolder(
             frame.showProcessingOverlay(true)
             frame.showTranslateButton(false)
         } else {
-            frame.showTranslateButton(true)
+            frame.showTranslateButton(translationEnabled)
         }
 
         try {
@@ -223,13 +243,13 @@ class WebtoonPageHolder(
             showTranslations && streamAvailable -> {
                 currentPage.showTranslatedImage = true
                 frame.showProcessingOverlay(false)
-                frame.showTranslateButton(true)
+                frame.showTranslateButton(translationEnabled)
                 loadJob?.cancel()
                 loadJob = holderScope.launch { setImage() }
             }
             else -> {
                 frame.showProcessingOverlay(false)
-                frame.showTranslateButton(true)
+                frame.showTranslateButton(translationEnabled)
             }
         }
     }

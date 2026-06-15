@@ -12,27 +12,22 @@ class DirectBufferPool(
     private val maxPoolSize: Int = 4,
 ) {
     private val availableBuffers = ConcurrentLinkedQueue<FloatBuffer>()
-    private val inUseBuffers = ConcurrentHashMap<Thread, MutableSet<FloatBuffer>>()
+    private val inUseBuffers = ConcurrentHashMap.newKeySet<FloatBuffer>()
     private val totalBuffers = AtomicInteger(0)
     private val bufferLock = ReentrantLock()
 
     fun acquire(): FloatBuffer {
-        val thread = Thread.currentThread()
-        bufferLock.withLock {
-            inUseBuffers.getOrPut(thread) { ConcurrentHashMap.newKeySet() }
-        }
-
         val buffer = availableBuffers.poll()
 
         return if (buffer != null) {
             bufferLock.withLock {
-                inUseBuffers[thread]?.add(buffer)
+                inUseBuffers.add(buffer)
             }
             buffer
         } else {
             bufferLock.withLock {
                 createNewBuffer().also { newBuffer ->
-                    inUseBuffers[thread]?.add(newBuffer)
+                    inUseBuffers.add(newBuffer)
                     totalBuffers.incrementAndGet()
                 }
             }
@@ -40,20 +35,13 @@ class DirectBufferPool(
     }
 
     fun release(buffer: FloatBuffer) {
-        val thread = Thread.currentThread()
         bufferLock.withLock {
-            val threadBuffers = inUseBuffers[thread] ?: return@withLock
-
-            if (threadBuffers.remove(buffer)) {
+            if (inUseBuffers.remove(buffer)) {
                 if (availableBuffers.size < maxPoolSize) {
                     buffer.clear()
                     availableBuffers.offer(buffer)
                 } else {
                     totalBuffers.decrementAndGet()
-                }
-
-                if (threadBuffers.isEmpty()) {
-                    inUseBuffers.remove(thread)
                 }
             }
         }

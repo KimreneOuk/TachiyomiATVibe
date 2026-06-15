@@ -88,6 +88,7 @@ internal class DownloadPageLoader(
                 null,
                 { context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)!! },
             ).apply {
+                sourceFileName = fileName
                 translation = translations[fileName]
                 if (translation?.renderedImageName != null) {
                     translatedStream = translationManager.getRenderedImageStream(

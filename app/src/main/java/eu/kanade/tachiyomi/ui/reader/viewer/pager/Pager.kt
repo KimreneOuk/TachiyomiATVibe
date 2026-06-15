@@ -54,12 +54,28 @@ open class Pager(
      */
     private var isGestureDetectorEnabled = true
 
+    // TachiyomiAT: when a child view (e.g. the per-page translate button)
+    // consumes the ACTION_DOWN of a touch sequence, the viewer suppresses its
+    // own tap-to-navigate gesture detector for the rest of that gesture.
+    // Without this, tapping the translate button would also flip the page.
+    private var childConsumedGesture = false
+
     /**
      * Dispatches a touch event.
      */
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         val handled = super.dispatchTouchEvent(ev)
-        if (isGestureDetectorEnabled) {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                // Decide for the whole gesture: if a child consumed the down,
+                // it owns this sequence and we must not feed the gesture detector.
+                childConsumedGesture = handled
+            }
+            MotionEvent.ACTION_CANCEL, MotionEvent.ACTION_UP -> {
+                childConsumedGesture = false
+            }
+        }
+        if (isGestureDetectorEnabled && !childConsumedGesture) {
             gestureDetector.onTouchEvent(ev)
         }
         return handled

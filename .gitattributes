@@ -22,3 +22,6 @@
 *.woff binary
 *.pyc binary
 *.swp binary
+
+# ONNX models (protobuf binary - must not be line-ending normalized)
+*.onnx binary

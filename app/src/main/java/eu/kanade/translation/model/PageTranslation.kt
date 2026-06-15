@@ -1,6 +1,7 @@
 package eu.kanade.translation.model
 
 import android.graphics.Bitmap
+import eu.kanade.translation.detection.Detection
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 
@@ -27,6 +28,16 @@ data class PageTranslation(
     ) {
     @Transient
     var cleanedBitmap: Bitmap? = null
+
+    /**
+     * TachiyomiAT: all text detections from the recognition stage, carried
+     * per-page so they survive from analyze() into inpaint() without relying
+     * on shared mutable state on the (singleton) recognition engine. This
+     * removes a race where concurrent pages overwrote each other's detections.
+     * Not serialized.
+     */
+    @Transient
+    var allTextDetections: List<Detection> = emptyList()
 
     companion object {
         val EMPTY = PageTranslation()

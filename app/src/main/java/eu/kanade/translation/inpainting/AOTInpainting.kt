@@ -5,7 +5,7 @@ import android.graphics.Canvas
 import android.graphics.RectF
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
-import eu.kanade.translation.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -102,8 +102,14 @@ class AOTInpainting {
 
         val freeFlatBoxes = mutableListOf<IntArray>()
         val freeNeuralBoxes = mutableListOf<IntArray>()
+        val freeSmallBoxes = mutableListOf<IntArray>()
+        val pageArea = image.width.toLong() * image.height.toLong()
+        val smallBoxAreaThreshold = pageArea / 200
         for (box in freeBoxesForAot) {
-            if (bubbleCleaner.isFlatBackgroundRegion(result, box)) {
+            val boxArea = (box[2] - box[0]).toLong() * (box[3] - box[1]).toLong()
+            if (boxArea < smallBoxAreaThreshold) {
+                freeSmallBoxes.add(box)
+            } else if (bubbleCleaner.isFlatBackgroundRegion(result, box)) {
                 freeFlatBoxes.add(box)
             } else {
                 freeNeuralBoxes.add(box)
@@ -112,7 +118,7 @@ class AOTInpainting {
 
         logcat(LogPriority.INFO) {
             "[inpaint] route bubbles=${bubbleBoxes.size} grouped=${grouped.values.sumOf { it.size }} " +
-                "unparented=${unparented.size} freeFlat=${freeFlatBoxes.size} freeNeural=${freeNeuralBoxes.size} " +
+                "unparented=${unparented.size} freeFlat=${freeFlatBoxes.size} freeSmall=${freeSmallBoxes.size} freeNeural=${freeNeuralBoxes.size} " +
                 "model=${sess != null}"
         }
 
@@ -120,25 +126,39 @@ class AOTInpainting {
             result = bubbleCleaner.cleanRegions(result, freeFlatBoxes)
         }
 
+        if (freeSmallBoxes.isNotEmpty()) {
+            result = bubbleCleaner.cleanRegions(result, freeSmallBoxes)
+        }
+
         if (freeNeuralBoxes.isNotEmpty() && sess != null && mode == InpaintingMode.QUALITY) {
-            val clusters = clusterNearbyBoxes(freeNeuralBoxes, clusterDistance = 100)
-            logcat(LogPriority.INFO) {
-                "[inpaint] clustering ${freeNeuralBoxes.size} neural boxes into ${clusters.size} clusters"
-            }
-            for (cluster in clusters) {
-                try {
-                    val next = inpaintFreeRegions(sess, result, cluster, padding)
-                    if (next !== result) {
-                        if (result !== image) result.recycle()
-                        result = next
+            if (TranslationMemoryBudget.isCriticalHeap()) {
+                TranslationMemoryBudget.logSnapshot(
+                    tag = "skip_neural_heap_pressure",
+                    width = image.width,
+                    height = image.height,
+                    extra = "boxes=${freeNeuralBoxes.size}",
+                )
+                result = bubbleCleaner.cleanRegions(result, freeNeuralBoxes)
+            } else {
+                val clusters = clusterNearbyBoxes(freeNeuralBoxes, clusterDistance = 100)
+                logcat(LogPriority.INFO) {
+                    "[inpaint] clustering ${freeNeuralBoxes.size} neural boxes into ${clusters.size} clusters"
+                }
+                for (cluster in clusters) {
+                    try {
+                        val next = inpaintFreeRegions(sess, result, cluster, padding)
+                        if (next !== result) {
+                            if (result !== image) result.recycle()
+                            result = next
+                        }
+                    } catch (oom: OutOfMemoryError) {
+                        BitmapPool.releaseAll()
+                        System.gc()
+                        logcat(LogPriority.WARN) {
+                            "[inpaint] OOM on neural cluster (${cluster.size} boxes), falling back to smart clean"
+                        }
+                        result = bubbleCleaner.cleanRegions(result, cluster)
                     }
-                } catch (oom: OutOfMemoryError) {
-                    BitmapPool.releaseAll()
-                    System.gc()
-                    logcat(LogPriority.WARN) {
-                        "[inpaint] OOM on neural cluster (${cluster.size} boxes), falling back to smart clean"
-                    }
-                    result = bubbleCleaner.cleanRegions(result, cluster)
                 }
             }
         } else if (freeNeuralBoxes.isNotEmpty()) {
@@ -570,5 +590,15 @@ class AOTInpainting {
         bubbleCleaner.clearWorkingBuffers()
         session?.close()
         session = null
+    }
+
+    private fun adaptiveInferenceDim(cropW: Int, cropH: Int): Int {
+        val maxSide = max(cropW, cropH)
+        return when {
+            maxSide <= 300 -> maxSide
+            maxSide <= 500 -> 384
+            maxSide <= 800 -> 512
+            else -> 640
+        }
     }
 }

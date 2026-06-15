@@ -14,13 +14,13 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.rendering.PageTextRenderer
-import eu.kanade.translation.recognizer.MlKitPageRecognitionEngine
-import eu.kanade.translation.recognizer.OnnxPageRecognitionEngine
-import eu.kanade.translation.recognizer.PageRecognitionEngine
-import eu.kanade.translation.recognizer.TextRecognizerLanguage
+import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.recognition.MlKitFullPageRecognitionEngine
+import eu.kanade.translation.recognition.PageRecognitionEngine
+import eu.kanade.translation.recognition.RoiPageRecognitionEngine
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TextTranslators
+import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.util.TranslationMemoryBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -39,10 +39,14 @@ import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
 import tachiyomi.core.common.util.lang.launchIO
+import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
@@ -54,6 +58,7 @@ import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
 
 
 class ChapterTranslator(
@@ -64,12 +69,88 @@ class ChapterTranslator(
     private val translationPreferences: TranslationPreferences = Injekt.get(),
 ) {
 
+    companion object {
+        /**
+         * Maximum wall-clock time a single page may hold the sole
+         * [translatorPermit] during [translateSinglePage]. Bounds the damage of
+         * a hung ONNX inference or a stalled AI/HTTP call so it can't starve
+         * every other page's translation for the whole session. Generous
+         * (on-device OCR + inpaint + render of one page can take tens of seconds
+         * on a large image), but finite.
+         */
+        const val SINGLE_PAGE_TIMEOUT_MS = 120_000L
+
+        private val readerPageStreams = ConcurrentHashMap<String, () -> InputStream>()
+
+        private fun readerPageStreamKey(
+            manga: Manga,
+            chapter: Chapter,
+            source: HttpSource,
+            pageKey: String,
+        ): String = "${source.id}:${manga.id}:${chapter.id}:$pageKey"
+
+        fun registerReaderPageStream(
+            manga: Manga,
+            chapter: Chapter,
+            source: HttpSource,
+            pageKey: String,
+            streamFn: () -> InputStream,
+        ) {
+            readerPageStreams[readerPageStreamKey(manga, chapter, source, pageKey)] = streamFn
+        }
+
+        private fun takeReaderPageStream(
+            manga: Manga,
+            chapter: Chapter,
+            source: HttpSource,
+            pageKey: String,
+        ): (() -> InputStream)? = readerPageStreams.remove(readerPageStreamKey(manga, chapter, source, pageKey))
+
+        /**
+         * Evicts every reader page stream registered for [mangaId]/[sourceId] in
+         * [chapterId]. Each registered entry holds a `() -> InputStream` closure
+         * over a [eu.kanade.tachiyomi.ui.reader.model.ReaderPage], which can keep
+         * page bitmaps/sources alive — so this must run on chapter change to
+         * avoid leaking memory and stale streams across chapters.
+         */
+        fun clearReaderPageStreams(sourceId: Long, mangaId: Long, chapterId: Long) {
+            val prefix = "$sourceId:$mangaId:$chapterId:"
+            val iterator = readerPageStreams.entries.iterator()
+            while (iterator.hasNext()) {
+                if (iterator.next().key.startsWith(prefix)) {
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
     private val _queueState = MutableStateFlow<List<Translation>>(emptyList())
     val queueState = _queueState.asStateFlow()
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private var translationJob: Job? = null
+
+    /**
+     * TachiyomiAT: serializes access to the shared translation engines
+     * (textTranslator + recognitionEngine). Both the single-page path
+     * ([translateSinglePage]) and the batch path ([translateChapter]) acquire
+     * this permit, so:
+     *  - only one page's bitmap/tensor set is alive at a time (fixes the
+     *    ~20-page OOM), and
+     *  - a language-change rebuild or stop()/close() in one path cannot run
+     *    concurrently with an in-flight translate() in the other path (fixes
+     *    the "Translator has been closed" IllegalStateException).
+     */
+    private val translatorPermit = Semaphore(1)
+
+    /**
+     * pageKeys currently mid-flight in [translateSinglePage]. Guards against
+     * the same page being queued behind itself (e.g. auto-mode re-enqueue on
+     * scroll, or a user double-tapping the per-page button). Access is
+     * serialized through [translatorPermit], so no extra lock is needed.
+     */
+    private val inFlightPageKeys = mutableSetOf<String>()
 
     val isRunning: Boolean
         get() = translationJob?.isActive == true
@@ -88,8 +169,7 @@ class ChapterTranslator(
         currentFromLang = fromLang
         currentInpaintingMode = inpaintingModeFromPref()
         recognitionEngine = createRecognitionEngine(fromLang, currentInpaintingMode)
-        textTranslator = TextTranslators.fromPref(translationPreferences.translationEngine())
-            .build(translationPreferences, fromLang, toLang)
+        textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
     }
 
     private fun inpaintingModeFromPref(): InpaintingMode {
@@ -100,14 +180,14 @@ class ChapterTranslator(
     }
 
     private fun createRecognitionEngine(lang: TextRecognizerLanguage, mode: InpaintingMode): PageRecognitionEngine {
-        val onnx = OnnxPageRecognitionEngine(context, mode)
+        val onnx = RoiPageRecognitionEngine(context, lang, mode)
         if (onnx.isAvailable) {
-            logcat(LogPriority.INFO) { "Using ONNX recognition engine" }
+            logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang" }
             return onnx
         }
         onnx.close()
-        logcat(LogPriority.INFO) { "ONNX unavailable, falling back to ML Kit recognition engine" }
-        return MlKitPageRecognitionEngine(lang)
+        logcat(LogPriority.INFO) { "ONNX unavailable, falling back to ML Kit recognition engine for $lang" }
+        return MlKitFullPageRecognitionEngine(lang)
     }
 
     fun start(): Boolean {
@@ -128,6 +208,7 @@ class ChapterTranslator(
             .forEach { it.status = Translation.State.ERROR }
         if (reason != null) return
         isPaused = false
+        closeEngines()
     }
 
     fun pause() {
@@ -201,6 +282,19 @@ class ChapterTranslator(
         translationJob = null
     }
 
+    private fun closeEngines() {
+        // NOTE: This does NOT acquire translatorPermit to avoid a re-entrancy
+        // deadlock (callers like stop() invoked from inside a withPermit block
+        // would deadlock on the non-reentrant Semaphore(1)). The concurrent-close
+        // NPE risk is instead eliminated at the engine layer: RoiPageRecognitionEngine
+        // captures detector/roiOcrEngine into locals and throws a catchable
+        // IllegalStateException if they were nulled mid-analyze, which
+        // processSinglePage catches and degrades gracefully.
+        enginesClosed = true
+        try { recognitionEngine.close() } catch (_: Exception) {}
+        try { textTranslator.close() } catch (_: Exception) {}
+    }
+
     fun queueChapter(manga: Manga, chapter: Chapter) {
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)?.let { existing ->
@@ -211,9 +305,12 @@ class ChapterTranslator(
         if (queueState.value.any { it.chapter.id == chapter.id }) return
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        val engine = TextTranslators.fromPref(translationPreferences.translationEngine())
-        if (engine == TextTranslators.MLKIT && !TextTranslatorLanguage.mlkitSupportedLanguages().contains(toLang)) {
-            context.toast(ATMR.strings.error_mlkit_language_unsupported)
+        if (TranslationEngineBuilder.isMlKitActive(translationPreferences) &&
+            !TextTranslatorLanguage.mlkitSupportedLanguages().contains(toLang)
+        ) {
+            scope.launchUI {
+                context.toast(ATMR.strings.error_mlkit_language_unsupported)
+            }
             return
         }
         val translation = Translation(source, manga, chapter, fromLang, toLang);
@@ -224,6 +321,8 @@ class ChapterTranslator(
     private var autoFallbackToFast = false
     private var currentChapterTranslation: Translation? = null
     private var currentChapterPath: UniFile? = null
+    @Volatile
+    private var enginesClosed = false
 
     /**
      * Listener that lets the translator share the same [ChapterTranslationStore]
@@ -241,11 +340,19 @@ class ChapterTranslator(
     }
 
     private fun unregisterActiveStore(translation: Translation) {
+        // Clear only the translator-local pointer. We intentionally do NOT call
+        // activeStoreUnregister here: that callback removes the shared
+        // ChapterTranslationStore from TranslationManager's cache, but the reader
+        // captured this store's StateFlow once at observe time and never
+        // re-resolves it. Evicting it after every single-page translation meant
+        // the next translate created a fresh store the reader never saw — so
+        // only the first page after opening the reader ever updated live.
+        // The shared store is now managed by TranslationManager's own lifecycle
+        // (chapter change / reader exit), not per-translation.
         if (currentChapterTranslation?.chapter?.id == translation.chapter.id) {
             currentChapterTranslation = null
             currentChapterPath = null
         }
-        activeStoreUnregister?.invoke(translation)
     }
 
     private fun createFailedPagePlaceholder(
@@ -273,14 +380,19 @@ class ChapterTranslator(
         )
     }
 
-    private suspend fun translateChapter(translation: Translation) {
+    private suspend fun translateChapter(translation: Translation) = translatorPermit.withPermit {
+        translateChapterInternal(translation)
+    }
+
+    private suspend fun translateChapterInternal(translation: Translation) {
         var store: ChapterTranslationStore? = null
         try {
-            if (translation.fromLang != currentFromLang) {
+            if (enginesClosed || translation.fromLang != currentFromLang) {
                 recognitionEngine.close()
                 currentFromLang = translation.fromLang
                 currentInpaintingMode = inpaintingModeFromPref()
                 recognitionEngine = createRecognitionEngine(translation.fromLang, currentInpaintingMode)
+                enginesClosed = false
             }
             val newMode = inpaintingModeFromPref()
             if (newMode != currentInpaintingMode) {
@@ -288,12 +400,14 @@ class ChapterTranslator(
                 currentInpaintingMode = newMode
                 recognitionEngine = createRecognitionEngine(currentFromLang, currentInpaintingMode)
             }
-            if (translation.fromLang != textTranslator.fromLang || translation.toLang != textTranslator.toLang) {
+            if (enginesClosed || translation.fromLang != textTranslator.fromLang || translation.toLang != textTranslator.toLang) {
                 withContext(Dispatchers.IO) {
                     textTranslator.close()
                 }
-                textTranslator = TextTranslators.fromPref(translationPreferences.translationEngine())
-                    .build(translationPreferences, translation.fromLang, translation.toLang)
+                textTranslator = TranslationEngineBuilder.build(
+                    translationPreferences, translation.fromLang, translation.toLang,
+                )
+                enginesClosed = false
             }
 
             consecutiveOomCount = 0
@@ -305,7 +419,16 @@ class ChapterTranslator(
             if (store == null) {
                 val translationMangaDir = provider.getMangaDir(translation.manga.title, translation.source)
                 val saveFile = provider.getTranslationFileName(translation.chapter.name, translation.chapter.scanlator)
-                val translationFile = translationMangaDir.createFile(saveFile)!!
+                // SAF createFile can return null on a missing/revoked storage
+                // location; treat that as a hard failure instead of NPE'ing.
+                val translationFile = translationMangaDir.createFile(saveFile)
+                if (translationFile == null) {
+                    logcat(LogPriority.ERROR) {
+                        "TachiyomiAT cannot create translation file for ${translation.chapter.name}"
+                    }
+                    translation.status = Translation.State.ERROR
+                    return
+                }
                 store = ChapterTranslationStore.open(translationFile)
             }
             registerActiveStore(translation, store)
@@ -315,7 +438,17 @@ class ChapterTranslator(
                 translation.chapter.scanlator,
                 translation.manga.title,
                 translation.source,
-            )!!
+            )
+            // Chapter files may be gone (deleted mid-translation) or never
+            // existed for a streamed chapter; fail the chapter cleanly rather
+            // than NPE'ing.
+            if (chapterPath == null) {
+                logcat(LogPriority.ERROR) {
+                    "TachiyomiAT chapter files not found for ${translation.chapter.name}"
+                }
+                translation.status = Translation.State.ERROR
+                return
+            }
             currentChapterPath = chapterPath
 
             val streams = getChapterPages(chapterPath)
@@ -398,6 +531,7 @@ class ChapterTranslator(
                         textTranslator.translatePage(fileName, pageTranslation)
                         pageTranslation.translationStatus = StageStatus.READY
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         pageTranslation.translationStatus = StageStatus.FAILED
                         pageTranslation.errorMessage = e.message
                         logcat(LogPriority.ERROR, e) { "Failed to translate text for $fileName" }
@@ -427,6 +561,7 @@ class ChapterTranslator(
                                 logcat(LogPriority.INFO) { "Saved rendered image: $renderedFileName for $fileName" }
                             }
                         } catch (e: Exception) {
+                            if (e is CancellationException) throw e
                             pageTranslation.renderStatus = StageStatus.FAILED
                             pageTranslation.errorMessage = e.message
                             logcat(LogPriority.ERROR, e) { "Failed to render text for $fileName" }
@@ -445,7 +580,7 @@ class ChapterTranslator(
                 pageTranslation.cleanedBitmap = null
                 pageTranslation.updatedAt = System.currentTimeMillis()
 
-                store.updatePage(fileName) { pageTranslation }
+                persistPageWithOomRecovery(store, fileName, pageTranslation)
 
                 BitmapPool.releaseAll()
             }
@@ -457,6 +592,7 @@ class ChapterTranslator(
             translation.status = Translation.State.TRANSLATED
 
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             BitmapPool.releaseAll()
             translation.status = Translation.State.ERROR
             logcat(LogPriority.ERROR, error)
@@ -478,23 +614,79 @@ class ChapterTranslator(
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
+    ) = translatorPermit.withPermit {
+        // Dedup: if this exact page is already being translated (e.g. an
+        // auto-mode re-enqueue on scroll), drop the redundant request instead
+        // of queuing it behind itself. Safe without an extra lock because the
+        // permit serializes entry.
+        if (!inFlightPageKeys.add(pageKey)) return@withPermit
+        try {
+            // Bound how long a single page can hold the (sole) translatorPermit.
+            // Without this, a hung ONNX inference or a stalled AI/HTTP request
+            // would block EVERY other page's translation for the whole session
+            // (only chapter-change / reader-exit cancels it). On timeout the
+            // permit is released (withPermit's finally), and we log it; the page
+            // just doesn't get translated this run.
+            withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
+                translateSinglePageInternal(manga, chapter, source, pageKey)
+            } ?: run {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT single-page translation timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
+                        "pageKey=$pageKey chapter=${chapter.name}"
+                }
+            }
+        } finally {
+            inFlightPageKeys.remove(pageKey)
+        }
+    }
+
+    suspend fun translateSinglePageFromStream(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        streamFn: () -> InputStream,
+    ) = translatorPermit.withPermit {
+        if (!inFlightPageKeys.add(pageKey)) return@withPermit
+        try {
+            withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
+                translateSinglePageInternal(manga, chapter, source, pageKey, streamFn)
+            } ?: run {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT single-page (stream) translation timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
+                        "pageKey=$pageKey chapter=${chapter.name}"
+                }
+            }
+        } finally {
+            inFlightPageKeys.remove(pageKey)
+        }
+    }
+
+    private suspend fun translateSinglePageInternal(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        readerStreamFn: (() -> InputStream)? = null,
     ) {
+        val streamFromReader = readerStreamFn ?: takeReaderPageStream(manga, chapter, source, pageKey)
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
         val syntheticTranslation = Translation(source, manga, chapter, fromLang, toLang)
         syntheticTranslation.status = Translation.State.TRANSLATING
 
         // Ensure the translation engine matches the current preferences.
-        if (fromLang != currentFromLang) {
+        if (enginesClosed || fromLang != currentFromLang) {
             recognitionEngine.close()
             currentFromLang = fromLang
             currentInpaintingMode = inpaintingModeFromPref()
             recognitionEngine = createRecognitionEngine(fromLang, currentInpaintingMode)
+            enginesClosed = false
         }
-        if (fromLang != textTranslator.fromLang || toLang != textTranslator.toLang) {
+        if (enginesClosed || fromLang != textTranslator.fromLang || toLang != textTranslator.toLang) {
             withContext(Dispatchers.IO) { textTranslator.close() }
-            textTranslator = TextTranslators.fromPref(translationPreferences.translationEngine())
-                .build(translationPreferences, fromLang, toLang)
+            textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
+            enginesClosed = false
         }
 
         // Use the shared active store so the reader observes our writes live.
@@ -511,22 +703,38 @@ class ChapterTranslator(
         try {
             registerActiveStore(syntheticTranslation, store)
 
-            val chapterPath = downloadProvider.findChapterDir(
-                chapter.name, chapter.scanlator, manga.title, source,
-            ) ?: run {
-                store.updatePage(pageKey) {
-                    (it ?: PageTranslation()).apply {
-                        sourceFileName = pageKey
-                        ocrStatus = StageStatus.FAILED
-                        errorMessage = "Chapter files not found on device"
-                        updatedAt = System.currentTimeMillis()
-                    }
+            val streams = if (streamFromReader != null) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT single-page translation using reader stream: pageKey=$pageKey " +
+                        "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
                 }
-                return
+                listOf(pageKey to streamFromReader)
+            } else {
+                val chapterPath = downloadProvider.findChapterDir(
+                    chapter.name, chapter.scanlator, manga.title, source,
+                ) ?: run {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT single-page translation cannot start: chapter files not found " +
+                            "pageKey=$pageKey chapter=${chapter.name} manga=${manga.title} source=${source.id}"
+                    }
+                    store.updatePage(pageKey) {
+                        (it ?: PageTranslation()).apply {
+                            sourceFileName = pageKey
+                            ocrStatus = StageStatus.FAILED
+                            errorMessage = "Chapter files not found on device"
+                            updatedAt = System.currentTimeMillis()
+                        }
+                    }
+                    return
+                }
+                currentChapterPath = chapterPath
+                getChapterPages(chapterPath)
             }
-            currentChapterPath = chapterPath
-            val streams = getChapterPages(chapterPath)
             val entry = streams.find { it.first == pageKey } ?: run {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT single-page translation cannot find requested page: pageKey=$pageKey " +
+                        "available=${streams.map { it.first }.take(5)} total=${streams.size}"
+                }
                 store.updatePage(pageKey) {
                     (it ?: PageTranslation()).apply {
                         sourceFileName = pageKey
@@ -590,6 +798,7 @@ class ChapterTranslator(
                     textTranslator.translatePage(pageKey, pageTranslation)
                     pageTranslation.translationStatus = StageStatus.READY
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     pageTranslation.translationStatus = StageStatus.FAILED
                     pageTranslation.errorMessage = e.message
                     logcat(LogPriority.ERROR, e) { "Failed to translate text for single page $pageKey" }
@@ -619,6 +828,7 @@ class ChapterTranslator(
                             logcat(LogPriority.INFO) { "Saved single-page rendered image: $renderedFileName for $pageKey" }
                         }
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         pageTranslation.renderStatus = StageStatus.FAILED
                         pageTranslation.errorMessage = e.message
                         logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
@@ -633,7 +843,7 @@ class ChapterTranslator(
             }
             pageTranslation.cleanedBitmap = null
             pageTranslation.updatedAt = System.currentTimeMillis()
-            store.updatePage(pageKey) { pageTranslation }
+            persistPageWithOomRecovery(store, pageKey, pageTranslation)
         } finally {
             unregisterActiveStore(syntheticTranslation)
         }
@@ -651,11 +861,11 @@ class ChapterTranslator(
         val pageStart = System.nanoTime()
         var pageTranslation: PageTranslation
         try {
+            downgradeOnnxIfMemoryLow(bitmap, fileName)
             pageTranslation = recognitionEngine.recognize(bitmap)
             consecutiveOomCount = 0
         } catch (oom: OutOfMemoryError) {
-            BitmapPool.releaseAll()
-            System.gc()
+            handleCriticalTranslationOom("recognizing/inpainting $fileName", oom)
             consecutiveOomCount++
             logcat(LogPriority.ERROR, oom) {
                 "Out of memory recognizing/inpainting $fileName (oomCount=$consecutiveOomCount)"
@@ -667,6 +877,7 @@ class ChapterTranslator(
                     val retryBitmap = decodePageBitmapAtSize(fileName, retrySampleSize, streams)
                     if (retryBitmap != null) {
                         try {
+                            downgradeOnnxAfterOom(fileName)
                             pageTranslation = recognitionEngine.recognize(retryBitmap)
                             consecutiveOomCount = 0
                         } finally {
@@ -684,8 +895,7 @@ class ChapterTranslator(
                         )
                     }
                 } catch (retryOom: OutOfMemoryError) {
-                    BitmapPool.releaseAll()
-                    System.gc()
+                    handleCriticalTranslationOom("retrying $fileName", retryOom)
                     pageTranslation = createFailedPagePlaceholder(
                         fileName,
                         "OOM during recognition/inpainting (retry also OOM).",
@@ -712,15 +922,18 @@ class ChapterTranslator(
                 logcat(LogPriority.WARN) { "Auto-fallback to fast mode after ${consecutiveOomCount} OOMs" }
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             logcat(LogPriority.ERROR, e) {
-                "ONNX recognition failed for $fileName; falling back to ML Kit OCR recognition"
+                "Recognition failed for $fileName; falling back to ML Kit OCR recognition"
             }
-            val fallback = MlKitPageRecognitionEngine(translation.fromLang)
-            try {
-                pageTranslation = fallback.recognize(bitmap)
-            } finally {
-                fallback.close()
+            // Replace the engine with persistent ML Kit instead of creating one-shot fallbacks
+            if (recognitionEngine is RoiPageRecognitionEngine) {
+                try { recognitionEngine.close() } catch (_: Exception) {}
+                val fromLang = translation.fromLang
+                recognitionEngine = MlKitFullPageRecognitionEngine(fromLang)
+                logcat(LogPriority.WARN) { "Switched to persistent ML Kit engine after ONNX failure" }
             }
+            pageTranslation = recognitionEngine.recognize(bitmap)
         }
         pageTranslation.decodeSampleSize = decoded.sampleSize
         pageTranslation.originalImgWidth = decoded.originalWidth.toFloat()
@@ -751,6 +964,67 @@ class ChapterTranslator(
         }
 
         return pageTranslation
+    }
+
+    private fun downgradeOnnxIfMemoryLow(bitmap: Bitmap, fileName: String) {
+        if (recognitionEngine !is RoiPageRecognitionEngine) return
+        if (TranslationMemoryBudget.canStartOnnxRecognition(bitmap.width, bitmap.height)) return
+        TranslationMemoryBudget.logSnapshot(
+            tag = "onnx_preflight_fallback",
+            width = bitmap.width,
+            height = bitmap.height,
+            extra = "file=$fileName",
+        )
+        downgradeOnnxAfterOom(fileName)
+    }
+
+    private fun downgradeOnnxAfterOom(fileName: String) {
+        if (recognitionEngine !is RoiPageRecognitionEngine) return
+        try { recognitionEngine.close() } catch (_: Exception) {}
+        BitmapPool.releaseAll()
+        System.gc()
+        recognitionEngine = MlKitFullPageRecognitionEngine(currentFromLang)
+        autoFallbackToFast = true
+        logcat(LogPriority.WARN) { "Switched to ML Kit recognition for $fileName to preserve heap after ONNX memory pressure" }
+    }
+
+    private fun handleCriticalTranslationOom(stage: String, oom: OutOfMemoryError) {
+        BitmapPool.releaseAll()
+        downgradeOnnxAfterOom(stage)
+        System.gc()
+        TranslationMemoryBudget.logSnapshot(tag = "oom_recovery", extra = "stage=$stage message=${oom.message}")
+    }
+
+    private suspend fun persistPageWithOomRecovery(
+        store: ChapterTranslationStore,
+        fileName: String,
+        pageTranslation: PageTranslation,
+    ) {
+        try {
+            if (TranslationMemoryBudget.isCriticalHeap()) {
+                handleCriticalTranslationOom("persisting $fileName", OutOfMemoryError("critical heap before persist"))
+            }
+            store.updatePage(fileName) { pageTranslation }
+        } catch (oom: OutOfMemoryError) {
+            handleCriticalTranslationOom("persisting $fileName", oom)
+            pageTranslation.cleanedBitmap = null
+            try {
+                store.updatePage(fileName) { pageTranslation }
+            } catch (retryOom: OutOfMemoryError) {
+                handleCriticalTranslationOom("persisting lightweight failure $fileName", retryOom)
+                store.updatePage(fileName) {
+                    createFailedPagePlaceholder(
+                        fileName,
+                        "OOM while saving translation metadata: ${retryOom.message}",
+                        imgWidth = pageTranslation.imgWidth,
+                        imgHeight = pageTranslation.imgHeight,
+                        originalImgWidth = pageTranslation.originalImgWidth,
+                        originalImgHeight = pageTranslation.originalImgHeight,
+                        decodeSampleSize = pageTranslation.decodeSampleSize,
+                    )
+                }
+            }
+        }
     }
 
     private fun decodePageBitmapAtSize(fileName: String, sampleSize: Int, streams: List<Pair<String, () -> InputStream>>): Bitmap? {

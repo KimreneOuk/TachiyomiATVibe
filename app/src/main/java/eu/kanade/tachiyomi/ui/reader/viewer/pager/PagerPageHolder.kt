@@ -53,6 +53,13 @@ class PagerPageHolder(
     //TachiyomiAT
     private var showTranslations = true
 
+    // TachiyomiAT: master gate for the per-page translate button. Updated live
+    // from the preference (collected in holderScope below) so the button
+    // appears/disappears the instant the user toggles translation, instead of
+    // only on the next setImage() pass.
+    private var translationEnabled =
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationEnabled().get()
+
     /**
      * Item that identifies this view. Needed by the adapter to not recreate views.
      */
@@ -87,6 +94,20 @@ class PagerPageHolder(
                 setImage()
             }
         }.launchIn(holderScope)
+        // Reactively update the translate button when the master toggle flips,
+        // so it shows/hides immediately rather than waiting for the next
+        // setImage() pass. While a page is mid-translation the processing
+        // overlay stays up and the button stays hidden.
+        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+            .translationEnabled().changes().onEach { enabled ->
+                translationEnabled = enabled
+                val isBeingTranslated = page.translation?.let { t ->
+                    (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
+                        t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
+                        t.renderedImageName == null && t.cleanedImageName == null
+                } ?: false
+                if (!isBeingTranslated) showTranslateButton(enabled)
+            }.launchIn(holderScope)
         // Per-page translate button
         onTranslateClicked = {
             viewer.activity.viewModel.translateSinglePage(page)
@@ -189,7 +210,7 @@ class PagerPageHolder(
             showProcessingOverlay(true)
             showTranslateButton(false)
         } else {
-            showTranslateButton(true)
+            showTranslateButton(translationEnabled)
         }
 
         try {
@@ -247,13 +268,13 @@ class PagerPageHolder(
             showTranslations && streamAvailable -> {
                 page.showTranslatedImage = true
                 showProcessingOverlay(false)
-                showTranslateButton(true)
+                showTranslateButton(translationEnabled)
                 loadJob?.cancel()
                 loadJob = holderScope.launch { setImage() }
             }
             else -> {
                 showProcessingOverlay(false)
-                showTranslateButton(true)
+                showTranslateButton(translationEnabled)
             }
         }
     }

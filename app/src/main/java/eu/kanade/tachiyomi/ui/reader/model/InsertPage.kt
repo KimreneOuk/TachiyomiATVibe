@@ -9,5 +9,6 @@ class InsertPage(val parent: ReaderPage) : ReaderPage(parent.index, parent.url, 
         originalStream = parent.originalStream
         translatedStream = parent.translatedStream
         showTranslatedImage = parent.showTranslatedImage
+        sourceFileName = parent.sourceFileName
     }
 }

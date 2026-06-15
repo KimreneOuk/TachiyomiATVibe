@@ -43,5 +43,5 @@ interface Viewer {
      */
     fun handleGenericMotionEvent(event: MotionEvent): Boolean
 
-    fun refreshTranslationPages() {}
+    fun refreshTranslationPages(pages: Set<ReaderPage>) {}
 }

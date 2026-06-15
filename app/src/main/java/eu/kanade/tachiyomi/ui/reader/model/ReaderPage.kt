@@ -11,6 +11,14 @@ open class ReaderPage(
     var translation : PageTranslation?=null,
     var originalStream: (() -> InputStream)? = null,
     var translatedStream: (() -> InputStream)? = null,
+    /**
+     * The local on-disk filename of this page (e.g. an archive entry name or a
+     * downloaded file name). This is the same key the translator uses to write
+     * page updates into the [ChapterTranslationStore], so the reader can match
+     * live store updates back to this in-memory page without relying on the
+     * unstable [url] or [imageUrl] fallbacks.
+     */
+    var sourceFileName: String? = null,
 ) : Page(index, url, imageUrl, null) {
 
     open lateinit var chapter: ReaderChapter

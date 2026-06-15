@@ -19,6 +19,31 @@
     <string name="pref_engine_model">LLM Model</string>
     <string name="pref_engine_temperature">LLM Temperature</string>
     <string name="pref_engine_max_output">LLM Max Output Token Count</string>
+
+    <!-- Translation engine refactor: two-family architecture -->
+    <string name="pref_translation_type">Translator type</string>
+    <string name="pref_translation_type_standard">Standard translator</string>
+    <string name="pref_translation_type_ai">AI model translator</string>
+    <string name="pref_standard_engine">Standard engine</string>
+    <string name="pref_ai_provider">AI provider</string>
+    <string name="pref_ai_api_key_gemini">Gemini API key</string>
+    <string name="pref_ai_api_key_openrouter">OpenRouter API key</string>
+    <string name="pref_ai_api_key_deepseek">DeepSeek API key</string>
+    <string name="pref_ai_key_set">Your key is set (not shown)</string>
+    <string name="pref_ai_key_not_set">Not set</string>
+    <string name="pref_ai_fetch_models">Fetch models</string>
+    <string name="pref_ai_fetching_models">Fetching…</string>
+    <string name="pref_ai_models_recent">Recent</string>
+    <string name="pref_ai_models_all">All models</string>
+    <string name="pref_ai_search_models">Search models</string>
+    <string name="pref_ai_model_manual">Manual model ID</string>
+    <string name="pref_ai_no_key">Enter an API key to fetch models</string>
+    <string name="pref_ai_invalid_key">Invalid or expired API key</string>
+    <string name="pref_ai_no_models">No models returned</string>
+    <string name="pref_ai_fetch_error">Failed to fetch models: %1$s</string>
+    <string name="pref_ai_current_model">Current model: %1$s</string>
+    <string name="pref_ai_current_model_none">No model selected</string>
+    <string name="pref_ai_recent_empty">No recent models yet</string>
     <string name="pref_inpainting_mode">Inpainting mode</string>
     <string name="pref_inpainting_mode_quality">Quality</string>
     <string name="pref_inpainting_mode_fast">Fast</string>
@@ -27,4 +52,11 @@
     <string name="reader_translation_cancel">Cancel</string>
     <string name="reader_translation_delete">Delete translation</string>
     <string name="reader_translation_not_downloaded">Translation requires downloaded chapters</string>
+
+    <!-- Reader overlay translation settings sheet -->
+    <string name="translation_settings">Translation</string>
+    <string name="pref_translation_enabled">Enable translation</string>
+    <string name="pref_auto_translate">Auto-translate pages</string>
+    <string name="pref_auto_translate_summary">Translates the current page and pre-processes upcoming pages automatically</string>
+    <string name="pref_auto_translate_prefetch">Prefetch pages ahead</string>
 </resources>

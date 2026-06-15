@@ -92,6 +92,15 @@ class WebtoonAdapter(val viewer: WebtoonViewer) : RecyclerView.Adapter<RecyclerV
         readerThemedContext = viewer.activity.createReaderThemeContext()
     }
 
+    fun refreshTranslationPages(pages: Set<ReaderPage>) {
+        pages.forEach { page ->
+            val position = items.indexOf(page)
+            if (position != -1) {
+                notifyItemChanged(position)
+            }
+        }
+    }
+
     /**
      * Returns the amount of items of the adapter.
      */

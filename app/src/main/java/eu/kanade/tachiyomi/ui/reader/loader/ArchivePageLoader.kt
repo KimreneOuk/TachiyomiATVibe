@@ -24,6 +24,7 @@ internal class ArchivePageLoader(
             .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
             .mapIndexed { i, entry ->
                 ReaderPage(i).apply {
+                    sourceFileName = entry.name
                     translation = translations[entry.name]
                     originalStream = { reader.getInputStream(entry.name)!! }
                     if ((translation?.renderedImageName != null || translation?.cleanedImageName != null) && cleanedImageResolver != null) {

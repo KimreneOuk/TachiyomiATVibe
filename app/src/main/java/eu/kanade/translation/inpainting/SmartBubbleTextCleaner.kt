@@ -99,7 +99,9 @@ class SmartBubbleTextCleaner(
             }
         }
 
-        val bubbleErode = 4
+        val bubbleW = bx2 - bx1
+        val bubbleH = by2 - by1
+        val bubbleErode = min(4, max(2, min(bubbleW, bubbleH) / 10))
         val intX1 = max(0, bx1 - cx1 + bubbleErode)
         val intY1 = max(0, by1 - cy1 + bubbleErode)
         val intX2 = min(contextW, bx2 - cx1 - bubbleErode)
@@ -427,7 +429,11 @@ class SmartBubbleTextCleaner(
     }
 
     private fun classifyBackground(stats: BackgroundStats): String {
-        if (stats.darkPixelRatio > 0.5f || stats.grayMean < 80f) return "dark_inverted"
+        if (stats.darkPixelRatio > 0.5f || stats.grayMean < 80f) {
+            if (stats.grayStd < 18f && stats.edgeDensity < 0.06f) return "dark_flat"
+            if (stats.grayStd < 35f && stats.edgeDensity < 0.12f) return "dark_lightly_varying"
+            return "dark_textured"
+        }
         if (stats.nearWhiteRatio > 0.7f && stats.grayStd < 20f) return "flat_white"
         if (stats.grayStd < 15f && stats.nearWhiteRatio <= 0.7f) return "flat_colored"
         if (stats.grayStd < 35f && stats.edgeDensity < 0.08f) return "lightly_varying"

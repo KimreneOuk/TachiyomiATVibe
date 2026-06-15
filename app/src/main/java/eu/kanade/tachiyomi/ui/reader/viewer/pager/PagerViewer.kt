@@ -372,10 +372,11 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
         pager.setCurrentItem(currentItem, false)
     }
 
-    override fun refreshTranslationPages() {
+    override fun refreshTranslationPages(pages: Set<ReaderPage>) {
         pager.children
             .filterIsInstance(PagerPageHolder::class.java)
             .forEach { it.refreshTranslation() }
+        adapter.refreshTranslationPages(pages)
     }
 
     /**

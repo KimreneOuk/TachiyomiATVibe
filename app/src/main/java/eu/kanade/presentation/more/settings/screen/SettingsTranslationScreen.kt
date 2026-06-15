@@ -2,17 +2,32 @@ package eu.kanade.presentation.more.settings.screen
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import eu.kanade.presentation.more.settings.Preference
+import eu.kanade.presentation.more.settings.widget.AiModelListState
+import eu.kanade.presentation.more.settings.widget.AiModelPickerWidget
+import eu.kanade.presentation.more.settings.widget.ApiKeyPreferenceWidget
+import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
 import eu.kanade.translation.data.TranslationFont
-import eu.kanade.translation.recognizer.TextRecognizerLanguage
+import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.AiModelFetcher
+import eu.kanade.translation.translator.AiTranslators
+import eu.kanade.translation.translator.StandardTranslators
 import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TextTranslators
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
+import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.StandardEngine
+import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
+import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
@@ -37,8 +52,7 @@ object SettingsTranslationScreen : SearchableSettings {
             ),
             getTranslationLangGroup(translationPreferences),
             getInpaintingModeGroup(translationPreferences),
-            getTranslatioEngineGroup(translationPreferences),
-            getTranslatioAdvancedGroup(translationPreferences),
+            getEngineGroup(translationPreferences),
         )
     }
 
@@ -66,67 +80,236 @@ object SettingsTranslationScreen : SearchableSettings {
     private fun getTranslationLangGroup(
         translationPreferences: TranslationPreferences,
     ): Preference.PreferenceGroup {
-        val fromLangs = TextRecognizerLanguage.entries
-        val toLangs = TextTranslatorLanguage.entries
+        val fromLangs = TextRecognizerLanguage.entries.associate { it.name to it.label }
+        val toLangs = TextTranslatorLanguage.entries.associate { it.name to it.label }
         return Preference.PreferenceGroup(
-            title =stringResource(ATMR.strings.pref_group_setup),
+            title = stringResource(ATMR.strings.pref_group_setup),
             preferenceItems = persistentListOf(
-                Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.translateFromLanguage(),
+                Preference.PreferenceItem.CustomPreference(
                     title = stringResource(ATMR.strings.pref_translate_from),
-                    entries = fromLangs.associate { it.name to it.label }.toImmutableMap(),
-                ),
-                Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.translateToLanguage(),
+                ) {
+                    val pref = translationPreferences.translateFromLanguage()
+                    val value by pref.collectAsState()
+                    val recentPref = translationPreferences.translationRecentLanguagesFrom()
+                    val recentRaw by recentPref.collectAsState()
+                    val recentLangs = remember(recentRaw) {
+                        TranslationPreferences.decodeRecentLanguages(recentRaw)
+                    }
+                    SearchableListPreferenceWidget(
+                        value = value,
+                        title = stringResource(ATMR.strings.pref_translate_from),
+                        subtitle = fromLangs[value],
+                        icon = null,
+                        entries = fromLangs,
+                        recentItems = recentLangs,
+                        onValueChange = { newValue ->
+                            pref.set(newValue)
+                            val updated = TranslationPreferences.encodeRecentLanguages(listOf(newValue) + recentLangs)
+                            recentPref.set(updated)
+                        }
+                    )
+                },
+                Preference.PreferenceItem.CustomPreference(
                     title = stringResource(ATMR.strings.pref_translate_to),
-                    entries = toLangs.associate { it.name to it.label }.toImmutableMap(),
-                ),
+                ) {
+                    val pref = translationPreferences.translateToLanguage()
+                    val value by pref.collectAsState()
+                    val recentPref = translationPreferences.translationRecentLanguagesTo()
+                    val recentRaw by recentPref.collectAsState()
+                    val recentLangs = remember(recentRaw) {
+                        TranslationPreferences.decodeRecentLanguages(recentRaw)
+                    }
+                    SearchableListPreferenceWidget(
+                        value = value,
+                        title = stringResource(ATMR.strings.pref_translate_to),
+                        subtitle = toLangs[value],
+                        icon = null,
+                        entries = toLangs,
+                        recentItems = recentLangs,
+                        onValueChange = { newValue ->
+                            pref.set(newValue)
+                            val updated = TranslationPreferences.encodeRecentLanguages(listOf(newValue) + recentLangs)
+                            recentPref.set(updated)
+                        }
+                    )
+                },
+            ),
+        )
+    }
+
+    /**
+     * State-driven engine section. The returned items depend on the current
+     * [TranslationEngineCategory] and (for AI) the selected provider, so this
+     * group is rebuilt on every recomposition from live preference state.
+     */
+    @Composable
+    private fun getEngineGroup(
+        translationPreferences: TranslationPreferences,
+    ): Preference.PreferenceGroup {
+        val category by translationPreferences.translationEngineCategory().collectAsState()
+        val typeEntries = TranslationEngineCategory.entries.associateWith { entry ->
+            when (entry) {
+                TranslationEngineCategory.STANDARD -> stringResource(ATMR.strings.pref_translation_type_standard)
+                TranslationEngineCategory.AI_MODEL -> stringResource(ATMR.strings.pref_translation_type_ai)
+            }
+        }.toImmutableMap()
+
+        val items = mutableListOf<Preference.PreferenceItem<out Any>>(
+            Preference.PreferenceItem.ListPreference(
+                pref = translationPreferences.translationEngineCategory(),
+                title = stringResource(ATMR.strings.pref_translation_type),
+                entries = typeEntries.toImmutableMap(),
+            ),
+        )
+
+        when (category) {
+            TranslationEngineCategory.STANDARD -> items.addAll(standardEngineItems(translationPreferences))
+            TranslationEngineCategory.AI_MODEL -> items.addAll(aiEngineItems(translationPreferences))
+        }
+
+        return Preference.PreferenceGroup(
+            title = stringResource(ATMR.strings.pref_group_engine),
+            preferenceItems = persistentListOf(*items.toTypedArray()),
+        )
+    }
+
+    @Composable
+    private fun standardEngineItems(
+        translationPreferences: TranslationPreferences,
+    ): List<Preference.PreferenceItem<out Any>> {
+        val engines = StandardTranslators.entries
+        return listOf(
+            Preference.PreferenceItem.ListPreference(
+                pref = translationPreferences.translationStandardEngine(),
+                title = stringResource(ATMR.strings.pref_standard_engine),
+                // The pref stores a StandardEngine; entries are keyed by the
+                // matching StandardEngine and labelled from StandardTranslators.
+                entries = engines.associate { translator ->
+                    StandardEngine.valueOf(translator.name) to translator.label
+                }.toImmutableMap(),
             ),
         )
     }
 
     @Composable
-    private fun getTranslatioEngineGroup(
+    private fun aiEngineItems(
         translationPreferences: TranslationPreferences,
-    ): Preference.PreferenceGroup {
-        val engines = TextTranslators.entries
-        return Preference.PreferenceGroup(
-            title =stringResource(ATMR.strings.pref_group_engine),
-            preferenceItems = persistentListOf(
+    ): List<Preference.PreferenceItem<out Any>> {
+        val scope = rememberCoroutineScope()
+        val providers = AiTranslators.entries
+
+        // Live AI-provider selection drives the API key / model / picker rows.
+        val aiEngine by translationPreferences.translationAiEngine().collectAsState()
+        val apiKeyPref = remember(aiEngine) { translationPreferences.translationAiApiKey(aiEngine) }
+        val apiKey by apiKeyPref.collectAsState()
+        val modelPref = remember(aiEngine) { translationPreferences.translationAiModel(aiEngine) }
+        val currentModel by modelPref.collectAsState()
+        val recentPref = remember(aiEngine) { translationPreferences.translationAiRecentModels(aiEngine) }
+        val recentRaw by recentPref.collectAsState()
+        val recentModels = remember(recentRaw) {
+            TranslationPreferences.decodeRecentModels(recentRaw)
+        }
+
+        // Fetch state is scoped per provider; resetting it when the provider
+        // changes avoids showing a stale model list for the wrong engine.
+        var fetchState by remember(aiEngine) { mutableStateOf<AiModelListState>(AiModelListState.Idle) }
+
+        val apiKeyTitle = when (aiEngine) {
+            AiEngine.GEMINI -> stringResource(ATMR.strings.pref_ai_api_key_gemini)
+            AiEngine.OPENROUTER -> stringResource(ATMR.strings.pref_ai_api_key_openrouter)
+            AiEngine.DEEPSEEK -> stringResource(ATMR.strings.pref_ai_api_key_deepseek)
+        }
+        val keySetLabel = stringResource(ATMR.strings.pref_ai_key_set)
+        val keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set)
+        val pickerTitle = stringResource(ATMR.strings.pref_engine_model)
+
+        val onFetch: () -> Unit = {
+            val key = apiKey
+            fetchState = AiModelListState.Loading(key)
+            scope.launch {
+                val result = AiModelFetcher.fetch(aiEngine, key)
+                fetchState = when (result) {
+                    is AiModelFetcher.Result.Success ->
+                        AiModelListState.Loaded(result.models)
+                    is AiModelFetcher.Result.InvalidKey ->
+                        AiModelListState.Failed("Invalid or expired API key")
+                    is AiModelFetcher.Result.NoModels ->
+                        AiModelListState.Loaded(emptyList())
+                    is AiModelFetcher.Result.Error ->
+                        AiModelListState.Failed(result.message)
+                }
+            }
+        }
+
+        val onSelectModel: (String) -> Unit = { id ->
+            modelPref.set(id)
+            // Prepend to recent, collapse duplicates, cap to the configured limit.
+            val updated = TranslationPreferences.encodeRecentModels(listOf(id) + recentModels)
+            recentPref.set(updated)
+        }
+
+        val onManualModel: (String) -> Unit = { id ->
+            modelPref.set(id)
+            val updated = TranslationPreferences.encodeRecentModels(listOf(id) + recentModels)
+            recentPref.set(updated)
+        }
+
+        return buildList {
+            // AI provider selector
+            add(
                 Preference.PreferenceItem.ListPreference(
-                    pref = translationPreferences.translationEngine(),
-                    title = stringResource(ATMR.strings.pref_translator_engine),
-                    entries = engines.withIndex().associate { it.index to it.value.label }.toImmutableMap(),
+                    pref = translationPreferences.translationAiEngine(),
+                    title = stringResource(ATMR.strings.pref_ai_provider),
+                    entries = providers.associate { it.engine to it.label }.toImmutableMap(),
                 ),
-                Preference.PreferenceItem.EditTextPreference(
-                    pref = translationPreferences.translationEngineApiKey(),
-                    subtitle = stringResource(ATMR.strings.pref_sub_engine_api_key),
-                    title = stringResource(ATMR.strings.pref_engine_api_key),
-                ),
-            ),
-        )
-    }
+            )
 
-    @Composable
-    private fun getTranslatioAdvancedGroup(
-        translationPreferences: TranslationPreferences,
-    ): Preference.PreferenceGroup {
-        return Preference.PreferenceGroup(
-            title = stringResource(ATMR.strings.pref_group_advanced),
-            preferenceItems = persistentListOf(
+            // Provider API key (masked, non-revealing subtitle)
+            add(
+                Preference.PreferenceItem.CustomPreference(
+                    title = apiKeyTitle,
+                ) {
+                    ApiKeyPreferenceWidget(
+                        title = apiKeyTitle,
+                        apiKey = apiKey,
+                        keySetLabel = keySetLabel,
+                        keyNotSetLabel = keyNotSetLabel,
+                        onApiKeyChange = { newKey -> apiKeyPref.set(newKey) },
+                    )
+                },
+            )
+
+            // Searchable model picker
+            add(
+                Preference.PreferenceItem.CustomPreference(
+                    title = pickerTitle,
+                ) {
+                    AiModelPickerWidget(
+                        title = pickerTitle,
+                        currentModel = currentModel,
+                        recentModels = recentModels,
+                        listState = fetchState,
+                        hasApiKey = apiKey.isNotBlank(),
+                        onFetchModels = onFetch,
+                        onSelectModel = onSelectModel,
+                        onManualModel = onManualModel,
+                    )
+                },
+            )
+
+            // Shared AI generation params
+            add(
                 Preference.PreferenceItem.EditTextPreference(
-                    pref = translationPreferences.translationEngineModel(),
-                    title = stringResource(ATMR.strings.pref_engine_model),
-                ),
-                Preference.PreferenceItem.EditTextPreference(
-                    pref = translationPreferences.translationEngineTemperature(),
+                    pref = translationPreferences.translationAiTemperature(),
                     title = stringResource(ATMR.strings.pref_engine_temperature),
                 ),
+            )
+            add(
                 Preference.PreferenceItem.EditTextPreference(
-                    pref = translationPreferences.translationEngineMaxOutputTokens(),
-                    title =stringResource(ATMR.strings.pref_engine_max_output),
+                    pref = translationPreferences.translationAiOutputTokens(),
+                    title = stringResource(ATMR.strings.pref_engine_max_output),
                 ),
-            ),
-        )
+            )
+        }
     }
 }

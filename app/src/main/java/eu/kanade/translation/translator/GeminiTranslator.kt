@@ -12,7 +12,7 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.recognizer.TextRecognizerLanguage
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import logcat.logcat
 import org.json.JSONObject
 

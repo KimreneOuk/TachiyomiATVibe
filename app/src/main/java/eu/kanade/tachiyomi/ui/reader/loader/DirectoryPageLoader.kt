@@ -20,6 +20,7 @@ internal class DirectoryPageLoader(val file: UniFile) : PageLoader() {
             ?.mapIndexed { i, file ->
                 val streamFn = { file.openInputStream() }
                 ReaderPage(i, originalStream = streamFn).apply {
+                    sourceFileName = file.name
                     status = Page.State.READY
                 }
             }

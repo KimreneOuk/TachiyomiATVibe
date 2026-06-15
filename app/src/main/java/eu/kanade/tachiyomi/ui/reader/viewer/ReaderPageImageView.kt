@@ -150,7 +150,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
     fun showTranslateButton(visible: Boolean) {
         if (visible) {
             ensureTranslateButton()
-            translateButton?.visibility = View.VISIBLE
+            // The page image (pageView) is added with MATCH_PARENT after the
+            // button during setImage(); in a FrameLayout later children draw on
+            // top, so without this the image would cover the button. bringToFront
+            // each time we show it so it stays above the image regardless of the
+            // order views were added/re-prepared.
+            translateButton?.apply {
+                bringToFront()
+                visibility = View.VISIBLE
+            }
         } else {
             translateButton?.visibility = View.GONE
         }

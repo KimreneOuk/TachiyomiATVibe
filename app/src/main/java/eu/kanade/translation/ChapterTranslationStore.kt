@@ -14,7 +14,8 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 class ChapterTranslationStore(
-    private val translationFile: UniFile,
+    private val translationFile: UniFile?,
+    private val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
 ) {
     private val mutex = Mutex()
@@ -52,12 +53,30 @@ class ChapterTranslationStore(
     }
 
     private fun persistLocked() {
-        translationFile.openOutputStream().use { output ->
-            Json.encodeToStream(pages, output)
+        // Resolve the backing file lazily. When the store was opened for a
+        // chapter with no existing translation file, translationFile is null and
+        // fileCreator materializes it on the FIRST real write. This avoids
+        // leaving empty translation files on disk for chapters that were merely
+        // opened (which previously caused isChapterTranslated to report a false
+        // TRANSLATED state on reopen).
+        val target = translationFile ?: fileCreator?.invoke() ?: return
+        // The translation store is SAF-backed (UniFile). A stale/revoked tree
+        // URI or moved folder can make openOutputStream() throw IOException.
+        // The in-memory state is still correct and the reader gets live updates
+        // via the StateFlow below, so a write failure must NOT kill the whole
+        // translation: log it and continue. The read path already degrades the
+        // same way (see open()).
+        try {
+            target.openOutputStream().use { output ->
+                Json.encodeToStream(pages, output)
+            }
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Failed to persist translation store; in-memory state retained" }
         }
     }
 
     companion object {
+        /** Opens an existing on-disk translation file into a store. */
         fun open(translationFile: UniFile): ChapterTranslationStore {
             val existing = if (translationFile.exists()) {
                 try {
@@ -69,7 +88,16 @@ class ChapterTranslationStore(
             } else {
                 emptyMap()
             }
-            return ChapterTranslationStore(translationFile, existing)
+            return ChapterTranslationStore(translationFile, fileCreator = null, existing)
         }
+
+        /**
+         * Creates a store whose on-disk file is created lazily on the first
+         * [updatePage]/[replaceAll] write. Use this when a chapter has no
+         * existing translation file yet, so that merely opening the chapter
+         * does NOT leave an empty file behind.
+         */
+        fun lazy(fileCreator: () -> UniFile): ChapterTranslationStore =
+            ChapterTranslationStore(translationFile = null, fileCreator = fileCreator, initialPages = emptyMap())
     }
 }

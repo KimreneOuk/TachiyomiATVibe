@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.recognizer.TextRecognizerLanguage
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
