@@ -25,7 +25,13 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
     }
 
     override suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
+        // TachiyomiAT: ML Kit mode has no neural inpainter. Record the skip as a
+        // retryable failure (with a clear reason) so auto-translate's bounded retry
+        // can re-attempt it once the ONNX engine recovers, instead of silently
+        // marking inpaint FAILED forever.
         pageTranslation.inpaintStatus = StageStatus.FAILED
+        pageTranslation.retryCount++
+        pageTranslation.errorMessage = "Inpainting unavailable in ML Kit mode"
         pageTranslation.updatedAt = System.currentTimeMillis()
         return null
     }

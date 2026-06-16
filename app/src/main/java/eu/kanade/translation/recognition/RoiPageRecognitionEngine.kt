@@ -244,12 +244,24 @@ class RoiPageRecognitionEngine(
                 return cleaned
             } catch (e: Exception) {
                 pageTranslation.inpaintStatus = StageStatus.FAILED
+                pageTranslation.retryCount++
                 pageTranslation.errorMessage = e.message
                 pageTranslation.updatedAt = System.currentTimeMillis()
                 logcat(LogPriority.WARN, e) { "Inpainting failed, continuing without cleaned bitmap" }
             }
         }
         pageTranslation.inpaintStatus = StageStatus.FAILED
+        pageTranslation.retryCount++
+        // TachiyomiAT: record WHY inpaint was skipped. Previously this fallback
+        // (hit when the inpainter is null/uninitialized or the page has no blocks)
+        // set FAILED with no message, producing a "blank error" in the translation
+        // store that was impossible to diagnose — it looked like an uncaught failure.
+        pageTranslation.errorMessage = when {
+            inpainter == null -> "Inpainting model not available"
+            !inpainter.isInitialized() -> "Inpainting engine not initialized"
+            pageTranslation.blocks.isEmpty() -> "No text blocks to inpaint"
+            else -> "Inpainting skipped"
+        }
         pageTranslation.updatedAt = System.currentTimeMillis()
         return null
     }

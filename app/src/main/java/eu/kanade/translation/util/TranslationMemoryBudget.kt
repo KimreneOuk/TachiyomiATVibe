@@ -39,7 +39,16 @@ object TranslationMemoryBudget {
         val pixels = width.toLong() * height.toLong()
         val rawBitmapBytes = pixels * 4L
 
-        if (pixels <= MAX_FULL_RES_DECODE_PIXELS && rawBitmapBytes <= snapshot().availableHeapBytes * 40L / 100L) {
+        // TachiyomiAT: thresholds lowered from 40%/35% to 25%/20% of available
+        // heap. The previous values were too aggressive on small-heaped devices
+        // (a 512MB heap leaves ~200MB for "one page" at 40%), and crucially they
+        // ignored that for DOWNLOADED chapters the reader decodes the SAME page
+        // on the main thread at the same time — so the translator's 40% budget
+        // plus the reader's decode frequently OOM'd together around page ~20,
+        // making translation appear to silently stop. 25%/20% steps the sample
+        // size up earlier, keeping peak memory low enough that the two concurrent
+        // decodes coexist.
+        if (pixels <= MAX_FULL_RES_DECODE_PIXELS && rawBitmapBytes <= snapshot().availableHeapBytes * 25L / 100L) {
             return 1
         }
 
@@ -48,7 +57,7 @@ object TranslationMemoryBudget {
             val sampledPixels = pixels / (sample.toLong() * sample.toLong())
             val sampledBytes = sampledPixels * 4L
             val fitsHugePageLimit = sampledPixels <= MAX_FULL_RES_DECODE_PIXELS
-            val fitsHeap = sampledBytes <= snapshot().availableHeapBytes * 35L / 100L
+            val fitsHeap = sampledBytes <= snapshot().availableHeapBytes * 20L / 100L
             if (fitsHugePageLimit && fitsHeap) break
             sample *= 2
         }
@@ -75,6 +84,22 @@ object TranslationMemoryBudget {
     fun isCriticalHeap(): Boolean {
         val snapshot = snapshot()
         return snapshot.availableHeapBytes < max(32L * MIB, snapshot.maxHeapBytes / 10L)
+    }
+
+    /**
+     * TachiyomiAT: gate used before auto-translate enqueues prefetch pages. The
+     * translator's per-page decode runs concurrently with the reader's own decode
+     * of the currently-viewed page (especially for downloaded chapters, where
+     * both read the same local file with no network latency to space them out).
+     * If the heap is already tight, launching a prefetch now risks an OOM on the
+     * MAIN reader thread — which crashes/kicks the user out of the reader instead
+     * of being caught as a translation-side FAILED. Skip enqueueing until there's
+     * headroom; auto-translate will retry on the next page change.
+     */
+    fun hasHeadroomForPrefetch(): Boolean {
+        val snapshot = snapshot()
+        val minimum = max(64L * MIB, snapshot.maxHeapBytes / 6L)
+        return snapshot.availableHeapBytes >= minimum
     }
 
     fun logSnapshot(tag: String, width: Int? = null, height: Int? = null, extra: String = "") {

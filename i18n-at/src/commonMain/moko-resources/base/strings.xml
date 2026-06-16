@@ -49,6 +49,7 @@
     <string name="pref_inpainting_mode_fast">Fast</string>
     <string name="reader_translate">Translate</string>
     <string name="reader_translating">Translating %1$d/%2$d</string>
+    <string name="reader_translating_page">Translating page %1$d of %2$d</string>
     <string name="reader_translation_cancel">Cancel</string>
     <string name="reader_translation_delete">Delete translation</string>
     <string name="reader_translation_not_downloaded">Translation requires downloaded chapters</string>

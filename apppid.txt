@@ -1,0 +1,611 @@
+--------- beginning of system
+06-16 11:07:31.642 23454 23454 W VRI[ReaderActivity]: handleResized, msg:, frameChanged:false, configChanged:false, displayChanged:false, attachedFrameChanged:false, compatScaleChanged:false, pendingDragResizing=false
+06-16 11:07:31.656 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:07:31.884 23454 23454 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity} checkFinished=false 4
+06-16 11:07:31.884 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:31.907 23454 23454 W VRI[MainActivity]: handleResized abandoned!
+06-16 11:07:32.215 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:false, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:32.836 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:32.843 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@765712d hasOnBackInvokedCallBackEnabled
+06-16 11:07:32.843 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@765712d hasOnBackInvokedCallBackEnabled
+06-16 11:07:32.862 23454 23454 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity} checkFinished=false 2
+06-16 11:07:32.862 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:32.864 23454 23454 D InsetsController: Setting requestedVisibleTypes to -16 (was -9)
+06-16 11:07:32.867 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:32.883 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@765712d hasOnBackInvokedCallBackEnabled
+06-16 11:07:32.889 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:true, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(0, 0), mWidth:-1, mHeight:-1, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:32.889 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(0, 0), format:-1, blastBufferQueue:null
+06-16 11:07:32.900 23454 23454 W VRI[ReaderActivity]: handleResized, msg:, frameChanged:false, configChanged:false, displayChanged:false, attachedFrameChanged:false, compatScaleChanged:false, pendingDragResizing=false
+06-16 11:07:32.919 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:07:33.038 23454 23454 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity} checkFinished=false 4
+06-16 11:07:33.039 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:33.063 23454 23454 W VRI[MainActivity]: handleResized abandoned!
+06-16 11:07:33.371 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:false, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:35.021 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:35.026 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@cbeec6e hasOnBackInvokedCallBackEnabled
+06-16 11:07:35.026 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@cbeec6e hasOnBackInvokedCallBackEnabled
+06-16 11:07:35.043 23454 23454 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity} checkFinished=false 2
+06-16 11:07:35.043 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:35.045 23454 23454 D InsetsController: Setting requestedVisibleTypes to -16 (was -9)
+06-16 11:07:35.049 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:35.066 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@cbeec6e hasOnBackInvokedCallBackEnabled
+06-16 11:07:35.072 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:true, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(0, 0), mWidth:-1, mHeight:-1, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:35.073 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(0, 0), format:-1, blastBufferQueue:null
+06-16 11:07:35.084 23454 23454 W VRI[ReaderActivity]: handleResized, msg:, frameChanged:false, configChanged:false, displayChanged:false, attachedFrameChanged:false, compatScaleChanged:false, pendingDragResizing=false
+06-16 11:07:35.096 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:07:35.282 23454 23454 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity} checkFinished=false 4
+06-16 11:07:35.282 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:35.308 23454 23454 W VRI[MainActivity]: handleResized abandoned!
+06-16 11:07:35.617 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:false, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:37.195 23454 23454 D VRI[MainActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:false, attr.flag:-2122252032, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:51.855 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.main.MainActivity@f322880 hasOnBackInvokedCallBackEnabled
+06-16 11:07:51.855 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.main.MainActivity@f322880 hasOnBackInvokedCallBackEnabled
+06-16 11:07:51.858 23454 23454 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity} checkFinished=false 2
+06-16 11:07:51.858 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:51.869 23454 23454 D VRI[MainActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122252032, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:51.869 23454 23454 W VRI[MainActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(1080, 2376), format:-1, blastBufferQueue:null
+06-16 11:07:51.900 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:52.456 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:52.462 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:07:52.462 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:07:52.479 23454 23454 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity} checkFinished=false 2
+06-16 11:07:52.479 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:52.482 23454 23454 D InsetsController: Setting requestedVisibleTypes to -16 (was -9)
+06-16 11:07:52.485 23454 23454 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-16 11:07:52.502 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:07:52.507 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:true, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(0, 0), mWidth:-1, mHeight:-1, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:07:52.507 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(0, 0), format:-1, blastBufferQueue:null
+06-16 11:07:52.530 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:07:52.846 23454 23454 D VRI[MainActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:false, attr.flag:-2122252032, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-16 11:08:01.459 23454 23694 I Quality : BitmapCompressInfo:1350,1920,1,100,467179010
+06-16 11:08:02.953 23454 23789 I Quality : BitmapCompressInfo:1350,1920,2,90,460104323
+06-16 11:08:08.884 23454 23454 D InsetsController: Setting requestedVisibleTypes to -9 (was -16)
+06-16 11:08:08.935 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:false, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][1080,2376]}, relayoutAsync:true, mSyncSeqId:0
+06-16 11:08:08.935 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(1080, 2376), format:-1, blastBufferQueue:android.graphics.BLASTBufferQueue@4a79343
+06-16 11:08:08.978 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:08:09.576 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:09.576 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:09.588 23454 23454 I ViewRootImplExtImpl: not create nav bar bg layer surface is invalid title = app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity
+06-16 11:08:09.590 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:09.623 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:11.724 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:false, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][1080,2376]}, relayoutAsync:true, mSyncSeqId:0
+06-16 11:08:11.724 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(1080, 2376), format:-1, blastBufferQueue:android.graphics.BLASTBufferQueue@4a79343
+06-16 11:08:12.093 23454 23454 D InsetsController: Setting requestedVisibleTypes to -16 (was -9)
+06-16 11:08:12.129 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:08:13.764 23454 23454 D InsetsController: Setting requestedVisibleTypes to -9 (was -16)
+06-16 11:08:13.792 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:false, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][1080,2376]}, relayoutAsync:true, mSyncSeqId:0
+06-16 11:08:13.792 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(1080, 2376), format:-1, blastBufferQueue:android.graphics.BLASTBufferQueue@4a79343
+06-16 11:08:13.826 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:08:14.386 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:14.386 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:14.391 23454 23454 I ViewRootImplExtImpl: not create nav bar bg layer surface is invalid title = app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity
+06-16 11:08:14.393 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:14.412 23454 23454 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.reader.ReaderActivity@f2ee798 hasOnBackInvokedCallBackEnabled
+06-16 11:08:16.208 23454 23789 I Quality : BitmapCompressInfo:1350,1920,1,100,588785729
+06-16 11:08:16.697 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:false, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][1080,2376]}, relayoutAsync:true, mSyncSeqId:0
+06-16 11:08:16.697 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(1080, 2376), format:-1, blastBufferQueue:android.graphics.BLASTBufferQueue@4a79343
+06-16 11:08:17.066 23454 23789 I Quality : BitmapCompressInfo:1350,1920,2,90,411611510
+06-16 11:08:18.395 23454 23454 D InsetsController: Setting requestedVisibleTypes to -16 (was -9)
+06-16 11:08:18.415 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:08:20.978 23454 23789 I Quality : BitmapCompressInfo:1350,1920,1,100,469505417
+06-16 11:08:22.123 23454 23789 I Quality : BitmapCompressInfo:1350,1920,2,90,468155885
+06-16 11:08:35.220 23454 23791 I Quality : BitmapCompressInfo:1350,1920,1,100,607466562
+--------- beginning of main
+06-16 11:08:35.269 23454 25347 D native  : I0616 11:08:35.269588   25347 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.270 23454 25347 D native  : I0616 11:08:35.269975   25347 mergeddicttrans.cc:1866] Sentence #0: 生まれ変わったグラシクレストですメディスフィナ様
+06-16 11:08:35.270 23454 25347 D native  : I0616 11:08:35.270084   25347 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.329 23454 25347 I native  : I0616 11:08:35.329884   25347 mergeddicttrans.cc:1827] Sentence #0: 生まれ変わったグラシクレストですメディスフィナ様
+06-16 11:08:35.330 23454 25347 I native  : I0616 11:08:35.329994   25347 mergeddicttrans.cc:1828] 
+06-16 11:08:35.330 23454 25347 I native  : Source language: ja, target language: en
+06-16 11:08:35.330 23454 25347 I native  : 
+06-16 11:08:35.330 23454 25347 I native  : Has period trick: 0
+06-16 11:08:35.330 23454 25347 I native  : 
+06-16 11:08:35.330 23454 25347 I native  : Full translation: It is a born-changing grassicle restaurant Medismufina
+06-16 11:08:35.330 23454 25347 I native  : Translate Instance: 
+06-16 11:08:35.330 23454 25347 I native  : Query (raw): 生まれ変わったグラシクレストですメディスフィナ様
+06-16 11:08:35.330 23454 25347 I native  : Query (after preprocess): 生まれ 変わっ た グラシクレスト です メディスフィナ 様
+06-16 11:08:35.330 23454 25347 I native  : Query ids (after tokenizer): 238 194 126 241 282 88 15 432 43 195 72 55 85 163 111 552 48 682 341 711 2
+06-16 11:08:35.330 23454 25347 I native  : Translation ids: 209 11 9 119 2115 15 2263 1024 376 849 3214 2195 178 2127 1475 121 154 1470 2
+06-16 11:08:35.330 23454 25347 I native  : Translation (after detokenizer): It is a born - changing grassicle restaurant Medismufina
+06-16 11:08:35.330 23454 25347 I native  : Alignment probability:
+06-16 11:08:35.330 23454 25347 I native  : 	It	is	a	born	-	changing	grassicle	restaurant	Medismufina
+06-16 11:08:35.330 23454 25347 I native  : 生まれ	0.384314	0.145098	0.498039	0.62549	0.231373	0.143137	0.00392157	0.00588235	0.00156863
+06-16 11:08:35.330 23454 25347 I native  : 変わっ	0.101961	0.0901961	0.231373	0.182353	0.396078	0.629412	0.027451	0.00196078	0.00156863
+06-16 11:08:35.330 23454 25347 I native  : た	0.0235294	0.0392157	0.0196078	0.0333333	0.0235294	0.045098	0.00392157	0.00392157	0.000784314
+06-16 11:08:35.330 23454 25347 I native  : グラシクレスト	0.0784314	0.0313726	0.117647	0.0921569	0.196078	0.0470588	0.930719	0.394118	0.0321569
+06-16 11:08:35.330 23454 25347 I native  : です	0.243137	0.627451	0.027451	0.00196078	0.00784314	0.00588235	0.00261438	0.0392157	0.00784314
+06-16 11:08:35.330 23454 25347 I native  : メディスフィナ	0.105882	0.0235294	0.0784314	0.0156863	0.0156863	0.00392157	0.00522876	0.196078	0.745882
+06-16 11:08:35.330 23454 25347 I native  : 様	0.0313726	0.00392157	0.00784314	0.00196078	0.00392157	0.00196078	0.00130719	0.0882353	0.094902
+06-16 11:08:35.330 23454 25347 I native  : Translation (before postprocess): It is a born - changing grassicle restaurant Medismufina
+06-16 11:08:35.334 23454 25348 D native  : I0616 11:08:35.334386   25348 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.334 23454 25348 D native  : I0616 11:08:35.334460   25348 mergeddicttrans.cc:1866] Sentence #0: 本日の出発に間に合いました
+06-16 11:08:35.334 23454 25348 D native  : I0616 11:08:35.334501   25348 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.363 23454 25348 I native  : I0616 11:08:35.363713   25348 mergeddicttrans.cc:1827] Sentence #0: 本日の出発に間に合いました
+06-16 11:08:35.363 23454 25348 I native  : I0616 11:08:35.363805   25348 mergeddicttrans.cc:1828] 
+06-16 11:08:35.363 23454 25348 I native  : Source language: ja, target language: en
+06-16 11:08:35.363 23454 25348 I native  : 
+06-16 11:08:35.363 23454 25348 I native  : Has period trick: 0
+06-16 11:08:35.363 23454 25348 I native  : 
+06-16 11:08:35.363 23454 25348 I native  : Full translation: It was in time for today's departure
+06-16 11:08:35.363 23454 25348 I native  : Translate Instance: 
+06-16 11:08:35.363 23454 25348 I native  : Query (raw): 本日の出発に間に合いました
+06-16 11:08:35.363 23454 25348 I native  : Query (after preprocess): 本日 の 出発 に 間 に合い まし た
+06-16 11:08:35.363 23454 25348 I native  : Query ids (after tokenizer): 118 1199 4 683 322 8 412 8 116 44 259 15 2
+06-16 11:08:35.363 23454 25348 I native  : Translation ids: 209 107 12 156 19 3100 158 521 464 230 2
+06-16 11:08:35.363 23454 25348 I native  : Translation (after detokenizer): It was in time for today 's departure
+06-16 11:08:35.363 23454 25348 I native  : Alignment probability:
+06-16 11:08:35.363 23454 25348 I native  : 	It	was	in	time	for	today	's	departure
+06-16 11:08:35.363 23454 25348 I native  : 本日	0.141176	0.0117647	0.027451	0.0352941	0.101961	0.572549	0.0431373	0.027451
+06-16 11:08:35.363 23454 25348 I native  : の	0	0.00392157	0	0.00392157	0.0156863	0.027451	0.301961	0.0261438
+06-16 11:08:35.363 23454 25348 I native  : 出発	0.0156863	0.0196078	0.0352941	0.0313726	0.0666667	0.345098	0.309804	0.636601
+06-16 11:08:35.363 23454 25348 I native  : に	0.105882	0.0941176	0.0470588	0.0392157	0.439216	0.00784314	0.0862745	0.00522876
+06-16 11:08:35.363 23454 25348 I native  : 間	0.243137	0.0941176	0.203922	0.635294	0.231373	0.0117647	0.0470588	0.00784314
+06-16 11:08:35.363 23454 25348 I native  : に合い	0.262745	0.564706	0.572549	0.113725	0.0862745	0	0.0117647	0.00392157
+06-16 11:08:35.363 23454 25348 I native  : まし	0.0666667	0.0745098	0.0196078	0	0.00392157	0	0	0
+06-16 11:08:35.363 23454 25348 I native  : た	0.129412	0.113725	0.0117647	0	0.0235294	0	0.00784314	0.00130719
+06-16 11:08:35.363 23454 25348 I native  : Translation (before postprocess): It was in time for today 's departure
+06-16 11:08:35.364 23454 25341 D native  : I0616 11:08:35.364974   25341 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.365 23454 25341 D native  : I0616 11:08:35.365021   25341 mergeddicttrans.cc:1866] Sentence #0: 相棒、修理完了!!!
+06-16 11:08:35.365 23454 25341 D native  : I0616 11:08:35.365049   25341 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.386 23454 25341 I native  : I0616 11:08:35.386590   25341 mergeddicttrans.cc:1827] Sentence #0: 相棒、修理完了!!!
+06-16 11:08:35.386 23454 25341 I native  : I0616 11:08:35.386703   25341 mergeddicttrans.cc:1828] 
+06-16 11:08:35.386 23454 25341 I native  : Source language: ja, target language: en
+06-16 11:08:35.386 23454 25341 I native  : 
+06-16 11:08:35.386 23454 25341 I native  : Has period trick: 0
+06-16 11:08:35.386 23454 25341 I native  : 
+06-16 11:08:35.386 23454 25341 I native  : Full translation: Bar, repair completion !!!
+06-16 11:08:35.386 23454 25341 I native  : Translate Instance: 
+06-16 11:08:35.386 23454 25341 I native  : Query (raw): 相棒、修理完了!!!
+06-16 11:08:35.386 23454 25341 I native  : Query (after preprocess): 相棒 , 修理 完 了 !!!
+06-16 11:08:35.386 23454 25341 I native  : Query ids (after tokenizer): 632 2140 5 1165 615 841 3 892 723 2312 2312 2
+06-16 11:08:35.386 23454 25341 I native  : Translation ids: 54 118 5 650 1633 1910 254 430 3409 3409 2
+06-16 11:08:35.386 23454 25341 I native  : Translation (after detokenizer): Bar , repair completion !!!
+06-16 11:08:35.386 23454 25341 I native  : Alignment probability:
+06-16 11:08:35.386 23454 25341 I native  : 	Bar	,	repair	completion	!!!
+06-16 11:08:35.386 23454 25341 I native  : 相棒	0.762745	0.298039	0.0686275	0.00196078	0
+06-16 11:08:35.386 23454 25341 I native  : ,	0.0137255	0.372549	0.0117647	0.00588235	0
+06-16 11:08:35.386 23454 25341 I native  : 修理	0.0196078	0.054902	0.790196	0.0372549	0.00392157
+06-16 11:08:35.386 23454 25341 I native  : 完	0.0509804	0.00784314	0.101961	0.296078	0.0679739
+06-16 11:08:35.386 23454 25341 I native  : 了	0.0176471	0.00784314	0.00784314	0.511765	0.0169935
+06-16 11:08:35.386 23454 25341 I native  : !!!	0.0137255	0.0117647	0.00392157	0.107843	0.793464
+06-16 11:08:35.386 23454 25341 I native  : Translation (before postprocess): Bar , repair completion !!!
+06-16 11:08:35.388 23454 25342 D native  : I0616 11:08:35.388581   25342 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.388 23454 25342 D native  : I0616 11:08:35.388642   25342 mergeddicttrans.cc:1866] Sentence #0: 最新道行方本語(新13番1企画)
+06-16 11:08:35.388 23454 25342 D native  : I0616 11:08:35.388674   25342 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.419 23454 25342 I native  : I0616 11:08:35.419802   25342 mergeddicttrans.cc:1827] Sentence #0: 最新道行方本語(新13番1企画)
+06-16 11:08:35.419 23454 25342 I native  : I0616 11:08:35.419906   25342 mergeddicttrans.cc:1828] 
+06-16 11:08:35.419 23454 25342 I native  : Source language: ja, target language: en
+06-16 11:08:35.419 23454 25342 I native  : 
+06-16 11:08:35.419 23454 25342 I native  : Has period trick: 0
+06-16 11:08:35.419 23454 25342 I native  : 
+06-16 11:08:35.419 23454 25342 I native  : Full translation: Latest Russian Word (New 13th 1 Plan)
+06-16 11:08:35.419 23454 25342 I native  : Translate Instance: 
+06-16 11:08:35.419 23454 25342 I native  : Query (raw): 最新道行方本語(新13番1企画)
+06-16 11:08:35.419 23454 25342 I native  : Query (after preprocess): 最新 道行方 本 語 ( 新 13 番 1 企画 )
+06-16 11:08:35.419 23454 25342 I native  : Query ids (after tokenizer): 188 956 1647 509 505 118 926 24 444 722 881 34 1225 753 21 2
+06-16 11:08:35.419 23454 25342 I native  : Translation ids: 49 153 192 57 2589 619 133 702 18 957 410 299 76 37 667 17 2
+06-16 11:08:35.419 23454 25342 I native  : Translation (after detokenizer): Latest Russian Word ( New 13th 1 Plan )
+06-16 11:08:35.419 23454 25342 I native  : Alignment probability:
+06-16 11:08:35.419 23454 25342 I native  : 	Latest	Russian	Word	(	New	13th	1	Plan	)
+06-16 11:08:35.419 23454 25342 I native  : 最新	0.737255	0.0379085	0.0235294	0.0509804	0.0470588	0.00196078	0	0	0
+06-16 11:08:35.419 23454 25342 I native  : 道行方	0.104575	0.588235	0.35098	0.176471	0.027451	0.0313726	0.00392157	0	0
+06-16 11:08:35.419 23454 25342 I native  : 本	0.0431373	0.0614379	0.301961	0.329412	0.0470588	0.00784314	0.00392157	0.00392157	0.0352941
+06-16 11:08:35.419 23454 25342 I native  : 語	0.0196078	0.0196078	0.145098	0.176471	0.0156863	0.0117647	0.00392157	0.00392157	0.0431373
+06-16 11:08:35.419 23454 25342 I native  : (	0.00261438	0.00392157	0.0117647	0.176471	0.00392157	0.00588235	0.0117647	0.00196078	0.0509804
+06-16 11:08:35.419 23454 25342 I native  : 新	0.00392157	0.00261438	0.00392157	0.0117647	0.580392	0.0666667	0.0156863	0.00784314	0.027451
+06-16 11:08:35.419 23454 25342 I native  : 13	0.00130719	0.00130719	0	0.00784314	0.0313726	0.311765	0.0156863	0.00784314	0.00392157
+06-16 11:08:35.419 23454 25342 I native  : 番	0	0	0.00196078	0	0.0156863	0.25098	0.137255	0.00392157	0.00392157
+06-16 11:08:35.419 23454 25342 I native  : 1	0	0.00130719	0.00196078	0.00392157	0.0196078	0.143137	0.486275	0.0392157	0.00392157
+06-16 11:08:35.419 23454 25342 I native  : 企画	0.00130719	0.00392157	0.00784314	0.0235294	0.156863	0.113725	0.27451	0.888235	0.360784
+06-16 11:08:35.419 23454 25342 I native  : )	0	0	0	0.00392157	0.00784314	0.00784314	0.0235294	0.00980392	0.282353
+06-16 11:08:35.419 23454 25342 I native  : Translation (before postprocess): Latest Russian Word ( New 13th 1 Plan )
+06-16 11:08:35.421 23454 25343 D native  : I0616 11:08:35.421608   25343 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.421 23454 25343 D native  : I0616 11:08:35.421773   25343 mergeddicttrans.cc:1866] Sentence #0: あのおおいそれた達が全然「調査室づけ」と思ったと思った
+06-16 11:08:35.421 23454 25343 D native  : I0616 11:08:35.421835   25343 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.464 23454 25343 I native  : I0616 11:08:35.464151   25343 mergeddicttrans.cc:1827] Sentence #0: あのおおいそれた達が全然「調査室づけ」と思ったと思った
+06-16 11:08:35.464 23454 25343 I native  : I0616 11:08:35.464248   25343 mergeddicttrans.cc:1828] 
+06-16 11:08:35.464 23454 25343 I native  : Source language: ja, target language: en
+06-16 11:08:35.464 23454 25343 I native  : 
+06-16 11:08:35.464 23454 25343 I native  : Has period trick: 0
+06-16 11:08:35.464 23454 25343 I native  : 
+06-16 11:08:35.464 23454 25343 I native  : Full translation: I thought that that much of that thought was "investigation room" at all
+06-16 11:08:35.464 23454 25343 I native  : Translate Instance: 
+06-16 11:08:35.464 23454 25343 I native  : Query (raw): あのおおいそれた達が全然「調査室づけ」と思ったと思った
+06-16 11:08:35.464 23454 25343 I native  : Query (after preprocess): あの おおいそれ た 達 が 全然 「 調査 室 づけ 」 と 思っ た と 思っ た
+06-16 11:08:35.464 23454 25343 I native  : Query ids (after tokenizer): 838 440 296 849 44 1564 126 15 3 831 10 464 1232 171 496 879 3 902 3 818 211 173 14 1557 88 15 14 1557 88 15 2
+06-16 11:08:35.464 23454 25343 I native  : Translation ids: 63 3124 30 30 2181 6 30 3124 107 34 2038 2561 819 34 69 210 2
+06-16 11:08:35.464 23454 25343 I native  : Translation (after detokenizer): I thought that that much of that thought was " investigation room " at all
+06-16 11:08:35.464 23454 25343 I native  : Alignment probability:
+06-16 11:08:35.464 23454 25343 I native  : 	I	thought	that	that	much	of	that	thought	was	"	investigation	room	"	at	all
+06-16 11:08:35.464 23454 25343 I native  : あの	0.427451	0.027451	0.282353	0.384314	0.137255	0.0588235	0.219608	0.0196078	0.0117647	0.00392157	0	0	0	0.00392157	0.00784314
+06-16 11:08:35.464 23454 25343 I native  : おおいそれ	0.152941	0.105882	0.172549	0.380392	0.729412	0.486275	0.513726	0.388235	0.105882	0.0352941	0	0	0	0	0.0117647
+06-16 11:08:35.464 23454 25343 I native  : た	0.0156863	0.00784314	0.0784314	0.0627451	0.0352941	0.0784314	0.105882	0.027451	0.0352941	0.00392157	0	0	0	0	0
+06-16 11:08:35.464 23454 25343 I native  : 達	0.0235294	0.00784314	0.0235294	0.0509804	0.027451	0.0862745	0.0392157	0.0156863	0.0705882	0.00784314	0	0	0	0.0117647	0.00392157
+06-16 11:08:35.464 23454 25343 I native  : が	0.0156863	0.00784314	0.0156863	0.0156863	0.00784314	0.0235294	0.00392157	0.0117647	0.0431373	0.0156863	0	0	0	0.0352941	0.00392157
+06-16 11:08:35.464 23454 25343 I native  : 全然	0.0196078	0.0117647	0.0196078	0.0117647	0.0117647	0.0352941	0.00784314	0.027451	0.109804	0.25098	0.00196078	0	0.0313726	0.788235	0.921569
+06-16 11:08:35.464 23454 25343 I native  : 「	0.00392157	0.00392157	0.0941176	0.0352941	0.0117647	0.0235294	0.0117647	0.027451	0.0823529	0.223529	0.00980392	0	0	0.00392157	0.00392157
+06-16 11:08:35.464 23454 25343 I native  : 調査	0	0	0.00784314	0.00392157	0.00392157	0.00784314	0.00784314	0.0156863	0.027451	0.0784314	0.794118	0.0117647	0.00784314	0	0.00784314
+06-16 11:08:35.464 23454 25343 I native  : 室	0	0	0	0	0	0	0	0	0.0235294	0.0196078	0.0882353	0.905882	0.0117647	0	0
+06-16 11:08:35.464 23454 25343 I native  : づけ	0	0	0	0	0	0	0	0.00392157	0.0156863	0.0431373	0.0745098	0.0431373	0.74902	0.00784314	0
+06-16 11:08:35.464 23454 25343 I native  : 」	0	0	0.00784314	0	0	0	0	0	0.0156863	0.00784314	0.00784314	0.0235294	0.152941	0.0156863	0
+06-16 11:08:35.464 23454 25343 I native  : と	0	0.00392157	0.0156863	0.00784314	0.00784314	0.00784314	0.00392157	0.0666667	0.101961	0.0352941	0.00196078	0	0	0.0117647	0
+06-16 11:08:35.464 23454 25343 I native  : 思っ	0.00392157	0.0666667	0.0235294	0.0117647	0.0196078	0.0588235	0.0313726	0.239216	0.184314	0.192157	0.00588235	0	0.00392157	0.0235294	0.00392157
+06-16 11:08:35.464 23454 25343 I native  : た	0.00784314	0.0235294	0.0509804	0.0196078	0.00784314	0.0235294	0.0117647	0.121569	0.0431373	0.0156863	0	0	0	0.00784314	0
+06-16 11:08:35.464 23454 25343 I native  : と	0.0117647	0.0392157	0.145098	0.00392157	0	0.00392157	0	0.00784314	0.027451	0.00784314	0	0	0	0	0
+06-16 11:08:35.464 23454 25343 I native  : 思っ	0.203922	0.635294	0.0313726	0	0	0.00392157	0.00392157	0.00392157	0.00784314	0.00392157	0	0	0	0	0
+06-16 11:08:35.464 23454 25343 I native  : た	0.0941176	0.0392157	0.0156863	0.00392157	0	0	0	0.00392157	0.00392157	0	0	0	0	0	0
+06-16 11:08:35.464 23454 25343 I native  : Translation (before postprocess): I thought that that much of that thought was " investigation room " at all
+06-16 11:08:35.467 23454 25344 D native  : I0616 11:08:35.467884   25344 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.467 23454 25344 D native  : I0616 11:08:35.467942   25344 mergeddicttrans.cc:1866] Sentence #0: 588ctて言いたちの準備えの準備
+06-16 11:08:35.467 23454 25344 D native  : I0616 11:08:35.467972   25344 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.499 23454 25344 I native  : I0616 11:08:35.499484   25344 mergeddicttrans.cc:1827] Sentence #0: 588ctて言いたちの準備えの準備
+06-16 11:08:35.499 23454 25344 I native  : I0616 11:08:35.499585   25344 mergeddicttrans.cc:1828] 
+06-16 11:08:35.499 23454 25344 I native  : Source language: ja, target language: en
+06-16 11:08:35.499 23454 25344 I native  : 
+06-16 11:08:35.499 23454 25344 I native  : Has period trick: 0
+06-16 11:08:35.499 23454 25344 I native  : 
+06-16 11:08:35.499 23454 25344 I native  : Full translation: 588ct and preparation for the preparation of the following
+06-16 11:08:35.499 23454 25344 I native  : Translate Instance: 
+06-16 11:08:35.499 23454 25344 I native  : Query (raw): 588ctて言いたちの準備えの準備
+06-16 11:08:35.499 23454 25344 I native  : Query (after preprocess): 588ct て 言い たち の 準 備え の 準備
+06-16 11:08:35.499 23454 25344 I native  : Query ids (after tokenizer): 122 89 89 38 30 12 991 44 15 333 4 3 657 1023 202 4 3 657 1002 2
+06-16 11:08:35.499 23454 25344 I native  : Translation ids: 98 96 96 1706 8 1203 86 19 3 1203 86 6 3 307 2
+06-16 11:08:35.499 23454 25344 I native  : Translation (after detokenizer): 588ct and preparation for the preparation of the following
+06-16 11:08:35.499 23454 25344 I native  : Alignment probability:
+06-16 11:08:35.499 23454 25344 I native  : 	588ct	and	preparation	for	the	preparation	of	the	following
+06-16 11:08:35.499 23454 25344 I native  : 588ct	0.815686	0.396078	0.00784314	0.0117647	0.0117647	0.00588235	0.00784314	0.0235294	0.0235294
+06-16 11:08:35.499 23454 25344 I native  : て	0.00882353	0.243137	0.027451	0.0156863	0.00784314	0.00196078	0.00392157	0.00784314	0.00392157
+06-16 11:08:35.499 23454 25344 I native  : 言い	0.00490196	0.0235294	0.0431373	0.0235294	0.227451	0.0745098	0.027451	0.4	0.45098
+06-16 11:08:35.499 23454 25344 I native  : たち	0.00294118	0.00392157	0.0117647	0.027451	0.0705882	0.0294118	0.054902	0.254902	0.145098
+06-16 11:08:35.499 23454 25344 I native  : の	0.00196078	0.00784314	0.00196078	0.0941176	0.0196078	0.0196078	0.231373	0.0588235	0.0666667
+06-16 11:08:35.499 23454 25344 I native  : 準	0.0245098	0.0235294	0.0882353	0.0823529	0.552941	0.360784	0.0901961	0.172549	0.254902
+06-16 11:08:35.499 23454 25344 I native  : 備え	0.00294118	0.00392157	0.0352941	0.105882	0.0745098	0.276471	0.188235	0.0392157	0.027451
+06-16 11:08:35.499 23454 25344 I native  : の	0.00882353	0.00392157	0.00392157	0.27451	0.00784314	0.00784314	0.0431373	0	0
+06-16 11:08:35.499 23454 25344 I native  : 準備	0.111765	0.247059	0.756863	0.192157	0.00784314	0.186275	0.00784314	0	0
+06-16 11:08:35.499 23454 25344 I native  : Translation (before postprocess): 588ct and preparation for the preparation of the following
+06-16 11:08:35.501 23454 25345 D native  : I0616 11:08:35.501314   25345 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.501 23454 25345 D native  : I0616 11:08:35.501363   25345 mergeddicttrans.cc:1866] Sentence #0: 最後ろー勝勝と思議
+06-16 11:08:35.501 23454 25345 D native  : I0616 11:08:35.501391   25345 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.517 23454 25345 I native  : I0616 11:08:35.517037   25345 mergeddicttrans.cc:1827] Sentence #0: 最後ろー勝勝と思議
+06-16 11:08:35.517 23454 25345 I native  : I0616 11:08:35.517176   25345 mergeddicttrans.cc:1828] 
+06-16 11:08:35.517 23454 25345 I native  : Source language: ja, target language: en
+06-16 11:08:35.517 23454 25345 I native  : 
+06-16 11:08:35.517 23454 25345 I native  : Has period trick: 0
+06-16 11:08:35.517 23454 25345 I native  : 
+06-16 11:08:35.517 23454 25345 I native  : Full translation: Last servant and thought
+06-16 11:08:35.517 23454 25345 I native  : Translate Instance: 
+06-16 11:08:35.517 23454 25345 I native  : Query (raw): 最後ろー勝勝と思議
+06-16 11:08:35.517 23454 25345 I native  : Query (after preprocess): 最後 ろー 勝勝 と 思議
+06-16 11:08:35.517 23454 25345 I native  : Query ids (after tokenizer): 188 1093 3 733 25 2103 2569 14 1557 1387 2
+06-16 11:08:35.517 23454 25345 I native  : Translation ids: 49 385 1642 178 8 3124 2
+06-16 11:08:35.517 23454 25345 I native  : Translation (after detokenizer): Last servant and thought
+06-16 11:08:35.517 23454 25345 I native  : Alignment probability:
+06-16 11:08:35.517 23454 25345 I native  : 	Last	servant	and	thought
+06-16 11:08:35.517 23454 25345 I native  : 最後	0.57451	0.164706	0.101961	0.0156863
+06-16 11:08:35.517 23454 25345 I native  : ろー	0.0745098	0.247059	0.137255	0.0470588
+06-16 11:08:35.517 23454 25345 I native  : 勝勝	0.0411765	0.15098	0.184314	0.172549
+06-16 11:08:35.517 23454 25345 I native  : と	0.0254902	0.027451	0.282353	0.0235294
+06-16 11:08:35.517 23454 25345 I native  : 思議	0.213725	0.24902	0.117647	0.635294
+06-16 11:08:35.517 23454 25345 I native  : Translation (before postprocess): Last servant and thought
+06-16 11:08:35.520 23454 25346 D native  : I0616 11:08:35.520771   25346 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:35.520 23454 25346 D native  : I0616 11:08:35.520798   25346 mergeddicttrans.cc:1866] Sentence #0: 15歳数値下で
+06-16 11:08:35.520 23454 25346 D native  : I0616 11:08:35.520823   25346 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:35.537 23454 25346 I native  : I0616 11:08:35.537033   25346 mergeddicttrans.cc:1827] Sentence #0: 15歳数値下で
+06-16 11:08:35.537 23454 25346 I native  : I0616 11:08:35.537176   25346 mergeddicttrans.cc:1828] 
+06-16 11:08:35.537 23454 25346 I native  : Source language: ja, target language: en
+06-16 11:08:35.537 23454 25346 I native  : 
+06-16 11:08:35.537 23454 25346 I native  : Has period trick: 0
+06-16 11:08:35.537 23454 25346 I native  : 
+06-16 11:08:35.537 23454 25346 I native  : Full translation: Under 15 years of age
+06-16 11:08:35.537 23454 25346 I native  : Translate Instance: 
+06-16 11:08:35.537 23454 25346 I native  : Query (raw): 15歳数値下で
+06-16 11:08:35.537 23454 25346 I native  : Query (after preprocess): 15 歳数値 下 で
+06-16 11:08:35.537 23454 25346 I native  : Query ids (after tokenizer): 749 3 2042 206 1114 486 16 2
+06-16 11:08:35.537 23454 25346 I native  : Translation ids: 318 2847 422 1527 6 3024 2
+06-16 11:08:35.537 23454 25346 I native  : Translation (after detokenizer): Under 15 years of age
+06-16 11:08:35.537 23454 25346 I native  : Alignment probability:
+06-16 11:08:35.537 23454 25346 I native  : 	Under	15	years	of	age
+06-16 11:08:35.537 23454 25346 I native  : 15	0.162745	0.690196	0.027451	0.0509804	0.0470588
+06-16 11:08:35.537 23454 25346 I native  : 歳数値	0.115686	0.2	0.92549	0.607843	0.886275
+06-16 11:08:35.537 23454 25346 I native  : 下	0.429412	0.0431373	0.0196078	0.141176	0.0117647
+06-16 11:08:35.537 23454 25346 I native  : で	0.2	0.00392157	0	0.0627451	0
+06-16 11:08:35.537 23454 25346 I native  : Translation (before postprocess): Under 15 years of age
+06-16 11:08:36.528 23454 23782 I Quality : BitmapCompressInfo:1350,1920,2,90,580022396
+06-16 11:08:43.126 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:43.216 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:08:43.217 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:08:43.217 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:08:43.220 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:43.221 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:08:43.222 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:43.480 23454 23454 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument
+06-16 11:08:44.083 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:44.178 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:44.179 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:44.377 23454 23454 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument
+06-16 11:08:45.100 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:45.179 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:45.179 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:45.473 23454 23454 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument
+06-16 11:08:45.761 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:45.808 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:45.809 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:46.075 23454 23454 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument
+06-16 11:08:46.437 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:46.493 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:46.493 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:46.979 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:47.050 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:47.050 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:47.389 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:47.453 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:47.453 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:47.678 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:47.679 23454 23454 D InsetsController: Setting requestedVisibleTypes to -9 (was -16)
+06-16 11:08:47.712 23454 23454 D ViewRootImplExtImpl: wrapConfigInfoIntoFlags rotation=0, smallestScreenWidthDp=360, residentWS=false, scenario=0, bounds=Rect(0, 0 - 1080, 2376), relayoutAsync=true, flags=0, newFlags=1245719808, title=app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity
+06-16 11:08:47.712 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:false, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][1080,2376]}, relayoutAsync:true, mSyncSeqId:0
+06-16 11:08:47.712 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(1080, 2376), format:-1, blastBufferQueue:android.graphics.BLASTBufferQueue@4a79343
+06-16 11:08:47.713 23454 23454 I SurfaceControl:  setExtendedRangeBrightness sc=Surface(name=app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity)/@0xb5b5795,currentBufferRatio=1.0,desiredRatio=1.0
+06-16 11:08:47.744 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:47.744 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:08:47.927 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:48.007 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:48.817 23454 23484 I hiyomi.at.debug: Background concurrent mark compact GC freed 12MB AllocSpace bytes, 234(69MB) LOS objects, 43% free,124MB(M:22MB,L:101MB)/220MB, paused 1.183ms,5.055ms total 100.839ms
+06-16 11:08:49.045 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:49.081 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:49.082 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:49.171 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:49.173 23454 23454 D InsetsController: Setting requestedVisibleTypes to -16 (was -9)
+06-16 11:08:49.199 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:08:49.255 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:49.671 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:49.727 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:08:49.727 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:49.840 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:08:49.841 23454 23454 D InsetsController: Setting requestedVisibleTypes to -9 (was -16)
+06-16 11:08:49.872 23454 23454 D ViewRootImplExtImpl: wrapConfigInfoIntoFlags rotation=0, smallestScreenWidthDp=360, residentWS=false, scenario=0, bounds=Rect(0, 0 - 1080, 2376), relayoutAsync=true, flags=0, newFlags=1245719808, title=app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity
+06-16 11:08:49.873 23454 23454 D VRI[ReaderActivity]: relayoutWindow result, sizeChanged:false, surfaceControlChanged:false, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(1080, 2376), mWidth:1080, mHeight:2376, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122251904, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][1080,2376]}, relayoutAsync:true, mSyncSeqId:0
+06-16 11:08:49.873 23454 23454 W VRI[ReaderActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(1080, 2376), format:-1, blastBufferQueue:android.graphics.BLASTBufferQueue@4a79343
+06-16 11:08:49.873 23454 23454 I SurfaceControl:  setExtendedRangeBrightness sc=Surface(name=app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity)/@0xb5b5795,currentBufferRatio=1.0,desiredRatio=1.0
+06-16 11:08:49.895 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:08:49.905 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:08:59.474 23454 23743 I Quality : BitmapCompressInfo:1350,1920,1,100,582346406
+06-16 11:08:59.508 23454 25347 D native  : I0616 11:08:59.508657   25347 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.509 23454 25347 D native  : I0616 11:08:59.509068   25347 mergeddicttrans.cc:1866] Sentence #0: 生まれ変わったグラシクレストですメディスフィナ様
+06-16 11:08:59.509 23454 25347 D native  : I0616 11:08:59.509126   25347 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.553 23454 25347 I native  : I0616 11:08:59.553043   25347 mergeddicttrans.cc:1827] Sentence #0: 生まれ変わったグラシクレストですメディスフィナ様
+06-16 11:08:59.553 23454 25347 I native  : I0616 11:08:59.553139   25347 mergeddicttrans.cc:1828] 
+06-16 11:08:59.553 23454 25347 I native  : Source language: ja, target language: en
+06-16 11:08:59.553 23454 25347 I native  : 
+06-16 11:08:59.553 23454 25347 I native  : Has period trick: 0
+06-16 11:08:59.553 23454 25347 I native  : 
+06-16 11:08:59.553 23454 25347 I native  : Full translation: It is a born-changing grassicle restaurant Medismufina
+06-16 11:08:59.553 23454 25347 I native  : Translate Instance: 
+06-16 11:08:59.553 23454 25347 I native  : Query (raw): 生まれ変わったグラシクレストですメディスフィナ様
+06-16 11:08:59.553 23454 25347 I native  : Query (after preprocess): 生まれ 変わっ た グラシクレスト です メディスフィナ 様
+06-16 11:08:59.553 23454 25347 I native  : Query ids (after tokenizer): 238 194 126 241 282 88 15 432 43 195 72 55 85 163 111 552 48 682 341 711 2
+06-16 11:08:59.553 23454 25347 I native  : Translation ids: 209 11 9 119 2115 15 2263 1024 376 849 3214 2195 178 2127 1475 121 154 1470 2
+06-16 11:08:59.553 23454 25347 I native  : Translation (after detokenizer): It is a born - changing grassicle restaurant Medismufina
+06-16 11:08:59.553 23454 25347 I native  : Alignment probability:
+06-16 11:08:59.553 23454 25347 I native  : 	It	is	a	born	-	changing	grassicle	restaurant	Medismufina
+06-16 11:08:59.553 23454 25347 I native  : 生まれ	0.384314	0.145098	0.498039	0.62549	0.231373	0.143137	0.00392157	0.00588235	0.00156863
+06-16 11:08:59.553 23454 25347 I native  : 変わっ	0.101961	0.0901961	0.231373	0.182353	0.396078	0.629412	0.027451	0.00196078	0.00156863
+06-16 11:08:59.553 23454 25347 I native  : た	0.0235294	0.0392157	0.0196078	0.0333333	0.0235294	0.045098	0.00392157	0.00392157	0.000784314
+06-16 11:08:59.553 23454 25347 I native  : グラシクレスト	0.0784314	0.0313726	0.117647	0.0921569	0.196078	0.0470588	0.930719	0.394118	0.0321569
+06-16 11:08:59.553 23454 25347 I native  : です	0.243137	0.627451	0.027451	0.00196078	0.00784314	0.00588235	0.00261438	0.0392157	0.00784314
+06-16 11:08:59.553 23454 25347 I native  : メディスフィナ	0.105882	0.0235294	0.0784314	0.0156863	0.0156863	0.00392157	0.00522876	0.196078	0.745882
+06-16 11:08:59.553 23454 25347 I native  : 様	0.0313726	0.00392157	0.00784314	0.00196078	0.00392157	0.00196078	0.00130719	0.0882353	0.094902
+06-16 11:08:59.553 23454 25347 I native  : Translation (before postprocess): It is a born - changing grassicle restaurant Medismufina
+06-16 11:08:59.555 23454 25348 D native  : I0616 11:08:59.555613   25348 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.555 23454 25348 D native  : I0616 11:08:59.555672   25348 mergeddicttrans.cc:1866] Sentence #0: 本日の出発に間に合いました
+06-16 11:08:59.555 23454 25348 D native  : I0616 11:08:59.555705   25348 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.577 23454 25348 I native  : I0616 11:08:59.577775   25348 mergeddicttrans.cc:1827] Sentence #0: 本日の出発に間に合いました
+06-16 11:08:59.577 23454 25348 I native  : I0616 11:08:59.577862   25348 mergeddicttrans.cc:1828] 
+06-16 11:08:59.577 23454 25348 I native  : Source language: ja, target language: en
+06-16 11:08:59.577 23454 25348 I native  : 
+06-16 11:08:59.577 23454 25348 I native  : Has period trick: 0
+06-16 11:08:59.577 23454 25348 I native  : 
+06-16 11:08:59.577 23454 25348 I native  : Full translation: It was in time for today's departure
+06-16 11:08:59.577 23454 25348 I native  : Translate Instance: 
+06-16 11:08:59.577 23454 25348 I native  : Query (raw): 本日の出発に間に合いました
+06-16 11:08:59.577 23454 25348 I native  : Query (after preprocess): 本日 の 出発 に 間 に合い まし た
+06-16 11:08:59.577 23454 25348 I native  : Query ids (after tokenizer): 118 1199 4 683 322 8 412 8 116 44 259 15 2
+06-16 11:08:59.577 23454 25348 I native  : Translation ids: 209 107 12 156 19 3100 158 521 464 230 2
+06-16 11:08:59.577 23454 25348 I native  : Translation (after detokenizer): It was in time for today 's departure
+06-16 11:08:59.577 23454 25348 I native  : Alignment probability:
+06-16 11:08:59.577 23454 25348 I native  : 	It	was	in	time	for	today	's	departure
+06-16 11:08:59.577 23454 25348 I native  : 本日	0.141176	0.0117647	0.027451	0.0352941	0.101961	0.572549	0.0431373	0.027451
+06-16 11:08:59.577 23454 25348 I native  : の	0	0.00392157	0	0.00392157	0.0156863	0.027451	0.301961	0.0261438
+06-16 11:08:59.577 23454 25348 I native  : 出発	0.0156863	0.0196078	0.0352941	0.0313726	0.0666667	0.345098	0.309804	0.636601
+06-16 11:08:59.577 23454 25348 I native  : に	0.105882	0.0941176	0.0470588	0.0392157	0.439216	0.00784314	0.0862745	0.00522876
+06-16 11:08:59.577 23454 25348 I native  : 間	0.243137	0.0941176	0.203922	0.635294	0.231373	0.0117647	0.0470588	0.00784314
+06-16 11:08:59.577 23454 25348 I native  : に合い	0.262745	0.564706	0.572549	0.113725	0.0862745	0	0.0117647	0.00392157
+06-16 11:08:59.577 23454 25348 I native  : まし	0.0666667	0.0745098	0.0196078	0	0.00392157	0	0	0
+06-16 11:08:59.577 23454 25348 I native  : た	0.129412	0.113725	0.0117647	0	0.0235294	0	0.00784314	0.00130719
+06-16 11:08:59.577 23454 25348 I native  : Translation (before postprocess): It was in time for today 's departure
+06-16 11:08:59.579 23454 25341 D native  : I0616 11:08:59.579447   25341 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.579 23454 25341 D native  : I0616 11:08:59.579500   25341 mergeddicttrans.cc:1866] Sentence #0: 相棒、修理完了!!!
+06-16 11:08:59.579 23454 25341 D native  : I0616 11:08:59.579526   25341 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.601 23454 25341 I native  : I0616 11:08:59.601710   25341 mergeddicttrans.cc:1827] Sentence #0: 相棒、修理完了!!!
+06-16 11:08:59.601 23454 25341 I native  : I0616 11:08:59.601799   25341 mergeddicttrans.cc:1828] 
+06-16 11:08:59.601 23454 25341 I native  : Source language: ja, target language: en
+06-16 11:08:59.601 23454 25341 I native  : 
+06-16 11:08:59.601 23454 25341 I native  : Has period trick: 0
+06-16 11:08:59.601 23454 25341 I native  : 
+06-16 11:08:59.601 23454 25341 I native  : Full translation: Bar, repair completion !!!
+06-16 11:08:59.601 23454 25341 I native  : Translate Instance: 
+06-16 11:08:59.601 23454 25341 I native  : Query (raw): 相棒、修理完了!!!
+06-16 11:08:59.601 23454 25341 I native  : Query (after preprocess): 相棒 , 修理 完 了 !!!
+06-16 11:08:59.601 23454 25341 I native  : Query ids (after tokenizer): 632 2140 5 1165 615 841 3 892 723 2312 2312 2
+06-16 11:08:59.601 23454 25341 I native  : Translation ids: 54 118 5 650 1633 1910 254 430 3409 3409 2
+06-16 11:08:59.601 23454 25341 I native  : Translation (after detokenizer): Bar , repair completion !!!
+06-16 11:08:59.601 23454 25341 I native  : Alignment probability:
+06-16 11:08:59.601 23454 25341 I native  : 	Bar	,	repair	completion	!!!
+06-16 11:08:59.601 23454 25341 I native  : 相棒	0.762745	0.298039	0.0686275	0.00196078	0
+06-16 11:08:59.601 23454 25341 I native  : ,	0.0137255	0.372549	0.0117647	0.00588235	0
+06-16 11:08:59.601 23454 25341 I native  : 修理	0.0196078	0.054902	0.790196	0.0372549	0.00392157
+06-16 11:08:59.601 23454 25341 I native  : 完	0.0509804	0.00784314	0.101961	0.296078	0.0679739
+06-16 11:08:59.601 23454 25341 I native  : 了	0.0176471	0.00784314	0.00784314	0.511765	0.0169935
+06-16 11:08:59.601 23454 25341 I native  : !!!	0.0137255	0.0117647	0.00392157	0.107843	0.793464
+06-16 11:08:59.601 23454 25341 I native  : Translation (before postprocess): Bar , repair completion !!!
+06-16 11:08:59.604 23454 25342 D native  : I0616 11:08:59.604090   25342 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.604 23454 25342 D native  : I0616 11:08:59.604140   25342 mergeddicttrans.cc:1866] Sentence #0: 最新道行方本語(新13番1企画)
+06-16 11:08:59.604 23454 25342 D native  : I0616 11:08:59.604166   25342 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.634 23454 25342 I native  : I0616 11:08:59.634051   25342 mergeddicttrans.cc:1827] Sentence #0: 最新道行方本語(新13番1企画)
+06-16 11:08:59.634 23454 25342 I native  : I0616 11:08:59.634158   25342 mergeddicttrans.cc:1828] 
+06-16 11:08:59.634 23454 25342 I native  : Source language: ja, target language: en
+06-16 11:08:59.634 23454 25342 I native  : 
+06-16 11:08:59.634 23454 25342 I native  : Has period trick: 0
+06-16 11:08:59.634 23454 25342 I native  : 
+06-16 11:08:59.634 23454 25342 I native  : Full translation: Latest Russian Word (New 13th 1 Plan)
+06-16 11:08:59.634 23454 25342 I native  : Translate Instance: 
+06-16 11:08:59.634 23454 25342 I native  : Query (raw): 最新道行方本語(新13番1企画)
+06-16 11:08:59.634 23454 25342 I native  : Query (after preprocess): 最新 道行方 本 語 ( 新 13 番 1 企画 )
+06-16 11:08:59.634 23454 25342 I native  : Query ids (after tokenizer): 188 956 1647 509 505 118 926 24 444 722 881 34 1225 753 21 2
+06-16 11:08:59.634 23454 25342 I native  : Translation ids: 49 153 192 57 2589 619 133 702 18 957 410 299 76 37 667 17 2
+06-16 11:08:59.634 23454 25342 I native  : Translation (after detokenizer): Latest Russian Word ( New 13th 1 Plan )
+06-16 11:08:59.634 23454 25342 I native  : Alignment probability:
+06-16 11:08:59.634 23454 25342 I native  : 	Latest	Russian	Word	(	New	13th	1	Plan	)
+06-16 11:08:59.634 23454 25342 I native  : 最新	0.737255	0.0379085	0.0235294	0.0509804	0.0470588	0.00196078	0	0	0
+06-16 11:08:59.634 23454 25342 I native  : 道行方	0.104575	0.588235	0.35098	0.176471	0.027451	0.0313726	0.00392157	0	0
+06-16 11:08:59.634 23454 25342 I native  : 本	0.0431373	0.0614379	0.301961	0.329412	0.0470588	0.00784314	0.00392157	0.00392157	0.0352941
+06-16 11:08:59.634 23454 25342 I native  : 語	0.0196078	0.0196078	0.145098	0.176471	0.0156863	0.0117647	0.00392157	0.00392157	0.0431373
+06-16 11:08:59.634 23454 25342 I native  : (	0.00261438	0.00392157	0.0117647	0.176471	0.00392157	0.00588235	0.0117647	0.00196078	0.0509804
+06-16 11:08:59.634 23454 25342 I native  : 新	0.00392157	0.00261438	0.00392157	0.0117647	0.580392	0.0666667	0.0156863	0.00784314	0.027451
+06-16 11:08:59.634 23454 25342 I native  : 13	0.00130719	0.00130719	0	0.00784314	0.0313726	0.311765	0.0156863	0.00784314	0.00392157
+06-16 11:08:59.634 23454 25342 I native  : 番	0	0	0.00196078	0	0.0156863	0.25098	0.137255	0.00392157	0.00392157
+06-16 11:08:59.634 23454 25342 I native  : 1	0	0.00130719	0.00196078	0.00392157	0.0196078	0.143137	0.486275	0.0392157	0.00392157
+06-16 11:08:59.634 23454 25342 I native  : 企画	0.00130719	0.00392157	0.00784314	0.0235294	0.156863	0.113725	0.27451	0.888235	0.360784
+06-16 11:08:59.634 23454 25342 I native  : )	0	0	0	0.00392157	0.00784314	0.00784314	0.0235294	0.00980392	0.282353
+06-16 11:08:59.634 23454 25342 I native  : Translation (before postprocess): Latest Russian Word ( New 13th 1 Plan )
+06-16 11:08:59.636 23454 25343 D native  : I0616 11:08:59.636530   25343 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.636 23454 25343 D native  : I0616 11:08:59.636585   25343 mergeddicttrans.cc:1866] Sentence #0: あのおおいそれた達が全然「調査室づけ」と思ったと思った
+06-16 11:08:59.636 23454 25343 D native  : I0616 11:08:59.636618   25343 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.678 23454 25343 I native  : I0616 11:08:59.678277   25343 mergeddicttrans.cc:1827] Sentence #0: あのおおいそれた達が全然「調査室づけ」と思ったと思った
+06-16 11:08:59.678 23454 25343 I native  : I0616 11:08:59.678466   25343 mergeddicttrans.cc:1828] 
+06-16 11:08:59.678 23454 25343 I native  : Source language: ja, target language: en
+06-16 11:08:59.678 23454 25343 I native  : 
+06-16 11:08:59.678 23454 25343 I native  : Has period trick: 0
+06-16 11:08:59.678 23454 25343 I native  : 
+06-16 11:08:59.678 23454 25343 I native  : Full translation: I thought that that much of that thought was "investigation room" at all
+06-16 11:08:59.678 23454 25343 I native  : Translate Instance: 
+06-16 11:08:59.678 23454 25343 I native  : Query (raw): あのおおいそれた達が全然「調査室づけ」と思ったと思った
+06-16 11:08:59.678 23454 25343 I native  : Query (after preprocess): あの おおいそれ た 達 が 全然 「 調査 室 づけ 」 と 思っ た と 思っ た
+06-16 11:08:59.678 23454 25343 I native  : Query ids (after tokenizer): 838 440 296 849 44 1564 126 15 3 831 10 464 1232 171 496 879 3 902 3 818 211 173 14 1557 88 15 14 1557 88 15 2
+06-16 11:08:59.678 23454 25343 I native  : Translation ids: 63 3124 30 30 2181 6 30 3124 107 34 2038 2561 819 34 69 210 2
+06-16 11:08:59.678 23454 25343 I native  : Translation (after detokenizer): I thought that that much of that thought was " investigation room " at all
+06-16 11:08:59.678 23454 25343 I native  : Alignment probability:
+06-16 11:08:59.678 23454 25343 I native  : 	I	thought	that	that	much	of	that	thought	was	"	investigation	room	"	at	all
+06-16 11:08:59.678 23454 25343 I native  : あの	0.427451	0.027451	0.282353	0.384314	0.137255	0.0588235	0.219608	0.0196078	0.0117647	0.00392157	0	0	0	0.00392157	0.00784314
+06-16 11:08:59.678 23454 25343 I native  : おおいそれ	0.152941	0.105882	0.172549	0.380392	0.729412	0.486275	0.513726	0.388235	0.105882	0.0352941	0	0	0	0	0.0117647
+06-16 11:08:59.678 23454 25343 I native  : た	0.0156863	0.00784314	0.0784314	0.0627451	0.0352941	0.0784314	0.105882	0.027451	0.0352941	0.00392157	0	0	0	0	0
+06-16 11:08:59.678 23454 25343 I native  : 達	0.0235294	0.00784314	0.0235294	0.0509804	0.027451	0.0862745	0.0392157	0.0156863	0.0705882	0.00784314	0	0	0	0.0117647	0.00392157
+06-16 11:08:59.678 23454 25343 I native  : が	0.0156863	0.00784314	0.0156863	0.0156863	0.00784314	0.0235294	0.00392157	0.0117647	0.0431373	0.0156863	0	0	0	0.0352941	0.00392157
+06-16 11:08:59.678 23454 25343 I native  : 全然	0.0196078	0.0117647	0.0196078	0.0117647	0.0117647	0.0352941	0.00784314	0.027451	0.109804	0.25098	0.00196078	0	0.0313726	0.788235	0.921569
+06-16 11:08:59.678 23454 25343 I native  : 「	0.00392157	0.00392157	0.0941176	0.0352941	0.0117647	0.0235294	0.0117647	0.027451	0.0823529	0.223529	0.00980392	0	0	0.00392157	0.00392157
+06-16 11:08:59.678 23454 25343 I native  : 調査	0	0	0.00784314	0.00392157	0.00392157	0.00784314	0.00784314	0.0156863	0.027451	0.0784314	0.794118	0.0117647	0.00784314	0	0.00784314
+06-16 11:08:59.678 23454 25343 I native  : 室	0	0	0	0	0	0	0	0	0.0235294	0.0196078	0.0882353	0.905882	0.0117647	0	0
+06-16 11:08:59.678 23454 25343 I native  : づけ	0	0	0	0	0	0	0	0.00392157	0.0156863	0.0431373	0.0745098	0.0431373	0.74902	0.00784314	0
+06-16 11:08:59.678 23454 25343 I native  : 」	0	0	0.00784314	0	0	0	0	0	0.0156863	0.00784314	0.00784314	0.0235294	0.152941	0.0156863	0
+06-16 11:08:59.678 23454 25343 I native  : と	0	0.00392157	0.0156863	0.00784314	0.00784314	0.00784314	0.00392157	0.0666667	0.101961	0.0352941	0.00196078	0	0	0.0117647	0
+06-16 11:08:59.678 23454 25343 I native  : 思っ	0.00392157	0.0666667	0.0235294	0.0117647	0.0196078	0.0588235	0.0313726	0.239216	0.184314	0.192157	0.00588235	0	0.00392157	0.0235294	0.00392157
+06-16 11:08:59.678 23454 25343 I native  : た	0.00784314	0.0235294	0.0509804	0.0196078	0.00784314	0.0235294	0.0117647	0.121569	0.0431373	0.0156863	0	0	0	0.00784314	0
+06-16 11:08:59.678 23454 25343 I native  : と	0.0117647	0.0392157	0.145098	0.00392157	0	0.00392157	0	0.00784314	0.027451	0.00784314	0	0	0	0	0
+06-16 11:08:59.678 23454 25343 I native  : 思っ	0.203922	0.635294	0.0313726	0	0	0.00392157	0.00392157	0.00392157	0.00784314	0.00392157	0	0	0	0	0
+06-16 11:08:59.678 23454 25343 I native  : た	0.0941176	0.0392157	0.0156863	0.00392157	0	0	0	0.00392157	0.00392157	0	0	0	0	0	0
+06-16 11:08:59.678 23454 25343 I native  : Translation (before postprocess): I thought that that much of that thought was " investigation room " at all
+06-16 11:08:59.681 23454 25344 D native  : I0616 11:08:59.681075   25344 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.681 23454 25344 D native  : I0616 11:08:59.681134   25344 mergeddicttrans.cc:1866] Sentence #0: 588ctて言いたちの準備えの準備
+06-16 11:08:59.681 23454 25344 D native  : I0616 11:08:59.681160   25344 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.712 23454 25344 I native  : I0616 11:08:59.712635   25344 mergeddicttrans.cc:1827] Sentence #0: 588ctて言いたちの準備えの準備
+06-16 11:08:59.712 23454 25344 I native  : I0616 11:08:59.712725   25344 mergeddicttrans.cc:1828] 
+06-16 11:08:59.712 23454 25344 I native  : Source language: ja, target language: en
+06-16 11:08:59.712 23454 25344 I native  : 
+06-16 11:08:59.712 23454 25344 I native  : Has period trick: 0
+06-16 11:08:59.712 23454 25344 I native  : 
+06-16 11:08:59.712 23454 25344 I native  : Full translation: 588ct and preparation for the preparation of the following
+06-16 11:08:59.712 23454 25344 I native  : Translate Instance: 
+06-16 11:08:59.712 23454 25344 I native  : Query (raw): 588ctて言いたちの準備えの準備
+06-16 11:08:59.712 23454 25344 I native  : Query (after preprocess): 588ct て 言い たち の 準 備え の 準備
+06-16 11:08:59.712 23454 25344 I native  : Query ids (after tokenizer): 122 89 89 38 30 12 991 44 15 333 4 3 657 1023 202 4 3 657 1002 2
+06-16 11:08:59.712 23454 25344 I native  : Translation ids: 98 96 96 1706 8 1203 86 19 3 1203 86 6 3 307 2
+06-16 11:08:59.712 23454 25344 I native  : Translation (after detokenizer): 588ct and preparation for the preparation of the following
+06-16 11:08:59.712 23454 25344 I native  : Alignment probability:
+06-16 11:08:59.712 23454 25344 I native  : 	588ct	and	preparation	for	the	preparation	of	the	following
+06-16 11:08:59.712 23454 25344 I native  : 588ct	0.815686	0.396078	0.00784314	0.0117647	0.0117647	0.00588235	0.00784314	0.0235294	0.0235294
+06-16 11:08:59.712 23454 25344 I native  : て	0.00882353	0.243137	0.027451	0.0156863	0.00784314	0.00196078	0.00392157	0.00784314	0.00392157
+06-16 11:08:59.712 23454 25344 I native  : 言い	0.00490196	0.0235294	0.0431373	0.0235294	0.227451	0.0745098	0.027451	0.4	0.45098
+06-16 11:08:59.712 23454 25344 I native  : たち	0.00294118	0.00392157	0.0117647	0.027451	0.0705882	0.0294118	0.054902	0.254902	0.145098
+06-16 11:08:59.712 23454 25344 I native  : の	0.00196078	0.00784314	0.00196078	0.0941176	0.0196078	0.0196078	0.231373	0.0588235	0.0666667
+06-16 11:08:59.712 23454 25344 I native  : 準	0.0245098	0.0235294	0.0882353	0.0823529	0.552941	0.360784	0.0901961	0.172549	0.254902
+06-16 11:08:59.712 23454 25344 I native  : 備え	0.00294118	0.00392157	0.0352941	0.105882	0.0745098	0.276471	0.188235	0.0392157	0.027451
+06-16 11:08:59.712 23454 25344 I native  : の	0.00882353	0.00392157	0.00392157	0.27451	0.00784314	0.00784314	0.0431373	0	0
+06-16 11:08:59.712 23454 25344 I native  : 準備	0.111765	0.247059	0.756863	0.192157	0.00784314	0.186275	0.00784314	0	0
+06-16 11:08:59.712 23454 25344 I native  : Translation (before postprocess): 588ct and preparation for the preparation of the following
+06-16 11:08:59.715 23454 25345 D native  : I0616 11:08:59.715285   25345 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.715 23454 25345 D native  : I0616 11:08:59.715345   25345 mergeddicttrans.cc:1866] Sentence #0: 最後ろー勝勝と思議
+06-16 11:08:59.715 23454 25345 D native  : I0616 11:08:59.715371   25345 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.731 23454 25345 I native  : I0616 11:08:59.731844   25345 mergeddicttrans.cc:1827] Sentence #0: 最後ろー勝勝と思議
+06-16 11:08:59.731 23454 25345 I native  : I0616 11:08:59.731927   25345 mergeddicttrans.cc:1828] 
+06-16 11:08:59.731 23454 25345 I native  : Source language: ja, target language: en
+06-16 11:08:59.731 23454 25345 I native  : 
+06-16 11:08:59.731 23454 25345 I native  : Has period trick: 0
+06-16 11:08:59.731 23454 25345 I native  : 
+06-16 11:08:59.731 23454 25345 I native  : Full translation: Last servant and thought
+06-16 11:08:59.731 23454 25345 I native  : Translate Instance: 
+06-16 11:08:59.731 23454 25345 I native  : Query (raw): 最後ろー勝勝と思議
+06-16 11:08:59.731 23454 25345 I native  : Query (after preprocess): 最後 ろー 勝勝 と 思議
+06-16 11:08:59.731 23454 25345 I native  : Query ids (after tokenizer): 188 1093 3 733 25 2103 2569 14 1557 1387 2
+06-16 11:08:59.731 23454 25345 I native  : Translation ids: 49 385 1642 178 8 3124 2
+06-16 11:08:59.731 23454 25345 I native  : Translation (after detokenizer): Last servant and thought
+06-16 11:08:59.731 23454 25345 I native  : Alignment probability:
+06-16 11:08:59.731 23454 25345 I native  : 	Last	servant	and	thought
+06-16 11:08:59.731 23454 25345 I native  : 最後	0.57451	0.164706	0.101961	0.0156863
+06-16 11:08:59.731 23454 25345 I native  : ろー	0.0745098	0.247059	0.137255	0.0470588
+06-16 11:08:59.731 23454 25345 I native  : 勝勝	0.0411765	0.15098	0.184314	0.172549
+06-16 11:08:59.731 23454 25345 I native  : と	0.0254902	0.027451	0.282353	0.0235294
+06-16 11:08:59.731 23454 25345 I native  : 思議	0.213725	0.24902	0.117647	0.635294
+06-16 11:08:59.731 23454 25345 I native  : Translation (before postprocess): Last servant and thought
+06-16 11:08:59.733 23454 25346 D native  : I0616 11:08:59.733481   25346 mergeddicttrans.cc:1860] The current system has NMT.
+06-16 11:08:59.733 23454 25346 D native  : I0616 11:08:59.733546   25346 mergeddicttrans.cc:1866] Sentence #0: 15歳数値下で
+06-16 11:08:59.733 23454 25346 D native  : I0616 11:08:59.733573   25346 mergeddicttrans.cc:1918] To be translated by NMT.
+06-16 11:08:59.749 23454 25346 I native  : I0616 11:08:59.749411   25346 mergeddicttrans.cc:1827] Sentence #0: 15歳数値下で
+06-16 11:08:59.749 23454 25346 I native  : I0616 11:08:59.749486   25346 mergeddicttrans.cc:1828] 
+06-16 11:08:59.749 23454 25346 I native  : Source language: ja, target language: en
+06-16 11:08:59.749 23454 25346 I native  : 
+06-16 11:08:59.749 23454 25346 I native  : Has period trick: 0
+06-16 11:08:59.749 23454 25346 I native  : 
+06-16 11:08:59.749 23454 25346 I native  : Full translation: Under 15 years of age
+06-16 11:08:59.749 23454 25346 I native  : Translate Instance: 
+06-16 11:08:59.749 23454 25346 I native  : Query (raw): 15歳数値下で
+06-16 11:08:59.749 23454 25346 I native  : Query (after preprocess): 15 歳数値 下 で
+06-16 11:08:59.749 23454 25346 I native  : Query ids (after tokenizer): 749 3 2042 206 1114 486 16 2
+06-16 11:08:59.749 23454 25346 I native  : Translation ids: 318 2847 422 1527 6 3024 2
+06-16 11:08:59.749 23454 25346 I native  : Translation (after detokenizer): Under 15 years of age
+06-16 11:08:59.749 23454 25346 I native  : Alignment probability:
+06-16 11:08:59.749 23454 25346 I native  : 	Under	15	years	of	age
+06-16 11:08:59.749 23454 25346 I native  : 15	0.162745	0.690196	0.027451	0.0509804	0.0470588
+06-16 11:08:59.749 23454 25346 I native  : 歳数値	0.115686	0.2	0.92549	0.607843	0.886275
+06-16 11:08:59.749 23454 25346 I native  : 下	0.429412	0.0431373	0.0196078	0.141176	0.0117647
+06-16 11:08:59.749 23454 25346 I native  : で	0.2	0.00392157	0	0.0627451	0
+06-16 11:08:59.749 23454 25346 I native  : Translation (before postprocess): Under 15 years of age
+06-16 11:09:00.682 23454 23743 I Quality : BitmapCompressInfo:1350,1920,2,90,558939791
+06-16 11:09:17.943 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:09:18.035 23454 23454 D InsetsController: Setting requestedVisibleTypes to -16 (was -9)
+06-16 11:09:18.038 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:09:18.038 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:09:18.061 23454 23454 W VRI[ReaderActivity]: handleResized abandoned!
+06-16 11:09:18.262 23454 23454 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument
+06-16 11:09:18.826 23454 23454 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-16 11:09:18.930 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:09:18.931 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:09:19.363 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:09:19.364 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:09:19.364 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:09:19.365 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:09:19.366 23454 23454 I VelocityTracker: LSQ2 speed rezero
+06-16 11:09:19.366 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:09:19.679 23454 23454 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument
+06-16 11:09:22.016 23454 23454 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-16 11:09:22.017 23454 23454 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-16 11:09:22.400 23454 23454 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument

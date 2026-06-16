@@ -37,8 +37,27 @@ class PageTextRenderer(context: Context) {
         strokeJoin = Paint.Join.ROUND
     }
 
-    fun render(bitmap: Bitmap, blocks: List<TranslationBlock>) {
-        val canvas = Canvas(bitmap)
+    /**
+     * Draws the translated [blocks] onto [bitmap] and returns the bitmap that
+     * actually holds the rendered pixels.
+     *
+     * TachiyomiAT: when [bitmap] is immutable (the default for BitmapFactory
+     * output, which [decodePageBitmap] returns), a mutable copy is created to
+     * draw on — Canvas(bitmap) otherwise throws "Immutable bitmap passed to
+     * Canvas constructor". Callers MUST compress/save the RETURNED bitmap, not
+     * the one they passed in, otherwise they save the un-drawn-on original.
+     */
+    fun render(bitmap: Bitmap, blocks: List<TranslationBlock>): Bitmap {
+        // TachiyomiAT: Canvas(bitmap) throws "Immutable bitmap passed to Canvas
+        // constructor" if the bitmap isn't mutable. Bitmaps returned by
+        // BitmapFactory.decodeStream are immutable by default (the caller,
+        // decodePageBitmap, doesn't set inMutable=true), so the render stage
+        // crashed here and left the page showing the ORIGINAL untranslated image.
+        // Copy to a mutable bitmap only when necessary — when the caller already
+        // supplies a mutable bitmap (e.g. a cleaned/inpainted working copy) the
+        // copy is skipped to avoid the extra allocation.
+        val target = if (bitmap.isMutable) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(target)
         for (block in blocks) {
             val text = block.translation.ifBlank { block.text }
             if (text.isBlank()) continue
@@ -75,6 +94,7 @@ class PageTextRenderer(context: Context) {
                 drawHorizontal(canvas, text, fontSizePx, safeW, containerCX, containerCY)
             }
         }
+        return target
     }
 
     private fun drawHorizontal(

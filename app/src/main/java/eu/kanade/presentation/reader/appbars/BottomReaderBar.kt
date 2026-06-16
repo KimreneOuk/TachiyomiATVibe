@@ -39,6 +39,7 @@ fun BottomReaderBar(
     onClickSettings: () -> Unit,
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationProgress: Pair<Int, Int> = Pair(0, 0),
+    translationCurrentPage: Int = 0,
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: while translation is running the icon is disabled so repeated
     // taps can't pile up overlapping requests behind the singleton translator
@@ -106,8 +107,18 @@ fun BottomReaderBar(
         }
 
         if (translationState == Translation.State.TRANSLATING && translationProgress.second > 0) {
+            // TachiyomiAT: prefer the page currently being translated so the
+            // label matches the page the spinner animates on. Fall back to the
+            // completed-count string when no specific page is RUNNING (e.g. a
+            // batch-queue transition where only the queue status is known), so
+            // the bar still shows progress instead of going blank.
+            val text = if (translationCurrentPage > 0) {
+                stringResource(ATMR.strings.reader_translating_page, translationCurrentPage, translationProgress.second)
+            } else {
+                stringResource(ATMR.strings.reader_translating, translationProgress.first, translationProgress.second)
+            }
             Text(
-                text = stringResource(ATMR.strings.reader_translating, translationProgress.first, translationProgress.second),
+                text = text,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

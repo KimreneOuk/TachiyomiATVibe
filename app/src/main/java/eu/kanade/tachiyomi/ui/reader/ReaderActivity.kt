@@ -262,6 +262,12 @@ class ReaderActivity : BaseActivity() {
 
     override fun onPause() {
         viewModel.flushReadTimer()
+        // TachiyomiAT: cancel all in-flight translation when the reader is
+        // backgrounded. Previously, translation kept running indefinitely
+        // after the user switched apps — consuming battery, bandwidth, and
+        // holding the translator's single permit. onCleared() catches reader
+        // destruction but that can be minutes later.
+        viewModel.cancelTranslationsOnBackground()
         super.onPause()
     }
 
@@ -297,6 +303,11 @@ class ReaderActivity : BaseActivity() {
      */
     override fun finish() {
         viewModel.onActivityFinish()
+        // TachiyomiAT: proactively stop translation when the reader is closed.
+        // onCleared() eventually does this too, but the window between finish()
+        // and ViewModel destruction can be seconds long — cancel immediately so
+        // no orphaned pages decode/inpaint/translate after the reader is gone.
+        viewModel.cancelTranslationsOnBackground()
         super.finish()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
@@ -451,6 +462,7 @@ class ReaderActivity : BaseActivity() {
 
             val translationState by viewModel.state.map { it.translationState }.collectAsState(initial = Translation.State.NOT_TRANSLATED)
             val translationProgress by viewModel.state.map { it.translationProgress }.collectAsState(initial = Pair(0, 0))
+            val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
 
             ReaderContentOverlay(
                 brightness = state.brightnessOverlayValue,
@@ -501,6 +513,7 @@ class ReaderActivity : BaseActivity() {
                 onClickSettings = viewModel::openSettingsDialog,
                 translationState = translationState,
                 translationProgress = translationProgress,
+                translationCurrentPage = translationCurrentPage,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
                 // Disable the icon while work is running so taps can't queue up
                 // overlapping requests behind the singleton translator permit.

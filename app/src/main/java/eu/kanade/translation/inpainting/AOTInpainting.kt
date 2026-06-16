@@ -44,7 +44,13 @@ class AOTInpainting {
         padding: Int = 5,
         mode: InpaintingMode = InpaintingMode.QUALITY,
     ): Bitmap {
-        if (boxes.isEmpty()) return image
+        // TachiyomiAT: return a mutable COPY on the empty-boxes path too.
+        // Previously this returned the immutable input `image` by reference,
+        // which aliased the caller's decoded bitmap — a downstream render()
+        // could then mutate the caller's bitmap (or, after the caller recycled
+        // it, throw). A copy keeps the contract uniform: the returned bitmap
+        // is always a fresh mutable ARGB_8888 owned by the inpainter.
+        if (boxes.isEmpty()) return image.copy(Bitmap.Config.ARGB_8888, true)
         val sess = session
         var result = image.copy(Bitmap.Config.ARGB_8888, true)
 
