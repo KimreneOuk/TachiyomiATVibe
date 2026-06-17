@@ -10,17 +10,18 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.MangaOcrEngine
-import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.ocr.MlKitRoiOcrEngine
+import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.util.TranslationMemoryBudget
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-
+import tachiyomi.domain.translation.OcrModel
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -28,6 +29,7 @@ import kotlin.math.min
 class RoiPageRecognitionEngine(
     private val context: Context,
     private val language: TextRecognizerLanguage,
+    private val ocrModel: OcrModel,
     private val inpaintingMode: InpaintingMode = InpaintingMode.QUALITY,
 ) : PageRecognitionEngine {
 
@@ -65,12 +67,16 @@ class RoiPageRecognitionEngine(
                 val paths = modelStore.ensureModels()
                 logcat(LogPriority.INFO) { "ONNX init: starting detector initialization" }
                 detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel) }
-                logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language)" }
-                roiOcrEngine = when (language) {
-                    TextRecognizerLanguage.JAPANESE -> MangaOcrEngine().also {
+                logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
+                roiOcrEngine = when (ocrModel) {
+                    OcrModel.MANGAOCR -> MangaOcrEngine().also {
                         it.initialize(paths.ocrEncoder, paths.ocrDecoderInit, paths.ocrDecoderStep, paths.ocrVocab)
                     }
-                    else -> MlKitRoiOcrEngine(language)
+                    OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also {
+                        val paddlePaths = modelStore.ensurePaddleOcrV6Small()
+                        it.initialize(paddlePaths.recognitionModel, paddlePaths.dictionary)
+                    }
+                    OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
                 logcat(LogPriority.INFO) { "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), starting inpainting initialization" }
                 paths.inpaintModel?.let { model ->

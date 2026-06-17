@@ -16,6 +16,11 @@ data class ModelPaths(
     val inpaintModel: File?,
 )
 
+data class PaddleOcrV6SmallPaths(
+    val recognitionModel: File,
+    val dictionary: File,
+)
+
 class OnnxModelStore(private val context: Context) {
 
     private val modelsDir: File by lazy {
@@ -69,6 +74,38 @@ class OnnxModelStore(private val context: Context) {
             ocrDecoderStep = decoderStepFile,
             ocrVocab = vocabFile,
             inpaintModel = inpaintFile,
+        )
+    }
+
+    fun paddleOcrV6SmallAvailable(): Boolean {
+        val dir = File(modelsDir, "paddle-v6-small")
+        return listOf(
+            "PP-OCRv6_small_rec.onnx",
+            "PP-OCRv6_small_rec.txt",
+        ).all { File(dir, it).exists() }
+    }
+
+    fun paddleOcrV6SmallAssetsAvailable(): Boolean {
+        return try {
+            context.assets.list("models/ocr/paddle-v6-small")?.isNotEmpty() == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun ensurePaddleOcrV6Small(): PaddleOcrV6SmallPaths {
+        val dir = File(modelsDir, "paddle-v6-small").also { if (!it.exists()) it.mkdirs() }
+        return PaddleOcrV6SmallPaths(
+            recognitionModel = copyIfNeeded(
+                dir,
+                "PP-OCRv6_small_rec.onnx",
+                "models/ocr/paddle-v6-small/PP-OCRv6_small_rec.onnx",
+            ),
+            dictionary = copyIfNeeded(
+                dir,
+                "PP-OCRv6_small_rec.txt",
+                "models/ocr/paddle-v6-small/PP-OCRv6_small_rec.txt",
+            ),
         )
     }
 

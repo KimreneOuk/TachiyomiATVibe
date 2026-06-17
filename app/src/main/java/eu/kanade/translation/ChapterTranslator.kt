@@ -15,6 +15,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.rendering.PageTextRenderer
 import eu.kanade.translation.rendering.RenderColorEstimator
+import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.recognition.MlKitFullPageRecognitionEngine
 import eu.kanade.translation.recognition.PageRecognitionEngine
@@ -57,6 +58,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.i18n.at.ATMR
@@ -274,6 +276,7 @@ class ChapterTranslator(
     var isPaused: Boolean = false
 
     private var currentFromLang: TextRecognizerLanguage
+    private var currentOcrModel: OcrModel
     // TachiyomiAT: these engine references are reassigned from a translation
     // coroutine (on language change) and read/closed from closeEngines() which
     // runs WITHOUT the permit (called from stop() on the main thread). Mark them
@@ -289,9 +292,11 @@ class ChapterTranslator(
     init {
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+        val ocrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
         currentFromLang = fromLang
+        currentOcrModel = ocrModel
         currentInpaintingMode = inpaintingModeFromPref()
-        recognitionEngine = createRecognitionEngine(fromLang, currentInpaintingMode)
+        recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
         textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
     }
 
@@ -302,23 +307,27 @@ class ChapterTranslator(
         }
     }
 
-    private fun createRecognitionEngine(lang: TextRecognizerLanguage, mode: InpaintingMode): PageRecognitionEngine {
+    private fun createRecognitionEngine(
+        lang: TextRecognizerLanguage,
+        ocrModel: OcrModel,
+        mode: InpaintingMode,
+    ): PageRecognitionEngine {
         // TachiyomiAT: when a prior batch run hit repeated OOMs and flipped
         // autoFallbackToFast, skip ONNX entirely for this batch/page so we
         // don't keep re-OOM'ing after the threshold was already crossed.
         // Previously this flag was written but never read (dead state), so
         // pages kept retrying ONNX and each OOM filled the heap further.
         if (autoFallbackToFast) {
-            logcat(LogPriority.WARN) { "autoFallbackToFast is set — skipping ONNX for $lang, using ML Kit directly" }
+            logcat(LogPriority.WARN) { "autoFallbackToFast is set — skipping ONNX for $lang/$ocrModel, using ML Kit directly" }
             return MlKitFullPageRecognitionEngine(lang)
         }
-        val onnx = RoiPageRecognitionEngine(context, lang, mode)
+        val onnx = RoiPageRecognitionEngine(context, lang, ocrModel, mode)
         if (onnx.isAvailable) {
-            logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang" }
+            logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang with OCR model $ocrModel" }
             return onnx
         }
         onnx.close()
-        logcat(LogPriority.INFO) { "ONNX unavailable, falling back to ML Kit recognition engine for $lang" }
+        logcat(LogPriority.INFO) { "ONNX unavailable, falling back to ML Kit recognition engine for $lang/$ocrModel" }
         return MlKitFullPageRecognitionEngine(lang)
     }
 
@@ -586,18 +595,20 @@ class ChapterTranslator(
     private suspend fun translateChapterInternal(translation: Translation) {
         var store: ChapterTranslationStore? = null
         try {
-            if (enginesClosed || translation.fromLang != currentFromLang) {
+            val selectedOcrModel = OcrModelCatalog.selectedModel(translationPreferences, translation.fromLang)
+            if (enginesClosed || translation.fromLang != currentFromLang || selectedOcrModel != currentOcrModel) {
                 recognitionEngine.close()
                 currentFromLang = translation.fromLang
+                currentOcrModel = selectedOcrModel
                 currentInpaintingMode = inpaintingModeFromPref()
-                recognitionEngine = createRecognitionEngine(translation.fromLang, currentInpaintingMode)
+                recognitionEngine = createRecognitionEngine(translation.fromLang, currentOcrModel, currentInpaintingMode)
                 enginesClosed = false
             }
             val newMode = inpaintingModeFromPref()
             if (newMode != currentInpaintingMode) {
                 recognitionEngine.close()
                 currentInpaintingMode = newMode
-                recognitionEngine = createRecognitionEngine(currentFromLang, currentInpaintingMode)
+                recognitionEngine = createRecognitionEngine(currentFromLang, currentOcrModel, currentInpaintingMode)
             }
             if (enginesClosed || translation.fromLang != textTranslator.fromLang || translation.toLang != textTranslator.toLang) {
                 withContext(Dispatchers.IO) {
@@ -1043,15 +1054,17 @@ class ChapterTranslator(
         val streamFromReader = readerStreamFn ?: peekReaderPageStream(manga, chapter, source, pageKey)
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+        val selectedOcrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
         val syntheticTranslation = Translation(source, manga, chapter, fromLang, toLang)
         syntheticTranslation.status = Translation.State.TRANSLATING
 
         // Ensure the translation engine matches the current preferences.
-        if (enginesClosed || fromLang != currentFromLang) {
+        if (enginesClosed || fromLang != currentFromLang || selectedOcrModel != currentOcrModel) {
             recognitionEngine.close()
             currentFromLang = fromLang
+            currentOcrModel = selectedOcrModel
             currentInpaintingMode = inpaintingModeFromPref()
-            recognitionEngine = createRecognitionEngine(fromLang, currentInpaintingMode)
+            recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
             enginesClosed = false
         }
         if (enginesClosed || fromLang != textTranslator.fromLang || toLang != textTranslator.toLang) {
@@ -1080,7 +1093,7 @@ class ChapterTranslator(
             autoFallbackToFast = false
             consecutiveOomCount = 0
             recognitionEngine.close()
-            recognitionEngine = createRecognitionEngine(fromLang, currentInpaintingMode)
+            recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
         }
 
         // Use the shared active store so the reader observes our writes live.

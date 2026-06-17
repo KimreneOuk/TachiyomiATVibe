@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,10 +23,12 @@ import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.more.settings.widget.AiModelListState
 import eu.kanade.presentation.more.settings.widget.AiModelPickerWidget
 import eu.kanade.presentation.more.settings.widget.ApiKeyPreferenceWidget
+import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.translator.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslators
 import eu.kanade.translation.translator.StandardTranslators
@@ -170,11 +173,43 @@ private fun ColumnScope.LanguagesSection(prefs: TranslationPreferences) {
         valuePref = prefs.translateFromLanguage(),
         recentPref = prefs.translationRecentLanguagesFrom(),
     )
+    OcrModelRow(prefs)
     SearchableLanguageRow(
         title = stringResource(ATMR.strings.pref_translate_to),
         entries = toLangs,
         valuePref = prefs.translateToLanguage(),
         recentPref = prefs.translationRecentLanguagesTo(),
+    )
+}
+
+@Composable
+private fun ColumnScope.OcrModelRow(prefs: TranslationPreferences) {
+    val fromValue by prefs.translateFromLanguage().collectAsState()
+    val language = remember(fromValue) {
+        TextRecognizerLanguage.entries.firstOrNull { it.name == fromValue }
+            ?: TextRecognizerLanguage.CHINESE
+    }
+    val ocrPref = remember(language) {
+        OcrModelCatalog.preferenceFor(prefs, language)
+    }
+    val storedModel by ocrPref.collectAsState()
+    val selectedModel = remember(storedModel, language) {
+        OcrModelCatalog.coerce(storedModel, language)
+    }
+    LaunchedEffect(storedModel, selectedModel) {
+        if (storedModel != selectedModel) {
+            ocrPref.set(selectedModel)
+        }
+    }
+    val entries = remember(language) {
+        OcrModelCatalog.labelsFor(language)
+    }
+
+    EngineListRow(
+        title = stringResource(ATMR.strings.pref_ocr_model),
+        entries = entries,
+        value = selectedModel,
+        onValueChange = { ocrPref.set(it) },
     )
 }
 
@@ -257,6 +292,8 @@ private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
 
     val apiKeyPref = remember(aiEngine) { prefs.translationAiApiKey(aiEngine) }
     val apiKey by apiKeyPref.collectAsState()
+    val baseUrlPref = remember(aiEngine) { prefs.translationAiBaseUrl(aiEngine) }
+    val baseUrl by baseUrlPref?.collectAsState() ?: remember { mutableStateOf("") }
     val modelPref = remember(aiEngine) { prefs.translationAiModel(aiEngine) }
     val currentModel by modelPref.collectAsState()
     val recentPref = remember(aiEngine) { prefs.translationAiRecentModels(aiEngine) }
@@ -277,20 +314,48 @@ private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
         AiEngine.GEMINI -> stringResource(ATMR.strings.pref_ai_api_key_gemini)
         AiEngine.OPENROUTER -> stringResource(ATMR.strings.pref_ai_api_key_openrouter)
         AiEngine.DEEPSEEK -> stringResource(ATMR.strings.pref_ai_api_key_deepseek)
+        AiEngine.LMSTUDIO -> stringResource(ATMR.strings.pref_ai_base_url_lmstudio)
     }
-    ApiKeyPreferenceWidget(
-        title = apiKeyTitle,
-        apiKey = apiKey,
-        keySetLabel = stringResource(ATMR.strings.pref_ai_key_set),
-        keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set),
-        onApiKeyChange = { apiKeyPref.set(it) },
-    )
+    if (aiEngine == AiEngine.LMSTUDIO && baseUrlPref != null) {
+        EditTextPreferenceWidget(
+            title = apiKeyTitle,
+            subtitle = "%s",
+            icon = null,
+            value = baseUrl,
+            isValueValid = { true },
+            normalizeValue = { AiModelFetcher.normalizeBaseUrl(it) },
+            onConfirm = { newUrl ->
+                baseUrlPref.set(newUrl)
+                true
+            },
+        )
+    } else {
+        ApiKeyPreferenceWidget(
+            title = apiKeyTitle,
+            apiKey = apiKey,
+            keySetLabel = stringResource(ATMR.strings.pref_ai_key_set),
+            keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set),
+            onApiKeyChange = { apiKeyPref.set(it) },
+        )
+    }
+
+    val missingConnectionMessage = if (aiEngine == AiEngine.LMSTUDIO) {
+        stringResource(ATMR.strings.pref_ai_no_base_url)
+    } else {
+        stringResource(ATMR.strings.pref_ai_no_key)
+    }
+    val hasConnection = if (aiEngine == AiEngine.LMSTUDIO) {
+        baseUrl.isNotBlank()
+    } else {
+        apiKey.isNotBlank()
+    }
 
     val onFetch: () -> Unit = {
         val key = apiKey
-        fetchState = AiModelListState.Loading(key)
+        val url = baseUrl
+        fetchState = AiModelListState.Loading(if (aiEngine == AiEngine.LMSTUDIO) url else key)
         scope.launch {
-            val result = AiModelFetcher.fetch(aiEngine, key)
+            val result = AiModelFetcher.fetch(aiEngine, key, url)
             fetchState = when (result) {
                 is AiModelFetcher.Result.Success -> AiModelListState.Loaded(result.models)
                 is AiModelFetcher.Result.InvalidKey -> AiModelListState.Failed("Invalid or expired API key")
@@ -308,7 +373,8 @@ private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
         currentModel = currentModel,
         recentModels = recentModels,
         listState = fetchState,
-        hasApiKey = apiKey.isNotBlank(),
+        hasApiKey = hasConnection,
+        missingConnectionMessage = missingConnectionMessage,
         onFetchModels = onFetch,
         onSelectModel = onSelectModel,
         onManualModel = onSelectModel,

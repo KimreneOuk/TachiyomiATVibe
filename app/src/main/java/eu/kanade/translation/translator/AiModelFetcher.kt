@@ -2,6 +2,8 @@ package eu.kanade.translation.translator
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import logcat.logcat
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -55,7 +57,12 @@ object AiModelFetcher {
         } catch (e: InvalidKeyException) {
             Result.InvalidKey
         } catch (e: Exception) {
-            Result.Error(e.message ?: "Network error")
+            if (engine == AiEngine.LMSTUDIO) {
+                logcat(LogPriority.ERROR) {
+                    "LM Studio model fetch failed for '${normalizeBaseUrl(baseUrl)}/models': ${e.stackTraceToString()}"
+                }
+            }
+            Result.Error("${e::class.java.simpleName}: ${e.message ?: "Network error"}")
         }
     }
 
@@ -124,8 +131,10 @@ object AiModelFetcher {
     }
 
     private fun fetchLmStudio(baseUrl: String): List<String> {
+        val url = "${normalizeBaseUrl(baseUrl)}/models"
+        logcat(LogPriority.INFO) { "LM Studio fetching models from '$url'" }
         val request = Request.Builder()
-            .url("${normalizeBaseUrl(baseUrl)}/models")
+            .url(url)
             .get()
             .build()
 

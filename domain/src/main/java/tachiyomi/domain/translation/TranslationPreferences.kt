@@ -24,6 +24,12 @@ enum class StandardEngine { MLKIT, GOOGLE }
  */
 enum class AiEngine { GEMINI, OPENROUTER, DEEPSEEK, LMSTUDIO }
 
+/**
+ * OCR backends used before translation. Stored separately from translator
+ * engines because OCR reads the source page language, not the target language.
+ */
+enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
+
 class TranslationPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
@@ -88,6 +94,11 @@ class TranslationPreferences(
 
     fun translationRecentLanguagesFrom() = preferenceStore.getString("translation_recent_languages_from", "")
     fun translationRecentLanguagesTo() = preferenceStore.getString("translation_recent_languages_to", "")
+
+    fun translationOcrModel(languageName: String): Preference<OcrModel> {
+        val normalized = languageName.lowercase()
+        return preferenceStore.getEnum("translation_ocr_model_$normalized", defaultOcrModel(languageName))
+    }
 
     //region Category and engine selection
     fun translationEngineCategory() = preferenceStore.getEnum("translation_engine_category", TranslationEngineCategory.STANDARD)
@@ -195,5 +206,12 @@ class TranslationPreferences(
 
         fun decodeRecentLanguages(value: String): List<String> =
             value.split('\n').map { it.trim() }.filter { it.isNotBlank() }
+
+        fun defaultOcrModel(languageName: String): OcrModel {
+            return when (languageName.uppercase()) {
+                "JAPANESE" -> OcrModel.MANGAOCR
+                else -> OcrModel.MLKIT
+            }
+        }
     }
 }
