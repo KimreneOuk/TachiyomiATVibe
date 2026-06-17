@@ -158,7 +158,7 @@ class TranslationManager(
         get() = translator.queueState
 
     fun translatorStart() = translator.start()
-    fun translatorStop(reason: String? = null) = translator.stop(reason)
+    fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 
     fun onMemoryPressure(level: Int) {
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {

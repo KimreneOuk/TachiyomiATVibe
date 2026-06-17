@@ -468,6 +468,8 @@ class ReaderActivity : BaseActivity() {
             val translationState by viewModel.state.map { it.translationState }.collectAsState(initial = Translation.State.NOT_TRANSLATED)
             val translationProgress by viewModel.state.map { it.translationProgress }.collectAsState(initial = Pair(0, 0))
             val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
+            // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
+            val translationQueue by viewModel.translationQueueState.collectAsState()
 
             ReaderContentOverlay(
                 brightness = state.brightnessOverlayValue,
@@ -520,9 +522,16 @@ class ReaderActivity : BaseActivity() {
                 translationProgress = translationProgress,
                 translationCurrentPage = translationCurrentPage,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
-                // Disable the icon while work is running so taps can't queue up
-                // overlapping requests behind the singleton translator permit.
-                translateEnabled = translationState != Translation.State.TRANSLATING,
+                // TachiyomiAT: the translate control is ALWAYS tappable, even while
+                // translation is running. While busy it shows a spinner, but tapping it
+                // opens the settings sheet — which is the ONLY place the user can stop
+                // an in-flight auto-translation run or change engine/language config. The
+                // previous behaviour disabled the icon while TRANSLATING, so the user was
+                // trapped on the spinner with no escape until the whole chapter finished.
+                // Repeated taps are harmless: openTranslationSettingsDialog() just sets the
+                // dialog state; the actual translation work is gated by the singleton
+                // translator permit and the activePageJobs dedup in TranslationManager.
+                translateEnabled = true,
             )
 
             if (flashOnPageChange) {
@@ -560,6 +569,9 @@ class ReaderActivity : BaseActivity() {
                     TranslationSettingsSheet(
                         onDismissRequest = onDismissRequest,
                         onStopAllTranslation = { viewModel.stopAllTranslation() },
+                        queue = translationQueue,
+                        translationProgress = translationProgress,
+                        translationCurrentPage = translationCurrentPage,
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

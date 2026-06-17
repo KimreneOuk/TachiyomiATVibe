@@ -61,6 +61,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
@@ -117,6 +118,89 @@ class ReaderViewModel @JvmOverloads constructor(
 
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
+
+    /**
+     * TachiyomiAT: read-only view of the current chapter's translation queue,
+     * derived from the live [translationManager.activeStoreState]. Each entry is
+     * one page that is (or was) being processed, with its 1-based index and the
+     * stage it's currently in. Consumed by the reader translation settings sheet
+     * so the user can see exactly what is queued/running/done/failed while a run
+     * is in progress — and decide whether to Stop. Exposed as its own StateFlow
+     * (rather than a field on [State]) so a per-page list update doesn't force a
+     * recompose of the whole reader.
+     */
+    val translationQueueState: kotlinx.coroutines.flow.StateFlow<List<QueuedPageInfo>> =
+        translationManager.activeStoreState
+            .map { pages -> buildQueuedPageInfo(pages) }
+            .distinctUntilChanged()
+            .stateIn(
+                viewModelScope,
+                kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+                emptyList(),
+            )
+
+    /**
+     * One row in the translation queue view. [index] is 1-based and stable
+     * (derived from the page key's natural order within the chapter); [stage]
+     * is the human-readable current stage for display.
+     */
+    @Immutable
+    data class QueuedPageInfo(
+        val pageKey: String,
+        val index: Int,
+        val stage: QueueStage,
+    )
+
+    enum class QueueStage { QUEUED, OCR, INPAINT, TRANSLATE, RENDER, DONE, FAILED }
+
+    /**
+     * Maps the live per-page store into an ordered, index-resolved list for the
+     * queue view. Pages are ordered by their 1-based chapter index (parsed from
+     * the page key where possible, else by insertion order). Only pages that have
+     * an entry in the store (i.e. are/were being translated) appear — untouched
+     * pages are omitted to keep the list focused on active work.
+     */
+    private fun buildQueuedPageInfo(pages: Map<String, PageTranslation>): List<QueuedPageInfo> {
+        if (pages.isEmpty()) return emptyList()
+        return pages.entries
+            .mapIndexed { insertionOrder, (pageKey, pt) ->
+                QueuedPageInfo(
+                    pageKey = pageKey,
+                    index = resolvePageIndex(pageKey, insertionOrder),
+                    stage = stageOf(pt),
+                )
+            }
+            .sortedBy { it.index }
+    }
+
+    /** Best-effort 1-based page index from the page key (e.g. "page-07" → 7). */
+    private fun resolvePageIndex(pageKey: String, fallback: Int): Int {
+        // Page keys in this codebase are typically "<something>-<number>" or a
+        // bare number; fall back to insertion order if no trailing int is found.
+        val match = Regex("""(\d+)$""").find(pageKey)
+        return match?.groupValues?.get(1)?.toIntOrNull() ?: (fallback + 1)
+    }
+
+    /** Derives the display stage from a page's four stage statuses. */
+    private fun stageOf(pt: PageTranslation): QueueStage {
+        // A page that produced a rendered (or cleaned) image is effectively done.
+        if (pt.renderedImageName != null || pt.cleanedImageName != null) return QueueStage.DONE
+        // First RUNNING stage wins, in pipeline order: render → translate →
+        // inpaint → ocr (checked newest-first so the label reflects the current
+        // step, not an earlier one that hasn't been cleared yet).
+        if (pt.renderStatus == StageStatus.RUNNING) return QueueStage.RENDER
+        if (pt.translationStatus == StageStatus.RUNNING) return QueueStage.TRANSLATE
+        if (pt.inpaintStatus == StageStatus.RUNNING) return QueueStage.INPAINT
+        if (pt.ocrStatus == StageStatus.RUNNING) return QueueStage.OCR
+        // Any FAILED stage with no result yet → Failed.
+        if (pt.ocrStatus == StageStatus.FAILED || pt.inpaintStatus == StageStatus.FAILED ||
+            pt.translationStatus == StageStatus.FAILED || pt.renderStatus == StageStatus.FAILED
+        ) {
+            return QueueStage.FAILED
+        }
+        return QueueStage.QUEUED
+    }
+
 
     private val eventChannel = Channel<Event>()
     val eventFlow = eventChannel.receiveAsFlow()
@@ -346,7 +430,9 @@ class ReaderViewModel @JvmOverloads constructor(
                     // translator permit) after the per-page buttons disappear.
                     autoQueuedPageKeys.clear()
                     translationManager.cancelAllPageTranslations()
-                    translationManager.translatorStop("translation disabled")
+                    // TachiyomiAT: user disabled translation — tear down engines so a
+                    // subsequent re-enable picks up any config changes made while off.
+                    translationManager.translatorStop("translation disabled", closeEngines = true)
                     // Reset both halves of the merged state so the bottom-bar
                     // icon returns to neutral instead of staying stuck on
                     // TRANSLATING/ERROR after the work was just cancelled.
@@ -1616,7 +1702,12 @@ class ReaderViewModel @JvmOverloads constructor(
     fun stopAllTranslation() {
         autoQueuedPageKeys.clear()
         translationManager.cancelAllPageTranslations()
-        translationManager.translatorStop("user stop")
+        // TachiyomiAT: closeEngines = true so the cached textTranslator /
+        // recognitionEngine are torn down and enginesClosed is set. Without this,
+        // any config change made after stopping (engine, provider, API key, model,
+        // OCR, language) was ignored on the next run — the rebuild gate never
+        // fired because the old engine instances stayed cached.
+        translationManager.translatorStop("user stop", closeEngines = true)
         // TachiyomiAT: evict all registered reader page streams so their captured
         // ReaderPage / ByteArray references are released. Without this, the
         // process-lifetime readerPageStreams map keeps page bytes alive after the

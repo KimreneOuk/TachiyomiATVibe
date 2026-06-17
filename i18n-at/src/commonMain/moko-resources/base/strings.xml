@@ -59,6 +59,27 @@
     <string name="reader_translation_stop_all">Stop all translation</string>
     <string name="reader_translation_stop_all_summary">Cancels every page being translated right now</string>
 
+    <!-- TachiyomiAT: live queue view shown in the reader translation settings sheet -->
+    <string name="reader_translation_queue_summary">Translating page %1$d of %2$d · %3$d queued</string>
+    <string name="reader_translation_queue_idle">No pages in the translation queue</string>
+    <string name="reader_translation_queue_running">Translating page %1$d of %2$d</string>
+    <string name="reader_translation_queued_count">Queued: %1$d</string>
+    <string name="reader_translation_stage_ocr">OCR</string>
+    <string name="reader_translation_stage_inpaint">Inpaint</string>
+    <string name="reader_translation_stage_translate">Translate</string>
+    <string name="reader_translation_stage_render">Render</string>
+    <string name="reader_translation_stage_running">%1$s…</string>
+    <string name="reader_translation_stage_done">Done</string>
+    <string name="reader_translation_stage_failed">Failed</string>
+    <string name="reader_translation_stage_queued">Queued</string>
+    <string name="reader_translation_page">Page %1$d</string>
+
+    <!-- TachiyomiAT: per-page original/translated compare handle -->
+    <string name="reader_compare_handle">Compare original and translated</string>
+    <string name="reader_compare_show_original">Show original</string>
+    <string name="reader_compare_show_translated">Show translated</string>
+    <string name="reader_compare_open_settings">Translation settings</string>
+
     <!-- Reader overlay translation settings sheet -->
     <string name="translation_settings">Translation</string>
     <string name="pref_translation_enabled">Enable translation</string>

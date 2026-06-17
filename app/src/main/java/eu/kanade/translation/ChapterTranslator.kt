@@ -289,6 +289,75 @@ class ChapterTranslator(
     private var recognitionEngine: PageRecognitionEngine
     private var currentInpaintingMode: InpaintingMode
 
+    // TachiyomiAT: snapshot of EVERY config dimension used to build the current
+    // textTranslator, captured at every build site. The rebuild gates below
+    // compare a freshly-computed signature against this one so that changing the
+    // engine category, provider, API key, model, temperature, max-tokens, or
+    // languages at runtime forces a rebuild — not just language changes. Without
+    // this, the cached AI translator instance (which captures key/model/temp as
+    // constructor fields and never re-reads prefs) survived a stop+reconfigure+restart
+    // cycle, leaving the run pinned to the original config. apiKeyHash is a short
+    // non-reversible digest so secrets are never stored in this struct or logged.
+    @Volatile
+    private var currentTranslatorSignature: EngineSignature
+
+    /**
+     * Captures the full set of preferences that determine which [TextTranslator]
+     * gets built. Two equal signatures guarantee the cached translator reflects
+     * exactly this configuration; any difference means a rebuild is required.
+     */
+    private data class EngineSignature(
+        val category: tachiyomi.domain.translation.TranslationEngineCategory,
+        val standardEngine: tachiyomi.domain.translation.StandardEngine,
+        val aiEngine: tachiyomi.domain.translation.AiEngine,
+        val apiKeyHash: String,
+        val baseUrl: String,
+        val modelName: String,
+        val temperature: String,
+        val maxTokens: String,
+        val fromLang: TextRecognizerLanguage,
+        val toLang: TextTranslatorLanguage,
+    )
+
+    /**
+     * Reads every engine-selection preference live and folds it into an
+     * [EngineSignature]. Called at the top of each translate path so the rebuild
+     * gate sees the user's current configuration, not whatever was selected when
+     * the singleton was first constructed.
+     */
+    private fun computeTranslatorSignature(
+        fromLang: TextRecognizerLanguage,
+        toLang: TextTranslatorLanguage,
+    ): EngineSignature {
+        val aiEngine = translationPreferences.translationAiEngine().get()
+        return EngineSignature(
+            category = translationPreferences.translationEngineCategory().get(),
+            standardEngine = translationPreferences.translationStandardEngine().get(),
+            aiEngine = aiEngine,
+            apiKeyHash = shortHash(translationPreferences.translationAiApiKey(aiEngine).get()),
+            baseUrl = translationPreferences.translationAiBaseUrlLmStudio().get(),
+            modelName = translationPreferences.translationAiModel(aiEngine).get(),
+            temperature = translationPreferences.translationAiTemperature().get(),
+            maxTokens = translationPreferences.translationAiOutputTokens().get(),
+            fromLang = fromLang,
+            toLang = toLang,
+        )
+    }
+
+    /** Stable, non-reversible short digest for secret comparison (API keys). */
+    private fun shortHash(value: String): String {
+        if (value.isEmpty()) return ""
+        // Lightweight FNV-1a: sufficient to detect a change without pulling in
+        // java.security.MessageDigest on a hot path, and never reversible to the
+        // original key from 8 hex chars.
+        var h = 0xcbf29ce484222325UL
+        for (c in value) {
+            h = h xor c.code.toULong()
+            h *= 0x100000001b3UL
+        }
+        return h.toString(16)
+    }
+
     init {
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
@@ -298,6 +367,7 @@ class ChapterTranslator(
         currentInpaintingMode = inpaintingModeFromPref()
         recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
         textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
+        currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
     }
 
     private fun inpaintingModeFromPref(): InpaintingMode {
@@ -343,11 +413,23 @@ class ChapterTranslator(
         return pending.isNotEmpty()
     }
 
-    fun stop(reason: String? = null) {
+    fun stop(reason: String? = null, closeEngines: Boolean = false) {
         cancelTranslatorJob()
         queueState.value.filter { it.status == Translation.State.TRANSLATING }
             .forEach { it.status = Translation.State.ERROR }
-        if (reason != null) return
+        // TachiyomiAT: the historical `if (reason != null) return` skipped
+        // closeEngines() for EVERY non-null-reason stop — including the user's
+        // explicit "Stop all translation". That left the cached textTranslator /
+        // recognitionEngine alive (enginesClosed stayed false), so any config
+        // change made after stopping (engine, provider, API key, model, language,
+        // OCR model) was ignored on the next run: the rebuild gate never fired.
+        //
+        // closeEngines now tears down + rearms (sets enginesClosed = true) when a
+        // caller explicitly asks for it. User-initiated stops pass closeEngines =
+        // true so the next translate rebuilds unconditionally from live prefs.
+        // Background / memory-pressure stops leave closeEngines = false to stay
+        // lightweight (the engines may be reused shortly).
+        if (reason != null && !closeEngines) return
         isPaused = false
         closeEngines()
     }
@@ -610,13 +692,22 @@ class ChapterTranslator(
                 currentInpaintingMode = newMode
                 recognitionEngine = createRecognitionEngine(currentFromLang, currentOcrModel, currentInpaintingMode)
             }
-            if (enginesClosed || translation.fromLang != textTranslator.fromLang || translation.toLang != textTranslator.toLang) {
+            // TachiyomiAT: rebuild the text translator whenever the full engine
+            // configuration differs from what the cached instance was built with.
+            // The signature is computed against the queued translation's languages
+            // (matching the build call below) but reads engine category, provider,
+            // API key, model, temperature, and max-tokens live — so changing any of
+            // those at runtime forces a rebuild here too. Previously only a language
+            // change rebuilt the translator, leaving stale AI engine instances.
+            val desiredSignature = computeTranslatorSignature(translation.fromLang, translation.toLang)
+            if (enginesClosed || desiredSignature != currentTranslatorSignature) {
                 withContext(Dispatchers.IO) {
                     textTranslator.close()
                 }
                 textTranslator = TranslationEngineBuilder.build(
                     translationPreferences, translation.fromLang, translation.toLang,
                 )
+                currentTranslatorSignature = desiredSignature
                 enginesClosed = false
             }
 
@@ -1067,9 +1158,18 @@ class ChapterTranslator(
             recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
             enginesClosed = false
         }
-        if (enginesClosed || fromLang != textTranslator.fromLang || toLang != textTranslator.toLang) {
+        // TachiyomiAT: rebuild the text translator whenever the full engine
+        // configuration differs from what the cached instance was built with —
+        // not just when the language changes. The signature covers engine
+        // category, provider, API key, model, temperature, and max-tokens, all
+        // of which the AI translators capture at construction time and never
+        // re-read. Without this, changing any of those at runtime (after a stop)
+        // silently reused the stale instance.
+        val desiredSignature = computeTranslatorSignature(fromLang, toLang)
+        if (enginesClosed || desiredSignature != currentTranslatorSignature) {
             withContext(Dispatchers.IO) { textTranslator.close() }
             textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
+            currentTranslatorSignature = desiredSignature
             enginesClosed = false
         }
 

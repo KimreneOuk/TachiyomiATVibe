@@ -66,6 +66,14 @@ fun TranslationSettingsSheet(
     // settings sheet — previously there was no way to stop translation at all
     // short of navigating away or disabling the master toggle.
     onStopAllTranslation: () -> Unit = {},
+    // TachiyomiAT: live queue to render in the QueueSection. Passed in from the
+    // activity (collected from viewModel.translationQueueState) so the sheet
+    // stays a stateless composable and the heavy per-page list only recomposes
+    // the sheet, not the reader. Plus the running-page index + totals for the
+    // summary line.
+    queue: List<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo> = emptyList(),
+    translationProgress: Pair<Int, Int> = Pair(0, 0),
+    translationCurrentPage: Int = 0,
 ) {
     val prefs = remember { Injekt.get<TranslationPreferences>() }
 
@@ -78,6 +86,11 @@ fun TranslationSettingsSheet(
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
         ) {
             TogglesSection(prefs)
+            QueueSection(
+                queue = queue,
+                translationProgress = translationProgress,
+                translationCurrentPage = translationCurrentPage,
+            )
             StopAllSection(onStopAllTranslation)
             LanguagesSection(prefs)
             EngineSection(prefs)
@@ -92,6 +105,117 @@ private fun ColumnScope.StopAllSection(onStopAllTranslation: () -> Unit) {
         subtitle = stringResource(ATMR.strings.reader_translation_stop_all_summary),
         onPreferenceClick = { onStopAllTranslation() },
     )
+}
+
+/**
+ * TachiyomiAT: live view of the current chapter's translation queue. Shows a
+ * one-line summary (current page / total · queued count) and a compact list of
+ * each page with its current stage. This is the visibility the user was missing:
+ * while auto-translation ran they previously had no way to see what was queued
+ * or stop it. The list is bounded so a long chapter doesn't make the sheet
+ * unusable — only the first few active/queued pages are listed, with an
+ * "and N more" tail.
+ */
+@Composable
+private fun ColumnScope.QueueSection(
+    queue: List<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo>,
+    translationProgress: Pair<Int, Int>,
+    translationCurrentPage: Int,
+) {
+    val (done, total) = translationProgress
+    val queued = queue.count {
+        it.stage != eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.DONE
+    }
+    val summary = when {
+        total == 0 && queue.isEmpty() ->
+            stringResource(ATMR.strings.reader_translation_queue_idle)
+        translationCurrentPage > 0 && total > 0 ->
+            stringResource(ATMR.strings.reader_translation_queue_summary, translationCurrentPage, total, queued)
+        total > 0 ->
+            stringResource(ATMR.strings.reader_translation_queued_count, queued)
+        else ->
+            stringResource(ATMR.strings.reader_translation_queue_idle)
+    }
+
+    Text(
+        text = summary,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+    )
+
+    if (queue.isEmpty()) return
+
+    // Show up to 8 rows, then an "and N more" tail, so a 40-page chapter's
+    // queue doesn't push the rest of the sheet off-screen.
+    val visible = queue.take(8)
+    val remainder = queue.size - visible.size
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MaterialTheme.padding.medium),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall / 2),
+    ) {
+        visible.forEach { info ->
+            QueueRow(info)
+        }
+        if (remainder > 0) {
+            Text(
+                text = "… +$remainder",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun QueueRow(info: eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo) {
+    val stageLabel: String
+    val stageColor: androidx.compose.ui.graphics.Color
+    when (info.stage) {
+        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.DONE -> {
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_done)
+            stageColor = MaterialTheme.colorScheme.primary
+        }
+        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.FAILED -> {
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_failed)
+            stageColor = MaterialTheme.colorScheme.error
+        }
+        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.QUEUED -> {
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_queued)
+            stageColor = MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        else -> {
+            val name = when (info.stage) {
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.OCR ->
+                    stringResource(ATMR.strings.reader_translation_stage_ocr)
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.INPAINT ->
+                    stringResource(ATMR.strings.reader_translation_stage_inpaint)
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.TRANSLATE ->
+                    stringResource(ATMR.strings.reader_translation_stage_translate)
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.RENDER ->
+                    stringResource(ATMR.strings.reader_translation_stage_render)
+                else -> ""
+            }
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_running, name)
+            stageColor = MaterialTheme.colorScheme.primary
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = stringResource(ATMR.strings.reader_translation_page, info.index),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = stageLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = stageColor,
+        )
+    }
 }
 
 @Composable
