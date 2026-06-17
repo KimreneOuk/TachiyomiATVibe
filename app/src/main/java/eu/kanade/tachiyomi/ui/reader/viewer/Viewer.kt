@@ -45,14 +45,4 @@ interface Viewer {
 
     fun refreshTranslationPages(pages: Set<ReaderPage>) {}
 
-    /**
-     * TachiyomiAT: lightweight status-only refresh. Called when a page's
-     * translation stage transitioned (RUNNING/FAILED/etc.) but the displayed
-     * image did NOT change. Implementations should only sync the processing
-     * overlay + translate/cancel button — never re-decode or rebind (unlike
-     * [refreshTranslationPages], which may feed a new image). This keeps bare
-     * RUNNING stage transitions from re-triggering image work on the visible
-     * page (the source of the "blink during auto-translate" bug).
-     */
-    fun refreshTranslationStatus(pages: Set<ReaderPage>) {}
 }

@@ -134,14 +134,7 @@ class DeepSeekTranslator(
                 }
                 block.translation = sanitizeOcrArtifacts(translated)
             }
-            // TachiyomiAT: filter out watermark blocks (the model occasionally
-            // echoes a "RTMTH" watermark it was trained with). GeminiTranslator
-            // already does this; applying it here too keeps block geometry
-            // consistent across engines so the inpaint boxes (computed before
-            // translation) stay aligned regardless of which AI engine is selected.
-            pages.forEach { (_, v) ->
-                v.blocks = v.blocks.filterNot { it.translation.contains("RTMTH") }.toMutableList()
-            }
+            TranslationBlockFilters.removeWatermarkBlocks(pages)
 
         } catch (e: Exception) {
             logcat { "DeepSeek Translation Error : ${e.stackTraceToString()}" }

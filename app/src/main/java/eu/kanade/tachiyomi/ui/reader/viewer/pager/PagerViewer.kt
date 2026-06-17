@@ -395,17 +395,6 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
             .forEach { it.refreshTranslation() }
     }
 
-    // TachiyomiAT: lightweight status-only refresh — overlay/button sync only,
-    // no re-decode. See Viewer.refreshTranslationStatus and the
-    // TranslationStatusChanged event for why this is split from
-    // refreshTranslationPages.
-    override fun refreshTranslationStatus(pages: Set<ReaderPage>) {
-        pager.children
-            .filterIsInstance(PagerPageHolder::class.java)
-            .filter { it.page in pages }
-            .forEach { it.syncTranslationStatus() }
-    }
-
     /**
      * Called from the containing activity when a key [event] is received. It should return true
      * if the event was handled, false otherwise.

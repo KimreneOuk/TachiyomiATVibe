@@ -102,6 +102,7 @@ class PagerPageHolder(
      * Null means "we have not yet rendered a translated image for this holder".
      */
     private var lastShownImageName: String? = null
+    private var lastShownRenderRevision: Long = -1L
 
     init {
         loadJob = holderScope.launch { loadPageAndProcessStatus() }
@@ -141,6 +142,9 @@ class PagerPageHolder(
                     setTranslating(false)
                 }
             }.launchIn(holderScope)
+        viewer.activity.viewModel.observePageView(page)
+            ?.onEach { refreshTranslation() }
+            ?.launchIn(holderScope)
         // Per-page translate button
         onTranslateClicked = {
             viewer.activity.viewModel.translateSinglePage(page)
@@ -188,9 +192,8 @@ class PagerPageHolder(
      * for the case where a page's stage transitioned (RUNNING/FAILED) but the
      * displayed IMAGE did not change. Updates ONLY the processing overlay and the
      * translate/cancel button + error text — it must never re-decode or re-set
-     * the image. This is the handler for [TranslationStatusChanged]; calling it
-     * instead of [refreshTranslation] on bare status changes is what eliminates
-     * the redundant image work that caused the auto-translate blink.
+     * the image. Holder-level page-view updates call this for status-only changes,
+     * which avoids the redundant image work that caused the auto-translate blink.
      */
     fun syncTranslationStatus() {
         val isBeingTranslated = isPageBeingTranslated()
@@ -303,6 +306,11 @@ class PagerPageHolder(
         } else {
             null
         }
+        lastShownRenderRevision = if (page.showTranslatedImage) {
+            page.translation?.renderRevision ?: -1L
+        } else {
+            -1L
+        }
 
         val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated) {
@@ -375,8 +383,12 @@ class PagerPageHolder(
         // changed (a genuinely new rendered/cleaned result) OR we're switching
         // between showing the original and the translated image.
         val newName = page.translation?.renderedImageName ?: page.translation?.cleanedImageName
+        val newRevision = page.translation?.renderRevision ?: -1L
         val alreadyShowingThisImage =
-            page.showTranslatedImage && newName != null && newName == lastShownImageName
+            page.showTranslatedImage &&
+                newName != null &&
+                newName == lastShownImageName &&
+                newRevision == lastShownRenderRevision
         when {
             isBeingTranslated -> {
                 showProcessingOverlay(true)
@@ -409,6 +421,7 @@ class PagerPageHolder(
         // refreshTranslation() can short-circuit if nothing changed. When showing
         // the original (not a translated stream) there's no name to track.
         lastShownImageName = if (page.showTranslatedImage) newName else null
+        lastShownRenderRevision = if (page.showTranslatedImage) newRevision else -1L
         // TachiyomiAT: surface translation errors to the user — but only when the
         // page is NOT currently running. A page that's being retried may carry
         // a stale errorMessage from a prior failed attempt; showing it alongside

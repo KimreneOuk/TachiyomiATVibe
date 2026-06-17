@@ -14,6 +14,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.rendering.PageTextRenderer
+import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.recognition.MlKitFullPageRecognitionEngine
 import eu.kanade.translation.recognition.PageRecognitionEngine
@@ -342,6 +343,23 @@ class ChapterTranslator(
         closeEngines()
     }
 
+    fun onMemoryPressure(level: Int) {
+        tachiyomi.domain.translation.pools.BitmapPool.releaseAll()
+        when {
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
+                stop("memory pressure")
+                closeEngines()
+                clearAllReaderPageStreams()
+            }
+            level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+                cancelTranslatorJob()
+                queueState.value.filter { it.status == Translation.State.TRANSLATING }
+                    .forEach { it.status = Translation.State.QUEUE }
+                clearAllReaderPageStreams()
+            }
+        }
+    }
+
     fun pause() {
         cancelTranslatorJob()
         queueState.value.filter { it.status == Translation.State.TRANSLATING }
@@ -414,16 +432,17 @@ class ChapterTranslator(
     }
 
     private fun closeEngines() {
-        // NOTE: This does NOT acquire translatorPermit to avoid a re-entrancy
-        // deadlock (callers like stop() invoked from inside a withPermit block
-        // would deadlock on the non-reentrant Semaphore(1)). The concurrent-close
-        // NPE risk is instead eliminated at the engine layer: RoiPageRecognitionEngine
-        // captures detector/roiOcrEngine into locals and throws a catchable
-        // IllegalStateException if they were nulled mid-analyze, which
-        // processSinglePage catches and degrades gracefully.
-        enginesClosed = true
-        try { recognitionEngine.close() } catch (_: Exception) {}
-        try { textTranslator.close() } catch (_: Exception) {}
+        if (!translatorPermit.tryAcquire()) {
+            enginesClosed = true
+            return
+        }
+        try {
+            enginesClosed = true
+            try { recognitionEngine.close() } catch (_: Exception) {}
+            try { textTranslator.close() } catch (_: Exception) {}
+        } finally {
+            translatorPermit.release()
+        }
     }
 
     fun queueChapter(manga: Manga, chapter: Chapter) {
@@ -812,6 +831,16 @@ class ChapterTranslator(
                         if (renderTarget != null) {
                             try {
                                 pageTranslation.renderStatus = StageStatus.RUNNING
+                                // TachiyomiAT: re-derive block text/stroke colors
+                                // AGAINST THE CLEANED BITMAP right before render. The
+                                // recognition-time estimate (in computeRenderColors)
+                                // sampled the ORIGINAL image, but inpainting may have
+                                // replaced the box background with a different median
+                                // color (e.g. mid-gray on a grayscale panel). Without
+                                // this recompute, a dark inpaint could get dark text
+                                // (illegible) and vice versa. Cheap (~1ms/block) and
+                                // gated on the cleaned bitmap being non-null.
+                                RenderColorEstimator.recomputeFor(renderTarget, pageTranslation.blocks)
                                 // TachiyomiAT: render() returns the bitmap it actually
                                 // drew on — it may be a mutable COPY of renderTarget
                                 // if renderTarget was immutable. Compress the returned
@@ -822,33 +851,18 @@ class ChapterTranslator(
                                     translation.manga.title, translation.source,
                                     translation.chapter.name, translation.chapter.scanlator,
                                 ).also { companionDir = it }
-                                val safeName = fileName.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                                val renderedFileName = "${safeName}.rendered.webp"
-                                val renderedFile = cDir?.createFile(renderedFileName)
-                                if (renderedFile != null) {
-                                    renderedFile.openOutputStream().use { os ->
-                                        renderedBitmap.compress(Bitmap.CompressFormat.WEBP, 90, os)
-                                    }
-                                    pageTranslation.renderedImageName = renderedFileName
-                                    pageTranslation.renderStatus = StageStatus.READY
-                                    if (retryTargetOwned) {
-                                        pageTranslation.errorMessage = "Inpainted on retry (downscaled decode)"
-                                    }
-                                    logcat(LogPriority.INFO) {
-                                        "Saved rendered image: $renderedFileName for $fileName" +
-                                            if (retryTargetOwned) " (retry path)" else ""
-                                    }
-                                } else {
-                                    pageTranslation.renderStatus = StageStatus.FAILED
-                                    pageTranslation.retryCount++
-                                    pageTranslation.errorMessage =
-                                        "Could not save translated image — translation output folder is unavailable. " +
-                                            "Grant storage permission to the app and retry."
-                                    logcat(LogPriority.ERROR) {
-                                        "Could not create rendered image file for $fileName " +
-                                            "(cDir=${cDir == null}); render marked FAILED"
-                                    }
-                                }
+                                persistRenderedBitmap(
+                                    pageTranslation = pageTranslation,
+                                    renderedBitmap = renderedBitmap,
+                                    companionDir = cDir,
+                                    pageKey = fileName,
+                                    successMessageSuffix = if (retryTargetOwned) " (retry path)" else "",
+                                    successErrorMessage = if (retryTargetOwned) {
+                                        "Inpainted on retry (downscaled decode)"
+                                    } else {
+                                        null
+                                    },
+                                )
                                 // renderedBitmap may be a distinct copy of
                                 // renderTarget (when renderTarget was immutable);
                                 // recycle the copy so it doesn't leak.
@@ -958,7 +972,9 @@ class ChapterTranslator(
         // auto-mode re-enqueue on scroll), drop the redundant request instead
         // of queuing it behind itself. Safe without an extra lock because the
         // permit serializes entry.
-        if (!inFlightPageKeys.add(pageKey)) return@withLeakProofPermit
+        if (!inFlightPageKeys.add(pageKey)) {
+            return@withLeakProofPermit
+        }
         try {
             // Cooperative timeout: bound how long a single page holds the
             // permit when its native calls actually RETURN (just slowly). On a
@@ -1234,6 +1250,9 @@ class ChapterTranslator(
                     try {
                         pageTranslation.renderStatus = StageStatus.RUNNING
                         val renderer = PageTextRenderer(context)
+                        // TachiyomiAT: re-derive text/stroke colors against the
+                        // CLEANED bitmap before render (see batch path for why).
+                        RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
                         // TachiyomiAT: render() returns the bitmap it actually
                         // drew on — it may be a mutable COPY of cleanedBitmap if
                         // the cleaned bitmap was immutable. Compress the returned
@@ -1244,38 +1263,7 @@ class ChapterTranslator(
                                 manga.title, source,
                                 chapter.name, chapter.scanlator,
                             )
-                            val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                            val renderedFileName = "${safeName}.rendered.webp"
-                            val renderedFile = companionDir?.createFile(renderedFileName)
-                            if (renderedFile != null) {
-                                renderedFile.openOutputStream().use { os ->
-                                    renderedBitmap.compress(Bitmap.CompressFormat.WEBP, 90, os)
-                                }
-                                pageTranslation.renderedImageName = renderedFileName
-                                pageTranslation.renderStatus = StageStatus.READY
-                                logcat(LogPriority.INFO) { "Saved single-page rendered image: $renderedFileName for $pageKey" }
-                            } else {
-                                // TachiyomiAT: a null companion dir or createFile
-                                // failure used to fall through with renderStatus left
-                                // at RUNNING and renderedImageName unset — the page
-                                // then showed the ORIGINAL image (no translated result)
-                                // while the reader kept reporting anyRunning=true
-                                // forever, since renderStatus never reached a terminal
-                                // state. This commonly happens on a fresh install
-                                // before storage permissions are granted, or when the
-                                // SAF tree URI was revoked. Surface a clear error and
-                                // flip to FAILED so the reader clears the overlay and
-                                // the user is told to grant storage access.
-                                pageTranslation.renderStatus = StageStatus.FAILED
-                                pageTranslation.retryCount++
-                                pageTranslation.errorMessage =
-                                    "Could not save translated image — translation output folder is unavailable. " +
-                                    "Grant storage permission to the app and retry."
-                                logcat(LogPriority.ERROR) {
-                                    "Could not create rendered image file for $pageKey " +
-                                        "(companionDir=${companionDir == null}); render marked FAILED"
-                                }
-                            }
+                            persistRenderedBitmap(pageTranslation, renderedBitmap, companionDir, pageKey)
                         } finally {
                             // renderedBitmap may be a distinct copy of
                             // cleanedBitmap (when the cleaned bitmap was
@@ -1318,34 +1306,23 @@ class ChapterTranslator(
                         try {
                             pageTranslation.renderStatus = StageStatus.RUNNING
                             val renderer = PageTextRenderer(context)
+                            // TachiyomiAT: re-derive colors against the retried
+                            // cleaned bitmap too (the retry may have produced a
+                            // different background than the first attempt).
+                            RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
                             val renderedBitmap = renderer.render(retriedCleaned, pageTranslation.blocks)
                             try {
                                 val companionDir = provider.getCompanionImageDir(
                                     manga.title, source, chapter.name, chapter.scanlator,
                                 )
-                                val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                                val renderedFileName = "${safeName}.rendered.webp"
-                                val renderedFile = companionDir?.createFile(renderedFileName)
-                                if (renderedFile != null) {
-                                    renderedFile.openOutputStream().use { os ->
-                                        renderedBitmap.compress(Bitmap.CompressFormat.WEBP, 90, os)
-                                    }
-                                    pageTranslation.renderedImageName = renderedFileName
-                                    pageTranslation.renderStatus = StageStatus.READY
-                                    pageTranslation.errorMessage = "Inpainted on retry (downscaled decode)"
-                                    logcat(LogPriority.INFO) {
-                                        "Saved single-page rendered image (retry path): $renderedFileName for $pageKey"
-                                    }
-                                } else {
-                                    pageTranslation.renderStatus = StageStatus.FAILED
-                                    pageTranslation.retryCount++
-                                    pageTranslation.errorMessage =
-                                        "Could not save translated image — translation output folder is unavailable. " +
-                                            "Grant storage permission to the app and retry."
-                                    logcat(LogPriority.ERROR) {
-                                        "Could not create rendered image file for $pageKey (retry path); render marked FAILED"
-                                    }
-                                }
+                                persistRenderedBitmap(
+                                    pageTranslation = pageTranslation,
+                                    renderedBitmap = renderedBitmap,
+                                    companionDir = companionDir,
+                                    pageKey = pageKey,
+                                    successMessageSuffix = " (retry path)",
+                                    successErrorMessage = "Inpainted on retry (downscaled decode)",
+                                )
                             } finally {
                                 if (renderedBitmap !== retriedCleaned) {
                                     try { renderedBitmap.recycle() } catch (_: Exception) {}
@@ -1476,6 +1453,43 @@ class ChapterTranslator(
             BitmapPool.releaseAll()
         }
         return pageTranslation
+    }
+
+    private fun persistRenderedBitmap(
+        pageTranslation: PageTranslation,
+        renderedBitmap: Bitmap,
+        companionDir: UniFile?,
+        pageKey: String,
+        successMessageSuffix: String = "",
+        successErrorMessage: String? = null,
+    ) {
+        val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val renderedFileName = "${safeName}.rendered.webp"
+        val renderedFile = companionDir?.createFile(renderedFileName)
+        if (renderedFile != null) {
+            renderedFile.openOutputStream().use { os ->
+                renderedBitmap.compress(Bitmap.CompressFormat.WEBP, 90, os)
+            }
+            pageTranslation.renderedImageName = renderedFileName
+            pageTranslation.renderRevision++
+            pageTranslation.renderStatus = StageStatus.READY
+            if (successErrorMessage != null) {
+                pageTranslation.errorMessage = successErrorMessage
+            }
+            logcat(LogPriority.INFO) {
+                "Saved rendered image: $renderedFileName for $pageKey$successMessageSuffix"
+            }
+        } else {
+            pageTranslation.renderStatus = StageStatus.FAILED
+            pageTranslation.retryCount++
+            pageTranslation.errorMessage =
+                "Could not save translated image — translation output folder is unavailable. " +
+                    "Grant storage permission to the app and retry."
+            logcat(LogPriority.ERROR) {
+                "Could not create rendered image file for $pageKey " +
+                    "(companionDir=${companionDir == null}); render marked FAILED"
+            }
+        }
     }
 
     private suspend fun processSinglePage(

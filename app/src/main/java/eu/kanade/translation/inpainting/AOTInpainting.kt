@@ -26,6 +26,10 @@ class AOTInpainting {
             logcat(LogPriority.WARN) { "Inpainting model not found at ${modelFile.absolutePath}, skipping" }
             return
         }
+        // TachiyomiAT: AOT is the ONE model that opts into the accelerator
+        // (NNAPI/NPU when available). It's a single big generative forward pass
+        // per masked region — exactly the workload mobile NPUs/GPUs are built
+        // for, unlike the manga-ocr autoregressive decoder (which forces CPU).
         val opts = OnnxRuntimeProvider.createSessionOptions()
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)

@@ -30,6 +30,9 @@ data class PageTranslation(
     // auto-translate uses it to bound retries (see MAX_STAGE_RETRIES) instead of
     // skipping a FAILED page forever or retrying it in an infinite loop.
     var retryCount: Int = 0,
+    // Incremented when the rendered file's bytes are rewritten. The file name is
+    // stable (<page>.rendered.webp), so UI dedup must not key on the name alone.
+    var renderRevision: Long = 0L,
     ) {
     @Transient
     var cleanedBitmap: Bitmap? = null
@@ -84,8 +87,15 @@ data class TranslationBlock(
     val parentY: Float = 0f,
     val parentWidth: Float = 0f,
     val parentHeight: Float = 0f,
-    val textColor: Long = 0xFF000000,
-    val strokeColor: Long = 0xFFFFFFFF,
-    val strokeWidth: Float = 0f,
+    // TachiyomiAT: textColor/strokeColor/strokeWidth are `var` (not `val`) so they
+    // can be RE-DERIVED after inpainting against the cleaned bitmap (see
+    // RenderColorEstimator + ChapterTranslator). Colors sampled against the
+    // original bitmap at recognition time can be wrong once inpainting replaces
+    // the background with a different median color — so the renderer needs the
+    // post-inpaint colors to keep "dark inpaint → light text" legible.
+    // Serialization is field-name based, so val→var is backward compatible.
+    var textColor: Long = 0xFF000000,
+    var strokeColor: Long = 0xFFFFFFFF,
+    var strokeWidth: Float = 0f,
     val direction: String = "LTR",
 )

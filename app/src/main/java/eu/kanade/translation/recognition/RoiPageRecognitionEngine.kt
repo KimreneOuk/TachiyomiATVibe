@@ -10,6 +10,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.MangaOcrEngine
+import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.ocr.MlKitRoiOcrEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -23,7 +24,6 @@ import tachiyomi.core.common.util.system.logcat
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.pow
 
 class RoiPageRecognitionEngine(
     private val context: Context,
@@ -162,7 +162,16 @@ class RoiPageRecognitionEngine(
                 val siblings = bubbles.filter { it !== rp }.map { it.bbox }
                 trimParentBbox(rp.bbox, bbox, siblings)
             } ?: rawParent?.bbox
-            val renderColors = computeRenderColors(bitmap, bbox, parentBbox, detection.label)
+            // TachiyomiAT: text color is sampled against the ORIGINAL bitmap here
+            // as a FIRST PASS. ChapterTranslator calls RenderColorEstimator.recomputeFor()
+            // again AFTER inpainting (against the cleaned bitmap) so the final
+            // rendered color matches the post-inpaint background. The recognition-
+            // time pass is still useful as a fallback if inpainting is skipped.
+            val renderColors = RenderColorEstimator.estimate(
+                bitmap,
+                bbox[0], bbox[1], bbox[2], bbox[3],
+                parentBbox,
+            )
             // TachiyomiAT: choose the render text direction. Vertical (TTB) manga
             // text is laid out top-to-bottom in columns, so its bounding box is
             // taller than wide. The renderer (PageTextRenderer) only goes vertical
@@ -217,7 +226,23 @@ class RoiPageRecognitionEngine(
     override suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         if (!initialized) initialize()
         val inpainter = inpainting
-        if (inpainter != null && inpainter.isInitialized() && pageTranslation.blocks.isNotEmpty()) {
+        // TachiyomiAT: a page whose OCR found ZERO text blocks is a SUCCESSFUL
+        // recognition (there is genuinely nothing to translate — a splash page,
+        // an art-only spread). Previously this fell through to the generic
+        // FAILED branch below and set inpaintStatus=FAILED + retryCount++, which
+        // made the page look like a *failing* page to auto-translate's dedup
+        // gate (ReaderViewModel.handleAutoTranslation). The gate re-enqueued it
+        // on every page navigation until retryCount saturated at MAX_STAGE_RETRIES,
+        // re-running detection+OCR each time — the reported "auto-translate keeps
+        // reprocessing the same image" bug. A textless page needs no inpaint and
+        // no retry: mark READY and bail cleanly so the dedup treats it as done.
+        if (pageTranslation.blocks.isEmpty()) {
+            pageTranslation.inpaintStatus = StageStatus.READY
+            pageTranslation.errorMessage = null
+            pageTranslation.updatedAt = System.currentTimeMillis()
+            return null
+        }
+        if (inpainter != null && inpainter.isInitialized()) {
             try {
                 pageTranslation.inpaintStatus = StageStatus.RUNNING
                 pageTranslation.updatedAt = System.currentTimeMillis()
@@ -292,14 +317,15 @@ class RoiPageRecognitionEngine(
         }
         pageTranslation.inpaintStatus = StageStatus.FAILED
         pageTranslation.retryCount++
-        // TachiyomiAT: record WHY inpaint was skipped. Previously this fallback
-        // (hit when the inpainter is null/uninitialized or the page has no blocks)
-        // set FAILED with no message, producing a "blank error" in the translation
-        // store that was impossible to diagnose — it looked like an uncaught failure.
+        // TachiyomiAT: record WHY inpaint was skipped. This branch is now ONLY
+        // reached when there ARE blocks but the inpainter itself is
+        // null/uninitialized (the empty-blocks case is handled above as a clean
+        // READY). Previously it also caught empty-blocks pages and marked them
+        // FAILED, which fed the auto-translate reprocess loop. The message is
+        // kept diagnostic so a "blank error" in the store is never produced.
         pageTranslation.errorMessage = when {
             inpainter == null -> "Inpainting model not available"
             !inpainter.isInitialized() -> "Inpainting engine not initialized"
-            pageTranslation.blocks.isEmpty() -> "No text blocks to inpaint"
             else -> "Inpainting skipped"
         }
         pageTranslation.updatedAt = System.currentTimeMillis()
@@ -476,72 +502,6 @@ class RoiPageRecognitionEngine(
         return Bitmap.createBitmap(source, clampedX1, clampedY1, clampedX2 - clampedX1, clampedY2 - clampedY1)
     }
 
-    private fun computeRenderColors(
-        bitmap: Bitmap,
-        textBbox: IntArray,
-        parentBbox: IntArray?,
-        label: Int,
-    ): Triple<Long, Long, Float> {
-        if (parentBbox != null && label in 1..2) {
-            return PYTHON_DEFAULT_TEXT_COLORS
-        }
-
-        val width = max(1, textBbox[2] - textBbox[0])
-        val height = max(1, textBbox[3] - textBbox[1])
-        val pad = max(12, min(width, height) / 2)
-        val left = (textBbox[0] - pad).coerceIn(0, bitmap.width)
-        val top = (textBbox[1] - pad).coerceIn(0, bitmap.height)
-        val right = (textBbox[2] + pad).coerceIn(left, bitmap.width)
-        val bottom = (textBbox[3] + pad).coerceIn(top, bitmap.height)
-        val cropW = right - left
-        val cropH = bottom - top
-        if (cropW <= 0 || cropH <= 0) return PYTHON_DEFAULT_TEXT_COLORS
-
-        val pixels = IntArray(cropW * cropH)
-        bitmap.getPixels(pixels, 0, cropW, left, top, cropW, cropH)
-        val step = max(1, pixels.size / 1200)
-
-        var center0 = floatArrayOf(0f, 0f, 0f)
-        var center1 = floatArrayOf(255f, 255f, 255f)
-        var count0 = 0
-        var count1 = 0
-
-        repeat(5) {
-            var sum0 = floatArrayOf(0f, 0f, 0f)
-            count0 = 0
-            var sum1 = floatArrayOf(0f, 0f, 0f)
-            count1 = 0
-
-            for (i in pixels.indices step step) {
-                val pixel = pixels[i]
-                val r = (pixel shr 16 and 0xFF).toFloat()
-                val g = (pixel shr 8 and 0xFF).toFloat()
-                val b = (pixel and 0xFF).toFloat()
-
-                val d0 = (r - center0[0]).pow(2) + (g - center0[1]).pow(2) + (b - center0[2]).pow(2)
-                val d1 = (r - center1[0]).pow(2) + (g - center1[1]).pow(2) + (b - center1[2]).pow(2)
-
-                if (d0 < d1) {
-                    sum0[0] += r; sum0[1] += g; sum0[2] += b; count0++
-                } else {
-                    sum1[0] += r; sum1[1] += g; sum1[2] += b; count1++
-                }
-            }
-            
-            if (count0 > 0) {
-                center0[0] = sum0[0] / count0; center0[1] = sum0[1] / count0; center0[2] = sum0[2] / count0
-            }
-            if (count1 > 0) {
-                center1[0] = sum1[0] / count1; center1[1] = sum1[1] / count1; center1[2] = sum1[2] / count1
-            }
-        }
-
-        val bgColor = if (count0 >= count1) center0 else center1
-        val brightness = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
-
-        return if (brightness < 85f) INVERTED_TEXT_COLORS else PYTHON_DEFAULT_TEXT_COLORS
-    }
-
     private fun trimParentBbox(
         parent: IntArray,
         textBbox: IntArray,
@@ -622,7 +582,9 @@ class RoiPageRecognitionEngine(
         private const val TEXT_CONTAINMENT_DUPLICATE_THRESHOLD = 0.86f
         private const val TEXT_CENTER_DUPLICATE_THRESHOLD = 0.12f
         private const val TEXT_SIZE_DUPLICATE_THRESHOLD = 0.20f
-        private val PYTHON_DEFAULT_TEXT_COLORS = Triple(0xFF1A1A1A, 0xFFFFFFFF, 3.0f)
-        private val INVERTED_TEXT_COLORS = Triple(0xFF1A1A1A, 0xFFFFFFFF, 4.5f)
+        // TachiyomiAT: text-color constants moved to RenderColorEstimator (and
+        // fixed there — the legacy INVERTED_TEXT_COLORS was a copy-paste of the
+        // default constant, both returning dark-gray text 0xFF1A1A1A, which made
+        // dark-inpainted bubbles illegible).
     }
 }

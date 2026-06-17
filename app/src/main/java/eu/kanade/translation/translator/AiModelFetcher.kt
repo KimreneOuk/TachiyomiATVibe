@@ -35,16 +35,21 @@ object AiModelFetcher {
             .build()
     }
 
-    suspend fun fetch(engine: AiEngine, apiKey: String): Result = withContext(Dispatchers.IO) {
+    suspend fun fetch(engine: AiEngine, apiKey: String, baseUrl: String = ""): Result = withContext(Dispatchers.IO) {
         // Guard at the boundary so the UI can show a missing-key message
         // without ever issuing a request.
-        if (apiKey.isBlank()) return@withContext Result.Error("API key is required")
+        if (engine == AiEngine.LMSTUDIO) {
+            if (baseUrl.isBlank()) return@withContext Result.Error("Base URL is required")
+        } else if (apiKey.isBlank()) {
+            return@withContext Result.Error("API key is required")
+        }
 
         try {
             val models = when (engine) {
                 AiEngine.GEMINI -> fetchGemini(apiKey)
                 AiEngine.OPENROUTER -> fetchOpenRouter(apiKey)
                 AiEngine.DEEPSEEK -> fetchDeepSeek(apiKey)
+                AiEngine.LMSTUDIO -> fetchLmStudio(baseUrl)
             }
             if (models.isEmpty()) Result.NoModels else Result.Success(models)
         } catch (e: InvalidKeyException) {
@@ -97,13 +102,7 @@ object AiModelFetcher {
             val body = response.body?.string().orEmpty()
             if (body.isBlank()) return emptyList()
             val json = JSONObject(body)
-            val arr = json.optJSONArray("data") ?: return emptyList()
-            val result = mutableListOf<String>()
-            for (i in 0 until arr.length()) {
-                val id = arr.optJSONObject(i)?.optString("id")?.trim().orEmpty()
-                if (id.isNotEmpty()) result.add(id)
-            }
-            return result
+            return parseOpenAiModels(json)
         }
     }
 
@@ -120,14 +119,35 @@ object AiModelFetcher {
             if (body.isBlank()) return emptyList()
             val json = JSONObject(body)
             // DeepSeek exposes the list under "data" like OpenAI/OpenRouter.
-            val arr = json.optJSONArray("data") ?: return emptyList()
-            val result = mutableListOf<String>()
-            for (i in 0 until arr.length()) {
-                val id = arr.optJSONObject(i)?.optString("id")?.trim().orEmpty()
-                if (id.isNotEmpty()) result.add(id)
-            }
-            return result
+            return parseOpenAiModels(json)
         }
+    }
+
+    private fun fetchLmStudio(baseUrl: String): List<String> {
+        val request = Request.Builder()
+            .url("${normalizeBaseUrl(baseUrl)}/models")
+            .get()
+            .build()
+
+        client.newCall(request).execute().use { response ->
+            validateAuth(response.code)
+            val body = response.body?.string().orEmpty()
+            if (body.isBlank()) return emptyList()
+            return parseOpenAiModels(JSONObject(body))
+        }
+    }
+
+    fun normalizeBaseUrl(baseUrl: String): String =
+        baseUrl.trim().trimEnd('/')
+
+    fun parseOpenAiModels(json: JSONObject): List<String> {
+        val arr = json.optJSONArray("data") ?: return emptyList()
+        val result = mutableListOf<String>()
+        for (i in 0 until arr.length()) {
+            val id = arr.optJSONObject(i)?.optString("id")?.trim().orEmpty()
+            if (id.isNotEmpty()) result.add(id)
+        }
+        return result
     }
 
     private fun validateAuth(code: Int) {

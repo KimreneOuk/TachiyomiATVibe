@@ -1,0 +1,1256 @@
+--------- beginning of system
+06-17 11:24:18.978 13023 14950 I Quality : BitmapCompressInfo:1350,1920,1,100,613595624
+--------- beginning of main
+06-17 11:24:19.019 13023 14066 D native  : I0617 11:24:19.018867   14066 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:19.019 13023 14066 D native  : I0617 11:24:19.019071   14066 mergeddicttrans.cc:1866] Sentence #0: ...少しよろしいでしょうか
+06-17 11:24:19.019 13023 14066 D native  : I0617 11:24:19.019127   14066 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:19.046 13023 14066 I native  : I0617 11:24:19.046642   14066 mergeddicttrans.cc:1827] Sentence #0: ...少しよろしいでしょうか
+06-17 11:24:19.046 13023 14066 I native  : I0617 11:24:19.046878   14066 mergeddicttrans.cc:1828] 
+06-17 11:24:19.046 13023 14066 I native  : Source language: ja, target language: en
+06-17 11:24:19.046 13023 14066 I native  : 
+06-17 11:24:19.046 13023 14066 I native  : Has period trick: 0
+06-17 11:24:19.046 13023 14066 I native  : 
+06-17 11:24:19.046 13023 14066 I native  : Full translation: ... Is it a bit good?
+06-17 11:24:19.046 13023 14066 I native  : Translate Instance: 
+06-17 11:24:19.046 13023 14066 I native  : Query (raw): ...少しよろしいでしょうか
+06-17 11:24:19.046 13023 14066 I native  : Query (after preprocess): ... 少し よろしい でしょ う か
+06-17 11:24:19.046 13023 14066 I native  : Query ids (after tokenizer): 1198 706 51 904 733 272 1334 1255 537 103 2
+06-17 11:24:19.046 13023 14066 I native  : Translation ids: 983 1663 70 9 1053 1171 417 2
+06-17 11:24:19.046 13023 14066 I native  : Translation (after detokenizer): ... Is it a bit good ?
+06-17 11:24:19.046 13023 14066 I native  : Alignment probability:
+06-17 11:24:19.046 13023 14066 I native  : 	...	Is	it	a	bit	good	?
+06-17 11:24:19.046 13023 14066 I native  : ...	0.639216	0.054902	0.0117647	0.0156863	0.00392157	0	0.00784314
+06-17 11:24:19.046 13023 14066 I native  : 少し	0.0352941	0.278431	0.470588	0.596078	0.894118	0.188235	0.105882
+06-17 11:24:19.046 13023 14066 I native  : よろしい	0.0980392	0.196078	0.298039	0.329412	0.0431373	0.737255	0.176471
+06-17 11:24:19.046 13023 14066 I native  : でしょ	0.0392157	0.137255	0.117647	0.0156863	0	0	0.0196078
+06-17 11:24:19.046 13023 14066 I native  : う	0.0235294	0.054902	0.0431373	0.00392157	0	0.00392157	0.0156863
+06-17 11:24:19.046 13023 14066 I native  : か	0.117647	0.247059	0.054902	0.00392157	0	0.00784314	0.172549
+06-17 11:24:19.046 13023 14066 I native  : Translation (before postprocess): ... Is it a bit good ?
+06-17 11:24:19.049 13023 14068 D native  : I0617 11:24:19.049596   14068 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:19.049 13023 14068 D native  : I0617 11:24:19.049666   14068 mergeddicttrans.cc:1866] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:24:19.049 13023 14068 D native  : I0617 11:24:19.049703   14068 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:19.072 13023 14068 I native  : I0617 11:24:19.072894   14068 mergeddicttrans.cc:1827] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:24:19.073 13023 14068 I native  : I0617 11:24:19.073007   14068 mergeddicttrans.cc:1828] 
+06-17 11:24:19.073 13023 14068 I native  : Source language: ja, target language: en
+06-17 11:24:19.073 13023 14068 I native  : 
+06-17 11:24:19.073 13023 14068 I native  : Has period trick: 0
+06-17 11:24:19.073 13023 14068 I native  : 
+06-17 11:24:19.073 13023 14068 I native  : Full translation: My father wants to say ...
+06-17 11:24:19.073 13023 14068 I native  : Translate Instance: 
+06-17 11:24:19.073 13023 14068 I native  : Query (raw): 父さんはいったいったいどんな...
+06-17 11:24:19.073 13023 14068 I native  : Query (after preprocess): 父さん は いった いっ たい どんな ...
+06-17 11:24:19.073 13023 14068 I native  : Query ids (after tokenizer): 3 2251 1886 9 81 88 398 81 88 1221 967 1742 1198 2
+06-17 11:24:19.073 13023 14068 I native  : Translation ids: 2377 120 2543 799 10 7 2591 983 2
+06-17 11:24:19.073 13023 14068 I native  : Translation (after detokenizer): My father wants to say ...
+06-17 11:24:19.073 13023 14068 I native  : Alignment probability:
+06-17 11:24:19.073 13023 14068 I native  : 	My	father	wants	to	say	...
+06-17 11:24:19.073 13023 14068 I native  : 父さん	0.443137	0.945098	0.0176471	0.00784314	0	0.00784314
+06-17 11:24:19.073 13023 14068 I native  : は	0.0666667	0.00980392	0.0823529	0.0235294	0.0117647	0.00392157
+06-17 11:24:19.073 13023 14068 I native  : いった	0.0352941	0.00588235	0.278431	0.301961	0.313726	0.227451
+06-17 11:24:19.073 13023 14068 I native  : いっ	0.0156863	0.00196078	0.194118	0.207843	0.384314	0.0901961
+06-17 11:24:19.073 13023 14068 I native  : たい	0.0666667	0.0156863	0.184314	0.0705882	0.0352941	0.0627451
+06-17 11:24:19.073 13023 14068 I native  : どんな	0.352941	0.00784314	0.0843137	0.172549	0.0196078	0.0823529
+06-17 11:24:19.073 13023 14068 I native  : ...	0.0117647	0.00196078	0.129412	0.160784	0.121569	0.411765
+06-17 11:24:19.073 13023 14068 I native  : Translation (before postprocess): My father wants to say ...
+06-17 11:24:19.074 13023 14247 D native  : I0617 11:24:19.074015   14247 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:19.074 13023 14247 D native  : I0617 11:24:19.074073   14247 mergeddicttrans.cc:1866] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:24:19.074 13023 14247 D native  : I0617 11:24:19.074102   14247 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:19.104 13023 14247 I native  : I0617 11:24:19.104960   14247 mergeddicttrans.cc:1827] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:24:19.105 13023 14247 I native  : I0617 11:24:19.105095   14247 mergeddicttrans.cc:1828] 
+06-17 11:24:19.105 13023 14247 I native  : Source language: ja, target language: en
+06-17 11:24:19.105 13023 14247 I native  : 
+06-17 11:24:19.105 13023 14247 I native  : Has period trick: 0
+06-17 11:24:19.105 13023 14247 I native  : 
+06-17 11:24:19.105 13023 14247 I native  : Full translation: This Rutas Sui Liii Line Fold
+06-17 11:24:19.105 13023 14247 I native  : Translate Instance: 
+06-17 11:24:19.105 13023 14247 I native  : Query (raw): このルータススーLIIIラインフォルドに
+06-17 11:24:19.105 13023 14247 I native  : Query (after preprocess): この ルータス スー liii ラインフォルド に
+06-17 11:24:19.105 13023 14247 I native  : Query ids (after tokenizer): 61 508 269 48 76 25 220 28 28 28 260 164 610 23 298 8 2
+06-17 11:24:19.105 13023 14247 I native  : Translation ids: 149 57 231 290 2950 44 49 44 44 44 2973 52 795 2
+06-17 11:24:19.105 13023 14247 I native  : Translation (after detokenizer): This Rutas Sui Liii Line Fold
+06-17 11:24:19.105 13023 14247 I native  : Alignment probability:
+06-17 11:24:19.105 13023 14247 I native  : 	This	Rutas	Sui	Liii	Line	Fold
+06-17 11:24:19.105 13023 14247 I native  : この	0.45098	0.00915033	0.00392157	0.00196078	0	0
+06-17 11:24:19.105 13023 14247 I native  : ルータス	0.129412	0.857516	0.0215686	0	0	0
+06-17 11:24:19.105 13023 14247 I native  : スー	0.027451	0.0418301	0.701961	0.027451	0	0
+06-17 11:24:19.105 13023 14247 I native  : liii	0.027451	0.00915033	0.196078	0.802941	0.141176	0.00588235
+06-17 11:24:19.105 13023 14247 I native  : ラインフォルド	0.0117647	0.00522876	0.00392157	0.0588235	0.709804	0.956863
+06-17 11:24:19.105 13023 14247 I native  : に	0.298039	0.0143791	0.0333333	0.0598039	0.129412	0.0254902
+06-17 11:24:19.105 13023 14247 I native  : Translation (before postprocess): This Rutas Sui Liii Line Fold
+06-17 11:24:19.112 13023 14248 D native  : I0617 11:24:19.112399   14248 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:19.112 13023 14248 D native  : I0617 11:24:19.112475   14248 mergeddicttrans.cc:1866] Sentence #0: この家を出たんだろう...
+06-17 11:24:19.112 13023 14248 D native  : I0617 11:24:19.112506   14248 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:19.135 13023 14248 I native  : I0617 11:24:19.135273   14248 mergeddicttrans.cc:1827] Sentence #0: この家を出たんだろう...
+06-17 11:24:19.135 13023 14248 I native  : I0617 11:24:19.135404   14248 mergeddicttrans.cc:1828] 
+06-17 11:24:19.135 13023 14248 I native  : Source language: ja, target language: en
+06-17 11:24:19.135 13023 14248 I native  : 
+06-17 11:24:19.135 13023 14248 I native  : Has period trick: 0
+06-17 11:24:19.135 13023 14248 I native  : 
+06-17 11:24:19.135 13023 14248 I native  : Full translation: I will leave this house ...
+06-17 11:24:19.135 13023 14248 I native  : Translate Instance: 
+06-17 11:24:19.135 13023 14248 I native  : Query (raw): この家を出たんだろう...
+06-17 11:24:19.135 13023 14248 I native  : Query (after preprocess): この 家 を 出 たんだろ う ...
+06-17 11:24:19.135 13023 14248 I native  : Query ids (after tokenizer): 61 1052 7 683 15 354 1019 733 537 1198 2
+06-17 11:24:19.135 13023 14248 I native  : Translation ids: 63 140 3272 67 2497 983 2
+06-17 11:24:19.135 13023 14248 I native  : Translation (after detokenizer): I will leave this house ...
+06-17 11:24:19.135 13023 14248 I native  : Alignment probability:
+06-17 11:24:19.135 13023 14248 I native  : 	I	will	leave	this	house	...
+06-17 11:24:19.135 13023 14248 I native  : この	0.121569	0.0117647	0.0313726	0.847059	0.0313726	0.0196078
+06-17 11:24:19.135 13023 14248 I native  : 家	0.00392157	0.0117647	0.0313726	0.054902	0.92549	0.0470588
+06-17 11:24:19.135 13023 14248 I native  : を	0.0235294	0.027451	0.0588235	0.0196078	0.00392157	0.0117647
+06-17 11:24:19.135 13023 14248 I native  : 出	0.188235	0.364706	0.607843	0.0117647	0.00392157	0.0392157
+06-17 11:24:19.135 13023 14248 I native  : たんだろ	0.407843	0.27451	0.105882	0.00392157	0	0.0156863
+06-17 11:24:19.135 13023 14248 I native  : う	0.188235	0.239216	0.0196078	0	0	0.00392157
+06-17 11:24:19.135 13023 14248 I native  : ...	0.0352941	0.0196078	0.0313726	0.0117647	0.0235294	0.74902
+06-17 11:24:19.135 13023 14248 I native  : Translation (before postprocess): I will leave this house ...
+06-17 11:24:19.142 13023 13935 D native  : I0617 11:24:19.142951   13935 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:19.143 13023 13935 D native  : I0617 11:24:19.143009   13935 mergeddicttrans.cc:1866] Sentence #0: 橘など香なせん!
+06-17 11:24:19.143 13023 13935 D native  : I0617 11:24:19.143038   13935 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:19.171 13023 13935 I native  : I0617 11:24:19.171601   13935 mergeddicttrans.cc:1827] Sentence #0: 橘など香なせん!
+06-17 11:24:19.171 13023 13935 I native  : I0617 11:24:19.171791   13935 mergeddicttrans.cc:1828] 
+06-17 11:24:19.171 13023 13935 I native  : Source language: ja, target language: en
+06-17 11:24:19.171 13023 13935 I native  : 
+06-17 11:24:19.171 13023 13935 I native  : Has period trick: 0
+06-17 11:24:19.171 13023 13935 I native  : 
+06-17 11:24:19.171 13023 13935 I native  : Full translation: Nataku such as Tachibana!
+06-17 11:24:19.171 13023 13935 I native  : Translate Instance: 
+06-17 11:24:19.171 13023 13935 I native  : Query (raw): 橘など香なせん!
+06-17 11:24:19.171 13023 13935 I native  : Query (after preprocess): 橘 など 香 な せ ん !
+06-17 11:24:19.171 13023 13935 I native  : Query ids (after tokenizer): 3 3451 427 3 1704 26 536 441 723 2
+06-17 11:24:19.171 13023 13935 I native  : Translation ids: 92 153 875 121 183 27 43 529 261 2932 430 2
+06-17 11:24:19.171 13023 13935 I native  : Translation (after detokenizer): Nataku such as Tachibana !
+06-17 11:24:19.171 13023 13935 I native  : Alignment probability:
+06-17 11:24:19.171 13023 13935 I native  : 	Nataku	such	as	Tachibana	!
+06-17 11:24:19.171 13023 13935 I native  : 橘	0.303922	0.117647	0.176471	0.814706	0.0705882
+06-17 11:24:19.171 13023 13935 I native  : など	0.0294118	0.431373	0.647059	0.0127451	0.0588235
+06-17 11:24:19.171 13023 13935 I native  : 香	0.209804	0.188235	0.0784314	0.022549	0.0627451
+06-17 11:24:19.171 13023 13935 I native  : な	0.111765	0.121569	0.00392157	0.00196078	0.0705882
+06-17 11:24:19.171 13023 13935 I native  : せ	0.0872549	0.0784314	0.00784314	0.00196078	0.109804
+06-17 11:24:19.171 13023 13935 I native  : ん	0.0676471	0.00784314	0	0.00196078	0.0156863
+06-17 11:24:19.171 13023 13935 I native  : !	0.0166667	0.0431373	0.0156863	0.0254902	0.482353
+06-17 11:24:19.171 13023 13935 I native  : Translation (before postprocess): Nataku such as Tachibana !
+06-17 11:24:20.121 13023 14950 I Quality : BitmapCompressInfo:1350,1920,2,90,513520886
+06-17 11:24:33.729 13023 14950 I Quality : BitmapCompressInfo:1350,1920,1,100,609669740
+06-17 11:24:33.767 13023 13950 D native  : I0617 11:24:33.767499   13950 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:33.767 13023 13950 D native  : I0617 11:24:33.767758   13950 mergeddicttrans.cc:1866] Sentence #0: ...少しよろしいでしょうか
+06-17 11:24:33.767 13023 13950 D native  : I0617 11:24:33.767818   13950 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:33.789 13023 13950 I native  : I0617 11:24:33.789519   13950 mergeddicttrans.cc:1827] Sentence #0: ...少しよろしいでしょうか
+06-17 11:24:33.789 13023 13950 I native  : I0617 11:24:33.789712   13950 mergeddicttrans.cc:1828] 
+06-17 11:24:33.789 13023 13950 I native  : Source language: ja, target language: en
+06-17 11:24:33.789 13023 13950 I native  : 
+06-17 11:24:33.789 13023 13950 I native  : Has period trick: 0
+06-17 11:24:33.789 13023 13950 I native  : 
+06-17 11:24:33.789 13023 13950 I native  : Full translation: ... Is it a bit good?
+06-17 11:24:33.789 13023 13950 I native  : Translate Instance: 
+06-17 11:24:33.789 13023 13950 I native  : Query (raw): ...少しよろしいでしょうか
+06-17 11:24:33.789 13023 13950 I native  : Query (after preprocess): ... 少し よろしい でしょ う か
+06-17 11:24:33.789 13023 13950 I native  : Query ids (after tokenizer): 1198 706 51 904 733 272 1334 1255 537 103 2
+06-17 11:24:33.789 13023 13950 I native  : Translation ids: 983 1663 70 9 1053 1171 417 2
+06-17 11:24:33.789 13023 13950 I native  : Translation (after detokenizer): ... Is it a bit good ?
+06-17 11:24:33.789 13023 13950 I native  : Alignment probability:
+06-17 11:24:33.789 13023 13950 I native  : 	...	Is	it	a	bit	good	?
+06-17 11:24:33.789 13023 13950 I native  : ...	0.639216	0.054902	0.0117647	0.0156863	0.00392157	0	0.00784314
+06-17 11:24:33.789 13023 13950 I native  : 少し	0.0352941	0.278431	0.470588	0.596078	0.894118	0.188235	0.105882
+06-17 11:24:33.789 13023 13950 I native  : よろしい	0.0980392	0.196078	0.298039	0.329412	0.0431373	0.737255	0.176471
+06-17 11:24:33.789 13023 13950 I native  : でしょ	0.0392157	0.137255	0.117647	0.0156863	0	0	0.0196078
+06-17 11:24:33.789 13023 13950 I native  : う	0.0235294	0.054902	0.0431373	0.00392157	0	0.00392157	0.0156863
+06-17 11:24:33.789 13023 13950 I native  : か	0.117647	0.247059	0.054902	0.00392157	0	0.00784314	0.172549
+06-17 11:24:33.789 13023 13950 I native  : Translation (before postprocess): ... Is it a bit good ?
+06-17 11:24:33.790 13023 13952 D native  : I0617 11:24:33.790879   13952 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:33.790 13023 13952 D native  : I0617 11:24:33.790929   13952 mergeddicttrans.cc:1866] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:24:33.790 13023 13952 D native  : I0617 11:24:33.790960   13952 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:33.813 13023 13952 I native  : I0617 11:24:33.813492   13952 mergeddicttrans.cc:1827] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:24:33.813 13023 13952 I native  : I0617 11:24:33.813589   13952 mergeddicttrans.cc:1828] 
+06-17 11:24:33.813 13023 13952 I native  : Source language: ja, target language: en
+06-17 11:24:33.813 13023 13952 I native  : 
+06-17 11:24:33.813 13023 13952 I native  : Has period trick: 0
+06-17 11:24:33.813 13023 13952 I native  : 
+06-17 11:24:33.813 13023 13952 I native  : Full translation: My father wants to say ...
+06-17 11:24:33.813 13023 13952 I native  : Translate Instance: 
+06-17 11:24:33.813 13023 13952 I native  : Query (raw): 父さんはいったいったいどんな...
+06-17 11:24:33.813 13023 13952 I native  : Query (after preprocess): 父さん は いった いっ たい どんな ...
+06-17 11:24:33.813 13023 13952 I native  : Query ids (after tokenizer): 3 2251 1886 9 81 88 398 81 88 1221 967 1742 1198 2
+06-17 11:24:33.813 13023 13952 I native  : Translation ids: 2377 120 2543 799 10 7 2591 983 2
+06-17 11:24:33.813 13023 13952 I native  : Translation (after detokenizer): My father wants to say ...
+06-17 11:24:33.813 13023 13952 I native  : Alignment probability:
+06-17 11:24:33.813 13023 13952 I native  : 	My	father	wants	to	say	...
+06-17 11:24:33.813 13023 13952 I native  : 父さん	0.443137	0.945098	0.0176471	0.00784314	0	0.00784314
+06-17 11:24:33.813 13023 13952 I native  : は	0.0666667	0.00980392	0.0823529	0.0235294	0.0117647	0.00392157
+06-17 11:24:33.813 13023 13952 I native  : いった	0.0352941	0.00588235	0.278431	0.301961	0.313726	0.227451
+06-17 11:24:33.813 13023 13952 I native  : いっ	0.0156863	0.00196078	0.194118	0.207843	0.384314	0.0901961
+06-17 11:24:33.813 13023 13952 I native  : たい	0.0666667	0.0156863	0.184314	0.0705882	0.0352941	0.0627451
+06-17 11:24:33.813 13023 13952 I native  : どんな	0.352941	0.00784314	0.0843137	0.172549	0.0196078	0.0823529
+06-17 11:24:33.813 13023 13952 I native  : ...	0.0117647	0.00196078	0.129412	0.160784	0.121569	0.411765
+06-17 11:24:33.813 13023 13952 I native  : Translation (before postprocess): My father wants to say ...
+06-17 11:24:33.816 13023 14065 D native  : I0617 11:24:33.816901   14065 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:33.816 13023 14065 D native  : I0617 11:24:33.816963   14065 mergeddicttrans.cc:1866] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:24:33.816 13023 14065 D native  : I0617 11:24:33.816995   14065 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:33.849 13023 14065 I native  : I0617 11:24:33.849532   14065 mergeddicttrans.cc:1827] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:24:33.849 13023 14065 I native  : I0617 11:24:33.849718   14065 mergeddicttrans.cc:1828] 
+06-17 11:24:33.849 13023 14065 I native  : Source language: ja, target language: en
+06-17 11:24:33.849 13023 14065 I native  : 
+06-17 11:24:33.849 13023 14065 I native  : Has period trick: 0
+06-17 11:24:33.849 13023 14065 I native  : 
+06-17 11:24:33.849 13023 14065 I native  : Full translation: This Rutas Sui Liii Line Fold
+06-17 11:24:33.849 13023 14065 I native  : Translate Instance: 
+06-17 11:24:33.849 13023 14065 I native  : Query (raw): このルータススーLIIIラインフォルドに
+06-17 11:24:33.849 13023 14065 I native  : Query (after preprocess): この ルータス スー liii ラインフォルド に
+06-17 11:24:33.849 13023 14065 I native  : Query ids (after tokenizer): 61 508 269 48 76 25 220 28 28 28 260 164 610 23 298 8 2
+06-17 11:24:33.849 13023 14065 I native  : Translation ids: 149 57 231 290 2950 44 49 44 44 44 2973 52 795 2
+06-17 11:24:33.849 13023 14065 I native  : Translation (after detokenizer): This Rutas Sui Liii Line Fold
+06-17 11:24:33.849 13023 14065 I native  : Alignment probability:
+06-17 11:24:33.849 13023 14065 I native  : 	This	Rutas	Sui	Liii	Line	Fold
+06-17 11:24:33.849 13023 14065 I native  : この	0.45098	0.00915033	0.00392157	0.00196078	0	0
+06-17 11:24:33.849 13023 14065 I native  : ルータス	0.129412	0.857516	0.0215686	0	0	0
+06-17 11:24:33.849 13023 14065 I native  : スー	0.027451	0.0418301	0.701961	0.027451	0	0
+06-17 11:24:33.849 13023 14065 I native  : liii	0.027451	0.00915033	0.196078	0.802941	0.141176	0.00588235
+06-17 11:24:33.849 13023 14065 I native  : ラインフォルド	0.0117647	0.00522876	0.00392157	0.0588235	0.709804	0.956863
+06-17 11:24:33.849 13023 14065 I native  : に	0.298039	0.0143791	0.0333333	0.0598039	0.129412	0.0254902
+06-17 11:24:33.849 13023 14065 I native  : Translation (before postprocess): This Rutas Sui Liii Line Fold
+06-17 11:24:33.852 13023 14066 D native  : I0617 11:24:33.852382   14066 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:33.852 13023 14066 D native  : I0617 11:24:33.852454   14066 mergeddicttrans.cc:1866] Sentence #0: この家を出たんだろう...
+06-17 11:24:33.852 13023 14066 D native  : I0617 11:24:33.852489   14066 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:33.871 13023 14066 I native  : I0617 11:24:33.871614   14066 mergeddicttrans.cc:1827] Sentence #0: この家を出たんだろう...
+06-17 11:24:33.871 13023 14066 I native  : I0617 11:24:33.871737   14066 mergeddicttrans.cc:1828] 
+06-17 11:24:33.871 13023 14066 I native  : Source language: ja, target language: en
+06-17 11:24:33.871 13023 14066 I native  : 
+06-17 11:24:33.871 13023 14066 I native  : Has period trick: 0
+06-17 11:24:33.871 13023 14066 I native  : 
+06-17 11:24:33.871 13023 14066 I native  : Full translation: I will leave this house ...
+06-17 11:24:33.871 13023 14066 I native  : Translate Instance: 
+06-17 11:24:33.871 13023 14066 I native  : Query (raw): この家を出たんだろう...
+06-17 11:24:33.871 13023 14066 I native  : Query (after preprocess): この 家 を 出 たんだろ う ...
+06-17 11:24:33.871 13023 14066 I native  : Query ids (after tokenizer): 61 1052 7 683 15 354 1019 733 537 1198 2
+06-17 11:24:33.871 13023 14066 I native  : Translation ids: 63 140 3272 67 2497 983 2
+06-17 11:24:33.871 13023 14066 I native  : Translation (after detokenizer): I will leave this house ...
+06-17 11:24:33.871 13023 14066 I native  : Alignment probability:
+06-17 11:24:33.871 13023 14066 I native  : 	I	will	leave	this	house	...
+06-17 11:24:33.871 13023 14066 I native  : この	0.121569	0.0117647	0.0313726	0.847059	0.0313726	0.0196078
+06-17 11:24:33.871 13023 14066 I native  : 家	0.00392157	0.0117647	0.0313726	0.054902	0.92549	0.0470588
+06-17 11:24:33.871 13023 14066 I native  : を	0.0235294	0.027451	0.0588235	0.0196078	0.00392157	0.0117647
+06-17 11:24:33.871 13023 14066 I native  : 出	0.188235	0.364706	0.607843	0.0117647	0.00392157	0.0392157
+06-17 11:24:33.871 13023 14066 I native  : たんだろ	0.407843	0.27451	0.105882	0.00392157	0	0.0156863
+06-17 11:24:33.871 13023 14066 I native  : う	0.188235	0.239216	0.0196078	0	0	0.00392157
+06-17 11:24:33.871 13023 14066 I native  : ...	0.0352941	0.0196078	0.0313726	0.0117647	0.0235294	0.74902
+06-17 11:24:33.871 13023 14066 I native  : Translation (before postprocess): I will leave this house ...
+06-17 11:24:33.877 13023 14068 D native  : I0617 11:24:33.877744   14068 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:33.877 13023 14068 D native  : I0617 11:24:33.877819   14068 mergeddicttrans.cc:1866] Sentence #0: 橘など香なせん!
+06-17 11:24:33.877 13023 14068 D native  : I0617 11:24:33.877850   14068 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:33.906 13023 14068 I native  : I0617 11:24:33.906291   14068 mergeddicttrans.cc:1827] Sentence #0: 橘など香なせん!
+06-17 11:24:33.906 13023 14068 I native  : I0617 11:24:33.906465   14068 mergeddicttrans.cc:1828] 
+06-17 11:24:33.906 13023 14068 I native  : Source language: ja, target language: en
+06-17 11:24:33.906 13023 14068 I native  : 
+06-17 11:24:33.906 13023 14068 I native  : Has period trick: 0
+06-17 11:24:33.906 13023 14068 I native  : 
+06-17 11:24:33.906 13023 14068 I native  : Full translation: Nataku such as Tachibana!
+06-17 11:24:33.906 13023 14068 I native  : Translate Instance: 
+06-17 11:24:33.906 13023 14068 I native  : Query (raw): 橘など香なせん!
+06-17 11:24:33.906 13023 14068 I native  : Query (after preprocess): 橘 など 香 な せ ん !
+06-17 11:24:33.906 13023 14068 I native  : Query ids (after tokenizer): 3 3451 427 3 1704 26 536 441 723 2
+06-17 11:24:33.906 13023 14068 I native  : Translation ids: 92 153 875 121 183 27 43 529 261 2932 430 2
+06-17 11:24:33.906 13023 14068 I native  : Translation (after detokenizer): Nataku such as Tachibana !
+06-17 11:24:33.906 13023 14068 I native  : Alignment probability:
+06-17 11:24:33.906 13023 14068 I native  : 	Nataku	such	as	Tachibana	!
+06-17 11:24:33.906 13023 14068 I native  : 橘	0.303922	0.117647	0.176471	0.814706	0.0705882
+06-17 11:24:33.906 13023 14068 I native  : など	0.0294118	0.431373	0.647059	0.0127451	0.0588235
+06-17 11:24:33.906 13023 14068 I native  : 香	0.209804	0.188235	0.0784314	0.022549	0.0627451
+06-17 11:24:33.906 13023 14068 I native  : な	0.111765	0.121569	0.00392157	0.00196078	0.0705882
+06-17 11:24:33.906 13023 14068 I native  : せ	0.0872549	0.0784314	0.00784314	0.00196078	0.109804
+06-17 11:24:33.906 13023 14068 I native  : ん	0.0676471	0.00784314	0	0.00196078	0.0156863
+06-17 11:24:33.906 13023 14068 I native  : !	0.0166667	0.0431373	0.0156863	0.0254902	0.482353
+06-17 11:24:33.906 13023 14068 I native  : Translation (before postprocess): Nataku such as Tachibana !
+06-17 11:24:34.807 13023 14950 I Quality : BitmapCompressInfo:1350,1920,2,90,510334010
+06-17 11:24:36.633 13023 13023 E IJankManager: slideSceneEnd unknown scene 1000 mScene:-1
+06-17 11:24:36.717 13023 13023 I hiyomi.at.debug: _Desupression native alloc gc_urgency: 73119 native bytes: 1520876812
+06-17 11:24:36.717 13023 13023 W VRI[ReaderActivity]: handleResized abandoned!
+06-17 11:24:36.983 13023 13023 D OplusViewDragTouchViewHelper: dispatchTouchView action = 1
+06-17 11:24:36.984 13023 13023 D ViewRootImplExtImpl: the up motion event handled by client, just return
+06-17 11:24:37.044 13023 13023 E Surface : IGraphicBufferProducer::setMaxDequeuedBufferCount(2) returned Invalid argument
+06-17 11:24:37.334 13023 13023 D VRI[ReaderActivity]: onFocusEvent false
+06-17 11:24:38.339 13023 13081 D OplusScrollToTopManager: app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity,This com.android.internal.policy.DecorView{596e298 V.E...... R....... 0,0-1080,2376 aid=1 alpha=1.0 viewInfo = }[ReaderActivity] change focus to false
+06-17 11:24:39.065 13023 13023 D VRI[ReaderActivity]: onFocusEvent true
+06-17 11:24:39.073 13023 13023 D InsetsController: hide(ime(), fromIme=false)
+06-17 11:24:39.073 13023 13023 I ImeTracker: app.kanade.tachiyomi.at.debug:13e0f140: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+06-17 11:24:39.082 13023 13023 W VRI[ReaderActivity]: handleResized abandoned!
+06-17 11:24:40.068 13023 13081 D OplusScrollToTopManager: app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.reader.ReaderActivity,This com.android.internal.policy.DecorView{596e298 V.E...... R....... 0,0-1080,2376 aid=1 alpha=1.0 viewInfo = }[ReaderActivity] change focus to true
+06-17 11:24:48.315 13023 13378 I Quality : BitmapCompressInfo:1350,1920,1,100,604020469
+06-17 11:24:48.359 13023 14247 D native  : I0617 11:24:48.359343   14247 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:48.359 13023 14247 D native  : I0617 11:24:48.359749   14247 mergeddicttrans.cc:1866] Sentence #0: ...少しよろしいでしょうか
+06-17 11:24:48.359 13023 14247 D native  : I0617 11:24:48.359825   14247 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:48.387 13023 14247 I native  : I0617 11:24:48.387808   14247 mergeddicttrans.cc:1827] Sentence #0: ...少しよろしいでしょうか
+06-17 11:24:48.387 13023 14247 I native  : I0617 11:24:48.387888   14247 mergeddicttrans.cc:1828] 
+06-17 11:24:48.387 13023 14247 I native  : Source language: ja, target language: en
+06-17 11:24:48.387 13023 14247 I native  : 
+06-17 11:24:48.387 13023 14247 I native  : Has period trick: 0
+06-17 11:24:48.387 13023 14247 I native  : 
+06-17 11:24:48.387 13023 14247 I native  : Full translation: ... Is it a bit good?
+06-17 11:24:48.387 13023 14247 I native  : Translate Instance: 
+06-17 11:24:48.387 13023 14247 I native  : Query (raw): ...少しよろしいでしょうか
+06-17 11:24:48.387 13023 14247 I native  : Query (after preprocess): ... 少し よろしい でしょ う か
+06-17 11:24:48.387 13023 14247 I native  : Query ids (after tokenizer): 1198 706 51 904 733 272 1334 1255 537 103 2
+06-17 11:24:48.387 13023 14247 I native  : Translation ids: 983 1663 70 9 1053 1171 417 2
+06-17 11:24:48.387 13023 14247 I native  : Translation (after detokenizer): ... Is it a bit good ?
+06-17 11:24:48.387 13023 14247 I native  : Alignment probability:
+06-17 11:24:48.387 13023 14247 I native  : 	...	Is	it	a	bit	good	?
+06-17 11:24:48.387 13023 14247 I native  : ...	0.639216	0.054902	0.0117647	0.0156863	0.00392157	0	0.00784314
+06-17 11:24:48.387 13023 14247 I native  : 少し	0.0352941	0.278431	0.470588	0.596078	0.894118	0.188235	0.105882
+06-17 11:24:48.387 13023 14247 I native  : よろしい	0.0980392	0.196078	0.298039	0.329412	0.0431373	0.737255	0.176471
+06-17 11:24:48.387 13023 14247 I native  : でしょ	0.0392157	0.137255	0.117647	0.0156863	0	0	0.0196078
+06-17 11:24:48.387 13023 14247 I native  : う	0.0235294	0.054902	0.0431373	0.00392157	0	0.00392157	0.0156863
+06-17 11:24:48.387 13023 14247 I native  : か	0.117647	0.247059	0.054902	0.00392157	0	0.00784314	0.172549
+06-17 11:24:48.387 13023 14247 I native  : Translation (before postprocess): ... Is it a bit good ?
+06-17 11:24:48.389 13023 14248 D native  : I0617 11:24:48.389874   14248 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:48.389 13023 14248 D native  : I0617 11:24:48.389983   14248 mergeddicttrans.cc:1866] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:24:48.390 13023 14248 D native  : I0617 11:24:48.390016   14248 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:48.412 13023 14248 I native  : I0617 11:24:48.412639   14248 mergeddicttrans.cc:1827] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:24:48.412 13023 14248 I native  : I0617 11:24:48.412735   14248 mergeddicttrans.cc:1828] 
+06-17 11:24:48.412 13023 14248 I native  : Source language: ja, target language: en
+06-17 11:24:48.412 13023 14248 I native  : 
+06-17 11:24:48.412 13023 14248 I native  : Has period trick: 0
+06-17 11:24:48.412 13023 14248 I native  : 
+06-17 11:24:48.412 13023 14248 I native  : Full translation: My father wants to say ...
+06-17 11:24:48.412 13023 14248 I native  : Translate Instance: 
+06-17 11:24:48.412 13023 14248 I native  : Query (raw): 父さんはいったいったいどんな...
+06-17 11:24:48.412 13023 14248 I native  : Query (after preprocess): 父さん は いった いっ たい どんな ...
+06-17 11:24:48.412 13023 14248 I native  : Query ids (after tokenizer): 3 2251 1886 9 81 88 398 81 88 1221 967 1742 1198 2
+06-17 11:24:48.412 13023 14248 I native  : Translation ids: 2377 120 2543 799 10 7 2591 983 2
+06-17 11:24:48.412 13023 14248 I native  : Translation (after detokenizer): My father wants to say ...
+06-17 11:24:48.412 13023 14248 I native  : Alignment probability:
+06-17 11:24:48.412 13023 14248 I native  : 	My	father	wants	to	say	...
+06-17 11:24:48.412 13023 14248 I native  : 父さん	0.443137	0.945098	0.0176471	0.00784314	0	0.00784314
+06-17 11:24:48.412 13023 14248 I native  : は	0.0666667	0.00980392	0.0823529	0.0235294	0.0117647	0.00392157
+06-17 11:24:48.412 13023 14248 I native  : いった	0.0352941	0.00588235	0.278431	0.301961	0.313726	0.227451
+06-17 11:24:48.412 13023 14248 I native  : いっ	0.0156863	0.00196078	0.194118	0.207843	0.384314	0.0901961
+06-17 11:24:48.412 13023 14248 I native  : たい	0.0666667	0.0156863	0.184314	0.0705882	0.0352941	0.0627451
+06-17 11:24:48.412 13023 14248 I native  : どんな	0.352941	0.00784314	0.0843137	0.172549	0.0196078	0.0823529
+06-17 11:24:48.412 13023 14248 I native  : ...	0.0117647	0.00196078	0.129412	0.160784	0.121569	0.411765
+06-17 11:24:48.412 13023 14248 I native  : Translation (before postprocess): My father wants to say ...
+06-17 11:24:48.414 13023 13935 D native  : I0617 11:24:48.414034   13935 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:48.414 13023 13935 D native  : I0617 11:24:48.414096   13935 mergeddicttrans.cc:1866] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:24:48.414 13023 13935 D native  : I0617 11:24:48.414130   13935 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:48.445 13023 13935 I native  : I0617 11:24:48.445689   13935 mergeddicttrans.cc:1827] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:24:48.445 13023 13935 I native  : I0617 11:24:48.445790   13935 mergeddicttrans.cc:1828] 
+06-17 11:24:48.445 13023 13935 I native  : Source language: ja, target language: en
+06-17 11:24:48.445 13023 13935 I native  : 
+06-17 11:24:48.445 13023 13935 I native  : Has period trick: 0
+06-17 11:24:48.445 13023 13935 I native  : 
+06-17 11:24:48.445 13023 13935 I native  : Full translation: This Rutas Sui Liii Line Fold
+06-17 11:24:48.445 13023 13935 I native  : Translate Instance: 
+06-17 11:24:48.445 13023 13935 I native  : Query (raw): このルータススーLIIIラインフォルドに
+06-17 11:24:48.445 13023 13935 I native  : Query (after preprocess): この ルータス スー liii ラインフォルド に
+06-17 11:24:48.445 13023 13935 I native  : Query ids (after tokenizer): 61 508 269 48 76 25 220 28 28 28 260 164 610 23 298 8 2
+06-17 11:24:48.445 13023 13935 I native  : Translation ids: 149 57 231 290 2950 44 49 44 44 44 2973 52 795 2
+06-17 11:24:48.445 13023 13935 I native  : Translation (after detokenizer): This Rutas Sui Liii Line Fold
+06-17 11:24:48.445 13023 13935 I native  : Alignment probability:
+06-17 11:24:48.445 13023 13935 I native  : 	This	Rutas	Sui	Liii	Line	Fold
+06-17 11:24:48.445 13023 13935 I native  : この	0.45098	0.00915033	0.00392157	0.00196078	0	0
+06-17 11:24:48.445 13023 13935 I native  : ルータス	0.129412	0.857516	0.0215686	0	0	0
+06-17 11:24:48.445 13023 13935 I native  : スー	0.027451	0.0418301	0.701961	0.027451	0	0
+06-17 11:24:48.445 13023 13935 I native  : liii	0.027451	0.00915033	0.196078	0.802941	0.141176	0.00588235
+06-17 11:24:48.445 13023 13935 I native  : ラインフォルド	0.0117647	0.00522876	0.00392157	0.0588235	0.709804	0.956863
+06-17 11:24:48.445 13023 13935 I native  : に	0.298039	0.0143791	0.0333333	0.0598039	0.129412	0.0254902
+06-17 11:24:48.445 13023 13935 I native  : Translation (before postprocess): This Rutas Sui Liii Line Fold
+06-17 11:24:48.450 13023 13950 D native  : I0617 11:24:48.450561   13950 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:48.450 13023 13950 D native  : I0617 11:24:48.450909   13950 mergeddicttrans.cc:1866] Sentence #0: この家を出たんだろう...
+06-17 11:24:48.450 13023 13950 D native  : I0617 11:24:48.450942   13950 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:48.471 13023 13950 I native  : I0617 11:24:48.471960   13950 mergeddicttrans.cc:1827] Sentence #0: この家を出たんだろう...
+06-17 11:24:48.472 13023 13950 I native  : I0617 11:24:48.472041   13950 mergeddicttrans.cc:1828] 
+06-17 11:24:48.472 13023 13950 I native  : Source language: ja, target language: en
+06-17 11:24:48.472 13023 13950 I native  : 
+06-17 11:24:48.472 13023 13950 I native  : Has period trick: 0
+06-17 11:24:48.472 13023 13950 I native  : 
+06-17 11:24:48.472 13023 13950 I native  : Full translation: I will leave this house ...
+06-17 11:24:48.472 13023 13950 I native  : Translate Instance: 
+06-17 11:24:48.472 13023 13950 I native  : Query (raw): この家を出たんだろう...
+06-17 11:24:48.472 13023 13950 I native  : Query (after preprocess): この 家 を 出 たんだろ う ...
+06-17 11:24:48.472 13023 13950 I native  : Query ids (after tokenizer): 61 1052 7 683 15 354 1019 733 537 1198 2
+06-17 11:24:48.472 13023 13950 I native  : Translation ids: 63 140 3272 67 2497 983 2
+06-17 11:24:48.472 13023 13950 I native  : Translation (after detokenizer): I will leave this house ...
+06-17 11:24:48.472 13023 13950 I native  : Alignment probability:
+06-17 11:24:48.472 13023 13950 I native  : 	I	will	leave	this	house	...
+06-17 11:24:48.472 13023 13950 I native  : この	0.121569	0.0117647	0.0313726	0.847059	0.0313726	0.0196078
+06-17 11:24:48.472 13023 13950 I native  : 家	0.00392157	0.0117647	0.0313726	0.054902	0.92549	0.0470588
+06-17 11:24:48.472 13023 13950 I native  : を	0.0235294	0.027451	0.0588235	0.0196078	0.00392157	0.0117647
+06-17 11:24:48.472 13023 13950 I native  : 出	0.188235	0.364706	0.607843	0.0117647	0.00392157	0.0392157
+06-17 11:24:48.472 13023 13950 I native  : たんだろ	0.407843	0.27451	0.105882	0.00392157	0	0.0156863
+06-17 11:24:48.472 13023 13950 I native  : う	0.188235	0.239216	0.0196078	0	0	0.00392157
+06-17 11:24:48.472 13023 13950 I native  : ...	0.0352941	0.0196078	0.0313726	0.0117647	0.0235294	0.74902
+06-17 11:24:48.472 13023 13950 I native  : Translation (before postprocess): I will leave this house ...
+06-17 11:24:48.475 13023 13952 D native  : I0617 11:24:48.475264   13952 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:24:48.475 13023 13952 D native  : I0617 11:24:48.475357   13952 mergeddicttrans.cc:1866] Sentence #0: 橘など香なせん!
+06-17 11:24:48.475 13023 13952 D native  : I0617 11:24:48.475386   13952 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:24:48.498 13023 13952 I native  : I0617 11:24:48.498241   13952 mergeddicttrans.cc:1827] Sentence #0: 橘など香なせん!
+06-17 11:24:48.498 13023 13952 I native  : I0617 11:24:48.498355   13952 mergeddicttrans.cc:1828] 
+06-17 11:24:48.498 13023 13952 I native  : Source language: ja, target language: en
+06-17 11:24:48.498 13023 13952 I native  : 
+06-17 11:24:48.498 13023 13952 I native  : Has period trick: 0
+06-17 11:24:48.498 13023 13952 I native  : 
+06-17 11:24:48.498 13023 13952 I native  : Full translation: Nataku such as Tachibana!
+06-17 11:24:48.498 13023 13952 I native  : Translate Instance: 
+06-17 11:24:48.498 13023 13952 I native  : Query (raw): 橘など香なせん!
+06-17 11:24:48.498 13023 13952 I native  : Query (after preprocess): 橘 など 香 な せ ん !
+06-17 11:24:48.498 13023 13952 I native  : Query ids (after tokenizer): 3 3451 427 3 1704 26 536 441 723 2
+06-17 11:24:48.498 13023 13952 I native  : Translation ids: 92 153 875 121 183 27 43 529 261 2932 430 2
+06-17 11:24:48.498 13023 13952 I native  : Translation (after detokenizer): Nataku such as Tachibana !
+06-17 11:24:48.498 13023 13952 I native  : Alignment probability:
+06-17 11:24:48.498 13023 13952 I native  : 	Nataku	such	as	Tachibana	!
+06-17 11:24:48.498 13023 13952 I native  : 橘	0.303922	0.117647	0.176471	0.814706	0.0705882
+06-17 11:24:48.498 13023 13952 I native  : など	0.0294118	0.431373	0.647059	0.0127451	0.0588235
+06-17 11:24:48.498 13023 13952 I native  : 香	0.209804	0.188235	0.0784314	0.022549	0.0627451
+06-17 11:24:48.498 13023 13952 I native  : な	0.111765	0.121569	0.00392157	0.00196078	0.0705882
+06-17 11:24:48.498 13023 13952 I native  : せ	0.0872549	0.0784314	0.00784314	0.00196078	0.109804
+06-17 11:24:48.498 13023 13952 I native  : ん	0.0676471	0.00784314	0	0.00196078	0.0156863
+06-17 11:24:48.498 13023 13952 I native  : !	0.0166667	0.0431373	0.0156863	0.0254902	0.482353
+06-17 11:24:48.498 13023 13952 I native  : Translation (before postprocess): Nataku such as Tachibana !
+06-17 11:24:49.403 13023 13378 I Quality : BitmapCompressInfo:1350,1920,2,90,514575625
+06-17 11:25:03.111 13023 14937 I Quality : BitmapCompressInfo:1350,1920,1,100,617605573
+06-17 11:25:03.148 13023 14065 D native  : I0617 11:25:03.148634   14065 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:03.148 13023 14065 D native  : I0617 11:25:03.148881   14065 mergeddicttrans.cc:1866] Sentence #0: ...少しよろしいでしょうか
+06-17 11:25:03.148 13023 14065 D native  : I0617 11:25:03.148948   14065 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:03.177 13023 14065 I native  : I0617 11:25:03.177528   14065 mergeddicttrans.cc:1827] Sentence #0: ...少しよろしいでしょうか
+06-17 11:25:03.177 13023 14065 I native  : I0617 11:25:03.177721   14065 mergeddicttrans.cc:1828] 
+06-17 11:25:03.177 13023 14065 I native  : Source language: ja, target language: en
+06-17 11:25:03.177 13023 14065 I native  : 
+06-17 11:25:03.177 13023 14065 I native  : Has period trick: 0
+06-17 11:25:03.177 13023 14065 I native  : 
+06-17 11:25:03.177 13023 14065 I native  : Full translation: ... Is it a bit good?
+06-17 11:25:03.177 13023 14065 I native  : Translate Instance: 
+06-17 11:25:03.177 13023 14065 I native  : Query (raw): ...少しよろしいでしょうか
+06-17 11:25:03.177 13023 14065 I native  : Query (after preprocess): ... 少し よろしい でしょ う か
+06-17 11:25:03.177 13023 14065 I native  : Query ids (after tokenizer): 1198 706 51 904 733 272 1334 1255 537 103 2
+06-17 11:25:03.177 13023 14065 I native  : Translation ids: 983 1663 70 9 1053 1171 417 2
+06-17 11:25:03.177 13023 14065 I native  : Translation (after detokenizer): ... Is it a bit good ?
+06-17 11:25:03.177 13023 14065 I native  : Alignment probability:
+06-17 11:25:03.177 13023 14065 I native  : 	...	Is	it	a	bit	good	?
+06-17 11:25:03.177 13023 14065 I native  : ...	0.639216	0.054902	0.0117647	0.0156863	0.00392157	0	0.00784314
+06-17 11:25:03.177 13023 14065 I native  : 少し	0.0352941	0.278431	0.470588	0.596078	0.894118	0.188235	0.105882
+06-17 11:25:03.177 13023 14065 I native  : よろしい	0.0980392	0.196078	0.298039	0.329412	0.0431373	0.737255	0.176471
+06-17 11:25:03.177 13023 14065 I native  : でしょ	0.0392157	0.137255	0.117647	0.0156863	0	0	0.0196078
+06-17 11:25:03.177 13023 14065 I native  : う	0.0235294	0.054902	0.0431373	0.00392157	0	0.00392157	0.0156863
+06-17 11:25:03.177 13023 14065 I native  : か	0.117647	0.247059	0.054902	0.00392157	0	0.00784314	0.172549
+06-17 11:25:03.177 13023 14065 I native  : Translation (before postprocess): ... Is it a bit good ?
+06-17 11:25:03.180 13023 14066 D native  : I0617 11:25:03.180469   14066 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:03.180 13023 14066 D native  : I0617 11:25:03.180557   14066 mergeddicttrans.cc:1866] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:25:03.180 13023 14066 D native  : I0617 11:25:03.180596   14066 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:03.205 13023 14066 I native  : I0617 11:25:03.205583   14066 mergeddicttrans.cc:1827] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:25:03.205 13023 14066 I native  : I0617 11:25:03.205685   14066 mergeddicttrans.cc:1828] 
+06-17 11:25:03.205 13023 14066 I native  : Source language: ja, target language: en
+06-17 11:25:03.205 13023 14066 I native  : 
+06-17 11:25:03.205 13023 14066 I native  : Has period trick: 0
+06-17 11:25:03.205 13023 14066 I native  : 
+06-17 11:25:03.205 13023 14066 I native  : Full translation: My father wants to say ...
+06-17 11:25:03.205 13023 14066 I native  : Translate Instance: 
+06-17 11:25:03.205 13023 14066 I native  : Query (raw): 父さんはいったいったいどんな...
+06-17 11:25:03.205 13023 14066 I native  : Query (after preprocess): 父さん は いった いっ たい どんな ...
+06-17 11:25:03.205 13023 14066 I native  : Query ids (after tokenizer): 3 2251 1886 9 81 88 398 81 88 1221 967 1742 1198 2
+06-17 11:25:03.205 13023 14066 I native  : Translation ids: 2377 120 2543 799 10 7 2591 983 2
+06-17 11:25:03.205 13023 14066 I native  : Translation (after detokenizer): My father wants to say ...
+06-17 11:25:03.205 13023 14066 I native  : Alignment probability:
+06-17 11:25:03.205 13023 14066 I native  : 	My	father	wants	to	say	...
+06-17 11:25:03.205 13023 14066 I native  : 父さん	0.443137	0.945098	0.0176471	0.00784314	0	0.00784314
+06-17 11:25:03.205 13023 14066 I native  : は	0.0666667	0.00980392	0.0823529	0.0235294	0.0117647	0.00392157
+06-17 11:25:03.205 13023 14066 I native  : いった	0.0352941	0.00588235	0.278431	0.301961	0.313726	0.227451
+06-17 11:25:03.205 13023 14066 I native  : いっ	0.0156863	0.00196078	0.194118	0.207843	0.384314	0.0901961
+06-17 11:25:03.205 13023 14066 I native  : たい	0.0666667	0.0156863	0.184314	0.0705882	0.0352941	0.0627451
+06-17 11:25:03.205 13023 14066 I native  : どんな	0.352941	0.00784314	0.0843137	0.172549	0.0196078	0.0823529
+06-17 11:25:03.205 13023 14066 I native  : ...	0.0117647	0.00196078	0.129412	0.160784	0.121569	0.411765
+06-17 11:25:03.205 13023 14066 I native  : Translation (before postprocess): My father wants to say ...
+06-17 11:25:03.207 13023 14068 D native  : I0617 11:25:03.207240   14068 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:03.207 13023 14068 D native  : I0617 11:25:03.207308   14068 mergeddicttrans.cc:1866] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:25:03.207 13023 14068 D native  : I0617 11:25:03.207338   14068 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:03.240 13023 14068 I native  : I0617 11:25:03.240486   14068 mergeddicttrans.cc:1827] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:25:03.240 13023 14068 I native  : I0617 11:25:03.240578   14068 mergeddicttrans.cc:1828] 
+06-17 11:25:03.240 13023 14068 I native  : Source language: ja, target language: en
+06-17 11:25:03.240 13023 14068 I native  : 
+06-17 11:25:03.240 13023 14068 I native  : Has period trick: 0
+06-17 11:25:03.240 13023 14068 I native  : 
+06-17 11:25:03.240 13023 14068 I native  : Full translation: This Rutas Sui Liii Line Fold
+06-17 11:25:03.240 13023 14068 I native  : Translate Instance: 
+06-17 11:25:03.240 13023 14068 I native  : Query (raw): このルータススーLIIIラインフォルドに
+06-17 11:25:03.240 13023 14068 I native  : Query (after preprocess): この ルータス スー liii ラインフォルド に
+06-17 11:25:03.240 13023 14068 I native  : Query ids (after tokenizer): 61 508 269 48 76 25 220 28 28 28 260 164 610 23 298 8 2
+06-17 11:25:03.240 13023 14068 I native  : Translation ids: 149 57 231 290 2950 44 49 44 44 44 2973 52 795 2
+06-17 11:25:03.240 13023 14068 I native  : Translation (after detokenizer): This Rutas Sui Liii Line Fold
+06-17 11:25:03.240 13023 14068 I native  : Alignment probability:
+06-17 11:25:03.240 13023 14068 I native  : 	This	Rutas	Sui	Liii	Line	Fold
+06-17 11:25:03.240 13023 14068 I native  : この	0.45098	0.00915033	0.00392157	0.00196078	0	0
+06-17 11:25:03.240 13023 14068 I native  : ルータス	0.129412	0.857516	0.0215686	0	0	0
+06-17 11:25:03.240 13023 14068 I native  : スー	0.027451	0.0418301	0.701961	0.027451	0	0
+06-17 11:25:03.240 13023 14068 I native  : liii	0.027451	0.00915033	0.196078	0.802941	0.141176	0.00588235
+06-17 11:25:03.240 13023 14068 I native  : ラインフォルド	0.0117647	0.00522876	0.00392157	0.0588235	0.709804	0.956863
+06-17 11:25:03.240 13023 14068 I native  : に	0.298039	0.0143791	0.0333333	0.0598039	0.129412	0.0254902
+06-17 11:25:03.240 13023 14068 I native  : Translation (before postprocess): This Rutas Sui Liii Line Fold
+06-17 11:25:03.246 13023 14247 D native  : I0617 11:25:03.246592   14247 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:03.246 13023 14247 D native  : I0617 11:25:03.246689   14247 mergeddicttrans.cc:1866] Sentence #0: この家を出たんだろう...
+06-17 11:25:03.246 13023 14247 D native  : I0617 11:25:03.246725   14247 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:03.271 13023 14247 I native  : I0617 11:25:03.271596   14247 mergeddicttrans.cc:1827] Sentence #0: この家を出たんだろう...
+06-17 11:25:03.271 13023 14247 I native  : I0617 11:25:03.271845   14247 mergeddicttrans.cc:1828] 
+06-17 11:25:03.271 13023 14247 I native  : Source language: ja, target language: en
+06-17 11:25:03.271 13023 14247 I native  : 
+06-17 11:25:03.271 13023 14247 I native  : Has period trick: 0
+06-17 11:25:03.271 13023 14247 I native  : 
+06-17 11:25:03.271 13023 14247 I native  : Full translation: I will leave this house ...
+06-17 11:25:03.271 13023 14247 I native  : Translate Instance: 
+06-17 11:25:03.271 13023 14247 I native  : Query (raw): この家を出たんだろう...
+06-17 11:25:03.271 13023 14247 I native  : Query (after preprocess): この 家 を 出 たんだろ う ...
+06-17 11:25:03.271 13023 14247 I native  : Query ids (after tokenizer): 61 1052 7 683 15 354 1019 733 537 1198 2
+06-17 11:25:03.271 13023 14247 I native  : Translation ids: 63 140 3272 67 2497 983 2
+06-17 11:25:03.271 13023 14247 I native  : Translation (after detokenizer): I will leave this house ...
+06-17 11:25:03.271 13023 14247 I native  : Alignment probability:
+06-17 11:25:03.271 13023 14247 I native  : 	I	will	leave	this	house	...
+06-17 11:25:03.271 13023 14247 I native  : この	0.121569	0.0117647	0.0313726	0.847059	0.0313726	0.0196078
+06-17 11:25:03.271 13023 14247 I native  : 家	0.00392157	0.0117647	0.0313726	0.054902	0.92549	0.0470588
+06-17 11:25:03.271 13023 14247 I native  : を	0.0235294	0.027451	0.0588235	0.0196078	0.00392157	0.0117647
+06-17 11:25:03.271 13023 14247 I native  : 出	0.188235	0.364706	0.607843	0.0117647	0.00392157	0.0392157
+06-17 11:25:03.271 13023 14247 I native  : たんだろ	0.407843	0.27451	0.105882	0.00392157	0	0.0156863
+06-17 11:25:03.271 13023 14247 I native  : う	0.188235	0.239216	0.0196078	0	0	0.00392157
+06-17 11:25:03.271 13023 14247 I native  : ...	0.0352941	0.0196078	0.0313726	0.0117647	0.0235294	0.74902
+06-17 11:25:03.271 13023 14247 I native  : Translation (before postprocess): I will leave this house ...
+06-17 11:25:03.273 13023 14248 D native  : I0617 11:25:03.273516   14248 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:03.273 13023 14248 D native  : I0617 11:25:03.273636   14248 mergeddicttrans.cc:1866] Sentence #0: 橘など香なせん!
+06-17 11:25:03.273 13023 14248 D native  : I0617 11:25:03.273684   14248 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:03.298 13023 14248 I native  : I0617 11:25:03.298444   14248 mergeddicttrans.cc:1827] Sentence #0: 橘など香なせん!
+06-17 11:25:03.298 13023 14248 I native  : I0617 11:25:03.298544   14248 mergeddicttrans.cc:1828] 
+06-17 11:25:03.298 13023 14248 I native  : Source language: ja, target language: en
+06-17 11:25:03.298 13023 14248 I native  : 
+06-17 11:25:03.298 13023 14248 I native  : Has period trick: 0
+06-17 11:25:03.298 13023 14248 I native  : 
+06-17 11:25:03.298 13023 14248 I native  : Full translation: Nataku such as Tachibana!
+06-17 11:25:03.298 13023 14248 I native  : Translate Instance: 
+06-17 11:25:03.298 13023 14248 I native  : Query (raw): 橘など香なせん!
+06-17 11:25:03.298 13023 14248 I native  : Query (after preprocess): 橘 など 香 な せ ん !
+06-17 11:25:03.298 13023 14248 I native  : Query ids (after tokenizer): 3 3451 427 3 1704 26 536 441 723 2
+06-17 11:25:03.298 13023 14248 I native  : Translation ids: 92 153 875 121 183 27 43 529 261 2932 430 2
+06-17 11:25:03.298 13023 14248 I native  : Translation (after detokenizer): Nataku such as Tachibana !
+06-17 11:25:03.298 13023 14248 I native  : Alignment probability:
+06-17 11:25:03.298 13023 14248 I native  : 	Nataku	such	as	Tachibana	!
+06-17 11:25:03.298 13023 14248 I native  : 橘	0.303922	0.117647	0.176471	0.814706	0.0705882
+06-17 11:25:03.298 13023 14248 I native  : など	0.0294118	0.431373	0.647059	0.0127451	0.0588235
+06-17 11:25:03.298 13023 14248 I native  : 香	0.209804	0.188235	0.0784314	0.022549	0.0627451
+06-17 11:25:03.298 13023 14248 I native  : な	0.111765	0.121569	0.00392157	0.00196078	0.0705882
+06-17 11:25:03.298 13023 14248 I native  : せ	0.0872549	0.0784314	0.00784314	0.00196078	0.109804
+06-17 11:25:03.298 13023 14248 I native  : ん	0.0676471	0.00784314	0	0.00196078	0.0156863
+06-17 11:25:03.298 13023 14248 I native  : !	0.0166667	0.0431373	0.0156863	0.0254902	0.482353
+06-17 11:25:03.298 13023 14248 I native  : Translation (before postprocess): Nataku such as Tachibana !
+06-17 11:25:04.202 13023 14937 I Quality : BitmapCompressInfo:1350,1920,2,90,505801510
+06-17 11:25:17.963 13023 13357 I Quality : BitmapCompressInfo:1350,1920,1,100,606008959
+06-17 11:25:17.998 13023 13935 D native  : I0617 11:25:17.998574   13935 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:17.998 13023 13935 D native  : I0617 11:25:17.998822   13935 mergeddicttrans.cc:1866] Sentence #0: ...少しよろしいでしょうか
+06-17 11:25:17.998 13023 13935 D native  : I0617 11:25:17.998878   13935 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:18.021 13023 13935 I native  : I0617 11:25:18.021570   13935 mergeddicttrans.cc:1827] Sentence #0: ...少しよろしいでしょうか
+06-17 11:25:18.021 13023 13935 I native  : I0617 11:25:18.021668   13935 mergeddicttrans.cc:1828] 
+06-17 11:25:18.021 13023 13935 I native  : Source language: ja, target language: en
+06-17 11:25:18.021 13023 13935 I native  : 
+06-17 11:25:18.021 13023 13935 I native  : Has period trick: 0
+06-17 11:25:18.021 13023 13935 I native  : 
+06-17 11:25:18.021 13023 13935 I native  : Full translation: ... Is it a bit good?
+06-17 11:25:18.021 13023 13935 I native  : Translate Instance: 
+06-17 11:25:18.021 13023 13935 I native  : Query (raw): ...少しよろしいでしょうか
+06-17 11:25:18.021 13023 13935 I native  : Query (after preprocess): ... 少し よろしい でしょ う か
+06-17 11:25:18.021 13023 13935 I native  : Query ids (after tokenizer): 1198 706 51 904 733 272 1334 1255 537 103 2
+06-17 11:25:18.021 13023 13935 I native  : Translation ids: 983 1663 70 9 1053 1171 417 2
+06-17 11:25:18.021 13023 13935 I native  : Translation (after detokenizer): ... Is it a bit good ?
+06-17 11:25:18.021 13023 13935 I native  : Alignment probability:
+06-17 11:25:18.021 13023 13935 I native  : 	...	Is	it	a	bit	good	?
+06-17 11:25:18.021 13023 13935 I native  : ...	0.639216	0.054902	0.0117647	0.0156863	0.00392157	0	0.00784314
+06-17 11:25:18.021 13023 13935 I native  : 少し	0.0352941	0.278431	0.470588	0.596078	0.894118	0.188235	0.105882
+06-17 11:25:18.021 13023 13935 I native  : よろしい	0.0980392	0.196078	0.298039	0.329412	0.0431373	0.737255	0.176471
+06-17 11:25:18.021 13023 13935 I native  : でしょ	0.0392157	0.137255	0.117647	0.0156863	0	0	0.0196078
+06-17 11:25:18.021 13023 13935 I native  : う	0.0235294	0.054902	0.0431373	0.00392157	0	0.00392157	0.0156863
+06-17 11:25:18.021 13023 13935 I native  : か	0.117647	0.247059	0.054902	0.00392157	0	0.00784314	0.172549
+06-17 11:25:18.021 13023 13935 I native  : Translation (before postprocess): ... Is it a bit good ?
+06-17 11:25:18.023 13023 13950 D native  : I0617 11:25:18.023339   13950 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:18.023 13023 13950 D native  : I0617 11:25:18.023423   13950 mergeddicttrans.cc:1866] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:25:18.023 13023 13950 D native  : I0617 11:25:18.023457   13950 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:18.049 13023 13950 I native  : I0617 11:25:18.049488   13950 mergeddicttrans.cc:1827] Sentence #0: 父さんはいったいったいどんな...
+06-17 11:25:18.049 13023 13950 I native  : I0617 11:25:18.049593   13950 mergeddicttrans.cc:1828] 
+06-17 11:25:18.049 13023 13950 I native  : Source language: ja, target language: en
+06-17 11:25:18.049 13023 13950 I native  : 
+06-17 11:25:18.049 13023 13950 I native  : Has period trick: 0
+06-17 11:25:18.049 13023 13950 I native  : 
+06-17 11:25:18.049 13023 13950 I native  : Full translation: My father wants to say ...
+06-17 11:25:18.049 13023 13950 I native  : Translate Instance: 
+06-17 11:25:18.049 13023 13950 I native  : Query (raw): 父さんはいったいったいどんな...
+06-17 11:25:18.049 13023 13950 I native  : Query (after preprocess): 父さん は いった いっ たい どんな ...
+06-17 11:25:18.049 13023 13950 I native  : Query ids (after tokenizer): 3 2251 1886 9 81 88 398 81 88 1221 967 1742 1198 2
+06-17 11:25:18.049 13023 13950 I native  : Translation ids: 2377 120 2543 799 10 7 2591 983 2
+06-17 11:25:18.049 13023 13950 I native  : Translation (after detokenizer): My father wants to say ...
+06-17 11:25:18.049 13023 13950 I native  : Alignment probability:
+06-17 11:25:18.049 13023 13950 I native  : 	My	father	wants	to	say	...
+06-17 11:25:18.049 13023 13950 I native  : 父さん	0.443137	0.945098	0.0176471	0.00784314	0	0.00784314
+06-17 11:25:18.049 13023 13950 I native  : は	0.0666667	0.00980392	0.0823529	0.0235294	0.0117647	0.00392157
+06-17 11:25:18.049 13023 13950 I native  : いった	0.0352941	0.00588235	0.278431	0.301961	0.313726	0.227451
+06-17 11:25:18.049 13023 13950 I native  : いっ	0.0156863	0.00196078	0.194118	0.207843	0.384314	0.0901961
+06-17 11:25:18.049 13023 13950 I native  : たい	0.0666667	0.0156863	0.184314	0.0705882	0.0352941	0.0627451
+06-17 11:25:18.049 13023 13950 I native  : どんな	0.352941	0.00784314	0.0843137	0.172549	0.0196078	0.0823529
+06-17 11:25:18.049 13023 13950 I native  : ...	0.0117647	0.00196078	0.129412	0.160784	0.121569	0.411765
+06-17 11:25:18.049 13023 13950 I native  : Translation (before postprocess): My father wants to say ...
+06-17 11:25:18.050 13023 13952 D native  : I0617 11:25:18.050927   13952 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:18.051 13023 13952 D native  : I0617 11:25:18.050998   13952 mergeddicttrans.cc:1866] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:25:18.051 13023 13952 D native  : I0617 11:25:18.051030   13952 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:18.085 13023 13952 I native  : I0617 11:25:18.085558   13952 mergeddicttrans.cc:1827] Sentence #0: このルータススーLIIIラインフォルドに
+06-17 11:25:18.085 13023 13952 I native  : I0617 11:25:18.085668   13952 mergeddicttrans.cc:1828] 
+06-17 11:25:18.085 13023 13952 I native  : Source language: ja, target language: en
+06-17 11:25:18.085 13023 13952 I native  : 
+06-17 11:25:18.085 13023 13952 I native  : Has period trick: 0
+06-17 11:25:18.085 13023 13952 I native  : 
+06-17 11:25:18.085 13023 13952 I native  : Full translation: This Rutas Sui Liii Line Fold
+06-17 11:25:18.085 13023 13952 I native  : Translate Instance: 
+06-17 11:25:18.085 13023 13952 I native  : Query (raw): このルータススーLIIIラインフォルドに
+06-17 11:25:18.085 13023 13952 I native  : Query (after preprocess): この ルータス スー liii ラインフォルド に
+06-17 11:25:18.085 13023 13952 I native  : Query ids (after tokenizer): 61 508 269 48 76 25 220 28 28 28 260 164 610 23 298 8 2
+06-17 11:25:18.085 13023 13952 I native  : Translation ids: 149 57 231 290 2950 44 49 44 44 44 2973 52 795 2
+06-17 11:25:18.085 13023 13952 I native  : Translation (after detokenizer): This Rutas Sui Liii Line Fold
+06-17 11:25:18.085 13023 13952 I native  : Alignment probability:
+06-17 11:25:18.085 13023 13952 I native  : 	This	Rutas	Sui	Liii	Line	Fold
+06-17 11:25:18.085 13023 13952 I native  : この	0.45098	0.00915033	0.00392157	0.00196078	0	0
+06-17 11:25:18.085 13023 13952 I native  : ルータス	0.129412	0.857516	0.0215686	0	0	0
+06-17 11:25:18.085 13023 13952 I native  : スー	0.027451	0.0418301	0.701961	0.027451	0	0
+06-17 11:25:18.085 13023 13952 I native  : liii	0.027451	0.00915033	0.196078	0.802941	0.141176	0.00588235
+06-17 11:25:18.085 13023 13952 I native  : ラインフォルド	0.0117647	0.00522876	0.00392157	0.0588235	0.709804	0.956863
+06-17 11:25:18.085 13023 13952 I native  : に	0.298039	0.0143791	0.0333333	0.0598039	0.129412	0.0254902
+06-17 11:25:18.085 13023 13952 I native  : Translation (before postprocess): This Rutas Sui Liii Line Fold
+06-17 11:25:18.091 13023 14065 D native  : I0617 11:25:18.091572   14065 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:18.091 13023 14065 D native  : I0617 11:25:18.091685   14065 mergeddicttrans.cc:1866] Sentence #0: この家を出たんだろう...
+06-17 11:25:18.091 13023 14065 D native  : I0617 11:25:18.091719   14065 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:18.113 13023 14065 I native  : I0617 11:25:18.112987   14065 mergeddicttrans.cc:1827] Sentence #0: この家を出たんだろう...
+06-17 11:25:18.113 13023 14065 I native  : I0617 11:25:18.113079   14065 mergeddicttrans.cc:1828] 
+06-17 11:25:18.113 13023 14065 I native  : Source language: ja, target language: en
+06-17 11:25:18.113 13023 14065 I native  : 
+06-17 11:25:18.113 13023 14065 I native  : Has period trick: 0
+06-17 11:25:18.113 13023 14065 I native  : 
+06-17 11:25:18.113 13023 14065 I native  : Full translation: I will leave this house ...
+06-17 11:25:18.113 13023 14065 I native  : Translate Instance: 
+06-17 11:25:18.113 13023 14065 I native  : Query (raw): この家を出たんだろう...
+06-17 11:25:18.113 13023 14065 I native  : Query (after preprocess): この 家 を 出 たんだろ う ...
+06-17 11:25:18.113 13023 14065 I native  : Query ids (after tokenizer): 61 1052 7 683 15 354 1019 733 537 1198 2
+06-17 11:25:18.113 13023 14065 I native  : Translation ids: 63 140 3272 67 2497 983 2
+06-17 11:25:18.113 13023 14065 I native  : Translation (after detokenizer): I will leave this house ...
+06-17 11:25:18.113 13023 14065 I native  : Alignment probability:
+06-17 11:25:18.113 13023 14065 I native  : 	I	will	leave	this	house	...
+06-17 11:25:18.113 13023 14065 I native  : この	0.121569	0.0117647	0.0313726	0.847059	0.0313726	0.0196078
+06-17 11:25:18.113 13023 14065 I native  : 家	0.00392157	0.0117647	0.0313726	0.054902	0.92549	0.0470588
+06-17 11:25:18.113 13023 14065 I native  : を	0.0235294	0.027451	0.0588235	0.0196078	0.00392157	0.0117647
+06-17 11:25:18.113 13023 14065 I native  : 出	0.188235	0.364706	0.607843	0.0117647	0.00392157	0.0392157
+06-17 11:25:18.113 13023 14065 I native  : たんだろ	0.407843	0.27451	0.105882	0.00392157	0	0.0156863
+06-17 11:25:18.113 13023 14065 I native  : う	0.188235	0.239216	0.0196078	0	0	0.00392157
+06-17 11:25:18.113 13023 14065 I native  : ...	0.0352941	0.0196078	0.0313726	0.0117647	0.0235294	0.74902
+06-17 11:25:18.113 13023 14065 I native  : Translation (before postprocess): I will leave this house ...
+06-17 11:25:18.114 13023 14066 D native  : I0617 11:25:18.114872   14066 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:18.114 13023 14066 D native  : I0617 11:25:18.114958   14066 mergeddicttrans.cc:1866] Sentence #0: 橘など香なせん!
+06-17 11:25:18.114 13023 14066 D native  : I0617 11:25:18.114992   14066 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:18.139 13023 14066 I native  : I0617 11:25:18.139471   14066 mergeddicttrans.cc:1827] Sentence #0: 橘など香なせん!
+06-17 11:25:18.139 13023 14066 I native  : I0617 11:25:18.139573   14066 mergeddicttrans.cc:1828] 
+06-17 11:25:18.139 13023 14066 I native  : Source language: ja, target language: en
+06-17 11:25:18.139 13023 14066 I native  : 
+06-17 11:25:18.139 13023 14066 I native  : Has period trick: 0
+06-17 11:25:18.139 13023 14066 I native  : 
+06-17 11:25:18.139 13023 14066 I native  : Full translation: Nataku such as Tachibana!
+06-17 11:25:18.139 13023 14066 I native  : Translate Instance: 
+06-17 11:25:18.139 13023 14066 I native  : Query (raw): 橘など香なせん!
+06-17 11:25:18.139 13023 14066 I native  : Query (after preprocess): 橘 など 香 な せ ん !
+06-17 11:25:18.139 13023 14066 I native  : Query ids (after tokenizer): 3 3451 427 3 1704 26 536 441 723 2
+06-17 11:25:18.139 13023 14066 I native  : Translation ids: 92 153 875 121 183 27 43 529 261 2932 430 2
+06-17 11:25:18.139 13023 14066 I native  : Translation (after detokenizer): Nataku such as Tachibana !
+06-17 11:25:18.139 13023 14066 I native  : Alignment probability:
+06-17 11:25:18.139 13023 14066 I native  : 	Nataku	such	as	Tachibana	!
+06-17 11:25:18.139 13023 14066 I native  : 橘	0.303922	0.117647	0.176471	0.814706	0.0705882
+06-17 11:25:18.139 13023 14066 I native  : など	0.0294118	0.431373	0.647059	0.0127451	0.0588235
+06-17 11:25:18.139 13023 14066 I native  : 香	0.209804	0.188235	0.0784314	0.022549	0.0627451
+06-17 11:25:18.139 13023 14066 I native  : な	0.111765	0.121569	0.00392157	0.00196078	0.0705882
+06-17 11:25:18.139 13023 14066 I native  : せ	0.0872549	0.0784314	0.00784314	0.00196078	0.109804
+06-17 11:25:18.139 13023 14066 I native  : ん	0.0676471	0.00784314	0	0.00196078	0.0156863
+06-17 11:25:18.139 13023 14066 I native  : !	0.0166667	0.0431373	0.0156863	0.0254902	0.482353
+06-17 11:25:18.139 13023 14066 I native  : Translation (before postprocess): Nataku such as Tachibana !
+06-17 11:25:19.058 13023 13357 I Quality : BitmapCompressInfo:1350,1920,2,90,510309062
+06-17 11:25:19.835 13023 14068 D DecoupledTextDelegate: Start loading thick OCR module.
+06-17 11:25:19.835 13023 14068 I DynamiteModule: Considering local module com.google.mlkit.dynamite.text.japanese:10000 and remote module com.google.mlkit.dynamite.text.japanese:0
+06-17 11:25:19.835 13023 14068 I DynamiteModule: Selected local version of com.google.mlkit.dynamite.text.japanese
+06-17 11:25:19.864 13023 14247 D nativeloader: Load /data/app/~~tIBwtNqq7FxyDBLX6XPMXA==/app.kanade.tachiyomi.at.debug-XRrpg7hdC2ixFjZgHKYY-A==/base.apk!/lib/arm64-v8a/libmlkit_google_ocr_pipeline.so using class loader ns clns-9 (caller=/data/app/~~tIBwtNqq7FxyDBLX6XPMXA==/app.kanade.tachiyomi.at.debug-XRrpg7hdC2ixFjZgHKYY-A==/base.apk!classes36.dex): ok
+06-17 11:25:19.867 13023 14247 I native  : I0000 00:00:1781670319.867412   14247 asset_manager_util.cc:61] Created global reference to asset manager.
+06-17 11:25:19.890 13023 16873 W libc    : Access denied finding property "ro.hardware.chipname"
+06-17 11:25:19.895 13023 16873 I native  : I0000 00:00:1781670319.895096   16873 resource_manager.cc:23] Number of optimal threads: 6
+06-17 11:25:19.895 13023 16873 I native  : I0000 00:00:1781670319.895540   16873 text_detector_thread_pool_context.cc:38] Compute manager max in flight region detector overwrite: 1
+06-17 11:25:19.895 13023 16872 I native  : I0000 00:00:1781670319.895582   16872 text_classifier.cc:32] Creating classifier TfliteTextClassifier
+06-17 11:25:19.896 13023 16873 I native  : I0000 00:00:1781670319.896378   16873 common_util.h:41] Resizing Thread Pool: ocr_det_0 to 3
+06-17 11:25:19.896 13023 16872 I native  : I0000 00:00:1781670319.896845   16872 common_util.h:41] Resizing Thread Pool: ocr_segm to 3
+06-17 11:25:19.897 13023 16873 I native  : I0000 00:00:1781670319.897967   16873 tflite_detector_client_with_shape_cache.cc:76] Interpreter threads: 6
+06-17 11:25:19.898 13023 16872 I native  : I0000 00:00:1781670319.898700   16872 tflite_lstm_client_base.cc:371] Resizing interpreter pool to 4
+06-17 11:25:19.899 13023 16872 I tflite  : Initialized TensorFlow Lite runtime.
+06-17 11:25:19.901 13023 16872 I native  : I0000 00:00:1781670319.901034   16872 multi_pass_line_recognition_mutator.cc:342] Preloading recognizers.
+06-17 11:25:19.901 13023 16873 I tflite  : Created TensorFlow Lite XNNPACK delegate for CPU.
+06-17 11:25:19.901 13023 16873 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:19.902 13023 16925 I native  : I0000 00:00:1781670319.902030   16925 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Jpan_ctc/optical/conv_model.fb
+06-17 11:25:19.902 13023 16926 I native  : I0000 00:00:1781670319.902333   16926 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Hani_ctc/optical/conv_model.fb
+06-17 11:25:19.902 13023 16925 I native  : I0000 00:00:1781670319.902556   16925 tflite_model_pooled_runner.cc:636] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Jpan_ctc/optical/lstm_model.fb
+06-17 11:25:19.902 13023 16926 I native  : I0000 00:00:1781670319.902783   16926 tflite_model_pooled_runner.cc:636] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Hani_ctc/optical/lstm_model.fb
+06-17 11:25:19.902 13023 16873 I native  : I0000 00:00:1781670319.902925   16873 tflite_detector_client_with_shape_cache.cc:105] Caching size: 10
+06-17 11:25:19.903 13023 16927 I native  : I0000 00:00:1781670319.903502   16927 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Latn_ctc/optical/conv_model.fb
+06-17 11:25:19.904 13023 16873 I native  : I0000 00:00:1781670319.904585   16873 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/layout/line_splitting_custom_ops/model.tflite
+06-17 11:25:19.904 13023 16927 I native  : I0000 00:00:1781670319.904739   16927 tflite_model_pooled_runner.cc:636] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Latn_ctc/optical/lstm_model.fb
+06-17 11:25:19.904 13023 16873 I native  : I0000 00:00:1781670319.904795   16873 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 1
+06-17 11:25:19.905 13023 16873 I native  : I0000 00:00:1781670319.905045   16873 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/layout/line_clustering_custom_ops/model.tflite
+06-17 11:25:19.905 13023 16873 I native  : I0000 00:00:1781670319.905348   16873 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 1
+06-17 11:25:19.907 13023 16927 I native  : I0000 00:00:1781670319.907285   16927 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 4
+06-17 11:25:19.909 13023 16926 I native  : I0000 00:00:1781670319.909011   16926 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 4
+06-17 11:25:19.909 13023 16925 I native  : I0000 00:00:1781670319.909106   16925 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 4
+06-17 11:25:19.909 13023 16927 I native  : I0000 00:00:1781670319.909696   16927 mobile_langid_v2.cc:58] MobileLangID V2 initialized.
+06-17 11:25:19.909 13023 16927 I native  : I0000 00:00:1781670319.909913   16927 multi_pass_line_recognition_mutator.cc:364] Finished preloading a recognizer for "Latn"
+06-17 11:25:19.912 13023 16925 I native  : I0000 00:00:1781670319.912898   16925 mobile_langid_v2.cc:58] MobileLangID V2 initialized.
+06-17 11:25:19.913 13023 16925 I native  : I0000 00:00:1781670319.913086   16925 multi_pass_line_recognition_mutator.cc:364] Finished preloading a recognizer for "Jpan"
+06-17 11:25:19.914 13023 16926 I native  : I0000 00:00:1781670319.914271   16926 mobile_langid_v2.cc:58] MobileLangID V2 initialized.
+06-17 11:25:19.914 13023 16926 I native  : I0000 00:00:1781670319.914366   16926 multi_pass_line_recognition_mutator.cc:364] Finished preloading a recognizer for "Hani"
+06-17 11:25:19.914 13023 16872 I native  : I0000 00:00:1781670319.914578   16872 multi_pass_line_recognition_mutator.cc:398] Finished preloading recognizers.
+06-17 11:25:19.916 13023 14247 D PipelineManager: Start process bitmap
+06-17 11:25:19.917 13023 14247 I native  : I0000 00:00:1781670319.917184   14247 scheduler.cc:693] ImageMetadata: 1350x1920
+06-17 11:25:19.925 13023 16872 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:19.941 13023 16872 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:19.954 13023 16872 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:19.980 13023 16872 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:20.000 13023 16872 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:20.065 13023 14247 D PipelineManager: OCR process succeeded via visionkit pipeline.
+06-17 11:25:20.210 13023 14248 D native  : I0617 11:25:20.210580   14248 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.210 13023 14248 D native  : I0617 11:25:20.210788   14248 mergeddicttrans.cc:1866] Sentence #0: 係など存在せん!
+06-17 11:25:20.210 13023 14248 D native  : I0617 11:25:20.210838   14248 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.236 13023 14248 I native  : I0617 11:25:20.236424   14248 mergeddicttrans.cc:1827] Sentence #0: 係など存在せん!
+06-17 11:25:20.236 13023 14248 I native  : I0617 11:25:20.236531   14248 mergeddicttrans.cc:1828] 
+06-17 11:25:20.236 13023 14248 I native  : Source language: ja, target language: en
+06-17 11:25:20.236 13023 14248 I native  : 
+06-17 11:25:20.236 13023 14248 I native  : Has period trick: 0
+06-17 11:25:20.236 13023 14248 I native  : 
+06-17 11:25:20.236 13023 14248 I native  : Full translation: There is an event such as a person!
+06-17 11:25:20.236 13023 14248 I native  : Translate Instance: 
+06-17 11:25:20.236 13023 14248 I native  : Query (raw): 係など存在せん!
+06-17 11:25:20.236 13023 14248 I native  : Query (after preprocess): 係 など 存在 せ ん !
+06-17 11:25:20.236 13023 14248 I native  : Query ids (after tokenizer): 3 993 427 3 410 423 536 441 723 2
+06-17 11:25:20.236 13023 14248 I native  : Translation ids: 709 11 36 1498 183 27 9 1804 430 2
+06-17 11:25:20.236 13023 14248 I native  : Translation (after detokenizer): There is an event such as a person !
+06-17 11:25:20.236 13023 14248 I native  : Alignment probability:
+06-17 11:25:20.236 13023 14248 I native  : 	There	is	an	event	such	as	a	person	!
+06-17 11:25:20.236 13023 14248 I native  : 係	0.498039	0.101961	0.317647	0.545098	0.117647	0.054902	0.52549	0.807843	0.439216
+06-17 11:25:20.236 13023 14248 I native  : など	0.0588235	0.270588	0.196078	0.0705882	0.435294	0.854902	0.0156863	0.00784314	0.117647
+06-17 11:25:20.236 13023 14248 I native  : 存在	0.14902	0.172549	0.266667	0.160784	0.109804	0.0117647	0.0196078	0.00392157	0.0431373
+06-17 11:25:20.236 13023 14248 I native  : せ	0.137255	0.270588	0.129412	0.0117647	0.0352941	0.00392157	0.00392157	0	0.00392157
+06-17 11:25:20.236 13023 14248 I native  : ん	0.109804	0.141176	0.0117647	0.00392157	0.00784314	0	0	0	0.00392157
+06-17 11:25:20.236 13023 14248 I native  : !	0.0235294	0.0156863	0.0352941	0.0392157	0.231373	0.0235294	0.219608	0.027451	0.27451
+06-17 11:25:20.236 13023 14248 I native  : Translation (before postprocess): There is an event such as a person !
+06-17 11:25:20.245 13023 13935 D native  : I0617 11:25:20.245567   13935 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.245 13023 13935 D native  : I0617 11:25:20.245626   13935 mergeddicttrans.cc:1866] Sentence #0: でしょうか
+06-17 11:25:20.245 13023 13935 D native  : I0617 11:25:20.245665   13935 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.258 13023 13935 I native  : I0617 11:25:20.258179   13935 mergeddicttrans.cc:1827] Sentence #0: でしょうか
+06-17 11:25:20.258 13023 13935 I native  : I0617 11:25:20.258305   13935 mergeddicttrans.cc:1828] 
+06-17 11:25:20.258 13023 13935 I native  : Source language: ja, target language: en
+06-17 11:25:20.258 13023 13935 I native  : 
+06-17 11:25:20.258 13023 13935 I native  : Has period trick: 0
+06-17 11:25:20.258 13023 13935 I native  : 
+06-17 11:25:20.258 13023 13935 I native  : Full translation: Is it?
+06-17 11:25:20.258 13023 13935 I native  : Translate Instance: 
+06-17 11:25:20.258 13023 13935 I native  : Query (raw): でしょうか
+06-17 11:25:20.258 13023 13935 I native  : Query (after preprocess): でしょ う か
+06-17 11:25:20.258 13023 13935 I native  : Query ids (after tokenizer): 1334 1255 537 103 2
+06-17 11:25:20.258 13023 13935 I native  : Translation ids: 1663 70 417 2
+06-17 11:25:20.258 13023 13935 I native  : Translation (after detokenizer): Is it ?
+06-17 11:25:20.258 13023 13935 I native  : Alignment probability:
+06-17 11:25:20.258 13023 13935 I native  : 	Is	it	?
+06-17 11:25:20.258 13023 13935 I native  : でしょ	0.529412	0.356863	0.215686
+06-17 11:25:20.258 13023 13935 I native  : う	0.14902	0.0705882	0.0352941
+06-17 11:25:20.258 13023 13935 I native  : か	0.227451	0.258824	0.054902
+06-17 11:25:20.258 13023 13935 I native  : Translation (before postprocess): Is it ?
+06-17 11:25:20.266 13023 13950 D native  : I0617 11:25:20.266244   13950 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.266 13023 13950 D native  : I0617 11:25:20.266333   13950 mergeddicttrans.cc:1866] Sentence #0: よろしい
+06-17 11:25:20.266 13023 13950 D native  : I0617 11:25:20.266390   13950 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.283 13023 13950 I native  : I0617 11:25:20.282979   13950 mergeddicttrans.cc:1827] Sentence #0: よろしい
+06-17 11:25:20.283 13023 13950 I native  : I0617 11:25:20.283119   13950 mergeddicttrans.cc:1828] 
+06-17 11:25:20.283 13023 13950 I native  : Source language: ja, target language: en
+06-17 11:25:20.283 13023 13950 I native  : 
+06-17 11:25:20.283 13023 13950 I native  : Has period trick: 0
+06-17 11:25:20.283 13023 13950 I native  : 
+06-17 11:25:20.283 13023 13950 I native  : Full translation: Obscure
+06-17 11:25:20.283 13023 13950 I native  : Translate Instance: 
+06-17 11:25:20.283 13023 13950 I native  : Query (raw): よろしい
+06-17 11:25:20.283 13023 13950 I native  : Query (after preprocess): よろしい
+06-17 11:25:20.283 13023 13950 I native  : Query ids (after tokenizer): 904 733 272 2
+06-17 11:25:20.283 13023 13950 I native  : Translation ids: 1734 90 230 2
+06-17 11:25:20.283 13023 13950 I native  : Translation (after detokenizer): obscure
+06-17 11:25:20.283 13023 13950 I native  : Alignment probability:
+06-17 11:25:20.283 13023 13950 I native  : 	obscure
+06-17 11:25:20.283 13023 13950 I native  : よろしい	0.23268
+06-17 11:25:20.283 13023 13950 I native  : Translation (before postprocess): obscure
+06-17 11:25:20.288 13023 13952 D native  : I0617 11:25:20.288670   13952 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.288 13023 13952 D native  : I0617 11:25:20.288760   13952 mergeddicttrans.cc:1866] Sentence #0: 少し
+06-17 11:25:20.288 13023 13952 D native  : I0617 11:25:20.288811   13952 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.302 13023 13952 I native  : I0617 11:25:20.302099   13952 mergeddicttrans.cc:1827] Sentence #0: 少し
+06-17 11:25:20.302 13023 13952 I native  : I0617 11:25:20.302232   13952 mergeddicttrans.cc:1828] 
+06-17 11:25:20.302 13023 13952 I native  : Source language: ja, target language: en
+06-17 11:25:20.302 13023 13952 I native  : 
+06-17 11:25:20.302 13023 13952 I native  : Has period trick: 0
+06-17 11:25:20.302 13023 13952 I native  : 
+06-17 11:25:20.302 13023 13952 I native  : Full translation: Slightly
+06-17 11:25:20.302 13023 13952 I native  : Translate Instance: 
+06-17 11:25:20.302 13023 13952 I native  : Query (raw): 少し
+06-17 11:25:20.302 13023 13952 I native  : Query (after preprocess): 少し
+06-17 11:25:20.302 13023 13952 I native  : Query ids (after tokenizer): 706 51 2
+06-17 11:25:20.302 13023 13952 I native  : Translation ids: 681 408 55 2
+06-17 11:25:20.302 13023 13952 I native  : Translation (after detokenizer): slightly
+06-17 11:25:20.302 13023 13952 I native  : Alignment probability:
+06-17 11:25:20.302 13023 13952 I native  : 	slightly
+06-17 11:25:20.302 13023 13952 I native  : 少し	0.385621
+06-17 11:25:20.302 13023 13952 I native  : Translation (before postprocess): slightly
+06-17 11:25:20.313 13023 14065 D native  : I0617 11:25:20.313192   14065 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.313 13023 14065 D native  : I0617 11:25:20.313356   14065 mergeddicttrans.cc:1866] Sentence #0: 出たんだろう.
+06-17 11:25:20.313 13023 14065 D native  : I0617 11:25:20.313414   14065 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.342 13023 14065 I native  : I0617 11:25:20.342919   14065 mergeddicttrans.cc:1827] Sentence #0: 出たんだろう.
+06-17 11:25:20.343 13023 14065 I native  : I0617 11:25:20.343035   14065 mergeddicttrans.cc:1828] 
+06-17 11:25:20.343 13023 14065 I native  : Source language: ja, target language: en
+06-17 11:25:20.343 13023 14065 I native  : 
+06-17 11:25:20.343 13023 14065 I native  : Has period trick: 0
+06-17 11:25:20.343 13023 14065 I native  : 
+06-17 11:25:20.343 13023 14065 I native  : Full translation: It will come out.
+06-17 11:25:20.343 13023 14065 I native  : Translate Instance: 
+06-17 11:25:20.343 13023 14065 I native  : Query (raw): 出たんだろう.
+06-17 11:25:20.343 13023 14065 I native  : Query (after preprocess): 出 たんだろ う .
+06-17 11:25:20.343 13023 14065 I native  : Query ids (after tokenizer): 683 15 354 1019 733 537 6 2
+06-17 11:25:20.343 13023 14065 I native  : Translation ids: 209 140 2860 346 4 2
+06-17 11:25:20.343 13023 14065 I native  : Translation (after detokenizer): It will come out .
+06-17 11:25:20.343 13023 14065 I native  : Alignment probability:
+06-17 11:25:20.343 13023 14065 I native  : 	It	will	come	out	.
+06-17 11:25:20.343 13023 14065 I native  : 出	0.164706	0.223529	0.584314	0.756863	0.0705882
+06-17 11:25:20.343 13023 14065 I native  : たんだろ	0.576471	0.431373	0.180392	0.0235294	0.0627451
+06-17 11:25:20.343 13023 14065 I native  : う	0.164706	0.27451	0.0313726	0.00392157	0.0156863
+06-17 11:25:20.343 13023 14065 I native  : .	0.0470588	0.0235294	0.0470588	0.0745098	0.380392
+06-17 11:25:20.343 13023 14065 I native  : Translation (before postprocess): It will come out .
+06-17 11:25:20.351 13023 14066 D native  : I0617 11:25:20.351407   14066 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.351 13023 14066 D native  : I0617 11:25:20.351487   14066 mergeddicttrans.cc:1866] Sentence #0: この家を
+06-17 11:25:20.351 13023 14066 D native  : I0617 11:25:20.351533   14066 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.362 13023 14066 I native  : I0617 11:25:20.362614   14066 mergeddicttrans.cc:1827] Sentence #0: この家を
+06-17 11:25:20.362 13023 14066 I native  : I0617 11:25:20.362739   14066 mergeddicttrans.cc:1828] 
+06-17 11:25:20.362 13023 14066 I native  : Source language: ja, target language: en
+06-17 11:25:20.362 13023 14066 I native  : 
+06-17 11:25:20.362 13023 14066 I native  : Has period trick: 0
+06-17 11:25:20.362 13023 14066 I native  : 
+06-17 11:25:20.362 13023 14066 I native  : Full translation: This house
+06-17 11:25:20.362 13023 14066 I native  : Translate Instance: 
+06-17 11:25:20.362 13023 14066 I native  : Query (raw): この家を
+06-17 11:25:20.362 13023 14066 I native  : Query (after preprocess): この 家 を
+06-17 11:25:20.362 13023 14066 I native  : Query ids (after tokenizer): 61 1052 7 2
+06-17 11:25:20.362 13023 14066 I native  : Translation ids: 149 2497 2
+06-17 11:25:20.362 13023 14066 I native  : Translation (after detokenizer): This house
+06-17 11:25:20.362 13023 14066 I native  : Alignment probability:
+06-17 11:25:20.362 13023 14066 I native  : 	This	house
+06-17 11:25:20.362 13023 14066 I native  : この	0.341176	0.0156863
+06-17 11:25:20.362 13023 14066 I native  : 家	0.0431373	0.956863
+06-17 11:25:20.362 13023 14066 I native  : を	0.278431	0.0117647
+06-17 11:25:20.362 13023 14066 I native  : Translation (before postprocess): This house
+06-17 11:25:20.364 13023 14068 D native  : I0617 11:25:20.364914   14068 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.365 13023 14068 D native  : I0617 11:25:20.365022   14068 mergeddicttrans.cc:1866] Sentence #0: のイン
+06-17 11:25:20.365 13023 14068 D native  : I0617 11:25:20.365062   14068 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.377 13023 14068 I native  : I0617 11:25:20.377289   14068 mergeddicttrans.cc:1827] Sentence #0: のイン
+06-17 11:25:20.377 13023 14068 I native  : I0617 11:25:20.377456   14068 mergeddicttrans.cc:1828] 
+06-17 11:25:20.377 13023 14068 I native  : Source language: ja, target language: en
+06-17 11:25:20.377 13023 14068 I native  : 
+06-17 11:25:20.377 13023 14068 I native  : Has period trick: 0
+06-17 11:25:20.377 13023 14068 I native  : 
+06-17 11:25:20.377 13023 14068 I native  : Full translation: In
+06-17 11:25:20.377 13023 14068 I native  : Translate Instance: 
+06-17 11:25:20.377 13023 14068 I native  : Query (raw): のイン
+06-17 11:25:20.377 13023 14068 I native  : Query (after preprocess): の イン
+06-17 11:25:20.377 13023 14068 I native  : Query ids (after tokenizer): 4 176 2
+06-17 11:25:20.377 13023 14068 I native  : Translation ids: 12 2
+06-17 11:25:20.377 13023 14068 I native  : Translation (after detokenizer): in
+06-17 11:25:20.377 13023 14068 I native  : Alignment probability:
+06-17 11:25:20.377 13023 14068 I native  : 	in
+06-17 11:25:20.377 13023 14068 I native  : の	0.137255
+06-17 11:25:20.377 13023 14068 I native  : イン	0.603922
+06-17 11:25:20.377 13023 14068 I native  : Translation (before postprocess): in
+06-17 11:25:20.379 13023 14247 D native  : I0617 11:25:20.379438   14247 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.379 13023 14247 D native  : I0617 11:25:20.379563   14247 mergeddicttrans.cc:1866] Sentence #0: Uのルータスー
+06-17 11:25:20.379 13023 14247 D native  : I0617 11:25:20.379614   14247 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.400 13023 14247 I native  : I0617 11:25:20.400647   14247 mergeddicttrans.cc:1827] Sentence #0: Uのルータスー
+06-17 11:25:20.400 13023 14247 I native  : I0617 11:25:20.400758   14247 mergeddicttrans.cc:1828] 
+06-17 11:25:20.400 13023 14247 I native  : Source language: ja, target language: en
+06-17 11:25:20.400 13023 14247 I native  : 
+06-17 11:25:20.400 13023 14247 I native  : Has period trick: 0
+06-17 11:25:20.400 13023 14247 I native  : 
+06-17 11:25:20.400 13023 14247 I native  : Full translation: U's router
+06-17 11:25:20.400 13023 14247 I native  : Translate Instance: 
+06-17 11:25:20.400 13023 14247 I native  : Query (raw): Uのルータスー
+06-17 11:25:20.400 13023 14247 I native  : Query (after preprocess): u の ルータスー
+06-17 11:25:20.400 13023 14247 I native  : Query ids (after tokenizer): 481 4 508 269 48 25 2
+06-17 11:25:20.400 13023 14247 I native  : Translation ids: 318 158 125 1380 2
+06-17 11:25:20.400 13023 14247 I native  : Translation (after detokenizer): U 's router
+06-17 11:25:20.400 13023 14247 I native  : Alignment probability:
+06-17 11:25:20.400 13023 14247 I native  : 	U	's	router
+06-17 11:25:20.400 13023 14247 I native  : u	0.556863	0.00784314	0.0313726
+06-17 11:25:20.400 13023 14247 I native  : の	0.12549	0.0862745	0.0176471
+06-17 11:25:20.400 13023 14247 I native  : ルータスー	0.254902	0.898039	0.913725
+06-17 11:25:20.400 13023 14247 I native  : Translation (before postprocess): U 's router
+06-17 11:25:20.402 13023 14248 D native  : I0617 11:25:20.402551   14248 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.402 13023 14248 D native  : I0617 11:25:20.402607   14248 mergeddicttrans.cc:1866] Sentence #0: 聖去があって...
+06-17 11:25:20.402 13023 14248 D native  : I0617 11:25:20.402634   14248 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.419 13023 14248 I native  : I0617 11:25:20.419887   14248 mergeddicttrans.cc:1827] Sentence #0: 聖去があって...
+06-17 11:25:20.419 13023 14248 I native  : I0617 11:25:20.419971   14248 mergeddicttrans.cc:1828] 
+06-17 11:25:20.419 13023 14248 I native  : Source language: ja, target language: en
+06-17 11:25:20.419 13023 14248 I native  : 
+06-17 11:25:20.419 13023 14248 I native  : Has period trick: 0
+06-17 11:25:20.419 13023 14248 I native  : 
+06-17 11:25:20.419 13023 14248 I native  : Full translation: There is a sacred house ...
+06-17 11:25:20.419 13023 14248 I native  : Translate Instance: 
+06-17 11:25:20.419 13023 14248 I native  : Query (raw): 聖去があって...
+06-17 11:25:20.419 13023 14248 I native  : Query (after preprocess): 聖去 が あっ て ...
+06-17 11:25:20.419 13023 14248 I native  : Query ids (after tokenizer): 3 1998 1061 10 1580 12 1198 2
+06-17 11:25:20.419 13023 14248 I native  : Translation ids: 709 11 9 137 243 512 2497 983 2
+06-17 11:25:20.419 13023 14248 I native  : Translation (after detokenizer): There is a sacred house ...
+06-17 11:25:20.419 13023 14248 I native  : Alignment probability:
+06-17 11:25:20.419 13023 14248 I native  : 	There	is	a	sacred	house	...
+06-17 11:25:20.419 13023 14248 I native  : 聖去	0.368627	0.168627	0.776471	0.698039	0.701961	0.0823529
+06-17 11:25:20.419 13023 14248 I native  : が	0.12549	0.305882	0.0470588	0.00653595	0.0117647	0.00784314
+06-17 11:25:20.419 13023 14248 I native  : あっ	0.294118	0.380392	0.0392157	0.00784314	0.00784314	0.00392157
+06-17 11:25:20.419 13023 14248 I native  : て	0.12549	0.0862745	0.0313726	0.00392157	0.00784314	0.0156863
+06-17 11:25:20.419 13023 14248 I native  : ...	0.0431373	0.0352941	0.0588235	0.048366	0.121569	0.776471
+06-17 11:25:20.419 13023 14248 I native  : Translation (before postprocess): There is a sacred house ...
+06-17 11:25:20.421 13023 13935 D native  : I0617 11:25:20.421105   13935 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.421 13023 13935 D native  : I0617 11:25:20.421158   13935 mergeddicttrans.cc:1866] Sentence #0: いったいどんな、
+06-17 11:25:20.421 13023 13935 D native  : I0617 11:25:20.421184   13935 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.434 13023 13935 I native  : I0617 11:25:20.434935   13935 mergeddicttrans.cc:1827] Sentence #0: いったいどんな、
+06-17 11:25:20.435 13023 13935 I native  : I0617 11:25:20.435022   13935 mergeddicttrans.cc:1828] 
+06-17 11:25:20.435 13023 13935 I native  : Source language: ja, target language: en
+06-17 11:25:20.435 13023 13935 I native  : 
+06-17 11:25:20.435 13023 13935 I native  : Has period trick: 0
+06-17 11:25:20.435 13023 13935 I native  : 
+06-17 11:25:20.435 13023 13935 I native  : Full translation: What kind of
+06-17 11:25:20.435 13023 13935 I native  : Translate Instance: 
+06-17 11:25:20.435 13023 13935 I native  : Query (raw): いったいどんな、
+06-17 11:25:20.435 13023 13935 I native  : Query (after preprocess): いったい どんな ,
+06-17 11:25:20.435 13023 13935 I native  : Query ids (after tokenizer): 81 88 398 44 967 1742 5 2
+06-17 11:25:20.435 13023 13935 I native  : Translation ids: 2080 2800 6 2
+06-17 11:25:20.435 13023 13935 I native  : Translation (after detokenizer): What kind of
+06-17 11:25:20.435 13023 13935 I native  : Alignment probability:
+06-17 11:25:20.435 13023 13935 I native  : 	What	kind	of
+06-17 11:25:20.435 13023 13935 I native  : いったい	0.447059	0.517647	0.160784
+06-17 11:25:20.435 13023 13935 I native  : どんな	0.337255	0.254902	0.0588235
+06-17 11:25:20.435 13023 13935 I native  : ,	0.109804	0.172549	0.172549
+06-17 11:25:20.435 13023 13935 I native  : Translation (before postprocess): What kind of
+06-17 11:25:20.439 13023 13950 D native  : I0617 11:25:20.439922   13950 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:20.440 13023 13950 D native  : I0617 11:25:20.440031   13950 mergeddicttrans.cc:1866] Sentence #0: 父さんは
+06-17 11:25:20.440 13023 13950 D native  : I0617 11:25:20.440067   13950 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:20.453 13023 13950 I native  : I0617 11:25:20.453807   13950 mergeddicttrans.cc:1827] Sentence #0: 父さんは
+06-17 11:25:20.453 13023 13950 I native  : I0617 11:25:20.453939   13950 mergeddicttrans.cc:1828] 
+06-17 11:25:20.453 13023 13950 I native  : Source language: ja, target language: en
+06-17 11:25:20.453 13023 13950 I native  : 
+06-17 11:25:20.453 13023 13950 I native  : Has period trick: 0
+06-17 11:25:20.453 13023 13950 I native  : 
+06-17 11:25:20.453 13023 13950 I native  : Full translation: Father
+06-17 11:25:20.453 13023 13950 I native  : Translate Instance: 
+06-17 11:25:20.453 13023 13950 I native  : Query (raw): 父さんは
+06-17 11:25:20.453 13023 13950 I native  : Query (after preprocess): 父さん は
+06-17 11:25:20.453 13023 13950 I native  : Query ids (after tokenizer): 3 2251 1886 9 2
+06-17 11:25:20.453 13023 13950 I native  : Translation ids: 120 2543 2
+06-17 11:25:20.453 13023 13950 I native  : Translation (after detokenizer): father
+06-17 11:25:20.453 13023 13950 I native  : Alignment probability:
+06-17 11:25:20.453 13023 13950 I native  : 	father
+06-17 11:25:20.453 13023 13950 I native  : 父さん	0.613726
+06-17 11:25:20.453 13023 13950 I native  : は	0.0980392
+06-17 11:25:20.453 13023 13950 I native  : Translation (before postprocess): father
+06-17 11:25:20.493 13023 13952 D PipelineManager: Start process bitmap
+06-17 11:25:20.516 13023 16872 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:20.584 13023 13952 D PipelineManager: OCR process succeeded via visionkit pipeline.
+06-17 11:25:21.491 13023 14066 D DecoupledTextDelegate: Start loading thick OCR module.
+06-17 11:25:21.492 13023 14066 I DynamiteModule: Considering local module com.google.mlkit.dynamite.text.japanese:10000 and remote module com.google.mlkit.dynamite.text.japanese:0
+06-17 11:25:21.492 13023 14066 I DynamiteModule: Selected local version of com.google.mlkit.dynamite.text.japanese
+06-17 11:25:21.492 13023 14066 I native  : I0000 00:00:1781670321.492948   14066 asset_manager_util.cc:61] Created global reference to asset manager.
+06-17 11:25:21.502 13023 16981 I native  : I0000 00:00:1781670321.502048   16981 resource_manager.cc:23] Number of optimal threads: 6
+06-17 11:25:21.502 13023 16981 I native  : I0000 00:00:1781670321.502806   16981 text_classifier.cc:32] Creating classifier TfliteTextClassifier
+06-17 11:25:21.502 13023 16980 I native  : I0000 00:00:1781670321.502783   16980 text_detector_thread_pool_context.cc:38] Compute manager max in flight region detector overwrite: 1
+06-17 11:25:21.503 13023 16981 I native  : I0000 00:00:1781670321.503314   16981 common_util.h:41] Resizing Thread Pool: ocr_segm to 3
+06-17 11:25:21.503 13023 16980 I native  : I0000 00:00:1781670321.503393   16980 common_util.h:41] Resizing Thread Pool: ocr_det_0 to 3
+06-17 11:25:21.503 13023 16980 I native  : I0000 00:00:1781670321.503959   16980 tflite_detector_client_with_shape_cache.cc:76] Interpreter threads: 6
+06-17 11:25:21.505 13023 16981 I native  : I0000 00:00:1781670321.505723   16981 tflite_lstm_client_base.cc:371] Resizing interpreter pool to 4
+06-17 11:25:21.505 13023 16980 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:21.507 13023 16980 I native  : I0000 00:00:1781670321.506982   16980 tflite_detector_client_with_shape_cache.cc:105] Caching size: 10
+06-17 11:25:21.507 13023 16981 I native  : I0000 00:00:1781670321.507064   16981 multi_pass_line_recognition_mutator.cc:342] Preloading recognizers.
+06-17 11:25:21.507 13023 16926 I native  : I0000 00:00:1781670321.507267   16926 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Jpan_ctc/optical/conv_model.fb
+06-17 11:25:21.507 13023 16964 I native  : I0000 00:00:1781670321.507313   16964 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Latn_ctc/optical/conv_model.fb
+06-17 11:25:21.507 13023 16965 I native  : I0000 00:00:1781670321.507400   16965 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Hani_ctc/optical/conv_model.fb
+06-17 11:25:21.508 13023 16964 I native  : I0000 00:00:1781670321.508105   16964 tflite_model_pooled_runner.cc:636] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Latn_ctc/optical/lstm_model.fb
+06-17 11:25:21.508 13023 16965 I native  : I0000 00:00:1781670321.508114   16965 tflite_model_pooled_runner.cc:636] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Hani_ctc/optical/lstm_model.fb
+06-17 11:25:21.508 13023 16980 I native  : I0000 00:00:1781670321.508141   16980 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/layout/line_splitting_custom_ops/model.tflite
+06-17 11:25:21.508 13023 16926 I native  : I0000 00:00:1781670321.508151   16926 tflite_model_pooled_runner.cc:636] Loading mlkit-google-ocr-models/gocr/gocr_models/line_recognition_legacy_mobile/Jpan_ctc/optical/lstm_model.fb
+06-17 11:25:21.508 13023 16980 I native  : I0000 00:00:1781670321.508657   16980 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 1
+06-17 11:25:21.509 13023 16980 I native  : I0000 00:00:1781670321.509134   16980 tflite_model_pooled_runner.cc:625] Loading mlkit-google-ocr-models/gocr/layout/line_clustering_custom_ops/model.tflite
+06-17 11:25:21.509 13023 16980 I native  : I0000 00:00:1781670321.509555   16980 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 1
+06-17 11:25:21.511 13023 16964 I native  : I0000 00:00:1781670321.511250   16964 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 4
+06-17 11:25:21.512 13023 16964 I native  : I0000 00:00:1781670321.512870   16964 mobile_langid_v2.cc:58] MobileLangID V2 initialized.
+06-17 11:25:21.513 13023 16964 I native  : I0000 00:00:1781670321.512987   16964 multi_pass_line_recognition_mutator.cc:364] Finished preloading a recognizer for "Latn"
+06-17 11:25:21.515 13023 16965 I native  : I0000 00:00:1781670321.514968   16965 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 4
+06-17 11:25:21.515 13023 16926 I native  : I0000 00:00:1781670321.515415   16926 tflite_model_pooled_runner.cc:836] Resizing interpreter pool to 4
+06-17 11:25:21.519 13023 16926 I native  : I0000 00:00:1781670321.519055   16926 mobile_langid_v2.cc:58] MobileLangID V2 initialized.
+06-17 11:25:21.519 13023 16926 I native  : I0000 00:00:1781670321.519162   16926 multi_pass_line_recognition_mutator.cc:364] Finished preloading a recognizer for "Jpan"
+06-17 11:25:21.520 13023 16965 I native  : I0000 00:00:1781670321.520311   16965 mobile_langid_v2.cc:58] MobileLangID V2 initialized.
+06-17 11:25:21.520 13023 16965 I native  : I0000 00:00:1781670321.520401   16965 multi_pass_line_recognition_mutator.cc:364] Finished preloading a recognizer for "Hani"
+06-17 11:25:21.520 13023 16981 I native  : I0000 00:00:1781670321.520464   16981 multi_pass_line_recognition_mutator.cc:398] Finished preloading recognizers.
+06-17 11:25:21.521 13023 14066 D PipelineManager: Start process bitmap
+06-17 11:25:21.530 13023 16980 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:21.549 13023 16980 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:21.564 13023 16980 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:21.589 13023 16980 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:21.608 13023 16980 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:21.663 13023 14066 D PipelineManager: OCR process succeeded via visionkit pipeline.
+06-17 11:25:21.798 13023 14068 D native  : I0617 11:25:21.798903   14068 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.799 13023 14068 D native  : I0617 11:25:21.799167   14068 mergeddicttrans.cc:1866] Sentence #0: 係など存在せん!
+06-17 11:25:21.799 13023 14068 D native  : I0617 11:25:21.799266   14068 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.823 13023 14068 I native  : I0617 11:25:21.823921   14068 mergeddicttrans.cc:1827] Sentence #0: 係など存在せん!
+06-17 11:25:21.824 13023 14068 I native  : I0617 11:25:21.824036   14068 mergeddicttrans.cc:1828] 
+06-17 11:25:21.824 13023 14068 I native  : Source language: ja, target language: en
+06-17 11:25:21.824 13023 14068 I native  : 
+06-17 11:25:21.824 13023 14068 I native  : Has period trick: 0
+06-17 11:25:21.824 13023 14068 I native  : 
+06-17 11:25:21.824 13023 14068 I native  : Full translation: There is an event such as a person!
+06-17 11:25:21.824 13023 14068 I native  : Translate Instance: 
+06-17 11:25:21.824 13023 14068 I native  : Query (raw): 係など存在せん!
+06-17 11:25:21.824 13023 14068 I native  : Query (after preprocess): 係 など 存在 せ ん !
+06-17 11:25:21.824 13023 14068 I native  : Query ids (after tokenizer): 3 993 427 3 410 423 536 441 723 2
+06-17 11:25:21.824 13023 14068 I native  : Translation ids: 709 11 36 1498 183 27 9 1804 430 2
+06-17 11:25:21.824 13023 14068 I native  : Translation (after detokenizer): There is an event such as a person !
+06-17 11:25:21.824 13023 14068 I native  : Alignment probability:
+06-17 11:25:21.824 13023 14068 I native  : 	There	is	an	event	such	as	a	person	!
+06-17 11:25:21.824 13023 14068 I native  : 係	0.498039	0.101961	0.317647	0.545098	0.117647	0.054902	0.52549	0.807843	0.439216
+06-17 11:25:21.824 13023 14068 I native  : など	0.0588235	0.270588	0.196078	0.0705882	0.435294	0.854902	0.0156863	0.00784314	0.117647
+06-17 11:25:21.824 13023 14068 I native  : 存在	0.14902	0.172549	0.266667	0.160784	0.109804	0.0117647	0.0196078	0.00392157	0.0431373
+06-17 11:25:21.824 13023 14068 I native  : せ	0.137255	0.270588	0.129412	0.0117647	0.0352941	0.00392157	0.00392157	0	0.00392157
+06-17 11:25:21.824 13023 14068 I native  : ん	0.109804	0.141176	0.0117647	0.00392157	0.00784314	0	0	0	0.00392157
+06-17 11:25:21.824 13023 14068 I native  : !	0.0235294	0.0156863	0.0352941	0.0392157	0.231373	0.0235294	0.219608	0.027451	0.27451
+06-17 11:25:21.824 13023 14068 I native  : Translation (before postprocess): There is an event such as a person !
+06-17 11:25:21.829 13023 14247 D native  : I0617 11:25:21.829787   14247 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.829 13023 14247 D native  : I0617 11:25:21.829844   14247 mergeddicttrans.cc:1866] Sentence #0: でしょうか
+06-17 11:25:21.829 13023 14247 D native  : I0617 11:25:21.829893   14247 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.842 13023 14247 I native  : I0617 11:25:21.842462   14247 mergeddicttrans.cc:1827] Sentence #0: でしょうか
+06-17 11:25:21.842 13023 14247 I native  : I0617 11:25:21.842587   14247 mergeddicttrans.cc:1828] 
+06-17 11:25:21.842 13023 14247 I native  : Source language: ja, target language: en
+06-17 11:25:21.842 13023 14247 I native  : 
+06-17 11:25:21.842 13023 14247 I native  : Has period trick: 0
+06-17 11:25:21.842 13023 14247 I native  : 
+06-17 11:25:21.842 13023 14247 I native  : Full translation: Is it?
+06-17 11:25:21.842 13023 14247 I native  : Translate Instance: 
+06-17 11:25:21.842 13023 14247 I native  : Query (raw): でしょうか
+06-17 11:25:21.842 13023 14247 I native  : Query (after preprocess): でしょ う か
+06-17 11:25:21.842 13023 14247 I native  : Query ids (after tokenizer): 1334 1255 537 103 2
+06-17 11:25:21.842 13023 14247 I native  : Translation ids: 1663 70 417 2
+06-17 11:25:21.842 13023 14247 I native  : Translation (after detokenizer): Is it ?
+06-17 11:25:21.842 13023 14247 I native  : Alignment probability:
+06-17 11:25:21.842 13023 14247 I native  : 	Is	it	?
+06-17 11:25:21.842 13023 14247 I native  : でしょ	0.529412	0.356863	0.215686
+06-17 11:25:21.842 13023 14247 I native  : う	0.14902	0.0705882	0.0352941
+06-17 11:25:21.842 13023 14247 I native  : か	0.227451	0.258824	0.054902
+06-17 11:25:21.842 13023 14247 I native  : Translation (before postprocess): Is it ?
+06-17 11:25:21.848 13023 14248 D native  : I0617 11:25:21.848394   14248 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.848 13023 14248 D native  : I0617 11:25:21.848467   14248 mergeddicttrans.cc:1866] Sentence #0: よろしい
+06-17 11:25:21.848 13023 14248 D native  : I0617 11:25:21.848524   14248 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.862 13023 14248 I native  : I0617 11:25:21.862944   14248 mergeddicttrans.cc:1827] Sentence #0: よろしい
+06-17 11:25:21.863 13023 14248 I native  : I0617 11:25:21.863072   14248 mergeddicttrans.cc:1828] 
+06-17 11:25:21.863 13023 14248 I native  : Source language: ja, target language: en
+06-17 11:25:21.863 13023 14248 I native  : 
+06-17 11:25:21.863 13023 14248 I native  : Has period trick: 0
+06-17 11:25:21.863 13023 14248 I native  : 
+06-17 11:25:21.863 13023 14248 I native  : Full translation: Obscure
+06-17 11:25:21.863 13023 14248 I native  : Translate Instance: 
+06-17 11:25:21.863 13023 14248 I native  : Query (raw): よろしい
+06-17 11:25:21.863 13023 14248 I native  : Query (after preprocess): よろしい
+06-17 11:25:21.863 13023 14248 I native  : Query ids (after tokenizer): 904 733 272 2
+06-17 11:25:21.863 13023 14248 I native  : Translation ids: 1734 90 230 2
+06-17 11:25:21.863 13023 14248 I native  : Translation (after detokenizer): obscure
+06-17 11:25:21.863 13023 14248 I native  : Alignment probability:
+06-17 11:25:21.863 13023 14248 I native  : 	obscure
+06-17 11:25:21.863 13023 14248 I native  : よろしい	0.23268
+06-17 11:25:21.863 13023 14248 I native  : Translation (before postprocess): obscure
+06-17 11:25:21.865 13023 13935 D native  : I0617 11:25:21.864987   13935 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.865 13023 13935 D native  : I0617 11:25:21.865118   13935 mergeddicttrans.cc:1866] Sentence #0: 少し
+06-17 11:25:21.865 13023 13935 D native  : I0617 11:25:21.865160   13935 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.875 13023 13935 I native  : I0617 11:25:21.875330   13935 mergeddicttrans.cc:1827] Sentence #0: 少し
+06-17 11:25:21.875 13023 13935 I native  : I0617 11:25:21.875435   13935 mergeddicttrans.cc:1828] 
+06-17 11:25:21.875 13023 13935 I native  : Source language: ja, target language: en
+06-17 11:25:21.875 13023 13935 I native  : 
+06-17 11:25:21.875 13023 13935 I native  : Has period trick: 0
+06-17 11:25:21.875 13023 13935 I native  : 
+06-17 11:25:21.875 13023 13935 I native  : Full translation: Slightly
+06-17 11:25:21.875 13023 13935 I native  : Translate Instance: 
+06-17 11:25:21.875 13023 13935 I native  : Query (raw): 少し
+06-17 11:25:21.875 13023 13935 I native  : Query (after preprocess): 少し
+06-17 11:25:21.875 13023 13935 I native  : Query ids (after tokenizer): 706 51 2
+06-17 11:25:21.875 13023 13935 I native  : Translation ids: 681 408 55 2
+06-17 11:25:21.875 13023 13935 I native  : Translation (after detokenizer): slightly
+06-17 11:25:21.875 13023 13935 I native  : Alignment probability:
+06-17 11:25:21.875 13023 13935 I native  : 	slightly
+06-17 11:25:21.875 13023 13935 I native  : 少し	0.385621
+06-17 11:25:21.875 13023 13935 I native  : Translation (before postprocess): slightly
+06-17 11:25:21.878 13023 13950 D native  : I0617 11:25:21.878669   13950 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.878 13023 13950 D native  : I0617 11:25:21.878742   13950 mergeddicttrans.cc:1866] Sentence #0: 出たんだろう.
+06-17 11:25:21.878 13023 13950 D native  : I0617 11:25:21.878771   13950 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.900 13023 13950 I native  : I0617 11:25:21.900684   13950 mergeddicttrans.cc:1827] Sentence #0: 出たんだろう.
+06-17 11:25:21.900 13023 13950 I native  : I0617 11:25:21.900781   13950 mergeddicttrans.cc:1828] 
+06-17 11:25:21.900 13023 13950 I native  : Source language: ja, target language: en
+06-17 11:25:21.900 13023 13950 I native  : 
+06-17 11:25:21.900 13023 13950 I native  : Has period trick: 0
+06-17 11:25:21.900 13023 13950 I native  : 
+06-17 11:25:21.900 13023 13950 I native  : Full translation: It will come out.
+06-17 11:25:21.900 13023 13950 I native  : Translate Instance: 
+06-17 11:25:21.900 13023 13950 I native  : Query (raw): 出たんだろう.
+06-17 11:25:21.900 13023 13950 I native  : Query (after preprocess): 出 たんだろ う .
+06-17 11:25:21.900 13023 13950 I native  : Query ids (after tokenizer): 683 15 354 1019 733 537 6 2
+06-17 11:25:21.900 13023 13950 I native  : Translation ids: 209 140 2860 346 4 2
+06-17 11:25:21.900 13023 13950 I native  : Translation (after detokenizer): It will come out .
+06-17 11:25:21.900 13023 13950 I native  : Alignment probability:
+06-17 11:25:21.900 13023 13950 I native  : 	It	will	come	out	.
+06-17 11:25:21.900 13023 13950 I native  : 出	0.164706	0.223529	0.584314	0.756863	0.0705882
+06-17 11:25:21.900 13023 13950 I native  : たんだろ	0.576471	0.431373	0.180392	0.0235294	0.0627451
+06-17 11:25:21.900 13023 13950 I native  : う	0.164706	0.27451	0.0313726	0.00392157	0.0156863
+06-17 11:25:21.900 13023 13950 I native  : .	0.0470588	0.0235294	0.0470588	0.0745098	0.380392
+06-17 11:25:21.900 13023 13950 I native  : Translation (before postprocess): It will come out .
+06-17 11:25:21.906 13023 13952 D native  : I0617 11:25:21.906739   13952 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.906 13023 13952 D native  : I0617 11:25:21.906852   13952 mergeddicttrans.cc:1866] Sentence #0: この家を
+06-17 11:25:21.906 13023 13952 D native  : I0617 11:25:21.906889   13952 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.920 13023 13952 I native  : I0617 11:25:21.920205   13952 mergeddicttrans.cc:1827] Sentence #0: この家を
+06-17 11:25:21.920 13023 13952 I native  : I0617 11:25:21.920369   13952 mergeddicttrans.cc:1828] 
+06-17 11:25:21.920 13023 13952 I native  : Source language: ja, target language: en
+06-17 11:25:21.920 13023 13952 I native  : 
+06-17 11:25:21.920 13023 13952 I native  : Has period trick: 0
+06-17 11:25:21.920 13023 13952 I native  : 
+06-17 11:25:21.920 13023 13952 I native  : Full translation: This house
+06-17 11:25:21.920 13023 13952 I native  : Translate Instance: 
+06-17 11:25:21.920 13023 13952 I native  : Query (raw): この家を
+06-17 11:25:21.920 13023 13952 I native  : Query (after preprocess): この 家 を
+06-17 11:25:21.920 13023 13952 I native  : Query ids (after tokenizer): 61 1052 7 2
+06-17 11:25:21.920 13023 13952 I native  : Translation ids: 149 2497 2
+06-17 11:25:21.920 13023 13952 I native  : Translation (after detokenizer): This house
+06-17 11:25:21.920 13023 13952 I native  : Alignment probability:
+06-17 11:25:21.920 13023 13952 I native  : 	This	house
+06-17 11:25:21.920 13023 13952 I native  : この	0.341176	0.0156863
+06-17 11:25:21.920 13023 13952 I native  : 家	0.0431373	0.956863
+06-17 11:25:21.920 13023 13952 I native  : を	0.278431	0.0117647
+06-17 11:25:21.920 13023 13952 I native  : Translation (before postprocess): This house
+06-17 11:25:21.923 13023 14065 D native  : I0617 11:25:21.923756   14065 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.923 13023 14065 D native  : I0617 11:25:21.923898   14065 mergeddicttrans.cc:1866] Sentence #0: のイン
+06-17 11:25:21.924 13023 14065 D native  : I0617 11:25:21.924006   14065 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.931 13023 14065 I native  : I0617 11:25:21.931323   14065 mergeddicttrans.cc:1827] Sentence #0: のイン
+06-17 11:25:21.931 13023 14065 I native  : I0617 11:25:21.931476   14065 mergeddicttrans.cc:1828] 
+06-17 11:25:21.931 13023 14065 I native  : Source language: ja, target language: en
+06-17 11:25:21.931 13023 14065 I native  : 
+06-17 11:25:21.931 13023 14065 I native  : Has period trick: 0
+06-17 11:25:21.931 13023 14065 I native  : 
+06-17 11:25:21.931 13023 14065 I native  : Full translation: In
+06-17 11:25:21.931 13023 14065 I native  : Translate Instance: 
+06-17 11:25:21.931 13023 14065 I native  : Query (raw): のイン
+06-17 11:25:21.931 13023 14065 I native  : Query (after preprocess): の イン
+06-17 11:25:21.931 13023 14065 I native  : Query ids (after tokenizer): 4 176 2
+06-17 11:25:21.931 13023 14065 I native  : Translation ids: 12 2
+06-17 11:25:21.931 13023 14065 I native  : Translation (after detokenizer): in
+06-17 11:25:21.931 13023 14065 I native  : Alignment probability:
+06-17 11:25:21.931 13023 14065 I native  : 	in
+06-17 11:25:21.931 13023 14065 I native  : の	0.137255
+06-17 11:25:21.931 13023 14065 I native  : イン	0.603922
+06-17 11:25:21.931 13023 14065 I native  : Translation (before postprocess): in
+06-17 11:25:21.938 13023 14066 D native  : I0617 11:25:21.938119   14066 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.938 13023 14066 D native  : I0617 11:25:21.938266   14066 mergeddicttrans.cc:1866] Sentence #0: Uのルータスー
+06-17 11:25:21.938 13023 14066 D native  : I0617 11:25:21.938324   14066 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.955 13023 14066 I native  : I0617 11:25:21.955514   14066 mergeddicttrans.cc:1827] Sentence #0: Uのルータスー
+06-17 11:25:21.955 13023 14066 I native  : I0617 11:25:21.955609   14066 mergeddicttrans.cc:1828] 
+06-17 11:25:21.955 13023 14066 I native  : Source language: ja, target language: en
+06-17 11:25:21.955 13023 14066 I native  : 
+06-17 11:25:21.955 13023 14066 I native  : Has period trick: 0
+06-17 11:25:21.955 13023 14066 I native  : 
+06-17 11:25:21.955 13023 14066 I native  : Full translation: U's router
+06-17 11:25:21.955 13023 14066 I native  : Translate Instance: 
+06-17 11:25:21.955 13023 14066 I native  : Query (raw): Uのルータスー
+06-17 11:25:21.955 13023 14066 I native  : Query (after preprocess): u の ルータスー
+06-17 11:25:21.955 13023 14066 I native  : Query ids (after tokenizer): 481 4 508 269 48 25 2
+06-17 11:25:21.955 13023 14066 I native  : Translation ids: 318 158 125 1380 2
+06-17 11:25:21.955 13023 14066 I native  : Translation (after detokenizer): U 's router
+06-17 11:25:21.955 13023 14066 I native  : Alignment probability:
+06-17 11:25:21.955 13023 14066 I native  : 	U	's	router
+06-17 11:25:21.955 13023 14066 I native  : u	0.556863	0.00784314	0.0313726
+06-17 11:25:21.955 13023 14066 I native  : の	0.12549	0.0862745	0.0176471
+06-17 11:25:21.955 13023 14066 I native  : ルータスー	0.254902	0.898039	0.913725
+06-17 11:25:21.955 13023 14066 I native  : Translation (before postprocess): U 's router
+06-17 11:25:21.959 13023 14068 D native  : I0617 11:25:21.959728   14068 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.959 13023 14068 D native  : I0617 11:25:21.959793   14068 mergeddicttrans.cc:1866] Sentence #0: 聖去があって...
+06-17 11:25:21.959 13023 14068 D native  : I0617 11:25:21.959820   14068 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:21.980 13023 14068 I native  : I0617 11:25:21.980860   14068 mergeddicttrans.cc:1827] Sentence #0: 聖去があって...
+06-17 11:25:21.981 13023 14068 I native  : I0617 11:25:21.981034   14068 mergeddicttrans.cc:1828] 
+06-17 11:25:21.981 13023 14068 I native  : Source language: ja, target language: en
+06-17 11:25:21.981 13023 14068 I native  : 
+06-17 11:25:21.981 13023 14068 I native  : Has period trick: 0
+06-17 11:25:21.981 13023 14068 I native  : 
+06-17 11:25:21.981 13023 14068 I native  : Full translation: There is a sacred house ...
+06-17 11:25:21.981 13023 14068 I native  : Translate Instance: 
+06-17 11:25:21.981 13023 14068 I native  : Query (raw): 聖去があって...
+06-17 11:25:21.981 13023 14068 I native  : Query (after preprocess): 聖去 が あっ て ...
+06-17 11:25:21.981 13023 14068 I native  : Query ids (after tokenizer): 3 1998 1061 10 1580 12 1198 2
+06-17 11:25:21.981 13023 14068 I native  : Translation ids: 709 11 9 137 243 512 2497 983 2
+06-17 11:25:21.981 13023 14068 I native  : Translation (after detokenizer): There is a sacred house ...
+06-17 11:25:21.981 13023 14068 I native  : Alignment probability:
+06-17 11:25:21.981 13023 14068 I native  : 	There	is	a	sacred	house	...
+06-17 11:25:21.981 13023 14068 I native  : 聖去	0.368627	0.168627	0.776471	0.698039	0.701961	0.0823529
+06-17 11:25:21.981 13023 14068 I native  : が	0.12549	0.305882	0.0470588	0.00653595	0.0117647	0.00784314
+06-17 11:25:21.981 13023 14068 I native  : あっ	0.294118	0.380392	0.0392157	0.00784314	0.00784314	0.00392157
+06-17 11:25:21.981 13023 14068 I native  : て	0.12549	0.0862745	0.0313726	0.00392157	0.00784314	0.0156863
+06-17 11:25:21.981 13023 14068 I native  : ...	0.0431373	0.0352941	0.0588235	0.048366	0.121569	0.776471
+06-17 11:25:21.981 13023 14068 I native  : Translation (before postprocess): There is a sacred house ...
+06-17 11:25:21.986 13023 14247 D native  : I0617 11:25:21.986598   14247 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:21.986 13023 14247 D native  : I0617 11:25:21.986651   14247 mergeddicttrans.cc:1866] Sentence #0: いったいどんな、
+06-17 11:25:21.986 13023 14247 D native  : I0617 11:25:21.986682   14247 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:22.003 13023 14247 I native  : I0617 11:25:22.003892   14247 mergeddicttrans.cc:1827] Sentence #0: いったいどんな、
+06-17 11:25:22.004 13023 14247 I native  : I0617 11:25:22.003984   14247 mergeddicttrans.cc:1828] 
+06-17 11:25:22.004 13023 14247 I native  : Source language: ja, target language: en
+06-17 11:25:22.004 13023 14247 I native  : 
+06-17 11:25:22.004 13023 14247 I native  : Has period trick: 0
+06-17 11:25:22.004 13023 14247 I native  : 
+06-17 11:25:22.004 13023 14247 I native  : Full translation: What kind of
+06-17 11:25:22.004 13023 14247 I native  : Translate Instance: 
+06-17 11:25:22.004 13023 14247 I native  : Query (raw): いったいどんな、
+06-17 11:25:22.004 13023 14247 I native  : Query (after preprocess): いったい どんな ,
+06-17 11:25:22.004 13023 14247 I native  : Query ids (after tokenizer): 81 88 398 44 967 1742 5 2
+06-17 11:25:22.004 13023 14247 I native  : Translation ids: 2080 2800 6 2
+06-17 11:25:22.004 13023 14247 I native  : Translation (after detokenizer): What kind of
+06-17 11:25:22.004 13023 14247 I native  : Alignment probability:
+06-17 11:25:22.004 13023 14247 I native  : 	What	kind	of
+06-17 11:25:22.004 13023 14247 I native  : いったい	0.447059	0.517647	0.160784
+06-17 11:25:22.004 13023 14247 I native  : どんな	0.337255	0.254902	0.0588235
+06-17 11:25:22.004 13023 14247 I native  : ,	0.109804	0.172549	0.172549
+06-17 11:25:22.004 13023 14247 I native  : Translation (before postprocess): What kind of
+06-17 11:25:22.005 13023 14248 D native  : I0617 11:25:22.005306   14248 mergeddicttrans.cc:1860] The current system has NMT.
+06-17 11:25:22.005 13023 14248 D native  : I0617 11:25:22.005367   14248 mergeddicttrans.cc:1866] Sentence #0: 父さんは
+06-17 11:25:22.005 13023 14248 D native  : I0617 11:25:22.005401   14248 mergeddicttrans.cc:1918] To be translated by NMT.
+06-17 11:25:22.013 13023 14248 I native  : I0617 11:25:22.013755   14248 mergeddicttrans.cc:1827] Sentence #0: 父さんは
+06-17 11:25:22.013 13023 14248 I native  : I0617 11:25:22.013856   14248 mergeddicttrans.cc:1828] 
+06-17 11:25:22.013 13023 14248 I native  : Source language: ja, target language: en
+06-17 11:25:22.013 13023 14248 I native  : 
+06-17 11:25:22.013 13023 14248 I native  : Has period trick: 0
+06-17 11:25:22.013 13023 14248 I native  : 
+06-17 11:25:22.013 13023 14248 I native  : Full translation: Father
+06-17 11:25:22.013 13023 14248 I native  : Translate Instance: 
+06-17 11:25:22.013 13023 14248 I native  : Query (raw): 父さんは
+06-17 11:25:22.013 13023 14248 I native  : Query (after preprocess): 父さん は
+06-17 11:25:22.013 13023 14248 I native  : Query ids (after tokenizer): 3 2251 1886 9 2
+06-17 11:25:22.013 13023 14248 I native  : Translation ids: 120 2543 2
+06-17 11:25:22.013 13023 14248 I native  : Translation (after detokenizer): father
+06-17 11:25:22.013 13023 14248 I native  : Alignment probability:
+06-17 11:25:22.013 13023 14248 I native  : 	father
+06-17 11:25:22.013 13023 14248 I native  : 父さん	0.613726
+06-17 11:25:22.013 13023 14248 I native  : は	0.0980392
+06-17 11:25:22.013 13023 14248 I native  : Translation (before postprocess): father
+06-17 11:25:22.053 13023 13935 D PipelineManager: Start process bitmap
+06-17 11:25:22.077 13023 16980 I tflite  : Replacing 44 out of 46 node(s) with delegate (TfLiteXNNPackDelegate) node, yielding 3 partitions for the whole graph.
+06-17 11:25:22.147 13023 13935 D PipelineManager: OCR process succeeded via visionkit pipeline.
+06-17 11:25:23.703 13023 14939 W onnxruntime:  [W:onnxruntime:, nnapi_execution_provider.cc:229 GetCapability] NnapiExecutionProvider::GetCapability, number of partitions supported by NNAPI: 10 number of nodes in the graph: 450 number of nodes supported by NNAPI: 10
+06-17 11:25:23.705 13023 14939 W onnxruntime:  [W:onnxruntime:, nnapi_execution_provider.cc:229 GetCapability] NnapiExecutionProvider::GetCapability, number of partitions supported by NNAPI: 10 number of nodes in the graph: 450 number of nodes supported by NNAPI: 10
+06-17 11:25:23.707 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.707 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.707 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.708 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.708 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.708 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.708 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.708 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.709 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.709 13023 14939 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-17 11:25:23.728 13023 14939 W onnxruntime:  [W:onnxruntime:, session_state.cc:1263 VerifyEachNodeIsAssignedToAnEp] Some nodes were not assigned to the preferred execution providers which may or may not have an negative impact on performance. e.g. ORT explicitly assigns shape related ops to CPU to improve perf.
+06-17 11:25:23.728 13023 14939 W onnxruntime:  [W:onnxruntime:, session_state.cc:1265 VerifyEachNodeIsAssignedToAnEp] Rerunning with verbose output on a non-minimal build will show node assignments.

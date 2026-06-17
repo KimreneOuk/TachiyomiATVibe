@@ -244,9 +244,6 @@ class ReaderActivity : BaseActivity() {
                     is ReaderViewModel.Event.RefreshTranslationPages -> {
                         viewModel.state.value.viewer?.refreshTranslationPages(event.pages)
                     }
-                    is ReaderViewModel.Event.TranslationStatusChanged -> {
-                        viewModel.state.value.viewer?.refreshTranslationStatus(event.pages)
-                    }
                 }
             }
             .launchIn(lifecycleScope)
@@ -272,6 +269,11 @@ class ReaderActivity : BaseActivity() {
         // destruction but that can be minutes later.
         viewModel.cancelTranslationsOnBackground()
         super.onPause()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        viewModel.onMemoryPressure(level)
     }
 
     /**

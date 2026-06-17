@@ -408,26 +408,6 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
         }
     }
 
-    // TachiyomiAT: lightweight status-only refresh — overlay/button sync only,
-    // no re-decode. See Viewer.refreshTranslationStatus and the
-    // TranslationStatusChanged event for why this is split from
-    // refreshTranslationPages.
-    override fun refreshTranslationStatus(pages: Set<ReaderPage>) {
-        if (pages.isEmpty()) return
-        val changedPositions = pages.mapNotNullTo(HashSet()) { page ->
-            val idx = adapter.items.indexOf(page)
-            if (idx == -1) null else idx
-        }
-        for (i in 0 until recycler.childCount) {
-            val child = recycler.getChildAt(i) ?: continue
-            val holder = recycler.getChildViewHolder(child)
-            if (holder is WebtoonPageHolder &&
-                holder.bindingAdapterPosition in changedPositions
-            ) {
-                holder.syncTranslationStatus()
-            }
-        }
-    }
 }
 
 // Double the cache size to reduce rebinds/recycles incurred by the extra layout space on scroll direction changes

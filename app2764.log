@@ -1,0 +1,226 @@
+--------- beginning of main
+06-17 11:08:58.155  2764  2764 I hiyomi.at.debug: isSwordfishLaunchAppEnabled_ 1 isSwordfishInstallAppEnabled_ 1
+06-17 11:08:58.155  2764  2764 I hiyomi.at.debug: Late-enabling -Xcheck:jni
+06-17 11:08:58.179  2764  2764 E hiyomi.at.debug: Unknown bits set in runtime_flags: 0x40000000
+06-17 11:08:58.179  2764  2764 I hiyomi.at.debug: Using CollectorTypeCMC GC.
+06-17 11:08:58.184  2764  2764 D nativeloader: Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+06-17 11:08:58.191  2764  2764 W libc    : Access denied finding property "persist.vendor.sys.activitylog"
+06-17 11:08:58.191  2764  2764 I OneTrace: Mark active for pid=2764? true
+06-17 11:08:58.191  2764  2764 D cutils-dev: otrace_set_tracing_enabled? true tag:0
+06-17 11:08:58.191  2764  2795 D cutils-dev: properties changed in otrace_seq_number_changed!
+06-17 11:08:58.205  2764  2861 D OplusActivityManager: get AMS extension: android.os.BinderProxy@448ddb8
+06-17 11:08:58.206  2764  2861 D SurfaceSyncGroup: preCreateSurfaceSyncGroupTimerThread
+06-17 11:08:58.207  2764  2861 D ColorModeChangeItem: preExecute mColorMode=0
+06-17 11:08:58.208  2764  2764 I ActivityThread: Relaunch all activities: onCoreSettingsChange
+06-17 11:08:58.209  2764  2764 D CompactWindowAppManager: initCompactApplicationInfo CompactMode: , NormalMode: 
+--------- beginning of system
+06-17 11:08:58.213  2764  2764 V Configuration: Updating configuration, locales updated from [] to [en_US]
+06-17 11:08:58.214  2764  2764 D OplusScrollToTopManager: setIsInWhiteList false
+06-17 11:08:58.214  2764  2764 D OplusViewDebugManager: OplusViewDebugManager Constructor android.view.debug.OplusViewDebugManager@98fb6f6 [mHasViewDebugProperty true] [mHasMsgDebugProperty false] [DEBUG false] [EXTRAINFOENABLE false] [LIGHT_OS false]
+06-17 11:08:58.217  2764  2764 D CompatChangeReporter: Compat change id reported: 242716250; UID 10612; state: ENABLED
+06-17 11:08:58.222  2764  2764 W libc    : Access denied finding property "ro.odm.prev.product.name"
+06-17 11:08:58.224  2764  2764 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.extensions.jar
+06-17 11:08:58.224  2764  2764 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.sidecar.jar
+06-17 11:08:58.671  2764  2764 I Quality : Odex status:io-error-no-oat filter:run-from-apk reason:unknown location:/data/app/~~HUiOBORIBvu8CLQcdhSCrg==/app.kanade.tachiyomi.at.debug-10ZXX9KsYhiIDZYFbXFh9g==/base.apk cost:446
+06-17 11:08:58.672  2764  2764 D nativeloader: Configuring clns-9 for other apk /data/app/~~HUiOBORIBvu8CLQcdhSCrg==/app.kanade.tachiyomi.at.debug-10ZXX9KsYhiIDZYFbXFh9g==/base.apk. target_sdk_version=34, uses_libraries=, library_path=/data/app/~~HUiOBORIBvu8CLQcdhSCrg==/app.kanade.tachiyomi.at.debug-10ZXX9KsYhiIDZYFbXFh9g==/lib/arm64:/data/app/~~HUiOBORIBvu8CLQcdhSCrg==/app.kanade.tachiyomi.at.debug-10ZXX9KsYhiIDZYFbXFh9g==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/app.kanade.tachiyomi.at.debug
+06-17 11:08:58.674  2764  2764 I hiyomi.at.debug: AssetManager2(0xb4000070bfc9b128) locale list changing from [] to [en-US]
+06-17 11:08:58.677  2764  2764 V GraphicsEnvironment: Currently set values for:
+06-17 11:08:58.677  2764  2764 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[]
+06-17 11:08:58.677  2764  2764 V GraphicsEnvironment:   angle_gl_driver_selection_values=[]
+06-17 11:08:58.677  2764  2764 V GraphicsEnvironment: app.kanade.tachiyomi.at.debug is not listed in per-application setting
+06-17 11:08:58.677  2764  2764 V GraphicsEnvironment: ANGLE allowlist from config: 
+06-17 11:08:58.677  2764  2764 V GraphicsEnvironment: app.kanade.tachiyomi.at.debug is not listed in ANGLE allowlist or settings, returning default
+06-17 11:08:58.677  2764  2764 V GraphicsEnvironment: Updatable production driver is not supported on the device.
+06-17 11:08:58.681  2764  2764 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:-1
+06-17 11:08:58.697  2764  2764 D SessionsDependencies: Dependency to CRASHLYTICS added.
+06-17 11:08:58.699  2764  2764 I FirebaseApp: Device unlocked: initializing all Firebase APIs for app [DEFAULT]
+06-17 11:08:58.718  2764  2764 D FirebaseSessions: Initializing Firebase Sessions SDK.
+06-17 11:08:58.724  2764  2764 D CompatChangeReporter: Compat change id reported: 3400644; UID 10612; state: ENABLED
+06-17 11:08:58.726  2764  2764 I FirebaseCrashlytics: Initializing Firebase Crashlytics 19.3.0 for app.kanade.tachiyomi.at.debug
+06-17 11:08:58.732  2764  2764 D SessionsDependencies: Subscriber CRASHLYTICS registered.
+06-17 11:08:58.740  2764  2968 W hiyomi.at.debug: ClassLoaderContext classpath size mismatch. expected=1, found=0 (DLC[];PCL[base.apk*1981305934]{PCL[/system/framework/org.apache.http.legacy.jar*2241503858]#PCL[/system/framework/com.android.location.provider.jar*1570284764]#PCL[/system/framework/com.android.media.remotedisplay.jar*487574312]#PCL[/system_ext/framework/com.android.extensions.appfunctions.jar*2880224042]#PCL[/system_ext/framework/androidx.window.extensions.jar*2427015362]#PCL[/system_ext/framework/androidx.window.sidecar.jar*621982722]} | DLC[];PCL[])
+06-17 11:08:58.742  2764  2968 I DynamiteModule: Considering local module com.google.android.gms.measurement.dynamite:127 and remote module com.google.android.gms.measurement.dynamite:193
+06-17 11:08:58.742  2764  2968 I DynamiteModule: Selected remote version of com.google.android.gms.measurement.dynamite, version >= 193
+06-17 11:08:58.742  2764  2968 V DynamiteModule: Dynamite loader version >= 2, using loadModule2NoCrashUtils
+06-17 11:08:58.747  2764  2998 E ashmem  : Pinning is deprecated since Android Q. Please use trim or other methods.
+06-17 11:08:58.747  2764  2968 E ashmem  : Pinning is deprecated since Android Q. Please use trim or other methods.
+06-17 11:08:58.747  2764  2764 I FirebaseInitProvider: FirebaseApp initialization successful
+06-17 11:08:58.754  2764  2998 D CompatChangeReporter: Compat change id reported: 253665015; UID 10612; state: ENABLED
+06-17 11:08:58.755  2764  2968 W System  : ClassLoader referenced unknown path: 
+06-17 11:08:58.755  2764  2968 D nativeloader: Configuring clns-10 for other apk . target_sdk_version=37, uses_libraries=, library_path=/data/app/~~3RaWn6QSMc70Km14trhmNQ==/com.google.android.gms-dMk4jUqwe9DuL9Cwaln-Bg==/lib/arm64:/data/app/~~3RaWn6QSMc70Km14trhmNQ==/com.google.android.gms-dMk4jUqwe9DuL9Cwaln-Bg==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.google.android.gms
+06-17 11:08:58.756  2764  3005 D CompatChangeReporter: Compat change id reported: 247079863; UID 10612; state: ENABLED
+06-17 11:08:58.756  2764  3005 D SessionConfigFetcher: Fetching settings from server.
+06-17 11:08:58.757  2764  2968 I hiyomi.at.debug: AssetManager2(0xb4000070ccd41328) locale list changing from [] to [en-US]
+06-17 11:08:58.759  2764  2764 D OplusGraphicsEvent: OplusGraphicsEventListener create now!
+06-17 11:08:58.760  2764  2764 D OplusGraphicsEvent: addEventListener success!
+06-17 11:08:58.761  2764  2764 E [UAH_CLIENT]: uahInit enter
+06-17 11:08:58.761  2764  2764 W hiyomi.at.debug: AIBinder_linkToDeath is being called with a non-null cookie and no onUnlink callback set. This might not be intended. AIBinder_DeathRecipient_setOnUnlinked should be called first.
+06-17 11:08:58.761  2764  3016 I DpmTcmClient: RegisterTcmMonitor from: $Proxy3
+06-17 11:08:58.762  2764  2764 I [UAH_CLIENT]: UahGetFeatureStatus enter
+06-17 11:08:58.762  2764  2764 D WM-WrkMgrInitializer: Initializing WorkManager with default configuration.
+06-17 11:08:58.762  2764  2968 W hiyomi.at.debug: ClassLoaderContext classpath element checksum mismatch. expected=1981305934, found=4115361047 (DLC[];PCL[base.apk*1981305934]{PCL[/system/framework/org.apache.http.legacy.jar*2241503858]#PCL[/system/framework/com.android.location.provider.jar*1570284764]#PCL[/system/framework/com.android.media.remotedisplay.jar*487574312]#PCL[/system_ext/framework/com.android.extensions.appfunctions.jar*2880224042]#PCL[/system_ext/framework/androidx.window.extensions.jar*2427015362]#PCL[/system_ext/framework/androidx.window.sidecar.jar*621982722]} | DLC[];PCL[/data/app/~~HUiOBORIBvu8CLQcdhSCrg==/app.kanade.tachiyomi.at.debug-10ZXX9KsYhiIDZYFbXFh9g==/base.apk*4115361047]{PCL[/system_ext/framework/androidx.window.extensions.jar*2427015362]#PCL[/system_ext/framework/androidx.window.sidecar.jar*621982722]})
+06-17 11:08:58.765  2764  2968 I hiyomi.at.debug: AssetManager2(0xb4000070ccd41628) locale list changing from [] to [en-US]
+06-17 11:08:58.766  2764  2968 I hiyomi.at.debug: AssetManager2(0xb4000070ccd41f28) locale list changing from [] to [en-US]
+06-17 11:08:58.770  2764  2764 D WM-PackageManagerHelper: Skipping component enablement for androidx.work.impl.background.systemjob.SystemJobService
+06-17 11:08:58.770  2764  2764 D WM-Schedulers: Created SystemJobScheduler and enabled SystemJobService
+06-17 11:08:58.774  2764  3031 D WM-ForceStopRunnable: The default process name was not specified.
+06-17 11:08:58.774  2764  3031 D WM-ForceStopRunnable: Performing cleanup operations.
+06-17 11:08:58.776  2764  2764 I hiyomi.at.debug: hiddenapi: Accessing hidden method Landroid/os/ServiceManager;->getService(Ljava/lang/String;)Landroid/os/IBinder; (runtime_flags=0, domain=platform, api=unsupported) from Lrikka/shizuku/SystemServiceHelper; (domain=app) using reflection: allowed
+06-17 11:08:58.776  2764  2764 D ShizukuProvider: Initialize Sui: false
+06-17 11:08:58.785  2764  3031 D WM-SystemJobScheduler: Reconciling jobs
+06-17 11:08:58.788  2764  3040 I hiyomi.at.debug: hiddenapi: Accessing hidden method Ldalvik/system/VMStack;->getStackClass2()Ljava/lang/Class; (runtime_flags=0, domain=core-platform, api=unsupported) from Lm7/apl; (domain=app) using reflection: allowed
+06-17 11:08:58.791  2764  3031 D WM-ForceStopRunnable: Application was force-stopped, rescheduling.
+06-17 11:08:58.801  2764  3031 D WM-SystemJobScheduler: Scheduling work ID e1e17957-c4a8-4d5f-9bfb-0afa8d10961dJob ID 1
+06-17 11:08:58.803  2764  3035 E hiyomi.at.debug: No package ID 6a found for resource ID 0x6a0b0013.
+06-17 11:08:58.804  2764  3035 I FA      : App measurement initialized, version: 169000
+06-17 11:08:58.804  2764  3035 I FA      : To enable debug logging run: adb shell setprop log.tag.FA VERBOSE
+06-17 11:08:58.804  2764  3035 I FA      : To enable faster debug mode event logging run:
+06-17 11:08:58.804  2764  3035 I FA      :   adb shell setprop debug.firebase.analytics.app app.kanade.tachiyomi.at.debug
+06-17 11:08:58.814  2764  3044 D WM-PackageManagerHelper: Skipping component enablement for androidx.work.impl.background.systemalarm.RescheduleReceiver
+06-17 11:08:58.840  2764  3007 I FirebaseCrashlytics: No version control information found
+06-17 11:08:58.840  2764  2764 I HWUI    : SupportApps size 0
+06-17 11:08:58.840  2764  2764 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-17 11:08:58.840  2764  2764 D ExtensionsLoader: Opened libSchedAssistExtImpl.so
+06-17 11:08:58.840  2764  2764 E SchedAssist: open sharedFd failed with error=Permission denied
+06-17 11:08:58.840  2764  2764 E SchedAssist: open sharedFd failed with error=Permission denied
+06-17 11:08:58.840  2764  2764 E SchedAssist: open sharedFd failed with error=Permission denied
+06-17 11:08:58.841  2764  3057 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-17 11:08:58.841  2764  3057 D ExtensionsLoader: Opened libSchedAssistExtImpl.so
+06-17 11:08:58.841  2764  3057 I DisplayManager: Choreographer implicitly registered for the refresh rate.
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: QUALCOMM build                   : f6b5df5188, I29aebc4401
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Build Date                       : 09/19/25
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: OpenGL ES Shader Compiler Version: E031.45.02.26
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Local Branch                     : 
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Remote Branch                    : refs/tags/AU_LINUX_ANDROID_LA.VENDOR.14.3.0.11.00.00.974.010
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Remote Branch                    : NONE
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Reconstruct Branch               : NOTHING
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Build Config                     : S P 16.1.2 AArch64
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Driver Path                      : /vendor/lib64/egl/libGLESv2_adreno.so
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Driver Version                   : 0762.41
+06-17 11:08:58.842  2764  3057 I AdrenoGLES-0: Process Name                     : app.kanade.tachiyomi.at.debug
+06-17 11:08:58.843  2764  2764 I hiyomi.at.debug: AssetManager2(0xb4000070bfc9b428) locale list changing from [] to [en-US]
+06-17 11:08:58.843  2764  2764 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-17 11:08:58.845  2764  3057 I AdrenoGLES-0: PFP: 0x01520181, ME: 0x01520023
+06-17 11:08:58.849  2764  3057 I AdrenoUtils: <ReadGpuID:357>: Reading chip ID through GSL
+06-17 11:08:58.852  2764  3057 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-17 11:08:58.852  2764  3057 D ExtensionsLoader: Opened libeglextimpl.so
+06-17 11:08:58.852  2764  3057 D PreCache: [IPreCacheRus]loadRUSConfigs#102 failed to transact: -22 prc:app.kanade.tachiyomi.at.debug
+06-17 11:08:58.854  2764  2764 I hiyomi.at.debug: AssetManager2(0xb40000705f139d28) locale list changing from [] to [en-US]
+06-17 11:08:58.855  2764  2764 I hiyomi.at.debug: AssetManager2(0xb4000070b1de5028) locale list changing from [] to [en-US]
+06-17 11:08:58.858  2764  2764 I oplus.android.OplusFrameworkFactoryImpl: Unknow feature:IOplusTextViewRTLUtilForUG
+06-17 11:08:58.860  2764  2764 E hiyomi.at.debug: Invalid resource ID 0x00000000.
+06-17 11:08:58.863  2764  2764 D DesktopModeFlags: Toggle override initialized to: OVERRIDE_UNSET
+06-17 11:08:58.864  2764  2764 D OplusWindowManager: get WMS extension: android.os.BinderProxy@e9388a2
+06-17 11:08:58.881  2764  2764 E OplusPredictiveBackController:  NoSuchMethodException 
+06-17 11:08:58.881  2764  2764 E OplusPredictiveBackController:  NoSuchMethodException 
+06-17 11:08:58.881  2764  2764 E OplusPredictiveBackController:  NoSuchMethodException 
+06-17 11:08:58.881  2764  2764 E OplusPredictiveBackController:  NoSuchMethodException 
+06-17 11:08:58.881  2764  2764 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.main.MainActivity@46f7829 hasOnBackInvokedCallBackEnabled
+06-17 11:08:58.881  2764  2764 D OplusPredictiveBackController: initPredictiveBackConfig for eu.kanade.tachiyomi.ui.main.MainActivity@46f7829 initPredictiveBackConfig mShouldInterceptKeyEvent false
+06-17 11:08:58.881  2764  2764 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.main.MainActivity@46f7829 hasOnBackInvokedCallBackEnabled
+06-17 11:08:58.890  2764  2764 I hiyomi.at.debug: hiddenapi: Accessing hidden method Landroid/view/ViewGroup;->makeOptionalFitsSystemWindows()V (runtime_flags=0, domain=platform, api=unsupported) from Landroidx/appcompat/widget/ViewUtils; (domain=app) using reflection: allowed
+06-17 11:08:58.894  2764  2764 D ActivityThread: ComponentInfo{app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity} checkFinished=false 2
+06-17 11:08:58.894  2764  2764 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-17 11:08:58.897  2764  2764 D OplusInputMethodUtil: init sDebug to false, init sDebugIme to false, init sAlwaysOn to false
+06-17 11:08:58.897  2764  2764 D OplusInputMethodUtil: updateDebugToClass InputMethodManager.DEBUG = false
+06-17 11:08:58.897  2764  2764 D OplusInputMethodUtil: updateDebugToClass ImeFocusController.DEBUG = false
+06-17 11:08:58.897  2764  2764 D OplusInputMethodUtil: updateDebugToClass OnBackInvokedDispatcher.DEBUG = false
+06-17 11:08:58.897  2764  2764 D OplusInputMethodUtil: updateDebugToClass InsetsController.DEBUG = false
+06-17 11:08:58.897  2764  2764 D OplusInputMethodUtil: updateDebugToClass BaseInputConnection.DEBUG = false
+06-17 11:08:58.902  2764  2764 D WindowManager: Add to mViews: com.android.internal.policy.DecorView{7827ec2 I.E...... R.....ID 0,0-0,0 alpha=1.0 viewInfo = }[MainActivity],pkg= app.kanade.tachiyomi.at.debug
+06-17 11:08:58.903  2764  3057 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-17 11:08:58.903  2764  3057 D ExtensionsLoader: Opened libhwuiextimpl.so
+06-17 11:08:58.903  2764  3057 D skia    : setRusSupported enable 1
+06-17 11:08:58.909  2764  2764 I ViewRootImplExtImpl: not create nav bar bg layer surface is invalid title = app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity
+06-17 11:08:58.910  2764  2764 D ViewRootImplExtImpl: onDisplayChanged -1 for VRI android.view.ViewRootImpl@77dc50e
+06-17 11:08:58.910  2764  2764 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:0
+06-17 11:08:58.911  2764  2764 E OplusBracketLog: [OplusViewMirrorManager] updateHostViewRootIfNeeded, not support android.view.ViewRootImpl@77dc50e
+06-17 11:08:59.235  2764  2764 W hiyomi.at.debug: Unsupported class loader: java.lang.Class<eu.kanade.tachiyomi.util.system.ChildFirstPathClassLoader>
+06-17 11:08:59.236  2764  2764 W hiyomi.at.debug: Unsupported class loader: java.lang.Class<eu.kanade.tachiyomi.util.system.ChildFirstPathClassLoader>
+06-17 11:08:59.243  2764  2764 I hiyomi.at.debug: AssetManager2(0xb40000705f4b3428) locale list changing from [] to [en-US]
+06-17 11:08:59.243  2764  2764 I WebViewFactory: Loading com.google.android.webview version 148.0.7778.217 (code 777821703)
+06-17 11:08:59.245  2764  2764 D ApplicationLoaders: Returning zygote-cached class loader: /system/framework/android.test.base.jar
+06-17 11:08:59.245  2764  2764 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.extensions.jar
+06-17 11:08:59.246  2764  2764 W hiyomi.at.debug: Loading /data/app/~~1zmHR9vW86h2k8-kfgKNUA==/com.google.android.webview-nk9H0x-PblTPst6k-ZdG8Q==/oat/arm64/base.odex non-executable as it requires an image which we failed to load
+06-17 11:08:59.246  2764  2764 D nativeloader: Configuring clns-11 for other apk /data/app/~~1zmHR9vW86h2k8-kfgKNUA==/com.google.android.webview-nk9H0x-PblTPst6k-ZdG8Q==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~1zmHR9vW86h2k8-kfgKNUA==/com.google.android.webview-nk9H0x-PblTPst6k-ZdG8Q==/lib/arm64:/data/app/~~1zmHR9vW86h2k8-kfgKNUA==/com.google.android.webview-nk9H0x-PblTPst6k-ZdG8Q==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand
+06-17 11:08:59.257  2764  2764 I cr_WVCFactoryProvider: version=148.0.7778.217 (777821703) minSdkVersion=29 multiprocess=true packageId=2 splits=<none>
+06-17 11:08:59.260  2764  2764 D nativeloader: Load /data/app/~~1zmHR9vW86h2k8-kfgKNUA==/com.google.android.webview-nk9H0x-PblTPst6k-ZdG8Q==/base.apk!/lib/arm64-v8a/libwebviewchromium.so using class loader ns clns-11 (caller=/data/app/~~1zmHR9vW86h2k8-kfgKNUA==/com.google.android.webview-nk9H0x-PblTPst6k-ZdG8Q==/base.apk): ok
+06-17 11:08:59.261  2764  2764 D nativeloader: Load /system/lib64/libwebviewchromium_plat_support.so using class loader ns clns-11 (caller=/data/app/~~1zmHR9vW86h2k8-kfgKNUA==/com.google.android.webview-nk9H0x-PblTPst6k-ZdG8Q==/base.apk): ok
+06-17 11:08:59.267  2764  2764 I cr_LibraryLoader: Successfully loaded native library
+06-17 11:08:59.267  2764  2764 I cr_CachingUmaRecorder: Flushed 16 samples from 16 histograms, 0 samples were dropped.
+06-17 11:08:59.276  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.276  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.276  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.276  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.276  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.276  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.277  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.277  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.277  2764  2764 I hiyomi.at.debug: ThrowNoClassDefFoundError when open swordfish
+06-17 11:08:59.279  2764  2764 I hiyomi.at.debug: AssetManager2(0xb40000705f4b3a28) locale list changing from [] to [en-US]
+06-17 11:08:59.280  2764  2764 W hiyomi.at.debug: Unsupported class loader: java.lang.Class<eu.kanade.tachiyomi.util.system.ChildFirstPathClassLoader>
+06-17 11:08:59.281  2764  2764 W hiyomi.at.debug: Unsupported class loader: java.lang.Class<eu.kanade.tachiyomi.util.system.ChildFirstPathClassLoader>
+06-17 11:08:59.288  2764  2764 I hiyomi.at.debug: AssetManager2(0xb40000705f4b3d28) locale list changing from [] to [en-US]
+06-17 11:08:59.289  2764  2764 W hiyomi.at.debug: Unsupported class loader: java.lang.Class<eu.kanade.tachiyomi.util.system.ChildFirstPathClassLoader>
+06-17 11:08:59.290  2764  2764 W hiyomi.at.debug: Unsupported class loader: java.lang.Class<eu.kanade.tachiyomi.util.system.ChildFirstPathClassLoader>
+06-17 11:08:59.294  2764  2764 I hiyomi.at.debug: AssetManager2(0xb40000705f446028) locale list changing from [] to [en-US]
+06-17 11:08:59.328  2764  2764 D OplusPredictiveBackController: should not HookOnBackInvokedCallbackEnabled for application eu.kanade.tachiyomi.ui.main.MainActivity@46f7829 hasOnBackInvokedCallBackEnabled
+06-17 11:08:59.330  2764  2764 D ViewRootImplExtImpl: wrapConfigInfoIntoFlags rotation=0, smallestScreenWidthDp=0, residentWS=false, scenario=0, bounds=Rect(0, 0 - 1080, 2376), relayoutAsync=false, flags=0, newFlags=1245708288, title=app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity
+06-17 11:08:59.335  2764  2764 D VRI[MainActivity]: relayoutWindow result, sizeChanged:true, surfaceControlChanged:true, transformHintChanged:false, mSurfaceSize:Point(1080, 2376), mLastSurfaceSize:Point(0, 0), mWidth:-1, mHeight:-1, requestedWidth:1080, requestedHeight:2376, transformHint:0, installOrientation:0, displayRotation:0, isSurfaceValid:true, attr.flag:-2122252032, tmpFrames:ClientWindowFrames{frame=[0,0][1080,2376] display=[0,0][1080,2376] parentFrame=[0,0][0,0]}, relayoutAsync:false, mSyncSeqId:0
+06-17 11:08:59.335  2764  2764 W VRI[MainActivity]: updateBlastSurfaceIfNeeded, surfaceSize:Point(1080, 2376), lastSurfaceSize:Point(0, 0), format:-1, blastBufferQueue:null
+06-17 11:08:59.335  2764  2764 D BufferQueueConsumer: [](id:acc00000000,api:0,p:-1,c:2764) connect: controlledByApp=false
+06-17 11:08:59.335  2764  2764 D BufferQueueConsumer: [VRI[MainActivity]#0(BLAST Consumer)0](id:acc00000000,api:0,p:-1,c:2764) setMaxAcquiredBufferCount: 2
+06-17 11:08:59.337  2764  3057 D HWUI    : createSurface new attribs array
+06-17 11:08:59.338  2764  3057 D libEGL  : this is from skia gles
+06-17 11:08:59.338  2764  3057 D BufferQueueProducer: [VRI[MainActivity]#0(BLAST Consumer)0](id:acc00000000,api:1,p:2764,c:2764) connect: api=1 producerControlledByApp=true
+06-17 11:08:59.529  2764  2795 I hiyomi.at.debug: Compiler allocated 7246KB to compile void android.view.ViewRootImpl.performTraversals()
+06-17 11:08:59.563  2764  3016 D SessionConfigFetcher: Fetched settings: {"settings_version":3,"cache_duration":191149,"features":{"collect_logged_exceptions":true,"collect_reports":true,"collect_analytics":false,"prompt_enabled":false,"push_enabled":false,"firebase_crashlytics_enabled":false,"collect_anrs":true,"collect_metric_kit":false,"collect_build_ids":true},"app":{"status":"activated","update_required":false,"report_upload_variant":2,"native_report_upload_variant":2},"fabric":{"org_id":"67b87abbf33b6c784df98b3b","bundle_id":"app.kanade.tachiyomi.at"},"on_demand_upload_rate_per_minute":10,"on_demand_backoff_base":1.2,"on_demand_backoff_step_duration_seconds":60,"app_quality":{"sessions_enabled":true,"sampling_rate":1,"session_timeout_seconds":1800},"on_demand_thread_recording_suspension_enabled":true}
+06-17 11:08:59.573  2764  2963 D LifecycleServiceBinder: Binding service to application.
+06-17 11:08:59.576  2764  2977 D SessionLifecycleClient: Queued message 1. Queue size 1
+06-17 11:08:59.682  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.695  2764  2764 I Choreographer: Skipped 46 frames!  The application may be doing too much work on its main thread.
+06-17 11:08:59.718  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.719  2764  2764 W VRI[MainActivity]: handleResized, msg:, frameChanged:false, configChanged:false, displayChanged:false, attachedFrameChanged:false, compatScaleChanged:false, pendingDragResizing=false
+06-17 11:08:59.721  2764  2764 D SessionLifecycleService: Service bound to new client on process 2764
+06-17 11:08:59.722  2764  3130 D SessionLifecycleService: App has not yet foregrounded. Using previously stored session.
+06-17 11:08:59.722  2764  3130 D SessionLifecycleService: Client android.os.Messenger@2345c8e bound at 1272665195. Clients: 1
+06-17 11:08:59.724  2764  2764 I DynamicFramerate [FRTCConfigManager]: initFrameRateConfig: 
+06-17 11:08:59.724  2764  2764 I DynamicFramerate [FRTCConfigManager]: 	levelsFor120hz: [120, 90, 72, 60]
+06-17 11:08:59.724  2764  2764 I DynamicFramerate [FRTCConfigManager]: 	thresholdsFor120hz: [1080, 300, 200]
+06-17 11:08:59.724  2764  2764 I DynamicFramerate [FRTCConfigManager]: 	levelsFor90hz: [90]
+06-17 11:08:59.724  2764  2764 I DynamicFramerate [FRTCConfigManager]: 	thresholdsFor90hz: []
+06-17 11:08:59.724  2764  2764 I DynamicFramerate [FRTCConfigManager]: FRTCConfigManager: FRTC_CAPABILITY = 360, package name = app.kanade.tachiyomi.at.debug, WINDOW_ANIMATION_SPEED_RATE = 10, SCROLL_ANIMATION_SPEED_RATE = 20, PACKAGE_ENABLE = false
+06-17 11:08:59.724  2764  2764 I DynamicFramerate [DynamicFrameRateController]: init info: mPackageName = app.kanade.tachiyomi.at.debug, mIsEnabled = false
+06-17 11:08:59.730  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.730  2764  2764 D SessionLifecycleClient: Connected to SessionLifecycleService. Queue size 1
+06-17 11:08:59.730  2764  2977 D SessionLifecycleClient: Sending lifecycle 1 to service
+06-17 11:08:59.731  2764  3130 D SessionLifecycleService: Activity foregrounding at 1272665205.
+06-17 11:08:59.731  2764  3130 D SessionLifecycleService: Cold start detected.
+06-17 11:08:59.731  2764  3130 D SessionLifecycleService: Generated new session.
+06-17 11:08:59.732  2764  3130 D SessionLifecycleService: Broadcasting new session
+06-17 11:08:59.734  2764  3007 D SessionFirelogPublisher: Data Collection is enabled for at least one Subscriber
+06-17 11:08:59.736  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.736  2764  2764 D SessionLifecycleClient: Session update received.
+06-17 11:08:59.736  2764  3007 D SessionLifecycleClient: Notified CRASHLYTICS of new session 74225a7cd1f5495d8e7e7905da7bb991
+06-17 11:08:59.739  2764  3005 D EventGDTLogger: Session Event Type: SESSION_START
+06-17 11:08:59.739  2764  3005 D SessionFirelogPublisher: Successfully logged Session Start event.
+06-17 11:08:59.752  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.768  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.785  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.802  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.818  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.835  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.852  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.868  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.900  2764  2764 W VRI[MainActivity]: performTraversals: cancelAndRedraw, mLastPerformTraversalsSkipDrawReasonpredraw_androidx.core.splashscreen.SplashScreen$Impl31$setKeepOnScreenCondition$1
+06-17 11:08:59.902  2764  2764 I SurfaceControl:  setExtendedRangeBrightness sc=Surface(name=app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity)/@0xbc09158,currentBufferRatio=1.0,desiredRatio=1.0
+06-17 11:08:59.931  2764  3057 D BLASTBufferQueue: [VRI[MainActivity]#0](f:0,a:1) acquireNextBufferLocked size=1080x2376 mFrameNumber=1 applyTransaction=true mTimestamp=1272665405651750(auto) mPendingTransactions.size=0 graphicBufferId=11871289606147 transform=0
+06-17 11:08:59.932  2764  3057 D VRI[MainActivity]: Received frameCommittedCallback lastAttemptedDrawFrameNum=1 didProduceBuffer=true syncBuffer=false
+06-17 11:08:59.932  2764  3057 D ExtensionsLoader: createInstance(64bit) : createExtendedFactory
+06-17 11:08:59.932  2764  3057 D ExtensionsLoader: Opened libSchedAssistExtImpl.so
+06-17 11:08:59.932  2764  2764 D VRI[MainActivity]: draw finished. seqId=0
+06-17 11:08:59.954  2764  2764 D VRI[MainActivity]: onFocusEvent true
+06-17 11:08:59.959  2764  2764 D InsetsController: hide(ime(), fromIme=false)
+06-17 11:08:59.959  2764  2764 I ImeTracker: app.kanade.tachiyomi.at.debug:2eadaeed: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+06-17 11:09:00.956  2764  2895 D OplusScrollToTopManager: app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity,This com.android.internal.policy.DecorView{7827ec2 V.E...... R....... 0,0-1080,2376 aid=0 alpha=1.0 viewInfo = }[MainActivity] change focus to true
+06-17 11:09:04.174  2764  3162 D ProfileInstaller: Installing profile for app.kanade.tachiyomi.at.debug

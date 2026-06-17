@@ -1,0 +1,2 @@
+/data/data/app.kanade.tachiyomi.at.debug/files/.crashlytics.v3/app.kanade.tachiyomi.at.debug/com.crashlytics.settings.json
+/data/data/app.kanade.tachiyomi.at.debug/files/PersistedInstallation.W0RFRkFVTFRd+MTo5Mjc4MTIwMTU4NDphbmRyb2lkOjhkYzk0MmY3M2UyYzQxYzBmMzUzNzU.json

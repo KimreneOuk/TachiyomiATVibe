@@ -31,6 +31,8 @@ fun EditTextPreferenceWidget(
     subtitle: String?,
     icon: ImageVector?,
     value: String,
+    isValueValid: (String) -> Boolean = { it.isNotBlank() },
+    normalizeValue: (String) -> String = { it },
     onConfirm: suspend (String) -> Boolean,
 ) {
     var isDialogShown by remember { mutableStateOf(false) }
@@ -56,7 +58,7 @@ fun EditTextPreferenceWidget(
                     value = textFieldValue,
                     onValueChange = { textFieldValue = it },
                     trailingIcon = {
-                        if (textFieldValue.text.isBlank()) {
+                        if (!isValueValid(textFieldValue.text)) {
                             Icon(imageVector = Icons.Filled.Error, contentDescription = null)
                         } else {
                             IconButton(onClick = { textFieldValue = TextFieldValue("") }) {
@@ -64,7 +66,7 @@ fun EditTextPreferenceWidget(
                             }
                         }
                     },
-                    isError = textFieldValue.text.isBlank(),
+                    isError = !isValueValid(textFieldValue.text),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -74,10 +76,10 @@ fun EditTextPreferenceWidget(
             ),
             confirmButton = {
                 TextButton(
-                    enabled = textFieldValue.text != value && textFieldValue.text.isNotBlank(),
+                    enabled = normalizeValue(textFieldValue.text) != value && isValueValid(textFieldValue.text),
                     onClick = {
                         scope.launch {
-                            if (onConfirm(textFieldValue.text)) {
+                            if (onConfirm(normalizeValue(textFieldValue.text))) {
                                 onDismissRequest()
                             }
                         }

@@ -119,9 +119,8 @@ class GeminiTranslator(
                         b.translation = if (res == null || res == "NULL") b.text else res
                     }
                 }
-                v.blocks =
-                    v.blocks.filterNot { it.translation.contains("RTMTH") }.toMutableList()
             }
+            TranslationBlockFilters.removeWatermarkBlocks(pages)
         } catch (e: Exception) {
             logcat { "Image Translation Error : ${e.stackTraceToString()}" }
             throw e

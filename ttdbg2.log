@@ -1,0 +1,41 @@
+--------- beginning of main
+06-17 11:44:39.108 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=0 thread=main
+06-17 11:44:39.171 28458 28788 E TTDBG   : handleAutoTranslation DEDUP-SKIP pageIdx=0 (already fired <2s ago)
+06-17 11:44:39.172 28458 28773 E TTDBG   : store.collect emit size=0 thread=DefaultDispatcher-worker-17
+06-17 11:44:40.047 28458 28788 E TTDBG   : translateSinglePage ENTER pageKey=1.jpg thread=DefaultDispatcher-worker-30
+06-17 11:44:40.506 28458 28773 E TTDBG   : store.collect emit size=1 thread=DefaultDispatcher-worker-17
+06-17 11:44:40.809 28458 28650 E TTDBG   : store.collect emit size=1 thread=DefaultDispatcher-worker-8
+06-17 11:44:45.619 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=0 thread=main
+06-17 11:44:45.619 28458 28458 E TTDBG   : gate idx=0 skip=true reason=isRunning ocr=RUNNING inpaint=PENDING trans=PENDING render=PENDING retry=0 blocks=0 thread=main
+06-17 11:44:46.326 28458 28458 E TTDBG   : handleAutoTranslation DEDUP-SKIP pageIdx=0 (already fired <2s ago)
+06-17 11:44:57.334 28458 28788 E TTDBG   : translateSinglePageInternal PERSIST pageKey=1.jpg ocr=READY inpaint=READY trans=READY render=READY rendered=true cleaned=true retry=0 blocks=7
+06-17 11:44:57.613 28458 28790 E TTDBG   : store.collect emit size=1 thread=DefaultDispatcher-worker-38
+06-17 11:44:57.614 28458 28760 E TTDBG   : translateSinglePage ENTER pageKey=2.jpg thread=DefaultDispatcher-worker-10
+06-17 11:44:57.971 28458 28790 E TTDBG   : translateSinglePage ENTER pageKey=2.jpg thread=DefaultDispatcher-worker-38
+06-17 11:44:58.241 28458 28790 E TTDBG   : translateSinglePage ENTER pageKey=3.jpg thread=DefaultDispatcher-worker-38
+06-17 11:44:58.575 28458 28790 E TTDBG   : sequential DONE keys=[2.jpg, 3.jpg] thread=DefaultDispatcher-worker-38
+06-17 11:44:58.576 28458 28604 E TTDBG   : translateSinglePage ENTER pageKey=3.jpg thread=DefaultDispatcher-worker-3
+06-17 11:44:58.890 28458 28604 E TTDBG   : sequential DONE keys=[1.jpg, 2.jpg, 3.jpg] thread=DefaultDispatcher-worker-3
+06-17 11:45:10.901 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=1 thread=main
+06-17 11:45:10.902 28458 28760 E TTDBG   : translateSinglePage ENTER pageKey=2.jpg thread=DefaultDispatcher-worker-10
+06-17 11:45:11.723 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=2 thread=main
+06-17 11:45:12.740 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=3 thread=main
+06-17 11:45:12.876 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=4 thread=main
+06-17 11:45:13.511 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=3 thread=main
+06-17 11:45:13.664 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=2 thread=main
+06-17 11:45:13.982 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=1 thread=main
+06-17 11:45:14.609 28458 28651 E TTDBG   : translateSinglePageInternal PERSIST pageKey=2.jpg ocr=READY inpaint=READY trans=READY render=READY rendered=true cleaned=true retry=0 blocks=5
+06-17 11:45:14.643 28458 28458 E TTDBG   : handleAutoTranslation ENTER pageIdx=0 thread=main
+06-17 11:45:14.643 28458 28458 E TTDBG   : gate idx=0 skip=true reason=hasResult(rendered=true cleaned=true) ocr=READY inpaint=READY trans=READY render=READY retry=0 blocks=7 thread=main
+06-17 11:45:14.826 28458 28651 E TTDBG   : translateSinglePage ENTER pageKey=3.jpg thread=DefaultDispatcher-worker-9
+06-17 11:45:19.111 28458 28801 E TTDBG   : translateSinglePageInternal PERSIST pageKey=3.jpg ocr=READY inpaint=READY trans=READY render=READY rendered=true cleaned=true retry=0 blocks=3
+06-17 11:45:19.398 28458 28801 E TTDBG   : translateSinglePage ENTER pageKey=4.jpg thread=DefaultDispatcher-worker-35
+06-17 11:45:22.634 28458 28801 E TTDBG   : translateSinglePageInternal PERSIST pageKey=4.jpg ocr=READY inpaint=READY trans=READY render=READY rendered=true cleaned=true retry=0 blocks=2
+06-17 11:45:22.888 28458 28801 E TTDBG   : translateSinglePage ENTER pageKey=5.jpg thread=DefaultDispatcher-worker-35
+06-17 11:45:29.743 28458 28801 E TTDBG   : translateSinglePageInternal PERSIST pageKey=5.jpg ocr=READY inpaint=READY trans=READY render=READY rendered=true cleaned=true retry=0 blocks=10
+06-17 11:45:30.032 28458 28797 E TTDBG   : translateSinglePage ENTER pageKey=4.jpg thread=DefaultDispatcher-worker-34
+06-17 11:45:33.263 28458 28779 E TTDBG   : translateSinglePageInternal PERSIST pageKey=4.jpg ocr=READY inpaint=READY trans=READY render=READY rendered=true cleaned=true retry=0 blocks=2
+06-17 11:45:33.501 28458 28797 E TTDBG   : translateSinglePage ENTER pageKey=3.jpg thread=DefaultDispatcher-worker-34
+06-17 11:45:37.788 28458 28779 E TTDBG   : translateSinglePageInternal PERSIST pageKey=3.jpg ocr=READY inpaint=READY trans=READY render=READY rendered=true cleaned=true retry=0 blocks=3
+06-17 11:45:38.016 28458 28779 E TTDBG   : sequential DONE keys=[3.jpg, 4.jpg, 5.jpg] thread=DefaultDispatcher-worker-19
+06-17 11:45:38.017 28458 28779 E TTDBG   : translateSinglePage ENTER pageKey=2.jpg thread=DefaultDispatcher-worker-19

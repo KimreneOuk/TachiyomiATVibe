@@ -2,6 +2,12 @@ package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isStageRunning
+import kotlinx.collections.immutable.PersistentMap
+import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,37 +30,50 @@ class ChapterTranslationStore(
     initialPages: Map<String, PageTranslation> = emptyMap(),
 ) {
     private val mutex = Mutex()
-    private val pages = LinkedHashMap<String, PageTranslation>()
+    private var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
 
     init {
-        pages.putAll(initialPages)
-        _state.value = pages.toMap()
+        pages = initialPages.toPersistentMap()
+        _state.value = snapshotPages()
     }
 
     suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
         mutex.withLock {
+            val previous = pages[pageKey]
             val updated = update(pages[pageKey]).apply {
                 sourceFileName = sourceFileName ?: pageKey
                 updatedAt = System.currentTimeMillis()
             }
-            pages[pageKey] = updated
-            persistLocked()
+            pages = pages.put(pageKey, updated)
+            if (shouldPersistUpdate(previous, updated)) {
+                persistLocked()
+            }
             // Build a snapshot copy so MutableStateFlow always emits — even when
             // callers mutate a previously emitted PageTranslation in place.
-            _state.value = pages.entries.associate { (key, page) -> key to page.copy() }
+            _state.value = snapshotPages()
         }
     }
 
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) {
         mutex.withLock {
-            pages.clear()
-            pages.putAll(updatedPages)
+            pages = updatedPages.toPersistentMap()
             persistLocked()
-            _state.value = pages.entries.associate { (key, page) -> key to page.copy() }
+            _state.value = snapshotPages()
         }
+    }
+
+    private fun snapshotPages(): Map<String, PageTranslation> =
+        pages.entries.associate { (key, page) -> key to page.copy() }
+
+    private fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
+        if (updated.hasRenderedResult || updated.isStageFailed) return true
+        if (updated.blocks.isNotEmpty()) return true
+        if (updated.errorMessage != null) return true
+        if (previous?.hasRenderedResult == true && !updated.hasRenderedResult) return true
+        return !updated.isStageRunning
     }
 
     private fun persistLocked() {

@@ -6,7 +6,10 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.shouldSkipAutoScheduling
+import eu.kanade.translation.model.toPageView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,6 +25,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
@@ -70,12 +74,26 @@ class TranslationManager(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * Tracks in-flight single-page jobs by `"$chapterId:$pageKey"` so a repeat
-     * request replaces (cancels) a pending one instead of queuing behind itself,
-     * and so [cancelPageTranslations] / [cancelAllPageTranslations] can revoke
-     * them when the chapter changes or the reader closes.
+     * Tracks independently-launched single-page jobs by `"$chapterId:$pageKey"`.
+     * Sequential auto-prefetch does not create one coroutine per page, so it is
+     * deduped separately by [queuedPageKeys] below.
      */
     private val activePageJobs = ConcurrentHashMap<String, Job>()
+
+    /**
+     * Tracks pages that are queued or currently executing inside an ordered
+     * auto-prefetch batch. This closes the gap where page selection events
+     * enqueue overlapping windows:
+     *
+     * page 4 -> [4,5,6]
+     * page 5 -> [5,6,7]
+     * page 4 again -> [4,5,6]
+     *
+     * Before this set, only the actively executing page was protected, so page
+     * 6 could sit in multiple pending batches and run two to four times before
+     * any persisted "done" state was visible to later batches.
+     */
+    private val queuedPageKeys = ConcurrentHashMap.newKeySet<String>()
 
     init {
         // Make the translator use the same store instance the reader observes
@@ -141,6 +159,13 @@ class TranslationManager(
 
     fun translatorStart() = translator.start()
     fun translatorStop(reason: String? = null) = translator.stop(reason)
+
+    fun onMemoryPressure(level: Int) {
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            cancelAllPageTranslations()
+        }
+        translator.onMemoryPressure(level)
+    }
 
     fun startTranslation() {
         if (translator.isRunning) return
@@ -311,6 +336,12 @@ class TranslationManager(
         return activeTranslationStores[chapterId]?.state
     }
 
+    fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {
+        return observeActiveStore(chapterId)
+            ?.map { pages -> pages[pageKey].toPageView() }
+            ?.distinctUntilChanged()
+    }
+
     fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
         launchIO {
             removeFromTranslationQueue(chapter)
@@ -440,18 +471,16 @@ class TranslationManager(
      * [pageKeys] within the same chapter. Each page is processed to completion
      * (or failure) before the next begins — absolute ordering guarantee.
      *
-     * This is the prefetch backbone for auto-translate: the reader enqueues the
-     * current page via [translatePage] (fire-and-forget, so the UI overlay
-     * appears immediately), then hands the lookahead pages here so they
-     * translate STRICTLY in page order (n+1 before n+2, never the reverse).
-     * Because each page calls [ChapterTranslator.translateSinglePage] directly
-     * (suspend), they stack on the single [translatorPermit] semaphore in call
-     * order — no dispatcher races can reorder them.
+     * This is the prefetch backbone for auto-translate: the reader hands the
+     * current page plus lookahead pages here, and this method translates them
+     * strictly in page order. Overlapping page-selection events are expected,
+     * so pages are first reserved in [queuedPageKeys]. That reservation covers
+     * both "waiting in an older sequential batch" and "currently executing",
+     * which prevents the same prefetch page from being processed several times
+     * before the first batch reaches a persisted terminal state.
      *
-     * Pages that are already in-flight (activePageJobs.isActive) are silently
-     * skipped so repeated auto-translate firings on scroll don't re-enqueue
-     * work. Cancellation is cooperative: [ensureActive] after each page and
-     * the standard [CancellationException] unwinding through the semaphore.
+     * Cancellation is cooperative: [ensureActive] runs before reservation and
+     * before each page; all reservations are cleared in finally blocks.
      */
     suspend fun translatePagesSequential(
         manga: Manga,
@@ -459,30 +488,73 @@ class TranslationManager(
         source: HttpSource,
         pageKeys: List<String>,
     ) {
-        for (pageKey in pageKeys) {
+        val chapterId = chapter.id ?: return
+        val accepted = mutableListOf<Pair<String, String>>()
+
+        for (pageKey in pageKeys.distinct()) {
             coroutineContext.ensureActive()
-            val jobKey = "${chapter.id}:$pageKey"
-            // Dedup: skip if an active job already exists for this page (e.g.
-            // the fire-and-forget translatePage path is already processing it,
-            // or a previous sequential batch started it). The lower-level
-            // inFlightPageKeys inside translateSinglePage also dedups, so a
-            // second call to translateSinglePage for the same pageKey would be
-            // a no-op — but checking here avoids even entering the permit dance.
+            val jobKey = "$chapterId:$pageKey"
             val existing = activePageJobs[jobKey]
-            if (existing != null && existing.isActive) continue
+            if (existing != null && existing.isActive) {
+                logcat(LogPriority.DEBUG) { "TachiyomiAT sequential SKIP (active): pageKey=$pageKey" }
+                continue
+            }
             if (existing != null) activePageJobs.remove(jobKey)
-            try {
-                translator.translateSinglePage(manga, chapter, source, pageKey)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                logcat(LogPriority.ERROR, e) {
-                    "TachiyomiAT sequential page translation failed: pageKey=$pageKey " +
-                        "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
+
+            val current = activeTranslationStores[chapterId]?.state?.value?.get(pageKey)
+            if (current != null) {
+                if (current.shouldSkipAutoScheduling) {
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT sequential SKIP (already done): pageKey=$pageKey " +
+                            "rendered=${current.renderedImageName != null} trans=${current.translationStatus}"
+                    }
+                    continue
                 }
             }
+
+            if (!queuedPageKeys.add(jobKey)) {
+                logcat(LogPriority.DEBUG) { "TachiyomiAT sequential SKIP (already queued): pageKey=$pageKey" }
+                continue
+            }
+
+            accepted.add(jobKey to pageKey)
         }
-    }
+
+        try {
+            for ((jobKey, pageKey) in accepted) {
+                coroutineContext.ensureActive()
+                val current = activeTranslationStores[chapterId]?.state?.value?.get(pageKey)
+                if (current != null && current.shouldSkipAutoScheduling) {
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT sequential SKIP (completed while queued): pageKey=$pageKey " +
+                            "rendered=${current.renderedImageName != null} trans=${current.translationStatus}"
+                    }
+                    continue
+                }
+                val existing = activePageJobs[jobKey]
+                if (existing != null && existing.isActive) {
+                    logcat(LogPriority.DEBUG) { "TachiyomiAT sequential SKIP (active while queued): pageKey=$pageKey" }
+                    continue
+                }
+                if (existing != null) activePageJobs.remove(jobKey)
+
+                try {
+                    translator.translateSinglePage(manga, chapter, source, pageKey)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    logcat(LogPriority.ERROR, e) {
+                        "TachiyomiAT sequential page translation failed: pageKey=$pageKey " +
+                            "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
+                    }
+                } finally {
+                    queuedPageKeys.remove(jobKey)
+                }
+            }
+        } finally {
+            accepted.forEach { (jobKey, _) -> queuedPageKeys.remove(jobKey) }
+        }
+            }
 
     /**
      * Clears a non-terminal RUNNING/PENDING status for [pageKey] left behind when
@@ -538,6 +610,7 @@ class TranslationManager(
      */
     fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean {
         val jobKey = "$chapterId:$pageKey"
+        queuedPageKeys.remove(jobKey)
         val job = activePageJobs.remove(jobKey)
         job?.cancel()
         return job != null
@@ -562,6 +635,7 @@ class TranslationManager(
      */
     suspend fun cancelPageTranslations(chapterId: Long) {
         val prefix = "$chapterId:"
+        queuedPageKeys.removeIf { it.startsWith(prefix) }
         val toJoin = mutableListOf<Job>()
         val iterator = activePageJobs.entries.iterator()
         while (iterator.hasNext()) {
@@ -594,6 +668,7 @@ class TranslationManager(
      * background and no collector outlives the session.
      */
     fun cancelAllPageTranslations() {
+        queuedPageKeys.clear()
         val iterator = activePageJobs.entries.iterator()
         while (iterator.hasNext()) {
             val (_, job) = iterator.next()

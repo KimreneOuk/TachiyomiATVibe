@@ -113,6 +113,8 @@ class GoogleTranslator(
 
 
     override fun close() {
+        okHttpClient.connectionPool.evictAll()
+        okHttpClient.dispatcher.executorService.shutdown()
     }
 
 }

@@ -1,0 +1,1037 @@
+--------- beginning of main
+06-17 11:08:06.951  2025  2098 D vendor.oplus.hardware.charger-V10-service: ret_value:136, read content:,398,399,3835,3835,-2185,29,29,1,14,0,0,7860,29,1,4475,500,2000,0,3,7500,3,0,1,0,2,0,0,0,1,6254,99,3352,1651,5793,1,1,1,1,1258311699,75
+06-17 11:08:06.951  2025  2098 D vendor.oplus.hardware.charger-V10-service: gmtime: 2026-06-17-11-08-06
+06-17 11:08:06.952  2025  2098 D vendor.oplus.hardware.charger-V10-service: usb_online:1, ac_online:-2147483648, wireless_online:-2147483648
+06-17 11:08:06.976  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=338 hdr_size=8 payload len=1792
+06-17 11:08:07.067  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:07.068  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:07.068  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:07.068  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:07.128  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1464 count=138 hdr_size=8 payload len=1792
+06-17 11:08:07.131  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=194 hdr_size=8 payload len=1792
+06-17 11:08:07.132  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1456 count=138 hdr_size=8 payload len=4096
+06-17 11:08:07.144  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:07.144  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105378236628970,16791,0
+06-17 11:08:07.147  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 269.1,cct 6548.8,brl/algo/ir 1481.0/2.0/25.5,pwm/dc 0.0/0.0,rgbc 9983.882812/7905.783203/4615.899902/21362.814453,ts 2105378162358658,cnt 11916,flag 16791
+06-17 11:08:07.183 17433 22656 D ShellSubscriberWorkerThread: the first 8 bytes empty, and RestData length > 8 
+06-17 11:08:07.223  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Received IBS_WAKE_IND: 0xFD
+06-17 11:08:07.223  1816 31299 D vendor.qti.bluetooth@1.1-ibs_handler: SerialClockVote: vote for UART CLK ON
+06-17 11:08:07.223  1816 31299 E vendor.qti.bluetooth@1.1-wake_lock: Acquire write to wakelock file failed -1 - Operation not permitted
+06-17 11:08:07.223  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Writing IBS_WAKE_ACK
+06-17 11:08:07.226 31205 31248 I bluetooth: [btif_bqr.cc:1267] vendor_specific_event_callback: Unhandled BQR subevent 0x01
+06-17 11:08:07.226 31205 31248 D bluetooth: [btif_bqr.cc:752] CategorizeBqrEvent: length: 56 quality_report_id: 0x01
+06-17 11:08:07.227 31205 31248 I bluetooth: [btif_bqr.cc:1204] bqr_delivery_event: len: 56, bqr_id: 1, addr: xx:xx:xx:xx:99:87, lmp_ver: 8, manufacturer_id: 93, lmp_subver: 30389
+06-17 11:08:07.227 31205 31312 I BluetoothInCallService: BluetoothInCallService = null
+06-17 11:08:07.227 31205 31312 I BluetoothQualityReportJni: [com_android_bluetooth_BluetoothQualityReport.cpp:48] bqr_delivery_callback: 
+06-17 11:08:07.227 31205 31312 I BluetoothQualityReportNativeInterface: rawData Length = 86
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface: BQR: {
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface:   mAddr: XX:XX:XX:XX:99:87, mLmpVer: 0x08, mLmpSubVer: 0x76B5, mManufacturerId: 0x005D, mName: DESKTOP-8VS098Q, mBluetoothClass: a0104,
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface:   BqrCommon: {
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface:     mQualityReportId: Quality monitor(0x01), mPacketType: TYPE_DM1(0x10), mConnectionHandle: 0x0016, mConnectionRole: 0(0), mTxPowerLevel: 10, mRssi: -42, mSnr: 0, mUnusedAfhChannelCount: 17,
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface:     mAfhSelectUnidealChannelCount: 0, mLsto: 8000, mPiconetClock: 0x018E4F21, mRetransmissionCount: 0, mNoRxCount: 0, mNakCount: 0, mLastTxAckTimestamp: 0x018D2902, mFlowOffCount: 0,
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface:     mLastFlowOnTimestamp: 0x0FFFFFFF, mOverflowCount: 0, mUnderflowCount: 0, mAddr: XX:XX:XX:XX:00:00, mCalFailedItemCount: 0,
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface:     mTxTotalPackets: 0, mTxUnackPackets: 0, mTxFlushPackets: 0, mTxLastSubeventPackets: 0, mCrcErrorPackets: 0, mRxDupPackets: 2264924160, mRxUnRecvPackets: 3763086233, mCoexInfoMask: 0
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface:   }
+06-17 11:08:07.233 31205 31312 I BluetoothQualityReportNativeInterface: }
+06-17 11:08:07.235 31205 31205 I oplus_bt_dual_sync: [oplus_bt_dual_sync.cc:151] stack_down_sync_action: type=18, len=17
+06-17 11:08:07.235 31205 31205 I oplus_bt_qos_monitor: [oplus_bt_qos_monitor.cc:118] get_oplus_qos_data: getting qos data
+06-17 11:08:07.264  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Received IBS_SLEEP_IND: 0xFE
+06-17 11:08:07.264  1816 31299 D vendor.qti.bluetooth@1.1-ibs_handler: SerialClockVote: vote for UART CLK OFF
+06-17 11:08:07.415  1816 31291 E vendor.qti.bluetooth@1.1-wake_lock: Release wake lock not initialized/acquired
+06-17 11:08:07.436  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:07.436  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105378528483449,16792,0
+06-17 11:08:07.553  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:07.593  1833 16330 I WifiHAL : event received NL80211_CMD_VENDOR, vendor_id = 0x1374, subcmd = 0xd
+06-17 11:08:07.594  2842  2842 I cnss-daemon: nl80211 response handler invoked
+06-17 11:08:07.594  2842  2842 I cnss-daemon: nl80211_response_handler: cmd 103, vendorID 4980, subcmd 13  received
+06-17 11:08:07.665  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 270.2,cct 6583.2,brl/algo/ir 1481.0/2.0/26.1,pwm/dc 0.0/0.0,rgbc 10055.662109/7949.221191/4622.401367/21505.710938,ts 2105378495741314,cnt 11926,flag 16792
+06-17 11:08:07.729  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:07.730  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105378821936678,16793,0
+06-17 11:08:07.806  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=146 hdr_size=8 payload len=1792
+06-17 11:08:07.815  7091 22691 E midasd  : getTotalFlipsFromSf mCurFrameCount: 35740898
+06-17 11:08:07.816  7091 22691 I midasd  : DisplayAgent updateDisplayDevInfo getRenderFps mFps:120 mRenderFps:0 mWidth:1080 mHeight:2376
+06-17 11:08:07.871  5427  6221 D OplusLinkBoostSceneManager: handleAppSceneChange: live broadcast off
+06-17 11:08:07.931  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59125, lux 75.9, cct -1.0, r/g/b/c: 9899.1/7812.7/4524.9/21174.5, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.039255, conf 0.0, ts 2105378802998502
+06-17 11:08:08.022  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:08.022  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105379114419178,16794,0
+06-17 11:08:08.091  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:08.092  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:08.092  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:08.092  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:08.114  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1468 count=138 hdr_size=8 payload len=1792
+06-17 11:08:08.154  3261  3261 I OplusTouchDaemon: ts_run_service: shellback temperature updated 40 (40026)
+06-17 11:08:08.196  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=146 hdr_size=8 payload len=1792
+06-17 11:08:08.197  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 277.2,cct 6601.3,brl/algo/ir 1481.0/2.0/25.3,pwm/dc 0.0/0.0,rgbc 9938.205078/7880.961426/4557.388672/21232.912109,ts 2105379061038605,cnt 11936,flag 16794
+06-17 11:08:08.205 12913 16107 D gaia-GaiaConnectChecker: start connect check++
+06-17 11:08:08.314  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:08.314  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105379406617564,16795,0
+06-17 11:08:08.435  5606  6396 D CoexRfService: report RRC state:true
+06-17 11:08:08.509  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F enter(), M stay=3
+06-17 11:08:08.515  5606  5606 D VendorWifiService: onEvent event:9,action:1
+06-17 11:08:08.515  3473  5428 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:08.515  3473  5428 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:08.516  3473  5428 I OplusHansManager : freeze uid: 10445 com.instagram.android pids: [24788, 31174] IsolatedUid: [90000, 90200] scene: |StrictMode-3|LcdOn
+06-17 11:08:08.517  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = PKG, targetUid = 10445, pkgCmd = ADD_ONE_UID
+06-17 11:08:08.518  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to em, mForegroundCnt = 0, isFg = false
+06-17 11:08:08.523  3473  5657 W OPLUS_LOG_LOAD: ==LOGS PROG INFO, prog(system_server) ==
+06-17 11:08:08.523  3473  5657 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:08.523  3473  5657 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:08.523  3473  5657 I OplusHansManager : unfreeze uid: 10445 com.instagram.android pids: [24788, 31174] reason: ExecutingComponent scene: |StrictMode-3|LcdOn
+06-17 11:08:08.524  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F exit(), F stay=0, reason=ExecutingComponent, FrozenActionKeepProxy=false
+06-17 11:08:08.524  3473  5436 I OplusHansManager : p_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:08.524  3473  5436 I OplusHansManager : a_alarm 10445
+--------- beginning of system
+06-17 11:08:08.524  3473  5436 D OplusAlarmAdjustment: alignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:08.524  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: true calling: OFreezer
+06-17 11:08:08.525  3473  4599 D OplusAlarmAdjustMap: addAlignUid, uid=10445, pkgName=com.instagram.android, requester=1, mode=1
+06-17 11:08:08.525  3473  5436 I LocationFreezeProc: will freezeLocationProcess for com.instagram.android, 10445, true, false
+06-17 11:08:08.525  3473  5436 I LocationFreezeProc: Executing freeze operation for com.instagram.android, 10445, true, false
+06-17 11:08:08.525  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:08.525  3473  5436 I OplusHansManager : p_gps: uid 10445 result false
+06-17 11:08:08.526  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:08.527  3473  5436 I OplusHansManager : p_BtScan: uid 10445 isProxy true
+06-17 11:08:08.527  3473  5436 I OplusHansManager : up_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:08.527  3473  5436 I OplusHansManager : ua_alarm 10445
+06-17 11:08:08.527  3473  5436 D OplusAlarmAdjustment: unalignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:08.527  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: false calling: OFreezer
+06-17 11:08:08.528  3473  5436 I OplusHansManager : up_BtScan: uid 10445 isUnProxy true
+06-17 11:08:08.529  3473  4599 D OplusAlarmAdjustMap: removeAlignUid, uid=10445, requester=1
+06-17 11:08:08.529  3473  5428 I OplusHansManager : uid=10319, pkg=com.coloros.weather2 cannot transition from R to M, importance=AppCardVisible#[com.oplus.pantanal.ums]
+06-17 11:08:08.531  3473  4884 D ScorerUtils: isLowTraffic: txTputKBps=0, rxTputKBps=0
+06-17 11:08:08.532  3473  4884 D OplusWifiPower_TriggerCenter: mComponentCallback: wifistat
+06-17 11:08:08.556  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:08.606  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:08.606  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105379698580636,16796,0
+06-17 11:08:08.730  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 267.7,cct 6586.2,brl/algo/ir 1481.0/2.0/25.0,pwm/dc 0.0/0.0,rgbc 10140.492188/8023.687012/4661.409180/21733.042969,ts 2105379642940948,cnt 11946,flag 16796
+06-17 11:08:08.808  3473  4601 V AlarmManager: sending alarm Alarm{1337479 type 1 origWhen 1781669288808 whenElapsed 2105379901 android} uid 1000 whenElapsed 2105379901 windowLength 0 maxWhenElapsed 2105379901 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+06-17 11:08:08.810  3473  6180 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+06-17 11:08:08.811  3473  6180 E OplusStorageUFSBandwidth: Bandwidth - Read: 0.00 MB/s, Write: 0.00 MB/s
+06-17 11:08:08.812  3473  6180 E OplusStorageUFSBandwidth: Task time: 2ms
+06-17 11:08:08.817  3473  6180 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+06-17 11:08:08.898  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:08.898  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105379990754126,16797,0
+06-17 11:08:09.115  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:09.116  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:09.116  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:09.116  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:09.142  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=138 hdr_size=8 payload len=5376
+06-17 11:08:09.190  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:09.190  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105380282994334,16798,0
+06-17 11:08:09.218  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=138 hdr_size=8 payload len=1792
+06-17 11:08:09.261  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 274.3,cct 6598.2,brl/algo/ir 1481.0/2.0/25.2,pwm/dc 0.0/0.0,rgbc 10362.357422/8197.440430/4778.432129/22220.185547,ts 2105380233127667,cnt 11956,flag 16798
+06-17 11:08:09.262  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59130, lux 79.4, cct -1.0, r/g/b/c: 10016.5/7943.0/4622.4/21479.7, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.040436, conf 0.0, ts 2105380266259647
+06-17 11:08:09.312  3473  5428 I OplusHansManager : uid=10349, pkg=com.google.android.inputmethod.latin cannot transition from R to M, importance=input
+06-17 11:08:09.482  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:09.482  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105380574899074,16799,0
+06-17 11:08:09.557  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:09.594  1833 16330 I WifiHAL : event received NL80211_CMD_VENDOR, vendor_id = 0x1374, subcmd = 0xd
+06-17 11:08:09.594  2842  2842 I cnss-daemon: nl80211 response handler invoked
+06-17 11:08:09.595  2842  2842 I cnss-daemon: nl80211_response_handler: cmd 103, vendorID 4980, subcmd 13  received
+06-17 11:08:09.667  3473  4465 D osense.compress: com.coloros.digitalwellbeing do shrink, target ratio = 60, final ratio = 90, cur ratio = 31
+06-17 11:08:09.774  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:09.774  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105380866852407,16800,0
+06-17 11:08:09.775  1830  1978 I sensors-hal: get_display_brightness:826, light_iface: set screenshot_info [2105288174482963,2105380866852407,16800,0]
+06-17 11:08:09.793  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 275.2,cct 6586.4,brl/algo/ir 1481.0/2.0/25.0,pwm/dc 0.0/0.0,rgbc 9990.408203/7893.372070/4576.892578/21330.339844,ts 2105380815034959,cnt 11966,flag 16800
+06-17 11:08:10.042  2025  2025 D vendor.oplus.hardware.charger-V10-service: getChargerControl:
+06-17 11:08:10.066  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:10.067  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105381159264646,16801,0
+06-17 11:08:10.138  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:10.140  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:10.141  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:10.141  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:10.266  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=146 hdr_size=8 payload len=1792
+06-17 11:08:10.326  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 266.0,cct 6570.8,brl/algo/ir 1481.0/2.0/25.9,pwm/dc 0.0/0.0,rgbc 9879.476562/7818.906250/4537.884766/21141.976562,ts 2105381156732355,cnt 11976,flag 16801
+06-17 11:08:10.358  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:10.359  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105381451060167,16802,0
+06-17 11:08:10.533  1987  2037 E PerformanceService: storage_feature: open /sys/devices/platform/soc/112b0000.ufshci//virtualtlcbuff fail
+06-17 11:08:10.560  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:10.594  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59135, lux 85.2, cct -1.0, r/g/b/c: 10264.5/8110.6/4732.9/21979.9, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.039439, conf 0.0, ts 2105381455962510
+06-17 11:08:10.651  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:10.651  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105381743217927,16803,0
+06-17 11:08:10.812  3473  4601 V AlarmManager: sending alarm Alarm{e643a17 type 1 origWhen 1781669290812 whenElapsed 2105381905 android} uid 1000 whenElapsed 2105381905 windowLength 0 maxWhenElapsed 2105381905 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+06-17 11:08:10.814  3473  6180 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+06-17 11:08:10.816  3473  6180 E OplusStorageUFSBandwidth: Bandwidth - Read: 0.00 MB/s, Write: 0.00 MB/s
+06-17 11:08:10.816  3473  6180 E OplusStorageUFSBandwidth: Task time: 2ms
+06-17 11:08:10.820  3473  6180 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+06-17 11:08:10.858  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 275.8,cct 6598.9,brl/algo/ir 1481.0/2.0/26.4,pwm/dc 0.0/0.0,rgbc 10277.526367/8122.975098/4732.922852/21973.367188,ts 2105381688763969,cnt 11986,flag 16803
+06-17 11:08:10.914 12913 13287 D gaia-GaiaConnectChecker: start connect check++
+06-17 11:08:10.943  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:10.943  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105382035401521,16804,0
+06-17 11:08:10.947  3473  4465 D osense.compress: com.facebook.katana do shrink, target ratio = 45, final ratio = 90, cur ratio = 0
+06-17 11:08:11.164  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:11.165  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:11.165  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:11.165  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:11.236  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:11.236  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105382328273083,16805,0
+06-17 11:08:11.390  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 271.2,cct 6578.6,brl/algo/ir 1481.0/2.0/25.8,pwm/dc 0.0/0.0,rgbc 10075.238281/7974.043457/4609.399414/21557.671875,ts 2105382270824907,cnt 11996,flag 16805
+06-17 11:08:11.427  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=138 hdr_size=8 payload len=1792
+06-17 11:08:11.436  5606  6396 D CoexRfService: report RRC state:true
+06-17 11:08:11.516  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=138 hdr_size=8 payload len=1792
+06-17 11:08:11.517  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=146 hdr_size=8 payload len=1792
+06-17 11:08:11.527  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F enter(), M stay=3
+06-17 11:08:11.527  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:11.528  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105382620356885,16806,0
+06-17 11:08:11.536  3473  5428 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:11.537  3473  5428 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:11.537  5606  5606 D VendorWifiService: onEvent event:9,action:1
+06-17 11:08:11.537  3473  4884 D ScorerUtils: isLowTraffic: txTputKBps=0, rxTputKBps=0
+06-17 11:08:11.538  3473  5428 I OplusHansManager : freeze uid: 10445 com.instagram.android pids: [24788, 31174] IsolatedUid: [90000, 90200] scene: |StrictMode-3|LcdOn
+06-17 11:08:11.538  3473  4884 D OplusWifiPower_TriggerCenter: mComponentCallback: wifistat
+06-17 11:08:11.538  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to em, mForegroundCnt = 0, isFg = false
+06-17 11:08:11.539  3473  5436 I OplusHansManager : p_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:11.539  3473  5436 I OplusHansManager : a_alarm 10445
+06-17 11:08:11.539  3473  5436 D OplusAlarmAdjustment: alignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:11.539  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = PKG, targetUid = 10445, pkgCmd = ADD_ONE_UID
+06-17 11:08:11.539  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: true calling: OFreezer
+06-17 11:08:11.540  3473  4599 D OplusAlarmAdjustMap: addAlignUid, uid=10445, pkgName=com.instagram.android, requester=1, mode=1
+06-17 11:08:11.540  3473  5436 I LocationFreezeProc: will freezeLocationProcess for com.instagram.android, 10445, true, false
+06-17 11:08:11.540  3473  5436 I LocationFreezeProc: Executing freeze operation for com.instagram.android, 10445, true, false
+06-17 11:08:11.540  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:11.540  3473  5436 I OplusHansManager : p_gps: uid 10445 result false
+06-17 11:08:11.542  3473  5436 I OplusHansManager : p_BtScan: uid 10445 isProxy true
+06-17 11:08:11.546  3473  5657 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:11.546  3473  5657 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:11.546  3473  5657 I OplusHansManager : unfreeze uid: 10445 com.instagram.android pids: [24788, 31174] reason: ExecutingComponent scene: |StrictMode-3|LcdOn
+06-17 11:08:11.547  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:11.547  3473  5272 I OplusBinderProxy: pb uid: 10445 pid: 31174 desc: android.app.IApplicationThread/42
+06-17 11:08:11.550  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F exit(), F stay=0, reason=ExecutingComponent, FrozenActionKeepProxy=false
+06-17 11:08:11.550  3473  5436 I OplusHansManager : up_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:11.550  3473  5436 I OplusHansManager : ua_alarm 10445
+06-17 11:08:11.550  3473  5436 D OplusAlarmAdjustment: unalignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:11.551  3473  4599 D OplusAlarmAdjustMap: removeAlignUid, uid=10445, requester=1
+06-17 11:08:11.551  3473  5436 I OplusBinderProxy: un_pb uid: 10445 pid: 31174 rst: true , Desc: android.app.IApplicationThread/42
+06-17 11:08:11.551  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: false calling: OFreezer
+06-17 11:08:11.552  3473  5436 I OplusHansManager : up_BtScan: uid 10445 isUnProxy true
+06-17 11:08:11.563  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:11.597  1833 16330 I WifiHAL : event received NL80211_CMD_VENDOR, vendor_id = 0x1374, subcmd = 0xd
+06-17 11:08:11.598  2842  2842 I cnss-daemon: nl80211 response handler invoked
+06-17 11:08:11.598  2842  2842 I cnss-daemon: nl80211_response_handler: cmd 103, vendorID 4980, subcmd 13  received
+06-17 11:08:11.711  5383  7673 D OplusCellularNetworkConfig: getDnsQueryPriority value=http://www.sina.com.cn/generate_204
+06-17 11:08:11.712  5606  8674 D NetworkService[0]: isNetworkAvailableForFeature or linkProperties is null
+06-17 11:08:11.712  5606  8674 D NetworkService[0]: isNetworkAvailableForFeature or linkProperties is null
+06-17 11:08:11.712  5606  8674 D NetworkService[0]: getActiveNetworks networkList size:1
+06-17 11:08:11.712  5606  8674 D SubsysThreadPool: execute task
+06-17 11:08:11.808  5606  5606 D SubsysEventListenerManager-SubsysTelephonyCallback[0]: onSignalStrengthsChanged
+06-17 11:08:11.810  5278  5381 W OPLUS_LOG_LOAD: ==LOGS PROG INFO, prog(com.android.systemui) ==
+06-17 11:08:11.810  5278  5381 I SystemUi--Statusbar: MobileConnectionRepositoryImpl-->subId:2 isSoftSimCard:false slotId:0
+06-17 11:08:11.814  5278  5278 D Tile.OplusCellularTile: refreshState: tile not listening, ignore
+06-17 11:08:11.817  5383  5383 D OplusTelephonyController: onSignalStrengthChanged: SignalStrength=SignalStrength:{mCdma=CellSignalStrengthCdma: cdmaDbm=2147483647 cdmaEcio=2147483647 evdoDbm=2147483647 evdoEcio=2147483647 evdoSnr=2147483647 level=0,mGsm=CellSignalStrengthGsm: rssi=2147483647 ber=2147483647 mTa=2147483647 mLevel=0,mWcdma=CellSignalStrengthWcdma: ss=2147483647 ber=2147483647 rscp=2147483647 ecno=2147483647 level=0,mTdscdma=CellSignalStrengthTdscdma: rssi=2147483647 ber=2147483647 rscp=2147483647 level=0,mLte=CellSignalStrengthLte: rssi=-59 rsrp=-94 rsrq=-14 rssnr=0 cqiTableIndex=2147483647 cqi=2147483647 ta=2147483647 level=4 parametersUseForLevel=0,mNr=CellSignalStrengthNr:{ csiRsrp = 2147483647 csiRsrq = 2147483647 csiCqiTableIndex = 2147483647 csiCqiReport = [] ssRsrp = 2147483647 ssRsrq = 2147483647 ssSinr = 2147483647 level = 0 parametersUseForLevel = 0 timingAdvance = 2147483647 },primary=CellSignalStrengthLte}
+06-17 11:08:11.819  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:11.819  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105382911985739,16807,0
+06-17 11:08:11.857  3473  5272 D OplusProxyWakeLock: acquireProxyWakeLock failed, prevent uid: 10258 tag:GOOGL...   WorkSource{10355 org.telegram.messenger} result: TAG_ILLEGAL
+06-17 11:08:11.862  3473  5657 I OplusHansManager : unfreeze uid: 10355 org.telegram.messenger pids: [21787] reason: acquireWakeLock GOOGL... WorkSource{10355 org.telegram.messenger} scene: |StrictMode-3|LcdOn
+06-17 11:08:11.863  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = org.telegram.messenger, uid = 10355, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:11.863  3473  5428 I OplusHansManager : uid=10355, pkg=org.telegram.messenger F exit(), F stay=1048, reason=acquireWakeLock GOOGL... WorkSource{10355 org.telegram.messenger}, FrozenActionKeepProxy=false
+06-17 11:08:11.864  3473  5436 I OplusHansManager : up_BC uid=10355 pkg=org.telegram.messenger
+06-17 11:08:11.864  3473  5436 I OplusHansManager : ua_alarm 10355
+06-17 11:08:11.864  3473  5436 D OplusAlarmAdjustment: unalignAlarmsByUid(), uid=10355, pkgName=org.telegram.messenger, actions=null, procs=null, requester=1
+06-17 11:08:11.865  3473  4599 D OplusAlarmAdjustMap: removeAlignUid, uid=10355, requester=1
+06-17 11:08:11.865  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.866  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.866  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.866  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.866  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.866  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.867  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.867  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.867  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.867  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.868  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.868  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.869  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.869  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.869  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.869  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.869  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.869  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.870  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.database.IContentObserver/-1
+06-17 11:08:11.870  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.hardware.input.IInputDevicesChangedListener/1
+06-17 11:08:11.870  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.view.accessibility.IAccessibilityManagerClient/4
+06-17 11:08:11.871  3473  5436 I OplusBinderProxy: un_pb uid: 10355 pid: 21787 rst: true , Desc: android.app.IApplicationThread/42
+06-17 11:08:11.871  3473  5436 I OplusBinderProxy: proxyBinder uid: 10355 pkg: org.telegram.messenger proxy: false calling: OFreezer
+06-17 11:08:11.871  3473  5436 I OplusHansManager : up_BtScan: uid 10355 isUnProxy true
+06-17 11:08:11.873 13422  2382 I AlarmManager: setExactAndAllowWhileIdle [name: FcmRetry type: 2 triggerAtMillis: 2105502965]
+06-17 11:08:11.881 13422 13422 D BoundBrokerSvc: onRebind: Intent { act=com.google.android.gms.common.telemetry.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentApiService mCallingUid=10258 }
+06-17 11:08:11.884 21787 21787 I Choreographer: Skipped 63080 frames!  The application may be doing too much work on its main thread.
+06-17 11:08:11.898 21787 21787 W BillingClient: Billing service disconnected.
+06-17 11:08:11.900  3473  6928 W OplusHansManager : storeHistoryAndNotifyApp fileTime: 2026-06-17_11-08-11
+06-17 11:08:11.900 21787 21787 D ActivityThread: Package [app.kanade.tachiyomi.at.debug] reported as REPLACED, but missing application info. Assuming REMOVED.
+06-17 11:08:11.901  5578  6420 W Athena  : HansStatisticsManager: start storeHistoryFile file: /data/oplus/os/bpm/history/hansHistory_2026-06-17_11-08-11.txt
+06-17 11:08:11.922  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 267.6,cct 6592.4,brl/algo/ir 1481.0/2.0/25.8,pwm/dc 0.0/0.0,rgbc 9879.476562/7849.934082/4557.388672/21180.947266,ts 2105382860989750,cnt 12006,flag 16807
+06-17 11:08:11.922  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59140, lux 82.7, cct -1.0, r/g/b/c: 10134.0/8042.3/4641.9/21694.1, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.040761, conf 0.0, ts 2105382894121781
+06-17 11:08:11.927 21787 21787 D ActivityThread: Package [app.kanade.tachiyomi.at.debug] reported as REPLACED, but missing application info. Assuming REMOVED.
+06-17 11:08:11.941 13422 14380 W OplusExSystemServiceHelper: checkOplusExSystemService intent getComponent is null
+06-17 11:08:11.952  2025  2098 D vendor.oplus.hardware.charger-V10-service: ret_value:136, read content:,398,398,3837,3837,-2191,29,29,1,14,0,0,7851,29,1,4475,500,2000,0,3,7500,3,0,1,0,2,0,0,0,1,6254,99,3356,1654,5793,1,1,1,1,1258311699,75
+06-17 11:08:11.953  2025  2098 D vendor.oplus.hardware.charger-V10-service: gmtime: 2026-06-17-11-08-11
+06-17 11:08:11.953  2025  2098 D vendor.oplus.hardware.charger-V10-service: usb_online:1, ac_online:-2147483648, wireless_online:-2147483648
+06-17 11:08:11.960  3473  3583 W JobInfo : Job 'org.telegram.messenger/.KeepAliveJob#1000' has a deadline with functional constraints and an extremely short time window of 0 ms (delay=0, deadline=0). The functional constraints are not likely to be satisfied when the job runs.
+06-17 11:08:11.961  3473  3583 W JobInfo : Job 'org.telegram.messenger/.KeepAliveJob#1000' has a deadline with functional constraints and an extremely short time window of 0 ms (delay=0, deadline=0). The functional constraints are not likely to be satisfied when the job runs.
+06-17 11:08:11.963 31263 31292 I Finsky  : [3218] org.telegram.messenger: Account determined from installer data - [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.965 31263 31292 I Finsky  : [3218] Billing preferred account via installer for org.telegram.messenger: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.968 31263 31292 W Finsky  : [3218] Got api version 26 for account: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.973 31263 31292 I Finsky  : [3218] playLoggingServerUrl: https://play.googleapis.com/play/log
+06-17 11:08:11.973 31263 31292 I Finsky  : [3218] playLoggingServerTimestampUrl: https://play.googleapis.com/play/log/timestamp
+06-17 11:08:11.976  3473  3583 D CompatChangeReporter: Compat change id reported: 297989574; UID 10262; state: ENABLED
+06-17 11:08:11.990 31263 31292 I Finsky  : [3218] org.telegram.messenger: Account determined from installer data - [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.990 31263 31292 I Finsky  : [3218] Billing preferred account via installer for org.telegram.messenger: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.991 31263 31292 W Finsky  : [3218] Got api version 26 for account: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.995 31263 31292 I Finsky  : [3218] org.telegram.messenger: Account determined from installer data - [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.995 31263 31292 I Finsky  : [3218] Billing preferred account via installer for org.telegram.messenger: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.995 31263 31292 W Finsky  : [3218] Got api version 26 for account: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:11.999 31263 31280 I Finsky  : [3216] org.telegram.messenger: Account determined from installer data - [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:12.000 31263  2180 I Finsky  : [3296] org.telegram.messenger: Account determined from installer data - [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:12.000 31263 31280 I Finsky  : [3216] Billing preferred account via installer for org.telegram.messenger: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:12.000 31263  2180 I Finsky  : [3296] Billing preferred account via installer for org.telegram.messenger: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:12.000 31263  2180 W Finsky  : [3296] Got api version 26 for account: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:12.000 31263 31280 W Finsky  : [3216] Got api version 26 for account: [JxuMI_YdUyA78GEg5NjBoFJDgDnrDa-j3Fl4qS3kDqQ]
+06-17 11:08:12.001 31263  2180 I Finsky  : [3296] User is not an active Play Pass subscriber
+06-17 11:08:12.029  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1452 count=138 hdr_size=8 payload len=1792
+06-17 11:08:12.111  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:12.112  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105383204385062,16808,0
+06-17 11:08:12.115  1830 30519 I sensors-hal: handle_sns_client_event:316, accel_sample: 0: ts=2105382949512093 ns; value = [-0.029558, 0.144914, 9.728557], status=3
+06-17 11:08:12.134 10814 11305 D HLog-HLog: [metis]updateMemoryCache existPushInfo : 
+06-17 11:08:12.134 10814 11305 D HLog-UpMgr: [metis]配置是否有变更 : true
+06-17 11:08:12.134 10814 11305 D HLog-HLog: [metis]findCurrentTraceDto existPushInfo : 
+06-17 11:08:12.134 10814 11305 D HLog-UpMgr: [metis]检查配置是否有更新 !
+06-17 11:08:12.175 17433 22656 D ShellSubscriberWorkerThread: the first 8 bytes empty, and RestData length > 8 
+06-17 11:08:12.181  5606  5606 D RFPowerBoostManager: my thermal listener proxy invoke method:notifyThermalBroadCast args len:2
+06-17 11:08:12.181  5606  5606 D RFPowerBoostManager: current temp is 39, mInCalling is false, mIsGameMode is false, current threshold is 41
+06-17 11:08:12.182  5427  6286 D AMC     : [TriggerForeground] handle temp changed:39952
+06-17 11:08:12.186  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:12.186  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:12.187  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:12.187  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:12.204 31263 32334 I cn_CronetUrlRequestContext: destroyNativeStreamLocked org.chromium.net.impl.CronetBidirectionalStream@35666c9
+06-17 11:08:12.205  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-16_09-20-35.zip
+06-17 11:08:12.205  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-16_10-30-36.txt
+06-17 11:08:12.205  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-16_12-28-43.txt
+06-17 11:08:12.205  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-16_13-49-20.txt
+06-17 11:08:12.205  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-16_18-01-54.txt
+06-17 11:08:12.206  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-16_20-10-50.txt
+06-17 11:08:12.206  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-16_22-29-28.txt
+06-17 11:08:12.206  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-17_01-27-29.txt
+06-17 11:08:12.206  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-17_07-55-50.txt
+06-17 11:08:12.206  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-17_09-36-44.txt
+06-17 11:08:12.206  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/oplus/os/bpm/history/hansHistory_2026-06-17_11-08-11.txt
+06-17 11:08:12.211  5578  6420 W Athena  : HansStatisticsManager: delete history file succeed: /data/persist_log/backup/hans/hansHistory_2026-06-17_09-36-44_tmp.zip
+06-17 11:08:12.211  5578  6420 W Athena  : HansStatisticsManager: delete history file excluded:
+06-17 11:08:12.215 31263 31588 D Volley  : [3237] aviu.e: Could not delete cache entry for key=[BDZD0mfAQ494H2FxBmYG756Dt3AyC5nro_4CzPzWwQY], filename=4mAzFPSf7uxnU4GOPWOtTAbftk8
+06-17 11:08:12.404  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:12.404  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105383496366833,16809,0
+06-17 11:08:12.453  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=138 hdr_size=8 payload len=38912
+06-17 11:08:12.454  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=170 hdr_size=8 payload len=1792
+06-17 11:08:12.455  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 277.6,cct 6579.5,brl/algo/ir 1481.0/2.0/26.7,pwm/dc 0.0/0.0,rgbc 10199.220703/8067.125488/4674.411621/21849.957031,ts 2105383442646989,cnt 12016,flag 16809
+06-17 11:08:12.482 21787 22881 V ActivityThread: Recovering failed rename /storage/emulated/0/Android/data/org.telegram.messenger/cache/-6165572450339459842_120.temp to /storage/emulated/0/Android/data/org.telegram.messenger/files/Telegram/Telegram Images/-6165572450339459842_120.jpg
+06-17 11:08:12.509 21787 22881 V ActivityThread: Recovering failed rename /storage/emulated/0/Android/data/org.telegram.messenger/cache/-6165572450339459843_120.temp to /storage/emulated/0/Android/data/org.telegram.messenger/files/Telegram/Telegram Images/-6165572450339459843_120.jpg
+06-17 11:08:12.519 21787 22881 V ActivityThread: Recovering failed rename /storage/emulated/0/Android/data/org.telegram.messenger/cache/-6165785042630676891_121.temp to /storage/emulated/0/Android/data/org.telegram.messenger/files/Telegram/Telegram Images/-6165785042630676891_121.jpg
+06-17 11:08:12.564  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:12.573 21787 22881 V ActivityThread: Recovering failed rename /storage/emulated/0/Android/data/org.telegram.messenger/cache/-6165572450339459841_120.temp to /storage/emulated/0/Android/data/org.telegram.messenger/files/Telegram/Telegram Images/-6165572450339459841_120.jpg
+06-17 11:08:12.578 21787 22881 V ActivityThread: Recovering failed rename /storage/emulated/0/Android/data/org.telegram.messenger/cache/-6165572450339459840_120.temp to /storage/emulated/0/Android/data/org.telegram.messenger/files/Telegram/Telegram Images/-6165572450339459840_120.jpg
+06-17 11:08:12.630  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1468 count=138 hdr_size=8 payload len=1792
+06-17 11:08:12.630  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1460 count=162 hdr_size=8 payload len=1792
+06-17 11:08:12.631  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1456 count=138 hdr_size=8 payload len=5376
+06-17 11:08:12.684 21787 22881 V ActivityThread: Recovering failed rename /storage/emulated/0/Android/data/org.telegram.messenger/cache/-6165572450339459839_120.temp to /storage/emulated/0/Android/data/org.telegram.messenger/files/Telegram/Telegram Images/-6165572450339459839_120.jpg
+06-17 11:08:12.696  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:12.696  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105383788510479,16810,0
+06-17 11:08:12.724  3473  6154 D RateLimit: decrementToken , current = 5, offset = 1
+06-17 11:08:12.729  3473  6154 V GrammaticalInflectionUtils: AttributionSource: android.content.AttributionSource@611971b2 does not have READ_SYSTEM_GRAMMATICAL_GENDER permission.
+06-17 11:08:12.745 31263 31593 W ServiceBindIntentUtils: Dynamic lookup for intent failed for action: com.google.android.gms.payse.service.BIND
+06-17 11:08:12.752  4571 28489 W OplusExSystemServiceHelper: checkOplusExSystemService intent getComponent is null
+06-17 11:08:12.754  4571  4571 D BoundBrokerSvc: onBind: Intent { act=com.google.android.gms.payse.service.BIND xflg=0x4 pkg=com.google.android.gms mCallingUid=10262 }
+06-17 11:08:12.754  4571  4571 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.gms.payse.service.BIND xflg=0x4 pkg=com.google.android.gms mCallingUid=10262 }
+06-17 11:08:12.754  4571  4571 I BndSvcConfigHelper: No bound-service is registered for action: com.google.android.gms.payse.service.BIND
+06-17 11:08:12.754  4571  4571 I BoundBrokerSvc: Bound service not available for: Intent { act=com.google.android.gms.payse.service.BIND xflg=0x4 pkg=com.google.android.gms mCallingUid=10262 }
+06-17 11:08:12.756  4571  4571 I GmsApiChimeraSvc: Handling missing api service for: com.google.android.gms.payse.service.BIND
+06-17 11:08:12.757  1708  1708 D Zygote  : Forked child process 2406
+06-17 11:08:12.761  3473  3671 I ActivityManager: Start proc 2406:com.android.chrome/u0a353 for service {com.android.chrome/org.chromium.chrome.browser.customtabs.CustomTabsConnectionService}
+06-17 11:08:12.761  3473  3639 I ActivityManager: ProcessObserver broadcast disabled
+06-17 11:08:12.761  1913  1913 E qspmHal : setAppInfoH atPid = 2406, gpuFname:com.android.chrome, gpuFver:7827114331
+06-17 11:08:12.762  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.android.chrome, uid = 10353, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:12.762  4571  4571 D BoundBrokerSvc: onBind: Intent { act=com.google.android.gms.ocr.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsApiService mCallingUid=10262 }
+06-17 11:08:12.762  4571  4571 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.gms.ocr.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsApiService mCallingUid=10262 }
+06-17 11:08:12.763  4571 30267 I GmsApiChimeraSvc: Using MissingApiServiceBroker for com.google.android.gms.payse.service.BIND due to missing BoundService implementation
+06-17 11:08:12.768  3473  4465 I MemoryOperationUtils: add 2406 to com.android.chrome
+06-17 11:08:12.769  2406  2406 I .android.chrome: isSwordfishLaunchAppEnabled_ 1 isSwordfishInstallAppEnabled_ 1
+06-17 11:08:12.770  2406  2406 E .android.chrome: Unknown bits set in runtime_flags: 0x40000000
+06-17 11:08:12.770  2406  2406 I .android.chrome: Using CollectorTypeCMC GC.
+06-17 11:08:12.773  2406  2406 E .android.chrome: Not starting debugger since process cannot load the jdwp agent.
+06-17 11:08:12.776  2406  2406 D nativeloader: Load libframework-connectivity-tiramisu-jni.so using APEX ns com_android_tethering for caller /apex/com.android.tethering/javalib/framework-connectivity-t.jar: ok
+06-17 11:08:12.779  2406  2406 W libc    : Access denied finding property "persist.vendor.sys.activitylog"
+06-17 11:08:12.779  2406  2406 I OneTrace: Mark active for pid=2406? true
+06-17 11:08:12.779  2406  2406 D cutils-dev: otrace_set_tracing_enabled? true tag:0
+06-17 11:08:12.780  2406  2406 D cutils-dev: properties changed in otrace_seq_number_changed!
+06-17 11:08:12.783  3473  3583 D SplitScreenAppReader: SPLIT_TOUCH support check:com.android.chrome = false
+06-17 11:08:12.783  3473  3583 D ActivityTaskManagerServiceExtImpl: preBindApplication record is null
+06-17 11:08:12.784  3473  3583 D RGBNormalizeServer: OplusRGBNormalize feature enabled ? true
+06-17 11:08:12.784  3473  3583 D ResourcesManagerCache: For package com.android.chrome we got cacheList [null] appInfoExt is null ? false hasFeature ? false
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: Writing exception to parcel
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: java.lang.SecurityException: No permission to access APN settings
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermissionForApnTable(TelephonyProvider.java:7013)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermission(TelephonyProvider.java:6979)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermission(TelephonyProvider.java:6961)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermissionCompat(TelephonyProvider.java:7030)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.query(TelephonyProvider.java:5697)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at android.content.ContentProvider.query(ContentProvider.java:1683)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at android.content.ContentProvider.query(ContentProvider.java:1779)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:309)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1439)
+06-17 11:08:12.787  5383  7673 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1378)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: Could not get APN after (but including) LollipopMr1: 
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: java.lang.SecurityException: No permission to access APN settings
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.os.Parcel.createExceptionOrNull(Parcel.java:3369)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.os.Parcel.createException(Parcel.java:3353)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.os.Parcel.readException(Parcel.java:3336)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.database.DatabaseUtils.readExceptionFromParcel(DatabaseUtils.java:201)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.database.DatabaseUtils.readExceptionFromParcel(DatabaseUtils.java:153)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.content.ContentProviderProxy.query(ContentProviderNative.java:495)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.content.ContentResolver.query(ContentResolver.java:1278)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.content.ContentResolver.query(ContentResolver.java:1198)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at android.content.ContentResolver.query(ContentResolver.java:1154)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bcxg.b(PG:114)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bcxg.a(PG:144)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bctb.a(PG:555)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bcsy.s(PG:52)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bcsy.n(PG:329)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at ppw.call(PG:444)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bfcs.a(PG:3)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bfbx.run(PG:19)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at bfct.run(PG:5)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1156)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:651)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at pab.run(PG:325)
+06-17 11:08:12.789 31263 31592 E RequestContextBuilder: 	at java.lang.Thread.run(Thread.java:1119)
+06-17 11:08:12.789  5277  7155 V OsAgent : broadcastSystemEvent - 7
+06-17 11:08:12.790  3473  5445 I OplusCpuLimitManager: Request oomadj change group  uid: 10353 pid: 2406 is moved to newGroup: 9, fromflag: oomadj,reason: adjustGrp
+06-17 11:08:12.790  3473  3817 D ProcessCpuTrackerExtImpl: mContext is already set, return now! 
+06-17 11:08:12.790  3473  3696 I OplusCpuLimitManager: CpuLimit SetGrp  uid: 10353 pid: 2406 to 9, fromflag: oomadj, reason: adjustGrp
+06-17 11:08:12.791  5383  7673 D PhoneInterfaceManager: QueryTelephonyChecker-getDeviceId: packageName = com.android.vending, isGrant = true
+06-17 11:08:12.792  5383  7673 D PhoneInterfaceManager: QueryTelephonyChecker-getDeviceId: packageName = com.android.vending, isGrant = true
+06-17 11:08:12.795  3473  5657 I OplusHansManager : onUidActive(), uid=10353, pkgName=com.android.chrome, can enter SM
+06-17 11:08:12.795  3473  5657 I OplusHansManager : onUidActive() update stay time, uid=10353, pkgName=com.android.chrome, U stay=1079
+06-17 11:08:12.795  3473  5428 I OplusHansManager : uid=10353, pkg=com.android.chrome enter SM
+06-17 11:08:12.795  3473  5428 I OplusHansManager : uid=10353, pkg=com.android.chrome R enter(), D stay=0
+06-17 11:08:12.797 13422 13422 D BoundBrokerSvc: onRebind: Intent { act=com.google.android.gms.libs.gmscorelogger.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentDirectBootAwareApiService mCallingUid=10258 }
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: Writing exception to parcel
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: java.lang.SecurityException: No permission to access APN settings
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermissionForApnTable(TelephonyProvider.java:7013)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermission(TelephonyProvider.java:6979)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermission(TelephonyProvider.java:6961)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.checkPermissionCompat(TelephonyProvider.java:7030)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at com.android.providers.telephony.TelephonyProvider.query(TelephonyProvider.java:5697)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at android.content.ContentProvider.query(ContentProvider.java:1683)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at android.content.ContentProvider.query(ContentProvider.java:1779)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:309)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1439)
+06-17 11:08:12.799  5383  7673 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1378)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: Could not get APN after (but including) LollipopMr1: 
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: java.lang.SecurityException: No permission to access APN settings
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.os.Parcel.createExceptionOrNull(Parcel.java:3369)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.os.Parcel.createException(Parcel.java:3353)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.os.Parcel.readException(Parcel.java:3336)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.database.DatabaseUtils.readExceptionFromParcel(DatabaseUtils.java:201)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.database.DatabaseUtils.readExceptionFromParcel(DatabaseUtils.java:153)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.content.ContentProviderProxy.query(ContentProviderNative.java:495)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.content.ContentResolver.query(ContentResolver.java:1278)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.content.ContentResolver.query(ContentResolver.java:1198)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at android.content.ContentResolver.query(ContentResolver.java:1154)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bcxg.b(PG:114)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bcxg.a(PG:144)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bctb.a(PG:555)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bcsy.s(PG:52)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bcsy.n(PG:329)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at ppw.call(PG:444)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bfcs.a(PG:3)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bfbx.run(PG:19)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at bfct.run(PG:5)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1156)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:651)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at pab.run(PG:325)
+06-17 11:08:12.800 31263 31592 E RequestContextBuilder: 	at java.lang.Thread.run(Thread.java:1119)
+06-17 11:08:12.800  2406  2418 D OplusActivityManager: get AMS extension: android.os.BinderProxy@448ddb8
+06-17 11:08:12.800  5383  7673 D PhoneInterfaceManager: QueryTelephonyChecker-getDeviceId: packageName = com.android.vending, isGrant = true
+06-17 11:08:12.802  5383  7673 D PhoneInterfaceManager: QueryTelephonyChecker-getDeviceId: packageName = com.android.vending, isGrant = true
+06-17 11:08:12.802  4571  8135 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+06-17 11:08:12.801 21787 22881 V ActivityThread: Recovering failed rename /storage/emulated/0/Android/data/org.telegram.messenger/cache/-6165572450339459838_120.temp to /storage/emulated/0/Android/data/org.telegram.messenger/files/Telegram/Telegram Images/-6165572450339459838_120.jpg
+06-17 11:08:12.802  4571  8135 W libc    : Access denied finding property "vendor.camera.aux.packagelist"
+06-17 11:08:12.807  2406  2406 I ActivityThread: Relaunch all activities: onCoreSettingsChange
+06-17 11:08:12.808  4571  4571 D BoundBrokerSvc: onBind: Intent { act=com.google.android.gms.chimera.container.moduleinstall.ModuleInstallService.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsApiService mCallingUid=10258 }
+06-17 11:08:12.808  4571  4571 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.gms.chimera.container.moduleinstall.ModuleInstallService.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsApiService mCallingUid=10258 }
+06-17 11:08:12.810  2406  2406 D CompactWindowAppManager: initCompactApplicationInfo CompactMode: , NormalMode: 
+06-17 11:08:12.815  2406  2406 V Configuration: Updating configuration, locales updated from [] to [en_US]
+06-17 11:08:12.815  2406  2406 D OplusScrollToTopManager: setIsInWhiteList true
+06-17 11:08:12.816  2406  2406 D OplusScrollManager: SpringScroll Config: [mOverScrollerEnable:true,mWebViewEnableSpringScroll:false,mAppRTOptEnable:false,mParamsConfig:4000,10000,2.5,2.5,0.2,WebConfig{level:-1,type:-1,viewName:,containerName:,blacklist:,whitelist:,blackhost:},RTConfig{rtWhiteList:[],rtExtraMap:{}}]
+06-17 11:08:12.816  3473  4601 V AlarmManager: sending alarm Alarm{2629378 type 1 origWhen 1781669292816 whenElapsed 2105383909 android} uid 1000 whenElapsed 2105383909 windowLength 0 maxWhenElapsed 2105383909 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+06-17 11:08:12.816  3473  6180 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+06-17 11:08:12.818  2406  2406 D OplusViewDebugManager: OplusViewDebugManager Constructor android.view.debug.OplusViewDebugManager@98fb6f6 [mHasViewDebugProperty true] [mHasMsgDebugProperty false] [DEBUG false] [EXTRAINFOENABLE false] [LIGHT_OS false]
+06-17 11:08:12.818  3473  6180 E OplusStorageUFSBandwidth: Bandwidth - Read: 32.97 MB/s, Write: 2.50 MB/s
+06-17 11:08:12.819  3473  6180 E OplusStorageUFSBandwidth: Task time: 3ms
+06-17 11:08:12.822  3473  6180 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+06-17 11:08:12.822  4571  4571 D BoundBrokerSvc: onBind: Intent { act=com.google.android.gms.ocr.service.internal.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsInternalApiService mCallingUid=10258 }
+06-17 11:08:12.822  4571  4571 D BoundBrokerSvc: Loading bound service for intent: Intent { act=com.google.android.gms.ocr.service.internal.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.GmsInternalApiService mCallingUid=10258 }
+06-17 11:08:12.825  3473  6154 D AS.AudioService: uid 10262, callingApp = com.android.vending
+06-17 11:08:12.827  2406  2406 W libc    : Access denied finding property "ro.odm.prev.product.name"
+06-17 11:08:12.827  3473  6154 D AS.AudioService: uid 10262, callingApp = com.android.vending
+06-17 11:08:12.830  2406  2406 W .android.chrome: Failed to find entry 'classes.dex': Entry not found
+06-17 11:08:12.832 31263 31592 D PaySecureElementClient: Felica app not found; returning isSecureElementAvailable = false!
+06-17 11:08:12.833  2406  2406 D nativeloader: Configuring clns-9 for other apk /data/app/~~9mx8fRoMHXp4F4eCHi3u9w==/com.google.android.trichromelibrary_782711433-9mA1hIGgflC8ku_0IFFztQ==/base.apk. target_sdk_version=36, uses_libraries=ALL, library_path=/data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/lib/arm64:/data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/base.apk!/lib/arm64-v8a:/data/app/~~9mx8fRoMHXp4F4eCHi3u9w==/com.google.android.trichromelibrary_782711433-9mA1hIGgflC8ku_0IFFztQ==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.android.chrome
+06-17 11:08:12.833  3473  3583 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.833  2406  2406 D nativeloader: Extending system_exposed_libraries: libbinauralrenderer_wrapper.qti.so:libhoaeffects.qti.so:libsuperNight.oplus.so:libAPSClient-cmd-jni-extension.oplus.so:libsatellite_audio_jni.oplus.so:libortc_so.oplus.so:libsoundtouch.oplus.so:libsoundtouch_jni.oplus.so:libOplusStringJNI-extension.oplus.so:libsatellite_ostx_jni.oplus.so:libapssuspend-jni.oplus.so:libupdateprof.qti.so:libthermalclient.qti.so:libqape.qti.so:libqesdk_ndk_platform.qti.so:liblistenjni.qti.so
+06-17 11:08:12.834  3473  3583 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.835  2406  2406 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.extensions.jar
+06-17 11:08:12.835  3473  6154 D BiometricService: canAuthenticate: User=0, Caller=0, Authenticators=255, opPackageName=com.android.vending
+06-17 11:08:12.835  2406  2406 D ApplicationLoaders: Returning zygote-cached class loader: /system_ext/framework/androidx.window.sidecar.jar
+06-17 11:08:12.835  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.835  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 1 Modality: 2 User id: 0 Status: 1
+06-17 11:08:12.835  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.836  3473  6154 D Biometrics/Fingerprint21/OplusFingerprintManager: mRemote:com.android.server.biometrics.sensors.fingerprint.FingerprintService$1@d059b03
+06-17 11:08:12.836  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 4 Modality: 8 User id: 0 Status: 4
+06-17 11:08:12.837  3473  6154 D BiometricService/PreAuthInfo: getCanAuthenticateInternal Modality: 2 AuthenticatorStatus: 1
+06-17 11:08:12.837  3473  6154 D AuthService: canAuthenticate, userId: 0, callingUserId: 0, authenticators: 255, result: 0
+06-17 11:08:12.844  3473  6154 D BiometricService: canAuthenticate: User=0, Caller=0, Authenticators=65536, opPackageName=com.android.vending
+06-17 11:08:12.844  3473  6154 D BiometricService/PreAuthInfo: getCanAuthenticateInternal Modality: 0 AuthenticatorStatus: 13
+06-17 11:08:12.844  3473  6154 D AuthService: canAuthenticate, userId: 0, callingUserId: 0, authenticators: 65536, result: 20
+06-17 11:08:12.844  3473  6154 D BiometricService: canAuthenticate: User=0, Caller=0, Authenticators=15, opPackageName=com.android.vending
+06-17 11:08:12.844  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.844  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 1 Modality: 2 User id: 0 Status: 1
+06-17 11:08:12.844  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.845  3473  6154 D Biometrics/Fingerprint21/OplusFingerprintManager: mRemote:com.android.server.biometrics.sensors.fingerprint.FingerprintService$1@d059b03
+06-17 11:08:12.845  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 4 Modality: 8 User id: 0 Status: 4
+06-17 11:08:12.845  3473  6154 D BiometricService/PreAuthInfo: getCanAuthenticateInternal Modality: 2 AuthenticatorStatus: 1
+06-17 11:08:12.845  3473  6154 D AuthService: canAuthenticate, userId: 0, callingUserId: 0, authenticators: 15, result: 0
+06-17 11:08:12.845  3473  6154 D BiometricService: canAuthenticate: User=0, Caller=0, Authenticators=15, opPackageName=com.android.vending
+06-17 11:08:12.845  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.845  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 1 Modality: 2 User id: 0 Status: 1
+06-17 11:08:12.845  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.845  3473  6154 D Biometrics/Fingerprint21/OplusFingerprintManager: mRemote:com.android.server.biometrics.sensors.fingerprint.FingerprintService$1@d059b03
+06-17 11:08:12.845  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 4 Modality: 8 User id: 0 Status: 4
+06-17 11:08:12.845  3473  6154 D BiometricService/PreAuthInfo: getCanAuthenticateInternal Modality: 2 AuthenticatorStatus: 1
+06-17 11:08:12.845  3473  6154 D AuthService: canAuthenticate, userId: 0, callingUserId: 0, authenticators: 15, result: 0
+06-17 11:08:12.849  3473  6154 D BiometricService: canAuthenticate: User=0, Caller=0, Authenticators=15, opPackageName=com.android.vending
+06-17 11:08:12.850  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.850  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 1 Modality: 2 User id: 0 Status: 1
+06-17 11:08:12.850  3473  6154 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.850  3473  6154 D Biometrics/Fingerprint21/OplusFingerprintManager: mRemote:com.android.server.biometrics.sensors.fingerprint.FingerprintService$1@d059b03
+06-17 11:08:12.850  3473  6154 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 4 Modality: 8 User id: 0 Status: 4
+06-17 11:08:12.850  3473  6154 D BiometricService/PreAuthInfo: getCanAuthenticateInternal Modality: 2 AuthenticatorStatus: 1
+06-17 11:08:12.850  3473  6154 D AuthService: canAuthenticate, userId: 0, callingUserId: 0, authenticators: 15, result: 0
+06-17 11:08:12.851  2406  2406 D nativeloader: Configuring clns-10 for other apk /data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/base.apk. target_sdk_version=36, uses_libraries=, library_path=/data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/lib/arm64:/data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/base.apk!/lib/arm64-v8a:/data/app/~~9mx8fRoMHXp4F4eCHi3u9w==/com.google.android.trichromelibrary_782711433-9mA1hIGgflC8ku_0IFFztQ==/base.apk!/lib/arm64-v8a, permitted_path=/data:/mnt/expand:/data/user/0/com.android.chrome
+06-17 11:08:12.863  2406  2406 I .android.chrome: AssetManager2(0xb4000070bfc9b128) locale list changing from [] to [en-US]
+06-17 11:08:12.870  3473  3583 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.870  3473  3583 D BiometricService: Sensor ID(4), oemStrength: 4095, updatedStrength: 4095, modality 8, state: 0, cookie: 0, sensorId 4, hasEnrollments: true cannot participate in Keystore operations
+06-17 11:08:12.873  2406  2406 V GraphicsEnvironment: Currently set values for:
+06-17 11:08:12.873  2406  2406 V GraphicsEnvironment:   angle_gl_driver_selection_pkgs=[]
+06-17 11:08:12.873  2406  2406 V GraphicsEnvironment:   angle_gl_driver_selection_values=[]
+06-17 11:08:12.873  2406  2406 V GraphicsEnvironment: com.android.chrome is not listed in per-application setting
+06-17 11:08:12.873  2406  2406 V GraphicsEnvironment: ANGLE allowlist from config: 
+06-17 11:08:12.873  2406  2406 V GraphicsEnvironment: com.android.chrome is not listed in ANGLE allowlist or settings, returning default
+06-17 11:08:12.873  2406  2406 V GraphicsEnvironment: Updatable production driver is not supported on the device.
+06-17 11:08:12.875  3473  3583 D BiometricService: canAuthenticate: User=0, Caller=0, Authenticators=15, opPackageName=com.android.vending
+06-17 11:08:12.876  3473  3583 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.876  3473  3583 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 1 Modality: 2 User id: 0 Status: 1
+06-17 11:08:12.876  3473  3583 E OplusCustomizeRestrictionManagerService: isBiometricDisabled start
+06-17 11:08:12.876  3473  3583 D Biometrics/Fingerprint21/OplusFingerprintManager: mRemote:com.android.server.biometrics.sensors.fingerprint.FingerprintService$1@d059b03
+06-17 11:08:12.876  3473  3583 D BiometricService/PreAuthInfo: Package: com.android.vending Sensor ID: 4 Modality: 8 User id: 0 Status: 4
+06-17 11:08:12.876  3473  3583 D BiometricService/PreAuthInfo: getCanAuthenticateInternal Modality: 2 AuthenticatorStatus: 1
+06-17 11:08:12.876  3473  3583 D AuthService: canAuthenticate, userId: 0, callingUserId: 0, authenticators: 15, result: 0
+06-17 11:08:12.876  2406  2406 I LoadedApk: No resource references to update in package com.google.android.trichromelibrary
+06-17 11:08:12.877  2406  2406 D ResourcesManagerExtImpl: applyConfigurationToAppResourcesLocked app.getDisplayId() return callback.displayId:-1
+06-17 11:08:12.882  2406  2406 I cr_SplitCompatApp: version=149.0.7827.114 (782711433) minSdkVersion=29 processName=com.android.chrome isIsolatedProcess=false splits=chrome,config.en,on_demand
+06-17 11:08:12.902  3473  5221 I Osense-BaseDecisionMaker: notifySceneToAthenaPolicy: SCENE_RES_IO_PSI, bundle: Bundle[{ioLevel=3}]
+06-17 11:08:12.905  3473  5221 I Osense-BaseDecisionMaker: scene: SCENE_RES_IO_PSI, excutingPolicy: reentrant
+06-17 11:08:12.905  3473  5221 D Osense-BaseDecisionMaker: invoke reentrant policy
+06-17 11:08:12.921  2406  2429 I .android.chrome: AssetManager2(0xb4000070ccca5028) locale list changing from [] to [en-US]
+06-17 11:08:12.940  2406  2406 I cr_SplitCompatClassLoader: Splits: null
+06-17 11:08:12.963 13422 13683 I FontLog : (REDACTED) Received query %s, URI %s
+06-17 11:08:12.964 13422 13683 I FontLog : (REDACTED) Query [%s] resolved to %s
+06-17 11:08:12.966 13422 13683 I FontLog : (REDACTED) Font PFD returned from cache for %s
+06-17 11:08:12.966 13422 13683 I FontLog : (REDACTED) Fetch %s end status %s
+06-17 11:08:12.968 13422 13683 I FontLog : (REDACTED) Pulling font file for id = %d, cache size = %d
+06-17 11:08:12.969  2406  2433 I cr_LibraryLoader: Loading monochrome_64 from within /data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/base.apk
+06-17 11:08:12.977  3473  3583 I ActivityManager: Flag disabled. Ignoring finishAttachApplication from uid: 10353. pid: 2406
+06-17 11:08:12.979  2406  2433 D nativeloader: Load /data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/base.apk!/lib/arm64-v8a/libchromium_android_linker.so using class loader ns clns-10 (caller=/data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/base.apk): ok
+06-17 11:08:12.982  2406  2433 I cr_Linker: loadLibraryImplLocked: monochrome_64, relroMode=1
+06-17 11:08:12.988  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:12.988  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105384080615791,16811,0
+06-17 11:08:12.989 13422 13683 I FontLog : (REDACTED) Received query %s, URI %s
+06-17 11:08:12.989 13422 13683 I FontLog : (REDACTED) Query [%s] resolved to %s
+06-17 11:08:12.990  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 269.4,cct 6590.0,brl/algo/ir 1481.0/2.0/24.6,pwm/dc 0.0/0.0,rgbc 9990.408203/7893.372070/4596.396484/21382.300781,ts 2105384016470166,cnt 12026,flag 16811
+06-17 11:08:12.991 13422 13683 I FontLog : (REDACTED) Font PFD returned from cache for %s
+06-17 11:08:12.991 13422 13683 I FontLog : (REDACTED) Fetch %s end status %s
+06-17 11:08:12.993 13422 13683 I FontLog : (REDACTED) Pulling font file for id = %d, cache size = %d
+06-17 11:08:13.003 13422 13683 I FontLog : (REDACTED) Received query %s, URI %s
+06-17 11:08:13.003 13422 13683 I FontLog : (REDACTED) Query [%s] resolved to %s
+06-17 11:08:13.005 13422 13683 I FontLog : (REDACTED) Font PFD returned from cache for %s
+06-17 11:08:13.005 13422 13683 I FontLog : (REDACTED) Fetch %s end status %s
+06-17 11:08:13.008 13422 13683 I FontLog : (REDACTED) Pulling font file for id = %d, cache size = %d
+06-17 11:08:13.016 13422 13683 I FontLog : (REDACTED) Received query %s, URI %s
+06-17 11:08:13.016 13422 13683 I FontLog : (REDACTED) Query [%s] resolved to %s
+06-17 11:08:13.018 13422 13683 I FontLog : (REDACTED) Font PFD returned from cache for %s
+06-17 11:08:13.018 13422 13683 I FontLog : (REDACTED) Fetch %s end status %s
+06-17 11:08:13.019 13422 13683 I FontLog : (REDACTED) Pulling font file for id = %d, cache size = %d
+06-17 11:08:13.027 13422 13683 I FontLog : (REDACTED) Received query %s, URI %s
+06-17 11:08:13.027 13422 13683 I FontLog : (REDACTED) Query [%s] resolved to %s
+06-17 11:08:13.028 13422 13683 I FontLog : (REDACTED) Font PFD returned from cache for %s
+06-17 11:08:13.028 13422 13683 I FontLog : (REDACTED) Fetch %s end status %s
+06-17 11:08:13.031 13422 13683 I FontLog : (REDACTED) Pulling font file for id = %d, cache size = %d
+06-17 11:08:13.050  2406  2433 D nativeloader: Load /data/app/~~9mx8fRoMHXp4F4eCHi3u9w==/com.google.android.trichromelibrary_782711433-9mA1hIGgflC8ku_0IFFztQ==/base.apk!/lib/arm64-v8a/libmonochrome_64.so using class loader ns clns-10 (caller=/data/app/~~NjdAh-JI54FSp6WeEQtt5Q==/com.android.chrome-W_vDqLnQL7hQIUiHzpnRKA==/base.apk): ok
+06-17 11:08:13.085  2406  2433 I cr_LibraryLoader: Successfully loaded native library
+06-17 11:08:13.090  2406  2433 I cr_CachingUmaRecorder: Flushed 12 samples from 11 histograms, 0 samples were dropped.
+06-17 11:08:13.175  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=138 hdr_size=8 payload len=38912
+06-17 11:08:13.176  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=138 hdr_size=8 payload len=1792
+06-17 11:08:13.177  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=138 hdr_size=8 payload len=1792
+06-17 11:08:13.211  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:13.218  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:13.218  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:13.218  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:13.223  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Received IBS_WAKE_IND: 0xFD
+06-17 11:08:13.223  1816 31299 D vendor.qti.bluetooth@1.1-ibs_handler: SerialClockVote: vote for UART CLK ON
+06-17 11:08:13.223  1816 31299 E vendor.qti.bluetooth@1.1-wake_lock: Acquire write to wakelock file failed -1 - Operation not permitted
+06-17 11:08:13.223  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Writing IBS_WAKE_ACK
+06-17 11:08:13.226 31205 31248 I bluetooth: [btif_bqr.cc:1267] vendor_specific_event_callback: Unhandled BQR subevent 0x01
+06-17 11:08:13.226 31205 31248 D bluetooth: [btif_bqr.cc:752] CategorizeBqrEvent: length: 56 quality_report_id: 0x01
+06-17 11:08:13.226 31205 31248 I bluetooth: [btif_bqr.cc:1204] bqr_delivery_event: len: 56, bqr_id: 1, addr: xx:xx:xx:xx:99:87, lmp_ver: 8, manufacturer_id: 93, lmp_subver: 30389
+06-17 11:08:13.226 31205 31312 I BluetoothInCallService: BluetoothInCallService = null
+06-17 11:08:13.227 31205 31312 I BluetoothQualityReportJni: [com_android_bluetooth_BluetoothQualityReport.cpp:48] bqr_delivery_callback: 
+06-17 11:08:13.227 31205 31312 I BluetoothQualityReportNativeInterface: rawData Length = 86
+06-17 11:08:13.228  3473  4465 D osense.compress: com.google.android.inputmethod.latin do shrink, target ratio = 69, final ratio = 90, cur ratio = 48
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface: BQR: {
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface:   mAddr: XX:XX:XX:XX:99:87, mLmpVer: 0x08, mLmpSubVer: 0x76B5, mManufacturerId: 0x005D, mName: DESKTOP-8VS098Q, mBluetoothClass: a0104,
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface:   BqrCommon: {
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface:     mQualityReportId: Quality monitor(0x01), mPacketType: TYPE_DM1(0x10), mConnectionHandle: 0x0016, mConnectionRole: 0(0), mTxPowerLevel: 10, mRssi: -42, mSnr: 0, mUnusedAfhChannelCount: 17,
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface:     mAfhSelectUnidealChannelCount: 0, mLsto: 8000, mPiconetClock: 0x018E9A21, mRetransmissionCount: 0, mNoRxCount: 0, mNakCount: 0, mLastTxAckTimestamp: 0x018D2902, mFlowOffCount: 0,
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface:     mLastFlowOnTimestamp: 0x0FFFFFFF, mOverflowCount: 0, mUnderflowCount: 0, mAddr: XX:XX:XX:XX:00:00, mCalFailedItemCount: 0,
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface:     mTxTotalPackets: 0, mTxUnackPackets: 0, mTxFlushPackets: 0, mTxLastSubeventPackets: 0, mCrcErrorPackets: 0, mRxDupPackets: 2264924160, mRxUnRecvPackets: 3763086233, mCoexInfoMask: 0
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface:   }
+06-17 11:08:13.232 31205 31312 I BluetoothQualityReportNativeInterface: }
+06-17 11:08:13.235 31205 31205 I oplus_bt_dual_sync: [oplus_bt_dual_sync.cc:151] stack_down_sync_action: type=18, len=17
+06-17 11:08:13.235 31205 31205 I oplus_bt_qos_monitor: [oplus_bt_qos_monitor.cc:118] get_oplus_qos_data: getting qos data
+06-17 11:08:13.264  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Received IBS_SLEEP_IND: 0xFE
+06-17 11:08:13.265  1816 31299 D vendor.qti.bluetooth@1.1-ibs_handler: SerialClockVote: vote for UART CLK OFF
+06-17 11:08:13.280  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:13.280  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105384372584437,16812,0
+06-17 11:08:13.285  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59145, lux 77.6, cct -1.0, r/g/b/c: 9951.3/7868.6/4563.9/21310.9, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.039252, conf 0.0, ts 2105384315527458
+06-17 11:08:13.415  1816 31291 E vendor.qti.bluetooth@1.1-wake_lock: Release wake lock not initialized/acquired
+06-17 11:08:13.519  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 271.0,cct 6599.8,brl/algo/ir 1481.0/2.0/24.7,pwm/dc 0.0/0.0,rgbc 10016.509766/7936.810547/4602.897949/21492.720703,ts 2105384349870010,cnt 12036,flag 16812
+06-17 11:08:13.532  3473  5428 I OplusHansManager : uid=10319, pkg=com.coloros.weather2 cannot transition from R to M, importance=AppCardVisible#[com.oplus.pantanal.ums]
+06-17 11:08:13.566  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:13.572  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:13.572  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105384664424697,16813,0
+06-17 11:08:13.581  3473  4465 D osense.compress: com.openai.chatgpt do shrink, target ratio = 45, final ratio = 90, cur ratio = 0
+06-17 11:08:13.598  2842  2842 I cnss-daemon: nl80211 response handler invoked
+06-17 11:08:13.598  2842  2842 I cnss-daemon: nl80211_response_handler: cmd 103, vendorID 4980, subcmd 13  received
+06-17 11:08:13.599  1833 16330 I WifiHAL : event received NL80211_CMD_VENDOR, vendor_id = 0x1374, subcmd = 0xd
+06-17 11:08:13.820  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1436 count=154 hdr_size=8 payload len=1792
+06-17 11:08:13.821  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=146 hdr_size=8 payload len=1792
+06-17 11:08:13.864  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:13.864  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105384956794176,16814,0
+06-17 11:08:13.947  3473  5221 I Osense-BaseDecisionMaker: notifySceneToAthenaPolicy: SCENE_RES_IO_PSI, bundle: Bundle[{ioLevel=3}]
+06-17 11:08:13.948  3473  5221 I Osense-BaseDecisionMaker: scene: SCENE_RES_IO_PSI, excutingPolicy: reentrant
+06-17 11:08:13.948  3473  5221 D Osense-BaseDecisionMaker: invoke reentrant policy
+06-17 11:08:14.023  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=146 hdr_size=8 payload len=1792
+06-17 11:08:14.024  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1460 count=170 hdr_size=8 payload len=1792
+06-17 11:08:14.024  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1468 count=138 hdr_size=8 payload len=5376
+06-17 11:08:14.051  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 278.3,cct 6628.0,brl/algo/ir 1481.0/2.0/24.8,pwm/dc 0.0/0.0,rgbc 9892.527344/7837.522461/4550.887695/21193.939453,ts 2105384906942562,cnt 12046,flag 16814
+06-17 11:08:14.156  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:14.157  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105385249210530,16815,0
+06-17 11:08:14.236  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:14.237  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:14.237  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:14.237  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:14.279  5606  5606 D RadioMessenger: handleMessage Request msgid 2311
+06-17 11:08:14.279  5606  5606 D RadioProxyJ[0]: [183016]> getAllCellularCellInfo
+06-17 11:08:14.281  2598  2675 D QmiVsClient: getAllCellularCellInfo - enter
+06-17 11:08:14.288  2598  2675 E QmiVsClient: sendAsyncRequest QMI_VS_GET_ALL_CELLULAR_CELL_INFO_REQ_MSG_V01 ret 0
+06-17 11:08:14.289  2598  3987 D QmiVsClient: operator() callback - enter
+06-17 11:08:14.290  2598  2675 D VsProxy : handleMessage msg is 4001
+06-17 11:08:14.290  2598  2675 D RadioProxy: getAllCellularCellInfo : response cb for instance 0
+06-17 11:08:14.290  5606  6463 D SubsysRadioResponse: getAllCellularCellInfoResponse
+06-17 11:08:14.291  5606  6463 D SubsysRadioResponse: responseAllCellularCellInfo len:9
+06-17 11:08:14.291  5606  6463 D RadioProxyJ[0]: [183016]< getAllCellularCellInfoResponse ******
+06-17 11:08:14.291  5606  5606 D MessengerResponseHandler: handleMessage Response msgid 281
+06-17 11:08:14.315  3473  5428 I OplusHansManager : uid=10349, pkg=com.google.android.inputmethod.latin cannot transition from R to M, importance=input
+06-17 11:08:14.438  5606  6396 D CoexRfService: report RRC state:true
+06-17 11:08:14.448  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:14.449  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105385541388863,16816,0
+06-17 11:08:14.528  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=154 hdr_size=8 payload len=1792
+06-17 11:08:14.551  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F enter(), M stay=3
+06-17 11:08:14.553  5606  5606 D VendorWifiService: onEvent event:9,action:1
+06-17 11:08:14.556  3473  5428 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:14.556  3473  5428 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:14.557  3473  5428 I OplusHansManager : freeze uid: 10445 com.instagram.android pids: [24788, 31174] IsolatedUid: [90000, 90200] scene: |StrictMode-3|LcdOn
+06-17 11:08:14.558  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to em, mForegroundCnt = 0, isFg = false
+06-17 11:08:14.558  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = PKG, targetUid = 10445, pkgCmd = ADD_ONE_UID
+06-17 11:08:14.559  3473  5657 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:14.559  3473  5657 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:14.560  3473  5657 I OplusHansManager : unfreeze uid: 10445 com.instagram.android pids: [24788, 31174] reason: ExecutingComponent scene: |StrictMode-3|LcdOn
+06-17 11:08:14.560  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:14.560  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F exit(), F stay=0, reason=ExecutingComponent, FrozenActionKeepProxy=false
+06-17 11:08:14.561  3473  5436 I OplusHansManager : p_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:14.561  3473  5436 I OplusHansManager : a_alarm 10445
+06-17 11:08:14.561  3473  5436 D OplusAlarmAdjustment: alignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:14.561  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: true calling: OFreezer
+06-17 11:08:14.561  3473  4599 D OplusAlarmAdjustMap: addAlignUid, uid=10445, pkgName=com.instagram.android, requester=1, mode=1
+06-17 11:08:14.562  3473  5436 I LocationFreezeProc: will freezeLocationProcess for com.instagram.android, 10445, true, false
+06-17 11:08:14.562  3473  5436 I LocationFreezeProc: Executing freeze operation for com.instagram.android, 10445, true, false
+06-17 11:08:14.562  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:14.563  3473  5436 I OplusHansManager : p_gps: uid 10445 result false
+06-17 11:08:14.564  3473  5436 I OplusHansManager : p_BtScan: uid 10445 isProxy true
+06-17 11:08:14.564  3473  5436 I OplusHansManager : up_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:14.564  3473  5436 I OplusHansManager : ua_alarm 10445
+06-17 11:08:14.564  3473  5436 D OplusAlarmAdjustment: unalignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:14.564  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: false calling: OFreezer
+06-17 11:08:14.565  3473  4599 D OplusAlarmAdjustMap: removeAlignUid, uid=10445, requester=1
+06-17 11:08:14.565  3473  5436 I OplusHansManager : up_BtScan: uid 10445 isUnProxy true
+06-17 11:08:14.566  3473  4884 D OplusWifiPower_TriggerCenter: mComponentCallback: wifistat
+06-17 11:08:14.569  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:14.585  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 266.6,cct 6576.0,brl/algo/ir 1481.0/2.0/25.1,pwm/dc 0.0/0.0,rgbc 10297.102539/8141.591309/4732.922852/22083.785156,ts 2105385488834541,cnt 12056,flag 16816
+06-17 11:08:14.586  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59150, lux 81.2, cct -1.0, r/g/b/c: 10036.1/7955.4/4602.9/21544.7, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.036230, conf 0.0, ts 2105385521966520
+06-17 11:08:14.741  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:14.741  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105385833644332,16817,0
+06-17 11:08:14.819  3473  4601 V AlarmManager: sending alarm Alarm{48531 type 1 origWhen 1781669294819 whenElapsed 2105385912 android} uid 1000 whenElapsed 2105385912 windowLength 0 maxWhenElapsed 2105385912 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+06-17 11:08:14.820  3473  6180 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+06-17 11:08:14.823  3473  6180 E OplusStorageUFSBandwidth: Bandwidth - Read: 32.42 MB/s, Write: 5.99 MB/s
+06-17 11:08:14.823  3473  6180 E OplusStorageUFSBandwidth: Task time: 3ms
+06-17 11:08:14.829  3473  6180 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+06-17 11:08:14.864  3473  5428 I OplusHansManager : uid=10355, pkg=org.telegram.messenger F enter(), M stay=3
+06-17 11:08:14.872  3473  5428 I OplusHansManager : freeze uid: 10355 org.telegram.messenger pids: [21787] scene: |StrictMode-3|LcdOn
+06-17 11:08:14.874  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = org.telegram.messenger, uid = 10355, state to em, mForegroundCnt = 0, isFg = false
+06-17 11:08:14.874  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = PKG, targetUid = 10355, pkgCmd = ADD_ONE_UID
+06-17 11:08:14.874  3473  5436 I OplusHansManager : p_BC uid=10355 pkg=org.telegram.messenger
+06-17 11:08:14.875  3473  5436 I OplusHansManager : a_alarm 10355
+06-17 11:08:14.875  3473  5436 D OplusAlarmAdjustment: alignAlarmsByUid(), uid=10355, pkgName=org.telegram.messenger, actions=null, procs=null, requester=1
+06-17 11:08:14.875  3473  5436 I OplusBinderProxy: proxyBinder uid: 10355 pkg: org.telegram.messenger proxy: true calling: OFreezer
+06-17 11:08:14.875  3473  4599 D OplusAlarmAdjustMap: addAlignUid, uid=10355, pkgName=org.telegram.messenger, requester=1, mode=1
+06-17 11:08:14.875  3473  5436 I LocationFreezeProc: will freezeLocationProcess for org.telegram.messenger, 10355, true, false
+06-17 11:08:14.876  3473  5436 I LocationFreezeProc: Executing freeze operation for org.telegram.messenger, 10355, true, false
+06-17 11:08:14.876  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:14.876  3473  5436 I OplusHansManager : p_gps: uid 10355 result false
+06-17 11:08:14.878  3473  5436 I OplusHansManager : p_BtScan: uid 10355 isProxy true
+06-17 11:08:14.989  3473  5221 I Osense-BaseDecisionMaker: notifySceneToAthenaPolicy: SCENE_RES_IO_PSI, bundle: Bundle[{ioLevel=3}]
+06-17 11:08:14.990  3473  5221 I Osense-BaseDecisionMaker: scene: SCENE_RES_IO_PSI, excutingPolicy: reentrant
+06-17 11:08:14.990  3473  5221 D Osense-BaseDecisionMaker: invoke reentrant policy
+06-17 11:08:15.033  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:15.034  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105386125993082,16818,0
+06-17 11:08:15.044  2025  2025 D vendor.oplus.hardware.charger-V10-service: getChargerControl:
+06-17 11:08:15.096  5383  5383 D OplusTelephonyController: onSignalStrengthChanged: SignalStrength=SignalStrength:{mCdma=CellSignalStrengthCdma: cdmaDbm=2147483647 cdmaEcio=2147483647 evdoDbm=2147483647 evdoEcio=2147483647 evdoSnr=2147483647 level=0,mGsm=CellSignalStrengthGsm: rssi=2147483647 ber=2147483647 mTa=2147483647 mLevel=0,mWcdma=CellSignalStrengthWcdma: ss=2147483647 ber=2147483647 rscp=2147483647 ecno=2147483647 level=0,mTdscdma=CellSignalStrengthTdscdma: rssi=2147483647 ber=2147483647 rscp=2147483647 level=0,mLte=CellSignalStrengthLte: rssi=-61 rsrp=-94 rsrq=-13 rssnr=2 cqiTableIndex=2147483647 cqi=2147483647 ta=2147483647 level=4 parametersUseForLevel=0,mNr=CellSignalStrengthNr:{ csiRsrp = 2147483647 csiRsrq = 2147483647 csiCqiTableIndex = 2147483647 csiCqiReport = [] ssRsrp = 2147483647 ssRsrq = 2147483647 ssSinr = 2147483647 level = 0 parametersUseForLevel = 0 timingAdvance = 2147483647 },primary=CellSignalStrengthLte}
+06-17 11:08:15.100  5606  5606 D SubsysEventListenerManager-SubsysTelephonyCallback[0]: onSignalStrengthsChanged
+06-17 11:08:15.108  5278  5278 D Tile.OplusCellularTile: refreshState: tile not listening, ignore
+06-17 11:08:15.117  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 273.7,cct 6642.7,brl/algo/ir 1481.0/2.0/26.5,pwm/dc 0.0/0.0,rgbc 10023.035156/7924.399902/4589.895508/21434.261719,ts 2105386070742614,cnt 12066,flag 16818
+06-17 11:08:15.118  5278  5381 I SystemUi--Statusbar: MobileConnectionRepositoryImpl-->subId:2 isSoftSimCard:false slotId:0
+06-17 11:08:15.259  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:15.260  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:15.260  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:15.260  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:15.324  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=138 hdr_size=8 payload len=1792
+06-17 11:08:15.326  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:15.326  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=138 hdr_size=8 payload len=1792
+06-17 11:08:15.326  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105386418080217,16819,0
+06-17 11:08:15.432  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=138 hdr_size=8 payload len=1792
+06-17 11:08:15.536  1987  2038 E PerformanceService: storage_feature: open /sys/devices/platform/soc/112b0000.ufshci//virtualtlcbuff fail
+06-17 11:08:15.570  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:15.602  1833 16330 I WifiHAL : event received NL80211_CMD_VENDOR, vendor_id = 0x1374, subcmd = 0xd
+06-17 11:08:15.602  2842  2842 I cnss-daemon: nl80211 response handler invoked
+06-17 11:08:15.602  2842  2842 I cnss-daemon: nl80211_response_handler: cmd 103, vendorID 4980, subcmd 13  received
+06-17 11:08:15.618  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:15.618  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105386710555061,16820,0
+06-17 11:08:15.648  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 275.2,cct 6585.8,brl/algo/ir 1481.0/2.0/25.3,pwm/dc 0.0/0.0,rgbc 10003.458984/7893.372070/4589.895508/21427.767578,ts 2105386652654385,cnt 12076,flag 16820
+06-17 11:08:15.797  3473  5428 I OplusHansManager : uid=10353, pkg=com.android.chrome M enter(), R stay=3
+06-17 11:08:15.798  3473  5436 I OplusHansManager : p_service: 10353
+06-17 11:08:15.799  3473  5436 I OplusHansManager : p_job: 10353
+06-17 11:08:15.811  3473  5436 I OplusHansManager : p_BC uid=10353 pkg=com.android.chrome
+06-17 11:08:15.811  3473  5436 I OplusHansManager : p_alarm 10353
+06-17 11:08:15.811  3473  5436 D OplusAlarmAdjustment: proxyAlarmsByUid(), uid=10353, pkgName=com.android.chrome, requester=1
+06-17 11:08:15.811  3473  5436 I OplusBinderProxy: proxyBinder uid: 10353 pkg: com.android.chrome proxy: true calling: OFreezer
+06-17 11:08:15.811  3473  5436 I LocationFreezeProc: will freezeLocationProcess for com.android.chrome, 10353, true, false
+06-17 11:08:15.812  3473  5436 I LocationFreezeProc: Executing freeze operation for com.android.chrome, 10353, true, false
+06-17 11:08:15.812  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:15.812  3473  5436 I OplusHansManager : p_gps: uid 10353 result false
+06-17 11:08:15.812  3473  4599 D OplusAlarmAdjustMap: addProxyUid, uid=10353, pkgName=com.android.chrome, requester=1
+06-17 11:08:15.876  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = FROZEN_TRANS, targetUid = 10355, pkgCmd = PKG_CMD_MAX
+06-17 11:08:15.910  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:15.910  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105387002611571,16821,0
+06-17 11:08:15.917  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59155, lux 83.5, cct -1.0, r/g/b/c: 10153.5/8042.3/4641.9/21739.5, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.038665, conf 0.0, ts 2105386976756467
+06-17 11:08:16.202  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:16.202  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105387294759696,16822,0
+06-17 11:08:16.205  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 266.2,cct 6592.3,brl/algo/ir 1481.0/2.0/25.7,pwm/dc 0.0/0.0,rgbc 9892.527344/7837.522461/4570.391602/21161.462891,ts 2105387209740738,cnt 12086,flag 16822
+06-17 11:08:16.283  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:16.284  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:16.284  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:16.284  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:16.368  2025  2086 D chg_exchange_soh_mesg: [THREAD]uisoh_update_thread_running
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: battery soh process uptime:2105388, debug_sys_time_plus:0
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [MAIN_SET]real_t1=2664102, real_t2=3456000, real_t3=1728000, real_uisoh=98,         real_soh=99, real_fcc=6350, real_cc=282, real_des=6415, real_temp=397, real_t4=3456000
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [MAIN]batt_fcc:6350, batt_cc:282, batt_design_capacity:6415, batt_soh:99, batt_temp:397, sn_ui_cc:0 1
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [MAIN]now_time_s[2105388], last_time_s[2105388], low_temp_state[0], soh_filter[98], buffer_update_t[34837]
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [MAIN]ui_soh_es=98, ui_soh=98, uisoh_need_update_to_p=1, run_counts=0, start_cc=249
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [BURYING]soh_trig_reason=0x8, track_bms_soh_item_done=0x1000, use_time=279, soh_keep_time=102,3028664
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [MAIN]out soh_trig_reason=0x8, track_bms_soh_item_done=0x1000
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [SAVE]partion ui_soh[98], ui_soh_cycle_t1[2664102], ui_soh_cycle_t2[3456000],        ui_soh_cycle_t3[1728000], ui_soh_cycle_t4[3456000]
+06-17 11:08:16.370  2025  2086 D chg_exchange_soh_mesg: [SAVE]partion ui_soh_load_info:ui_soh data is good,98,2664102,3456000,1728000,98,282,98,98,98,98,98,98,98,99,99,99,99,6286,6286,6286,6286,6286,6286,6286,6350,6350,6350,6350,34837,4096,24114775,3028664,3456000,8810896,249.C=T.L=189
+06-17 11:08:16.454  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1460 count=138 hdr_size=8 payload len=5775
+06-17 11:08:16.494  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:16.495  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105387586982977,16823,0
+06-17 11:08:16.573  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:16.606  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [rmnet_data1]
+06-17 11:08:16.606  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [wlan0]
+06-17 11:08:16.608  3473  4919 D OplusNetKit: oplus_wifi_network check inet by slow arp: /192.168.100.***
+06-17 11:08:16.608  3473  4919 D OplusNetKit: interface name from LP: [rmnet_data1]
+06-17 11:08:16.608  3473  4919 D OplusNetKit: interface name from LP: [wlan0]
+06-17 11:08:16.608  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [rmnet_data1]
+06-17 11:08:16.608  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [wlan0]
+06-17 11:08:16.608  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [rmnet_data1]
+06-17 11:08:16.608  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [wlan0]
+06-17 11:08:16.643  3473  4919 D OplusArpPeer_euclid_psw: Do not fill sender ip
+06-17 11:08:16.712  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 277.4,cct 6567.3,brl/algo/ir 1481.0/2.0/26.7,pwm/dc 0.0/0.0,rgbc 10329.729492/8178.824219/4752.426758/22083.785156,ts 2105387543192301,cnt 12096,flag 16823
+06-17 11:08:16.718  5383  7673 D OplusCellularNetworkConfig: getDnsQueryPriority value=http://www.sina.com.cn/generate_204
+06-17 11:08:16.718  5606  8674 D NetworkService[0]: isNetworkAvailableForFeature or linkProperties is null
+06-17 11:08:16.718  5606  8674 D NetworkService[0]: isNetworkAvailableForFeature or linkProperties is null
+06-17 11:08:16.719  5606  8674 D NetworkService[0]: getActiveNetworks networkList size:1
+06-17 11:08:16.719  5606  8674 D SubsysThreadPool: execute task
+06-17 11:08:16.754  3473  4919 D OplusArpPeer_euclid_psw: arp from self , ignore it
+06-17 11:08:16.786  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:16.787  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105387879254488,16824,0
+06-17 11:08:16.800  3473  5428 I OplusHansManager : uid=10353, pkg=com.android.chrome F enter(), M stay=1
+06-17 11:08:16.805  3473  5428 I OplusHansManager : freeze uid: 10353 com.android.chrome pids: [2406] scene: |StrictMode-3|LcdOn
+06-17 11:08:16.807  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.android.chrome, uid = 10353, state to em, mForegroundCnt = 0, isFg = false
+06-17 11:08:16.809  1705 28274 E         : destroyAllSocketForUid:10353
+06-17 11:08:16.809  3473  5436 I LocationFreezeProc: will freezeLocationProcess for com.android.chrome, 10353, true, false
+06-17 11:08:16.810  3473  5436 I LocationFreezeProc: Executing freeze operation for com.android.chrome, 10353, true, false
+06-17 11:08:16.810  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:16.811  3473  5436 I OplusHansManager : p_gps: uid 10353 result false
+06-17 11:08:16.816  3473  5436 I OplusHansManager : p_BtScan: uid 10353 isProxy true
+06-17 11:08:16.819  3473  5020 D OAppNetControlService: Hans update:[10353=true][0|0] blackList:[10546, 10341, 10173, 10387, 10121, 10353]
+06-17 11:08:16.823  3473  4601 V AlarmManager: sending alarm Alarm{b101ca1 type 1 origWhen 1781669296823 whenElapsed 2105387916 android} uid 1000 whenElapsed 2105387916 windowLength 0 maxWhenElapsed 2105387916 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+06-17 11:08:16.825  3473  6180 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+06-17 11:08:16.827  3473  6180 E OplusStorageUFSBandwidth: Bandwidth - Read: 0.00 MB/s, Write: 0.00 MB/s
+06-17 11:08:16.827  3473  6180 E OplusStorageUFSBandwidth: Task time: 2ms
+06-17 11:08:16.834  3473  6180 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+06-17 11:08:16.892 13422 13422 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.common.telemetry.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentApiService mCallingUid=10258 }
+06-17 11:08:16.954  2025  2098 D vendor.oplus.hardware.charger-V10-service: ret_value:136, read content:,397,399,3836,3836,-2124,29,29,1,14,0,0,7819,29,1,4475,500,2000,0,3,7500,3,0,1,0,2,0,0,0,1,6254,99,3359,1657,5793,1,1,1,1,1258311699,75
+06-17 11:08:16.954  2025  2098 D vendor.oplus.hardware.charger-V10-service: gmtime: 2026-06-17-11-08-16
+06-17 11:08:16.955  2025  2098 D vendor.oplus.hardware.charger-V10-service: usb_online:1, ac_online:-2147483648, wireless_online:-2147483648
+06-17 11:08:16.999  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_LOG - possible buffer over access, length=1444 count=146 hdr_size=12 payload len=23792
+06-17 11:08:17.078  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:17.079  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105388171197508,16825,0
+06-17 11:08:17.182 17433 22656 D ShellSubscriberWorkerThread: the first 8 bytes empty, and RestData length > 8 
+06-17 11:08:17.245  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 269.5,cct 6574.1,brl/algo/ir 1481.0/2.0/26.3,pwm/dc 0.0/0.0,rgbc 9872.951172/7818.906250/4557.388672/21193.939453,ts 2105388116855998,cnt 12106,flag 16825
+06-17 11:08:17.248  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59160, lux 84.5, cct -1.0, r/g/b/c: 10179.6/8042.3/4680.9/21850.0, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.034909, conf 0.0, ts 2105388149988029
+06-17 11:08:17.307  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:17.308  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:17.308  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:17.308  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:17.371  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:17.371  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105388463155998,16826,0
+06-17 11:08:17.442  5606  6396 D CoexRfService: report RRC state:true
+06-17 11:08:17.466  3473  4919 E OplusArpPeer_euclid_psw: ARP read failure: android.system.ErrnoException: read failed: EAGAIN (Try again)
+06-17 11:08:17.467  3473  4919 E OplusArpPeer_euclid_psw:  OplusArpPeer close
+06-17 11:08:17.479  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=138 hdr_size=8 payload len=1792
+06-17 11:08:17.481  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=162 hdr_size=8 payload len=1792
+06-17 11:08:17.490  3473  4919 D OplusArpPeer_euclid_psw: Do not fill sender ip
+06-17 11:08:17.563  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F enter(), M stay=3
+06-17 11:08:17.576  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:17.576  3473  5428 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:17.576  3473  5428 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:17.576  3473  4919 D OplusArpPeer_euclid_psw: arp from self , ignore it
+06-17 11:08:17.578  3473  5428 I OplusHansManager : freeze uid: 10445 com.instagram.android pids: [24788, 31174] IsolatedUid: [90000, 90200] scene: |StrictMode-3|LcdOn
+06-17 11:08:17.579  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to em, mForegroundCnt = 0, isFg = false
+06-17 11:08:17.579  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = PKG, targetUid = 10445, pkgCmd = ADD_ONE_UID
+06-17 11:08:17.580  5606  5606 D VendorWifiService: onEvent event:9,action:1
+06-17 11:08:17.591  3473  5657 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:17.592  3473  5657 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:17.592  3473  5657 I OplusHansManager : unfreeze uid: 10445 com.instagram.android pids: [24788, 31174] reason: ExecutingComponent scene: |StrictMode-3|LcdOn
+06-17 11:08:17.592  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F exit(), F stay=0, reason=ExecutingComponent, FrozenActionKeepProxy=false
+06-17 11:08:17.592  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:17.594  3473  5436 I OplusHansManager : p_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:17.594  3473  5436 I OplusHansManager : a_alarm 10445
+06-17 11:08:17.594  3473  5436 D OplusAlarmAdjustment: alignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:17.594  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: true calling: OFreezer
+06-17 11:08:17.595  3473  5436 I LocationFreezeProc: will freezeLocationProcess for com.instagram.android, 10445, true, false
+06-17 11:08:17.595  3473  5436 I LocationFreezeProc: Executing freeze operation for com.instagram.android, 10445, true, false
+06-17 11:08:17.595  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:17.595  3473  5436 I OplusHansManager : p_gps: uid 10445 result false
+06-17 11:08:17.596  3473  5436 I OplusHansManager : p_BtScan: uid 10445 isProxy true
+06-17 11:08:17.596  3473  5436 I OplusHansManager : up_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:17.596  3473  5436 I OplusHansManager : ua_alarm 10445
+06-17 11:08:17.596  3473  5436 D OplusAlarmAdjustment: unalignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:17.597  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: false calling: OFreezer
+06-17 11:08:17.597  3473  4599 D OplusAlarmAdjustMap: addAlignUid, uid=10445, pkgName=com.instagram.android, requester=1, mode=1
+06-17 11:08:17.598  3473  4599 D OplusAlarmAdjustMap: removeAlignUid, uid=10445, requester=1
+06-17 11:08:17.599  3473  5436 I OplusHansManager : up_BtScan: uid 10445 isUnProxy true
+06-17 11:08:17.599  3473  4884 D ScorerUtils: isLowTraffic: txTputKBps=0, rxTputKBps=0
+06-17 11:08:17.599  3473  4884 D OplusWifiPower_TriggerCenter: mComponentCallback: wifistat
+06-17 11:08:17.601  2842  2842 I cnss-daemon: nl80211 response handler invoked
+06-17 11:08:17.601  2842  2842 I cnss-daemon: nl80211_response_handler: cmd 103, vendorID 4980, subcmd 13  received
+06-17 11:08:17.602  1833 16330 I WifiHAL : event received NL80211_CMD_VENDOR, vendor_id = 0x1374, subcmd = 0xd
+06-17 11:08:17.662  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:17.663  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105388755293914,16827,0
+06-17 11:08:17.778  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 268.7,cct 6636.1,brl/algo/ir 1481.0/2.0/26.1,pwm/dc 0.0/0.0,rgbc 10205.747070/8098.153320/4706.917969/21914.910156,ts 2105388698718862,cnt 12116,flag 16827
+06-17 11:08:17.779  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1468 count=138 hdr_size=8 payload len=1792
+06-17 11:08:17.783  4571  4571 D BoundBrokerSvc: onUnbind: Intent { act=com.google.android.gms.payse.service.BIND xflg=0x4 pkg=com.google.android.gms mCallingUid=10262 }
+06-17 11:08:17.809  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = FROZEN_TRANS, targetUid = 10353, pkgCmd = PKG_CMD_MAX
+06-17 11:08:17.861  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=138 hdr_size=8 payload len=1792
+06-17 11:08:17.863  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1464 count=138 hdr_size=8 payload len=1792
+06-17 11:08:17.955  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:17.955  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105389047885685,16828,0
+06-17 11:08:18.204 12913 16107 D gaia-GaiaConnectChecker: start connect check++
+06-17 11:08:18.247  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:18.247  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105389339775268,16829,0
+06-17 11:08:18.298  3473  4919 E OplusArpPeer_euclid_psw: ARP read failure: android.system.ErrnoException: read failed: EAGAIN (Try again)
+06-17 11:08:18.299  3473  4919 E OplusArpPeer_euclid_psw:  OplusArpPeer close
+06-17 11:08:18.310  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 279.3,cct 6556.5,brl/algo/ir 1481.0/2.0/25.0,pwm/dc 0.0/0.0,rgbc 10336.254883/8191.235352/4732.922852/22142.242188,ts 2105389288899956,cnt 12126,flag 16829
+06-17 11:08:18.315  3473  4919 D OplusArpPeer_euclid_psw: Do not fill sender ip
+06-17 11:08:18.331  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:18.331  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:18.331  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:18.331  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:18.391  3473  4919 D OplusArpPeer_euclid_psw: arp from self , ignore it
+06-17 11:08:18.392  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1452 count=138 hdr_size=8 payload len=5376
+06-17 11:08:18.536  3473  5428 W OPLUS_LOG_LOAD: ==LOGS PROG INFO, prog(system_server) ==
+06-17 11:08:18.536  3473  5428 I OplusHansManager : uid=10319, pkg=com.coloros.weather2 cannot transition from R to M, importance=AppCardVisible#[com.oplus.pantanal.ums]
+06-17 11:08:18.539  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:18.539  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105389631642143,16830,0
+06-17 11:08:18.577  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59165, lux 76.7, cct -1.0, r/g/b/c: 9905.6/7856.1/4531.4/21206.9, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.040898, conf 0.0, ts 2105389612787404
+06-17 11:08:18.580  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:18.641  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1460 count=162 hdr_size=8 payload len=1792
+06-17 11:08:18.650  3473  5432 I OplusHansManager : unfreeze uid: 10355 org.telegram.messenger pids: [21787] reason: Packet scene: |StrictMode-3|LcdOn
+06-17 11:08:18.652  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = org.telegram.messenger, uid = 10355, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:18.652  3473  5428 I OplusHansManager : uid=10355, pkg=org.telegram.messenger F exit(), F stay=3, reason=Packet, FrozenActionKeepProxy=false
+06-17 11:08:18.653  3473  5436 I OplusHansManager : up_BC uid=10355 pkg=org.telegram.messenger
+06-17 11:08:18.654  3473  5436 I OplusHansManager : ua_alarm 10355
+06-17 11:08:18.654  3473  5436 D OplusAlarmAdjustment: unalignAlarmsByUid(), uid=10355, pkgName=org.telegram.messenger, actions=null, procs=null, requester=1
+06-17 11:08:18.654  3473  5436 I OplusBinderProxy: proxyBinder uid: 10355 pkg: org.telegram.messenger proxy: false calling: OFreezer
+06-17 11:08:18.655  3473  4599 D OplusAlarmAdjustMap: removeAlignUid, uid=10355, requester=1
+06-17 11:08:18.659  3473  5436 I OplusHansManager : up_BtScan: uid 10355 isUnProxy true
+06-17 11:08:18.660 21787 21787 I Choreographer: Skipped 228 frames!  The application may be doing too much work on its main thread.
+06-17 11:08:18.791  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1468 count=170 hdr_size=8 payload len=1792
+06-17 11:08:18.793  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=138 hdr_size=8 payload len=5376
+06-17 11:08:18.827  3473  4601 V AlarmManager: sending alarm Alarm{513909e type 1 origWhen 1781669298827 whenElapsed 2105389919 android} uid 1000 whenElapsed 2105389919 windowLength 0 maxWhenElapsed 2105389919 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+06-17 11:08:18.828  3473  6180 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+06-17 11:08:18.831  3473  6180 E OplusStorageUFSBandwidth: Bandwidth - Read: 0.00 MB/s, Write: 0.50 MB/s
+06-17 11:08:18.831  3473  6180 E OplusStorageUFSBandwidth: Task time: 3ms
+06-17 11:08:18.831  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:18.831  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105389923672664,16831,0
+06-17 11:08:18.842  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 266.5,cct 6607.4,brl/algo/ir 1481.0/2.0/25.8,pwm/dc 0.0/0.0,rgbc 9905.577148/7849.934082/4550.887695/21232.912109,ts 2105389870796310,cnt 12136,flag 16831
+06-17 11:08:18.844  3473  6180 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+06-17 11:08:19.124  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:19.124  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105390216729382,16832,0
+06-17 11:08:19.130  3473  4919 E OplusArpPeer_euclid_psw: ARP read failure: android.system.ErrnoException: read failed: EAGAIN (Try again)
+06-17 11:08:19.131  3473  4919 E OplusArpPeer_euclid_psw:  OplusArpPeer close
+06-17 11:08:19.133  3473  4919 D OplusNetKit: interface name from LP: [rmnet_data1]
+06-17 11:08:19.134  3473  4919 D OplusNetKit: interface name from LP: [wlan0]
+06-17 11:08:19.134  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [rmnet_data1]
+06-17 11:08:19.134  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [wlan0]
+06-17 11:08:19.134  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [rmnet_data1]
+06-17 11:08:19.134  3473  4919 D OplusNetKit: in getLpByInterface name from LP: [wlan0]
+06-17 11:08:19.171  3473  4919 D OplusArpKit: sendGatewayMacAddress ifaceName=wlan0 gatewayMac=24:**:**:**:3a:16 gatewayIp=192.168.100.***
+06-17 11:08:19.172  3473  4917 D OplusNetKit: in getLpByInterface name from LP: [rmnet_data1]
+06-17 11:08:19.172  3473  4917 D OplusNetKit: in getLpByInterface name from LP: [wlan0]
+06-17 11:08:19.224  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Received IBS_WAKE_IND: 0xFD
+06-17 11:08:19.224  1816 31299 D vendor.qti.bluetooth@1.1-ibs_handler: SerialClockVote: vote for UART CLK ON
+06-17 11:08:19.224  1816 31299 E vendor.qti.bluetooth@1.1-wake_lock: Acquire write to wakelock file failed -1 - Operation not permitted
+06-17 11:08:19.224  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Writing IBS_WAKE_ACK
+06-17 11:08:19.227 31205 31248 I bluetooth: [btif_bqr.cc:1267] vendor_specific_event_callback: Unhandled BQR subevent 0x01
+06-17 11:08:19.227 31205 31248 D bluetooth: [btif_bqr.cc:752] CategorizeBqrEvent: length: 56 quality_report_id: 0x01
+06-17 11:08:19.228 31205 31248 I bluetooth: [btif_bqr.cc:1204] bqr_delivery_event: len: 56, bqr_id: 1, addr: xx:xx:xx:xx:99:87, lmp_ver: 8, manufacturer_id: 93, lmp_subver: 30389
+06-17 11:08:19.228 31205 31312 I BluetoothInCallService: BluetoothInCallService = null
+06-17 11:08:19.228 31205 31312 I BluetoothQualityReportJni: [com_android_bluetooth_BluetoothQualityReport.cpp:48] bqr_delivery_callback: 
+06-17 11:08:19.228 31205 31312 I BluetoothQualityReportNativeInterface: rawData Length = 86
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface: BQR: {
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface:   mAddr: XX:XX:XX:XX:99:87, mLmpVer: 0x08, mLmpSubVer: 0x76B5, mManufacturerId: 0x005D, mName: DESKTOP-8VS098Q, mBluetoothClass: a0104,
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface:   BqrCommon: {
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface:     mQualityReportId: Quality monitor(0x01), mPacketType: TYPE_DM1(0x10), mConnectionHandle: 0x0016, mConnectionRole: 0(0), mTxPowerLevel: 10, mRssi: -43, mSnr: 0, mUnusedAfhChannelCount: 17,
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface:     mAfhSelectUnidealChannelCount: 0, mLsto: 8000, mPiconetClock: 0x018EE522, mRetransmissionCount: 0, mNoRxCount: 0, mNakCount: 0, mLastTxAckTimestamp: 0x018D2902, mFlowOffCount: 0,
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface:     mLastFlowOnTimestamp: 0x0FFFFFFF, mOverflowCount: 0, mUnderflowCount: 0, mAddr: XX:XX:XX:XX:00:00, mCalFailedItemCount: 0,
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface:     mTxTotalPackets: 0, mTxUnackPackets: 0, mTxFlushPackets: 0, mTxLastSubeventPackets: 0, mCrcErrorPackets: 0, mRxDupPackets: 2264924160, mRxUnRecvPackets: 3763086233, mCoexInfoMask: 0
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface:   }
+06-17 11:08:19.235 31205 31312 I BluetoothQualityReportNativeInterface: }
+06-17 11:08:19.236 31205 31205 I oplus_bt_dual_sync: [oplus_bt_dual_sync.cc:151] stack_down_sync_action: type=18, len=17
+06-17 11:08:19.236 31205 31205 I oplus_bt_qos_monitor: [oplus_bt_qos_monitor.cc:118] get_oplus_qos_data: getting qos data
+06-17 11:08:19.265  1816 31299 I vendor.qti.bluetooth@1.1-ibs_handler: ProcessIbsCmd: Received IBS_SLEEP_IND: 0xFE
+06-17 11:08:19.265  1816 31299 D vendor.qti.bluetooth@1.1-ibs_handler: SerialClockVote: vote for UART CLK OFF
+06-17 11:08:19.319  3473  5428 I OplusHansManager : uid=10349, pkg=com.google.android.inputmethod.latin cannot transition from R to M, importance=input
+06-17 11:08:19.355  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:19.356  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:19.356  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:19.356  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:19.367  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=146 hdr_size=8 payload len=1792
+06-17 11:08:19.368  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=146 hdr_size=8 payload len=1792
+06-17 11:08:19.373  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 275.3,cct 6558.9,brl/algo/ir 1481.0/2.0/25.4,pwm/dc 0.0/0.0,rgbc 10173.120117/8085.742188/4674.411621/21823.978516,ts 2105390204215736,cnt 12146,flag 16832
+06-17 11:08:19.416  1816 31291 E vendor.qti.bluetooth@1.1-wake_lock: Release wake lock not initialized/acquired
+06-17 11:08:19.417  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:19.417  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105390509639695,16833,0
+06-17 11:08:19.418  3261  3261 I OplusTouchDaemon: ts_run_service: shellback temperature updated 39 (39952)
+06-17 11:08:19.548  5427  6221 D OplusLinkBoostSceneManager: handleAppSceneChange: live broadcast off
+06-17 11:08:19.583  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:19.607  2842  2842 I cnss-daemon: nl80211 response handler invoked
+06-17 11:08:19.607  2842  2842 I cnss-daemon: nl80211_response_handler: cmd 103, vendorID 4980, subcmd 13  received
+06-17 11:08:19.608  1833 16330 I WifiHAL : event received NL80211_CMD_VENDOR, vendor_id = 0x1374, subcmd = 0xd
+06-17 11:08:19.699  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=138 hdr_size=8 payload len=1792
+06-17 11:08:19.709  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:19.709  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105390801806309,16834,0
+06-17 11:08:19.906  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 274.7,cct 6515.8,brl/algo/ir 1481.0/2.0/26.3,pwm/dc 0.0/0.0,rgbc 10355.831055/8185.029785/4765.429688/22122.757812,ts 2105390744588757,cnt 12156,flag 16834
+06-17 11:08:19.907  3473  4592 D FusionLightNextGen: process end reported = 1, mode: 0, cnt: 59170, lux 77.5, cct -1.0, r/g/b/c: 9990.4/7887.2/4576.9/21343.3, R/G/B: 255.0/254.0/250.0, bri 1481.0, match 1.00, ir 0.041934, conf 0.0, ts 2105390777720736
+06-17 11:08:19.910  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1480 count=146 hdr_size=8 payload len=1792
+06-17 11:08:19.911  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=146 hdr_size=8 payload len=1792
+06-17 11:08:20.001  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:20.002  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105391093976934,16835,0
+06-17 11:08:20.047  2025  2025 D vendor.oplus.hardware.charger-V10-service: getChargerControl:
+06-17 11:08:20.155  3473  4919 E OplusArpPeer_euclid_psw: ARP read failure: android.system.ErrnoException: read failed: EAGAIN (Try again)
+06-17 11:08:20.161  3473  4919 E OplusArpPeer_euclid_psw:  OplusArpPeer close
+06-17 11:08:20.294  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:20.294  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105391386581205,16836,0
+06-17 11:08:20.295  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1476 count=202 hdr_size=8 payload len=1792
+06-17 11:08:20.374  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1472 count=162 hdr_size=8 payload len=1792
+06-17 11:08:20.380  5606  8674 D CommonApp-1050-10612: transport layer data is invalid
+06-17 11:08:20.382  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:20.382  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:20.382  5606  8674 D ScorePolicy: handleScoreChanged: []
+06-17 11:08:20.437  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 266.7,cct 6590.9,brl/algo/ir 1481.0/2.0/25.2,pwm/dc 0.0/0.0,rgbc 10173.120117/8036.098145/4680.913086/21707.064453,ts 2105391334809330,cnt 12166,flag 16836
+06-17 11:08:20.445  5606  6396 D CoexRfService: report RRC state:true
+06-17 11:08:20.533  1987  2038 E PerformanceService: storage_feature: open /sys/devices/platform/soc/112b0000.ufshci//virtualtlcbuff fail
+06-17 11:08:20.586  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:20.586  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105391678451674,16837,0
+06-17 11:08:20.587  2025  2092 E bms_heating: BmsHeatingCheckThread status: 0
+06-17 11:08:20.594  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F enter(), M stay=3
+06-17 11:08:20.598  5606  5606 D VendorWifiService: onEvent event:9,action:1
+06-17 11:08:20.599  3473  5428 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:20.600  3473  5428 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:20.601  3473  5428 I OplusHansManager : freeze uid: 10445 com.instagram.android pids: [24788, 31174] IsolatedUid: [90000, 90200] scene: |StrictMode-3|LcdOn
+06-17 11:08:20.603  3473  5436 I OplusHansManager : p_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:20.603  3473  5436 I OplusHansManager : a_alarm 10445
+06-17 11:08:20.603  3473  5436 D OplusAlarmAdjustment: alignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:20.603  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: true calling: OFreezer
+06-17 11:08:20.603  3473  5436 I LocationFreezeProc: will freezeLocationProcess for com.instagram.android, 10445, true, false
+06-17 11:08:20.604  3473  5436 I LocationFreezeProc: Executing freeze operation for com.instagram.android, 10445, true, false
+06-17 11:08:20.604  3473  5436 W LocationFreezeProc: Do nothing for the app is not record!
+06-17 11:08:20.604  3473  5436 I OplusHansManager : p_gps: uid 10445 result false
+06-17 11:08:20.605  9504 27247 D IHansComunication: HANS sendMessageToKernel: threadId = 518822804544, netLinkSetup = 1, type = PKG, targetUid = 10445, pkgCmd = ADD_ONE_UID
+06-17 11:08:20.605  3473  5436 I OplusHansManager : p_BtScan: uid 10445 isProxy true
+06-17 11:08:20.607  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to em, mForegroundCnt = 0, isFg = false
+06-17 11:08:20.608  3473  4599 D OplusAlarmAdjustMap: addAlignUid, uid=10445, pkgName=com.instagram.android, requester=1, mode=1
+06-17 11:08:20.611  3473  4884 D ScorerUtils: isLowTraffic: txTputKBps=0, rxTputKBps=0
+06-17 11:08:20.612  3473  4884 D OplusWifiPower_TriggerCenter: mComponentCallback: wifistat
+06-17 11:08:20.614  3473  5657 E OplusHansManager : 90000 cgroup file does not exist
+06-17 11:08:20.615  3473  5657 E OplusHansManager : 90200 cgroup file does not exist
+06-17 11:08:20.616  3473  5657 I OplusHansManager : unfreeze uid: 10445 com.instagram.android pids: [24788, 31174] reason: ExecutingComponent scene: |StrictMode-3|LcdOn
+06-17 11:08:20.617  3473  5428 I OplusHansManager : uid=10445, pkg=com.instagram.android F exit(), F stay=0, reason=ExecutingComponent, FrozenActionKeepProxy=false
+06-17 11:08:20.617  3473  6973 I OStatsManager_OplusBatteryStatsManager: updateStateTime: PkgName = com.instagram.android, uid = 10445, state to bg, mForegroundCnt = 0, isFg = false
+06-17 11:08:20.617  3473  5436 I OplusHansManager : up_BC uid=10445 pkg=com.instagram.android
+06-17 11:08:20.617  3473  5436 I OplusHansManager : ua_alarm 10445
+06-17 11:08:20.617  3473  5436 D OplusAlarmAdjustment: unalignAlarmsByUid(), uid=10445, pkgName=com.instagram.android, actions=null, procs=null, requester=1
+06-17 11:08:20.618  3473  4599 D OplusAlarmAdjustMap: removeAlignUid, uid=10445, requester=1
+06-17 11:08:20.618  3473  5436 I OplusBinderProxy: proxyBinder uid: 10445 pkg: com.instagram.android proxy: false calling: OFreezer
+06-17 11:08:20.619  3473  5436 I OplusHansManager : up_BtScan: uid 10445 isUnProxy true
+06-17 11:08:20.787  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1448 count=138 hdr_size=8 payload len=14848
+06-17 11:08:20.788  1833 16330 E WifiHAL : WLAN_DIAG_TYPE_CONFIG - possible buffer over access, length=1456 count=138 hdr_size=8 payload len=5017
+06-17 11:08:20.831  3473  4601 V AlarmManager: sending alarm Alarm{8135d4e type 1 origWhen 1781669300831 whenElapsed 2105391924 android} uid 1000 whenElapsed 2105391924 windowLength 0 maxWhenElapsed 2105391924 repeatInterval 0 action null component null tag StorgaeBandInfoAlarmTag flags 0x9 procName system_server
+06-17 11:08:20.832  3473  6180 E OplusStorageUFSBandwidth: storage_io_metrics_path is /proc/oplus_storage/io_metrics/forever/
+06-17 11:08:20.834  3473  6180 E OplusStorageUFSBandwidth: Bandwidth - Read: 0.00 MB/s, Write: 0.00 MB/s
+06-17 11:08:20.834  3473  6180 E OplusStorageUFSBandwidth: Task time: 2ms
+06-17 11:08:20.844  3473  6180 E OplusStorageUFSBandwidth: Alarm set to trigger in 10 seconds
+06-17 11:08:20.878  1979  1979 D SensorFeature: name=ssc_screenshot_info ,index = 22
+06-17 11:08:20.879  1979  1979 D SensorFeature: write 41 bytes:2105288174482963,2105391970945944,16838,0
+06-17 11:08:20.915 12913 13287 D gaia-GaiaConnectChecker: start connect check++
+06-17 11:08:20.970  1830 24113 I sensors-hal: handle_oplus_wise_rgb_event:189, high_pwm_light:lux 277.5,cct 6563.5,brl/algo/ir 1481.0/2.0/26.1,pwm/dc 0.0/0.0,rgbc 9957.781250/7862.344727/4563.890137/21284.873047,ts 2105391916496465,cnt 12176,flag 16838

@@ -147,13 +147,31 @@ class SmartBubbleTextCleaner(
 
         val hasAnyMask = combinedMask.any { it != 0.toByte() }
         if (!hasAnyMask && localTextBoxes.isNotEmpty()) {
-            for (box in localTextBoxes) {
-                for (y in box[1] until box[3]) {
-                    for (x in box[0] until box[2]) {
-                        if (x in 0 until contextW && y in 0 until contextH) {
-                            combinedMask[y * contextW + x] = 1
-                        }
-                    }
+            // TachiyomiAT: generateTextMask found NOTHING to clean — faint/low-
+            // contrast text whose strokes all fell under threshold, or anti-aliased
+            // edges too thin to register. Previously this filled the ENTIRE box
+            // with the ring median, which on a grayscale panel or colored bubble
+            // produced the reported "gray rectangle over the whole bounding box."
+            // Now: try a RECOVERY pass first — a much lower threshold keyed off
+            // the ring-sampled background median alone (the most reliable bg
+            // reference), to catch the faint strokes the main pass missed. Only
+            // if that ALSO finds nothing do we fall back to the tight box of any
+            // pixel differing from the median (catches anti-aliased edges), and
+            // only as a last resort fill the box. Most of the time the recovery
+            // pass succeeds and the box is never blindly filled.
+            val recovered = recoverFaintTextMask(
+                contextPixels, bgStats, localTextBoxes, contextW, contextH,
+            )
+            if (recovered.any { it != 0.toByte() }) {
+                for (i in recovered.indices) {
+                    if (recovered[i] != 0.toByte()) combinedMask[i] = 1
+                }
+            } else {
+                val tightFallback = tightDifferenceMask(
+                    contextPixels, bgStats, localTextBoxes, contextW, contextH,
+                )
+                for (i in tightFallback.indices) {
+                    if (tightFallback[i] != 0.toByte()) combinedMask[i] = 1
                 }
             }
         }
@@ -288,9 +306,25 @@ class SmartBubbleTextCleaner(
             }
         }
         if (!hasAny) {
-            for (zy in ey1 until ey2) {
-                for (zx in ex1 until ex2) {
-                    combinedMask[zy * contextW + zx] = 1
+            // TachiyomiAT: same faint-text recovery as cleanBubbleGroup's
+            // fallback. generateTextMask found nothing here either; try a
+            // lowered-threshold pass keyed off the ring median before resorting
+            // to the whole-box fill (which paints the median color over the
+            // entire box — the "gray rectangle" symptom on grayscale panels).
+            val singleBox = intArrayOf(ex1, ey1, ex2, ey2)
+            val recovered = recoverFaintTextMask(
+                contextPixels, bgStats, listOf(singleBox), contextW, contextH,
+            )
+            if (recovered.any { it != 0.toByte() }) {
+                for (i in recovered.indices) {
+                    if (recovered[i] != 0.toByte()) combinedMask[i] = 1
+                }
+            } else {
+                val tightFallback = tightDifferenceMask(
+                    contextPixels, bgStats, listOf(singleBox), contextW, contextH,
+                )
+                for (i in tightFallback.indices) {
+                    if (tightFallback[i] != 0.toByte()) combinedMask[i] = 1
                 }
             }
         }
@@ -360,6 +394,146 @@ class SmartBubbleTextCleaner(
         val stats = sampleBackgroundStats(pixels, ringMask, contextW, contextH)
         val bgType = classifyBackground(stats)
         return bgType == "flat_white" || bgType == "flat_colored" || bgType == "lightly_varying"
+    }
+
+    /**
+     * TachiyomiAT: recovery pass for the whole-box fallback. When
+     * generateTextMask returns an empty mask (all strokes fell under the normal
+     * threshold), re-scan each box with a MUCH lower threshold keyed off the
+     * ring-sampled background median (the most reliable background reference —
+     * it is sampled from the border ring AROUND the box, not the box interior).
+     * The lowered threshold catches the faint strokes the main pass missed, and
+     * removeEdgeTouchingComponents keeps the mask bounded to genuine text
+     * regions rather than bleeding to the box edges.
+     *
+     * Returns a full-context-sized mask (contextW * contextH) — caller ANDs it
+     * into [combinedMask]. Empty if the recovery found nothing.
+     */
+    private fun recoverFaintTextMask(
+        pixels: IntArray,
+        stats: BackgroundStats,
+        boxes: List<IntArray>,
+        contextW: Int,
+        contextH: Int,
+    ): ByteArray {
+        val combined = ByteArray(contextW * contextH)
+        if (boxes.isEmpty()) return combined
+        val ringR = (stats.medianColor shr 16 and 0xFF).toFloat()
+        val ringG = (stats.medianColor shr 8 and 0xFF).toFloat()
+        val ringB = (stats.medianColor and 0xFF).toFloat()
+        // Floor threshold: lower than the main pass (45 → 12) so very faint
+        // strokes still register. The main pass already tried 45 (and a lowered
+        // value when clusters were close); this pass goes to the absolute floor
+        // and relies on removeEdgeTouchingComponents + downstream mask
+        // intersections to bound the region.
+        val floorThresh = 12.0f
+        for (box in boxes) {
+            val bx1 = box[0].coerceIn(0, contextW)
+            val by1 = box[1].coerceIn(0, contextH)
+            val bx2 = box[2].coerceIn(bx1, contextW)
+            val by2 = box[3].coerceIn(by1, contextH)
+            if (bx2 <= bx1 || by2 <= by1) continue
+            val zoneW = bx2 - bx1
+            val zoneH = by2 - by1
+            val zoneMask = ByteArray(zoneW * zoneH)
+            var zoneHasAny = false
+            for (zy in 0 until zoneH) {
+                for (zx in 0 until zoneW) {
+                    val px = pixels[(by1 + zy) * contextW + (bx1 + zx)]
+                    val r = (px shr 16 and 0xFF).toFloat()
+                    val g = (px shr 8 and 0xFF).toFloat()
+                    val b = (px and 0xFF).toFloat()
+                    val dr = r - ringR
+                    val dg = g - ringG
+                    val db = b - ringB
+                    if (sqrt(dr * dr + dg * dg + db * db) > floorThresh) {
+                        zoneMask[zy * zoneW + zx] = 1
+                        zoneHasAny = true
+                    }
+                }
+            }
+            if (!zoneHasAny) continue
+            // Drop components that touch the zone edge (likely anti-aliasing
+            // bleed, not real text) — same hygiene as generateTextMask.
+            val filtered = removeEdgeTouchingComponents(zoneMask, zoneW, zoneH)
+            for (zy in 0 until zoneH) {
+                for (zx in 0 until zoneW) {
+                    if (filtered[zy * zoneW + zx] != 0.toByte()) {
+                        combined[(by1 + zy) * contextW + (bx1 + zx)] = 1
+                    }
+                }
+            }
+        }
+        return combined
+    }
+
+    /**
+     * TachiyomiAT: last-resort fallback when even [recoverFaintTextMask] finds
+     * nothing. Instead of filling the ENTIRE box (which paints the median over
+     * everything — the "gray rectangle" symptom), fill only the TIGHT bounding
+     * box of any pixel that differs from the ring median by more than a small
+     * epsilon. This catches anti-aliased text edges that the distance threshold
+     * missed, and shrinks the filled region to where text actually is. If the
+     * image is genuinely uniform (no text, no edges), the tight box collapses
+     * and nothing is filled — preferable to a spurious full-box rectangle.
+     */
+    private fun tightDifferenceMask(
+        pixels: IntArray,
+        stats: BackgroundStats,
+        boxes: List<IntArray>,
+        contextW: Int,
+        contextH: Int,
+    ): ByteArray {
+        val combined = ByteArray(contextW * contextH)
+        if (boxes.isEmpty()) return combined
+        val ringR = (stats.medianColor shr 16 and 0xFF)
+        val ringG = (stats.medianColor shr 8 and 0xFF)
+        val ringB = (stats.medianColor and 0xFF)
+        // Small epsilon: any pixel that differs from the background median at
+        // all is a candidate text/edge pixel. This is deliberately permissive —
+        // the goal is to bound the filled region to "where the pixels aren't
+        // pure background" rather than the full OCR box.
+        val epsilon = 8
+        for (box in boxes) {
+            val bx1 = box[0].coerceIn(0, contextW)
+            val by1 = box[1].coerceIn(0, contextH)
+            val bx2 = box[2].coerceIn(bx1, contextW)
+            val by2 = box[3].coerceIn(by1, contextH)
+            if (bx2 <= bx1 || by2 <= by1) continue
+            // First pass: find the tight bounds of differing pixels.
+            var minX = bx2
+            var minY = by2
+            var maxX = bx1
+            var maxY = by1
+            for (y in by1 until by2) {
+                for (x in bx1 until bx2) {
+                    val px = pixels[y * contextW + x]
+                    val r = px shr 16 and 0xFF
+                    val g = px shr 8 and 0xFF
+                    val b = px and 0xFF
+                    if (abs(r - ringR) + abs(g - ringG) + abs(b - ringB) > epsilon) {
+                        if (x < minX) minX = x
+                        if (y < minY) minY = y
+                        if (x > maxX) maxX = x
+                        if (y > maxY) maxY = y
+                    }
+                }
+            }
+            if (maxX < minX || maxY < minY) continue // truly uniform — fill nothing
+            // Pad the tight bounds slightly so anti-aliased edges are covered,
+            // but clamp to the original box (never grow beyond it).
+            val pad = 2
+            val fx1 = max(bx1, minX - pad)
+            val fy1 = max(by1, minY - pad)
+            val fx2 = min(bx2, maxX + pad + 1)
+            val fy2 = min(by2, maxY + pad + 1)
+            for (y in fy1 until fy2) {
+                for (x in fx1 until fx2) {
+                    combined[y * contextW + x] = 1
+                }
+            }
+        }
+        return combined
     }
 
     private fun sampleBackgroundStats(

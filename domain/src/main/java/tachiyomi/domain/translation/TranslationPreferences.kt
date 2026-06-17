@@ -22,7 +22,7 @@ enum class StandardEngine { MLKIT, GOOGLE }
  * AI model translators. Each provider has its own API key and model
  * selection so switching providers does not overwrite credentials.
  */
-enum class AiEngine { GEMINI, OPENROUTER, DEEPSEEK }
+enum class AiEngine { GEMINI, OPENROUTER, DEEPSEEK, LMSTUDIO }
 
 class TranslationPreferences(
     private val preferenceStore: PreferenceStore,
@@ -56,6 +56,36 @@ class TranslationPreferences(
 
     fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "QUALITY")
 
+    /**
+     * TachiyomiAT: ONNX Runtime execution-provider strategy.
+     *
+     * Values:
+     *   "AUTO"   — pick the safe default for this device (NNAPI where supported,
+     *              else CPU). This is the recommended value and the default.
+     *   "NNAPI"  — force the NNAPI EP (NPU/GPU/DSP via Android's driver layer).
+     *              Useful to opt back in after AUTO chose CPU on a misdetected
+     *              device, or to force NNAPI for benchmarking.
+     *   "CPU"    — force CPU-only (the legacy behavior). Use if a device's NNAPI
+     *              driver is unstable (rare; the runtime also auto-disables
+     *              NNAPI for the process after one failure).
+     *
+     * NOTE: "QNN" is intentionally NOT a value here. QNN (Qualcomm HTP) requires
+     * the onnxruntime-android-qnn artifact and QNN-quantized models, neither of
+     * which ship yet. It is gated behind [translationExperimentalQnn] below and
+     * wired in a future cycle — enabling it without the prerequisites is a
+     * silent no-op (see OnnxRuntimeProvider.registerQnnSafely).
+     */
+    fun translationOnnxEp() = preferenceStore.getString("translation_onnx_ep", "AUTO")
+
+    /**
+     * TachiyomiAT: experimental QNN (Qualcomm HTP/NPU) toggle. OFF by default
+     * and NOT functional until onnxruntime-android-qnn + QNN-quantized models
+     * are shipped. When ON, ChapterTranslator's ONNX sessions will be created
+     * with EpStrategy.QNN — which is currently a logged no-op falling back to
+     * CPU. Surfaced as a preference now so the integration point is stable.
+     */
+    fun translationExperimentalQnn() = preferenceStore.getBoolean("translation_experimental_qnn", false)
+
     fun translationRecentLanguagesFrom() = preferenceStore.getString("translation_recent_languages_from", "")
     fun translationRecentLanguagesTo() = preferenceStore.getString("translation_recent_languages_to", "")
 
@@ -80,16 +110,22 @@ class TranslationPreferences(
         AiEngine.GEMINI -> translationAiApiKeyGemini()
         AiEngine.OPENROUTER -> translationAiApiKeyOpenrouter()
         AiEngine.DEEPSEEK -> translationAiApiKeyDeepseek()
+        AiEngine.LMSTUDIO -> preferenceStore.getString("__PRIVATE_translation_ai_api_key_lmstudio", "")
     }
+
+    fun translationAiBaseUrlLmStudio() =
+        preferenceStore.getString("translation_ai_base_url_lmstudio", "")
 
     fun translationAiModelGemini() = preferenceStore.getString("translation_ai_model_gemini", "gemini-1.5-pro")
     fun translationAiModelOpenrouter() = preferenceStore.getString("translation_ai_model_openrouter", "")
     fun translationAiModelDeepseek() = preferenceStore.getString("translation_ai_model_deepseek", "deepseek-chat")
+    fun translationAiModelLmStudio() = preferenceStore.getString("translation_ai_model_lmstudio", "")
 
     fun translationAiModel(engine: AiEngine): Preference<String> = when (engine) {
         AiEngine.GEMINI -> translationAiModelGemini()
         AiEngine.OPENROUTER -> translationAiModelOpenrouter()
         AiEngine.DEEPSEEK -> translationAiModelDeepseek()
+        AiEngine.LMSTUDIO -> translationAiModelLmStudio()
     }
 
     // Recent models are kept private as well to avoid leaking usage hints
@@ -101,11 +137,19 @@ class TranslationPreferences(
         preferenceStore.getString("__PRIVATE_translation_ai_recent_models_openrouter", "")
     fun translationAiRecentModelsDeepseek() =
         preferenceStore.getString("__PRIVATE_translation_ai_recent_models_deepseek", "")
+    fun translationAiRecentModelsLmStudio() =
+        preferenceStore.getString("__PRIVATE_translation_ai_recent_models_lmstudio", "")
 
     fun translationAiRecentModels(engine: AiEngine): Preference<String> = when (engine) {
         AiEngine.GEMINI -> translationAiRecentModelsGemini()
         AiEngine.OPENROUTER -> translationAiRecentModelsOpenrouter()
         AiEngine.DEEPSEEK -> translationAiRecentModelsDeepseek()
+        AiEngine.LMSTUDIO -> translationAiRecentModelsLmStudio()
+    }
+
+    fun translationAiBaseUrl(engine: AiEngine): Preference<String>? = when (engine) {
+        AiEngine.LMSTUDIO -> translationAiBaseUrlLmStudio()
+        else -> null
     }
 
     fun translationAiTemperature() = preferenceStore.getString("translation_ai_temperature", "0.3")

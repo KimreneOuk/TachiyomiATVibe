@@ -24,6 +24,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -87,6 +89,7 @@ class WebtoonPageHolder(
      * dedup content-based and robust to any path that re-resolves the stream.
      */
     private var lastShownImageName: String? = null
+    private var lastShownRenderRevision: Long = -1L
 
     /**
      * TachiyomiAT: a generation counter bumped on every [bind]. In-flight
@@ -138,9 +141,8 @@ class WebtoonPageHolder(
      * for the case where a page's stage transitioned (RUNNING/FAILED) but the
      * displayed IMAGE did not change. Updates ONLY the processing overlay and the
      * translate/cancel button + error text — it must never re-decode or re-set
-     * the image. This is the handler for [TranslationStatusChanged]; calling it
-     * instead of [refreshTranslation] on bare status changes is what eliminates
-     * the redundant image work that caused the auto-translate blink.
+     * the image. Holder-level page-view updates call this for status-only changes,
+     * which avoids the redundant image work that caused the auto-translate blink.
      */
     fun syncTranslationStatus() {
         val currentPage = page ?: return
@@ -176,7 +178,7 @@ class WebtoonPageHolder(
         // translation status the instant it is bound. Previously the overlay was
         // only (re)shown when [setImage]/[refreshTranslation]/[syncTranslationStatus]
         // ran — and those are only driven by the page-load statusFlow reaching READY
-        // or by a TranslationStatusChanged event reaching an ATTACHED holder. So a
+        // or by a page-view update reaching an ATTACHED holder. So a
         // page that scrolled off-screen (holder recycled → onDetachedFromWindow
         // cleared the ephemeral overlay state) and scrolled back WHILE still
         // mid-translation had a window — sometimes a long one — with no animation,
@@ -186,6 +188,9 @@ class WebtoonPageHolder(
         // decode timing. syncTranslationStatus() only touches the overlay/button
         // (never re-decodes), so it's safe before loadPageAndProcessStatus() runs.
         syncTranslationStatus()
+        viewer.activity.viewModel.observePageView(page)
+            ?.onEach { refreshTranslation() }
+            ?.launchIn(holderScope)
         loadJob?.cancel()
         loadJob = holderScope.launch { loadPageAndProcessStatus() }
         refreshLayoutParams()
@@ -296,6 +301,11 @@ class WebtoonPageHolder(
         } else {
             null
         }
+        lastShownRenderRevision = if (boundPage.showTranslatedImage) {
+            boundPage.translation?.renderRevision ?: -1L
+        } else {
+            -1L
+        }
 
         val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated) {
@@ -358,8 +368,12 @@ class WebtoonPageHolder(
         // change (RUNNING→READY re-emitted, no new image) must NOT re-decode &
         // re-set the image — that's the visible flash.
         val newName = currentPage.translation?.renderedImageName ?: currentPage.translation?.cleanedImageName
+        val newRevision = currentPage.translation?.renderRevision ?: -1L
         val alreadyShowingThisImage =
-            currentPage.showTranslatedImage && newName != null && newName == lastShownImageName
+            currentPage.showTranslatedImage &&
+                newName != null &&
+                newName == lastShownImageName &&
+                newRevision == lastShownRenderRevision
         when {
             isBeingTranslated -> {
                 frame.showProcessingOverlay(true)
@@ -392,6 +406,7 @@ class WebtoonPageHolder(
         // short-circuit if nothing changed. When showing the original (not a
         // translated stream) there's no name to track.
         lastShownImageName = if (currentPage.showTranslatedImage) newName else null
+        lastShownRenderRevision = if (currentPage.showTranslatedImage) newRevision else -1L
         // TachiyomiAT: surface translation errors — but only when the page is NOT
         // currently running, to avoid showing stale errors from a prior failed
         // attempt alongside the RUNNING overlay.
