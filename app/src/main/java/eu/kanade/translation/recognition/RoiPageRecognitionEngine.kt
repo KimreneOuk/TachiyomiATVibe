@@ -22,6 +22,8 @@ import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.OcrModel
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -52,6 +54,25 @@ class RoiPageRecognitionEngine(
     // fallback instead of crashing the process.
     @Volatile
     private var closed = false
+
+    // TachiyomiAT: cached value of the translation_diagnostics pref. Read once at
+    // first use (not at construction, to avoid an Injekt cycle during init) so the
+    // opt-in per-block OCR logging can be inspected without rebuilds.
+    @Volatile
+    private var translationDiagnosticsEnabled: Boolean = false
+    @Volatile
+    private var diagnosticsResolved: Boolean = false
+    private fun resolveDiagnostics(): Boolean {
+        if (diagnosticsResolved) return translationDiagnosticsEnabled
+        val prefs = try {
+            Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+        } catch (_: Throwable) {
+            null
+        }
+        translationDiagnosticsEnabled = prefs?.translationDiagnostics()?.get() ?: false
+        diagnosticsResolved = true
+        return translationDiagnosticsEnabled
+    }
 
     val isAvailable: Boolean
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
@@ -148,8 +169,47 @@ class RoiPageRecognitionEngine(
             if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
             val bbox = detection.bbox
             val crop = cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
-            val text = engine.recognize(crop)
+            // TachiyomiAT: PaddleOCR's rec model reads HORIZONTAL text lines (it is a
+            // CNN+CTC trained on left-to-right lines). Japanese/Chinese manga text is
+            // usually laid out VERTICALLY in tall, narrow columns (top-to-bottom,
+            // right-to-left). Feeding a vertical crop directly produced empty/garbage
+            // ASCII output for every tall bubble — only wide (horizontal) crops were
+            // readable. MangaOcr tolerates this because it resizes to a fixed 224x224
+            // square and handles orientation internally, but the CTC model cannot.
+            //
+            // Fix: for CJK languages, when the crop is taller than wide (vertical
+            // text), rotate it 90° clockwise so each vertical column becomes a
+            // horizontal line the model can read. The recognized text is then laid
+            // out vertically by the renderer using the existing direction="TTB"
+            // logic below, so the rotation is OCR-only and does not affect rendering.
+            val boxWidthPre = crop.width.toFloat()
+            val boxHeightPre = crop.height.toFloat()
+            val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
+                language == TextRecognizerLanguage.CHINESE ||
+                language == TextRecognizerLanguage.KOREAN
+            val rotatedForOcr = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.2f
+            val ocrInput = if (rotatedForOcr) {
+                val matrix = android.graphics.Matrix()
+                matrix.postRotate(90f)
+                android.graphics.Bitmap.createBitmap(crop, 0, 0, crop.width, crop.height, matrix, true)
+            } else {
+                crop
+            }
+            val text = engine.recognize(ocrInput)
+            if (rotatedForOcr && ocrInput !== crop) {
+                ocrInput.recycle()
+            }
             crop.recycle()
+            // TachiyomiAT: diagnostics — log each detected box and its OCR output so
+            // recognition quality can be inspected from logcat. Gated by the opt-in
+            // translation_diagnostics pref (same gate as the per-engine timing logs).
+            if (resolveDiagnostics()) {
+                logcat(LogPriority.INFO) {
+                    "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
+                        "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
+                        "rotated=${if (rotatedForOcr) "90cw" else "no"} text=\"$text\""
+                }
+            }
             val boxWidth = (bbox[2] - bbox[0]).toFloat()
             val boxHeight = (bbox[3] - bbox[1]).toFloat()
             val centerX = (bbox[0] + bbox[2]) / 2.0
@@ -185,10 +245,8 @@ class RoiPageRecognitionEngine(
             // always rendered horizontally even though MangaOcr read it correctly.
             // Use a height-to-width ratio heuristic, gated on the CJK languages
             // that actually use vertical layout, so horizontal Latin text is
-            // unaffected.
-            val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
-                language == TextRecognizerLanguage.CHINESE ||
-                language == TextRecognizerLanguage.KOREAN
+            // unaffected. isVerticalLanguage is computed once above (shared with the
+            // OCR-rotation decision) — reused here.
             val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
             recognizedBlocks.add(
                 RecognizedBlock(

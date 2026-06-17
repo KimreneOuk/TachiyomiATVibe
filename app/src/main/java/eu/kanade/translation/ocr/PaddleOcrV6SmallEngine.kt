@@ -74,7 +74,8 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
             if (isDiagnosticsEnabled()) {
                 logcat(LogPriority.INFO) {
                     "[paddle_ocr] total=${(System.nanoTime() - start) / 1_000_000.0}ms " +
-                        "crop=${crop.width}x${crop.height} input=${preprocessed.width}x$RECOGNITION_HEIGHT chars=${text.length}"
+                        "crop=${crop.width}x${crop.height} input=${preprocessed.width}x$RECOGNITION_HEIGHT " +
+                        "chars=${text.length} text=\"$text\""
                 }
             }
             return text
@@ -93,8 +94,17 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     private fun preprocess(crop: Bitmap): PreprocessedInput {
         val safeWidth = crop.width.coerceAtLeast(1)
         val safeHeight = crop.height.coerceAtLeast(1)
+        // TachiyomiAT: scale the width PROPORTIONALLY to the fixed 48px recognition
+        // height, preserving the crop's aspect ratio. PaddleOCR's rec model is
+        // aspect-ratio sensitive: feeding a tall/narrow manga bubble stretched into
+        // a square produced garbage ("??", "") for every non-wide crop. The previous
+        // `.coerceIn(MIN_RECOGNITION_WIDTH, MAX)` here clamped narrow text UP to 48px
+        // wide, destroying the aspect ratio — e.g. a 383x719 bubble (0.53:1) became
+        // 48x48 (1:1). Only the upper bound is correct (the model input is capped);
+        // the lower bound is enforced by padding (below), NOT by distorting the image.
         val scaledWidth = ceil(safeWidth * (RECOGNITION_HEIGHT.toFloat() / safeHeight)).toInt()
-            .coerceIn(MIN_RECOGNITION_WIDTH, MAX_RECOGNITION_WIDTH)
+            .coerceAtMost(MAX_RECOGNITION_WIDTH)
+            .coerceAtLeast(1)
         val inputWidth = alignWidth(scaledWidth)
 
         var resized: Bitmap? = null
@@ -137,8 +147,14 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     }
 
     private fun alignWidth(width: Int): Int {
+        // Round the proportional width UP to the WIDTH_ALIGNMENT boundary so the
+        // padded bitmap can hold the (aspect-correct) resized crop plus white
+        // padding on the right. Cap at MAX_RECOGNITION_WIDTH. The minimum width
+        // is the alignment unit itself (16) — the existing white padding
+        // (padded.eraseColor(WHITE)) fills the remainder, so narrow text keeps its
+        // aspect ratio instead of being stretched into a square.
         val aligned = ((width + WIDTH_ALIGNMENT - 1) / WIDTH_ALIGNMENT) * WIDTH_ALIGNMENT
-        return min(MAX_RECOGNITION_WIDTH, max(MIN_RECOGNITION_WIDTH, aligned))
+        return aligned.coerceIn(WIDTH_ALIGNMENT, MAX_RECOGNITION_WIDTH)
     }
 
     private data class PreprocessedInput(
@@ -148,7 +164,6 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
     private companion object {
         private const val RECOGNITION_HEIGHT = 48
-        private const val MIN_RECOGNITION_WIDTH = 48
         private const val MAX_RECOGNITION_WIDTH = 960
         private const val WIDTH_ALIGNMENT = 16
 
