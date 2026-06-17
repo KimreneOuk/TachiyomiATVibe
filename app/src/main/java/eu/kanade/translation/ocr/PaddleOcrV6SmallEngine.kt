@@ -4,7 +4,6 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
@@ -94,17 +93,26 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     private fun preprocess(crop: Bitmap): PreprocessedInput {
         val safeWidth = crop.width.coerceAtLeast(1)
         val safeHeight = crop.height.coerceAtLeast(1)
-        // TachiyomiAT: scale the width PROPORTIONALLY to the fixed 48px recognition
-        // height, preserving the crop's aspect ratio. PaddleOCR's rec model is
-        // aspect-ratio sensitive: feeding a tall/narrow manga bubble stretched into
-        // a square produced garbage ("??", "") for every non-wide crop. The previous
-        // `.coerceIn(MIN_RECOGNITION_WIDTH, MAX)` here clamped narrow text UP to 48px
-        // wide, destroying the aspect ratio — e.g. a 383x719 bubble (0.53:1) became
-        // 48x48 (1:1). Only the upper bound is correct (the model input is capped);
-        // the lower bound is enforced by padding (below), NOT by distorting the image.
+        // TachiyomiAT: match the reference PP-OCR pipeline (e.g. comic-translate's
+        // ppocr module). Three corrections vs. the original implementation, all of
+        // which are needed for vertical manga text to be recognized:
+        //
+        // 1. PAD TO A MINIMUM WIDTH OF 320 (the model's training shape), not to a
+        //    tiny 16/32px alignment boundary. The reference uses rec_img_shape
+        //    (3, 48, 320) and pads every crop up to at least 320 wide. Padding to
+        //    only 16-32px starved the model of pixels per character, which is why
+        //    every narrow/rotated crop returned "" or single junk chars.
+        //
+        // 2. PAD WITH THE NORMALIZATION MEAN (gray 128 -> normalized 0.0), NOT
+        //    white. The reference fills the pad region with np.zeros AFTER
+        //    normalizing (i.e. the mean). White (255 -> normalized 1.0) biases
+        //    the CTC decoder.
+        //
+        // 3. Scale the resized width PROPORTIONALLY to the fixed 48px height
+        //    (aspect-ratio preserving) and let padding fill the rest — the
+        //    original `.coerceIn(48, MAX)` destroyed aspect ratio.
         val scaledWidth = ceil(safeWidth * (RECOGNITION_HEIGHT.toFloat() / safeHeight)).toInt()
-            .coerceAtMost(MAX_RECOGNITION_WIDTH)
-            .coerceAtLeast(1)
+            .coerceIn(1, MAX_RECOGNITION_WIDTH)
         val inputWidth = alignWidth(scaledWidth)
 
         var resized: Bitmap? = null
@@ -119,7 +127,10 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
             )
 
             padded = BitmapPool.getARGB8888(inputWidth, RECOGNITION_HEIGHT)
-            padded.eraseColor(Color.WHITE)
+            // Pad with mid-gray (128) so that after normalize() the pad region is
+            // 0.0 — the normalization mean — matching the reference pipeline's
+            // np.zeros padding. White (255) normalized to 1.0 skewed recognition.
+            padded.eraseColor(PAD_GRAY)
             Canvas(padded).drawBitmap(resized, 0f, 0f, null)
 
             val pixels = IntArray(inputWidth * RECOGNITION_HEIGHT)
@@ -147,14 +158,14 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     }
 
     private fun alignWidth(width: Int): Int {
-        // Round the proportional width UP to the WIDTH_ALIGNMENT boundary so the
-        // padded bitmap can hold the (aspect-correct) resized crop plus white
-        // padding on the right. Cap at MAX_RECOGNITION_WIDTH. The minimum width
-        // is the alignment unit itself (16) — the existing white padding
-        // (padded.eraseColor(WHITE)) fills the remainder, so narrow text keeps its
-        // aspect ratio instead of being stretched into a square.
-        val aligned = ((width + WIDTH_ALIGNMENT - 1) / WIDTH_ALIGNMENT) * WIDTH_ALIGNMENT
-        return aligned.coerceIn(WIDTH_ALIGNMENT, MAX_RECOGNITION_WIDTH)
+        // Match the reference PP-OCR pipeline: pad every crop to AT LEAST the
+        // model's native recognition width (320), rounded up to WIDTH_ALIGNMENT.
+        // This is the key fix for vertical/rotated text — the original aligned to
+        // only 16-32px, starving the model of per-character resolution. Cap at
+        // MAX_RECOGNITION_WIDTH.
+        val floored = maxOf(width, MIN_TARGET_WIDTH)
+        val aligned = ((floored + WIDTH_ALIGNMENT - 1) / WIDTH_ALIGNMENT) * WIDTH_ALIGNMENT
+        return aligned.coerceAtMost(MAX_RECOGNITION_WIDTH)
     }
 
     private data class PreprocessedInput(
@@ -164,8 +175,16 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
     private companion object {
         private const val RECOGNITION_HEIGHT = 48
+        // TachiyomiAT: PP-OCR's recognition model is trained on a (3, 48, 320)
+        // input shape. Every crop is padded up to at least this width so the
+        // model gets the per-character resolution it expects — padding to only
+        // 16-32px starved it and caused empty/garbage output on vertical text.
+        private const val MIN_TARGET_WIDTH = 320
         private const val MAX_RECOGNITION_WIDTH = 960
         private const val WIDTH_ALIGNMENT = 16
+        // Gray that normalizes to 0.0 (the normalization mean) — used for the
+        // right-side padding instead of white, matching the reference pipeline.
+        private const val PAD_GRAY = 0xFF808080.toInt()
 
         @Volatile
         private var diagnosticsInitialized = false

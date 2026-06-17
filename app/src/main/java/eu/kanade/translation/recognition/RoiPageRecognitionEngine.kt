@@ -187,7 +187,7 @@ class RoiPageRecognitionEngine(
             val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
                 language == TextRecognizerLanguage.CHINESE ||
                 language == TextRecognizerLanguage.KOREAN
-            val rotatedForOcr = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.2f
+            val rotatedForOcr = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
             val ocrInput = if (rotatedForOcr) {
                 val matrix = android.graphics.Matrix()
                 matrix.postRotate(90f)
