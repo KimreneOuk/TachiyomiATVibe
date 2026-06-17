@@ -460,6 +460,71 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * TachiyomiAT: per-page original/translated compare toggle state for the
+     * current page. Derived from [state] (current page index + translation
+     * enabled) and the current page's [ReaderPage.translatedStream]. The
+     * side-mounted compare handle observes this to know whether to enable the
+     * Original/Translated rows and which one to highlight. Exposed as its own
+     * StateFlow so the handle recomposes independently of the rest of the reader.
+     */
+    val compareState: kotlinx.coroutines.flow.StateFlow<CompareState> =
+        state
+            .map { s ->
+                val enabled = translationPreferences.translationEnabled().get()
+                val page = currentPageReaderPage(s)
+                val hasTranslation = page?.translatedStream != null
+                val showingTranslated = page?.showTranslatedImage == true
+                CompareState(
+                    translationEnabled = enabled,
+                    hasTranslation = hasTranslation,
+                    showingTranslated = showingTranslated,
+                )
+            }
+            .distinctUntilChanged()
+            .stateIn(
+                viewModelScope,
+                kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+                CompareState(),
+            )
+
+    @Immutable
+    data class CompareState(
+        val translationEnabled: Boolean = false,
+        val hasTranslation: Boolean = false,
+        val showingTranslated: Boolean = false,
+    )
+
+    /** Resolves the [ReaderPage] currently displayed, or null. */
+    private fun currentPageReaderPage(s: State = state.value): ReaderPage? {
+        val pages = getCurrentChapter()?.pages ?: return null
+        val idx = s.currentPage
+        return pages.getOrNull(idx) as? ReaderPage
+    }
+
+    /**
+     * TachiyomiAT: flips the current page between its original and translated
+     * image, per-page (does NOT touch the global showTranslations pref, so other
+     * pages are unaffected). Sticky: the choice survives scroll-away/return. The
+     * flip reuses the existing holder refresh path (Event.RefreshTranslationPages
+     * for just this page), so the holder re-runs setImage() with the new
+     * showTranslatedImage value — one decode for one page, cheap on both viewers.
+     */
+    fun setCurrentPageShowTranslated(showTranslated: Boolean) {
+        val page = currentPageReaderPage() ?: return
+        // Nothing to do (and nothing to show) if there's no translation to swap to.
+        if (showTranslated && page.translatedStream == null) return
+        if (page.showTranslatedImage == showTranslated) return
+        page.showTranslatedImage = showTranslated
+        eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
+        // Bump a no-op state update so compareState (which derives from state)
+        // re-emits and the handle highlight flips immediately. currentPage itself
+        // is unchanged; we nudge via translationRefreshToken which already exists
+        // for this purpose.
+        mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+    }
+
+
     override fun onCleared() {
         val currentChapters = state.value.viewerChapters
         if (currentChapters != null) {

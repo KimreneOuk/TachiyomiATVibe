@@ -21,7 +21,10 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -29,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
 import androidx.core.graphics.ColorUtils
@@ -53,6 +57,7 @@ import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.TranslationSettingsSheet
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
+import eu.kanade.presentation.reader.components.TranslationCompareHandle
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
@@ -470,12 +475,37 @@ class ReaderActivity : BaseActivity() {
             val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
             // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
             val translationQueue by viewModel.translationQueueState.collectAsState()
+            val compareState by viewModel.compareState.collectAsState()
 
             ReaderContentOverlay(
                 brightness = state.brightnessOverlayValue,
                 color = colorOverlay.takeIf { colorOverlayEnabled },
                 colorBlendMode = colorOverlayBlendMode,
             )
+
+            // TachiyomiAT: per-page original/translated compare handle. A small
+            // side-mounted control (left edge, vertically centred) that lets the
+            // user flip ONLY the current page between its original and translated
+            // image for quick comparison, plus open the full translation settings.
+            // Always visible (independent of the reader chrome) so it's reachable
+            // during distraction-free reading; hidden entirely when translation is
+            // disabled. Original/Translated rows auto-disable on pages with no
+            // translation yet. Wrapped in a full-size Box so it overlays the page
+            // area without consuming layout space from the app bars.
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                TranslationCompareHandle(
+                    visible = compareState.translationEnabled,
+                    hasTranslation = compareState.hasTranslation,
+                    showingTranslated = compareState.showingTranslated,
+                    onSelectOriginal = { viewModel.setCurrentPageShowTranslated(false) },
+                    onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
+                    onOpenSettings = { viewModel.openTranslationSettingsDialog() },
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
 
             ReaderAppBars(
                 visible = state.menuVisible,
