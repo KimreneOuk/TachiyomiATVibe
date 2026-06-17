@@ -1,0 +1,202 @@
+699:06-17 09:44:24.755 I/Quality (25334): BitmapCompressInfo:1350,1920,1,100,521810000
+710:06-17 09:44:25.574 I/Quality (25334): BitmapCompressInfo:1350,1920,2,90,470070260
+2635:06-17 09:44:33.368 I/Quality (25334): BitmapCompressInfo:1350,1920,1,100,660899740
+2638:06-17 09:44:33.379 D/native  (25334): I0617 09:44:33.379821   26656 mergeddicttrans.cc:1860] The current system has NMT.
+2639:06-17 09:44:33.379 D/native  (25334): I0617 09:44:33.379914   26656 mergeddicttrans.cc:1866] Sentence #0: 「終末の加護」と名付けた
+2640:06-17 09:44:33.379 D/native  (25334): I0617 09:44:33.379951   26656 mergeddicttrans.cc:1918] To be translated by NMT.
+2654:06-17 09:44:33.403 I/native  (25334): I0617 09:44:33.403544   26656 mergeddicttrans.cc:1827] Sentence #0: 「終末の加護」と名付けた
+2655:06-17 09:44:33.403 I/native  (25334): I0617 09:44:33.403599   26656 mergeddicttrans.cc:1828] 
+2656:06-17 09:44:33.403 I/native  (25334): Source language: ja, target language: en
+2657:06-17 09:44:33.403 I/native  (25334): 
+2658:06-17 09:44:33.403 I/native  (25334): Has period trick: 0
+2659:06-17 09:44:33.403 I/native  (25334): 
+2660:06-17 09:44:33.403 I/native  (25334): Full translation: Named "Prostation of the end"
+2661:06-17 09:44:33.403 I/native  (25334): Translate Instance: 
+2662:06-17 09:44:33.403 I/native  (25334): Query (raw): 「終末の加護」と名付けた
+2663:06-17 09:44:33.403 I/native  (25334): Query (after preprocess): 「 終末 の 加護 」 と 名付け た
+2664:06-17 09:44:33.403 I/native  (25334): Query ids (after tokenizer): 171 1001 988 4 487 1094 173 14 465 773 211 15 2
+2665:06-17 09:44:33.403 I/native  (25334): Translation ids: 92 180 14 34 189 654 86 6 3 341 34 2
+2666:06-17 09:44:33.403 I/native  (25334): Translation (after detokenizer): Named " Prostation of the end "
+2667:06-17 09:44:33.403 I/native  (25334): Alignment probability:
+2668:06-17 09:44:33.403 I/native  (25334): 	Named	"	Prostation	of	the	end	"
+2669:06-17 09:44:33.403 I/native  (25334): 「	0.0601307	0.470588	0.00653595	0.00784314	0.0156863	0.00392157	0.00784314
+2670:06-17 09:44:33.403 I/native  (25334): 終末	0.00522876	0.054902	0.198693	0.168627	0.862745	0.819608	0.113725
+2671:06-17 09:44:33.403 I/native  (25334): の	0	0	0.162092	0.478431	0.00784314	0.00392157	0.0745098
+2672:06-17 09:44:33.403 I/native  (25334): 加護	0.0143791	0.0705882	0.545098	0.145098	0.0196078	0.0117647	0.0666667
+2673:06-17 09:44:33.403 I/native  (25334): 」	0.00130719	0.00784314	0.020915	0.109804	0.00784314	0.00392157	0.509804
+2674:06-17 09:44:33.403 I/native  (25334): と	0.0366013	0.309804	0.00130719	0	0	0	0.00784314
+2675:06-17 09:44:33.403 I/native  (25334): 名付け	0.521569	0.027451	0	0	0	0	0.00392157
+2676:06-17 09:44:33.403 I/native  (25334): た	0.0784314	0.00392157	0	0	0	0	0.00784314
+2677:06-17 09:44:33.403 I/native  (25334): Translation (before postprocess): Named " Prostation of the end "
+2681:06-17 09:44:33.404 D/native  (25334): I0617 09:44:33.404880   26658 mergeddicttrans.cc:1860] The current system has NMT.
+2682:06-17 09:44:33.404 D/native  (25334): I0617 09:44:33.404909   26658 mergeddicttrans.cc:1866] Sentence #0: その姿は...?
+2683:06-17 09:44:33.404 D/native  (25334): I0617 09:44:33.404937   26658 mergeddicttrans.cc:1918] To be translated by NMT.
+2698:06-17 09:44:33.418 I/native  (25334): I0617 09:44:33.418268   26658 mergeddicttrans.cc:1827] Sentence #0: その姿は...?
+2699:06-17 09:44:33.418 I/native  (25334): I0617 09:44:33.418516   26658 mergeddicttrans.cc:1828] 
+2700:06-17 09:44:33.418 I/native  (25334): Source language: ja, target language: en
+2701:06-17 09:44:33.418 I/native  (25334): 
+2702:06-17 09:44:33.418 I/native  (25334): Has period trick: 0
+2703:06-17 09:44:33.418 I/native  (25334): 
+2704:06-17 09:44:33.418 I/native  (25334): Full translation: Is that figure ...?
+2705:06-17 09:44:33.418 I/native  (25334): Translate Instance: 
+2706:06-17 09:44:33.418 I/native  (25334): Query (raw): その姿は...?
+2707:06-17 09:44:33.418 I/native  (25334): Query (after preprocess): その 姿 は ... ?
+2708:06-17 09:44:33.418 I/native  (25334): Query ids (after tokenizer): 138 3 2188 9 1198 882 2
+2709:06-17 09:44:33.418 I/native  (25334): Translation ids: 1663 30 1998 983 417 2
+2710:06-17 09:44:33.418 I/native  (25334): Translation (after detokenizer): Is that figure ... ?
+2711:06-17 09:44:33.418 I/native  (25334): Alignment probability:
+2712:06-17 09:44:33.418 I/native  (25334): 	Is	that	figure	...	?
+2713:06-17 09:44:33.418 I/native  (25334): その	0.294118	0.380392	0.0235294	0.0588235	0.00392157
+2714:06-17 09:44:33.418 I/native  (25334): 姿	0.0784314	0.137255	0.901961	0.101961	0
+2715:06-17 09:44:33.418 I/native  (25334): は	0.360784	0.25098	0.0352941	0.168627	0.00784314
+2716:06-17 09:44:33.418 I/native  (25334): ...	0.101961	0.0588235	0.0352941	0.603922	0.054902
+2717:06-17 09:44:33.418 I/native  (25334): ?	0.101961	0.105882	0	0.0392157	0.564706
+2718:06-17 09:44:33.418 I/native  (25334): Translation (before postprocess): Is that figure ... ?
+2719:06-17 09:44:33.419 D/native  (25334): I0617 09:44:33.419370   26659 mergeddicttrans.cc:1860] The current system has NMT.
+2720:06-17 09:44:33.419 D/native  (25334): I0617 09:44:33.419415   26659 mergeddicttrans.cc:1866] Sentence #0: アキラ...
+2721:06-17 09:44:33.419 D/native  (25334): I0617 09:44:33.419444   26659 mergeddicttrans.cc:1918] To be translated by NMT.
+2724:06-17 09:44:33.429 I/native  (25334): I0617 09:44:33.429635   26659 mergeddicttrans.cc:1827] Sentence #0: アキラ...
+2725:06-17 09:44:33.429 I/native  (25334): I0617 09:44:33.429720   26659 mergeddicttrans.cc:1828] 
+2726:06-17 09:44:33.429 I/native  (25334): Source language: ja, target language: en
+2727:06-17 09:44:33.429 I/native  (25334): 
+2728:06-17 09:44:33.429 I/native  (25334): Has period trick: 0
+2729:06-17 09:44:33.429 I/native  (25334): 
+2730:06-17 09:44:33.429 I/native  (25334): Full translation: Akira ...
+2731:06-17 09:44:33.429 I/native  (25334): Translate Instance: 
+2732:06-17 09:44:33.429 I/native  (25334): Query (raw): アキラ...
+2733:06-17 09:44:33.429 I/native  (25334): Query (after preprocess): アキラ ...
+2734:06-17 09:44:33.429 I/native  (25334): Query ids (after tokenizer): 77 142 43 1198 2
+2735:06-17 09:44:33.429 I/native  (25334): Translation ids: 3212 269 45 983 2
+2736:06-17 09:44:33.429 I/native  (25334): Translation (after detokenizer): Akira ...
+2737:06-17 09:44:33.429 I/native  (25334): Alignment probability:
+2738:06-17 09:44:33.429 I/native  (25334): 	Akira	...
+2739:06-17 09:44:33.429 I/native  (25334): アキラ	0.773856	0.227451
+2740:06-17 09:44:33.429 I/native  (25334): ...	0.118954	0.635294
+2741:06-17 09:44:33.429 I/native  (25334): Translation (before postprocess): Akira ...
+2742:06-17 09:44:33.430 D/native  (25334): I0617 09:44:33.430401   26660 mergeddicttrans.cc:1860] The current system has NMT.
+2743:06-17 09:44:33.430 D/native  (25334): I0617 09:44:33.430442   26660 mergeddicttrans.cc:1866] Sentence #0: 38845年13話の加護
+2744:06-17 09:44:33.430 D/native  (25334): I0617 09:44:33.430468   26660 mergeddicttrans.cc:1918] To be translated by NMT.
+2760:06-17 09:44:33.452 I/native  (25334): I0617 09:44:33.452177   26660 mergeddicttrans.cc:1827] Sentence #0: 38845年13話の加護
+2761:06-17 09:44:33.452 I/native  (25334): I0617 09:44:33.452284   26660 mergeddicttrans.cc:1828] 
+2762:06-17 09:44:33.452 I/native  (25334): Source language: ja, target language: en
+2763:06-17 09:44:33.452 I/native  (25334): 
+2764:06-17 09:44:33.452 I/native  (25334): Has period trick: 0
+2765:06-17 09:44:33.452 I/native  (25334): 
+2766:06-17 09:44:33.452 I/native  (25334): Full translation: 3 Blessing of 8845 13 episodes
+2767:06-17 09:44:33.452 I/native  (25334): Translate Instance: 
+2768:06-17 09:44:33.452 I/native  (25334): Query (raw): 38845年13話の加護
+2769:06-17 09:44:33.452 I/native  (25334): Query (after preprocess): 3 8845 年 13 話 の 加護
+2770:06-17 09:44:33.452 I/native  (25334): Query ids (after tokenizer): 68 329 89 63 57 470 722 1668 4 487 1094 2
+2771:06-17 09:44:33.452 I/native  (25334): Translation ids: 81 54 1035 13 6 238 96 62 61 410 2235 163 1342 2
+2772:06-17 09:44:33.452 I/native  (25334): Translation (after detokenizer): 3 Blessing of 8845 13 episodes
+2773:06-17 09:44:33.452 I/native  (25334): Alignment probability:
+2774:06-17 09:44:33.452 I/native  (25334): 	3	Blessing	of	8845	13	episodes
+2775:06-17 09:44:33.452 I/native  (25334): 3	0.423529	0.00915033	0.0196078	0.00980392	0.00392157	0.00130719
+2776:06-17 09:44:33.452 I/native  (25334): 8845	0.0509804	0.133333	0.145098	0.786275	0.0392157	0.0169935
+2777:06-17 09:44:33.452 I/native  (25334): 年	0.0156863	0.0196078	0.0235294	0.0235294	0.141176	0.020915
+2778:06-17 09:44:33.452 I/native  (25334): 13	0.0980392	0.0810458	0.207843	0.103922	0.494118	0.0248366
+2779:06-17 09:44:33.452 I/native  (25334): 話	0.0156863	0.0457516	0.109804	0.0598039	0.172549	0.560784
+2780:06-17 09:44:33.452 I/native  (25334): の	0.0352941	0.0823529	0.392157	0.00294118	0.0392157	0.00784314
+2781:06-17 09:44:33.452 I/native  (25334): 加護	0.34902	0.487582	0.0509804	0.000980392	0.027451	0.0117647
+2782:06-17 09:44:33.452 I/native  (25334): Translation (before postprocess): 3 Blessing of 8845 13 episodes
+2989:06-17 09:44:34.238 I/Quality (25334): BitmapCompressInfo:1350,1920,2,90,522888125
+5745:06-17 09:44:42.067 I/Quality (25334): BitmapCompressInfo:1350,1920,1,100,667840990
+5757:06-17 09:44:42.099 D/native  (25334): I0617 09:44:42.099337   26661 mergeddicttrans.cc:1860] The current system has NMT.
+5758:06-17 09:44:42.099 D/native  (25334): I0617 09:44:42.099586   26661 mergeddicttrans.cc:1866] Sentence #0: 「終末の加護」と名付けた
+5759:06-17 09:44:42.099 D/native  (25334): I0617 09:44:42.099627   26661 mergeddicttrans.cc:1918] To be translated by NMT.
+5778:06-17 09:44:42.123 I/native  (25334): I0617 09:44:42.123476   26661 mergeddicttrans.cc:1827] Sentence #0: 「終末の加護」と名付けた
+5779:06-17 09:44:42.123 I/native  (25334): I0617 09:44:42.123561   26661 mergeddicttrans.cc:1828] 
+5780:06-17 09:44:42.123 I/native  (25334): Source language: ja, target language: en
+5781:06-17 09:44:42.123 I/native  (25334): 
+5782:06-17 09:44:42.123 I/native  (25334): Has period trick: 0
+5783:06-17 09:44:42.123 I/native  (25334): 
+5784:06-17 09:44:42.123 I/native  (25334): Full translation: Named "Prostation of the end"
+5785:06-17 09:44:42.123 I/native  (25334): Translate Instance: 
+5786:06-17 09:44:42.123 I/native  (25334): Query (raw): 「終末の加護」と名付けた
+5787:06-17 09:44:42.123 I/native  (25334): Query (after preprocess): 「 終末 の 加護 」 と 名付け た
+5788:06-17 09:44:42.123 I/native  (25334): Query ids (after tokenizer): 171 1001 988 4 487 1094 173 14 465 773 211 15 2
+5789:06-17 09:44:42.123 I/native  (25334): Translation ids: 92 180 14 34 189 654 86 6 3 341 34 2
+5790:06-17 09:44:42.123 I/native  (25334): Translation (after detokenizer): Named " Prostation of the end "
+5791:06-17 09:44:42.123 I/native  (25334): Alignment probability:
+5792:06-17 09:44:42.123 I/native  (25334): 	Named	"	Prostation	of	the	end	"
+5793:06-17 09:44:42.123 I/native  (25334): 「	0.0601307	0.470588	0.00653595	0.00784314	0.0156863	0.00392157	0.00784314
+5794:06-17 09:44:42.123 I/native  (25334): 終末	0.00522876	0.054902	0.198693	0.168627	0.862745	0.819608	0.113725
+5795:06-17 09:44:42.123 I/native  (25334): の	0	0	0.162092	0.478431	0.00784314	0.00392157	0.0745098
+5796:06-17 09:44:42.123 I/native  (25334): 加護	0.0143791	0.0705882	0.545098	0.145098	0.0196078	0.0117647	0.0666667
+5797:06-17 09:44:42.123 I/native  (25334): 」	0.00130719	0.00784314	0.020915	0.109804	0.00784314	0.00392157	0.509804
+5798:06-17 09:44:42.123 I/native  (25334): と	0.0366013	0.309804	0.00130719	0	0	0	0.00784314
+5799:06-17 09:44:42.123 I/native  (25334): 名付け	0.521569	0.027451	0	0	0	0	0.00392157
+5800:06-17 09:44:42.123 I/native  (25334): た	0.0784314	0.00392157	0	0	0	0	0.00784314
+5801:06-17 09:44:42.123 I/native  (25334): Translation (before postprocess): Named " Prostation of the end "
+5802:06-17 09:44:42.125 D/native  (25334): I0617 09:44:42.125408   26662 mergeddicttrans.cc:1860] The current system has NMT.
+5803:06-17 09:44:42.125 D/native  (25334): I0617 09:44:42.125466   26662 mergeddicttrans.cc:1866] Sentence #0: その姿は...?
+5804:06-17 09:44:42.125 D/native  (25334): I0617 09:44:42.125496   26662 mergeddicttrans.cc:1918] To be translated by NMT.
+5805:06-17 09:44:42.139 I/native  (25334): I0617 09:44:42.139048   26662 mergeddicttrans.cc:1827] Sentence #0: その姿は...?
+5806:06-17 09:44:42.139 I/native  (25334): I0617 09:44:42.139133   26662 mergeddicttrans.cc:1828] 
+5807:06-17 09:44:42.139 I/native  (25334): Source language: ja, target language: en
+5808:06-17 09:44:42.139 I/native  (25334): 
+5809:06-17 09:44:42.139 I/native  (25334): Has period trick: 0
+5810:06-17 09:44:42.139 I/native  (25334): 
+5811:06-17 09:44:42.139 I/native  (25334): Full translation: Is that figure ...?
+5812:06-17 09:44:42.139 I/native  (25334): Translate Instance: 
+5813:06-17 09:44:42.139 I/native  (25334): Query (raw): その姿は...?
+5814:06-17 09:44:42.139 I/native  (25334): Query (after preprocess): その 姿 は ... ?
+5815:06-17 09:44:42.139 I/native  (25334): Query ids (after tokenizer): 138 3 2188 9 1198 882 2
+5816:06-17 09:44:42.139 I/native  (25334): Translation ids: 1663 30 1998 983 417 2
+5817:06-17 09:44:42.139 I/native  (25334): Translation (after detokenizer): Is that figure ... ?
+5818:06-17 09:44:42.139 I/native  (25334): Alignment probability:
+5819:06-17 09:44:42.139 I/native  (25334): 	Is	that	figure	...	?
+5820:06-17 09:44:42.139 I/native  (25334): その	0.294118	0.380392	0.0235294	0.0588235	0.00392157
+5821:06-17 09:44:42.139 I/native  (25334): 姿	0.0784314	0.137255	0.901961	0.101961	0
+5822:06-17 09:44:42.139 I/native  (25334): は	0.360784	0.25098	0.0352941	0.168627	0.00784314
+5823:06-17 09:44:42.139 I/native  (25334): ...	0.101961	0.0588235	0.0352941	0.603922	0.054902
+5824:06-17 09:44:42.139 I/native  (25334): ?	0.101961	0.105882	0	0.0392157	0.564706
+5825:06-17 09:44:42.139 I/native  (25334): Translation (before postprocess): Is that figure ... ?
+5826:06-17 09:44:42.143 D/native  (25334): I0617 09:44:42.143483   26663 mergeddicttrans.cc:1860] The current system has NMT.
+5827:06-17 09:44:42.143 D/native  (25334): I0617 09:44:42.143597   26663 mergeddicttrans.cc:1866] Sentence #0: アキラ...
+5828:06-17 09:44:42.143 D/native  (25334): I0617 09:44:42.143628   26663 mergeddicttrans.cc:1918] To be translated by NMT.
+5835:06-17 09:44:42.158 I/native  (25334): I0617 09:44:42.158907   26663 mergeddicttrans.cc:1827] Sentence #0: アキラ...
+5836:06-17 09:44:42.159 I/native  (25334): I0617 09:44:42.159039   26663 mergeddicttrans.cc:1828] 
+5837:06-17 09:44:42.159 I/native  (25334): Source language: ja, target language: en
+5838:06-17 09:44:42.159 I/native  (25334): 
+5839:06-17 09:44:42.159 I/native  (25334): Has period trick: 0
+5840:06-17 09:44:42.159 I/native  (25334): 
+5841:06-17 09:44:42.159 I/native  (25334): Full translation: Akira ...
+5842:06-17 09:44:42.159 I/native  (25334): Translate Instance: 
+5843:06-17 09:44:42.159 I/native  (25334): Query (raw): アキラ...
+5844:06-17 09:44:42.159 I/native  (25334): Query (after preprocess): アキラ ...
+5845:06-17 09:44:42.159 I/native  (25334): Query ids (after tokenizer): 77 142 43 1198 2
+5846:06-17 09:44:42.159 I/native  (25334): Translation ids: 3212 269 45 983 2
+5847:06-17 09:44:42.159 I/native  (25334): Translation (after detokenizer): Akira ...
+5848:06-17 09:44:42.159 I/native  (25334): Alignment probability:
+5849:06-17 09:44:42.159 I/native  (25334): 	Akira	...
+5850:06-17 09:44:42.159 I/native  (25334): アキラ	0.773856	0.227451
+5851:06-17 09:44:42.159 I/native  (25334): ...	0.118954	0.635294
+5852:06-17 09:44:42.159 I/native  (25334): Translation (before postprocess): Akira ...
+5853:06-17 09:44:42.161 D/native  (25334): I0617 09:44:42.161169   26665 mergeddicttrans.cc:1860] The current system has NMT.
+5854:06-17 09:44:42.161 D/native  (25334): I0617 09:44:42.161251   26665 mergeddicttrans.cc:1866] Sentence #0: 38845年13話の加護
+5855:06-17 09:44:42.161 D/native  (25334): I0617 09:44:42.161299   26665 mergeddicttrans.cc:1918] To be translated by NMT.
+5857:06-17 09:44:42.185 I/native  (25334): I0617 09:44:42.185560   26665 mergeddicttrans.cc:1827] Sentence #0: 38845年13話の加護
+5859:06-17 09:44:42.185 I/native  (25334): I0617 09:44:42.185613   26665 mergeddicttrans.cc:1828] 
+5860:06-17 09:44:42.185 I/native  (25334): Source language: ja, target language: en
+5861:06-17 09:44:42.185 I/native  (25334): 
+5862:06-17 09:44:42.185 I/native  (25334): Has period trick: 0
+5863:06-17 09:44:42.185 I/native  (25334): 
+5864:06-17 09:44:42.185 I/native  (25334): Full translation: 3 Blessing of 8845 13 episodes
+5865:06-17 09:44:42.185 I/native  (25334): Translate Instance: 
+5866:06-17 09:44:42.185 I/native  (25334): Query (raw): 38845年13話の加護
+5867:06-17 09:44:42.185 I/native  (25334): Query (after preprocess): 3 8845 年 13 話 の 加護
+5868:06-17 09:44:42.185 I/native  (25334): Query ids (after tokenizer): 68 329 89 63 57 470 722 1668 4 487 1094 2
+5869:06-17 09:44:42.185 I/native  (25334): Translation ids: 81 54 1035 13 6 238 96 62 61 410 2235 163 1342 2
+5870:06-17 09:44:42.185 I/native  (25334): Translation (after detokenizer): 3 Blessing of 8845 13 episodes
+5871:06-17 09:44:42.185 I/native  (25334): Alignment probability:
+5872:06-17 09:44:42.185 I/native  (25334): 	3	Blessing	of	8845	13	episodes
+5873:06-17 09:44:42.185 I/native  (25334): 3	0.423529	0.00915033	0.0196078	0.00980392	0.00392157	0.00130719
+5874:06-17 09:44:42.185 I/native  (25334): 8845	0.0509804	0.133333	0.145098	0.786275	0.0392157	0.0169935
+5875:06-17 09:44:42.185 I/native  (25334): 年	0.0156863	0.0196078	0.0235294	0.0235294	0.141176	0.020915
+5876:06-17 09:44:42.185 I/native  (25334): 13	0.0980392	0.0810458	0.207843	0.103922	0.494118	0.0248366
+5877:06-17 09:44:42.185 I/native  (25334): 話	0.0156863	0.0457516	0.109804	0.0598039	0.172549	0.560784
+5878:06-17 09:44:42.185 I/native  (25334): の	0.0352941	0.0823529	0.392157	0.00294118	0.0392157	0.00784314
+5879:06-17 09:44:42.185 I/native  (25334): 加護	0.34902	0.487582	0.0509804	0.000980392	0.027451	0.0117647
+5880:06-17 09:44:42.185 I/native  (25334): Translation (before postprocess): 3 Blessing of 8845 13 episodes
+6130:06-17 09:44:43.043 I/Quality (25334): BitmapCompressInfo:1350,1920,2,90,543644062

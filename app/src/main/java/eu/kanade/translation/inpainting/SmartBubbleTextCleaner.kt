@@ -16,7 +16,13 @@ class SmartBubbleTextCleaner(
     private val textMaskPad: Int = 2,
     private val textThreshold: Int = 25,
     private val colorDistanceThreshold: Float = 45.0f,
-    private val dilationIterations: Int = 2,
+    // TachiyomiAT: 2 → 3 iterations. With faint-text detection now also keying off
+    // the ring-sampled background median (see generateTextMask), the text mask
+    // captures thinner/fainter strokes. Those strokes have thin anti-aliased edges
+    // that, after feathering, can leave a hairline of the original showing through
+    // the fill. One extra dilation pass grows the mask outward by a couple of px so
+    // the fill fully covers those edges before feathering softens the boundary.
+    private val dilationIterations: Int = 3,
     private val featherRadius: Int = 6,
 ) {
     private var workingBuffer1: IntArray? = null
@@ -453,9 +459,32 @@ class SmartBubbleTextCleaner(
 
         val mask = ByteArray(zoneW * zoneH)
         val bgCluster = findBackgroundCluster(pixels, x1, y1, zoneW, zoneH, contextW)
+
+        // TachiyomiAT: the in-box 2-cluster centroid (bgCluster) is a *noisy*
+        // background estimate because the box ITSELF is mostly text, so the
+        // "background" centroid drifts toward the text color. Faint strokes — whose
+        // color sits between true background and text — then fall UNDER the
+        // detection threshold and never get masked, leaving the original text
+        // faintly visible through the fill. The ring-sampled median
+        // (stats.medianColor) is a far more reliable background reference because
+        // it is sampled from the border ring AROUND the box, which is real
+        // background. Use BOTH references: a pixel is "text" if it differs from the
+        // in-box centroid OR from the ring median beyond the threshold. The OR
+        // catches faint strokes that the in-box centroid alone misses, without
+        // over-erasing, because removeEdgeTouchingComponents + the rounded-rect /
+        // bubble-interior mask intersection downstream still bound the mask to the
+        // text region.
+        val ringR = (stats.medianColor shr 16 and 0xFF).toFloat()
+        val ringG = (stats.medianColor shr 8 and 0xFF).toFloat()
+        val ringB = (stats.medianColor and 0xFF).toFloat()
+
         var threshVal = colorDistanceThreshold
         if (bgCluster.foregroundDistance < threshVal * 1.5f) {
-            threshVal = max(15.0f, bgCluster.foregroundDistance * 0.45f)
+            // Clusters are close (low-contrast text): lower the floor so faint
+            // strokes still clear the bar. Floor was 15; tighten to 12 so very
+            // faint anti-aliasing edges are captured, then cover their thin edges
+            // with the extra dilation pass below.
+            threshVal = max(12.0f, bgCluster.foregroundDistance * 0.4f)
         }
 
         for (zy in 0 until zoneH) {
@@ -464,11 +493,17 @@ class SmartBubbleTextCleaner(
                 val r = (px shr 16 and 0xFF).toFloat()
                 val g = (px shr 8 and 0xFF).toFloat()
                 val b = (px and 0xFF).toFloat()
+                // Distance from the in-box background centroid.
                 val dr = r - bgCluster.r
                 val dg = g - bgCluster.g
                 val db = b - bgCluster.b
-                val dist = sqrt(dr * dr + dg * dg + db * db)
-                if (dist > threshVal) {
+                val distFromCluster = sqrt(dr * dr + dg * dg + db * db)
+                // Distance from the ring-sampled true background median.
+                val drRing = r - ringR
+                val dgRing = g - ringG
+                val dbRing = b - ringB
+                val distFromRing = sqrt(drRing * drRing + dgRing * dgRing + dbRing * dbRing)
+                if (distFromCluster > threshVal || distFromRing > threshVal) {
                     mask[zy * zoneW + zx] = 1
                 }
             }

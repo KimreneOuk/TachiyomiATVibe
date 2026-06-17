@@ -244,6 +244,9 @@ class ReaderActivity : BaseActivity() {
                     is ReaderViewModel.Event.RefreshTranslationPages -> {
                         viewModel.state.value.viewer?.refreshTranslationPages(event.pages)
                     }
+                    is ReaderViewModel.Event.TranslationStatusChanged -> {
+                        viewModel.state.value.viewer?.refreshTranslationStatus(event.pages)
+                    }
                 }
             }
             .launchIn(lifecycleScope)

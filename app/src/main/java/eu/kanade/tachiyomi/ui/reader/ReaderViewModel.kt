@@ -81,6 +81,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.time.Instant
 import java.util.Date
@@ -271,6 +272,15 @@ class ReaderViewModel @JvmOverloads constructor(
 
     private val incognitoMode = preferences.incognitoMode().get()
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading().get()
+
+    /**
+     * TachiyomiAT: cached value of the opt-in translation_diagnostics preference.
+     * Gates the chatty per-page INFO log in [observeLiveTranslationStore] so the
+     * collector's hot path isn't doing string interpolation + log dispatch on
+     * every RUNNING stage of every page during a batch run. Read once at VM
+     * creation (the pref is not toggled mid-read in practice).
+     */
+    private val translationDiagnosticsEnabled = translationPreferences.translationDiagnostics().get()
 
     init {
         // To save state
@@ -697,6 +707,10 @@ class ReaderViewModel @JvmOverloads constructor(
         // which processes pages one at a time, strictly in list order. The
         // current page always goes first; prefetch pages wait their turn.
         val sequentialKeys = mutableListOf<String>()
+        // TachiyomiAT: uncached prefetch pages that need an async image download
+        // before they can be translated. Downloaded + registered in the launchIO
+        // block below (cancellable) instead of via a blocking runBlocking stream.
+        val pagesNeedingLazyDownload = mutableListOf<Pair<ReaderPage, String>>()
 
         for (i in currentIndex..lastIndex) {
             // Current page (i == currentIndex) always translates; only
@@ -735,44 +749,84 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             // TachiyomiAT: register a stream for the translator. Prefer the
             // reader's originalStream when available (already-cached pages).
-            // For online pages not yet downloaded into the chapter cache,
-            // register a LAZY stream that fetches the image from the source
-            // on demand when the translator actually needs the bytes. Without
-            // this, lookahead pages (which haven't been viewed/cached yet)
-            // have originalStream==null, the translator falls through to
-            // findChapterDir()==null and writes a FAILED placeholder — so
-            // auto-translate silently does nothing for uncached pages.
-            val streamFn = readerPage.originalStream
-                ?: readerPage.imageUrl?.let { imageUrl ->
-                    createLazyHttpStream(source, readerPage, imageUrl)
-                }
-            streamFn?.let {
+            // For online pages not yet downloaded into the chapter cache, defer
+            // the registration — the bytes need an async download (see below),
+            // and the original runBlocking{} lazy stream blocked an IO thread for
+            // the whole download and couldn't be cancelled on a chapter switch.
+            readerPage.originalStream?.let { streamFn ->
                 eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
                     manga,
                     chapter.toDomainChapter()!!,
                     source,
                     pageKey,
-                    it,
+                    streamFn,
                 )
+                sequentialKeys.add(pageKey)
+            } ?: readerPage.imageUrl?.let { imageUrl ->
+                // Track uncached pages that need an async fetch. They are
+                // downloaded + registered in the launchIO block below (so the
+                // download is cancellable) BEFORE translatePagesSequential runs,
+                // preserving the strict sequential ordering.
+                pagesNeedingLazyDownload.add(readerPage to imageUrl)
+                sequentialKeys.add(pageKey)
             }
-            sequentialKeys.add(pageKey)
         }
 
-        // TachiyomiAT: submit the full ordered list (current page first, then
-        // prefetch in page order) to a single sequential worker. This guarantees
-        // page n translates before page n+1 before page n+2 — no dispatcher
-        // races. The current page (list[0]) starts translating immediately
-        // because translatePagesSequential begins processing from index 0 on
-        // the very next dispatcher turn. Repeated calls to handleAutoTranslation
-        // (e.g. on rapid scroll) may enqueue overlapping lists, but the dedup
-        // inside translatePagesSequential (activePageJobs.isActive check) and
-        // in translateSinglePage (inFlightPageKeys) prevents duplicate work.
         if (sequentialKeys.isNotEmpty()) {
             val domainChapter = chapter.toDomainChapter()!!
             viewModelScope.launchIO {
-                translationManager.translatePagesSequential(
-                    manga, domainChapter, source, sequentialKeys,
-                )
+                // TachiyomiAT: download any uncached prefetch pages NOW, in a
+                // cancellable suspend context, before submitting them. Each download
+                // is awaited in order so a chapter switch (which cancels this
+                // coroutine) aborts remaining downloads instead of blocking IO
+                // threads like the old runBlocking stream.
+                for ((readerPage, imageUrl) in pagesNeedingLazyDownload) {
+                    val streamFn = try {
+                        createLazyHttpStream(source, readerPage, imageUrl)
+                    } catch (e: Throwable) {
+                        logcat(LogPriority.WARN) {
+                            "auto-translate: lazy download failed for " +
+                                "${resolvePageKey(readerPage)}: ${e.message}"
+                        }
+                        null
+                    } ?: continue
+                    eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
+                        manga,
+                        domainChapter,
+                        source,
+                        resolvePageKey(readerPage),
+                        streamFn,
+                    )
+                }
+                // TachiyomiAT: submit the page list STRICTLY IN ORDER via
+                // translatePagesSequential(). Each page is awaited to completion (or
+                // failure) before the next begins, so execution order is guaranteed
+                // to match list order: the current page first, then n+1, then n+2 —
+                // never n+2 before n+1.
+                //
+                // Why not the earlier fire-and-forget translatePage() per page:
+                // that launched one independent coroutine per page on Dispatchers.IO,
+                // all of which then raced for the single translatorPermit semaphore.
+                // Submission order did NOT determine execution order — whichever
+                // prefetch coroutine the IO pool resumed first on a permit release
+                // won, so n+2 frequently ran before n+1, which read as "prefetch
+                // skipped n+1". translatePagesSequential() instead calls the
+                // suspend translateSinglePage() inline in list order, so the pages
+                // stack on the permit in call order.
+                //
+                // The original reason the serial path was abandoned ("prefetch
+                // starved behind the current page, never started") is no longer
+                // valid: the re-triggering/dedup bugs that caused batches to be
+                // torn down and restarted on every scroll have since been fixed
+                // (stable-name dedup + status/image event split). With those fixed,
+                // a single ordered batch survives and prefetches ahead correctly.
+                //
+                // Cancellation/safety: translatePagesSequential() checks
+                // coroutineContext.ensureActive() per page and skips pages that are
+                // already in-flight (activePageJobs), so a chapter switch (which
+                // cancels this launchIO coroutine) aborts the batch, and rapid
+                // scroll re-triggers are no-ops for pages already running.
+                translationManager.translatePagesSequential(manga, domainChapter, source, sequentialKeys)
             }
         }
     }
@@ -1319,6 +1373,21 @@ class ReaderViewModel @JvmOverloads constructor(
             mangaId = manga.id,
             chapterId = chapterId,
         )
+        // TachiyomiAT: clear the per-page translation fields on the departing
+        // chapter's pages. The translator jobs are cancelled above and the
+        // registered streams evicted, but the ReaderPage objects themselves keep
+        // their translatedStream / translation / showTranslatedImage fields set.
+        // Because InsertPage (in the pager viewer) wraps the SAME underlying
+        // ReaderPage, a holder reused across the chapter boundary could briefly
+        // render the old chapter's translated image in the new chapter's slot
+        // during the cancel→re-subscribe window. Null these out so a stale
+        // stream closure (which also captured page bitmaps) is released and any
+        // holder still pointing at these pages falls back to the original image.
+        chapter.pages?.forEach { page ->
+            page.translatedStream = null
+            page.translation = null
+            page.showTranslatedImage = false
+        }
         // TachiyomiAT: reset the merged translation state to neutral. Without
         // this, an ERROR (or TRANSLATING) from the chapter we're leaving stays
         // sticky: recomputeTranslationState() treats ERROR as terminal-wins, so
@@ -1392,40 +1461,68 @@ class ReaderViewModel @JvmOverloads constructor(
                 pageKey,
                 streamFn,
             )
+            // TachiyomiAT: bytes already available — kick off translation now.
+            viewModelScope.launchIO {
+                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+            }
         } ?: page.imageUrl?.let { imageUrl ->
             // TachiyomiAT: for online pages not yet cached (originalStream is
-            // null), register a lazy stream that fetches from the source so the
-            // translator can read the image bytes without a local chapter dir.
-            eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
-                manga,
-                chapter.toDomainChapter()!!,
-                source,
-                pageKey,
-                createLazyHttpStream(source, page, imageUrl),
-            )
-        }
-        viewModelScope.launchIO {
-            translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+            // null), download the image bytes in a cancellable coroutine and
+            // only THEN register the stream + start translation. Previously this
+            // registered a runBlocking{ source.getImage() } closure, which blocked
+            // an IO thread for the whole download and could not be cancelled on a
+            // chapter switch. Now the download is suspend (cancellable) and the
+            // translation is enqueued only after the bytes are in hand.
+            viewModelScope.launchIO {
+                val streamFn = try {
+                    createLazyHttpStream(source, page, imageUrl)
+                } catch (e: Throwable) {
+                    logcat(LogPriority.WARN) {
+                        "translateSinglePage: lazy download failed for $pageKey: ${e.message}"
+                    }
+                    return@launchIO
+                }
+                eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
+                    manga,
+                    chapter.toDomainChapter()!!,
+                    source,
+                    pageKey,
+                    streamFn,
+                )
+                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+            }
         }
     }
 
     /**
-     * TachiyomiAT: creates a lazy stream closure that downloads the page image
-     * from the [source] on demand. Used when [ReaderPage.originalStream] is null
-     * (the page hasn't been cached yet by HttpPageLoader) but the page has an
-     * [imageUrl]. The translator invokes this closure when it needs the image
-     * bytes to run OCR/inpaint — at which point the image is fetched fresh.
+     * TachiyomiAT: downloads the page image from [source] and returns a stream
+     * closure backed by the captured bytes. Used when [ReaderPage.originalStream]
+     * is null (the page hasn't been cached yet by HttpPageLoader) but the page has
+     * an [imageUrl].
+     *
+     * This is a [suspend] function (called from a tracked coroutine scope) so the
+     * download is cancellable — if the reader switches chapters mid-download, the
+     * coroutine is cancelled and the partially-downloaded bytes are dropped.
+     * Previously this was a non-suspending closure whose body was `runBlocking {
+     * source.getImage(...) }`; that blocked an IO dispatcher thread for the entire
+     * download (thread-pool starvation) AND could not be cancelled, so a chapter
+     * switch left the download running to completion against a recycled page.
+     *
+     * The bytes are downloaded eagerly (rather than lazily inside the closure) so
+     * the translator's decode path — which runs on Dispatchers.IO inside the
+     * permit — only reads from memory instead of doing blocking network I/O.
      */
-    private fun createLazyHttpStream(
+    private suspend fun createLazyHttpStream(
         source: HttpSource,
         page: ReaderPage,
         imageUrl: String,
-    ): () -> InputStream = {
-        runBlocking {
-            val sPage = Page(page.index, page.url, imageUrl)
-            val response = source.getImage(sPage)
-            response.body.byteStream()
-        }
+    ): () -> InputStream {
+        val sPage = Page(page.index, page.url, imageUrl)
+        // Read the body fully while we're in a cancellable suspend context. The
+        // resulting byte array is captured by the returned closure, which the
+        // translator invokes synchronously from its decode path.
+        val bytes = source.getImage(sPage).body.bytes()
+        return { ByteArrayInputStream(bytes) }
     }
 
     /**
@@ -1453,6 +1550,11 @@ class ReaderViewModel @JvmOverloads constructor(
     fun stopAllTranslation() {
         translationManager.cancelAllPageTranslations()
         translationManager.translatorStop("user stop")
+        // TachiyomiAT: evict all registered reader page streams so their captured
+        // ReaderPage / ByteArray references are released. Without this, the
+        // process-lifetime readerPageStreams map keeps page bytes alive after the
+        // user explicitly stops translation.
+        eu.kanade.translation.ChapterTranslator.clearAllReaderPageStreams()
         batchTranslationState = Translation.State.NOT_TRANSLATED
         liveTranslationState = Translation.State.NOT_TRANSLATED
         recomputeTranslationState()
@@ -1469,6 +1571,10 @@ class ReaderViewModel @JvmOverloads constructor(
     fun cancelTranslationsOnBackground() {
         translationManager.cancelAllPageTranslations()
         translationManager.translatorStop("reader backgrounded")
+        // TachiyomiAT: evict registered reader page streams so their captured
+        // page bytes are freed while the reader sits in the background, instead
+        // of pinning them in the process-lifetime map.
+        eu.kanade.translation.ChapterTranslator.clearAllReaderPageStreams()
     }
 
     fun isCurrentChapterDownloaded(): Boolean {
@@ -1582,7 +1688,13 @@ class ReaderViewModel @JvmOverloads constructor(
             storeState.collect { pageMap ->
                 val pages = state.value.viewerChapters?.currChapter?.pages ?: return@collect
                 var translatedCount = 0
+                // Pages whose displayed IMAGE changed (new rendered/cleaned
+                // result) — these MAY trigger a re-decode via refreshTranslation().
                 val changedPages = mutableSetOf<ReaderPage>()
+                // Pages whose STATUS only changed (RUNNING/FAILED stage transition,
+                // no new image) — routed to the lightweight refreshTranslationStatus()
+                // path that syncs overlays/buttons WITHOUT re-decoding.
+                val statusPages = mutableSetOf<ReaderPage>()
                 val totalPages = pages.size
                 // Track whether ANY page currently has a RUNNING stage or a
                 // FAILED stage across this emission, so we can derive a
@@ -1616,11 +1728,17 @@ class ReaderViewModel @JvmOverloads constructor(
                     val isFailed = updated.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
                         updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED
                     if (isFailed && !hasRendered && !hasCleaned) anyError = true
-                    if (updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.errorMessage != null
+                    // TachiyomiAT: this per-page INFO log fires on every RUNNING
+                    // stage of every page during a batch run — thousands of string
+                    // interpolations + log dispatches on a busy chapter. Gate it
+                    // behind the opt-in translation_diagnostics pref so the hot
+                    // path stays quiet unless the user is actively debugging.
+                    if (translationDiagnosticsEnabled &&
+                        (updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.errorMessage != null)
                     ) {
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT live translation update: pageKey=$pageKey " +
@@ -1641,6 +1759,13 @@ class ReaderViewModel @JvmOverloads constructor(
                         updated.inpaintStatus != previous?.inpaintStatus ||
                         updated.renderStatus != previous?.renderStatus ||
                         updated.translationStatus != previous?.translationStatus
+                    // TachiyomiAT: always persist the latest translation snapshot,
+                    // but route the UPDATE differently:
+                    //  - needsStreamUpdate  -> refreshTranslationPages (may re-decode)
+                    //  - runningChanged only -> refreshTranslationStatus (overlay/
+                    //    button sync only, NO re-decode). This is what stops bare
+                    //    RUNNING stage transitions from re-triggering image work
+                    //    on the visible page — the root cause of the blink.
                     if (!needsStreamUpdate && !runningChanged) {
                         readerPage.translation = updated
                         continue
@@ -1655,7 +1780,12 @@ class ReaderViewModel @JvmOverloads constructor(
                         )
                     }
                     readerPage.translation = updated
-                    changedPages.add(readerPage)
+                    if (needsStreamUpdate) {
+                        changedPages.add(readerPage)
+                    } else {
+                        // runningChanged only — status update, no image change.
+                        statusPages.add(readerPage)
+                    }
                 }
                 // Derive the live state from what we just observed, then merge
                 // with the batch state. TRANSLATING wins; then ERROR; then
@@ -1690,6 +1820,17 @@ class ReaderViewModel @JvmOverloads constructor(
                 }
                 if (changedPages.isNotEmpty()) {
                     eventChannel.trySend(Event.RefreshTranslationPages(changedPages))
+                }
+                if (statusPages.isNotEmpty()) {
+                    // TachiyomiAT: status-only update — overlay/button sync, no
+                    // re-decode. A page that appears in BOTH sets (image AND
+                    // status changed in the same emission) takes the image path
+                    // via changedPages above, so drop it here to avoid a double
+                    // refresh.
+                    statusPages.removeAll(changedPages)
+                    if (statusPages.isNotEmpty()) {
+                        eventChannel.trySend(Event.TranslationStatusChanged(statusPages))
+                    }
                 }
             }
         }
@@ -1732,6 +1873,16 @@ class ReaderViewModel @JvmOverloads constructor(
         data class ShareImage(val uri: Uri, val page: ReaderPage) : Event
         data class CopyImage(val uri: Uri) : Event
         data class RefreshTranslationPages(val pages: Set<ReaderPage>) : Event
+        /**
+         * TachiyomiAT: lightweight status-only update (a page's OCR/inpaint/
+         * translate/render stage transitioned, but the displayed IMAGE did not
+         * change). Routed to [Viewer.refreshTranslationStatus] which syncs only
+         * the processing overlay + translate/cancel button — it must NOT
+         * re-decode or rebind, the way [RefreshTranslationPages] can. Splitting
+         * status changes from image changes is what stops bare RUNNING stage
+         * transitions from re-triggering image work on the visible page.
+         */
+        data class TranslationStatusChanged(val pages: Set<ReaderPage>) : Event
     }
 }
                                                                                                                                

@@ -33,8 +33,6 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
     var currentChapter: ReaderChapter? = null
 
-    private val translationRefreshPages = mutableSetOf<ReaderPage>()
-
     /**
      * Context that has been wrapped to use the correct theme values based on the
      * current app theme and reader background color
@@ -152,9 +150,6 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
      */
     override fun getItemPosition(view: Any): Int {
         if (view is PositionableView) {
-            if (view.item in translationRefreshPages) {
-                return POSITION_NONE
-            }
             val position = items.indexOf(view.item)
             if (position != -1) {
                 return position
@@ -206,12 +201,5 @@ class PagerViewerAdapter(private val viewer: PagerViewer) : ViewPagerAdapter() {
 
     fun refresh() {
         readerThemedContext = viewer.activity.createReaderThemeContext()
-    }
-
-    fun refreshTranslationPages(pages: Set<ReaderPage>) {
-        if (pages.isEmpty()) return
-        translationRefreshPages.addAll(pages)
-        notifyDataSetChanged()
-        translationRefreshPages.clear()
     }
 }

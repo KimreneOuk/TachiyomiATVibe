@@ -378,13 +378,55 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
     }
 
     override fun refreshTranslationPages(pages: Set<ReaderPage>) {
+        if (pages.isEmpty()) return
+        // TachiyomiAT: only refresh holders bound to a page that actually
+        // changed. The previous implementation iterated every attached child
+        // holder and called refreshTranslation() on each — so the page the user
+        // was reading reloaded its image whenever ANY other page advanced a
+        // translation stage (the same "blink" bug the pager viewer had). Since
+        // WebtoonPageHolder.page is private, resolve each changed page to its
+        // adapter position and refresh only the holder at that position.
+        val changedPositions = pages.mapNotNullTo(HashSet()) { page ->
+            val idx = adapter.items.indexOf(page)
+            if (idx == -1) null else idx
+        }
+        // TachiyomiAT: deliberately do NOT call adapter.refreshTranslationPages()
+        // here. That path issued notifyItemChanged(position) with NO payload, which
+        // forces a full onBindViewHolder() -> holder.bind() -> setImage() that
+        // completely bypasses the lastShownImageName guard in refreshTranslation()
+        // and re-decodes/re-binds the page on every status emission (the visible
+        // "blink"). The holder loop above is the only refresh path and it IS
+        // guarded, so the adapter call was pure redundant destruction.
         for (i in 0 until recycler.childCount) {
-            val holder = recycler.getChildViewHolder(recycler.getChildAt(i))
-            if (holder is WebtoonPageHolder) {
+            val child = recycler.getChildAt(i) ?: continue
+            val holder = recycler.getChildViewHolder(child)
+            if (holder is WebtoonPageHolder &&
+                holder.bindingAdapterPosition in changedPositions
+            ) {
                 holder.refreshTranslation()
             }
         }
-        adapter.refreshTranslationPages(pages)
+    }
+
+    // TachiyomiAT: lightweight status-only refresh — overlay/button sync only,
+    // no re-decode. See Viewer.refreshTranslationStatus and the
+    // TranslationStatusChanged event for why this is split from
+    // refreshTranslationPages.
+    override fun refreshTranslationStatus(pages: Set<ReaderPage>) {
+        if (pages.isEmpty()) return
+        val changedPositions = pages.mapNotNullTo(HashSet()) { page ->
+            val idx = adapter.items.indexOf(page)
+            if (idx == -1) null else idx
+        }
+        for (i in 0 until recycler.childCount) {
+            val child = recycler.getChildAt(i) ?: continue
+            val holder = recycler.getChildViewHolder(child)
+            if (holder is WebtoonPageHolder &&
+                holder.bindingAdapterPosition in changedPositions
+            ) {
+                holder.syncTranslationStatus()
+            }
+        }
     }
 }
 

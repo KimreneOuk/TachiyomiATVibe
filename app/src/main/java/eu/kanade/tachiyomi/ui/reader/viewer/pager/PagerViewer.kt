@@ -373,10 +373,37 @@ abstract class PagerViewer(val activity: ReaderActivity) : Viewer {
     }
 
     override fun refreshTranslationPages(pages: Set<ReaderPage>) {
+        // TachiyomiAT: only refresh holders whose page is in the changed-pages
+        // set. Previously this iterated EVERY attached holder (the visible page
+        // + adjacent offscreen pages) and called refreshTranslation() on each,
+        // ignoring the `pages` set entirely. That caused the current (already-
+        // translated) page to fully reload its image every time a background
+        // page advanced a stage — the visible "blink" during auto-translate.
+        // The ViewModel collector already computes a minimal, correct delta set
+        // (changedPages); respect it here so an unchanged page is never touched.
+        // TachiyomiAT: deliberately do NOT call adapter.refreshTranslationPages()
+        // here. That path called notifyDataSetChanged() and returned POSITION_NONE
+        // from getItemPosition() for changed pages, which makes ViewPager DESTROY and
+        // RECREATE the PagerPageHolder. A freshly-created holder has
+        // lastShownImageName = null, so it can never short-circuit and always
+        // re-decodes the image — the visible "blink". The holder loop below is the
+        // only refresh path and it IS guarded, so the adapter call was pure
+        // redundant destruction.
         pager.children
             .filterIsInstance(PagerPageHolder::class.java)
+            .filter { it.page in pages }
             .forEach { it.refreshTranslation() }
-        adapter.refreshTranslationPages(pages)
+    }
+
+    // TachiyomiAT: lightweight status-only refresh — overlay/button sync only,
+    // no re-decode. See Viewer.refreshTranslationStatus and the
+    // TranslationStatusChanged event for why this is split from
+    // refreshTranslationPages.
+    override fun refreshTranslationStatus(pages: Set<ReaderPage>) {
+        pager.children
+            .filterIsInstance(PagerPageHolder::class.java)
+            .filter { it.page in pages }
+            .forEach { it.syncTranslationStatus() }
     }
 
     /**

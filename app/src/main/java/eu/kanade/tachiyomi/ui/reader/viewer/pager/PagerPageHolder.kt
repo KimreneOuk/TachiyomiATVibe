@@ -25,6 +25,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
@@ -83,8 +84,39 @@ class PagerPageHolder(
      */
     private var loadJob: Job? = null
 
+    /**
+     * TachiyomiAT: the rendered/cleaned image FILE NAME this holder is currently
+     * displaying, so [refreshTranslation] can tell whether a refresh actually
+     * needs to reload the image (new/different translated image) or only sync
+     * overlays (the displayed image is already correct). Set whenever [setImage]
+     * / [refreshTranslation] actually feeds a new image to the view.
+     *
+     * This replaces an earlier guard that keyed on `===` referential identity of
+     * the translated-stream lambda. That was fragile: the stream factories
+     * ([getRenderedImageStream]/[getCleanedImageStream]) allocate a fresh lambda
+     * on every call, so identity only held by coincidence across status-only
+     * re-emissions. Keying on the stable file NAME (rendered wins over cleaned,
+     * matching the ViewModel collector's precedence) makes the dedup content-
+     * based and robust to any path that re-resolves the stream.
+     *
+     * Null means "we have not yet rendered a translated image for this holder".
+     */
+    private var lastShownImageName: String? = null
+
     init {
         loadJob = holderScope.launch { loadPageAndProcessStatus() }
+        // TachiyomiAT: seed the processing overlay from the page's DURABLE
+        // translation status at construction. A PagerPageHolder is freshly created
+        // whenever the ViewPager rebuilds its offscreen holder set (scroll/navigate
+        // back to a page whose holder was destroyed). ReaderPageImageView starts
+        // with the ephemeral overlay state cleared, and it would otherwise only be
+        // re-shown once loadPageAndProcessStatus()'s statusFlow reaches READY and
+        // setImage() runs — leaving a window (long, for an already-decoded page
+        // that's mid-translation) with no animation despite the page's stages still
+        // being "RUNNING". syncTranslationStatus() reads the durable stage status
+        // and shows the scrim/spinner immediately; it only touches the overlay +
+        // button, never re-decodes, so it's safe to call before the image loads.
+        syncTranslationStatus()
         //TachiyomiAT
         showTranslations = readerPreferences.showTranslations().get()
         readerPreferences.showTranslations().changes().onEach {
@@ -149,6 +181,30 @@ class PagerPageHolder(
             showTranslateButton(translationEnabled)
             setTranslating(false)
         }
+    }
+
+    /**
+     * TachiyomiAT: lightweight status-only sync. Counterpart to [refreshTranslation]
+     * for the case where a page's stage transitioned (RUNNING/FAILED) but the
+     * displayed IMAGE did not change. Updates ONLY the processing overlay and the
+     * translate/cancel button + error text — it must never re-decode or re-set
+     * the image. This is the handler for [TranslationStatusChanged]; calling it
+     * instead of [refreshTranslation] on bare status changes is what eliminates
+     * the redundant image work that caused the auto-translate blink.
+     */
+    fun syncTranslationStatus() {
+        val isBeingTranslated = isPageBeingTranslated()
+        if (isBeingTranslated) {
+            showProcessingOverlay(true)
+            setTranslating(true)
+        } else {
+            showProcessingOverlay(false)
+            showTranslateButton(translationEnabled)
+            setTranslating(false)
+        }
+        // Surface errors only when idle (matches refreshTranslation's guard).
+        val errorMsg = if (!isBeingTranslated) page.translation?.errorMessage else null
+        showTranslationError(errorMsg)
     }
 
     /**
@@ -238,6 +294,16 @@ class PagerPageHolder(
         page.showTranslatedImage = showTranslations && page.translatedStream != null
         val streamFn = page.stream ?: return
 
+        // TachiyomiAT: record the rendered/cleaned image file name we're about to
+        // display (rendered wins over cleaned, matching the ViewModel collector's
+        // precedence) so refreshTranslation() can detect a no-op refresh (same
+        // image already on screen) and skip the re-decode.
+        lastShownImageName = if (page.showTranslatedImage) {
+            page.translation?.renderedImageName ?: page.translation?.cleanedImageName
+        } else {
+            null
+        }
+
         val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated) {
             showProcessingOverlay(true)
@@ -260,7 +326,12 @@ class PagerPageHolder(
                 }
                 Triple(source, isAnimated, background)
             }
+            // TachiyomiAT: if the holder was detached (scope cancelled) while we
+            // decoded off-thread, drop the result instead of writing into a dead
+            // view. Cooperative cancellation only fires at suspension points.
+            if (!holderScope.isActive) return
             withUIContext {
+                if (!holderScope.isActive) return@withUIContext
                 setImage(
                     source,
                     isAnimated,
@@ -292,6 +363,20 @@ class PagerPageHolder(
     fun refreshTranslation() {
         val streamAvailable = page.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
+        // TachiyomiAT: detect whether the translated image we'd render is the
+        // SAME one already on screen. refreshTranslation() can be called for this
+        // holder when only its STATUS changed (e.g. RUNNING→READY re-emitted, or
+        // a status nudge with no new image) — in which case reloading the image
+        // is pure waste and a visible flash. The dedup is keyed on the stable
+        // rendered/cleaned file NAME (rendered wins over cleaned, matching the
+        // ViewModel collector) rather than the stream lambda's referential
+        // identity, which was fragile because the stream factories allocate a
+        // fresh lambda on every call. Only relaunch setImage() when the image
+        // changed (a genuinely new rendered/cleaned result) OR we're switching
+        // between showing the original and the translated image.
+        val newName = page.translation?.renderedImageName ?: page.translation?.cleanedImageName
+        val alreadyShowingThisImage =
+            page.showTranslatedImage && newName != null && newName == lastShownImageName
         when {
             isBeingTranslated -> {
                 showProcessingOverlay(true)
@@ -299,12 +384,20 @@ class PagerPageHolder(
                 setTranslating(true)
             }
             showTranslations && streamAvailable -> {
-                page.showTranslatedImage = true
-                showProcessingOverlay(false)
-                showTranslateButton(translationEnabled)
-                setTranslating(false)
-                loadJob?.cancel()
-                loadJob = holderScope.launch { setImage() }
+                if (alreadyShowingThisImage) {
+                    // Same translated image already on screen — just sync the
+                    // overlay/button state, do NOT re-decode & re-set the image.
+                    showProcessingOverlay(false)
+                    showTranslateButton(translationEnabled)
+                    setTranslating(false)
+                } else {
+                    page.showTranslatedImage = true
+                    showProcessingOverlay(false)
+                    showTranslateButton(translationEnabled)
+                    setTranslating(false)
+                    loadJob?.cancel()
+                    loadJob = holderScope.launch { setImage() }
+                }
             }
             else -> {
                 showProcessingOverlay(false)
@@ -312,6 +405,10 @@ class PagerPageHolder(
                 setTranslating(false)
             }
         }
+        // Remember the image name we're now showing so the next
+        // refreshTranslation() can short-circuit if nothing changed. When showing
+        // the original (not a translated stream) there's no name to track.
+        lastShownImageName = if (page.showTranslatedImage) newName else null
         // TachiyomiAT: surface translation errors to the user — but only when the
         // page is NOT currently running. A page that's being retried may carry
         // a stale errorMessage from a prior failed attempt; showing it alongside

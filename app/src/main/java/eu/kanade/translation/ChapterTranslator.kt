@@ -137,6 +137,21 @@ class ChapterTranslator(
                 }
             }
         }
+
+        /**
+         * TachiyomiAT: evicts EVERY registered reader page stream, regardless of
+         * chapter. Each entry holds a `() -> InputStream` closure over a
+         * [eu.kanade.tachiyomi.ui.reader.model.ReaderPage] (and for the new eager
+         * prefetch path, a captured downloaded [ByteArray]), so leaving them in
+         * the process-lifetime map on reader background / "stop all translation"
+         * keeps those bytes/pages alive until the process dies. Call this from
+         * [ReaderViewModel.cancelTranslationsOnBackground] and [stopAllTranslation]
+         * so backgrounding the reader releases the streams instead of pinning
+         * page bitmaps in memory.
+         */
+        fun clearAllReaderPageStreams() {
+            readerPageStreams.clear()
+        }
     }
 
     private val _queueState = MutableStateFlow<List<Translation>>(emptyList())
@@ -258,7 +273,15 @@ class ChapterTranslator(
     var isPaused: Boolean = false
 
     private var currentFromLang: TextRecognizerLanguage
+    // TachiyomiAT: these engine references are reassigned from a translation
+    // coroutine (on language change) and read/closed from closeEngines() which
+    // runs WITHOUT the permit (called from stop() on the main thread). Mark them
+    // @Volatile so a stop()/language-change race reads a consistent reference
+    // instead of a stale value — closing the wrong client or seeing a half-
+    // published field. See closeEngines() for the full lifecycle note.
+    @Volatile
     private var textTranslator: TextTranslator
+    @Volatile
     private var recognitionEngine: PageRecognitionEngine
     private var currentInpaintingMode: InpaintingMode
 
@@ -645,10 +668,19 @@ class ChapterTranslator(
                 // Emit a running placeholder as early as possible so the
                 // reader can show a dimmed-image + spinner overlay on the
                 // currently processed page in real time.
+                // TachiyomiAT: clear stale result names (see the single-page
+                // path at ~line 1119 for the full rationale). Without this, a
+                // chapter re-translate leaves each page's old renderedImageName
+                // set while ocrStatus=RUNNING, so isPageBeingTranslated() stays
+                // false and the reader never shows the overlay for in-flight
+                // pages that had a prior result.
                 store.updatePage(fileName) {
                     (it ?: PageTranslation()).apply {
                         sourceFileName = fileName
                         ocrStatus = StageStatus.RUNNING
+                        renderedImageName = null
+                        cleanedImageName = null
+                        errorMessage = null
                         updatedAt = System.currentTimeMillis()
                     }
                 }
@@ -1094,10 +1126,28 @@ class ChapterTranslator(
             }
 
             // Emit RUNNING early so the reader shows the overlay for this page.
+            // TachiyomiAT: clear any STALE result names from a prior successful
+            // translation of this page. The reader's isPageBeingTranslated()
+            // predicate requires renderedImageName == null && cleanedImageName ==
+            // null to treat a page as "in progress" (so it shows the processing
+            // overlay + the cancel affordance instead of the idle translate
+            // button). On a RE-translation (user taps translate again on an
+            // already-translated page), ocrStatus flips to RUNNING here but the
+            // old renderedImageName was still set — so the predicate's `&&`
+            // short-circuited to false, the overlay never appeared, and the
+            // re-translate ran invisibly ("click again, nothing happens").
+            // Clearing the names here makes the predicate report correctly; they
+            // are rewritten downstream (lines ~1227/1306 for rendered, ~1600 for
+            // cleaned) when the new translation produces its result. This only
+            // mutates the in-memory/ persisted store STATE, not the image files
+            // themselves, so no translated images are lost.
             store.updatePage(pageKey) {
                 (it ?: PageTranslation()).apply {
                     sourceFileName = pageKey
                     ocrStatus = StageStatus.RUNNING
+                    renderedImageName = null
+                    cleanedImageName = null
+                    errorMessage = null
                     updatedAt = System.currentTimeMillis()
                 }
             }
@@ -1519,12 +1569,26 @@ class ChapterTranslator(
             logcat(LogPriority.ERROR, e) {
                 "Recognition failed for $fileName; falling back to ML Kit OCR recognition"
             }
-            // Replace the engine with persistent ML Kit instead of creating one-shot fallbacks
+            // TachiyomiAT: a transient ONNX failure (e.g. the intermittent idx-out-
+            // of-bounds error under memory pressure, or a native allocation failure)
+            // must NOT permanently kill inpainting for the rest of the chapter.
+            // Previously this catch block directly replaced recognitionEngine with
+            // MlKitFullPageRecognitionEngine and set NO flag — so the recovery
+            // logic (which keys on autoFallbackToFast) never triggered, and every
+            // subsequent page showed "Inpainting unavailable in ML Kit mode" until
+            // the chapter reloaded. Mirror the OOM path: set autoFallbackToFast so
+            // (a) the single-page path restores ONNX once the heap recovers
+            // (line ~1051), and (b) the batch path resets it at the next chapter
+            // start (line ~594). This makes a transient failure a TEMPORARY
+            // downgrade that self-heals, not a permanent one.
             if (recognitionEngine is RoiPageRecognitionEngine) {
                 try { recognitionEngine.close() } catch (_: Exception) {}
                 val fromLang = translation.fromLang
                 recognitionEngine = MlKitFullPageRecognitionEngine(fromLang)
-                logcat(LogPriority.WARN) { "Switched to persistent ML Kit engine after ONNX failure" }
+                autoFallbackToFast = true
+                logcat(LogPriority.WARN) {
+                    "Switched to persistent ML Kit engine after ONNX failure (autoFallbackToFast=true; will self-restore on heap recovery)"
+                }
             }
             pageTranslation = recognitionEngine.recognize(bitmap)
         }

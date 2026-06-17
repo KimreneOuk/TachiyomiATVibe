@@ -136,6 +136,12 @@ class OpenRouterTranslator(
     }
 
     override fun close() {
+        // TachiyomiAT: release this translator's connection pool + dispatcher
+        // threads. TranslationEngineBuilder rebuilds translators on every language
+        // change, and an empty close() left each retired client's pool (and its
+        // idle threads) alive for the process lifetime, slowly leaking.
+        okHttpClient.connectionPool.evictAll()
+        okHttpClient.dispatcher.executorService.shutdown()
     }
 
 

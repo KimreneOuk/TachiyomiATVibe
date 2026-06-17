@@ -39,6 +39,17 @@ class RoiPageRecognitionEngine(
     private var initialized = false
     private var initFailed = false
     private val initMutex = Mutex()
+    // TachiyomiAT: cooperative close flag. closeEngines() in ChapterTranslator
+    // runs WITHOUT the translator permit (called from stop() on the main thread),
+    // so it can race an in-flight analyze()/inpaint(). The locals-capture pattern
+    // below guards the KOTLIN dereference (no NPE), but the underlying ONNX
+    // NATIVE sessions can still be freed by close() while analyze() is mid-call
+    // past a suspension point — a potential SIGSEGV rather than the catchable
+    // IllegalStateException. analyze()/inpaint() poll this flag before each ONNX
+    // invocation and bail cleanly (throwing) so the page degrades to the ML Kit
+    // fallback instead of crashing the process.
+    @Volatile
+    private var closed = false
 
     val isAvailable: Boolean
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
@@ -78,7 +89,10 @@ class RoiPageRecognitionEngine(
 
     override suspend fun analyze(bitmap: Bitmap): PageTranslation {
         if (!initialized) initialize()
-        // Capture the engine references into locals up front. close() can run
+        // TachiyomiAT: bail before any ONNX call if the engine was closed
+        // cooperatively (stop()/language-change raced this call). See [closed].
+        if (closed) throw IllegalStateException("ONNX recognition engine closed before analyze")
+        // Capture this engine references into locals up front. close() can run
         // concurrently (closeEngines does NOT hold translatorPermit) and nulls
         // these fields; the previous detector!!/roiOcrEngine!! dereferences were
         // an NPE crash if close() raced mid-analyze. Throwing a catchable
@@ -90,6 +104,10 @@ class RoiPageRecognitionEngine(
             ?: throw IllegalStateException("ONNX OCR engine closed mid-analyze")
         val startTime = System.nanoTime()
         TranslationMemoryBudget.logSnapshot("analyze_start", bitmap.width, bitmap.height)
+        // TachiyomiAT: re-check the closed flag right before the first native
+        // (detect) call; close() may have run between the top-of-method check
+        // and here (e.g. after initialize() completed).
+        if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
         val detections = localDetector.detect(bitmap)
         val bubbles = detections.filter { it.label == 0 }
         val textDetections = detections.filter { it.label == 1 || it.label == 2 }
@@ -118,6 +136,10 @@ class RoiPageRecognitionEngine(
         // have nulled by now).
         val engine = localOcrEngine
         for (detection in filteredDetections) {
+            // TachiyomiAT: cooperative close — bail out of the per-ROI OCR loop
+            // if close() ran between iterations, before invoking the (native)
+            // OCR engine. Throwing keeps the page degradable instead of SIGSEGV.
+            if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
             val bbox = detection.bbox
             val crop = cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
             val text = engine.recognize(crop)
@@ -141,6 +163,18 @@ class RoiPageRecognitionEngine(
                 trimParentBbox(rp.bbox, bbox, siblings)
             } ?: rawParent?.bbox
             val renderColors = computeRenderColors(bitmap, bbox, parentBbox, detection.label)
+            // TachiyomiAT: choose the render text direction. Vertical (TTB) manga
+            // text is laid out top-to-bottom in columns, so its bounding box is
+            // taller than wide. The renderer (PageTextRenderer) only goes vertical
+            // when direction == "TTB"; without this, Japanese vertical text was
+            // always rendered horizontally even though MangaOcr read it correctly.
+            // Use a height-to-width ratio heuristic, gated on the CJK languages
+            // that actually use vertical layout, so horizontal Latin text is
+            // unaffected.
+            val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
+                language == TextRecognizerLanguage.CHINESE ||
+                language == TextRecognizerLanguage.KOREAN
+            val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
             recognizedBlocks.add(
                 RecognizedBlock(
                     detection = detection,
@@ -162,7 +196,7 @@ class RoiPageRecognitionEngine(
                     textColor = renderColors.first,
                     strokeColor = renderColors.second,
                     strokeWidth = renderColors.third,
-                    direction = "LTR",
+                    direction = direction,
                 ),
                 ),
             )
@@ -238,6 +272,12 @@ class RoiPageRecognitionEngine(
                     "ONNX inpainting input: boxes=${combinedBoxes.size} extraDetector=${extraDetectorBoxes.size} labels=${combinedLabels.groupingBy { it }.eachCount()}"
                 }
                 TranslationMemoryBudget.logSnapshot("before_inpaint", bitmap.width, bitmap.height, "boxes=${combinedBoxes.size}")
+                // TachiyomiAT: cooperative close — bail before the native inpaint
+                // call if close() ran while building the input boxes. See [closed].
+                if (closed) {
+                    pageTranslation.inpaintStatus = StageStatus.FAILED
+                    return null
+                }
                 val cleaned = inpainter.inpaintRegions(bitmap, combinedBoxes, combinedLabels, mode = inpaintingMode)
                 pageTranslation.inpaintStatus = StageStatus.READY
                 pageTranslation.updatedAt = System.currentTimeMillis()
@@ -272,6 +312,11 @@ class RoiPageRecognitionEngine(
     )
 
     override fun close() {
+        // TachiyomiAT: set the cooperative close flag FIRST, before freeing the
+        // native sessions. An in-flight analyze()/inpaint() that polls [closed]
+        // between ONNX calls will see this and bail cleanly (throwing) instead of
+        // touching a session freed on the line below — a potential native crash.
+        closed = true
         detector?.close()
         roiOcrEngine?.close()
         inpainting?.close()

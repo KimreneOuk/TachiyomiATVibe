@@ -22,7 +22,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import logcat.LogPriority
@@ -60,9 +62,41 @@ class WebtoonPageHolder(
 
     private var page: ReaderPage? = null
 
-    private val holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // TachiyomiAT: the holder's coroutine scope. Unlike PagerPageHolder (which
+    // cancels its scope once in onDetachedFromWindow, the end of the view's
+    // life), a WebtoonPageHolder is REUSED after recycle() — RecyclerView
+    // returns it to the pool and rebinds it. So the scope must be cancelled on
+    // recycle AND recreated on bind, otherwise the holder would carry a
+    // cancelled scope forever and never load again. Recreation is cheap
+    // (SupervisorJob + Main.immediate) and is what makes recycle() safe.
+    private var holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var loadJob: Job? = null
+
+    /**
+     * TachiyomiAT: the rendered/cleaned image FILE NAME currently displayed by
+     * this holder, so [refreshTranslation] can skip a redundant re-decode when
+     * the same translated image is already on screen.
+     *
+     * This replaces an earlier guard that keyed on `===` referential identity of
+     * the translated-stream lambda. That was fragile: the stream factories
+     * ([getRenderedImageStream]/[getCleanedImageStream]) return a brand-new
+     * lambda on every call, so identity only happened to be stable across
+     * status-only re-emissions. Keying on the stable file name (rendered wins
+     * over cleaned, matching the ViewModel collector's precedence) makes the
+     * dedup content-based and robust to any path that re-resolves the stream.
+     */
+    private var lastShownImageName: String? = null
+
+    /**
+     * TachiyomiAT: a generation counter bumped on every [bind]. In-flight
+     * [setImage] jobs capture the generation they were launched with and bail
+     * before touching the view if a newer bind has landed — cooperative
+     * cancellation only fires at suspension points, so a refresh job past its
+     * [withIOContext] could otherwise set the OLD page's image into a holder
+     * that has since been rebound to a new page.
+     */
+    private var bindGeneration: Int = 0
 
     init {
         refreshLayoutParams()
@@ -99,8 +133,59 @@ class WebtoonPageHolder(
             t.renderedImageName == null && t.cleanedImageName == null
     } ?: false
 
+    /**
+     * TachiyomiAT: lightweight status-only sync. Counterpart to [refreshTranslation]
+     * for the case where a page's stage transitioned (RUNNING/FAILED) but the
+     * displayed IMAGE did not change. Updates ONLY the processing overlay and the
+     * translate/cancel button + error text — it must never re-decode or re-set
+     * the image. This is the handler for [TranslationStatusChanged]; calling it
+     * instead of [refreshTranslation] on bare status changes is what eliminates
+     * the redundant image work that caused the auto-translate blink.
+     */
+    fun syncTranslationStatus() {
+        val currentPage = page ?: return
+        val isBeingTranslated = isPageBeingTranslated()
+        if (isBeingTranslated) {
+            frame.showProcessingOverlay(true)
+            frame.setTranslating(true)
+        } else {
+            frame.showProcessingOverlay(false)
+            frame.showTranslateButton(translationEnabled)
+            frame.setTranslating(false)
+        }
+        // Surface errors only when idle (matches refreshTranslation's guard).
+        val errorMsg = if (!isBeingTranslated) currentPage.translation?.errorMessage else null
+        frame.showTranslationError(errorMsg)
+    }
+
     fun bind(page: ReaderPage) {
+        // TachiyomiAT: invalidate any in-flight setImage() so it can't write the
+        // previous page's image into this rebound holder (see [bindGeneration]).
+        bindGeneration++
+        // TachiyomiAT: a freshly bound page hasn't rendered anything yet — reset
+        // the dedup cache so the first refresh after rebind always applies.
+        lastShownImageName = null
+        // TachiyomiAT: recreate the scope. [recycle] cancels it (to release the
+        // holder's references while pooled), so a reused holder arrives here
+        // with a dead scope and must get a fresh one before launching jobs.
+        if (!holderScope.isActive) {
+            holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        }
         this.page = page
+        // TachiyomiAT: seed the processing overlay from the page's DURABLE
+        // translation status the instant it is bound. Previously the overlay was
+        // only (re)shown when [setImage]/[refreshTranslation]/[syncTranslationStatus]
+        // ran — and those are only driven by the page-load statusFlow reaching READY
+        // or by a TranslationStatusChanged event reaching an ATTACHED holder. So a
+        // page that scrolled off-screen (holder recycled → onDetachedFromWindow
+        // cleared the ephemeral overlay state) and scrolled back WHILE still
+        // mid-translation had a window — sometimes a long one — with no animation,
+        // even though PageTranslation.*Status was still "RUNNING". Re-deriving the
+        // overlay here from the durable stage status makes it consistent: any bound
+        // (visible) translating page animates immediately, independent of event or
+        // decode timing. syncTranslationStatus() only touches the overlay/button
+        // (never re-decodes), so it's safe before loadPageAndProcessStatus() runs.
+        syncTranslationStatus()
         loadJob?.cancel()
         loadJob = holderScope.launch { loadPageAndProcessStatus() }
         refreshLayoutParams()
@@ -121,6 +206,21 @@ class WebtoonPageHolder(
     override fun recycle() {
         loadJob?.cancel()
         loadJob = null
+
+        // TachiyomiAT: cancel the holder's coroutine scope. Previously this was
+        // never done — the SupervisorJob + Main.immediate context leaked for the
+        // process lifetime of every recycled holder, pinning the holder → frame
+        // (ReaderPageImageView) → Activity-themed context → Compose indicator.
+        // The per-holder preference collectors that motivated the original leak
+        // were hoisted to WebtoonViewer, but the scope itself still leaked.
+        holderScope.cancel()
+
+        // TachiyomiAT: drop references so a holder sitting in the RecyclerView
+        // pool doesn't keep the previous page (and its stream lambdas) alive,
+        // and doesn't carry stale dedup state into its next binding.
+        page = null
+        lastShownImageName = null
+        bindGeneration++
 
         removeErrorLayout()
         frame.recycle()
@@ -176,8 +276,26 @@ class WebtoonPageHolder(
     private suspend fun setImage() {
         progressIndicator.setProgress(0)
 
-        page?.showTranslatedImage = showTranslations && page?.translatedStream != null
-        val streamFn = page?.stream ?: return
+        // TachiyomiAT: capture the generation this setImage() was launched for.
+        // If a newer bind() lands before we reach the UI update, bail —
+        // cooperative cancellation only fires at suspension points, so without
+        // this check a refresh job past its withIOContext could still call
+        // frame.setImage() with the OLD page's bytes into a rebound holder.
+        val myGeneration = bindGeneration
+        val boundPage = page ?: return
+
+        boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
+        val streamFn = boundPage.stream ?: return
+
+        // TachiyomiAT: record the rendered/cleaned image file name we're about to
+        // display (rendered wins over cleaned, matching the ViewModel collector's
+        // precedence) so refreshTranslation() can skip a redundant re-decode when
+        // the same image is already on screen. See [lastShownImageName].
+        lastShownImageName = if (boundPage.showTranslatedImage) {
+            boundPage.translation?.renderedImageName ?: boundPage.translation?.cleanedImageName
+        } else {
+            null
+        }
 
         val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated) {
@@ -196,7 +314,12 @@ class WebtoonPageHolder(
                 val isAnimated = ImageUtil.isAnimatedAndSupported(source)
                 Pair(source, isAnimated)
             }
+            // TachiyomiAT: rebind guard — if a newer page was bound while we
+            // decoded off-thread, drop this result instead of flashing the wrong
+            // page. Also bail if the coroutine was cancelled.
+            if (myGeneration != bindGeneration || !holderScope.isActive) return
             withUIContext {
+                if (myGeneration != bindGeneration) return@withUIContext
                 frame.setImage(
                     source,
                     isAnimated,
@@ -212,8 +335,10 @@ class WebtoonPageHolder(
                 removeErrorLayout()
             }
         } catch (e: Throwable) {
+            if (myGeneration != bindGeneration) return
             logcat(LogPriority.ERROR, e)
             withUIContext {
+                if (myGeneration != bindGeneration) return@withUIContext
                 frame.showProcessingOverlay(false)
                 setError()
             }
@@ -224,6 +349,17 @@ class WebtoonPageHolder(
         val currentPage = page ?: return
         val streamAvailable = currentPage.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
+        // TachiyomiAT: only relaunch setImage() when the translated image we'd
+        // render is DIFFERENT from the one already on screen. The dedup is keyed
+        // on the stable rendered/cleaned file NAME (rendered wins over cleaned,
+        // matching the ViewModel collector) rather than the stream lambda's
+        // referential identity, which was fragile because the stream factories
+        // return a fresh lambda on every call. A refresh for a status-only
+        // change (RUNNING→READY re-emitted, no new image) must NOT re-decode &
+        // re-set the image — that's the visible flash.
+        val newName = currentPage.translation?.renderedImageName ?: currentPage.translation?.cleanedImageName
+        val alreadyShowingThisImage =
+            currentPage.showTranslatedImage && newName != null && newName == lastShownImageName
         when {
             isBeingTranslated -> {
                 frame.showProcessingOverlay(true)
@@ -231,12 +367,20 @@ class WebtoonPageHolder(
                 frame.setTranslating(true)
             }
             showTranslations && streamAvailable -> {
-                currentPage.showTranslatedImage = true
-                frame.showProcessingOverlay(false)
-                frame.showTranslateButton(translationEnabled)
-                frame.setTranslating(false)
-                loadJob?.cancel()
-                loadJob = holderScope.launch { setImage() }
+                if (alreadyShowingThisImage) {
+                    // Same translated image already on screen — sync overlays
+                    // only, do NOT re-decode & re-set the image.
+                    frame.showProcessingOverlay(false)
+                    frame.showTranslateButton(translationEnabled)
+                    frame.setTranslating(false)
+                } else {
+                    currentPage.showTranslatedImage = true
+                    frame.showProcessingOverlay(false)
+                    frame.showTranslateButton(translationEnabled)
+                    frame.setTranslating(false)
+                    loadJob?.cancel()
+                    loadJob = holderScope.launch { setImage() }
+                }
             }
             else -> {
                 frame.showProcessingOverlay(false)
@@ -244,6 +388,10 @@ class WebtoonPageHolder(
                 frame.setTranslating(false)
             }
         }
+        // Record the image name we're now showing so the next refresh can
+        // short-circuit if nothing changed. When showing the original (not a
+        // translated stream) there's no name to track.
+        lastShownImageName = if (currentPage.showTranslatedImage) newName else null
         // TachiyomiAT: surface translation errors — but only when the page is NOT
         // currently running, to avoid showing stale errors from a prior failed
         // attempt alongside the RUNNING overlay.

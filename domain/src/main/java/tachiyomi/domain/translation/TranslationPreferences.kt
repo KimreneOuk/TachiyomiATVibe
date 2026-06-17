@@ -111,6 +111,16 @@ class TranslationPreferences(
     fun translationAiTemperature() = preferenceStore.getString("translation_ai_temperature", "0.3")
     fun translationAiOutputTokens() = preferenceStore.getString("translation_ai_output_tokens", "8192")
 
+    /**
+     * TachiyomiAT: opt-in verbose logging for the translation pipeline. When on,
+     * the OCR/inpaint/translate/render stages emit per-stage and per-ROI INFO
+     * logs to logcat, plus heap snapshots. When off (default), only ERROR-level
+     * diagnostics are emitted, so the hot path isn't doing string interpolation
+     * + log dispatch on every stage of every page. Useful for debugging a flaky
+     * translation run without rebuilding.
+     */
+    fun translationDiagnostics() = preferenceStore.getBoolean("translation_diagnostics", false)
+
     //endregion
 
     companion object {

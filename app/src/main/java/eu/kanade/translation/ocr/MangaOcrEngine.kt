@@ -20,6 +20,9 @@ import java.nio.LongBuffer
 import kotlin.math.max
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
+import tachiyomi.domain.translation.TranslationPreferences
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 class MangaOcrEngine : RoiOcrEngine {
 
@@ -252,14 +255,20 @@ class MangaOcrEngine : RoiOcrEngine {
             val result = postprocess(text)
             val t5 = System.nanoTime()
 
-            logcat(LogPriority.INFO) {
-                "[ocr] total=${(t5 - t0) / 1_000_000.0}ms " +
-                    "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
-                    "encoder=${(t2 - t1) / 1_000_000.0}ms " +
-                    "decoder_init=${(t3 - t2) / 1_000_000.0}ms " +
-                    "decoder_steps=${(t4 - t3) / 1_000_000.0}ms " +
-                    "postprocess=${(t5 - t4) / 1_000_000.0}ms " +
-                    "tokens=${tokenIds.size}"
+            // TachiyomiAT: this timing log fires once per ROI crop (30+ on a
+            // text-heavy page) and does a 6-field string interpolation each time.
+            // Gate it behind the opt-in diagnostics pref so the hot path stays
+            // quiet unless the user is actively debugging OCR latency.
+            if (isDiagnosticsEnabled()) {
+                logcat(LogPriority.INFO) {
+                    "[ocr] total=${(t5 - t0) / 1_000_000.0}ms " +
+                        "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
+                        "encoder=${(t2 - t1) / 1_000_000.0}ms " +
+                        "decoder_init=${(t3 - t2) / 1_000_000.0}ms " +
+                        "decoder_steps=${(t4 - t3) / 1_000_000.0}ms " +
+                        "postprocess=${(t5 - t4) / 1_000_000.0}ms " +
+                        "tokens=${tokenIds.size}"
+                }
             }
             return result
         } finally {
@@ -406,5 +415,28 @@ class MangaOcrEngine : RoiOcrEngine {
         private const val START_TOKEN = 2
         private const val END_TOKEN = 3
         private const val MAX_LEN = 256
+
+        /**
+         * TachiyomiAT: mirrors the translation_diagnostics preference. The per-ROI
+         * [ocr] timing log in [recognize] fires once per text region (30+ on a
+         * text-heavy page), so reading the preference through SharedPreferences on
+         * every call would itself be hot-path overhead. These @Volatile flags are
+         * initialized lazily once; the diagnostics pref is not toggled mid-read.
+         */
+        @Volatile
+        private var diagnosticsInitialized = false
+        @Volatile
+        private var diagnosticsEnabled = false
+
+        private fun isDiagnosticsEnabled(): Boolean {
+            if (diagnosticsInitialized) return diagnosticsEnabled
+            diagnosticsEnabled = try {
+                Injekt.get<TranslationPreferences>().translationDiagnostics().get()
+            } catch (e: Throwable) {
+                false
+            }
+            diagnosticsInitialized = true
+            return diagnosticsEnabled
+        }
     }
 }

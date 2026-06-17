@@ -76,6 +76,22 @@ open class ReaderPageImageView @JvmOverloads constructor(
         relayoutTranslateButton()
     }
 
+    // TachiyomiAT: clean up when this view detaches. The fade animator introduced
+    // in [showProcessingOverlay] runs on the pageView via View.animate(), which
+    // targets the view's Handler; if the holder is recycled/detached mid-fade
+    // the animator would otherwise keep running against a detached view (wasted
+    // work + potential jank when re-attached). Cancel it, restore full alpha,
+    // and drop the overlay so a recycled holder doesn't briefly show a stale
+    // dim+spinner. Idempotent state is also reset so the next attach starts clean.
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        pageView?.animate()?.cancel()
+        pageView?.alpha = 1.0f
+        processingOverlayVisible = false
+        processingScrim?.isVisible = false
+        processingIndicator?.hide()
+    }
+
     //TachiyomiAT : need this for textblock placements
     var pageView: View? = null
 
@@ -148,6 +164,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var processingIndicator: ReaderProgressIndicator? = null
     private var processingScrim: View? = null
 
+    // TachiyomiAT: tracks the current processing-overlay state so
+    // [showProcessingOverlay] can short-circuit duplicate calls (translation
+    // status re-emits the same RUNNING state repeatedly) instead of re-firing
+    // the fade animator each time.
+    private var processingOverlayVisible: Boolean = false
+
     // TachiyomiAT: small error text shown below the spinner when a translation
     // fails, so the user gets meaningful feedback instead of silently seeing
     // "nothing happened" on skipped/failed pages.
@@ -191,16 +213,21 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     fun showTranslateButton(visible: Boolean) {
         if (visible) {
+            val wasCreated = translateButton == null
             ensureTranslateButton()
-            // The page image (pageView) is added with MATCH_PARENT after the
-            // button during setImage(); in a FrameLayout later children draw on
-            // top, so without this the image would cover the button. bringToFront
-            // each time we show it so it stays above the image regardless of the
-            // order views were added/re-prepared.
-            translateButton?.apply {
-                bringToFront()
-                visibility = View.VISIBLE
+            // TachiyomiAT: only bringToFront() when the button was just created or
+            // is currently hidden. Calling it unconditionally triggers a child-list
+            // reorder + requestLayout on every refreshTranslation() — wasteful
+            // during the frequent translation status updates.
+            if (wasCreated || translateButton?.visibility != View.VISIBLE) {
+                translateButton?.apply {
+                    bringToFront()
+                    visibility = View.VISIBLE
+                }
             }
+            // Invalidate the throttle cache so the first layout after show always
+            // applies the correct margins (the cached position may be stale).
+            lastButtonApplied = false
             // Pin against the current image rect now that it's visible.
             relayoutTranslateButton()
         } else {
@@ -254,21 +281,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
      */
     private fun computeImageViewDrawableRect(imageView: AppCompatImageView): RectF? {
         val drawable = imageView.drawable ?: return null
-        val matrixValues = FloatArray(9)
         val m = imageView.imageMatrix
-        m.getValues(matrixValues)
-        val bounds = android.graphics.Rect()
+        m.getValues(imageMatrixValues)
+        val bounds = tempDrawableBounds
         drawable.copyBounds(bounds)
         if (bounds.width() <= 0 || bounds.height() <= 0) return null
-        val scaleX = matrixValues[android.graphics.Matrix.MSCALE_X]
-        val scaleY = matrixValues[android.graphics.Matrix.MSCALE_Y]
-        val transX = matrixValues[android.graphics.Matrix.MTRANS_X]
-        val transY = matrixValues[android.graphics.Matrix.MTRANS_Y]
+        val scaleX = imageMatrixValues[android.graphics.Matrix.MSCALE_X]
+        val scaleY = imageMatrixValues[android.graphics.Matrix.MSCALE_Y]
+        val transX = imageMatrixValues[android.graphics.Matrix.MTRANS_X]
+        val transY = imageMatrixValues[android.graphics.Matrix.MTRANS_Y]
         if (scaleX == 0f || scaleY == 0f) return null
         val left = bounds.left * scaleX + transX + imageView.paddingLeft
         val top = bounds.top * scaleY + transY + imageView.paddingTop
         return RectF(left, top, left + bounds.width() * scaleX, top + bounds.height() * scaleY)
     }
+
+    // TachiyomiAT: scratch buffers reused across [relayoutTranslateButton] /
+    // [computeImageViewDrawableRect] calls to avoid allocating a Rect + a 9-float
+    // array on every pan/zoom frame (these run on every gesture callback).
+    private val imageMatrixValues = FloatArray(9)
+    private val tempDrawableBounds = android.graphics.Rect()
 
     /**
      * TachiyomiAT: repositions the per-page translate button so it hugs the
@@ -286,21 +318,57 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val rect = computeImageRect()
         if (rect == null) {
             // No image yet: keep the default holder top-left inset.
-            lp.gravity = Gravity.TOP or Gravity.START
-            lp.setMargins(inset, inset, 0, 0)
-            btn.layoutParams = lp
+            val targetLeft = inset
+            val targetTop = inset
+            if (applyButtonMarginsIfChanged(lp, targetLeft, targetTop)) {
+                lastButtonLeft = targetLeft
+                lastButtonTop = targetTop
+            }
             return
         }
         // Position at the image's top-left, inset by a small margin so the
         // button doesn't overlap the page's own top-left content. Clamp so the
         // button stays within the holder (a heavily panned/zoomed image may
         // place its top-left off the visible area).
-        val left = rect.left.toInt().coerceIn(0, (width - btn.width).coerceAtLeast(0))
-        val top = rect.top.toInt().coerceIn(0, (height - btn.height).coerceAtLeast(0))
-        lp.gravity = Gravity.TOP or Gravity.START
-        lp.setMargins(left + inset, top + inset, 0, 0)
-        btn.layoutParams = lp
+        val targetLeft = rect.left.toInt().coerceIn(0, (width - btn.width).coerceAtLeast(0)) + inset
+        val targetTop = rect.top.toInt().coerceIn(0, (height - btn.height).coerceAtLeast(0)) + inset
+        // TachiyomiAT: pan/zoom fire this on every gesture frame. Only re-assign
+        // layoutParams (which triggers requestLayout) when the position actually
+        // moved by at least a pixel — sub-pixel jitter from continuous pan must
+        // not cause a per-frame layout pass.
+        if (applyButtonMarginsIfChanged(lp, targetLeft, targetTop)) {
+            lastButtonLeft = targetLeft
+            lastButtonTop = targetTop
+        }
     }
+
+    /**
+     * TachiyomiAT: assigns the translate button's gravity+margins and triggers a
+     * layout pass ONLY when the target position differs from the last applied
+     * one (or none has been applied yet). Returns true if the assignment ran.
+     * This is the throttle that stops [relayoutTranslateButton] from issuing a
+     * requestLayout() on every pan/zoom frame when the position is unchanged.
+     */
+    private fun applyButtonMarginsIfChanged(
+        lp: FrameLayout.LayoutParams,
+        targetLeft: Int,
+        targetTop: Int,
+    ): Boolean {
+        if (targetLeft == lastButtonLeft && targetTop == lastButtonTop && lastButtonApplied) {
+            return false
+        }
+        lp.gravity = Gravity.TOP or Gravity.START
+        lp.setMargins(targetLeft, targetTop, 0, 0)
+        translateButton?.layoutParams = lp
+        lastButtonApplied = true
+        return true
+    }
+
+    // TachiyomiAT: last margins applied to the translate button, used by
+    // [applyButtonMarginsIfChanged] to skip redundant requestLayout() calls.
+    private var lastButtonLeft: Int = Int.MIN_VALUE
+    private var lastButtonTop: Int = Int.MIN_VALUE
+    private var lastButtonApplied: Boolean = false
 
     /**
      * TachiyomiAT: restores the intended child-view z-order after
@@ -415,8 +483,24 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun showProcessingOverlay(visible: Boolean) {
-        // Dim the page image so the user can see the overlay is active.
-        pageView?.alpha = if (visible) 0.4f else 1.0f
+        // TachiyomiAT: idempotent — no-op when the requested state already matches
+        // the current overlay state. Translation status re-emits (RUNNING stage
+        // transitions) can call this repeatedly; without this guard each call
+        // would re-trigger the fade and the scrim/indicator toggle.
+        if (visible == processingOverlayVisible) return
+        processingOverlayVisible = visible
+
+        // Dim the page image with a short fade instead of an instant alpha snap,
+        // so the overlay appearing/disappearing feels smooth rather than blinking.
+        // Cancel any in-flight alpha animator first so rapid toggles don't stack.
+        pageView?.animate()?.cancel()
+        val targetAlpha = if (visible) DIMMED_ALPHA else 1.0f
+        pageView
+            ?.animate()
+            ?.alpha(targetAlpha)
+            ?.setDuration(OVERLAY_FADE_DURATION_MS)
+            ?.start()
+
         if (visible) {
             ensureProcessingOverlay()
             processingScrim?.isVisible = true
@@ -649,7 +733,16 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
                 ImageRequest.Builder(context)
                     .data(data)
-                    .memoryCachePolicy(CachePolicy.DISABLED)
+                    // TachiyomiAT: enable the memory cache for the webtoon non-SSIV
+                    // path. Previously both policies were DISABLED, which forced a
+                    // full bitmap re-decode on every setImage() — combined with the
+                    // (now fixed) redundant rebinds this was a major OOM/jank source
+                    // on low-RAM devices. Translated/original webtoon sources are
+                    // stable per content, so memoizing the decoded bitmap is safe.
+                    // Disk stays disabled because the source bytes are already on
+                    // disk (translated WEBP / downloaded page); we only want to
+                    // avoid re-decoding them into a Bitmap.
+                    .memoryCachePolicy(CachePolicy.ENABLED)
                     .diskCachePolicy(CachePolicy.DISABLED)
                     .target(
                         onSuccess = { result ->
@@ -766,3 +859,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
 }
 
 private const val MAX_ZOOM_SCALE = 5F
+
+// TachiyomiAT: animation tuning for the translation processing overlay.
+private const val DIMMED_ALPHA = 0.4f
+private const val OVERLAY_FADE_DURATION_MS = 150L

@@ -134,6 +134,14 @@ class DeepSeekTranslator(
                 }
                 block.translation = sanitizeOcrArtifacts(translated)
             }
+            // TachiyomiAT: filter out watermark blocks (the model occasionally
+            // echoes a "RTMTH" watermark it was trained with). GeminiTranslator
+            // already does this; applying it here too keeps block geometry
+            // consistent across engines so the inpaint boxes (computed before
+            // translation) stay aligned regardless of which AI engine is selected.
+            pages.forEach { (_, v) ->
+                v.blocks = v.blocks.filterNot { it.translation.contains("RTMTH") }.toMutableList()
+            }
 
         } catch (e: Exception) {
             logcat { "DeepSeek Translation Error : ${e.stackTraceToString()}" }
@@ -164,6 +172,12 @@ class DeepSeekTranslator(
     }
 
     override fun close() {
-        // No-op
+        // TachiyomiAT: release this translator's connection pool + dispatcher
+        // threads. TranslationEngineBuilder rebuilds translators on every language
+        // change, and a no-op close() left each retired client's pool (and its
+        // idle threads) alive for the process lifetime, slowly leaking. This
+        // does NOT evict shared/coil clients — only this instance's own pool.
+        okHttpClient.connectionPool.evictAll()
+        okHttpClient.dispatcher.executorService.shutdown()
     }
 }
