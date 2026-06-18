@@ -182,12 +182,21 @@ class RoiPageRecognitionEngine(
             // horizontal line the model can read. The recognized text is then laid
             // out vertically by the renderer using the existing direction="TTB"
             // logic below, so the rotation is OCR-only and does not affect rendering.
+            //
+            // TachiyomiAT: gate the rotation on engine.prefersHorizontalText so it
+            // applies ONLY to horizontal-line engines (PaddleOCR). ML Kit's CJK
+            // recognizers and MangaOcr read vertical text NATIVELY — feeding them a
+            // pre-rotated crop was actively harming them (truncated/garbled output).
+            // The earlier unconditional rotation was a one-engine fix that became a
+            // second engine's bug once ML Kit was selectable.
             val boxWidthPre = crop.width.toFloat()
             val boxHeightPre = crop.height.toFloat()
             val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
                 language == TextRecognizerLanguage.CHINESE ||
                 language == TextRecognizerLanguage.KOREAN
-            val rotatedForOcr = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
+            val rotatedForOcr = isVerticalLanguage &&
+                engine.prefersHorizontalText &&
+                boxHeightPre > boxWidthPre * 1.5f
             val ocrInput = if (rotatedForOcr) {
                 val matrix = android.graphics.Matrix()
                 matrix.postRotate(90f)

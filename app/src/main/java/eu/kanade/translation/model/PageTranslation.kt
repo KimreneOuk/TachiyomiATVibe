@@ -58,6 +58,7 @@ object StageStatus {
     const val RUNNING = "RUNNING"
     const val READY = "READY"
     const val FAILED = "FAILED"
+    const val CANCELLED = "CANCELLED"
 
     /**
      * TachiyomiAT: maximum number of times auto-translate will re-attempt a page

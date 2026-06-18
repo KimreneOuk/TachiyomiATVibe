@@ -23,6 +23,13 @@ import kotlin.math.min
 
 class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
+    // TachiyomiAT: PP-OCRv6's recognition model is a CNN+CTC head trained on
+    // horizontal text lines (left-to-right). It cannot read vertical columns
+    // directly, so RoiPageRecognitionEngine rotates tall (vertical) crops 90°
+    // for THIS engine only — native-vertical engines (ML Kit, MangaOcr) opt out
+    // via prefersHorizontalText=false and get the crop unrotated.
+    override val prefersHorizontalText: Boolean = true
+
     private var session: OrtSession? = null
     private var dictionary: List<String> = emptyList()
     private var inputName: String = "x"

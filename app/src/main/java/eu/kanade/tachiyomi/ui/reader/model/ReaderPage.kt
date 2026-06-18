@@ -23,6 +23,8 @@ open class ReaderPage(
 
     open lateinit var chapter: ReaderChapter
 
+    var translationStorageKey: String? = null
+
     var showTranslatedImage: Boolean = false
 
     val stream: (() -> InputStream)?

@@ -42,11 +42,16 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.TranslationPageId
+import eu.kanade.translation.TranslationPageRequest
+import eu.kanade.translation.TranslationWorkKind
+import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.shouldSkipAutoScheduling
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -54,7 +59,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
@@ -88,7 +92,6 @@ import uy.kohesive.injekt.api.get
 import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.time.Instant
-import java.util.concurrent.ConcurrentHashMap
 import java.util.Date
 
 /**
@@ -209,26 +212,13 @@ class ReaderViewModel @JvmOverloads constructor(
     private var translationStateJob: kotlinx.coroutines.Job? = null
     // TachiyomiAT: dedup token for handleAutoTranslation. On chapter load, BOTH
     // the landing-page path (loadChapter) AND the auto-toggle/enable collectors
-    // can fire handleAutoTranslation for the SAME page within milliseconds. Each
-    // launches its own translatePagesSequential batch, so every page got
-    // translated TWICE (the reported "stuck animation / won't advance" symptom —
-    // the second batch re-OCR'd pages the first batch had just finished). This
-    // token collapses a rapid second call for the same page into a no-op. It is
-    // keyed on (chapterId + pageKey) and cleared once the sequential batch it
-    // guards has been submitted, so a genuine later page-change still enqueues.
+    // can fire handleAutoTranslation for the SAME page within milliseconds.
+    // Manager-side reservation dedups the actual work, but this token avoids
+    // rebuilding and submitting the same auto window twice on initial load.
     @Volatile
     private var lastAutoTranslateKey: String = ""
     @Volatile
     private var lastAutoTranslateAtMs: Long = 0L
-
-    /**
-     * ViewModel-side reservation for auto-prefetch page keys. TranslationManager
-     * also dedups queued/running pages, but auto-prefetch may download uncached
-     * page images before it submits the sequential batch. Reserving here avoids
-     * duplicate network/image work when overlapping page-selection windows ask
-     * for the same future page.
-     */
-    private val autoQueuedPageKeys = ConcurrentHashMap.newKeySet<String>()
 
     // TachiyomiAT: the published [State.translationState] now reflects BOTH the
     // batch-queue status (batchTranslationState, driven by observeTranslationState)
@@ -409,8 +399,13 @@ class ReaderViewModel @JvmOverloads constructor(
             .launchIn(viewModelScope)
 
         translationPreferences.autoTranslate().changes()
-            .filter { it && translationPreferences.translationEnabled().get() }
-            .onEach { translateCurrentPageForAuto() }
+            .onEach { enabled ->
+                if (enabled && translationPreferences.translationEnabled().get()) {
+                    translateCurrentPageForAuto()
+                } else {
+                    getCurrentChapter()?.chapter?.id?.let { translationManager.cancelAutoTranslations(it) }
+                }
+            }
             .launchIn(viewModelScope)
 
         // TachiyomiAT: when the master translation toggle flips, force every
@@ -428,7 +423,6 @@ class ReaderViewModel @JvmOverloads constructor(
                     // User disabled translation: cancel everything in flight so
                     // no orphaned page jobs keep running (and keep holding the
                     // translator permit) after the per-page buttons disappear.
-                    autoQueuedPageKeys.clear()
                     translationManager.cancelAllPageTranslations()
                     // TachiyomiAT: user disabled translation — tear down engines so a
                     // subsequent re-enable picks up any config changes made while off.
@@ -540,7 +534,6 @@ class ReaderViewModel @JvmOverloads constructor(
         // across reader sessions.
         translationStoreJob?.cancel()
         translationStateJob?.cancel()
-        autoQueuedPageKeys.clear()
         translationManager.cancelAllPageTranslations()
         translationManager.translatorStop("reader closed")
     }
@@ -665,9 +658,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 .coerceAtMost((pages?.lastIndex ?: 0))
             val landingPage = pages?.getOrNull(landingIndex) as? ReaderPage
             if (landingPage != null) {
-                viewModelScope.launchIO {
-                    handleAutoTranslation(landingPage)
-                }
+                handleAutoTranslation(landingPage)
             }
         }
 
@@ -835,15 +826,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * - Skips pages that already have a rendered/cleaned translation.
      */
     private fun handleAutoTranslation(currentPage: ReaderPage) {
-        // No isCurrentChapterDownloaded() guard: the manual translateSinglePage
-        // path also has none, and the translator writes a FAILED status when
-        // chapter files are missing instead of crashing. Matching the manual
-        // path keeps auto-mode usable for streamed and freshly-opened chapters.
         val chapterId = currentPage.chapter.chapter.id ?: return
-        // Dedup: collapse a rapid second call for the same page within 2s. On
-        // chapter load both the landing-page path and the auto-toggle collectors
-        // fire this for the same page; without this guard each launches its own
-        // sequential batch and every page is translated twice.
         val dedupKey = "$chapterId:${resolvePageKey(currentPage)}"
         val now = System.currentTimeMillis()
         val sinceLast = if (dedupKey == lastAutoTranslateKey) now - lastAutoTranslateAtMs else -1L
@@ -853,23 +836,11 @@ class ReaderViewModel @JvmOverloads constructor(
         lastAutoTranslateKey = dedupKey
         lastAutoTranslateAtMs = now
         val manga = manga ?: return
-        // TachiyomiAT: use the page's own chapter context, not getCurrentChapter().
-        // When a cross-chapter page transition fires via onPageSelected, the
-        // global current-chapter may still point to the old chapter while page
-        // belongs to the new one (loadNewChapter is async). Translating against
-        // the wrong chapter ID writes page results under the wrong store key,
-        // which is the root cause of "pages appear to skip during auto-translate".
         val chapter = currentPage.chapter.chapter
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val pages = currentPage.chapter.pages ?: return
         val domainChapter = chapter.toDomainChapter() ?: return
-        val store = translationManager.openOrCreateActiveChapterTranslationStore(
-            chapterId,
-            chapter.name,
-            chapter.scanlator,
-            manga.title,
-            source,
-        )
+        val session = translationManager.openTranslationSession(manga, domainChapter, source) ?: return
 
         val currentIndex = pages.indexOfFirst { it === currentPage }
         if (currentIndex < 0) return
@@ -877,18 +848,6 @@ class ReaderViewModel @JvmOverloads constructor(
         val depth = translationPreferences.autoTranslatePrefetchCount().get().coerceIn(1, 5)
         val lastIndex = (currentIndex + depth).coerceAtMost(pages.lastIndex)
 
-        // TachiyomiAT: gate only PREFETCH pages on heap headroom, never the
-        // currently-viewed page. The earlier total early-return here (bail out
-        // of the whole function when hasHeadroomForPrefetch() was false) meant
-        // that under sustained memory pressure auto-translate would NEVER
-        // translate even the page the user is staring at — so a chapter looked
-        // untranslated forever and manual translate was the only way in. The
-        // current page is already being decoded by the reader regardless, so
-        // translating it isn't the OOM risk the gate exists to prevent; only
-        // the extra lookahead pages are. Each loop iteration checks the gate
-        // individually, so a tight heap still defers prefetch (auto-translate
-        // retries them on the next page change) without ever dropping the page
-        // the user is actually on.
         val prefetchHeadroomOk =
             eu.kanade.translation.util.TranslationMemoryBudget.hasHeadroomForPrefetch()
 
@@ -898,152 +857,58 @@ class ReaderViewModel @JvmOverloads constructor(
                 "prefetchHeadroomOk=$prefetchHeadroomOk"
         }
 
-        // TachiyomiAT: collect all eligible page keys in PAGE ORDER (current
-        // page first, then prefetch pages n+1, n+2, ...). Previously each page
-        // was submitted via a separate viewModelScope.launchIO which raced on
-        // Dispatchers.IO and contended for the single translatorPermit in non-
-        // deterministic order — so page n+2 often translated before page n.
-        // Now the entire ordered list is handed to translatePagesSequential(),
-        // which processes pages one at a time, strictly in list order. The
-        // current page always goes first; prefetch pages wait their turn.
-        val sequentialKeys = mutableListOf<String>()
-        // TachiyomiAT: uncached prefetch pages that need an async image download
-        // before they can be translated. Downloaded + registered in the launchIO
-        // block below (cancellable) instead of via a blocking runBlocking stream.
-        val pagesNeedingLazyDownload = mutableListOf<Pair<ReaderPage, String>>()
-        val autoReservedKeys = mutableListOf<String>()
+        val requests = mutableListOf<TranslationPageRequest>()
 
         for (i in currentIndex..lastIndex) {
-            // Current page (i == currentIndex) always translates; only
-            // lookahead pages are subject to the heap gate.
-            if (i > currentIndex && !prefetchHeadroomOk) continue
             val readerPage = pages[i] as? ReaderPage ?: continue
-            // TachiyomiAT: skip pages that don't need (re)translation. Previously
-            // this only skipped pages with a rendered/cleaned result, so pages
-            // that were in-flight (RUNNING) or had already finished with an
-            // error (FAILED) got re-enqueued on EVERY page change — causing the
-            // translator to cancel and restart them repeatedly, which manifested
-            // as visible blinking/flicker of the processing overlay with no new
-            // results appearing. Now we skip a page when:
-            //  - it has a rendered or cleaned result (done), OR
-            //  - any stage is RUNNING (already in-flight), OR
-            //  - all retries exhausted for FAILED pages, OR
-            //  - OCR succeeded with zero text blocks (a textless splash/art page
-            //    is terminally "done" — nothing to translate, nothing to inpaint).
-            //    The last clause is the fix for the reported "auto-translate keeps
-            //    reprocessing the same image" bug: a textless page previously got
-            //    inpaintStatus=FAILED + low retryCount, so it looked like a failing
-            //    page and was re-OCR'd on every navigation. (The engine now also
-            //    marks such pages inpaint=READY, but this guard makes the dedup
-            //    robust to legacy persisted state from older builds too.)
             val pageKey = resolvePageKey(readerPage)
-            val t = store?.state?.value?.get(pageKey) ?: readerPage.translation
-            if (t != null) {
-                if (t.shouldSkipAutoScheduling) continue
-            }
-
-            val streamFn = readerPage.originalStream
-            val imageUrl = readerPage.imageUrl
-            if (streamFn == null && imageUrl == null) continue
-
-            val autoJobKey = "$chapterId:$pageKey"
-            if (!autoQueuedPageKeys.add(autoJobKey)) {
-                logcat(LogPriority.DEBUG) {
-                    "TachiyomiAT auto-translate SKIP (already queued): index=${readerPage.index} pageKey=$pageKey"
+            if (i > currentIndex && !prefetchHeadroomOk) {
+                val currentTranslation = readerPage.translation
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT auto page skipped: id=${source.id}:${manga.id}:$chapterId:${readerPage.index} " +
+                        "index=${readerPage.index} storageKey=$pageKey " +
+                        "lifecycle=${currentTranslation?.lifecycle ?: eu.kanade.translation.model.PageLifecycle.Pending} " +
+                        "retry=${currentTranslation?.retryCount ?: 0} streamAvailable=${readerPage.originalStream != null || readerPage.imageUrl != null} " +
+                        "rendered=${currentTranslation?.renderedImageName != null} cleaned=${currentTranslation?.cleanedImageName != null} " +
+                        "reason=prefetch-memory-low"
                 }
                 continue
             }
-            autoReservedKeys.add(autoJobKey)
+            val originalStream = readerPage.originalStream
+            val imageUrl = readerPage.imageUrl
 
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT auto-translate page request: index=${readerPage.index} pageKey=$pageKey " +
-                    "sourceFileName=${readerPage.sourceFileName} imageUrl=${readerPage.imageUrl}"
-            }
-            // TachiyomiAT: register a stream for the translator. Prefer the
-            // reader's originalStream when available (already-cached pages).
-            // For online pages not yet downloaded into the chapter cache, defer
-            // the registration — the bytes need an async download (see below),
-            // and the original runBlocking{} lazy stream blocked an IO thread for
-            // the whole download and couldn't be cancelled on a chapter switch.
-            if (streamFn != null) {
-                eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
-                    manga,
-                    domainChapter,
-                    source,
-                    pageKey,
-                    streamFn,
-                )
-                sequentialKeys.add(pageKey)
-            } else if (imageUrl != null) {
-                // Track uncached pages that need an async fetch. They are
-                // downloaded + registered in the launchIO block below (so the
-                // download is cancellable) BEFORE translatePagesSequential runs,
-                // preserving the strict sequential ordering.
-                pagesNeedingLazyDownload.add(readerPage to imageUrl)
-                sequentialKeys.add(pageKey)
-            }
-        }
-
-        if (sequentialKeys.isNotEmpty()) {
-            viewModelScope.launchIO {
-                // TachiyomiAT: download any uncached prefetch pages NOW, in a
-                // cancellable suspend context, before submitting them. Each download
-                // is awaited in order so a chapter switch (which cancels this
-                // coroutine) aborts remaining downloads instead of blocking IO
-                // threads like the old runBlocking stream.
-                for ((readerPage, imageUrl) in pagesNeedingLazyDownload) {
-                    val streamFn = try {
-                        createLazyHttpStream(source, readerPage, imageUrl)
-                    } catch (e: Throwable) {
-                        logcat(LogPriority.WARN) {
-                            "auto-translate: lazy download failed for " +
-                                "${resolvePageKey(readerPage)}: ${e.message}"
+            requests.add(
+                TranslationPageRequest(
+                    id = TranslationPageId(
+                        sourceId = source.id,
+                        mangaId = manga.id,
+                        chapterId = chapterId,
+                        pageIndex = readerPage.index,
+                    ),
+                    storageKey = pageKey,
+                    streamProvider = {
+                        when {
+                            originalStream != null -> originalStream
+                            imageUrl != null -> try {
+                                createLazyHttpStream(source, readerPage, imageUrl)
+                            } catch (e: Throwable) {
+                                if (e is CancellationException) throw e
+                                logcat(LogPriority.WARN) {
+                                    "auto-translate: lazy download failed for $pageKey: ${e.message}"
+                                }
+                                null
+                            }
+                            else -> null
                         }
-                        null
-                    } ?: continue
-                    eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
-                        manga,
-                        domainChapter,
-                        source,
-                        resolvePageKey(readerPage),
-                        streamFn,
-                    )
-                }
-                // TachiyomiAT: submit the page list STRICTLY IN ORDER via
-                // translatePagesSequential(). Each page is awaited to completion (or
-                // failure) before the next begins, so execution order is guaranteed
-                // to match list order: the current page first, then n+1, then n+2 —
-                // never n+2 before n+1.
-                //
-                // Why not the earlier fire-and-forget translatePage() per page:
-                // that launched one independent coroutine per page on Dispatchers.IO,
-                // all of which then raced for the single translatorPermit semaphore.
-                // Submission order did NOT determine execution order — whichever
-                // prefetch coroutine the IO pool resumed first on a permit release
-                // won, so n+2 frequently ran before n+1, which read as "prefetch
-                // skipped n+1". translatePagesSequential() instead calls the
-                // suspend translateSinglePage() inline in list order, so the pages
-                // stack on the permit in call order.
-                //
-                // The original reason the serial path was abandoned ("prefetch
-                // starved behind the current page, never started") is no longer
-                // valid: the re-triggering/dedup bugs that caused batches to be
-                // torn down and restarted on every scroll have since been fixed
-                // (stable-name dedup + status/image event split). With those fixed,
-                // a single ordered batch survives and prefetches ahead correctly.
-                //
-                // Cancellation/safety: translatePagesSequential() checks
-                // coroutineContext.ensureActive() per page and skips pages that are
-                // already in-flight (activePageJobs), so a chapter switch (which
-                // cancels this launchIO coroutine) aborts the batch, and rapid
-                // scroll re-triggers are no-ops for pages already running.
-                try {
-                    translationManager.translatePagesSequential(manga, domainChapter, source, sequentialKeys)
-                } finally {
-                    autoReservedKeys.forEach { autoQueuedPageKeys.remove(it) }
-                }
-            }
+                    },
+                    priority = i - currentIndex,
+                    kind = TranslationWorkKind.Auto,
+                    streamAvailable = originalStream != null || imageUrl != null,
+                ),
+            )
         }
+
+        translationManager.requestAutoWindow(session, requests)
     }
 
     /**
@@ -1579,7 +1444,6 @@ class ReaderViewModel @JvmOverloads constructor(
     private suspend fun cancelTranslationForChapter(chapter: ReaderChapter) {
         val manga = manga ?: return
         val chapterId = chapter.chapter.id ?: return
-        autoQueuedPageKeys.removeIf { it.startsWith("$chapterId:") }
         translationManager.cancelPageTranslations(chapterId)
         translationManager.getQueuedTranslationOrNull(chapterId)?.let {
             translationManager.cancelQueuedTranslation(it)
@@ -1678,9 +1542,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 streamFn,
             )
             // TachiyomiAT: bytes already available — kick off translation now.
-            viewModelScope.launchIO {
-                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
-            }
+            translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
         } ?: page.imageUrl?.let { imageUrl ->
             // TachiyomiAT: for online pages not yet cached (originalStream is
             // null), download the image bytes in a cancellable coroutine and
@@ -1753,7 +1615,6 @@ class ReaderViewModel @JvmOverloads constructor(
         // no-op for a page whose chapter differs from getCurrentChapter().
         val chapterId = page.chapter.chapter.id ?: return
         val pageKey = resolvePageKey(page)
-        autoQueuedPageKeys.remove("$chapterId:$pageKey")
         translationManager.cancelPageTranslation(chapterId, pageKey)
     }
 
@@ -1765,7 +1626,6 @@ class ReaderViewModel @JvmOverloads constructor(
      * short of navigating away or disabling the master toggle.
      */
     fun stopAllTranslation() {
-        autoQueuedPageKeys.clear()
         translationManager.cancelAllPageTranslations()
         // TachiyomiAT: closeEngines = true so the cached textTranslator /
         // recognitionEngine are torn down and enginesClosed is set. Without this,
@@ -1792,7 +1652,6 @@ class ReaderViewModel @JvmOverloads constructor(
      * and finish() in ReaderActivity.
      */
     fun cancelTranslationsOnBackground() {
-        autoQueuedPageKeys.clear()
         translationManager.cancelAllPageTranslations()
         translationManager.translatorStop("reader backgrounded")
         // TachiyomiAT: evict registered reader page streams so their captured
@@ -1853,18 +1712,20 @@ class ReaderViewModel @JvmOverloads constructor(
         val staleAfterMs = eu.kanade.translation.ChapterTranslator.SINGLE_PAGE_TIMEOUT_MS
         val snapshot = store.state.value
         for ((pageKey, pt) in snapshot) {
-            val isTerminal = pt.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                pt.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                pt.renderedImageName != null || pt.cleanedImageName != null
+            val isTerminal = pt.ocrStatus == StageStatus.FAILED ||
+                pt.inpaintStatus == StageStatus.FAILED ||
+                pt.translationStatus == StageStatus.FAILED ||
+                pt.renderStatus == StageStatus.FAILED ||
+                pt.displayImageName != null
             if (isTerminal) continue
-            val isNonTerminal = pt.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                pt.ocrStatus == eu.kanade.translation.model.StageStatus.PENDING ||
-                pt.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                pt.inpaintStatus == eu.kanade.translation.model.StageStatus.PENDING ||
-                pt.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                pt.translationStatus == eu.kanade.translation.model.StageStatus.PENDING ||
-                pt.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                pt.renderStatus == eu.kanade.translation.model.StageStatus.PENDING
+            val isNonTerminal = pt.ocrStatus == StageStatus.RUNNING ||
+                pt.ocrStatus == StageStatus.PENDING ||
+                pt.inpaintStatus == StageStatus.RUNNING ||
+                pt.inpaintStatus == StageStatus.PENDING ||
+                pt.translationStatus == StageStatus.RUNNING ||
+                pt.translationStatus == StageStatus.PENDING ||
+                pt.renderStatus == StageStatus.RUNNING ||
+                pt.renderStatus == StageStatus.PENDING
             if (!isNonTerminal) continue
             val age = now - pt.updatedAt
             if (age < staleAfterMs) continue
@@ -1874,14 +1735,26 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             store.updatePage(pageKey) { existing ->
                 val safe = existing ?: return@updatePage pt
-                val safeTerminal = safe.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                    safe.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                    safe.renderedImageName != null || safe.cleanedImageName != null
+                val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
+                    safe.inpaintStatus == StageStatus.FAILED ||
+                    safe.translationStatus == StageStatus.FAILED ||
+                    safe.renderStatus == StageStatus.FAILED ||
+                    safe.displayImageName != null
                 if (safeTerminal) return@updatePage safe
                 safe.apply {
-                    ocrStatus = eu.kanade.translation.model.StageStatus.FAILED
-                    inpaintStatus = eu.kanade.translation.model.StageStatus.FAILED
-                    errorMessage = errorMessage ?: "Page was stranded mid-translation; reset on chapter reopen"
+                    if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
+                        ocrStatus = StageStatus.CANCELLED
+                    }
+                    if (inpaintStatus == StageStatus.RUNNING || inpaintStatus == StageStatus.PENDING) {
+                        inpaintStatus = StageStatus.CANCELLED
+                    }
+                    if (translationStatus == StageStatus.RUNNING || translationStatus == StageStatus.PENDING) {
+                        translationStatus = StageStatus.CANCELLED
+                    }
+                    if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
+                        renderStatus = StageStatus.CANCELLED
+                    }
+                    errorMessage = errorMessage ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
                     updatedAt = System.currentTimeMillis()
                 }
             }
@@ -1914,8 +1787,9 @@ class ReaderViewModel @JvmOverloads constructor(
             // TRANSLATING, the spinner never stops, the translate icon stays
             // disabled, and auto-translate's isRunning skip never re-enqueues
             // it). Any non-terminal entry older than the per-page timeout is
-            // treated as abandoned and flipped to FAILED. Runs once per chapter
-            // open. Never clobbers a page that produced a result or reached FAILED.
+            // treated as abandoned and flipped to CANCELLED. Runs once per
+            // chapter open. Never clobbers a page that produced a result or
+            // reached FAILED.
             sweepStrandedPageStatus(store)
             storeState.collect { pageMap ->
                 val pages = state.value.viewerChapters?.currChapter?.pages ?: return@collect
@@ -1948,10 +1822,13 @@ class ReaderViewModel @JvmOverloads constructor(
                             runningPageIndex = oneBased
                         }
                     }
+                    val displayImageName = updated.displayImageName
                     val hasRendered = updated.renderedImageName != null
-                    val hasCleaned = updated.cleanedImageName != null
+                    val hasCleaned = displayImageName != null && updated.cleanedImageName != null
                     val isFailed = updated.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                        updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED
+                        updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED ||
+                        updated.translationStatus == eu.kanade.translation.model.StageStatus.FAILED ||
+                        updated.renderStatus == eu.kanade.translation.model.StageStatus.FAILED
                     if (isFailed && !hasRendered && !hasCleaned) anyError = true
                     // TachiyomiAT: this per-page INFO log fires on every RUNNING
                     // stage of every page during a batch run — thousands of string
@@ -1973,7 +1850,7 @@ class ReaderViewModel @JvmOverloads constructor(
                                 "error=${updated.errorMessage}"
                         }
                     }
-                    if (hasRendered || hasCleaned) translatedCount++
+                    if (displayImageName != null || updated.isTextlessTerminal) translatedCount++
                     if (isFailed && !hasRendered && !hasCleaned) translatedCount++
                     if (hasRendered) {
                         readerPage.translatedStream = translationManager.getRenderedImageStream(
@@ -2053,7 +1930,7 @@ class ReaderViewModel @JvmOverloads constructor(
                         chapter.scanlator,
                         updated.renderedImageName!!,
                     )
-                    updated.cleanedImageName != null -> translationManager.getCleanedImageStream(
+                    updated.displayImageName == updated.cleanedImageName && updated.cleanedImageName != null -> translationManager.getCleanedImageStream(
                         manga.title,
                         source,
                         chapter.name,
@@ -2079,11 +1956,15 @@ class ReaderViewModel @JvmOverloads constructor(
      *
      * Returns an empty string only as a last resort so callers can still index without NPEs.
      */
-    private fun resolvePageKey(page: ReaderPage): String =
-        page.sourceFileName
+    private fun resolvePageKey(page: ReaderPage): String {
+        page.translationStorageKey?.let { return it }
+        val resolved = page.sourceFileName
             ?: page.translation?.sourceFileName
             ?: page.imageUrl?.substringAfterLast('/')?.substringBefore('?')
             ?: page.url.substringAfterLast('/').substringBefore('?')
+        page.translationStorageKey = resolved
+        return resolved
+    }
 
     sealed interface Dialog {
         data object Loading : Dialog

@@ -166,7 +166,7 @@ class PagerPageHolder(
     private fun isPageBeingTranslated(): Boolean = page.translation?.let { t ->
         (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
             t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && t.cleanedImageName == null
+            t.renderedImageName == null && (t.cleanedImageName == null || t.blocks.isNotEmpty())
     } ?: false
 
     /**

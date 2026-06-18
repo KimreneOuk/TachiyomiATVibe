@@ -105,21 +105,31 @@ class ChapterTranslationStore(
         // crash mid-write then leaves the previous good file untouched. This is
         // the same write-temp-then-rename pattern the Downloader already uses.
         try {
+            // TachiyomiAT: snapshot the persistent map into a plain Map<String,
+            // PageTranslation> before encoding. `pages` is a kotlinx.collections
+            // `PersistentMap`; serializing it directly makes kotlinx.serialization
+            // treat PersistentMap polymorphically and then fail at runtime with
+            // "Serializer for subclass 'PersistentOrderedMap' is not found in the
+            // polymorphic scope of 'PersistentMap'" — which broke EVERY persist
+            // (and the matching open() decode below) so no translation.json was
+            // ever written and every reopen started empty. The persistent map is
+            // an in-memory structure; only its plain contents belong on disk.
+            val snapshot: Map<String, PageTranslation> = pages.toMap()
             val parent = target.parentFile
             if (parent == null) {
                 // No parent (e.g. a single-document URI): fall back to a direct
                 // truncating write. Atomicity isn't achievable without a sibling
                 // location, so prefer liveness over corruption-risk here.
-                target.openOutputStream().use { output -> Json.encodeToStream(pages, output) }
+                target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
                 return
             }
             val tempFile = parent.createFile(TEMP_FILE_NAME)
             if (tempFile == null) {
-                target.openOutputStream().use { output -> Json.encodeToStream(pages, output) }
+                target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
                 return
             }
             try {
-                tempFile.openOutputStream().use { output -> Json.encodeToStream(pages, output) }
+                tempFile.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
             } catch (e: Exception) {
                 try { tempFile.delete() } catch (_: Exception) {}
                 throw e

@@ -3,6 +3,7 @@ package eu.kanade.translation.translator
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import logcat.LogPriority
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -27,17 +28,34 @@ class GoogleTranslator(
     }
 
     private suspend fun translateText(lang: String, text: String): String {
+        if (text.isBlank()) return ""
         val access = getTranslateUrl(lang, text)
         val build: Request = Request.Builder().url(access).build()
         val newCall = okHttpClient.newCall(build)
         val response = newCall.await()
         val body = response.body
+            ?: run {
+                logcat(LogPriority.WARN) {
+                    "GoogleTranslator: empty response body for lang=$lang text=\"$text\" code=${response.code}"
+                }
+                return ""
+            }
         val string = body.string()
         try {
             val jSONArray = JSONArray(string).getJSONArray(0).getJSONArray(0)
             return jSONArray.getString(0)
         } catch (e: Exception) {
-            logcat { "Image Translation Error : $e" }
+            // TachiyomiAT: the old logcat here printed only the exception, never
+            // the HTTP code or the response body. Google's free endpoint returns
+            // 429/HTML (not JSON) on rate-limiting or bot-detection, which this
+            // catch then silently turned into "" — so the whole page rendered
+            // with blank translations and no visible error. Log the code + a
+            // snippet of the body so the real cause is diagnosable.
+            val snippet = if (string.length > 200) string.substring(0, 200) else string
+            logcat(LogPriority.WARN, e) {
+                "GoogleTranslator: parse failed for lang=$lang text=\"$text\" " +
+                    "code=${response.code} body=\"$snippet\""
+            }
         }
         return ""
     }

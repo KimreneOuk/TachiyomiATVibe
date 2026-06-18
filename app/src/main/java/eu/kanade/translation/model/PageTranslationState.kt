@@ -10,19 +10,30 @@ enum class PageStage {
 sealed interface PageLifecycle {
     data object Pending : PageLifecycle
     data class Running(val stage: PageStage) : PageLifecycle
+    data object NeedsRender : PageLifecycle
     data object Done : PageLifecycle
     data object Textless : PageLifecycle
+    data object Cancelled : PageLifecycle
     data class Failed(val stage: PageStage, val retryCount: Int, val reason: String?) : PageLifecycle
 }
 
+val PageTranslation.displayImageName: String?
+    get() = renderedImageName ?: cleanedImageName?.takeIf { blocks.isEmpty() }
+
 val PageTranslation.hasRenderedResult: Boolean
-    get() = renderedImageName != null || cleanedImageName != null
+    get() = displayImageName != null
 
 val PageTranslation.isStageRunning: Boolean
     get() = ocrStatus == StageStatus.RUNNING ||
         translationStatus == StageStatus.RUNNING ||
         inpaintStatus == StageStatus.RUNNING ||
         renderStatus == StageStatus.RUNNING
+
+val PageTranslation.isStageCancelled: Boolean
+    get() = ocrStatus == StageStatus.CANCELLED ||
+        translationStatus == StageStatus.CANCELLED ||
+        inpaintStatus == StageStatus.CANCELLED ||
+        renderStatus == StageStatus.CANCELLED
 
 val PageTranslation.isStageFailed: Boolean
     get() = ocrStatus == StageStatus.FAILED ||
@@ -48,16 +59,16 @@ val PageTranslation.shouldSkipAutoScheduling: Boolean
     get() = hasRenderedResult ||
         isStageRunning ||
         hasExhaustedRetries ||
-        isTextlessTerminal ||
-        hasRecognizedTranslation
+        isTextlessTerminal
 
 val PageTranslation.shouldSkipSequentialScheduling: Boolean
-    get() = hasRenderedResult || hasRecognizedTranslation
+    get() = hasRenderedResult || isTextlessTerminal
 
 val PageTranslation.lifecycle: PageLifecycle
     get() = when {
         hasRenderedResult -> PageLifecycle.Done
         isTextlessTerminal -> PageLifecycle.Textless
+        isStageCancelled -> PageLifecycle.Cancelled
         renderStatus == StageStatus.FAILED -> PageLifecycle.Failed(PageStage.Render, retryCount, errorMessage)
         inpaintStatus == StageStatus.FAILED -> PageLifecycle.Failed(PageStage.Inpaint, retryCount, errorMessage)
         translationStatus == StageStatus.FAILED -> PageLifecycle.Failed(PageStage.Translation, retryCount, errorMessage)
@@ -66,5 +77,6 @@ val PageTranslation.lifecycle: PageLifecycle
         inpaintStatus == StageStatus.RUNNING -> PageLifecycle.Running(PageStage.Inpaint)
         translationStatus == StageStatus.RUNNING -> PageLifecycle.Running(PageStage.Translation)
         ocrStatus == StageStatus.RUNNING -> PageLifecycle.Running(PageStage.Ocr)
+        hasRecognizedTranslation -> PageLifecycle.NeedsRender
         else -> PageLifecycle.Pending
     }

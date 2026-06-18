@@ -13,6 +13,8 @@ import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.hasRecognizedTranslation
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.rendering.PageTextRenderer
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.ocr.OcrModelCatalog
@@ -1059,6 +1061,7 @@ class ChapterTranslator(
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
+        force: Boolean = true,
     ) = withLeakProofPermit(
         permit = translatorPermit,
         timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
@@ -1084,7 +1087,7 @@ class ChapterTranslator(
             // finally below. This does NOT cover the case where the native call
             // never returns at all — that is what the outer watchdog is for.
             withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
-                translateSinglePageInternal(manga, chapter, source, pageKey)
+                translateSinglePageInternal(manga, chapter, source, pageKey, force = force)
             } ?: run {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT single-page translation timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
@@ -1112,6 +1115,7 @@ class ChapterTranslator(
         source: HttpSource,
         pageKey: String,
         streamFn: () -> InputStream,
+        force: Boolean = true,
     ) = withLeakProofPermit(
         permit = translatorPermit,
         timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
@@ -1122,7 +1126,7 @@ class ChapterTranslator(
         if (!inFlightPageKeys.add(pageKey)) return@withLeakProofPermit
         try {
             withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
-                translateSinglePageInternal(manga, chapter, source, pageKey, streamFn)
+                translateSinglePageInternal(manga, chapter, source, pageKey, streamFn, force)
             } ?: run {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT single-page (stream) translation timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
@@ -1141,6 +1145,7 @@ class ChapterTranslator(
         source: HttpSource,
         pageKey: String,
         readerStreamFn: (() -> InputStream)? = null,
+        force: Boolean = true,
     ) {
         val streamFromReader = readerStreamFn ?: peekReaderPageStream(manga, chapter, source, pageKey)
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
@@ -1210,6 +1215,45 @@ class ChapterTranslator(
         try {
             registerActiveStore(syntheticTranslation, store)
 
+            val resumeTranslation = if (!force) {
+                store.state.value[pageKey]?.copyForResume()
+            } else {
+                null
+            }
+            if (resumeTranslation?.hasRenderedResult == true) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT single-page resume skip: pageKey=$pageKey already has final output"
+                }
+                return
+            }
+            val resumeFromTranslatedBlocks = resumeTranslation
+                ?.takeIf { it.hasRecognizedTranslation && it.renderedImageName == null }
+            if (resumeFromTranslatedBlocks?.cleanedImageName != null) {
+                val cleanedBitmap = loadPersistedCleanedBitmap(
+                    manga,
+                    chapter,
+                    source,
+                    resumeFromTranslatedBlocks.cleanedImageName!!,
+                )
+                if (cleanedBitmap != null) {
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT single-page resume: render from cleaned image pageKey=$pageKey " +
+                            "cleaned=${resumeFromTranslatedBlocks.cleanedImageName}"
+                    }
+                    renderResumedPage(
+                        manga,
+                        chapter,
+                        source,
+                        pageKey,
+                        store,
+                        resumeFromTranslatedBlocks,
+                        cleanedBitmap,
+                        successMessageSuffix = " (resume cleaned)",
+                    )
+                    return
+                }
+            }
+
             val streams = if (streamFromReader != null) {
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT single-page translation using reader stream: pageKey=$pageKey " +
@@ -1220,17 +1264,23 @@ class ChapterTranslator(
                 val chapterPath = downloadProvider.findChapterDir(
                     chapter.name, chapter.scanlator, manga.title, source,
                 ) ?: run {
+                    // TachiyomiAT: SOFT SKIP — no FAILED placeholder, no retryCount
+                    // increment. For a STREAMED/online chapter this branch is hit
+                    // whenever the reader hasn't fetched the page bytes yet (the
+                    // lazy download in ReaderViewModel either hasn't run, hasn't
+                    // registered its stream, or failed transiently). Previously this
+                    // wrote ocrStatus=FAILED, which — once ChapterTranslationStore
+                    // persistence actually works — would be saved to disk and,
+                    // after two occurrences, set hasExhaustedRetries=true so
+                    // shouldSkipAutoScheduling permanently dropped the page from
+                    // auto-translate. A transient "bytes not here yet" must NOT
+                    // burn a retry: bail without touching the store so the next
+                    // page-change re-enqueue (with the page now cached) retries
+                    // cleanly. (The manual per-page button is unaffected either way.)
                     logcat(LogPriority.WARN) {
-                        "TachiyomiAT single-page translation cannot start: chapter files not found " +
-                            "pageKey=$pageKey chapter=${chapter.name} manga=${manga.title} source=${source.id}"
-                    }
-                    store.updatePage(pageKey) {
-                        (it ?: PageTranslation()).apply {
-                            sourceFileName = pageKey
-                            ocrStatus = StageStatus.FAILED
-                            errorMessage = "Chapter files not found on device"
-                            updatedAt = System.currentTimeMillis()
-                        }
+                        "TachiyomiAT single-page translation cannot start (soft skip, no store write): " +
+                            "chapter files not found pageKey=$pageKey chapter=${chapter.name} " +
+                            "manga=${manga.title} source=${source.id}"
                     }
                     return
                 }
@@ -1273,9 +1323,13 @@ class ChapterTranslator(
             store.updatePage(pageKey) {
                 (it ?: PageTranslation()).apply {
                     sourceFileName = pageKey
-                    ocrStatus = StageStatus.RUNNING
-                    renderedImageName = null
-                    cleanedImageName = null
+                    if (force || ocrStatus != StageStatus.READY) {
+                        ocrStatus = StageStatus.RUNNING
+                    }
+                    if (force) {
+                        renderedImageName = null
+                        cleanedImageName = null
+                    }
                     errorMessage = null
                     updatedAt = System.currentTimeMillis()
                 }
@@ -1296,6 +1350,28 @@ class ChapterTranslator(
             }
 
             val bitmap = decoded.bitmap
+            if (resumeFromTranslatedBlocks != null) {
+                try {
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT single-page resume: inpaint + render from translated blocks pageKey=$pageKey"
+                    }
+                    resumeInpaintAndRender(
+                        manga,
+                        chapter,
+                        source,
+                        pageKey,
+                        store,
+                        streams,
+                        decoded,
+                        bitmap,
+                        resumeFromTranslatedBlocks,
+                    )
+                } finally {
+                    try { bitmap.recycle() } catch (_: Exception) {}
+                    BitmapPool.releaseAll()
+                }
+                return
+            }
             store.updatePage(pageKey) {
                 (it ?: PageTranslation()).apply {
                     sourceFileName = pageKey
@@ -1327,10 +1403,49 @@ class ChapterTranslator(
             coroutineContext.ensureActive()
 
             if (pageTranslation.blocks.isNotEmpty()) {
+                // TachiyomiAT: diagnostic instrumentation for the translation
+                // step. Device logs showed pages reaching RENDER with no HTTP
+                // traffic and no translate-step logs at all — meaning either the
+                // translator short-circuited on empty text, swallowed per-block
+                // errors, or was never invoked. The translator instance type and
+                // the non-empty block count are logged unconditionally (cheap,
+                // and the only reliable way to confirm the step actually ran);
+                // the per-block text is gated on the opt-in diagnostics pref so
+                // secrets/OCR garbage aren't spammed by default.
+                val transDiag = translationPreferences.translationDiagnostics().get()
+                val nonEmptyBlocks = pageTranslation.blocks.count { it.text.isNotBlank() }
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT translate step START: pageKey=$pageKey " +
+                        "translator=${textTranslator::class.simpleName} " +
+                        "blocks=${pageTranslation.blocks.size} nonEmptyText=$nonEmptyBlocks"
+                }
+                if (transDiag) {
+                    pageTranslation.blocks.forEachIndexed { idx, b ->
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT translate INPUT [$idx] text=\"${b.text}\""
+                        }
+                    }
+                }
                 try {
                     pageTranslation.translationStatus = StageStatus.RUNNING
                     textTranslator.translatePage(pageKey, pageTranslation)
                     pageTranslation.translationStatus = StageStatus.READY
+                    // Confirm the translator actually produced output. If every
+                    // block's `translation` is still null/blank after a "READY"
+                    // result, the translator is silently a no-op (the bug we're
+                    // hunting). Log the outcome so it's visible without diagnostics.
+                    val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT translate step DONE: pageKey=$pageKey " +
+                            "translated=$translatedCount/${pageTranslation.blocks.size}"
+                    }
+                    if (transDiag) {
+                        pageTranslation.blocks.forEachIndexed { idx, b ->
+                            logcat(LogPriority.INFO) {
+                                "TachiyomiAT translate OUTPUT [$idx] \"${b.text}\" -> \"${b.translation}\""
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     pageTranslation.translationStatus = StageStatus.FAILED
@@ -1479,6 +1594,200 @@ class ChapterTranslator(
         } finally {
             unregisterActiveStore(syntheticTranslation)
         }
+    }
+
+    private fun PageTranslation.copyForResume(): PageTranslation {
+        return copy(blocks = blocks.map { it.copy() }.toMutableList()).also {
+            it.cleanedBitmap = null
+            it.allTextDetections = emptyList()
+        }
+    }
+
+    private fun loadPersistedCleanedBitmap(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        cleanedImageName: String,
+    ): Bitmap? {
+        return try {
+            provider.findPageCleanedImage(
+                manga.title,
+                source,
+                chapter.name,
+                chapter.scanlator,
+                cleanedImageName,
+            )?.openInputStream()?.use { BitmapFactory.decodeStream(it) }
+        } catch (e: Throwable) {
+            logcat(LogPriority.WARN, e) {
+                "TachiyomiAT failed to load cleaned image for resume: cleaned=$cleanedImageName"
+            }
+            null
+        }
+    }
+
+    private fun persistCleanedBitmap(
+        pageTranslation: PageTranslation,
+        cleanedBitmap: Bitmap,
+        companionDir: UniFile?,
+        pageKey: String,
+    ): Boolean {
+        val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val cleanedFileName = "${safeName}.cleaned.png"
+        val cleanedFile = companionDir?.createFile(cleanedFileName)
+        return if (cleanedFile != null) {
+            cleanedFile.openOutputStream().use { os ->
+                cleanedBitmap.compress(Bitmap.CompressFormat.PNG, 100, os)
+            }
+            pageTranslation.cleanedImageName = cleanedFileName
+            pageTranslation.inpaintStatus = StageStatus.READY
+            pageTranslation.errorMessage = null
+            true
+        } else {
+            pageTranslation.inpaintStatus = StageStatus.FAILED
+            pageTranslation.retryCount++
+            pageTranslation.errorMessage =
+                "Could not save cleaned image — translation output folder is unavailable. " +
+                    "Grant storage permission to the app and retry."
+            logcat(LogPriority.ERROR) {
+                "Could not create cleaned image file for $pageKey " +
+                    "(companionDir=${companionDir == null}); inpaint marked FAILED"
+            }
+            false
+        }
+    }
+
+    private suspend fun renderResumedPage(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        store: ChapterTranslationStore,
+        pageTranslation: PageTranslation,
+        cleanedBitmap: Bitmap,
+        successMessageSuffix: String,
+    ) {
+        pageTranslation.sourceFileName = pageKey
+        pageTranslation.ocrStatus = StageStatus.READY
+        pageTranslation.translationStatus = StageStatus.READY
+        pageTranslation.renderStatus = StageStatus.RUNNING
+        pageTranslation.errorMessage = null
+        store.updatePage(pageKey) {
+            (it ?: pageTranslation.copyForResume()).apply {
+                sourceFileName = pageKey
+                renderStatus = StageStatus.RUNNING
+                errorMessage = null
+                updatedAt = System.currentTimeMillis()
+            }
+        }
+        try {
+            val renderer = PageTextRenderer(context)
+            RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
+            val renderedBitmap = renderer.render(cleanedBitmap, pageTranslation.blocks)
+            try {
+                val companionDir = provider.getCompanionImageDir(
+                    manga.title,
+                    source,
+                    chapter.name,
+                    chapter.scanlator,
+                )
+                persistRenderedBitmap(
+                    pageTranslation = pageTranslation,
+                    renderedBitmap = renderedBitmap,
+                    companionDir = companionDir,
+                    pageKey = pageKey,
+                    successMessageSuffix = successMessageSuffix,
+                )
+            } finally {
+                if (renderedBitmap !== cleanedBitmap) {
+                    try { renderedBitmap.recycle() } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            pageTranslation.renderStatus = StageStatus.FAILED
+            pageTranslation.retryCount++
+            pageTranslation.errorMessage = e.message
+            logcat(LogPriority.ERROR, e) { "Failed to render resumed page $pageKey" }
+        } finally {
+            try { cleanedBitmap.recycle() } catch (_: Exception) {}
+            pageTranslation.cleanedBitmap = null
+            pageTranslation.updatedAt = System.currentTimeMillis()
+            persistPageWithOomRecovery(store, pageKey, pageTranslation)
+        }
+    }
+
+    private suspend fun resumeInpaintAndRender(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        store: ChapterTranslationStore,
+        streams: List<Pair<String, () -> InputStream>>,
+        decoded: DecodedPage,
+        bitmap: Bitmap,
+        pageTranslation: PageTranslation,
+    ) {
+        pageTranslation.sourceFileName = pageKey
+        pageTranslation.ocrStatus = StageStatus.READY
+        pageTranslation.translationStatus = StageStatus.READY
+        pageTranslation.inpaintStatus = StageStatus.RUNNING
+        pageTranslation.renderStatus = StageStatus.PENDING
+        pageTranslation.renderedImageName = null
+        pageTranslation.errorMessage = null
+        store.updatePage(pageKey) {
+            (it ?: pageTranslation.copyForResume()).apply {
+                sourceFileName = pageKey
+                inpaintStatus = StageStatus.RUNNING
+                renderStatus = StageStatus.PENDING
+                renderedImageName = null
+                errorMessage = null
+                updatedAt = System.currentTimeMillis()
+            }
+        }
+
+        val cleaned = try {
+            recognitionEngine.inpaint(bitmap, pageTranslation)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            pageTranslation.inpaintStatus = StageStatus.FAILED
+            pageTranslation.retryCount++
+            pageTranslation.errorMessage = e.message
+            logcat(LogPriority.ERROR, e) { "Failed to resume inpaint for $pageKey" }
+            null
+        }
+
+        if (cleaned == null) {
+            pageTranslation.renderStatus = StageStatus.FAILED
+            pageTranslation.retryCount++
+            val reason = pageTranslation.errorMessage ?: "inpaint unavailable"
+            pageTranslation.errorMessage =
+                "Inpainting unavailable ($reason) — translated text was not rendered."
+            persistPageWithOomRecovery(store, pageKey, pageTranslation)
+            return
+        }
+
+        val companionDir = provider.getCompanionImageDir(
+            manga.title,
+            source,
+            chapter.name,
+            chapter.scanlator,
+        )
+        if (!persistCleanedBitmap(pageTranslation, cleaned, companionDir, pageKey)) {
+            try { cleaned.recycle() } catch (_: Exception) {}
+            pageTranslation.renderStatus = StageStatus.FAILED
+            persistPageWithOomRecovery(store, pageKey, pageTranslation)
+            return
+        }
+        renderResumedPage(
+            manga,
+            chapter,
+            source,
+            pageKey,
+            store,
+            pageTranslation,
+            cleaned,
+            successMessageSuffix = " (resume inpaint)",
+        )
     }
 
     /**
