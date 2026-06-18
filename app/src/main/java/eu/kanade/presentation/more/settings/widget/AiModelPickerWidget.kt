@@ -57,6 +57,7 @@ fun AiModelPickerWidget(
     recentModels: List<String>,
     listState: AiModelListState,
     hasApiKey: Boolean,
+    missingConnectionMessage: String = "Enter an API key to fetch models",
     onFetchModels: () -> Unit,
     onSelectModel: (String) -> Unit,
     onManualModel: (String) -> Unit,
@@ -109,7 +110,7 @@ fun AiModelPickerWidget(
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     )
 
-                    PickerStatusLine(listState, hasApiKey)
+                    PickerStatusLine(listState, hasApiKey, missingConnectionMessage)
 
                     Box(modifier = Modifier.weight(1f, fill = false)) {
                         val state = rememberLazyListState()
@@ -122,7 +123,12 @@ fun AiModelPickerWidget(
                             if (filteredRecent.isEmpty() && filteredAll.isEmpty()) {
                                 item {
                                     Text(
-                                        text = emptyMessage(listState, hasApiKey, recentModels),
+                                        text = emptyMessage(
+                                            listState,
+                                            hasApiKey,
+                                            recentModels,
+                                            missingConnectionMessage,
+                                        ),
                                         style = MaterialTheme.typography.bodySmall,
                                         modifier = Modifier
                                             .secondaryItemAlpha()
@@ -233,9 +239,13 @@ private fun ModelRow(
 }
 
 @Composable
-private fun PickerStatusLine(listState: AiModelListState, hasApiKey: Boolean) {
+private fun PickerStatusLine(
+    listState: AiModelListState,
+    hasApiKey: Boolean,
+    missingConnectionMessage: String,
+) {
     val message = when {
-        !hasApiKey -> "Enter an API key to fetch models"
+        !hasApiKey -> missingConnectionMessage
         listState is AiModelListState.Failed -> "Failed to fetch models: ${listState.message}"
         else -> return
     }
@@ -258,8 +268,9 @@ private fun emptyMessage(
     listState: AiModelListState,
     hasApiKey: Boolean,
     recentModels: List<String>,
+    missingConnectionMessage: String,
 ): String = when {
-    !hasApiKey -> "Enter an API key to fetch models"
+    !hasApiKey -> missingConnectionMessage
     listState is AiModelListState.Failed -> "Failed to fetch models: ${listState.message}"
     listState is AiModelListState.Loading -> "Fetching…"
     listState is AiModelListState.Loaded && listState.models.isEmpty() && recentModels.isEmpty() ->

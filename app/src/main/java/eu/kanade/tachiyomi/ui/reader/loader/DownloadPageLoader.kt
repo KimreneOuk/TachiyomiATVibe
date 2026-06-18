@@ -13,6 +13,7 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.displayImageName
 import mihon.core.archive.archiveReader
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.Injekt
@@ -69,7 +70,7 @@ internal class DownloadPageLoader(
                     manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
                     pageTranslation.renderedImageName!!,
                 )
-            } else if (pageTranslation.cleanedImageName != null) {
+            } else if (pageTranslation.displayImageName == pageTranslation.cleanedImageName && pageTranslation.cleanedImageName != null) {
                 translationManager.getCleanedImageStream(
                     manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
                     pageTranslation.cleanedImageName!!,
@@ -86,7 +87,14 @@ internal class DownloadPageLoader(
             ReaderPage(
                 page.index, page.url, page.imageUrl,
                 null,
-                { context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)!! },
+                // TachiyomiAT: null-safe stream open — if the SAF URI is
+                // inaccessible (revoked permission, deleted file, etc.), throw
+                // an explicit IOException instead of an NPE so the reader's
+                // error-handling can surface it gracefully.
+                {
+                    context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)
+                        ?: throw java.io.IOException("Cannot open file for downloaded page: $fileName (uri=${page.uri})")
+                },
             ).apply {
                 sourceFileName = fileName
                 translation = translations[fileName]
@@ -95,7 +103,7 @@ internal class DownloadPageLoader(
                         manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
                         translation!!.renderedImageName!!,
                     )
-                } else if (translation?.cleanedImageName != null) {
+                } else if (translation?.displayImageName == translation?.cleanedImageName && translation?.cleanedImageName != null) {
                     translatedStream = translationManager.getCleanedImageStream(
                         manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
                         translation!!.cleanedImageName!!,
@@ -112,7 +120,7 @@ internal class DownloadPageLoader(
                 manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
                 pageTranslation.renderedImageName!!,
             )
-        } else if (pageTranslation.cleanedImageName != null) {
+        } else if (pageTranslation.displayImageName == pageTranslation.cleanedImageName && pageTranslation.cleanedImageName != null) {
             return translationManager.getCleanedImageStream(
                 manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
                 pageTranslation.cleanedImageName!!,

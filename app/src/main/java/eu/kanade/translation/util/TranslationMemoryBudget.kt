@@ -2,6 +2,9 @@ package eu.kanade.translation.util
 
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.TranslationPreferences
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import kotlin.math.max
 
 object TranslationMemoryBudget {
@@ -39,7 +42,25 @@ object TranslationMemoryBudget {
         val pixels = width.toLong() * height.toLong()
         val rawBitmapBytes = pixels * 4L
 
-        if (pixels <= MAX_FULL_RES_DECODE_PIXELS && rawBitmapBytes <= snapshot().availableHeapBytes * 40L / 100L) {
+        // TachiyomiAT: read the heap snapshot ONCE for the whole decision.
+        // Previously snapshot() was called at the early-return check AND inside
+        // the while-loop on every iteration, each reading Runtime totals. Not
+        // only is that extra work, but the heap can change between the two reads
+        // (GC during the loop), making the computed sample size nondeterministic
+        // — usually benign, but it could pick a larger-than-needed sample on a
+        // transient spike. A single snapshot makes the decision atomic.
+        val available = snapshot().availableHeapBytes
+
+        // TachiyomiAT: thresholds lowered from 40%/35% to 25%/20% of available
+        // heap. The previous values were too aggressive on small-heaped devices
+        // (a 512MB heap leaves ~200MB for "one page" at 40%), and crucially they
+        // ignored that for DOWNLOADED chapters the reader decodes the SAME page
+        // on the main thread at the same time — so the translator's 40% budget
+        // plus the reader's decode frequently OOM'd together around page ~20,
+        // making translation appear to silently stop. 25%/20% steps the sample
+        // size up earlier, keeping peak memory low enough that the two concurrent
+        // decodes coexist.
+        if (pixels <= MAX_FULL_RES_DECODE_PIXELS && rawBitmapBytes <= available * 25L / 100L) {
             return 1
         }
 
@@ -48,7 +69,7 @@ object TranslationMemoryBudget {
             val sampledPixels = pixels / (sample.toLong() * sample.toLong())
             val sampledBytes = sampledPixels * 4L
             val fitsHugePageLimit = sampledPixels <= MAX_FULL_RES_DECODE_PIXELS
-            val fitsHeap = sampledBytes <= snapshot().availableHeapBytes * 35L / 100L
+            val fitsHeap = sampledBytes <= available * 20L / 100L
             if (fitsHugePageLimit && fitsHeap) break
             sample *= 2
         }
@@ -77,13 +98,50 @@ object TranslationMemoryBudget {
         return snapshot.availableHeapBytes < max(32L * MIB, snapshot.maxHeapBytes / 10L)
     }
 
+    /**
+     * TachiyomiAT: gate used before auto-translate enqueues prefetch pages. The
+     * translator's per-page decode runs concurrently with the reader's own decode
+     * of the currently-viewed page (especially for downloaded chapters, where
+     * both read the same local file with no network latency to space them out).
+     * If the heap is already tight, launching a prefetch now risks an OOM on the
+     * MAIN reader thread — which crashes/kicks the user out of the reader instead
+     * of being caught as a translation-side FAILED. Skip enqueueing until there's
+     * headroom; auto-translate will retry on the next page change.
+     */
+    fun hasHeadroomForPrefetch(): Boolean {
+        val snapshot = snapshot()
+        val minimum = max(64L * MIB, snapshot.maxHeapBytes / 6L)
+        return snapshot.availableHeapBytes >= minimum
+    }
+
     fun logSnapshot(tag: String, width: Int? = null, height: Int? = null, extra: String = "") {
+        // TachiyomiAT: this fires at multiple stages per page (decode,
+        // analyze_start, before_inpaint, oom_recovery, ...). Building the message
+        // string + log dispatch on every stage of every page is wasted work when
+        // the user isn't debugging. Gate the whole call behind the opt-in
+        // translation_diagnostics preference; ERROR-level logs elsewhere stay on.
+        if (!diagnosticsEnabled) return
         val snapshot = snapshot()
         val dims = if (width != null && height != null) " page=${width}x$height" else ""
         logcat(LogPriority.INFO) {
             "[translation_mem] $tag$dims " +
                 "heap=${snapshot.usedHeapBytes.toMiB()}MiB/${snapshot.maxHeapBytes.toMiB()}MiB " +
                 "avail=${snapshot.availableHeapBytes.toMiB()}MiB budget=${singlePageBudgetBytes().toMiB()}MiB $extra"
+        }
+    }
+
+    /**
+     * TachiyomiAT: cached value of the translation_diagnostics preference. Read
+     * lazily once and cached for the process lifetime; the pref rarely changes
+     * mid-session and re-reading SharedPreferences on every hot-path log call
+     * would defeat the purpose of gating. Falls back to false if Injekt isn't
+     * ready (e.g. during very early init), keeping logging off by default.
+     */
+    private val diagnosticsEnabled: Boolean by lazy {
+        try {
+            Injekt.get<TranslationPreferences>().translationDiagnostics().get()
+        } catch (e: Throwable) {
+            false
         }
     }
 

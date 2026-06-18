@@ -160,8 +160,38 @@ class DownloadManager(
      */
     fun buildPageList(source: Source, manga: Manga, chapter: Chapter): List<Pair<String,Page>> {
         val chapterDir = provider.findChapterDir(chapter.name, chapter.scanlator, manga.title, source)
-        val files = chapterDir?.listFiles().orEmpty()
-            .filter { it.isFile && ImageUtil.isImage(it.name) { it.openInputStream() } }
+            ?: throw Exception(context.stringResource(MR.strings.page_list_empty_error))
+        // TachiyomiAT: harden against stale/revoked SAF paths. listFiles() can
+        // return null on a revoked tree URI or a moved folder; previously the
+        // `!!` chain and the per-file openInputStream() probe (used to sniff the
+        // real image type when the extension is unknown) could throw here, which
+        // surfaced as an unhandled reader crash instead of the clean "no pages"
+        // error. Resolve the directory first, then resolve each file defensively
+        // so a single unreadable entry can't take down the whole chapter.
+        val rawFiles = try {
+            chapterDir.listFiles().orEmpty()
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN, e) {
+                "buildPageList: listFiles() threw for ${chapterDir.filePath}; treating as empty"
+            }
+            emptyArray()
+        }
+        val files = rawFiles.mapNotNull { file ->
+            try {
+                if (!file.isFile) return@mapNotNull null
+                // entry name is nullable on some SAF providers; skip nameless
+                // entries instead of NPE'ing on name!! later.
+                val name = file.name ?: return@mapNotNull null
+                if (!ImageUtil.isImage(name) { file.openInputStream() }) return@mapNotNull null
+                file
+            } catch (e: Exception) {
+                // A single inaccessible file (revoked/stale URI) must not abort
+                // discovery of the whole chapter: skip it and keep going so the
+                // reader can still show the pages that ARE readable.
+                logcat(LogPriority.WARN, e) { "buildPageList: skipping unreadable page entry" }
+                null
+            }
+        }
 
         if (files.isEmpty()) {
             throw Exception(context.stringResource(MR.strings.page_list_empty_error))

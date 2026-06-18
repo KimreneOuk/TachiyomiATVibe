@@ -54,7 +54,8 @@ enum class StandardTranslators(val label: String) {
 enum class AiTranslators(val engine: AiEngine, val label: String, val providerName: String) {
     GEMINI(AiEngine.GEMINI, "Gemini AI", "Gemini"),
     OPENROUTER(AiEngine.OPENROUTER, "OpenRouter", "OpenRouter"),
-    DEEPSEEK(AiEngine.DEEPSEEK, "DeepSeek", "DeepSeek");
+    DEEPSEEK(AiEngine.DEEPSEEK, "DeepSeek", "DeepSeek"),
+    LMSTUDIO(AiEngine.LMSTUDIO, "LM Studio", "LM Studio");
 
     fun build(
         pref: TranslationPreferences,
@@ -69,12 +70,24 @@ enum class AiTranslators(val engine: AiEngine, val label: String, val providerNa
         // Fail fast with a clear provider-specific message when the key is
         // missing. DeepSeek already checks this internally; the check here
         // makes the contract uniform across all AI engines.
-        require(apiKey.isNotBlank()) { "$providerName API key is required" }
+        if (engine == AiEngine.LMSTUDIO) {
+            require(pref.translationAiBaseUrlLmStudio().get().isNotBlank()) { "$providerName base URL is required" }
+        } else {
+            require(apiKey.isNotBlank()) { "$providerName API key is required" }
+        }
 
         return when (this) {
             GEMINI -> GeminiTranslator(fromLang, toLang, apiKey, modelName, maxOutputTokens, temperature)
             OPENROUTER -> OpenRouterTranslator(fromLang, toLang, apiKey, modelName, maxOutputTokens, temperature)
             DEEPSEEK -> DeepSeekTranslator(fromLang, toLang, apiKey, modelName, maxOutputTokens, temperature)
+            LMSTUDIO -> LmStudioTranslator(
+                fromLang = fromLang,
+                toLang = toLang,
+                baseUrl = pref.translationAiBaseUrlLmStudio().get(),
+                modelName = modelName,
+                maxOutputToken = maxOutputTokens,
+                temp = temperature,
+            )
         }
     }
 

@@ -25,10 +25,13 @@ class DeepSeekTranslator(
     val temp: Float,
 ) : TextTranslator {
 
+    // TachiyomiAT: tightened from 180s → 60s. The batch path now wraps every
+    // page in withTimeoutOrNull(120s), so an HTTP timeout within that period
+    // gives the permit a chance to release timely rather than eating all 120s.
     private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
-        .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
-        .writeTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+        .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+        .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
     private val ocrArtifactPattern = "(?:[N\\uff2e][\\u00ba\\u00b0\\u02da]|[N\\uff2e]\\u2070|\\u2116|\\uff2e\\uff10|N0)"
@@ -109,7 +112,18 @@ class DeepSeekTranslator(
             val response = okHttpClient.newCall(build).await()
             val rBody = response.body ?: throw IllegalStateException("Empty response body from DeepSeek API")
             val responseJson = JSONObject(rBody.string())
-            val rawOutput = responseJson.getJSONArray("choices").getJSONObject(0).getJSONObject("message").getString("content") ?: ""
+            // TachiyomiAT: shape-check the response. A DeepSeek API error (rate
+            // limit, bad key, server error) returns JSON with no "choices" array;
+            // the old code did getJSONArray("choices") unconditionally and
+            // JSONException'd with an opaque message.
+            val rawOutput = responseJson.optJSONArray("choices")?.optJSONObject(0)
+                ?.optJSONObject("message")?.optString("content")
+            if (rawOutput.isNullOrBlank()) {
+                throw IllegalStateException(
+                    "DeepSeek returned no content (choices missing or empty): " +
+                        responseJson.optString("error", responseJson.toString()),
+                )
+            }
 
             val parsedTranslations = parseResponse(rawOutput, flatBlocks.size)
 
@@ -120,6 +134,7 @@ class DeepSeekTranslator(
                 }
                 block.translation = sanitizeOcrArtifacts(translated)
             }
+            TranslationBlockFilters.removeWatermarkBlocks(pages)
 
         } catch (e: Exception) {
             logcat { "DeepSeek Translation Error : ${e.stackTraceToString()}" }
@@ -150,6 +165,12 @@ class DeepSeekTranslator(
     }
 
     override fun close() {
-        // No-op
+        // TachiyomiAT: release this translator's connection pool + dispatcher
+        // threads. TranslationEngineBuilder rebuilds translators on every language
+        // change, and a no-op close() left each retired client's pool (and its
+        // idle threads) alive for the process lifetime, slowly leaking. This
+        // does NOT evict shared/coil clients — only this instance's own pool.
+        okHttpClient.connectionPool.evictAll()
+        okHttpClient.dispatcher.executorService.shutdown()
     }
 }

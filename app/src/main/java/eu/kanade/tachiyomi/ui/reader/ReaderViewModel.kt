@@ -42,21 +42,31 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.TranslationPageId
+import eu.kanade.translation.TranslationPageRequest
+import eu.kanade.translation.TranslationWorkKind
+import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.toPageView
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
@@ -80,6 +90,7 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.time.Instant
 import java.util.Date
@@ -112,11 +123,141 @@ class ReaderViewModel @JvmOverloads constructor(
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
 
+    /**
+     * TachiyomiAT: read-only view of the current chapter's translation queue,
+     * derived from the live [translationManager.activeStoreState]. Each entry is
+     * one page that is (or was) being processed, with its 1-based index and the
+     * stage it's currently in. Consumed by the reader translation settings sheet
+     * so the user can see exactly what is queued/running/done/failed while a run
+     * is in progress — and decide whether to Stop. Exposed as its own StateFlow
+     * (rather than a field on [State]) so a per-page list update doesn't force a
+     * recompose of the whole reader.
+     */
+    val translationQueueState: kotlinx.coroutines.flow.StateFlow<List<QueuedPageInfo>> =
+        translationManager.activeStoreState
+            .map { pages -> buildQueuedPageInfo(pages) }
+            .distinctUntilChanged()
+            .stateIn(
+                viewModelScope,
+                kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+                emptyList(),
+            )
+
+    /**
+     * One row in the translation queue view. [index] is 1-based and stable
+     * (derived from the page key's natural order within the chapter); [stage]
+     * is the human-readable current stage for display.
+     */
+    @Immutable
+    data class QueuedPageInfo(
+        val pageKey: String,
+        val index: Int,
+        val stage: QueueStage,
+    )
+
+    enum class QueueStage { QUEUED, OCR, INPAINT, TRANSLATE, RENDER, DONE, FAILED }
+
+    /**
+     * Maps the live per-page store into an ordered, index-resolved list for the
+     * queue view. Pages are ordered by their 1-based chapter index (parsed from
+     * the page key where possible, else by insertion order). Only pages that have
+     * an entry in the store (i.e. are/were being translated) appear — untouched
+     * pages are omitted to keep the list focused on active work.
+     */
+    private fun buildQueuedPageInfo(pages: Map<String, PageTranslation>): List<QueuedPageInfo> {
+        if (pages.isEmpty()) return emptyList()
+        return pages.entries
+            .mapIndexedNotNull { insertionOrder, (pageKey, pt) ->
+                val stage = stageOf(pt) ?: return@mapIndexedNotNull null
+                QueuedPageInfo(
+                    pageKey = pageKey,
+                    index = resolvePageIndex(pageKey, insertionOrder),
+                    stage = stage,
+                )
+            }
+            .sortedBy { it.index }
+    }
+
+    /** Best-effort 1-based page index from the page key (e.g. "page-07" → 7). */
+    private fun resolvePageIndex(pageKey: String, fallback: Int): Int {
+        // Page keys in this codebase are typically "<something>-<number>" or a
+        // bare number; fall back to insertion order if no trailing int is found.
+        val match = Regex("""(\d+)$""").find(pageKey)
+        return match?.groupValues?.get(1)?.toIntOrNull() ?: (fallback + 1)
+    }
+
+    /** Derives the display stage from a page's four stage statuses. */
+    private fun stageOf(pt: PageTranslation): QueueStage? {
+        // The store is persisted history. Only active work and actionable
+        // failures belong in the queue view; old pending/cancelled/textless/done
+        // rows are not live queue reservations.
+        if (pt.hasRenderedResult) return null
+        // First RUNNING stage wins, in pipeline order: render → translate →
+        // inpaint → ocr (checked newest-first so the label reflects the current
+        // step, not an earlier one that hasn't been cleared yet).
+        if (pt.renderStatus == StageStatus.RUNNING) return QueueStage.RENDER
+        if (pt.translationStatus == StageStatus.RUNNING) return QueueStage.TRANSLATE
+        if (pt.inpaintStatus == StageStatus.RUNNING) return QueueStage.INPAINT
+        if (pt.ocrStatus == StageStatus.RUNNING) return QueueStage.OCR
+        // Any FAILED stage with no result yet → Failed.
+        if (pt.ocrStatus == StageStatus.FAILED || pt.inpaintStatus == StageStatus.FAILED ||
+            pt.translationStatus == StageStatus.FAILED || pt.renderStatus == StageStatus.FAILED
+        ) {
+            return QueueStage.FAILED
+        }
+        return null
+    }
+
+
     private val eventChannel = Channel<Event>()
     val eventFlow = eventChannel.receiveAsFlow()
 
     private var translationStoreJob: kotlinx.coroutines.Job? = null
     private var translationStateJob: kotlinx.coroutines.Job? = null
+    // TachiyomiAT: dedup token for handleAutoTranslation. On chapter load, BOTH
+    // the landing-page path (loadChapter) AND the auto-toggle/enable collectors
+    // can fire handleAutoTranslation for the SAME page within milliseconds.
+    // Manager-side reservation dedups the actual work, but this token avoids
+    // rebuilding and submitting the same auto window twice on initial load.
+    @Volatile
+    private var lastAutoTranslateKey: String = ""
+    @Volatile
+    private var lastAutoTranslateAtMs: Long = 0L
+
+    // TachiyomiAT: the published [State.translationState] now reflects BOTH the
+    // batch-queue status (batchTranslationState, driven by observeTranslationState)
+    // and per-page/auto work (liveTranslationState, driven by
+    // observeLiveTranslationStore). Previously only the batch queue was
+    // observed, so the only path the UI actually triggers (per-page/auto) never
+    // flipped the bottom-bar icon to TRANSLATING — making taps look like they
+    // did nothing. [recomputeTranslationState] merges the two each time either
+    // source changes.
+    private var batchTranslationState = Translation.State.NOT_TRANSLATED
+    private var liveTranslationState = Translation.State.NOT_TRANSLATED
+
+    // TachiyomiAT: guard so recompute only fires [mutableState.update] when the
+    // effective translation state actually changes. Without this, every single
+    // stage-emission from the live store (OCR→inpaint→translate→render for
+    // every auto-translated page) triggers a recompose, causing the per-page
+    // button to rapidly toggle between translate and cancel affordances —
+    // visible as "blinking" on non-downloaded chapters where pages stream
+    // through translation stages at network speed.
+    private var lastEffectiveTranslationState = Translation.State.NOT_TRANSLATED
+
+    private fun recomputeTranslationState() {
+        val effective = when {
+            batchTranslationState == Translation.State.TRANSLATING ||
+                liveTranslationState == Translation.State.TRANSLATING -> Translation.State.TRANSLATING
+            batchTranslationState == Translation.State.ERROR ||
+                liveTranslationState == Translation.State.ERROR -> Translation.State.ERROR
+            liveTranslationState == Translation.State.TRANSLATED -> Translation.State.TRANSLATED
+            else -> Translation.State.NOT_TRANSLATED
+        }
+        if (effective != lastEffectiveTranslationState) {
+            lastEffectiveTranslationState = effective
+            mutableState.update { it.copy(translationState = effective) }
+        }
+    }
 
     /**
      * The manga loaded in the reader. It can be null when instantiated for a short time.
@@ -154,9 +295,15 @@ class ReaderViewModel @JvmOverloads constructor(
 
     private var chapterToDownload: Download? = null
 
-    /**
+/**
      * Chapter list for the active manga. It's retrieved lazily and should be accessed for the first
      * time in a background thread to avoid blocking the UI.
+     *
+     * TachiyomiAT: the [runBlocking] call here must only execute from off-main.
+     * The sole first-access path from [loadChapter] already runs inside
+     * [withIOContext]; a future call site that touches [chapterList] from main
+     * would ANR. A safer long-term fix is a full suspend conversion deferred to
+     * a follow-up.
      */
     private val chapterList by lazy {
         val manga = manga!!
@@ -230,6 +377,15 @@ class ReaderViewModel @JvmOverloads constructor(
     private val incognitoMode = preferences.incognitoMode().get()
     private val downloadAheadAmount = downloadPreferences.autoDownloadWhileReading().get()
 
+    /**
+     * TachiyomiAT: cached value of the opt-in translation_diagnostics preference.
+     * Gates the chatty per-page INFO log in [observeLiveTranslationStore] so the
+     * collector's hot path isn't doing string interpolation + log dispatch on
+     * every RUNNING stage of every page during a batch run. Read once at VM
+     * creation (the pref is not toggled mid-read in practice).
+     */
+    private val translationDiagnosticsEnabled = translationPreferences.translationDiagnostics().get()
+
     init {
         // To save state
         state.map { it.viewerChapters?.currChapter }
@@ -247,8 +403,15 @@ class ReaderViewModel @JvmOverloads constructor(
             .launchIn(viewModelScope)
 
         translationPreferences.autoTranslate().changes()
-            .filter { it && translationPreferences.translationEnabled().get() }
-            .onEach { translateCurrentPageForAuto() }
+            .onEach { enabled ->
+                if (enabled && translationPreferences.translationEnabled().get()) {
+                    translateCurrentPageForAuto()
+                } else {
+                    lastAutoTranslateKey = ""
+                    lastAutoTranslateAtMs = 0L
+                    getCurrentChapter()?.chapter?.id?.let { translationManager.cancelAutoTranslations(it) }
+                }
+            }
             .launchIn(viewModelScope)
 
         // TachiyomiAT: when the master translation toggle flips, force every
@@ -267,7 +430,16 @@ class ReaderViewModel @JvmOverloads constructor(
                     // no orphaned page jobs keep running (and keep holding the
                     // translator permit) after the per-page buttons disappear.
                     translationManager.cancelAllPageTranslations()
-                    translationManager.translatorStop("translation disabled")
+                    // TachiyomiAT: user disabled translation — tear down engines so a
+                    // subsequent re-enable picks up any config changes made while off.
+                    translationManager.translatorStop("translation disabled", closeEngines = true)
+                    // Reset both halves of the merged state so the bottom-bar
+                    // icon returns to neutral instead of staying stuck on
+                    // TRANSLATING/ERROR after the work was just cancelled.
+                    batchTranslationState = Translation.State.NOT_TRANSLATED
+                    liveTranslationState = Translation.State.NOT_TRANSLATED
+                    lastEffectiveTranslationState = Translation.State.NOT_TRANSLATED
+                    recomputeTranslationState()
                 } else if (translationPreferences.autoTranslate().get()) {
                     translateCurrentPageForAuto()
                 }
@@ -287,6 +459,71 @@ class ReaderViewModel @JvmOverloads constructor(
             eventChannel.trySend(Event.RefreshTranslationPages(readerPages))
         }
     }
+
+    /**
+     * TachiyomiAT: per-page original/translated compare toggle state for the
+     * current page. Derived from [state] (current page index + translation
+     * enabled) and the current page's [ReaderPage.translatedStream]. The
+     * side-mounted compare handle observes this to know whether to enable the
+     * Original/Translated rows and which one to highlight. Exposed as its own
+     * StateFlow so the handle recomposes independently of the rest of the reader.
+     */
+    val compareState: kotlinx.coroutines.flow.StateFlow<CompareState> =
+        state
+            .map { s ->
+                val enabled = translationPreferences.translationEnabled().get()
+                val page = currentPageReaderPage(s)
+                val hasTranslation = page?.translatedStream != null
+                val showingTranslated = page?.showTranslatedImage == true
+                CompareState(
+                    translationEnabled = enabled,
+                    hasTranslation = hasTranslation,
+                    showingTranslated = showingTranslated,
+                )
+            }
+            .distinctUntilChanged()
+            .stateIn(
+                viewModelScope,
+                kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+                CompareState(),
+            )
+
+    @Immutable
+    data class CompareState(
+        val translationEnabled: Boolean = false,
+        val hasTranslation: Boolean = false,
+        val showingTranslated: Boolean = false,
+    )
+
+    /** Resolves the [ReaderPage] currently displayed, or null. */
+    private fun currentPageReaderPage(s: State = state.value): ReaderPage? {
+        val pages = getCurrentChapter()?.pages ?: return null
+        val idx = s.currentPage
+        return pages.getOrNull(idx) as? ReaderPage
+    }
+
+    /**
+     * TachiyomiAT: flips the current page between its original and translated
+     * image, per-page (does NOT touch the global showTranslations pref, so other
+     * pages are unaffected). Sticky: the choice survives scroll-away/return. The
+     * flip reuses the existing holder refresh path (Event.RefreshTranslationPages
+     * for just this page), so the holder re-runs setImage() with the new
+     * showTranslatedImage value — one decode for one page, cheap on both viewers.
+     */
+    fun setCurrentPageShowTranslated(showTranslated: Boolean) {
+        val page = currentPageReaderPage() ?: return
+        // Nothing to do (and nothing to show) if there's no translation to swap to.
+        if (showTranslated && page.translatedStream == null) return
+        if (page.showTranslatedImage == showTranslated) return
+        page.showTranslatedImage = showTranslated
+        eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
+        // Bump a no-op state update so compareState (which derives from state)
+        // re-emits and the handle highlight flips immediately. currentPage itself
+        // is unchanged; we nudge via translationRefreshToken which already exists
+        // for this purpose.
+        mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+    }
+
 
     override fun onCleared() {
         val currentChapters = state.value.viewerChapters
@@ -407,6 +644,30 @@ class ReaderViewModel @JvmOverloads constructor(
         }
         observeLiveTranslationStore()
         if (manga != null) observeTranslationState()
+
+        // TachiyomiAT: kick auto-translate for the new chapter's landing page.
+        // handleAutoTranslation() was previously only called from onPageSelected()
+        // (viewer-driven), but the initial/landing page after loadChapter does
+        // not always produce an onPageSelected event — e.g. opening the reader
+        // directly on a chapter, or jumping via the prev/next toolbar buttons.
+        // The result: the landing page sat untranslated until the user scrolled.
+        // This central kick covers all loadChapter paths (initial open, prev/next,
+        // cross-chapter scroll) and runs AFTER cancelTranslationForChapter() so
+        // the previous chapter's work has been wound down. The viewer-driven
+        // onPageSelected kick (below in onPageSelected) stays as a defensive
+        // second kick; translatePage()'s dedup makes the double-kick a no-op.
+        if (translationPreferences.translationEnabled().get() &&
+            translationPreferences.autoTranslate().get()
+        ) {
+            val pages = chapter.pages
+            val landingIndex = chapter.requestedPage.coerceAtLeast(0)
+                .coerceAtMost((pages?.lastIndex ?: 0))
+            val landingPage = pages?.getOrNull(landingIndex) as? ReaderPage
+            if (landingPage != null) {
+                handleAutoTranslation(landingPage)
+            }
+        }
+
         return newChapters
     }
 
@@ -517,6 +778,17 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val selectedChapter = page.chapter
         val pages = selectedChapter.pages ?: return
+        val pageIndex = page.index
+
+        // Keep the in-memory visible page pointer synchronous. Persistence runs
+        // below, but auto-toggle reads chapterPageIndex immediately; if this is
+        // only updated by the background progress job, a quick scroll + auto-on
+        // can enqueue from the old page.
+        chapterPageIndex = pageIndex
+        selectedChapter.requestedPage = pageIndex
+        mutableState.update {
+            it.copy(currentPage = pageIndex + 1)
+        }
 
         // Save last page read and mark as read if needed
         viewModelScope.launchNonCancellable {
@@ -536,7 +808,26 @@ class ReaderViewModel @JvmOverloads constructor(
         if (translationPreferences.translationEnabled().get() &&
             translationPreferences.autoTranslate().get()
         ) {
-            handleAutoTranslation(page)
+            // TachiyomiAT: drop stale cross-chapter events. onPageSelected can
+            // fire for a page whose chapter has already been replaced by a newer
+            // loadChapter (e.g. rapid chapter-swiping fires several page events
+            // before the state catches up). Enqueuing against a chapter that's
+            // no longer in viewerChapters writes results the reader will never
+            // show and can race the cancellation the new loadChapter just issued.
+            val active = state.value.viewerChapters
+            val stillActive = active != null && (
+                selectedChapter === active.currChapter ||
+                    selectedChapter === active.prevChapter ||
+                    selectedChapter === active.nextChapter
+                )
+            if (stillActive) {
+                handleAutoTranslation(page)
+            } else {
+                logcat {
+                    "Dropping auto-translate for page ${page.index}: chapter ${selectedChapter.chapter.url} " +
+                        "no longer active (stale cross-chapter event)"
+                }
+            }
         }
 
         eventChannel.trySend(Event.PageChanged)
@@ -552,14 +843,21 @@ class ReaderViewModel @JvmOverloads constructor(
      * - Skips pages that already have a rendered/cleaned translation.
      */
     private fun handleAutoTranslation(currentPage: ReaderPage) {
-        // No isCurrentChapterDownloaded() guard: the manual translateSinglePage
-        // path also has none, and the translator writes a FAILED status when
-        // chapter files are missing instead of crashing. Matching the manual
-        // path keeps auto-mode usable for streamed and freshly-opened chapters.
+        val chapterId = currentPage.chapter.chapter.id ?: return
+        val dedupKey = "$chapterId:${resolvePageKey(currentPage)}"
+        val now = System.currentTimeMillis()
+        val sinceLast = if (dedupKey == lastAutoTranslateKey) now - lastAutoTranslateAtMs else -1L
+        if (dedupKey == lastAutoTranslateKey && sinceLast < 2_000L) {
+            return
+        }
+        lastAutoTranslateKey = dedupKey
+        lastAutoTranslateAtMs = now
         val manga = manga ?: return
-        val chapter = getCurrentChapter()?.chapter ?: return
+        val chapter = currentPage.chapter.chapter
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val pages = currentPage.chapter.pages ?: return
+        val domainChapter = chapter.toDomainChapter() ?: return
+        val session = translationManager.openTranslationSession(manga, domainChapter, source) ?: return
 
         val currentIndex = pages.indexOfFirst { it === currentPage }
         if (currentIndex < 0) return
@@ -567,41 +865,67 @@ class ReaderViewModel @JvmOverloads constructor(
         val depth = translationPreferences.autoTranslatePrefetchCount().get().coerceIn(1, 5)
         val lastIndex = (currentIndex + depth).coerceAtMost(pages.lastIndex)
 
+        val prefetchHeadroomOk =
+            eu.kanade.translation.util.TranslationMemoryBudget.hasHeadroomForPrefetch()
+
         logcat(LogPriority.INFO) {
             "TachiyomiAT auto-translate enqueue: currentIndex=$currentIndex lastIndex=$lastIndex " +
-                "depth=$depth pageKey=${resolvePageKey(currentPage)} loader=${currentPage.chapter.pageLoader?.javaClass?.simpleName}"
+                "depth=$depth pageKey=${resolvePageKey(currentPage)} loader=${currentPage.chapter.pageLoader?.javaClass?.simpleName} " +
+                "prefetchHeadroomOk=$prefetchHeadroomOk"
         }
+
+        val requests = mutableListOf<TranslationPageRequest>()
 
         for (i in currentIndex..lastIndex) {
             val readerPage = pages[i] as? ReaderPage ?: continue
-            // Skip pages that already have a rendered/cleaned translation.
-            val t = readerPage.translation
-            val hasResult = t?.renderedImageName != null || t?.cleanedImageName != null
-            if (hasResult) continue
-
             val pageKey = resolvePageKey(readerPage)
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT auto-translate page request: index=${readerPage.index} pageKey=$pageKey " +
-                    "sourceFileName=${readerPage.sourceFileName} imageUrl=${readerPage.imageUrl}"
+            if (i > currentIndex && !prefetchHeadroomOk) {
+                val currentTranslation = readerPage.translation
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT auto page skipped: id=${source.id}:${manga.id}:$chapterId:${readerPage.index} " +
+                        "index=${readerPage.index} storageKey=$pageKey " +
+                        "lifecycle=${currentTranslation?.lifecycle ?: eu.kanade.translation.model.PageLifecycle.Pending} " +
+                        "retry=${currentTranslation?.retryCount ?: 0} streamAvailable=${readerPage.originalStream != null || readerPage.imageUrl != null} " +
+                        "rendered=${currentTranslation?.renderedImageName != null} cleaned=${currentTranslation?.cleanedImageName != null} " +
+                        "reason=prefetch-memory-low"
+                }
+                continue
             }
-            readerPage.originalStream?.let { streamFn ->
-                eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
-                    manga,
-                    chapter.toDomainChapter()!!,
-                    source,
-                    pageKey,
-                    streamFn,
-                )
-            }
-            viewModelScope.launchIO {
-                translationManager.translatePage(
-                    manga,
-                    chapter.toDomainChapter()!!,
-                    source,
-                    pageKey,
-                )
-            }
+            val originalStream = readerPage.originalStream
+            val imageUrl = readerPage.imageUrl
+
+            requests.add(
+                TranslationPageRequest(
+                    id = TranslationPageId(
+                        sourceId = source.id,
+                        mangaId = manga.id,
+                        chapterId = chapterId,
+                        pageIndex = readerPage.index,
+                    ),
+                    storageKey = pageKey,
+                    streamProvider = {
+                        when {
+                            originalStream != null -> originalStream
+                            imageUrl != null -> try {
+                                createLazyHttpStream(source, readerPage, imageUrl)
+                            } catch (e: Throwable) {
+                                if (e is CancellationException) throw e
+                                logcat(LogPriority.WARN) {
+                                    "auto-translate: lazy download failed for $pageKey: ${e.message}"
+                                }
+                                null
+                            }
+                            else -> null
+                        }
+                    },
+                    priority = i - currentIndex,
+                    kind = TranslationWorkKind.Auto,
+                    streamAvailable = originalStream != null || imageUrl != null,
+                ),
+            )
         }
+
+        translationManager.requestAutoWindow(session, requests)
     }
 
     /**
@@ -1095,6 +1419,12 @@ class ReaderViewModel @JvmOverloads constructor(
         @IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
         val translationState: Translation.State = Translation.State.NOT_TRANSLATED,
         val translationProgress: Pair<Int, Int> = Pair(0, 0),
+        // TachiyomiAT: 1-based index of the page currently being translated (the
+        // lowest-index page with a RUNNING stage), or 0 when none. The bottom bar
+        // uses this so "Translating page N of M" tracks the page the spinner is
+        // actually animating on, instead of the completed-pages count (which used
+        // to read "36" while the spinner sat on page 34 — a confusing mismatch).
+        val translationCurrentPage: Int = 0,
         val translationRefreshToken: Long = 0L,
     ) {
         val currentChapter: ReaderChapter?
@@ -1128,7 +1458,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * from the batch queue if present, and evicts the reader page streams its
      * holders registered (those closures otherwise keep page bitmaps alive).
      */
-    private fun cancelTranslationForChapter(chapter: ReaderChapter) {
+    private suspend fun cancelTranslationForChapter(chapter: ReaderChapter) {
         val manga = manga ?: return
         val chapterId = chapter.chapter.id ?: return
         translationManager.cancelPageTranslations(chapterId)
@@ -1140,6 +1470,35 @@ class ReaderViewModel @JvmOverloads constructor(
             mangaId = manga.id,
             chapterId = chapterId,
         )
+        // TachiyomiAT: clear the per-page translation fields on the departing
+        // chapter's pages. The translator jobs are cancelled above and the
+        // registered streams evicted, but the ReaderPage objects themselves keep
+        // their translatedStream / translation / showTranslatedImage fields set.
+        // Because InsertPage (in the pager viewer) wraps the SAME underlying
+        // ReaderPage, a holder reused across the chapter boundary could briefly
+        // render the old chapter's translated image in the new chapter's slot
+        // during the cancel→re-subscribe window. Null these out so a stale
+        // stream closure (which also captured page bitmaps) is released and any
+        // holder still pointing at these pages falls back to the original image.
+        chapter.pages?.forEach { page ->
+            page.translatedStream = null
+            page.translation = null
+            page.showTranslatedImage = false
+        }
+        // TachiyomiAT: reset the merged translation state to neutral. Without
+        // this, an ERROR (or TRANSLATING) from the chapter we're leaving stays
+        // sticky: recomputeTranslationState() treats ERROR as terminal-wins, so
+        // the bottom-bar icon stayed red (and auto/manual translation on the
+        // NEXT chapter was masked by the stale error) even though the failing
+        // chapter's work had just been cancelled. observeLiveTranslationStore()
+        // re-subscribes to the new chapter's store and resets liveTranslationState,
+        // but batchTranslationState (driven by the queued-translation statusFlow)
+        // was never cleared here — so a chapter-1 batch ERROR bled into chapter 2.
+        // Mirror the reset that "Stop all translation" and "disable translation"
+        // already perform.
+        batchTranslationState = Translation.State.NOT_TRANSLATED
+        liveTranslationState = Translation.State.NOT_TRANSLATED
+        recomputeTranslationState()
     }
 
     fun deleteCurrentChapterTranslation() {
@@ -1151,8 +1510,17 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     fun translateSinglePage(page: ReaderPage) {
-        val manga = manga ?: return
-        val chapter = getCurrentChapter()?.chapter ?: return
+        val manga = manga ?: run {
+            logcat(LogPriority.WARN) { "translateSinglePage: manga is null, cannot translate" }
+            return
+        }
+        // TachiyomiAT: use the page's own chapter context, not getCurrentChapter().
+        // The global current-chapter may differ from the page's actual chapter
+        // when a cross-chapter page-transition event fires before loadNewChapter
+        // completes — translating against the wrong chapter would write results
+        // under the wrong store key (skipped-pages bug) and register reader-page
+        // streams for a chapter the translator can't match to disk files.
+        val chapter = page.chapter.chapter
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val pageKey = resolvePageKey(page)
         logcat(LogPriority.INFO) {
@@ -1160,15 +1528,25 @@ class ReaderViewModel @JvmOverloads constructor(
                 "sourceFileName=${page.sourceFileName} imageUrl=${page.imageUrl} " +
                 "loader=${page.chapter.pageLoader?.javaClass?.simpleName}"
         }
-        // Streamed (non-downloaded) chapters: the translator can only read page
-        // bytes via the reader's originalStream. If that stream isn't available
-        // yet AND the chapter isn't downloaded, the pipeline would fall through
-        // to findChapterDir()==null and silently write a FAILED placeholder.
-        // Skip with a clear log instead of looking like "nothing happens".
-        if (page.originalStream == null && !isCurrentChapterDownloaded()) {
+        // TachiyomiAT: resolve a stream for the translator. A page is
+        // translatable when ANY of these byte sources is available:
+        //   1. page.originalStream  — already-cached/downloaded page bytes
+        //   2. a downloaded chapter dir (translator opens the file directly)
+        //   3. page.imageUrl        — lazy on-demand fetch from the source
+        // Previously the guard below rejected (1)==null && (2)==false outright,
+        // which is exactly the streamed-chapter case that (3) exists to cover —
+        // so the lazy-HTTP fallback was unreachable dead code and tapping
+        // translate on an online chapter silently did nothing ("Download the
+        // chapter before translating"). Only bail when NONE of the three are
+        // available. Check the page's own chapter (not getCurrentChapter()) so
+        // the guard is correct when a cross-chapter transition fires before
+        // loadNewChapter completes.
+        val pageChapterDownloaded = downloadManager.isChapterDownloaded(
+            chapter.name, chapter.scanlator, manga.title, manga.source,
+        )
+        if (page.originalStream == null && !pageChapterDownloaded && page.imageUrl == null) {
             logcat(LogPriority.WARN) {
-                "TachiyomiAT translate skipped: no reader stream and chapter not downloaded " +
-                    "(pageKey=$pageKey). Download the chapter before translating."
+                "translateSinglePage: no stream available for page $pageKey (originalStream=null, chapterDownloaded=$pageChapterDownloaded, imageUrl=${page.imageUrl != null})"
             }
             return
         }
@@ -1180,9 +1558,130 @@ class ReaderViewModel @JvmOverloads constructor(
                 pageKey,
                 streamFn,
             )
-        }
-        viewModelScope.launchIO {
+            // TachiyomiAT: bytes already available — kick off translation now.
             translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+        } ?: page.imageUrl?.let { imageUrl ->
+            // TachiyomiAT: for online pages not yet cached (originalStream is
+            // null), download the image bytes in a cancellable coroutine and
+            // only THEN register the stream + start translation. Previously this
+            // registered a runBlocking{ source.getImage() } closure, which blocked
+            // an IO thread for the whole download and could not be cancelled on a
+            // chapter switch. Now the download is suspend (cancellable) and the
+            // translation is enqueued only after the bytes are in hand.
+            viewModelScope.launchIO {
+                val streamFn = try {
+                    createLazyHttpStream(source, page, imageUrl)
+                } catch (e: Throwable) {
+                    logcat(LogPriority.WARN) {
+                        "translateSinglePage: lazy download failed for $pageKey: ${e.message}"
+                    }
+                    return@launchIO
+                }
+                eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
+                    manga,
+                    chapter.toDomainChapter()!!,
+                    source,
+                    pageKey,
+                    streamFn,
+                )
+                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+            }
+        }
+    }
+
+    /**
+     * TachiyomiAT: downloads the page image from [source] and returns a stream
+     * closure backed by the captured bytes. Used when [ReaderPage.originalStream]
+     * is null (the page hasn't been cached yet by HttpPageLoader) but the page has
+     * an [imageUrl].
+     *
+     * This is a [suspend] function (called from a tracked coroutine scope) so the
+     * download is cancellable — if the reader switches chapters mid-download, the
+     * coroutine is cancelled and the partially-downloaded bytes are dropped.
+     * Previously this was a non-suspending closure whose body was `runBlocking {
+     * source.getImage(...) }`; that blocked an IO dispatcher thread for the entire
+     * download (thread-pool starvation) AND could not be cancelled, so a chapter
+     * switch left the download running to completion against a recycled page.
+     *
+     * The bytes are downloaded eagerly (rather than lazily inside the closure) so
+     * the translator's decode path — which runs on Dispatchers.IO inside the
+     * permit — only reads from memory instead of doing blocking network I/O.
+     */
+    private suspend fun createLazyHttpStream(
+        source: HttpSource,
+        page: ReaderPage,
+        imageUrl: String,
+    ): () -> InputStream {
+        val sPage = Page(page.index, page.url, imageUrl)
+        // Read the body fully while we're in a cancellable suspend context. The
+        // resulting byte array is captured by the returned closure, which the
+        // translator invokes synchronously from its decode path.
+        val bytes = source.getImage(sPage).body.bytes()
+        return { ByteArrayInputStream(bytes) }
+    }
+
+    /**
+     * TachiyomiAT: cancels the in-flight translation job for a single [page].
+     * Backs the per-page button's cancel affordance — lets the user stop one
+     * slow/stuck page without abandoning the whole chapter. No-op if nothing is
+     * running for that page.
+     */
+    fun cancelSinglePageTranslation(page: ReaderPage) {
+        // TachiyomiAT: use the page's own chapter ID so the cancel lands on
+        // the correct activePageJobs key — otherwise the cancel would be a
+        // no-op for a page whose chapter differs from getCurrentChapter().
+        val chapterId = page.chapter.chapter.id ?: return
+        val pageKey = resolvePageKey(page)
+        translationManager.cancelPageTranslation(chapterId, pageKey)
+    }
+
+    /**
+     * TachiyomiAT: cancels ALL in-flight translation work (single-page, auto and
+     * batch), stops the translator engines, and resets the merged translation
+     * state to neutral. Backs the "Stop all translation" control in the reader
+     * — previously there was no way for the user to stop translation at all
+     * short of navigating away or disabling the master toggle.
+     */
+    fun stopAllTranslation() {
+        translationManager.cancelAllPageTranslations()
+        // TachiyomiAT: closeEngines = true so the cached textTranslator /
+        // recognitionEngine are torn down and enginesClosed is set. Without this,
+        // any config change made after stopping (engine, provider, API key, model,
+        // OCR, language) was ignored on the next run — the rebuild gate never
+        // fired because the old engine instances stayed cached.
+        translationManager.translatorStop("user stop", closeEngines = true)
+        // TachiyomiAT: evict all registered reader page streams so their captured
+        // ReaderPage / ByteArray references are released. Without this, the
+        // process-lifetime readerPageStreams map keeps page bytes alive after the
+        // user explicitly stops translation.
+        eu.kanade.translation.ChapterTranslator.clearAllReaderPageStreams()
+        batchTranslationState = Translation.State.NOT_TRANSLATED
+        liveTranslationState = Translation.State.NOT_TRANSLATED
+        recomputeTranslationState()
+    }
+
+    /**
+     * TachiyomiAT: cancel all translation work when the reader
+     * is backgrounded or the activity is finishing. Previously, only onCleared()
+     * (ViewModel destruction) cancelled translation work, which meant background
+     * translation kept consuming battery, bandwidth, and the single translator
+     * permit for minutes after the user switched apps. Called from onPause()
+     * and finish() in ReaderActivity.
+     */
+    fun cancelTranslationsOnBackground() {
+        translationManager.cancelAllPageTranslations()
+        translationManager.translatorStop("reader backgrounded")
+        // TachiyomiAT: evict registered reader page streams so their captured
+        // page bytes are freed while the reader sits in the background, instead
+        // of pinning them in the process-lifetime map.
+        eu.kanade.translation.ChapterTranslator.clearAllReaderPageStreams()
+    }
+
+    fun onMemoryPressure(level: Int) {
+        translationManager.onMemoryPressure(level)
+        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+            liveTranslationState = Translation.State.NOT_TRANSLATED
+            recomputeTranslationState()
         }
     }
 
@@ -1205,10 +1704,78 @@ class ReaderViewModel @JvmOverloads constructor(
             .filterNotNull()
             .onEach { translation ->
                 if (translation.chapter.id == chapterId) {
-                    mutableState.update { it.copy(translationState = translation.status) }
+                    // Merge the batch-queue status with live (per-page/auto)
+                    // status instead of overwriting it. Overwriting here would
+                    // erase a TRANSLATING signal coming from per-page work.
+                    batchTranslationState = translation.status
+                    recomputeTranslationState()
                 }
             }
             .launchIn(viewModelScope)
+    }
+
+    /**
+     * TachiyomiAT: heals pages left stranded in a non-terminal (RUNNING/PENDING)
+     * status by a prior crash, an OOM-kill, or the native-code permit leak.
+     * Such a page otherwise keeps the reader's liveTranslationState pinned at
+     * TRANSLATING forever (spinner never stops, translate icon disabled,
+     * auto-translate never retries it). Any non-terminal entry older than the
+     * per-page timeout is treated as abandoned and flipped to FAILED. Never
+     * touches a page that already produced a result (rendered/cleaned) or
+     * already reached FAILED. Idempotent.
+     */
+    private suspend fun sweepStrandedPageStatus(store: eu.kanade.translation.ChapterTranslationStore) {
+        val now = System.currentTimeMillis()
+        val staleAfterMs = eu.kanade.translation.ChapterTranslator.SINGLE_PAGE_TIMEOUT_MS
+        val snapshot = store.state.value
+        for ((pageKey, pt) in snapshot) {
+            val isTerminal = pt.ocrStatus == StageStatus.FAILED ||
+                pt.inpaintStatus == StageStatus.FAILED ||
+                pt.translationStatus == StageStatus.FAILED ||
+                pt.renderStatus == StageStatus.FAILED ||
+                pt.displayImageName != null
+            if (isTerminal) continue
+            val isNonTerminal = pt.ocrStatus == StageStatus.RUNNING ||
+                pt.ocrStatus == StageStatus.PENDING ||
+                pt.inpaintStatus == StageStatus.RUNNING ||
+                pt.inpaintStatus == StageStatus.PENDING ||
+                pt.translationStatus == StageStatus.RUNNING ||
+                pt.translationStatus == StageStatus.PENDING ||
+                pt.renderStatus == StageStatus.RUNNING ||
+                pt.renderStatus == StageStatus.PENDING
+            if (!isNonTerminal) continue
+            val age = now - pt.updatedAt
+            if (age < staleAfterMs) continue
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT stranded-page sweep: healing $pageKey " +
+                    "(ocr=${pt.ocrStatus} inpaint=${pt.inpaintStatus} age=${age / 1000}s)"
+            }
+            store.updatePage(pageKey) { existing ->
+                val safe = existing ?: return@updatePage pt
+                val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
+                    safe.inpaintStatus == StageStatus.FAILED ||
+                    safe.translationStatus == StageStatus.FAILED ||
+                    safe.renderStatus == StageStatus.FAILED ||
+                    safe.displayImageName != null
+                if (safeTerminal) return@updatePage safe
+                safe.apply {
+                    if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
+                        ocrStatus = StageStatus.CANCELLED
+                    }
+                    if (inpaintStatus == StageStatus.RUNNING || inpaintStatus == StageStatus.PENDING) {
+                        inpaintStatus = StageStatus.CANCELLED
+                    }
+                    if (translationStatus == StageStatus.RUNNING || translationStatus == StageStatus.PENDING) {
+                        translationStatus = StageStatus.CANCELLED
+                    }
+                    if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
+                        renderStatus = StageStatus.CANCELLED
+                    }
+                    errorMessage = errorMessage ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
+                    updatedAt = System.currentTimeMillis()
+                }
+            }
+        }
     }
 
     fun observeLiveTranslationStore() {
@@ -1229,20 +1796,68 @@ class ReaderViewModel @JvmOverloads constructor(
         ) ?: return
         val storeState = store.state
         translationStoreJob = viewModelScope.launchIO {
+            // TachiyomiAT: heal stranded RUNNING/PENDING pages left behind by a
+            // prior crash, an OOM-kill, or the native-code permit leak this build
+            // fixes — BEFORE the first collect emission is processed. A page
+            // stuck at ocrStatus=RUNNING with no result keeps the observer's
+            // anyRunning=true forever (so liveTranslationState never leaves
+            // TRANSLATING, the spinner never stops, the translate icon stays
+            // disabled, and auto-translate's isRunning skip never re-enqueues
+            // it). Any non-terminal entry older than the per-page timeout is
+            // treated as abandoned and flipped to CANCELLED. Runs once per
+            // chapter open. Never clobbers a page that produced a result or
+            // reached FAILED.
+            sweepStrandedPageStatus(store)
             storeState.collect { pageMap ->
                 val pages = state.value.viewerChapters?.currChapter?.pages ?: return@collect
                 var translatedCount = 0
-                val changedPages = mutableSetOf<ReaderPage>()
                 val totalPages = pages.size
-                for (page in pages) {
+                // Track whether ANY page currently has a RUNNING stage or a
+                // FAILED stage across this emission, so we can derive a
+                // liveTranslationState that reflects per-page/auto work (the
+                // batch-queue status alone never flips for these).
+                var anyRunning = false
+                var anyError = false
+                // Lowest 1-based index of a page currently mid-translation. Used
+                // for the "Translating page N of M" label so it tracks the page
+                // the spinner animates on. 0 means no page is running.
+                var runningPageIndex = 0
+                for ((pageIndex, page) in pages.withIndex()) {
                     val readerPage = page as? ReaderPage ?: continue
                     val pageKey = resolvePageKey(readerPage)
                     val updated = pageMap[pageKey] ?: continue
                     if (updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
                         updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
                         updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                        updated.errorMessage != null
+                        updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING
+                    ) {
+                        anyRunning = true
+                        // Pages may be emitted out of order; keep the lowest
+                        // running index for a stable label.
+                        val oneBased = pageIndex + 1
+                        if (runningPageIndex == 0 || oneBased < runningPageIndex) {
+                            runningPageIndex = oneBased
+                        }
+                    }
+                    val displayImageName = updated.displayImageName
+                    val hasRendered = updated.renderedImageName != null
+                    val hasCleaned = displayImageName != null && updated.cleanedImageName != null
+                    val isFailed = updated.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
+                        updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED ||
+                        updated.translationStatus == eu.kanade.translation.model.StageStatus.FAILED ||
+                        updated.renderStatus == eu.kanade.translation.model.StageStatus.FAILED
+                    if (isFailed && !hasRendered && !hasCleaned) anyError = true
+                    // TachiyomiAT: this per-page INFO log fires on every RUNNING
+                    // stage of every page during a batch run — thousands of string
+                    // interpolations + log dispatches on a busy chapter. Gate it
+                    // behind the opt-in translation_diagnostics pref so the hot
+                    // path stays quiet unless the user is actively debugging.
+                    if (translationDiagnosticsEnabled &&
+                        (updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                            updated.errorMessage != null)
                     ) {
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT live translation update: pageKey=$pageKey " +
@@ -1252,48 +1867,98 @@ class ReaderViewModel @JvmOverloads constructor(
                                 "error=${updated.errorMessage}"
                         }
                     }
-                    val previous = readerPage.translation
-                    val hasRendered = updated.renderedImageName != null
-                    val hasCleaned = updated.cleanedImageName != null
-                    val isFailed = updated.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
-                        updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED
-                    if (hasRendered || hasCleaned) translatedCount++
+                    if (displayImageName != null || updated.isTextlessTerminal) translatedCount++
                     if (isFailed && !hasRendered && !hasCleaned) translatedCount++
-                    val renderedChanged = hasRendered && updated.renderedImageName != previous?.renderedImageName
-                    val cleanedChanged = hasCleaned && updated.cleanedImageName != previous?.cleanedImageName
-                    val streamChanged = updated.renderedImageName != null || updated.cleanedImageName != null
-                    val needsStreamUpdate = streamChanged && (renderedChanged || cleanedChanged || readerPage.translatedStream == null)
-                    val runningChanged = updated.ocrStatus != previous?.ocrStatus ||
-                        updated.inpaintStatus != previous?.inpaintStatus ||
-                        updated.renderStatus != previous?.renderStatus ||
-                        updated.translationStatus != previous?.translationStatus
-                    if (!needsStreamUpdate && !runningChanged) {
-                        readerPage.translation = updated
-                        continue
-                    }
-                    if (needsStreamUpdate && hasRendered) {
+                    if (hasRendered) {
                         readerPage.translatedStream = translationManager.getRenderedImageStream(
                             manga.title, source, chapter.name, chapter.scanlator, updated.renderedImageName!!,
                         )
-                    } else if (needsStreamUpdate && hasCleaned) {
+                    } else if (hasCleaned) {
                         readerPage.translatedStream = translationManager.getCleanedImageStream(
                             manga.title, source, chapter.name, chapter.scanlator, updated.cleanedImageName!!,
                         )
+                    } else {
+                        readerPage.translatedStream = null
                     }
                     readerPage.translation = updated
-                    changedPages.add(readerPage)
                 }
-                mutableState.update {
-                    it.copy(
-                        translationProgress = Pair(translatedCount, totalPages),
-                        translationRefreshToken = System.currentTimeMillis(),
-                    )
+                // Derive the live state from what we just observed, then merge
+                // with the batch state. TRANSLATING wins; then ERROR; then
+                // TRANSLATED only when every page has produced a result; else
+                // NOT_TRANSLATED (so the icon goes back to neutral when idle).
+                liveTranslationState = when {
+                    anyRunning -> Translation.State.TRANSLATING
+                    anyError -> Translation.State.ERROR
+                    totalPages > 0 && translatedCount >= totalPages -> Translation.State.TRANSLATED
+                    else -> Translation.State.NOT_TRANSLATED
                 }
-                if (changedPages.isNotEmpty()) {
-                    eventChannel.trySend(Event.RefreshTranslationPages(changedPages))
+                recomputeTranslationState()
+                // TachiyomiAT: only push a State update when the progress OR the
+                // currently-running page index actually changed. The old code used
+                // System.currentTimeMillis() as a refresh token, which always
+                // differs and forces Compose recomposition on every single
+                // translation-stage emission (OCR → inpaint → translate → render
+                // per page per prefetch), causing visible "blinking" on
+                // auto-translate chapters.
+                val newProgress = Pair(translatedCount, totalPages)
+                val currentState = mutableState.value
+                if (newProgress != currentState.translationProgress ||
+                    runningPageIndex != currentState.translationCurrentPage
+                ) {
+                    mutableState.update {
+                        it.copy(
+                            translationProgress = newProgress,
+                            translationCurrentPage = runningPageIndex,
+                            translationRefreshToken = System.currentTimeMillis(),
+                        )
+                    }
                 }
+                // Holder-level observePageView(page) collectors consume page
+                // image/status changes directly. This collector only keeps the
+                // global translation state and ReaderPage snapshots current.
             }
         }
+    }
+
+    fun observePageView(page: ReaderPage): Flow<eu.kanade.translation.model.PageView>? {
+        val manga = manga ?: return null
+        val chapter = page.chapter.chapter
+        val chapterId = chapter.id ?: return null
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+        val store = translationManager.openOrCreateActiveChapterTranslationStore(
+            chapterId,
+            chapter.name,
+            chapter.scanlator,
+            manga.title,
+            source,
+        ) ?: return null
+        val pageKey = resolvePageKey(page)
+        return store.state
+            .map { pages -> pages[pageKey] }
+            .distinctUntilChanged()
+            .onEach { updated ->
+                if (updated == null) return@onEach
+                page.translation = updated
+                page.translatedStream = when {
+                    updated.renderedImageName != null -> translationManager.getRenderedImageStream(
+                        manga.title,
+                        source,
+                        chapter.name,
+                        chapter.scanlator,
+                        updated.renderedImageName!!,
+                    )
+                    updated.displayImageName == updated.cleanedImageName && updated.cleanedImageName != null -> translationManager.getCleanedImageStream(
+                        manga.title,
+                        source,
+                        chapter.name,
+                        chapter.scanlator,
+                        updated.cleanedImageName!!,
+                    )
+                    else -> null
+                }
+            }
+            .map { it.toPageView() }
+            .distinctUntilChanged()
     }
 
     private val ReaderPage.renderedImageName: String?
@@ -1308,11 +1973,15 @@ class ReaderViewModel @JvmOverloads constructor(
      *
      * Returns an empty string only as a last resort so callers can still index without NPEs.
      */
-    private fun resolvePageKey(page: ReaderPage): String =
-        page.sourceFileName
+    private fun resolvePageKey(page: ReaderPage): String {
+        page.translationStorageKey?.let { return it }
+        val resolved = page.sourceFileName
             ?: page.translation?.sourceFileName
             ?: page.imageUrl?.substringAfterLast('/')?.substringBefore('?')
             ?: page.url.substringAfterLast('/').substringBefore('?')
+        page.translationStorageKey = resolved
+        return resolved
+    }
 
     sealed interface Dialog {
         data object Loading : Dialog

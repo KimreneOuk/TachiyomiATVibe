@@ -25,6 +25,14 @@ data class PageTranslation(
     var errorMessage: String? = null,
     var updatedAt: Long = 0L,
     var sourceFileName: String? = null,
+    // TachiyomiAT: counts how many times a stage on this page has been retried
+    // after a failure. Persisted (serialized) so it survives a chapter reopen —
+    // auto-translate uses it to bound retries (see MAX_STAGE_RETRIES) instead of
+    // skipping a FAILED page forever or retrying it in an infinite loop.
+    var retryCount: Int = 0,
+    // Incremented when the rendered file's bytes are rewritten. The file name is
+    // stable (<page>.rendered.webp), so UI dedup must not key on the name alone.
+    var renderRevision: Long = 0L,
     ) {
     @Transient
     var cleanedBitmap: Bitmap? = null
@@ -50,6 +58,17 @@ object StageStatus {
     const val RUNNING = "RUNNING"
     const val READY = "READY"
     const val FAILED = "FAILED"
+    const val CANCELLED = "CANCELLED"
+
+    /**
+     * TachiyomiAT: maximum number of times auto-translate will re-attempt a page
+     * whose stage(s) failed. Bounds the retry loop so a genuinely broken page
+     * (corrupt image, persistent OOM) can't spin forever holding the singleton
+     * translator permit — while still recovering transient failures (e.g. an OOM
+     * right after a chapter switch). The manual per-page translate button is
+     * NOT bound by this (it always retries), so a user can force more attempts.
+     */
+    const val MAX_STAGE_RETRIES = 2
 }
 
 @Serializable
@@ -69,8 +88,15 @@ data class TranslationBlock(
     val parentY: Float = 0f,
     val parentWidth: Float = 0f,
     val parentHeight: Float = 0f,
-    val textColor: Long = 0xFF000000,
-    val strokeColor: Long = 0xFFFFFFFF,
-    val strokeWidth: Float = 0f,
+    // TachiyomiAT: textColor/strokeColor/strokeWidth are `var` (not `val`) so they
+    // can be RE-DERIVED after inpainting against the cleaned bitmap (see
+    // RenderColorEstimator + ChapterTranslator). Colors sampled against the
+    // original bitmap at recognition time can be wrong once inpainting replaces
+    // the background with a different median color — so the renderer needs the
+    // post-inpaint colors to keep "dark inpaint → light text" legible.
+    // Serialization is field-name based, so val→var is backward compatible.
+    var textColor: Long = 0xFF000000,
+    var strokeColor: Long = 0xFFFFFFFF,
+    var strokeWidth: Float = 0f,
     val direction: String = "LTR",
 )

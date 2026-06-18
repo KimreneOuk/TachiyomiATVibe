@@ -87,17 +87,40 @@ class GeminiTranslator(
             val data = pages.mapValues { (k, v) -> v.blocks.map { b -> b.text } }
             val json = JSONObject(data)
             val response = model.generateContent(json.toString())
-            val resJson = JSONObject("${response.text}")
+            // TachiyomiAT: response.text is null when the model refuses, is
+            // safety-filtered, or errors internally. The old code did
+            // JSONObject("${response.text}") which turned a null into the literal
+            // string "null" and then threw a JSONException deep in org.json. Fail
+            // early with a clear, typed message so the page is marked FAILED with
+            // an actionable cause instead.
+            val responseText = response.text
+            if (responseText.isNullOrBlank()) {
+                throw GeminiEmptyResponseException(
+                    "Gemini returned an empty response (refused, safety-filtered, or error).",
+                )
+            }
+            val resJson = JSONObject(responseText)
             for ((k, v) in pages) {
+                // TachiyomiAT: log when the model returned a different number of
+                // translations than blocks for this page. Previously a mismatch
+                // silently fell back to the original (untranslated) text with no
+                // signal, making it look like translation "just didn't work".
+                val expected = v.blocks.size
+                val actual = resJson.optJSONArray(k)?.length() ?: 0
+                if (expected != actual) {
+                    logcat {
+                        "Gemini response length mismatch for '$k': expected=$expected actual=$actual " +
+                            "(mismatched blocks keep their original text)"
+                    }
+                }
                 v.blocks.forEachIndexed { i, b ->
                     run {
                         val res = resJson.optJSONArray(k)?.optString(i, "NULL")
                         b.translation = if (res == null || res == "NULL") b.text else res
                     }
                 }
-                v.blocks =
-                    v.blocks.filterNot { it.translation.contains("RTMTH") }.toMutableList()
             }
+            TranslationBlockFilters.removeWatermarkBlocks(pages)
         } catch (e: Exception) {
             logcat { "Image Translation Error : ${e.stackTraceToString()}" }
             throw e
@@ -106,6 +129,12 @@ class GeminiTranslator(
 
     override fun close() {
     }
-
-
 }
+
+/**
+ * TachiyomiAT: thrown when the Gemini model returns no usable text (refusal,
+ * safety filter, or internal error). Distinct from a generic [Exception] so the
+ * caller can report a clear cause to the user instead of a low-level JSON parse
+ * error.
+ */
+class GeminiEmptyResponseException(message: String) : Exception(message)

@@ -28,7 +28,13 @@ class OnnxPageTextDetector {
         logcat(LogPriority.INFO) {
             "Detector init: ${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions()
+        // TachiyomiAT: detector stays on CPU. It's one cheap 640x640 pass per
+        // page and runs in the same init sequence as the manga-ocr sessions;
+        // keeping it off the accelerator avoids any chance an NNAPI partitioning
+        // hiccup destabilizes the OCR session init that follows. The AOT
+        // inpainting model is the only model that opts into the accelerator
+        // (single big generative pass — its ideal workload).
+        val opts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
         } catch (e: Exception) {
@@ -103,29 +109,36 @@ class OnnxPageTextDetector {
         session = null
     }
 
+    // TachiyomiAT: rewritten from a triple-nested per-channel loop
+    // (for c in 0..2 { for y { for x { ... } } }) to a single-pass scan through
+    // the pixel array. The old code traversed every pixel three times (once per
+    // channel); this version reads each pixel once, extracts R/G/B, and writes
+    // to contiguous FloatBuffer regions via bulk-put where possible, reducing
+    // the per-page pixel-array traversal from ~3.6M to ~1.2M.
     private fun preprocess(resized: Bitmap): OnnxTensor {
         val pixels = IntArray(640 * 640)
         resized.getPixels(pixels, 0, 640, 0, 0, 640, 640)
 
-        val floatBuffer = FloatBuffer.allocate(1 * 3 * 640 * 640)
-        for (c in 0 until 3) {
-            for (y in 0 until 640) {
-                for (x in 0 until 640) {
-                    val pixel = pixels[y * 640 + x]
-                    val channelValue = when (c) {
-                        0 -> (pixel shr 16 and 0xFF) / 255.0f
-                        1 -> (pixel shr 8 and 0xFF) / 255.0f
-                        2 -> (pixel and 0xFF) / 255.0f
-                        else -> 0f
-                    }
-                    floatBuffer.put(channelValue)
-                }
-            }
+        val total = 640 * 640
+        // Layout: [R_0...R_n, G_0...G_n, B_0...B_n] — contiguous float arrays
+        // so ONNX can read them directly without interleaving.
+        val rChannel = FloatArray(total)
+        val gChannel = FloatArray(total)
+        val bChannel = FloatArray(total)
+        for (i in 0 until total) {
+            val pixel = pixels[i]
+            rChannel[i] = (pixel shr 16 and 0xFF) / 255.0f
+            gChannel[i] = (pixel shr 8 and 0xFF) / 255.0f
+            bChannel[i] = (pixel and 0xFF) / 255.0f
         }
-        floatBuffer.rewind()
+        val floatBuf = FloatBuffer.allocate(3 * total)
+        floatBuf.put(rChannel)
+        floatBuf.put(gChannel)
+        floatBuf.put(bChannel)
+        floatBuf.rewind()
         return OnnxTensor.createTensor(
             OnnxRuntimeProvider.environment,
-            floatBuffer,
+            floatBuf,
             longArrayOf(1, 3, 640, 640),
         )
     }

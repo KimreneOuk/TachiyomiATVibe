@@ -10,6 +10,7 @@
     <string name="pref_reader_font">Reader Font</string>
     <string name="pref_group_setup">Translation Setup</string>
     <string name="pref_translate_from">Translate From</string>
+    <string name="pref_ocr_model">OCR model</string>
     <string name="pref_translate_to">Translate To</string>
     <string name="pref_group_engine">Translator</string>
     <string name="pref_translator_engine">Translator Engine</string>
@@ -29,6 +30,7 @@
     <string name="pref_ai_api_key_gemini">Gemini API key</string>
     <string name="pref_ai_api_key_openrouter">OpenRouter API key</string>
     <string name="pref_ai_api_key_deepseek">DeepSeek API key</string>
+    <string name="pref_ai_base_url_lmstudio">LM Studio base URL</string>
     <string name="pref_ai_key_set">Your key is set (not shown)</string>
     <string name="pref_ai_key_not_set">Not set</string>
     <string name="pref_ai_fetch_models">Fetch models</string>
@@ -38,6 +40,7 @@
     <string name="pref_ai_search_models">Search models</string>
     <string name="pref_ai_model_manual">Manual model ID</string>
     <string name="pref_ai_no_key">Enter an API key to fetch models</string>
+    <string name="pref_ai_no_base_url">Enter a base URL to fetch models</string>
     <string name="pref_ai_invalid_key">Invalid or expired API key</string>
     <string name="pref_ai_no_models">No models returned</string>
     <string name="pref_ai_fetch_error">Failed to fetch models: %1$s</string>
@@ -49,9 +52,33 @@
     <string name="pref_inpainting_mode_fast">Fast</string>
     <string name="reader_translate">Translate</string>
     <string name="reader_translating">Translating %1$d/%2$d</string>
+    <string name="reader_translating_page">Translating page %1$d of %2$d</string>
     <string name="reader_translation_cancel">Cancel</string>
     <string name="reader_translation_delete">Delete translation</string>
     <string name="reader_translation_not_downloaded">Translation requires downloaded chapters</string>
+    <string name="reader_translation_stop_all">Stop all translation</string>
+    <string name="reader_translation_stop_all_summary">Cancels every page being translated right now</string>
+
+    <!-- TachiyomiAT: live queue view shown in the reader translation settings sheet -->
+    <string name="reader_translation_queue_summary">Translating page %1$d of %2$d · %3$d queued</string>
+    <string name="reader_translation_queue_idle">No pages in the translation queue</string>
+    <string name="reader_translation_queue_running">Translating page %1$d of %2$d</string>
+    <string name="reader_translation_queued_count">Queued: %1$d</string>
+    <string name="reader_translation_stage_ocr">OCR</string>
+    <string name="reader_translation_stage_inpaint">Inpaint</string>
+    <string name="reader_translation_stage_translate">Translate</string>
+    <string name="reader_translation_stage_render">Render</string>
+    <string name="reader_translation_stage_running">%1$s…</string>
+    <string name="reader_translation_stage_done">Done</string>
+    <string name="reader_translation_stage_failed">Failed</string>
+    <string name="reader_translation_stage_queued">Queued</string>
+    <string name="reader_translation_page">Page %1$d</string>
+
+    <!-- TachiyomiAT: per-page original/translated compare handle -->
+    <string name="reader_compare_handle">Compare original and translated</string>
+    <string name="reader_compare_show_original">Show original</string>
+    <string name="reader_compare_show_translated">Show translated</string>
+    <string name="reader_compare_open_settings">Translation settings</string>
 
     <!-- Reader overlay translation settings sheet -->
     <string name="translation_settings">Translation</string>

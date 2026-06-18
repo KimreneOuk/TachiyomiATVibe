@@ -21,7 +21,10 @@ import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -29,6 +32,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.getSystemService
 import androidx.core.graphics.ColorUtils
@@ -53,6 +57,7 @@ import eu.kanade.presentation.reader.ReaderPageActionsDialog
 import eu.kanade.presentation.reader.ReadingModeSelectDialog
 import eu.kanade.presentation.reader.TranslationSettingsSheet
 import eu.kanade.presentation.reader.appbars.ReaderAppBars
+import eu.kanade.presentation.reader.components.TranslationCompareHandle
 import eu.kanade.presentation.reader.settings.ReaderSettingsDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.coil.TachiyomiImageDecoder
@@ -114,6 +119,11 @@ class ReaderActivity : BaseActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
+
+        // TachiyomiAT: window after a double-tap during which touch events are
+        // swallowed so the SubsamplingScaleImageView's built-in double-tap-to-zoom
+        // can't also fire alongside the menu toggle.
+        private const val DOUBLE_TAP_SUPPRESS_MS = 280L
     }
 
     private val readerPreferences = Injekt.get<ReaderPreferences>()
@@ -257,7 +267,18 @@ class ReaderActivity : BaseActivity() {
 
     override fun onPause() {
         viewModel.flushReadTimer()
+        // TachiyomiAT: cancel all in-flight translation when the reader is
+        // backgrounded. Previously, translation kept running indefinitely
+        // after the user switched apps — consuming battery, bandwidth, and
+        // holding the translator's single permit. onCleared() catches reader
+        // destruction but that can be minutes later.
+        viewModel.cancelTranslationsOnBackground()
         super.onPause()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        viewModel.onMemoryPressure(level)
     }
 
     /**
@@ -292,6 +313,11 @@ class ReaderActivity : BaseActivity() {
      */
     override fun finish() {
         viewModel.onActivityFinish()
+        // TachiyomiAT: proactively stop translation when the reader is closed.
+        // onCleared() eventually does this too, but the window between finish()
+        // and ViewModel destruction can be seconds long — cancel immediately so
+        // no orphaned pages decode/inpaint/translate after the reader is gone.
+        viewModel.cancelTranslationsOnBackground()
         super.finish()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             overrideActivityTransition(
@@ -325,6 +351,63 @@ class ReaderActivity : BaseActivity() {
     }
 
     /**
+     * TachiyomiAT: detect a double-tap anywhere on the screen to toggle the
+     * reader menu overlay. This catches the gesture at the Activity level via
+     * dispatchTouchEvent, before any child view can consume it.
+     *
+     * Why a separate detector here instead of the viewer's tapListener:
+     * The dialog_root ComposeView (which hosts the overlay bars and dialogs)
+     * sits above the viewer in the Z-order and consumes ACTION_DOWN for its
+     * own gesture tracking, starving the viewer's GestureDetectorWithLongTap
+     * of the down event it needs to fire onSingleTapConfirmed. By detecting
+     * double-tap in dispatchTouchEvent (which the framework calls on every
+     * touch before any child sees it), the gesture works from any screen
+     * region regardless of which child view is on top.
+     *
+     * We also need to suppress the SubsamplingScaleImageView's built-in
+     * double-tap-to-zoom. The library is third-party (can't be edited) and
+     * handles zoom internally via its own GestureDetector. To prevent the
+     * second tap of a double-tap from reaching it, we track recent double-tap
+     * timestamps and short-circuit ACTION_DOWN/UP within a 280ms window,
+     * returning true (consumed) so the SSIV never sees the triggering taps.
+     * Single-tap page navigation and pinch-zoom are unaffected because those
+     * gestures don't fall inside the double-tap window.
+     */
+    @Volatile
+    private var lastDoubleTapTime = 0L
+
+    private val doubleTapDetector by lazy {
+        android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                lastDoubleTapTime = android.os.SystemClock.uptimeMillis()
+                toggleMenu()
+                return true
+            }
+        })
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        doubleTapDetector.onTouchEvent(ev)
+        // Suppress the second tap of a double-tap so the
+        // SubsamplingScaleImageView's built-in double-tap-to-zoom doesn't
+        // also fire. For ~280ms after we detect a double-tap, swallow
+        // DOWN/UP/MOVE so the library's internal GestureDetector never
+        // completes its own double-tap recognition.
+        if (lastDoubleTapTime != 0L &&
+            android.os.SystemClock.uptimeMillis() - lastDoubleTapTime < DOUBLE_TAP_SUPPRESS_MS
+        ) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP,
+                MotionEvent.ACTION_MOVE, MotionEvent.ACTION_CANCEL,
+                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                    return true
+                }
+            }
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    /**
      * Dispatches a generic motion event. If the viewer doesn't handle it, call the default
      * implementation.
      */
@@ -348,6 +431,13 @@ class ReaderActivity : BaseActivity() {
                 )
             }
         }
+
+// TachiyomiAT: dialog_root ComposeView is MATCH_PARENT and sits above
+        // the reader_container in the FrameLayout Z-order. Make it
+        // non-clickable/non-focusable so it doesn't steal touch ownership
+        // from the viewer below when no interactive composable is showing.
+        binding.dialogRoot.isClickable = false
+        binding.dialogRoot.isFocusable = false
 
         binding.dialogRoot.setComposeContent {
             val state by viewModel.state.collectAsState()
@@ -382,12 +472,40 @@ class ReaderActivity : BaseActivity() {
 
             val translationState by viewModel.state.map { it.translationState }.collectAsState(initial = Translation.State.NOT_TRANSLATED)
             val translationProgress by viewModel.state.map { it.translationProgress }.collectAsState(initial = Pair(0, 0))
+            val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
+            // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
+            val translationQueue by viewModel.translationQueueState.collectAsState()
+            val compareState by viewModel.compareState.collectAsState()
 
             ReaderContentOverlay(
                 brightness = state.brightnessOverlayValue,
                 color = colorOverlay.takeIf { colorOverlayEnabled },
                 colorBlendMode = colorOverlayBlendMode,
             )
+
+            // TachiyomiAT: per-page original/translated compare handle. A small
+            // side-mounted control (left edge, vertically centred) that lets the
+            // user flip ONLY the current page between its original and translated
+            // image for quick comparison, plus open the full translation settings.
+            // Always visible (independent of the reader chrome) so it's reachable
+            // during distraction-free reading; hidden entirely when translation is
+            // disabled. Original/Translated rows auto-disable on pages with no
+            // translation yet. Wrapped in a full-size Box so it overlays the page
+            // area without consuming layout space from the app bars.
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                TranslationCompareHandle(
+                    visible = compareState.translationEnabled,
+                    hasTranslation = compareState.hasTranslation,
+                    showingTranslated = compareState.showingTranslated,
+                    onSelectOriginal = { viewModel.setCurrentPageShowTranslated(false) },
+                    onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
+                    onOpenSettings = { viewModel.openTranslationSettingsDialog() },
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
 
             ReaderAppBars(
                 visible = state.menuVisible,
@@ -432,7 +550,18 @@ class ReaderActivity : BaseActivity() {
                 onClickSettings = viewModel::openSettingsDialog,
                 translationState = translationState,
                 translationProgress = translationProgress,
+                translationCurrentPage = translationCurrentPage,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
+                // TachiyomiAT: the translate control is ALWAYS tappable, even while
+                // translation is running. While busy it shows a spinner, but tapping it
+                // opens the settings sheet — which is the ONLY place the user can stop
+                // an in-flight auto-translation run or change engine/language config. The
+                // previous behaviour disabled the icon while TRANSLATING, so the user was
+                // trapped on the spinner with no escape until the whole chapter finished.
+                // Repeated taps are harmless: openTranslationSettingsDialog() just sets the
+                // dialog state; the actual translation work is gated by the singleton
+                // translator permit and the activePageJobs dedup in TranslationManager.
+                translateEnabled = true,
             )
 
             if (flashOnPageChange) {
@@ -469,6 +598,10 @@ class ReaderActivity : BaseActivity() {
                 is ReaderViewModel.Dialog.TranslationSettings -> {
                     TranslationSettingsSheet(
                         onDismissRequest = onDismissRequest,
+                        onStopAllTranslation = { viewModel.stopAllTranslation() },
+                        queue = translationQueue,
+                        translationProgress = translationProgress,
+                        translationCurrentPage = translationCurrentPage,
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

@@ -2,6 +2,12 @@ package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isStageRunning
+import kotlinx.collections.immutable.PersistentMap
+import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -14,42 +20,60 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 class ChapterTranslationStore(
-    private val translationFile: UniFile?,
+    // TachiyomiAT: mutable so persistLocked() can cache the file materialized
+    // by fileCreator on the first lazy write. Previously this was `val`, which
+    // meant the lazy store re-invoked fileCreator (creating a NEW translation
+    // file) on every single persist — leaking orphaned files and splitting the
+    // translation across multiple documents.
+    private var translationFile: UniFile?,
     private val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
 ) {
     private val mutex = Mutex()
-    private val pages = LinkedHashMap<String, PageTranslation>()
+    private var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
 
     init {
-        pages.putAll(initialPages)
-        _state.value = pages.toMap()
+        pages = initialPages.toPersistentMap()
+        _state.value = snapshotPages()
     }
 
     suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
         mutex.withLock {
+            val previous = pages[pageKey]
             val updated = update(pages[pageKey]).apply {
                 sourceFileName = sourceFileName ?: pageKey
                 updatedAt = System.currentTimeMillis()
             }
-            pages[pageKey] = updated
-            persistLocked()
+            pages = pages.put(pageKey, updated)
+            if (shouldPersistUpdate(previous, updated)) {
+                persistLocked()
+            }
             // Build a snapshot copy so MutableStateFlow always emits — even when
             // callers mutate a previously emitted PageTranslation in place.
-            _state.value = pages.entries.associate { (key, page) -> key to page.copy() }
+            _state.value = snapshotPages()
         }
     }
 
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) {
         mutex.withLock {
-            pages.clear()
-            pages.putAll(updatedPages)
+            pages = updatedPages.toPersistentMap()
             persistLocked()
-            _state.value = pages.entries.associate { (key, page) -> key to page.copy() }
+            _state.value = snapshotPages()
         }
+    }
+
+    private fun snapshotPages(): Map<String, PageTranslation> =
+        pages.entries.associate { (key, page) -> key to page.copy() }
+
+    private fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
+        if (updated.hasRenderedResult || updated.isStageFailed) return true
+        if (updated.blocks.isNotEmpty()) return true
+        if (updated.errorMessage != null) return true
+        if (previous?.hasRenderedResult == true && !updated.hasRenderedResult) return true
+        return !updated.isStageRunning
     }
 
     private fun persistLocked() {
@@ -58,17 +82,83 @@ class ChapterTranslationStore(
         // fileCreator materializes it on the FIRST real write. This avoids
         // leaving empty translation files on disk for chapters that were merely
         // opened (which previously caused isChapterTranslated to report a false
-        // TRANSLATED state on reopen).
-        val target = translationFile ?: fileCreator?.invoke() ?: return
+        // TRANSLATED state on reopen). Cache the resolved file so subsequent
+        // writes reuse it instead of creating a new one each time.
+        if (translationFile == null) {
+            translationFile = fileCreator?.invoke()
+        }
+        val target = translationFile ?: return
         // The translation store is SAF-backed (UniFile). A stale/revoked tree
         // URI or moved folder can make openOutputStream() throw IOException.
         // The in-memory state is still correct and the reader gets live updates
         // via the StateFlow below, so a write failure must NOT kill the whole
         // translation: log it and continue. The read path already degrades the
         // same way (see open()).
+        //
+        // TachiyomiAT: write atomically. openOutputStream(false) truncates the
+        // target BEFORE encoding, so if Json.encodeToStream throws or the
+        // process is killed mid-write (OOM, ANR, low-memory kill), the file is
+        // left with a valid JSON prefix followed by NOTHING — a truncated,
+        // unreadable store that on next open() silently wipes every page we
+        // had already translated. Instead, encode into a sibling temp file and
+        // rename it over the target only once the bytes are fully flushed; a
+        // crash mid-write then leaves the previous good file untouched. This is
+        // the same write-temp-then-rename pattern the Downloader already uses.
         try {
-            target.openOutputStream().use { output ->
-                Json.encodeToStream(pages, output)
+            // TachiyomiAT: snapshot the persistent map into a plain Map<String,
+            // PageTranslation> before encoding. `pages` is a kotlinx.collections
+            // `PersistentMap`; serializing it directly makes kotlinx.serialization
+            // treat PersistentMap polymorphically and then fail at runtime with
+            // "Serializer for subclass 'PersistentOrderedMap' is not found in the
+            // polymorphic scope of 'PersistentMap'" — which broke EVERY persist
+            // (and the matching open() decode below) so no translation.json was
+            // ever written and every reopen started empty. The persistent map is
+            // an in-memory structure; only its plain contents belong on disk.
+            val snapshot: Map<String, PageTranslation> = pages.toMap()
+            val parent = target.parentFile
+            if (parent == null) {
+                // No parent (e.g. a single-document URI): fall back to a direct
+                // truncating write. Atomicity isn't achievable without a sibling
+                // location, so prefer liveness over corruption-risk here.
+                target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
+                return
+            }
+            val tempFile = parent.createFile(TEMP_FILE_NAME)
+            if (tempFile == null) {
+                target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
+                return
+            }
+            try {
+                tempFile.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
+            } catch (e: Exception) {
+                try { tempFile.delete() } catch (_: Exception) {}
+                throw e
+            }
+            // Replace the target with the completed temp file. SAF's
+            // DocumentsContract.renameDocument refuses to overwrite an existing
+            // name on most providers (no FLAG_SUPPORTS_RENAME_AND_OVERWRITE), so
+            // we delete the target first, then rename the temp onto it. The
+            // delete-then-rename window is sub-millisecond; if a crash lands in
+            // it, open() already degrades a missing/corrupt file to empty, so the
+            // reader keeps working — it just re-translates on the next run. If
+            // the rename still fails (provider quirk), fall back to a truncating
+            // copy of the already-encoded bytes so the in-memory state isn't lost.
+            val targetName = target.name ?: DEFAULT_FILE_NAME
+            val renamed = try {
+                target.delete()
+                tempFile.renameTo(targetName)
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "Atomic rename of translation store failed; falling back to copy" }
+                false
+            }
+            if (!renamed) {
+                try {
+                    tempFile.openInputStream().use { input ->
+                        target.openOutputStream().use { output -> input.copyTo(output) }
+                    }
+                } finally {
+                    try { tempFile.delete() } catch (_: Exception) {}
+                }
             }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to persist translation store; in-memory state retained" }
@@ -76,6 +166,16 @@ class ChapterTranslationStore(
     }
 
     companion object {
+        /**
+         * Sibling temp file used by [persistLocked] for the write-temp-then-
+         * rename atomicity pattern. It is created in the same directory as the
+         * target translation file and renamed over it once encoding completes.
+         */
+        private const val TEMP_FILE_NAME = ".translation.tmp"
+
+        /** Fallback name for the rename target if [UniFile.getName] is null. */
+        private const val DEFAULT_FILE_NAME = "translation.json"
+
         /** Opens an existing on-disk translation file into a store. */
         fun open(translationFile: UniFile): ChapterTranslationStore {
             val existing = if (translationFile.exists()) {

@@ -12,6 +12,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -22,10 +23,12 @@ import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.presentation.more.settings.widget.AiModelListState
 import eu.kanade.presentation.more.settings.widget.AiModelPickerWidget
 import eu.kanade.presentation.more.settings.widget.ApiKeyPreferenceWidget
+import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.translator.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslators
 import eu.kanade.translation.translator.StandardTranslators
@@ -58,6 +61,19 @@ import uy.kohesive.injekt.api.get
 @Composable
 fun TranslationSettingsSheet(
     onDismissRequest: () -> Unit,
+    // TachiyomiAT: backs the "Stop all translation" row. Lets the user cancel
+    // every in-flight single-page/auto/batch translation job from the reader
+    // settings sheet — previously there was no way to stop translation at all
+    // short of navigating away or disabling the master toggle.
+    onStopAllTranslation: () -> Unit = {},
+    // TachiyomiAT: live queue to render in the QueueSection. Passed in from the
+    // activity (collected from viewModel.translationQueueState) so the sheet
+    // stays a stateless composable and the heavy per-page list only recomposes
+    // the sheet, not the reader. Plus the running-page index + totals for the
+    // summary line.
+    queue: List<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo> = emptyList(),
+    translationProgress: Pair<Int, Int> = Pair(0, 0),
+    translationCurrentPage: Int = 0,
 ) {
     val prefs = remember { Injekt.get<TranslationPreferences>() }
 
@@ -70,9 +86,135 @@ fun TranslationSettingsSheet(
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
         ) {
             TogglesSection(prefs)
+            QueueSection(
+                queue = queue,
+                translationProgress = translationProgress,
+                translationCurrentPage = translationCurrentPage,
+            )
+            StopAllSection(onStopAllTranslation)
             LanguagesSection(prefs)
             EngineSection(prefs)
         }
+    }
+}
+
+@Composable
+private fun ColumnScope.StopAllSection(onStopAllTranslation: () -> Unit) {
+    TextPreferenceWidget(
+        title = stringResource(ATMR.strings.reader_translation_stop_all),
+        subtitle = stringResource(ATMR.strings.reader_translation_stop_all_summary),
+        onPreferenceClick = { onStopAllTranslation() },
+    )
+}
+
+/**
+ * TachiyomiAT: live view of the current chapter's translation queue. Shows a
+ * one-line summary (current page / total · queued count) and a compact list of
+ * each page with its current stage. This is the visibility the user was missing:
+ * while auto-translation ran they previously had no way to see what was queued
+ * or stop it. The list is bounded so a long chapter doesn't make the sheet
+ * unusable — only the first few active/queued pages are listed, with an
+ * "and N more" tail.
+ */
+@Composable
+private fun ColumnScope.QueueSection(
+    queue: List<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo>,
+    translationProgress: Pair<Int, Int>,
+    translationCurrentPage: Int,
+) {
+    val (done, total) = translationProgress
+    val queued = queue.count {
+        it.stage != eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.DONE
+    }
+    val summary = when {
+        total == 0 && queue.isEmpty() ->
+            stringResource(ATMR.strings.reader_translation_queue_idle)
+        translationCurrentPage > 0 && total > 0 ->
+            stringResource(ATMR.strings.reader_translation_queue_summary, translationCurrentPage, total, queued)
+        total > 0 ->
+            stringResource(ATMR.strings.reader_translation_queued_count, queued)
+        else ->
+            stringResource(ATMR.strings.reader_translation_queue_idle)
+    }
+
+    Text(
+        text = summary,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+    )
+
+    if (queue.isEmpty()) return
+
+    // Show up to 8 rows, then an "and N more" tail, so a 40-page chapter's
+    // queue doesn't push the rest of the sheet off-screen.
+    val visible = queue.take(8)
+    val remainder = queue.size - visible.size
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MaterialTheme.padding.medium),
+        verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall / 2),
+    ) {
+        visible.forEach { info ->
+            QueueRow(info)
+        }
+        if (remainder > 0) {
+            Text(
+                text = "… +$remainder",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun QueueRow(info: eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo) {
+    val stageLabel: String
+    val stageColor: androidx.compose.ui.graphics.Color
+    when (info.stage) {
+        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.DONE -> {
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_done)
+            stageColor = MaterialTheme.colorScheme.primary
+        }
+        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.FAILED -> {
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_failed)
+            stageColor = MaterialTheme.colorScheme.error
+        }
+        eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.QUEUED -> {
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_queued)
+            stageColor = MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        else -> {
+            val name = when (info.stage) {
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.OCR ->
+                    stringResource(ATMR.strings.reader_translation_stage_ocr)
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.INPAINT ->
+                    stringResource(ATMR.strings.reader_translation_stage_inpaint)
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.TRANSLATE ->
+                    stringResource(ATMR.strings.reader_translation_stage_translate)
+                eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.RENDER ->
+                    stringResource(ATMR.strings.reader_translation_stage_render)
+                else -> ""
+            }
+            stageLabel = stringResource(ATMR.strings.reader_translation_stage_running, name)
+            stageColor = MaterialTheme.colorScheme.primary
+        }
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = stringResource(ATMR.strings.reader_translation_page, info.index),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            text = stageLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = stageColor,
+        )
     }
 }
 
@@ -155,11 +297,43 @@ private fun ColumnScope.LanguagesSection(prefs: TranslationPreferences) {
         valuePref = prefs.translateFromLanguage(),
         recentPref = prefs.translationRecentLanguagesFrom(),
     )
+    OcrModelRow(prefs)
     SearchableLanguageRow(
         title = stringResource(ATMR.strings.pref_translate_to),
         entries = toLangs,
         valuePref = prefs.translateToLanguage(),
         recentPref = prefs.translationRecentLanguagesTo(),
+    )
+}
+
+@Composable
+private fun ColumnScope.OcrModelRow(prefs: TranslationPreferences) {
+    val fromValue by prefs.translateFromLanguage().collectAsState()
+    val language = remember(fromValue) {
+        TextRecognizerLanguage.entries.firstOrNull { it.name == fromValue }
+            ?: TextRecognizerLanguage.CHINESE
+    }
+    val ocrPref = remember(language) {
+        OcrModelCatalog.preferenceFor(prefs, language)
+    }
+    val storedModel by ocrPref.collectAsState()
+    val selectedModel = remember(storedModel, language) {
+        OcrModelCatalog.coerce(storedModel, language)
+    }
+    LaunchedEffect(storedModel, selectedModel) {
+        if (storedModel != selectedModel) {
+            ocrPref.set(selectedModel)
+        }
+    }
+    val entries = remember(language) {
+        OcrModelCatalog.labelsFor(language)
+    }
+
+    EngineListRow(
+        title = stringResource(ATMR.strings.pref_ocr_model),
+        entries = entries,
+        value = selectedModel,
+        onValueChange = { ocrPref.set(it) },
     )
 }
 
@@ -242,6 +416,8 @@ private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
 
     val apiKeyPref = remember(aiEngine) { prefs.translationAiApiKey(aiEngine) }
     val apiKey by apiKeyPref.collectAsState()
+    val baseUrlPref = remember(aiEngine) { prefs.translationAiBaseUrl(aiEngine) }
+    val baseUrl by baseUrlPref?.collectAsState() ?: remember { mutableStateOf("") }
     val modelPref = remember(aiEngine) { prefs.translationAiModel(aiEngine) }
     val currentModel by modelPref.collectAsState()
     val recentPref = remember(aiEngine) { prefs.translationAiRecentModels(aiEngine) }
@@ -262,20 +438,48 @@ private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
         AiEngine.GEMINI -> stringResource(ATMR.strings.pref_ai_api_key_gemini)
         AiEngine.OPENROUTER -> stringResource(ATMR.strings.pref_ai_api_key_openrouter)
         AiEngine.DEEPSEEK -> stringResource(ATMR.strings.pref_ai_api_key_deepseek)
+        AiEngine.LMSTUDIO -> stringResource(ATMR.strings.pref_ai_base_url_lmstudio)
     }
-    ApiKeyPreferenceWidget(
-        title = apiKeyTitle,
-        apiKey = apiKey,
-        keySetLabel = stringResource(ATMR.strings.pref_ai_key_set),
-        keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set),
-        onApiKeyChange = { apiKeyPref.set(it) },
-    )
+    if (aiEngine == AiEngine.LMSTUDIO && baseUrlPref != null) {
+        EditTextPreferenceWidget(
+            title = apiKeyTitle,
+            subtitle = "%s",
+            icon = null,
+            value = baseUrl,
+            isValueValid = { true },
+            normalizeValue = { AiModelFetcher.normalizeBaseUrl(it) },
+            onConfirm = { newUrl ->
+                baseUrlPref.set(newUrl)
+                true
+            },
+        )
+    } else {
+        ApiKeyPreferenceWidget(
+            title = apiKeyTitle,
+            apiKey = apiKey,
+            keySetLabel = stringResource(ATMR.strings.pref_ai_key_set),
+            keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set),
+            onApiKeyChange = { apiKeyPref.set(it) },
+        )
+    }
+
+    val missingConnectionMessage = if (aiEngine == AiEngine.LMSTUDIO) {
+        stringResource(ATMR.strings.pref_ai_no_base_url)
+    } else {
+        stringResource(ATMR.strings.pref_ai_no_key)
+    }
+    val hasConnection = if (aiEngine == AiEngine.LMSTUDIO) {
+        baseUrl.isNotBlank()
+    } else {
+        apiKey.isNotBlank()
+    }
 
     val onFetch: () -> Unit = {
         val key = apiKey
-        fetchState = AiModelListState.Loading(key)
+        val url = baseUrl
+        fetchState = AiModelListState.Loading(if (aiEngine == AiEngine.LMSTUDIO) url else key)
         scope.launch {
-            val result = AiModelFetcher.fetch(aiEngine, key)
+            val result = AiModelFetcher.fetch(aiEngine, key, url)
             fetchState = when (result) {
                 is AiModelFetcher.Result.Success -> AiModelListState.Loaded(result.models)
                 is AiModelFetcher.Result.InvalidKey -> AiModelListState.Failed("Invalid or expired API key")
@@ -293,7 +497,8 @@ private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
         currentModel = currentModel,
         recentModels = recentModels,
         listState = fetchState,
-        hasApiKey = apiKey.isNotBlank(),
+        hasApiKey = hasConnection,
+        missingConnectionMessage = missingConnectionMessage,
         onFetchModels = onFetch,
         onSelectModel = onSelectModel,
         onManualModel = onSelectModel,
