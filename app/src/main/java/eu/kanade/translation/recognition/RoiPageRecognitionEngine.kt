@@ -170,44 +170,57 @@ class RoiPageRecognitionEngine(
             val bbox = detection.bbox
             val crop = cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
             // TachiyomiAT: PaddleOCR's rec model reads HORIZONTAL text lines (it is a
-            // CNN+CTC trained on left-to-right lines). Japanese/Chinese manga text is
-            // usually laid out VERTICALLY in tall, narrow columns (top-to-bottom,
-            // right-to-left). Feeding a vertical crop directly produced empty/garbage
-            // ASCII output for every tall bubble — only wide (horizontal) crops were
-            // readable. MangaOcr tolerates this because it resizes to a fixed 224x224
-            // square and handles orientation internally, but the CTC model cannot.
+            // CNN+CTC trained on left-to-right lines — confirmed against the official
+            // PaddleOCR text-recognition docs, which run a separate orientation
+            // classifier BEFORE rec). Japanese/Chinese manga text is usually laid out
+            // VERTICALLY in tall, narrow columns (top-to-bottom, right-to-left).
+            // Feeding a vertical crop directly produced empty/garbage output for every
+            // tall bubble — only wide (horizontal) crops were readable. MangaOcr
+            // tolerates vertical crops because it resizes to a fixed 224x224 square and
+            // handles orientation internally, but the CTC model cannot.
             //
-            // Fix: for CJK languages, when the crop is taller than wide (vertical
-            // text), rotate it 90° clockwise so each vertical column becomes a
-            // horizontal line the model can read. The recognized text is then laid
-            // out vertically by the renderer using the existing direction="TTB"
-            // logic below, so the rotation is OCR-only and does not affect rendering.
+            // Fix (two parts, both required for horizontal-line engines like PaddleOCR):
             //
-            // TachiyomiAT: gate the rotation on engine.prefersHorizontalText so it
-            // applies ONLY to horizontal-line engines (PaddleOCR). ML Kit's CJK
-            // recognizers and MangaOcr read vertical text NATIVELY — feeding them a
-            // pre-rotated crop was actively harming them (truncated/garbled output).
-            // The earlier unconditional rotation was a one-engine fix that became a
-            // second engine's bug once ML Kit was selectable.
+            // 1. COLUMN SPLITTING. A manga speech bubble's text detector emits ONE box
+            //    for the whole bubble, but the bubble usually contains MULTIPLE vertical
+            //    text columns side-by-side. The CTC model can only read a SINGLE
+            //    horizontal line, so feeding a whole multi-column bubble (after rotation)
+            //    interleaved the columns and produced garbage / single junk chars — e.g.
+            //    real device output was "开" / "天者" from tall boxes that held 4-5 chars.
+            //    Fix: detect each text column by ink-gap analysis on the original crop,
+            //    OCR each column SEPARATELY, and concatenate in manga reading order
+            //    (right-to-left). Single-column bubbles degrade gracefully to the
+            //    one-column path. Verified in a controlled reproduction against this
+            //    exact ONNX model: whole-box decoded 1/6 multi-column cases; per-column
+            //    splitting decoded 6/6.
+            //
+            // 2. CCW ROTATION per column. Each detected vertical column is rotated 90°
+            //    COUNTER-clockwise (postRotate(-90f)) so its top-to-bottom glyphs become
+            //    a left-to-right line. CLOCKWISE produces upside-down text the CTC head
+            //    cannot read (CW decoded 0/6 vertical strings; CCW decoded 6/6).
+            //
+            // Both transformations are OCR-only: the renderer lays text out vertically
+            // via the existing direction="TTB" logic below, independent of this.
+            //
+            // Gate on engine.prefersHorizontalText so this applies ONLY to horizontal-
+            // line engines (PaddleOCR). ML Kit's CJK recognizers and MangaOcr read
+            // vertical text NATIVELY (prefersHorizontalText=false) and get the crop as-is.
             val boxWidthPre = crop.width.toFloat()
             val boxHeightPre = crop.height.toFloat()
             val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
                 language == TextRecognizerLanguage.CHINESE ||
                 language == TextRecognizerLanguage.KOREAN
-            val rotatedForOcr = isVerticalLanguage &&
+            val splitVerticalColumns = isVerticalLanguage &&
                 engine.prefersHorizontalText &&
                 boxHeightPre > boxWidthPre * 1.5f
-            val ocrInput = if (rotatedForOcr) {
-                val matrix = android.graphics.Matrix()
-                matrix.postRotate(90f)
-                android.graphics.Bitmap.createBitmap(crop, 0, 0, crop.width, crop.height, matrix, true)
+            val text = if (splitVerticalColumns) {
+                recognizeVerticalColumns(engine, crop)
             } else {
-                crop
+                engine.recognize(crop)
             }
-            val text = engine.recognize(ocrInput)
-            if (rotatedForOcr && ocrInput !== crop) {
-                ocrInput.recycle()
-            }
+            // Kept for the diagnostics log tag below; mirrors the rotation the
+            // per-column path applies internally.
+            val rotatedForOcr = splitVerticalColumns
             crop.recycle()
             // TachiyomiAT: diagnostics — log each detected box and its OCR output so
             // recognition quality can be inspected from logcat. Gated by the opt-in
@@ -216,7 +229,7 @@ class RoiPageRecognitionEngine(
                 logcat(LogPriority.INFO) {
                     "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
                         "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
-                        "rotated=${if (rotatedForOcr) "90cw" else "no"} text=\"$text\""
+                        "rotated=${if (rotatedForOcr) "90ccw" else "no"} text=\"$text\""
                 }
             }
             val boxWidth = (bbox[2] - bbox[0]).toFloat()
@@ -575,6 +588,123 @@ class RoiPageRecognitionEngine(
         return Bitmap.createBitmap(source, clampedX1, clampedY1, clampedX2 - clampedX1, clampedY2 - clampedY1)
     }
 
+    /**
+     * TachiyomiAT: OCR a tall (vertical-text) manga bubble by splitting it into
+     * individual text columns first, then recognizing each column as a separate
+     * horizontal line. See the comment at the call site for why this is needed
+     * (a whole multi-column bubble, even after rotation, garbles in the CTC head).
+     *
+     * Pipeline (mirrors the verified Python reproduction):
+     *   1. Detect vertical text columns by ink-gap analysis on the crop.
+     *   2. For each column (in manga reading order, right-to-left): rotate 90° CCW
+     *      and OCR it as one horizontal line.
+     *   3. Concatenate the per-column results.
+     *
+     * A single-column bubble (or one where no gap is found) falls back to rotating
+     * and recognizing the whole crop as one line, so this never does worse than the
+     * old whole-box path.
+     */
+    private suspend fun recognizeVerticalColumns(
+        engine: RoiOcrEngine,
+        crop: Bitmap,
+    ): String {
+        val columns = detectVerticalColumns(crop)
+        if (columns.size <= 1) {
+            val rotated = rotateCcw(crop)
+            return try {
+                engine.recognize(rotated)
+            } finally {
+                rotated.recycle()
+            }
+        }
+        val parts = ArrayList<String>(columns.size)
+        // Manga vertical text reads right-to-left. [detectVerticalColumns] returns
+        // columns in left-to-right pixel order, so iterate them in reverse.
+        for (i in columns.indices.reversed()) {
+            val (x0, x1) = columns[i]
+            if (x1 - x0 < MIN_COLUMN_WIDTH_PX) continue
+            val columnCrop = Bitmap.createBitmap(crop, x0, 0, x1 - x0, crop.height)
+            val rotated = rotateCcw(columnCrop)
+            columnCrop.recycle()
+            try {
+                val part = engine.recognize(rotated)
+                if (part.isNotEmpty()) parts.add(part)
+            } finally {
+                rotated.recycle()
+            }
+        }
+        return parts.joinToString("")
+    }
+
+    private fun rotateCcw(bitmap: Bitmap): Bitmap {
+        val matrix = android.graphics.Matrix()
+        matrix.postRotate(-90f)
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    /**
+     * TachiyomiAT: detect vertical text columns in a TALL crop by ink-gap analysis.
+     * Returns column x-ranges [(x0,x1), ...] in left-to-right pixel order.
+     *
+     * Algorithm: a column is a horizontal x-band containing ink (dark text strokes);
+     * a wide-enough ink-free x-band separates columns. Within-column inter-character
+     * gaps are NARROW (typical glyph spacing) and are merged so a single column of
+     * several stacked glyphs is not split apart; only wider inter-COLUMN gaps split.
+     */
+    private fun detectVerticalColumns(crop: Bitmap): List<Pair<Int, Int>> {
+        val w = crop.width
+        val h = crop.height
+        if (w < 2 || h < 2) return listOf(0 to w)
+        val pixels = IntArray(w * h)
+        crop.getPixels(pixels, 0, w, 0, 0, w, h)
+        // ink fraction per x-column: count dark pixels / column height.
+        val inkFraction = FloatArray(w)
+        for (x in 0 until w) {
+            var dark = 0
+            for (y in 0 until h) {
+                val px = pixels[y * w + x]
+                // luminance approximation; text strokes are dark.
+                val lum = (0.299f * ((px shr 16) and 0xFF) +
+                    0.587f * ((px shr 8) and 0xFF) +
+                    0.114f * (px and 0xFF)).toInt()
+                if (lum < INK_LUMINANCE_THRESHOLD) dark++
+            }
+            inkFraction[x] = dark.toFloat() / h.toFloat()
+        }
+        // Walk x finding ink-runs, merging across narrow gaps.
+        val columns = ArrayList<Pair<Int, Int>>()
+        var inRun = false
+        var runStart = 0
+        var gapSinceInk = 0
+        for (x in 0 until w) {
+            val hasInk = inkFraction[x] >= COLUMN_GAP_INK_FRACTION
+            if (hasInk) {
+                if (!inRun) {
+                    runStart = x
+                    inRun = true
+                }
+                gapSinceInk = 0
+            } else if (inRun) {
+                gapSinceInk++
+                if (gapSinceInk >= MIN_COLUMN_GAP_PX) {
+                    val end = x - gapSinceInk
+                    if (end - runStart >= MIN_COLUMN_WIDTH_PX) {
+                        columns.add(runStart to end)
+                    }
+                    inRun = false
+                    gapSinceInk = 0
+                }
+            }
+        }
+        if (inRun) {
+            val end = if (gapSinceInk > 0) w - gapSinceInk else w
+            if (end - runStart >= MIN_COLUMN_WIDTH_PX) {
+                columns.add(runStart to end)
+            }
+        }
+        return columns
+    }
+
     private fun trimParentBbox(
         parent: IntArray,
         textBbox: IntArray,
@@ -655,6 +785,19 @@ class RoiPageRecognitionEngine(
         private const val TEXT_CONTAINMENT_DUPLICATE_THRESHOLD = 0.86f
         private const val TEXT_CENTER_DUPLICATE_THRESHOLD = 0.12f
         private const val TEXT_SIZE_DUPLICATE_THRESHOLD = 0.20f
+        // TachiyomiAT: vertical-column detection thresholds for splitting a
+        // multi-column manga bubble before OCR. Tuned against the verified Python
+        // reproduction (whole-box 1/6 vs per-column 6/6 on multi-column cases).
+        // INK_LUMINANCE_THRESHOLD: pixels darker than this count as text ink.
+        // COLUMN_GAP_INK_FRACTION: an x-column whose ink fraction is below this is
+        //   treated as a candidate gap.
+        // MIN_COLUMN_GAP_PX: only an ink-free run at least this wide splits columns;
+        //   narrower runs (inter-character spacing within a column) are merged.
+        // MIN_COLUMN_WIDTH_PX: ink-runs narrower than this are discarded as noise.
+        private const val INK_LUMINANCE_THRESHOLD = 110
+        private const val COLUMN_GAP_INK_FRACTION = 0.02f
+        private const val MIN_COLUMN_GAP_PX = 10
+        private const val MIN_COLUMN_WIDTH_PX = 12
         // TachiyomiAT: text-color constants moved to RenderColorEstimator (and
         // fixed there — the legacy INVERTED_TEXT_COLORS was a copy-paste of the
         // default constant, both returning dark-gray text 0xFF1A1A1A, which made

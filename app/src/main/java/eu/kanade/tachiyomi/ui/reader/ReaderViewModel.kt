@@ -46,6 +46,7 @@ import eu.kanade.translation.TranslationPageId
 import eu.kanade.translation.TranslationPageRequest
 import eu.kanade.translation.TranslationWorkKind
 import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.PageTranslation
@@ -166,11 +167,12 @@ class ReaderViewModel @JvmOverloads constructor(
     private fun buildQueuedPageInfo(pages: Map<String, PageTranslation>): List<QueuedPageInfo> {
         if (pages.isEmpty()) return emptyList()
         return pages.entries
-            .mapIndexed { insertionOrder, (pageKey, pt) ->
+            .mapIndexedNotNull { insertionOrder, (pageKey, pt) ->
+                val stage = stageOf(pt) ?: return@mapIndexedNotNull null
                 QueuedPageInfo(
                     pageKey = pageKey,
                     index = resolvePageIndex(pageKey, insertionOrder),
-                    stage = stageOf(pt),
+                    stage = stage,
                 )
             }
             .sortedBy { it.index }
@@ -185,9 +187,11 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /** Derives the display stage from a page's four stage statuses. */
-    private fun stageOf(pt: PageTranslation): QueueStage {
-        // A page that produced a rendered (or cleaned) image is effectively done.
-        if (pt.renderedImageName != null || pt.cleanedImageName != null) return QueueStage.DONE
+    private fun stageOf(pt: PageTranslation): QueueStage? {
+        // The store is persisted history. Only active work and actionable
+        // failures belong in the queue view; old pending/cancelled/textless/done
+        // rows are not live queue reservations.
+        if (pt.hasRenderedResult) return null
         // First RUNNING stage wins, in pipeline order: render → translate →
         // inpaint → ocr (checked newest-first so the label reflects the current
         // step, not an earlier one that hasn't been cleared yet).
@@ -201,7 +205,7 @@ class ReaderViewModel @JvmOverloads constructor(
         ) {
             return QueueStage.FAILED
         }
-        return QueueStage.QUEUED
+        return null
     }
 
 
@@ -403,6 +407,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 if (enabled && translationPreferences.translationEnabled().get()) {
                     translateCurrentPageForAuto()
                 } else {
+                    lastAutoTranslateKey = ""
+                    lastAutoTranslateAtMs = 0L
                     getCurrentChapter()?.chapter?.id?.let { translationManager.cancelAutoTranslations(it) }
                 }
             }
@@ -772,6 +778,17 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val selectedChapter = page.chapter
         val pages = selectedChapter.pages ?: return
+        val pageIndex = page.index
+
+        // Keep the in-memory visible page pointer synchronous. Persistence runs
+        // below, but auto-toggle reads chapterPageIndex immediately; if this is
+        // only updated by the background progress job, a quick scroll + auto-on
+        // can enqueue from the old page.
+        chapterPageIndex = pageIndex
+        selectedChapter.requestedPage = pageIndex
+        mutableState.update {
+            it.copy(currentPage = pageIndex + 1)
+        }
 
         // Save last page read and mark as read if needed
         viewModelScope.launchNonCancellable {

@@ -148,9 +148,13 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                 for (x in 0 until inputWidth) {
                     val pixel = pixels[y * inputWidth + x]
                     val offset = y * inputWidth + x
-                    result[offset] = normalize(pixel shr 16 and 0xFF)
+                    // PaddleOCR's standard rec path receives OpenCV images,
+                    // which are BGR. Android bitmaps are ARGB, so write the
+                    // tensor planes as B, G, R to match the exported model's
+                    // training/inference pipeline.
+                    result[offset] = normalize(pixel and 0xFF)
                     result[planeSize + offset] = normalize(pixel shr 8 and 0xFF)
-                    result[planeSize * 2 + offset] = normalize(pixel and 0xFF)
+                    result[planeSize * 2 + offset] = normalize(pixel shr 16 and 0xFF)
                 }
             }
             return PreprocessedInput(result, inputWidth)

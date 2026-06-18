@@ -107,6 +107,7 @@ class TranslationManager(
      */
     private val activeAutoJobs = ConcurrentHashMap<String, Job>()
     private val autoWindowIds = AtomicLong(0L)
+    private val autoGenerations = ConcurrentHashMap<Long, AtomicLong>()
 
     init {
         // Make the translator use the same store instance the reader observes
@@ -368,6 +369,10 @@ class TranslationManager(
         requests: List<TranslationPageRequest>,
     ) {
         if (requests.isEmpty()) return
+        val chapterId = session.chapter.id ?: return
+        val generation = autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
+        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
+
         val accepted = mutableListOf<Pair<String, TranslationPageRequest>>()
         val distinctRequests = requests.distinctBy { it.id }
             .sortedWith(compareBy<TranslationPageRequest> { it.priority }.thenBy { it.id.pageIndex })
@@ -387,7 +392,7 @@ class TranslationManager(
             }
             if (manualJob != null) activePageJobs.remove(manualJobKey)
 
-            val reservationKey = autoReservationKey(request)
+            val reservationKey = autoReservationKey(request, generation)
             if (!queuedPageKeys.add(reservationKey)) {
                 logAutoDecision("skipped", request, current, request.streamAvailable, "already-queued")
                 continue
@@ -399,12 +404,18 @@ class TranslationManager(
 
         if (accepted.isEmpty()) return
 
-        val jobKey = "auto:${session.chapter.id}:${session.key}:${autoWindowIds.incrementAndGet()}"
+        val jobKey = "auto:$chapterId:$generation:${session.key}:${autoWindowIds.incrementAndGet()}"
         val job = scope.launch {
             val completedReservations = mutableSetOf<String>()
             try {
                 for ((reservationKey, request) in accepted) {
                     coroutineContext.ensureActive()
+                    if (autoGenerations[chapterId]?.get() != generation) {
+                        logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], request.streamAvailable, "stale-generation")
+                        completedReservations.add(reservationKey)
+                        queuedPageKeys.remove(reservationKey)
+                        break
+                    }
                     val current = session.store.state.value[request.storageKey]
                     if (current != null && current.shouldSkipAutoScheduling) {
                         logAutoDecision("skipped", request, current, request.streamAvailable, "completed-while-queued")
@@ -421,6 +432,8 @@ class TranslationManager(
                         continue
                     }
                     if (manualJob != null) activePageJobs.remove(manualJobKey)
+
+                    markAutoPageStarting(session.store, request.storageKey, current)
 
                     if (current != null &&
                         current.hasRecognizedTranslation &&
@@ -466,9 +479,10 @@ class TranslationManager(
 
                     if (streamFn == null) {
                         logAutoDecision("soft-skip:no-stream", request, current, false)
+                        markPageAutoSoftSkipped(session.store, request.storageKey)
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
-                        continue
+                        break
                     }
 
                     try {
@@ -491,9 +505,13 @@ class TranslationManager(
                                 "storageKey=${request.storageKey} chapter=${session.chapter.name} " +
                                 "manga=${session.manga.title} source=${session.source.id}"
                         }
+                        break
                     } finally {
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
+                    }
+                    if (autoGenerations[chapterId]?.get() != generation) {
+                        break
                     }
                 }
             } catch (e: CancellationException) {
@@ -521,6 +539,12 @@ class TranslationManager(
         val queuePrefix = chapterId?.let { "auto:$it:" }
         var cancelled = false
 
+        if (chapterId == null) {
+            autoGenerations.values.forEach { it.incrementAndGet() }
+        } else {
+            autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
+        }
+
         val jobIterator = activeAutoJobs.entries.iterator()
         while (jobIterator.hasNext()) {
             val (key, job) = jobIterator.next()
@@ -540,9 +564,67 @@ class TranslationManager(
         return cancelled
     }
 
-    private fun autoReservationKey(request: TranslationPageRequest): String {
+    private fun autoReservationKey(request: TranslationPageRequest, generation: Long): String {
         val safeStorageKey = request.storageKey.replace(':', '_')
-        return "auto:${request.id.chapterId}:${request.id.sourceId}:${request.id.mangaId}:${request.id.pageIndex}:$safeStorageKey"
+        return "auto:${request.id.chapterId}:$generation:${request.id.sourceId}:${request.id.mangaId}:${request.id.pageIndex}:$safeStorageKey"
+    }
+
+    private suspend fun markAutoPageStarting(
+        store: ChapterTranslationStore,
+        pageKey: String,
+        current: PageTranslation?,
+    ) {
+        if (current != null && current.shouldSkipAutoScheduling) return
+        store.updatePage(pageKey) { existing ->
+            val page = existing ?: PageTranslation(sourceFileName = pageKey)
+            if (page.renderedImageName != null) return@updatePage page
+            page.apply {
+                sourceFileName = pageKey
+                errorMessage = null
+                when {
+                    hasRecognizedTranslation && cleanedImageName != null -> {
+                        renderStatus = StageStatus.RUNNING
+                    }
+                    hasRecognizedTranslation -> {
+                        inpaintStatus = StageStatus.RUNNING
+                        renderStatus = StageStatus.PENDING
+                    }
+                    ocrStatus != StageStatus.READY -> {
+                        ocrStatus = StageStatus.RUNNING
+                        translationStatus = StageStatus.PENDING
+                        inpaintStatus = StageStatus.PENDING
+                        renderStatus = StageStatus.PENDING
+                    }
+                    translationStatus != StageStatus.READY -> {
+                        translationStatus = StageStatus.RUNNING
+                    }
+                    else -> {
+                        renderStatus = StageStatus.RUNNING
+                    }
+                }
+                updatedAt = System.currentTimeMillis()
+            }
+        }
+    }
+
+    private suspend fun markPageAutoSoftSkipped(store: ChapterTranslationStore, pageKey: String) {
+        store.updatePage(pageKey) { existing ->
+            val page = existing ?: return@updatePage PageTranslation(
+                sourceFileName = pageKey,
+                ocrStatus = StageStatus.CANCELLED,
+                errorMessage = null,
+                updatedAt = System.currentTimeMillis(),
+            )
+            if (page.renderedImageName != null) return@updatePage page
+            page.apply {
+                if (ocrStatus == StageStatus.RUNNING) ocrStatus = StageStatus.CANCELLED
+                if (translationStatus == StageStatus.RUNNING) translationStatus = StageStatus.CANCELLED
+                if (inpaintStatus == StageStatus.RUNNING) inpaintStatus = StageStatus.CANCELLED
+                if (renderStatus == StageStatus.RUNNING) renderStatus = StageStatus.CANCELLED
+                errorMessage = null
+                updatedAt = System.currentTimeMillis()
+            }
+        }
     }
 
     private fun logAutoDecision(
