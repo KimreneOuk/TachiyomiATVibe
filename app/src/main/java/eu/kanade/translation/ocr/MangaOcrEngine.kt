@@ -216,6 +216,12 @@ class MangaOcrEngine : RoiOcrEngine {
 
             for (stepIdx in 0 until MAX_GENERATION_LENGTH) {
                 if (pos >= MAX_LEN) break
+                if (currentInputId !in 0L until DECODER_TOKEN_COUNT.toLong()) {
+                    logcat(LogPriority.WARN) {
+                        "MangaOCR decoder stopped before invalid input_id=$currentInputId at step=$stepIdx"
+                    }
+                    break
+                }
 
                 stepInputIdsBuf.put(0, currentInputId)
                 stepPositionIdsBuf.put(0, currentPositionId)
