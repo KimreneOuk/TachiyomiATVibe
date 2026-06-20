@@ -49,7 +49,7 @@ data class PageTranslation(
     var allTextDetections: List<Detection> = emptyList()
 
     companion object {
-        const val CURRENT_INPAINT_REVISION = 7
+        const val CURRENT_INPAINT_REVISION = 8
         val EMPTY = PageTranslation()
     }
 }

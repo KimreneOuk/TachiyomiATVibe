@@ -7,7 +7,6 @@ import eu.kanade.translation.inpainting.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizer
@@ -82,7 +81,6 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
                 ),
             )
         }
-        translation.blocks = PageTranslationHelper.mergeRelatedBlocks(translation.blocks)
         translation.ocrBlockCount = translation.blocks.size
         translation.ocrStatus = StageStatus.READY
         translation.updatedAt = System.currentTimeMillis()

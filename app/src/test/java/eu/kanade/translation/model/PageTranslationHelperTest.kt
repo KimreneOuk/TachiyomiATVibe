@@ -5,10 +5,8 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * Guards the OCR text-block merge step. After detection + OCR, overlapping
- * same-orientation boxes that belong to the same speech bubble are merged into
- * one block so the translator sees one coherent string. The merge is pure
- * geometry on TranslationBlock and has no test coverage today.
+ * Guards the legacy explicit-overlap merge helper. Recognition output should
+ * preserve detector boxes and must not call this helper implicitly.
  */
 class PageTranslationHelperTest {
 
@@ -119,71 +117,4 @@ class PageTranslationHelperTest {
         original[1].text shouldBe "second"
     }
 
-    @Test
-    fun `adjacent vertical manga columns are merged right to left`() {
-        val merged = PageTranslationHelper.mergeRelatedBlocks(
-            listOf(
-                block(x = 208f, y = 110f, w = 22f, h = 102f, text = "right", direction = "TTB"),
-                block(x = 180f, y = 109f, w = 24f, h = 141f, text = "mid-right", direction = "TTB"),
-                block(x = 155f, y = 110f, w = 21f, h = 155f, text = "mid-left", direction = "TTB"),
-                block(x = 101f, y = 110f, w = 48f, h = 173f, text = "left", direction = "TTB"),
-            ),
-        )
-
-        merged shouldHaveSize 1
-        merged[0].x shouldBe 101f
-        merged[0].width shouldBe 129f
-        merged[0].direction shouldBe "TTB"
-        merged[0].text shouldBe "right\nmid-right\nmid-left\nleft"
-    }
-
-    @Test
-    fun `vertical side banner is not merged across a real gutter`() {
-        val merged = PageTranslationHelper.mergeRelatedBlocks(
-            listOf(
-                block(x = 48f, y = 71f, w = 26f, h = 392f, text = "banner", direction = "TTB"),
-                block(x = 101f, y = 110f, w = 48f, h = 173f, text = "bubble", direction = "TTB"),
-            ),
-        )
-
-        merged shouldHaveSize 2
-        merged.map { it.text } shouldBe listOf("banner", "bubble")
-    }
-
-    @Test
-    fun `same parent bubble fragments are merged before rendering`() {
-        val merged = PageTranslationHelper.mergeRelatedBlocks(
-            listOf(
-                block(
-                    x = 100f,
-                    y = 100f,
-                    w = 40f,
-                    h = 100f,
-                    text = "a",
-                    direction = "TTB",
-                    parentX = 90f,
-                    parentY = 80f,
-                    parentWidth = 120f,
-                    parentHeight = 180f,
-                ),
-                block(
-                    x = 150f,
-                    y = 110f,
-                    w = 35f,
-                    h = 90f,
-                    text = "b",
-                    direction = "TTB",
-                    parentX = 90f,
-                    parentY = 80f,
-                    parentWidth = 120f,
-                    parentHeight = 180f,
-                ),
-            ),
-        )
-
-        merged shouldHaveSize 1
-        merged[0].parentX shouldBe 90f
-        merged[0].parentWidth shouldBe 120f
-        merged[0].text shouldBe "b\na"
-    }
 }

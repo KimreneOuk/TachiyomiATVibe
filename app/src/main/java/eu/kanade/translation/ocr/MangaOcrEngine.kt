@@ -18,6 +18,7 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
 import kotlin.math.max
+import kotlin.math.min
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
 import tachiyomi.domain.translation.TranslationPreferences
@@ -225,9 +226,13 @@ class MangaOcrEngine : RoiOcrEngine {
                     val logitsTensor = stepResult[0] as OnnxTensor
                     val logitsBuf = logitsTensor.floatBuffer
                     val vocabSize = logitsBuf.remaining()
+                    // The decoder embedding table accepts ids 0..127. Some
+                    // exported logits include an extra class at 128; selecting
+                    // it and feeding it back as input_ids crashes ORT Gather.
+                    val validDecoderTokenCount = min(vocabSize, DECODER_TOKEN_COUNT)
                     var maxVal = Float.NEGATIVE_INFINITY
                     var maxIdx = 0
-                    for (vi in 0 until vocabSize) {
+                    for (vi in 0 until validDecoderTokenCount) {
                         val v = logitsBuf.get(vi)
                         if (v > maxVal) {
                             maxVal = v
@@ -426,6 +431,7 @@ class MangaOcrEngine : RoiOcrEngine {
         private const val START_TOKEN = 2
         private const val END_TOKEN = 3
         private const val MAX_LEN = 256
+        private const val DECODER_TOKEN_COUNT = 128
 
         /**
          * TachiyomiAT: mirrors the translation_diagnostics preference. The per-ROI

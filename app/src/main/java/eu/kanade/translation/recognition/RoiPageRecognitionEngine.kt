@@ -8,7 +8,6 @@ import eu.kanade.translation.inpainting.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.MangaOcrEngine
@@ -307,8 +306,7 @@ class RoiPageRecognitionEngine(
             )
         }
         val finalRecognizedBlocks = removePostOcrDuplicateBlocks(recognizedBlocks)
-        val mergedBlocks = PageTranslationHelper.mergeRelatedBlocks(finalRecognizedBlocks.map { it.block })
-        pageTranslation.blocks.addAll(mergedBlocks)
+        pageTranslation.blocks.addAll(finalRecognizedBlocks.map { it.block })
         pageTranslation.ocrBlockCount = pageTranslation.blocks.size
         pageTranslation.ocrStatus = StageStatus.READY
         pageTranslation.updatedAt = System.currentTimeMillis()
