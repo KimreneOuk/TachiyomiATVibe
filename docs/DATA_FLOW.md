@@ -234,6 +234,13 @@ ChapterTranslator.translate(chapter)
         │      └── RenderColorEstimator picks text color
         │
         ▼
+Note: shared pure logic used across stages lives in focused helpers, not inline:
+  • recognition/BoxGeometry        — bbox IoU + geometric dedupe (Stages 1 & 2)
+  • inpainting/BubbleMaskBuilder   — mask construction + morphology (Stage 4)
+  • translator/NumberedLineResponseParser + OcrArtifactSanitizer — LLM output parsing (Stage 3)
+  • rendering/RenderColorEstimator.colorPolicy — text/stroke color decision (Stage 5)
+See docs/TRANSLATION_MODULE.md for the full map.
+        ▼
 PageTranslationState updated through states:
   Pending → Detecting → Detected → Recognizing → Recognized
   → Translating → Translated → Inpainting → Inpainted
