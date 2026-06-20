@@ -47,6 +47,9 @@ fun ChapterTranslationIndicator(
     enabled: Boolean,
     translationStateProvider: () -> Translation.State,
     onClick: (ChapterTranslationAction) -> Unit,
+    // TachiyomiAT: (done, total) batch progress; (0,0) or total==0 renders an
+    // indeterminate spinner (e.g. reader per-page path, where total is unknown).
+    translationProgressProvider: () -> Pair<Int, Int> = { 0 to 0 },
     modifier: Modifier = Modifier,
 ) {
     when (val translationState = translationStateProvider()) {
@@ -59,6 +62,7 @@ fun ChapterTranslationIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
+            progress = translationProgressProvider(),
         )
         Translation.State.TRANSLATED -> TranslatedIndicator(
             enabled = enabled,
@@ -105,6 +109,7 @@ private fun TranslatingIndicator(
     enabled: Boolean,
     onClick: (ChapterTranslationAction) -> Unit,
     modifier: Modifier = Modifier,
+    progress: Pair<Int, Int> = 0 to 0,
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
@@ -119,8 +124,15 @@ private fun TranslatingIndicator(
         contentAlignment = Alignment.Center,
     ) {
         val strokeColor = MaterialTheme.colorScheme.onSurfaceVariant
+        val (done, total) = progress
+        // TachiyomiAT: determinate "12/40" progress for the staged batch path
+        // (total known from the active store); indeterminate for the reader
+        // per-page path or before the batch registers any pages (total == 0).
+        val progressFraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+        val isDeterminate = total > 0
 
         CircularProgressIndicator(
+            progress = { if (isDeterminate) progressFraction else 0f },
             modifier = IndicatorModifier,
             color = strokeColor,
             strokeWidth = IndicatorStrokeWidth,
@@ -143,6 +155,19 @@ private fun TranslatingIndicator(
             modifier = TranslatingModifier,
             tint = strokeColor,
         )
+        // TachiyomiAT: small "done/total" label under the icon so the user can
+        // watch pre-translation advance without opening the reader.
+        if (isDeterminate) {
+            Text(
+                text = "$done/$total",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 0.dp),
+                color = strokeColor,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+            )
+        }
     }
 }
 

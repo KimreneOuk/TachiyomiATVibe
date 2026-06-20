@@ -1,0 +1,292 @@
+--------- beginning of kernel
+06-20 15:57:21.170     0     0 I logd    : logdr: UID=2000 GID=2000 PID=12944 b tail=0 logMask=99 pid=0 start=0ns deadline=0ns
+--------- beginning of main
+06-20 15:58:49.513  1865 12935 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26536572]
+06-20 15:58:49.514  1865 12935 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26536573]
+--------- beginning of system
+06-20 15:59:08.056  1138  1164 I UsageStatsService: User[0] Flushing usage stats to disk
+06-20 15:59:08.827  1138  1211 D ActivityManager: freezing 10529 com.google.android.partnersetup
+06-20 15:59:09.031  1138  1211 D ActivityManager: freezing 10583 com.android.remoteprovisioner
+06-20 15:59:09.345  1138  1211 D ActivityManager: freezing 5028 com.bluestacks.home
+06-20 15:59:09.365  1138  1211 D ActivityManager: freezing 5327 com.android.chrome:sandboxed_process0:org.chromium.content.app.SandboxedProcessService0:0
+06-20 15:59:10.205  1865 12948 I .gms.persistent: Explicit concurrent copying GC freed 11312(556KB) AllocSpace objects, 0(0B) LOS objects, 49% free, 11MB/22MB, paused 13us,16us total 23.460ms
+06-20 15:59:12.971  2202 10420 W gle.android.gms: Cleared Reference was only reachable from finalizer (only reported once)
+06-20 15:59:12.973  2202 10420 I gle.android.gms: Explicit concurrent copying GC freed 1018(178KB) AllocSpace objects, 0(0B) LOS objects, 25% free, 15MB/20MB, paused 22us,19us total 39.223ms
+06-20 15:59:14.332  1138  1211 D ActivityManager: freezing 5427 com.google.android.gms.unstable
+06-20 15:59:26.162   393  4018 I audio_hw_primary: choose pcmC0D0p for 0
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: Writing exception to parcel
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: java.lang.IllegalArgumentException: Failed to determine if primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp is child of primary:Documents: java.io.FileNotFoundException: Missing file for primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp at /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: 	at com.android.internal.content.FileSystemProvider.isChildDocument(FileSystemProvider.java:143)
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: 	at android.provider.DocumentsProvider.enforceTree(DocumentsProvider.java:235)
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: 	at android.provider.DocumentsProvider.query(DocumentsProvider.java:923)
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:285)
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1280)
+06-20 15:59:26.168 10995 11010 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1244)
+06-20 15:59:26.171  1996  4134 W MediaProvider: isAppCloneUserPair for user 0: false
+06-20 15:59:26.172  1996  4134 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:26.175  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.176  1996  4298 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:26.189  1996  2560 I MediaProvider: Begin Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:26.190  1996  2560 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.192  1996  2560 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:26.194  1996  2560 I MediaProvider: End Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:26.196  1996  4244 I MediaProvider: Deleted 1 0 0 0 0 0 0 items on external_primary due to com.android.externalstorage
+06-20 15:59:26.198  1996 11811 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.199  1996 11811 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json
+06-20 15:59:26.202  1996 11811 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:26.206  1996  4639 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.207  1996  4639 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:26.208  1996  2254 W MediaProvider: Failed to update quota for uri: content://media/external_primary/file/1000000801
+06-20 15:59:26.208  1996  2254 W MediaProvider: java.io.FileNotFoundException: No item at content://media/external_primary/file/1000000801
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForSingleItem(MediaProvider.java:8137)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8077)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8069)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.updateQuotaTypeForUri(MediaProvider.java:677)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.-$$Nest$mupdateQuotaTypeForUri(Unknown Source:0)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.lambda$onUpdate$1(MediaProvider.java:773)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.$r8$lambda$3D2OHltIfecN7CvhaLyqtkV--uY(Unknown Source:0)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4$$ExternalSyntheticLambda1.run(Unknown Source:10)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at android.os.Handler.handleCallback(Handler.java:942)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at android.os.Looper.loopOnce(Looper.java:201)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at android.os.Looper.loop(Looper.java:288)
+06-20 15:59:26.208  1996  2254 W MediaProvider: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+06-20 15:59:26.211  1996 11811 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:26.214  1996 11811 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:26.215  1996 11811 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.217  1996 11811 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:26.225   407   774 D AudioFlinger: mixer(0x7e12c9d449a0) throttle end: throttle time(30)
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: Writing exception to parcel
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: java.lang.IllegalArgumentException: Failed to determine if primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp is child of primary:Documents: java.io.FileNotFoundException: Missing file for primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp at /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: 	at com.android.internal.content.FileSystemProvider.isChildDocument(FileSystemProvider.java:143)
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: 	at android.provider.DocumentsProvider.enforceTree(DocumentsProvider.java:235)
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: 	at android.provider.DocumentsProvider.query(DocumentsProvider.java:923)
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:285)
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1280)
+06-20 15:59:26.230 10995 11318 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1244)
+06-20 15:59:26.233  1996  3920 W MediaProvider: isAppCloneUserPair for user 0: false
+06-20 15:59:26.233  1996  3920 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:26.236  1996 11811 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.237  1996 11811 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:26.251  1996  2560 I MediaProvider: Begin Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:26.252  1996  2560 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.253  1996  2560 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:26.255  1996  2560 I MediaProvider: End Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:26.257  1996  4244 I MediaProvider: Deleted 1 0 0 0 0 0 0 items on external_primary due to com.android.externalstorage
+06-20 15:59:26.259  1996 11811 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.260  1996 11811 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json
+06-20 15:59:26.262  1996 11811 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:26.266  1996  2289 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.267  1996  2289 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:26.268  1996  2254 W MediaProvider: Failed to update quota for uri: content://media/external_primary/file/1000000801
+06-20 15:59:26.268  1996  2254 W MediaProvider: java.io.FileNotFoundException: No item at content://media/external_primary/file/1000000801
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForSingleItem(MediaProvider.java:8137)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8077)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8069)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.updateQuotaTypeForUri(MediaProvider.java:677)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.-$$Nest$mupdateQuotaTypeForUri(Unknown Source:0)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.lambda$onUpdate$1(MediaProvider.java:773)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.$r8$lambda$3D2OHltIfecN7CvhaLyqtkV--uY(Unknown Source:0)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4$$ExternalSyntheticLambda1.run(Unknown Source:10)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at android.os.Handler.handleCallback(Handler.java:942)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at android.os.Looper.loopOnce(Looper.java:201)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at android.os.Looper.loop(Looper.java:288)
+06-20 15:59:26.268  1996  2254 W MediaProvider: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+06-20 15:59:26.270  1996 11811 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:26.272  1996 11811 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:26.273  1996 11811 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:26.275  1996 11811 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:30.402 10940 11065 E onnxruntime:  [E:onnxruntime:, sequential_executor.cc:572 ExecuteKernel] Non-zero status code returned while running Gather node. Name:'node_embedding_1' Status Message: indices element out of data bounds, idx=128 must be within the inclusive range [-128,127]
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: Writing exception to parcel
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: java.lang.IllegalArgumentException: Failed to determine if primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp is child of primary:Documents: java.io.FileNotFoundException: Missing file for primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp at /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: 	at com.android.internal.content.FileSystemProvider.isChildDocument(FileSystemProvider.java:143)
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.enforceTree(DocumentsProvider.java:235)
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.query(DocumentsProvider.java:923)
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:285)
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1280)
+06-20 15:59:30.415 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1244)
+06-20 15:59:30.419  1996  4134 W MediaProvider: isAppCloneUserPair for user 0: false
+06-20 15:59:30.419  1996  4134 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:30.422  1996 11811 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:30.423  1996 11811 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:30.437  1996  2560 I MediaProvider: Begin Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:30.437  1996  2560 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:30.439  1996  2560 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:30.441  1996  2560 I MediaProvider: End Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:30.444  1996  3920 I MediaProvider: Deleted 1 0 0 0 0 0 0 items on external_primary due to com.android.externalstorage
+06-20 15:59:30.445  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:30.446  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json
+06-20 15:59:30.448  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:30.452  1996  4639 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:30.453  1996  4639 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:30.454  1996  2254 W MediaProvider: Failed to update quota for uri: content://media/external_primary/file/1000000801
+06-20 15:59:30.454  1996  2254 W MediaProvider: java.io.FileNotFoundException: No item at content://media/external_primary/file/1000000801
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForSingleItem(MediaProvider.java:8137)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8077)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8069)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.updateQuotaTypeForUri(MediaProvider.java:677)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.-$$Nest$mupdateQuotaTypeForUri(Unknown Source:0)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.lambda$onUpdate$1(MediaProvider.java:773)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.$r8$lambda$3D2OHltIfecN7CvhaLyqtkV--uY(Unknown Source:0)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4$$ExternalSyntheticLambda1.run(Unknown Source:10)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at android.os.Handler.handleCallback(Handler.java:942)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at android.os.Looper.loopOnce(Looper.java:201)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at android.os.Looper.loop(Looper.java:288)
+06-20 15:59:30.454  1996  2254 W MediaProvider: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+06-20 15:59:30.456  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:30.459  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:30.461  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:30.462  1996  4298 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:32.644   393  4018 I audio_hw_primary: choose pcmC0D0p for 0
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: Writing exception to parcel
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: java.lang.IllegalArgumentException: Failed to determine if primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp is child of primary:Documents: java.io.FileNotFoundException: Missing file for primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp at /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: 	at com.android.internal.content.FileSystemProvider.isChildDocument(FileSystemProvider.java:143)
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.enforceTree(DocumentsProvider.java:235)
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.query(DocumentsProvider.java:923)
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:285)
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1280)
+06-20 15:59:32.648 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1244)
+06-20 15:59:32.652  1996  4134 W MediaProvider: isAppCloneUserPair for user 0: false
+06-20 15:59:32.652  1996  4134 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:32.655  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.656  1996  4298 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:32.669  1996  2560 I MediaProvider: Begin Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:32.670  1996  2560 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.671  1996  2560 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:32.673  1996  2560 I MediaProvider: End Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:32.675  1996  2289 I MediaProvider: Deleted 1 0 0 0 0 0 0 items on external_primary due to com.android.externalstorage
+06-20 15:59:32.677  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.677  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json
+06-20 15:59:32.680  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:32.684  1996  2291 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.685  1996  2291 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:32.686  1996  2254 W MediaProvider: Failed to update quota for uri: content://media/external_primary/file/1000000801
+06-20 15:59:32.686  1996  2254 W MediaProvider: java.io.FileNotFoundException: No item at content://media/external_primary/file/1000000801
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForSingleItem(MediaProvider.java:8137)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8077)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8069)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.updateQuotaTypeForUri(MediaProvider.java:677)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.-$$Nest$mupdateQuotaTypeForUri(Unknown Source:0)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.lambda$onUpdate$1(MediaProvider.java:773)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.$r8$lambda$3D2OHltIfecN7CvhaLyqtkV--uY(Unknown Source:0)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4$$ExternalSyntheticLambda1.run(Unknown Source:10)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at android.os.Handler.handleCallback(Handler.java:942)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at android.os.Looper.loopOnce(Looper.java:201)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at android.os.Looper.loop(Looper.java:288)
+06-20 15:59:32.686  1996  2254 W MediaProvider: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+06-20 15:59:32.688  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:32.691  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:32.692  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.693  1996  4298 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: Writing exception to parcel
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: java.lang.IllegalArgumentException: Failed to determine if primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp is child of primary:Documents: java.io.FileNotFoundException: Missing file for primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp at /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: 	at com.android.internal.content.FileSystemProvider.isChildDocument(FileSystemProvider.java:143)
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.enforceTree(DocumentsProvider.java:235)
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.query(DocumentsProvider.java:923)
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:285)
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1280)
+06-20 15:59:32.705 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1244)
+06-20 15:59:32.706   407   774 D AudioFlinger: mixer(0x7e12c9d449a0) throttle end: throttle time(30)
+06-20 15:59:32.709  1996  2291 W MediaProvider: isAppCloneUserPair for user 0: false
+06-20 15:59:32.709  1996  2291 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:32.711  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.713  1996  4298 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:32.726  1996  2560 I MediaProvider: Begin Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:32.726  1996  2560 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.727  1996  2560 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:32.729  1996  2560 I MediaProvider: End Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:32.731  1996  4639 I MediaProvider: Deleted 1 0 0 0 0 0 0 items on external_primary due to com.android.externalstorage
+06-20 15:59:32.733  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.733  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json
+06-20 15:59:32.736  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:32.739  1996  2289 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.740  1996  2289 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:32.741  1996  2254 W MediaProvider: Failed to update quota for uri: content://media/external_primary/file/1000000801
+06-20 15:59:32.741  1996  2254 W MediaProvider: java.io.FileNotFoundException: No item at content://media/external_primary/file/1000000801
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForSingleItem(MediaProvider.java:8137)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8077)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8069)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.updateQuotaTypeForUri(MediaProvider.java:677)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.-$$Nest$mupdateQuotaTypeForUri(Unknown Source:0)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.lambda$onUpdate$1(MediaProvider.java:773)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.$r8$lambda$3D2OHltIfecN7CvhaLyqtkV--uY(Unknown Source:0)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4$$ExternalSyntheticLambda1.run(Unknown Source:10)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at android.os.Handler.handleCallback(Handler.java:942)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at android.os.Looper.loopOnce(Looper.java:201)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at android.os.Looper.loop(Looper.java:288)
+06-20 15:59:32.741  1996  2254 W MediaProvider: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+06-20 15:59:32.744  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:32.747  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:32.748  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:32.750  1996  4298 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:35.302  1138  1164 W UsageStatsService: Unexpected activity event reported! (app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity event : 23 instanceId : 47406999)
+06-20 15:59:35.309  1138 10193 D CoreBackPreview: Window{a9517c2 u0 app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity}: Setting back callback null
+06-20 15:59:35.310  1138 10193 W InputManager-JNI: Input channel object 'a9517c2 app.kanade.tachiyomi.at.debug/eu.kanade.tachiyomi.ui.main.MainActivity (client)' was disposed without first being removed with the input manager!
+06-20 15:59:37.030 10940 11065 E onnxruntime:  [E:onnxruntime:, sequential_executor.cc:572 ExecuteKernel] Non-zero status code returned while running Gather node. Name:'node_embedding_1' Status Message: indices element out of data bounds, idx=128 must be within the inclusive range [-128,127]
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: Writing exception to parcel
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: java.lang.IllegalArgumentException: Failed to determine if primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp is child of primary:Documents: java.io.FileNotFoundException: Missing file for primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp at /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: 	at com.android.internal.content.FileSystemProvider.isChildDocument(FileSystemProvider.java:143)
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.enforceTree(DocumentsProvider.java:235)
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: 	at android.provider.DocumentsProvider.query(DocumentsProvider.java:923)
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: 	at android.content.ContentProvider$Transport.query(ContentProvider.java:285)
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: 	at android.content.ContentProviderNative.onTransact(ContentProviderNative.java:107)
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransactInternal(Binder.java:1280)
+06-20 15:59:37.044 10995 12415 E DatabaseUtils: 	at android.os.Binder.execTransact(Binder.java:1244)
+06-20 15:59:37.047  1996  4134 W MediaProvider: isAppCloneUserPair for user 0: false
+06-20 15:59:37.047  1996  4134 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:37.055  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:37.057  1996  4298 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:37.071  1996  2560 I MediaProvider: Begin Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:37.071  1996  2560 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:37.072  1996  2560 V MediaProvider: Inserted id:1000000801 less than next row id backup:1000002000.
+06-20 15:59:37.076  1996  2560 I MediaProvider: End Intent { act=android.intent.action.MEDIA_SCANNER_SCAN_FILE dat=file:///... flg=0x1000010 cmp=com.android.providers.media.module/com.android.providers.media.MediaService }
+06-20 15:59:37.076  1996  3920 I MediaProvider: Deleted 1 0 0 0 0 0 0 items on external_primary due to com.android.externalstorage
+06-20 15:59:37.078  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:37.079  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 326.json
+06-20 15:59:37.081  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:37.085  1996  4639 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:37.086  1996  4639 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 15:59:37.087  1996  2254 W MediaProvider: Failed to update quota for uri: content://media/external_primary/file/1000000801
+06-20 15:59:37.087  1996  2254 W MediaProvider: java.io.FileNotFoundException: No item at content://media/external_primary/file/1000000801
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForSingleItem(MediaProvider.java:8137)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8077)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.queryForDataFile(MediaProvider.java:8069)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.updateQuotaTypeForUri(MediaProvider.java:677)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider.-$$Nest$mupdateQuotaTypeForUri(Unknown Source:0)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.lambda$onUpdate$1(MediaProvider.java:773)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4.$r8$lambda$3D2OHltIfecN7CvhaLyqtkV--uY(Unknown Source:0)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at com.android.providers.media.MediaProvider$4$$ExternalSyntheticLambda1.run(Unknown Source:10)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at android.os.Handler.handleCallback(Handler.java:942)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at android.os.Handler.dispatchMessage(Handler.java:99)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at android.os.Looper.loopOnce(Looper.java:201)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at android.os.Looper.loop(Looper.java:288)
+06-20 15:59:37.087  1996  2254 W MediaProvider: 	at android.os.HandlerThread.run(HandlerThread.java:67)
+06-20 15:59:37.090  1996  4298 W ModernMediaScanner: Failed to visit /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp: java.nio.file.NoSuchFileException: /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.translation.tmp
+06-20 15:59:37.092  1996  4298 I MediaProvider: Scanned external_primary due to REASON_DEMAND, found 0 items in 3ms, 0 inserts 0 updates 0 deletes
+06-20 15:59:37.094  1996  4298 I MediaProvider: Observed non-standard /storage/emulated/0/Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/.nomedia
+06-20 15:59:37.095  1996  4298 V MediaProvider: Inserted id:1000001201 less than next row id backup:1000002000.
+06-20 16:00:14.051  3026  3131 I Finsky  : [30] muj.run(430): Stats for Executor: BlockingExecutor opd@91ff35[Running, pool size = 0, active threads = 0, queued tasks = 0, completed tasks = 235]
+06-20 16:00:14.051  3026  3131 I Finsky  : [30] muj.run(430): Stats for Executor: LightweightExecutor opd@1e9ffca[Running, pool size = 3, active threads = 0, queued tasks = 0, completed tasks = 1705]
+06-20 16:00:14.096  3026  3131 I Finsky  : [30] muj.run(430): Stats for Executor: bgExecutor opd@ccda53b[Running, pool size = 4, active threads = 0, queued tasks = 0, completed tasks = 3925]
+06-20 16:00:14.681  3292  3321 I Finsky:background: [30] muj.run(430): Stats for Executor: bgExecutor opd@fd49f1[Running, pool size = 4, active threads = 0, queued tasks = 0, completed tasks = 249]
+06-20 16:00:14.691  3292  3321 I Finsky:background: [30] muj.run(430): Stats for Executor: LightweightExecutor opd@9c619d6[Running, pool size = 3, active threads = 0, queued tasks = 0, completed tasks = 327]
+06-20 16:00:14.991  3292  3321 I Finsky:background: [30] muj.run(430): Stats for Executor: BlockingExecutor opd@6bc6457[Running, pool size = 0, active threads = 0, queued tasks = 0, completed tasks = 16]
+06-20 16:00:40.004  1865 12948 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26647062]
+06-20 16:00:40.004  1865 12948 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26647063]
+06-20 16:01:28.452  1525  1659 I VMSG    : processRequest:104 called for gcal
+06-20 16:01:28.452  1525  1661 I BstGCallService-JNI: gcallSetClipboardTextClbk called
+06-20 16:01:28.453  1138  1307 E ClipboardService: Denying clipboard access to com.bluestacks.gamecenter, application is not in focus nor is it a system service for user 0
+06-20 16:02:30.504  1865 12963 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26757563]
+06-20 16:02:30.504  1865 12963 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26757563]
+06-20 16:04:16.919     0     0 I logd    : logdr: UID=2000 GID=2000 PID=12969 n tail=0 logMask=99 pid=0 start=0ns deadline=0ns
+06-20 16:04:20.986  1865 12965 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26868045]
+06-20 16:04:20.987  1865 12965 I AlarmManager: setExactAndAllowWhileIdle [name: GCM_HB_ALARM type: 2 triggerAtMillis: 26868046]

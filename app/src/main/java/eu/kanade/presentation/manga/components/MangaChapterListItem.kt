@@ -59,6 +59,8 @@ fun MangaChapterListItem(
     downloadStateProvider: () -> Download.State,
     // TachiyomiAT
     translationStateProvider: () -> Translation.State,
+    // TachiyomiAT: (done, total) batch translation progress for the indicator.
+    translationProgressProvider: () -> Pair<Int, Int> = { 0 to 0 },
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
@@ -181,6 +183,7 @@ fun MangaChapterListItem(
                     enabled = true,
                     modifier = Modifier.padding(start = 4.dp),
                     translationStateProvider = translationStateProvider,
+                    translationProgressProvider = translationProgressProvider,
                     onClick = { onTranslationClick?.invoke(it) },
                 )
             }

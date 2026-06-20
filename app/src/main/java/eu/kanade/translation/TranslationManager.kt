@@ -9,7 +9,9 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgress
 import eu.kanade.translation.model.hasRecognizedTranslation
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.shouldSkipAutoScheduling
 import eu.kanade.translation.model.toPageView
@@ -206,7 +208,23 @@ class TranslationManager(
         // map; decode it and require at least one entry.
         if (!file.exists() || file.length() <= 2L) return false
         return try {
-            Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream()).isNotEmpty()
+            val pages = Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
+            // TachiyomiAT: a chapter counts as translated ONLY when at least one
+            // page produced real output — a rendered/displayable image
+            // (hasRenderedResult) OR recognized text blocks whose translation is
+            // READY (hasRecognizedTranslation). Both helpers already define the
+            // exact stage/image-name conditions the reader uses to treat a page
+            // as Done / NeedsRender, so this stays consistent with the live UI.
+            //
+            // Previously this was `pages.isNotEmpty()`, which meant any single
+            // placeholder page — an all-PENDING/CANCELLED entry with no blocks,
+            // no rendered image — made the chapter show TRANSLATED. Those
+            // placeholders are routinely written by the stranded-page sweep on
+            // chapter open (ReaderViewModel.sweepStrandedPageStatus) and by
+            // failed/aborted translations, so a chapter merely opened once (or
+            // attempted and abandoned) read as fully translated forever after.
+            // Requiring real content here closes that false-positive.
+            pages.values.any { it.hasRenderedResult || it.hasRecognizedTranslation }
         } catch (e: Exception) {
             // Corrupt/empty file isn't a translation. getChapterTranslation(file)
             // will delete it on read; here just report not-translated.
@@ -345,6 +363,21 @@ class TranslationManager(
         return activeTranslationStores[chapterId]?.state
     }
 
+    /**
+     * TachiyomiAT: per-chapter batch translation progress (done/total), derived
+     * from the active chapter store. Used by the manga-screen chapter-list
+     * indicator so the user can watch pre-translation advance ("12/40") without
+     * opening the reader. Emits the active store's page-count progress for
+     * [chapterId]; null when no active store exists for the chapter (no batch in
+     * flight) — callers should then show no progress fraction.
+     */
+    fun observeTranslationProgress(chapterId: Long): Flow<Pair<Int, Int>>? {
+        val store = activeTranslationStores[chapterId] ?: return null
+        return store.state
+            .map { pages -> TranslationProgress.compute(pages) }
+            .distinctUntilChanged()
+    }
+
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {
         return observeActiveStore(chapterId)
             ?.map { pages -> pages[pageKey].toPageView() }
@@ -352,8 +385,41 @@ class TranslationManager(
     }
 
     fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
+        val chapterId = chapter.id ?: return
         launchIO {
+            // TachiyomiAT: tear down ALL in-flight translation work for this
+            // chapter BEFORE deleting any on-disk artifacts. The previous version
+            // only removed the chapter from the batch queue and deleted files,
+            // which left single-page / auto-prefetch jobs running. An auto job
+            // can be mid-native-call inside OrtSession.run() at the instant the
+            // user taps delete; the subsequent translate then rebuilds/closes the
+            // recognition engine (recognitionEngine.close() frees the native
+            // session), freeing a session out from under the still-running
+            // inference. That is a native use-after-free (SIGSEGV) that kills the
+            // process — exactly the "app exits/crashes on delete-then-translate"
+            // symptom. The close()/run() race is also acknowledged in
+            // RoiPageRecognitionEngine's comments.
+            //
+            // Ordering is load-bearing:
+            //   1. cancelAutoTranslations bumps the chapter's auto generation so
+            //      any in-flight auto window stops dispatching NEW pages at its
+            //      next iteration (without this, a window between pages could
+            //      re-launch work against the about-to-be-deleted store/file).
+            //   2. cancelPageTranslations cancels + JOINs every auto and
+            //      single-page job for the chapter (bounded by JOIN_TIMEOUT_MS),
+            //      so the in-flight native work unwinds to its next suspension
+            //      point before we proceed. It ALSO evicts the shared
+            //      ChapterTranslationStore (unregisterActiveTranslationStore),
+            //      so a subsequent translate resolves a fresh lazy store instead
+            //      of reusing one bound to the file we're about to delete.
+            //   3. removeFromTranslationQueue drops the batch-queue entry and
+            //      stops the batch engine if the queue is now empty.
+            //   4. Only once all work is wound down is it safe to delete the
+            //      on-disk translation file + companion images.
+            scheduler.cancelAutoTranslations(chapterId)
+            cancelPageTranslations(chapterId)
             removeFromTranslationQueue(chapter)
+            unregisterActiveTranslationStore(chapterId)
             val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
             file?.delete()
             provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)

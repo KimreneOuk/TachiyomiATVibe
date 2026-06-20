@@ -119,12 +119,43 @@ class ChapterTranslationStore(
         return if (isQueueTransient()) StageStatus.CANCELLED else this
     }
 
-    private fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
-        if (updated.hasRenderedResult || updated.isStageFailed) return true
+    internal fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
+        // Persist only states that represent DURABLE progress worth surviving a
+        // chapter reopen — not transient placeholders. Each rule below maps to
+        // real work the pipeline performed; anything else (RUNNING/PENDING/
+        // CANCELLED with no blocks, no image, no failure) is a transient
+        // bookkeeping update that only needs to live in the in-memory StateFlow
+        // (which the reader observes live) and must NOT hit disk.
+        //
+        // Why this matters: the stranded-page sweep
+        // (ReaderViewModel.sweepStrandedPageStatus) runs on every chapter open
+        // and writes exactly the placeholder shape — CANCELLED stages plus an
+        // explanatory errorMessage, with no blocks and no rendered image — via
+        // updatePage. The previous logic (`errorMessage != null` -> persist, and
+        // `return !isStageRunning` -> persist any non-running state) saved those
+        // placeholders to the translation JSON, where — under the old
+        // `pages.isNotEmpty()` translated-state check — a single such entry made
+        // the chapter falsely read as fully TRANSLATED forever after. Note that
+        // the explicit cancel snapshot path clearTransientQueuePages() writes
+        // via persistLocked() directly and bypasses this gate, so legitimate
+        // user cancels are still recorded on disk.
+        // 1. A final rendered/displayable image (the actual translation output).
+        if (updated.hasRenderedResult) return true
+        // 2. Recognized text blocks (real OCR work done).
         if (updated.blocks.isNotEmpty()) return true
-        if (updated.errorMessage != null) return true
+        // 3. An inpainted cleaned image (real inpaint work; lets a later render
+        //    resume without redoing the neural pass).
+        if (updated.cleanedImageName != null) return true
+        // 4. Stage failures — persisted so retry-exhaustion bookkeeping
+        //    (hasExhaustedRetries) survives a reopen and the scheduler can skip
+        //    permanently-failing pages instead of re-attempting them forever.
+        if (updated.isStageFailed) return true
+        // 5. Transition away from a previously-rendered result (e.g. a forced
+        //    retry cleared the image) so the reader stops showing the stale one.
         if (previous?.hasRenderedResult == true && !updated.hasRenderedResult) return true
-        return !updated.isStageRunning
+        // Transient placeholder (RUNNING/PENDING/CANCELLED with no content and
+        // no failure): keep it in memory only.
+        return false
     }
 
     private fun persistLocked() {

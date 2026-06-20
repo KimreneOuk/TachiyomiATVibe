@@ -523,8 +523,55 @@ class MangaScreenModel(
         }
     }
 
+    // TachiyomiAT: active per-chapter batch-progress collectors. Keyed by
+    // chapterId so we start one collector when a chapter begins translating and
+    // stop it when it leaves the translating state, feeding (done,total) into
+    // the chapter list item for the determinate "12/40" indicator.
+    private val translationProgressJobs = mutableMapOf<Long, kotlinx.coroutines.Job>()
+
+    private fun observeTranslationProgress(chapterId: Long) {
+        if (translationProgressJobs[chapterId]?.isActive == true) return
+        val progressFlow = translationManager.observeTranslationProgress(chapterId) ?: return
+        translationProgressJobs[chapterId] = screenModelScope.launchIO {
+            progressFlow
+                .catch { error -> logcat(LogPriority.ERROR, error) }
+                .flowWithLifecycle(lifecycle)
+                .collect { (done, total) ->
+                    withUIContext { updateTranslationProgress(chapterId, done to total) }
+                }
+        }
+    }
+
+    private fun stopTranslationProgress(chapterId: Long) {
+        translationProgressJobs.remove(chapterId)?.cancel()
+        updateTranslationProgress(chapterId, 0 to 0)
+    }
+
+    private fun updateTranslationProgress(chapterId: Long, progress: Pair<Int, Int>) {
+        updateSuccessState { successState ->
+            val idx = successState.chapters.indexOfFirst { it.id == chapterId }
+            if (idx < 0) return@updateSuccessState successState
+            val item = successState.chapters[idx]
+            if (item.translationProgress == progress) return@updateSuccessState successState
+            val newChapters = successState.chapters.toMutableList().apply {
+                set(idx, item.copy(translationProgress = progress))
+            }
+            successState.copy(chapters = newChapters)
+        }
+    }
+
     // TachiyomiAT
     private fun updateTranslationState(translation: Translation) {
+        // Start/stop the per-chapter batch-progress collector so the "12/40"
+        // indicator only tracks chapters actively translating, and stops (and
+        // resets to no-fraction) once the chapter reaches a terminal state.
+        val chapterId = translation.chapter.id
+        if (chapterId != null) {
+            when (translation.status) {
+                Translation.State.QUEUE, Translation.State.TRANSLATING -> observeTranslationProgress(chapterId)
+                else -> stopTranslationProgress(chapterId)
+            }
+        }
         updateSuccessState { successState ->
             val modifiedIndex = successState.chapters.indexOfFirst { it.id == translation.chapter.id }
             if (modifiedIndex < 0) return@updateSuccessState successState
@@ -735,8 +782,21 @@ class MangaScreenModel(
     ) {
         when (action) {
             ChapterTranslationAction.START -> {
-                if (item.downloadState != Download.State.DOWNLOADED) return
+                // TachiyomiAT: log the guard outcome instead of silently returning.
+                // A silent return on a user action made the staged-batch path look
+                // "dead" when the real cause was the chapter not being downloaded.
+                if (item.downloadState != Download.State.DOWNLOADED) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT translate START rejected: chapter ${item.chapter.name} " +
+                            "not downloaded (state=${item.downloadState}); download it first."
+                    }
+                    return
+                }
                 val manga = successState?.manga ?: return
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT translate START: chapter=${item.chapter.name} manga=${manga.title} " +
+                        "lastPageRead=${item.chapter.lastPageRead}"
+                }
                 screenModelScope.launchNonCancellable {
                     translationManager.translateChapter(manga, item.chapter)
                 }
@@ -1286,6 +1346,9 @@ sealed class ChapterList {
         val downloadState: Download.State,
         // TachiyomiAT
         val translationState: Translation.State = Translation.State.NOT_TRANSLATED,
+        // TachiyomiAT: (done, total) batch translation progress for the chapter
+        // list indicator. (0, 0) means no batch in flight / unknown total.
+        val translationProgress: Pair<Int, Int> = 0 to 0,
         val downloadProgress: Int,
         val selected: Boolean = false,
     ) : ChapterList() {

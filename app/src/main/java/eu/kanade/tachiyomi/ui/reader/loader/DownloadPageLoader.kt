@@ -64,30 +64,7 @@ internal class DownloadPageLoader(
         file: UniFile,
         translations: Map<String, PageTranslation>,
     ): List<ReaderPage> {
-        val resolver: ((String, PageTranslation) -> (() -> java.io.InputStream)?)? = { _, pageTranslation ->
-            if (pageTranslation.renderedImageName != null) {
-                translationManager.getRenderedImageStream(
-                    manga.title,
-                    source,
-                    chapter.chapter.name,
-                    chapter.chapter.scanlator,
-                    pageTranslation.renderedImageName!!,
-                )
-            } else if (pageTranslation.displayImageName == pageTranslation.cleanedImageName &&
-                pageTranslation.cleanedImageName != null
-            ) {
-                translationManager.getCleanedImageStream(
-                    manga.title,
-                    source,
-                    chapter.chapter.name,
-                    chapter.chapter.scanlator,
-                    pageTranslation.cleanedImageName!!,
-                )
-            } else {
-                null
-            }
-        }
-        val loader = ArchivePageLoader(file.archiveReader(context), translations, resolver).also {
+        val loader = ArchivePageLoader(file.archiveReader(context), translations).also {
             archivePageLoader =
                 it
         }
@@ -115,25 +92,6 @@ internal class DownloadPageLoader(
             ).apply {
                 sourceFileName = fileName
                 translation = translations[fileName]
-                if (translation?.renderedImageName != null) {
-                    translatedStream = translationManager.getRenderedImageStream(
-                        manga.title,
-                        source,
-                        chapter.chapter.name,
-                        chapter.chapter.scanlator,
-                        translation!!.renderedImageName!!,
-                    )
-                } else if (translation?.displayImageName == translation?.cleanedImageName &&
-                    translation?.cleanedImageName != null
-                ) {
-                    translatedStream = translationManager.getCleanedImageStream(
-                        manga.title,
-                        source,
-                        chapter.chapter.name,
-                        chapter.chapter.scanlator,
-                        translation!!.cleanedImageName!!,
-                    )
-                }
                 status = Page.State.READY
             }
         }

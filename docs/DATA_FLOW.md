@@ -247,6 +247,21 @@ PageTranslationState updated through states:
   → Rendering → Rendered → Complete
 ```
 
+Rendered image quality is an invariant, not a best effort. Before decode, the
+pipeline reclaims bitmap pools, OCR/inpaint native pools, and Coil memory cache
+if a normal page would otherwise be heap-downsampled. Additionally, to prevent
+chronic native memory pressure accumulation across consecutive page translations,
+the pipeline immediately calls native/off-heap memory reclamation at the end of
+each page. If full-quality decode is still unsafe, the page becomes retryable
+instead of saving blurry output. Only hard source-size limits may produce
+sampled output, and those pages are marked `RenderQuality.SIZE_LIMITED`.
+
+Reader-side translated image streams are on demand. `ReaderPageWarmWindow`
+attaches translated streams only for the current page plus two pages on either
+side; cold pages keep only persisted metadata and reopen translated images from
+disk when they enter the warm window. A 200-page chapter therefore does not keep
+200 translated stream factories or compressed source byte arrays in memory.
+
 ### State Machine (`PageTranslationState`)
 
 ```

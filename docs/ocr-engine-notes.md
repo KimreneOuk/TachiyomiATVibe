@@ -1,8 +1,8 @@
 # OCR Engine Notes & Known Limitations
 
-Notes from a deep investigation into PaddleOCR v6 small recognition quality
-(June 2026). Captures what was fixed, what's a documented model limitation, and
-the recommended engine choice per language/orientation.
+Notes from deep investigations into the OCR engines (June 2026). Captures what
+was fixed, what's a documented model limitation, the recommended engine choice
+per language/orientation, and the MangaOcr ONNX decoder contract.
 
 ## TL;DR — recommended OCR engine per use case
 
@@ -94,9 +94,91 @@ adb logcat --pid=$(adb shell pidof app.kanade.tachiyomi.at.debug) | grep ocr_blo
 Also requires `verbose_logging` = ON (Settings → Advanced) so the `logcat()`
 logger is installed — without it, all `logcat()` calls are no-ops.
 
+## MangaOcr ONNX decoder contract (do NOT regress)
+
+MangaOcr (`MangaOcrEngine.kt`) is a **ViT encoder + GPT-2-style transformer
+decoder** exported as three ONNX graphlets: `encoder.onnx`, `decoder_init.onnx`,
+`decoder_step.onnx`. Understanding the decode loop is essential — it has been
+broken twice by well-intentioned "fixes," each of which passed unit tests but
+broke OCR on-device.
+
+### How the autoregressive decode loop works
+
+1. **Encoder** (`encoder.onnx`): the grayscale 224×224 crop → `encoder_hidden_states`.
+2. **Decoder init** (`decoder_init.onnx`): takes `encoder_hidden_states` + the
+   START token (`input_ids=[2]`), returns the first logits plus the initial
+   self-attention KV cache (`self_k_init`, `self_v_init`) and the cross-attention
+   KV cache (`cross_k`, `cross_v`). The self-cache is **copied into a pre-allocated
+   `[4,1,4,MAX_LEN=256,64]` direct FloatBuffer** (`kCachePool`/`vCachePool`).
+3. **Decoder step** (`decoder_step.onnx`): runs once per generated token. Inputs:
+   `encoder_hidden_states`, `input_ids` (the last selected token), `position_ids`
+   (absolute, 1..255), the **full** `self_k_cache`/`self_v_cache` buffers,
+   `cross_k_cache`/`cross_v_cache`. Outputs: logits, and the updated KV slices
+   which are written back into the cache buffer at `pos` via `writeCacheAtPos`.
+4. **Loop** (`for (stepIdx in 0 until MAX_GENERATION_LENGTH)`): `pos >= DECODER_POSITION_COUNT`
+   (128) is the ceiling — the position-embedding table size (see below). argmax runs
+   over the **full vocabulary** (`logitsBuf.remaining()`). The loop stops at the END
+   token (3) or at 128 positions.
+
+### Why the position-embedding bound (`pos < 128`) is required
+
+The `decoder_step` graph handles its own KV-cache offsetting internally, but the
+**position-embedding Gather (`node_embedding_1`) is absolute and has exactly 128
+entries** (indices 0..127). `position_ids` are fed as absolute values (1, 2, 3,
+...), so once `pos` reaches 128 the Gather overflows:
+
+```
+ONNX recognition failed: ... Gather node 'node_embedding_1' ...
+indices element 0 of shape [4] is not in the exclusive range [-128,127]
+```
+
+This crashes the chapter. The loop MUST be bounded by `DECODER_POSITION_COUNT`
+(128), **not** `MAX_LEN` (256). `MAX_LEN` is the KV-cache sequence dimension,
+which is *larger* than the position table — bounding by it lets `pos` reach 128
+on long bubbles (128+ generated tokens) and crash. Confirmed on-device: the
+`MAX_LEN` ceiling translated short pages fine but crashed on long-text bubbles;
+`DECODER_POSITION_COUNT` fixes both. argmax remains full-vocabulary (the token
+embedding does not overflow).
+
+### The zero-fill trap (separate bug, also real)
+
+During debugging, **zeroing the KV-cache buffers** was also attempted and
+corrupted OCR independently of the position bound: zeroed K/V vectors made the
+attention softmax spread uniformly across all 256 positions, producing
+degenerate repetitive output (`viletetetetotetoteritetiteterinitijanijijan`).
+This bug masked/confused the position-bound diagnosis for a long time, because
+reverting the (correct) position bound while also reverting the (also-correct)
+zero-fill revert made *short* pages work again — hiding the long-bubble crash
+until a text-dense page surfaced it. **Both fixes are needed and both are
+correct**: `pos < 128` AND no zero-fill.
+
+### Process lesson
+
+Two "fixes" were each individually validated by unit tests (the extracted
+helpers were pure and correct in isolation) yet still broke or masked the
+on-device behavior. The decoder loop's correctness depends on graph internals
+that are not unit-testable. **Verify every change to this loop against a
+text-dense manga page on-device, with `translation_diagnostics` on, reading the
+`[ocr_block]` output and checking for `node_embedding_1` errors** — not against
+unit tests alone.
+
+### KV-cache buffer invariant (DirectBufferPool)
+
+The `kCachePool`/`vCachePool` direct buffers are **reused across ROIs without
+being zeroed** (`FloatBuffer.clear()` resets position/limit only). This is
+correct: `MangaOcrEngine` overwrites every cache position it reads back, and the
+decoder's causal attention depends on the cache contents. Zeroing the buffers on
+acquire was attempted and **corrupted OCR** — zeroed K/V vectors made the
+attention softmax spread uniformly across all 256 positions, producing
+degenerate repetitive output (`viletetetetotetoteritetiteterinitijanijijan`).
+Do not re-add zeroing to `DirectBufferPool.acquire`.
+
 ## References
 
 - [comic-translate ppocr module](https://github.com/ogkalu2/comic-translate/tree/main/modules/ocr/ppocr) — reference implementation used to validate the pipeline.
 - [PaddleOCR discussion #15695](https://github.com/PaddlePaddle/PaddleOCR/discussions/15695) — maintainer on vertical-text support limits.
 - [PaddleOCR discussion #14463](https://github.com/PaddlePaddle/PaddleOCR/discussions/14463) — "Can I set paddleOCR to read vertical text?"
 - [PP-OCRv6 arXiv paper](https://arxiv.org/abs/2606.13108) — model tiers (tiny/small/medium) and parameter counts.
+- [manga-ocr-base (kha-white)](https://huggingface.co/kha-white/manga-ocr-base) — ViT encoder + GPT-2 decoder model; `config.json` documents the decoder (`model_type: gpt2`).
+- [onnx-community/manga-ocr-base-ONNX](https://huggingface.co/onnx-community/manga-ocr-base-ONNX) — community ONNX export used as the mobile model source.
+- [manga-ocr ONNX export issue #45](https://github.com/kha-white/manga-ocr/issues/45) — notes on exporting the decoder graphlets.

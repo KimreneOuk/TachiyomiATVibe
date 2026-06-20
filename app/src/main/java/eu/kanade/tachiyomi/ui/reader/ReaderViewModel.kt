@@ -15,6 +15,7 @@ import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
+import eu.kanade.tachiyomi.data.cache.ChapterCache
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.model.Download
@@ -93,7 +94,6 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.time.Instant
 import java.util.Date
@@ -122,6 +122,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val translationManager: TranslationManager = Injekt.get(),
     private val translationScheduler: TranslationScheduler = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
+    private val chapterCache: ChapterCache = Injekt.get(),
     private val translationPreferences: tachiyomi.domain.translation.TranslationPreferences = Injekt.get(),
 ) : ViewModel() {
 
@@ -529,6 +530,102 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
     }
 
+    private fun updateTranslationWorkingSet(
+        chapter: ReaderChapter,
+        currentIndex: Int,
+        dispatchRefresh: Boolean,
+    ) {
+        val manga = manga ?: return
+        val chapterId = chapter.chapter.id ?: return
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val pages = chapter.pages?.filterIsInstance<ReaderPage>() ?: return
+        if (pages.isEmpty()) return
+
+        val keepPageKeys = HashSet<String>()
+        val changedPages = linkedSetOf<ReaderPage>()
+        for ((listIndex, page) in pages.withIndex()) {
+            val warm = ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex)
+            if (warm) {
+                keepPageKeys += resolvePageKey(page)
+                val hadStream = page.translatedStream != null
+                attachTranslatedStreamIfWarm(page, manga, chapter, source)
+                if (dispatchRefresh && hadStream != (page.translatedStream != null)) {
+                    changedPages += page
+                }
+            } else {
+                if (page.translatedStream != null || page.showTranslatedImage) {
+                    changedPages += page
+                }
+                page.translatedStream = null
+                page.showTranslatedImage = false
+            }
+        }
+
+        streamRegistry.clearOutsideWindow(
+            sourceId = source.id,
+            mangaId = manga.id,
+            chapterId = chapterId,
+            keepPageKeys = keepPageKeys,
+        )
+        if (translationDiagnosticsEnabled) {
+            logcat(LogPriority.INFO) {
+                "[translation_working_set] chapterId=$chapterId current=$currentIndex " +
+                    "warm=${keepPageKeys.size} cold=${pages.size - keepPageKeys.size} " +
+                    "registrySize=${streamRegistry.size()}"
+            }
+        }
+        if (dispatchRefresh && changedPages.isNotEmpty()) {
+            eventChannel.trySend(Event.RefreshTranslationPages(changedPages))
+            mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+        }
+    }
+
+    private fun attachTranslatedStreamIfWarm(
+        page: ReaderPage,
+        manga: Manga,
+        chapter: ReaderChapter,
+        source: HttpSource,
+    ) {
+        if (!isInTranslationWarmWindow(page)) {
+            page.translatedStream = null
+            page.showTranslatedImage = false
+            return
+        }
+        val translation = page.translation
+        page.translatedStream = when {
+            translation?.renderedImageName != null -> translationManager.getRenderedImageStream(
+                manga.title,
+                source,
+                chapter.chapter.name,
+                chapter.chapter.scanlator,
+                translation.renderedImageName!!,
+            )
+            translation?.displayImageName == translation?.cleanedImageName &&
+                translation?.cleanedImageName != null -> translationManager.getCleanedImageStream(
+                    manga.title,
+                    source,
+                    chapter.chapter.name,
+                    chapter.chapter.scanlator,
+                    translation.cleanedImageName!!,
+                )
+            else -> null
+        }
+        if (page.translatedStream == null) {
+            page.showTranslatedImage = false
+        }
+    }
+
+    private fun isInTranslationWarmWindow(page: ReaderPage): Boolean {
+        val pages = page.chapter.pages?.filterIsInstance<ReaderPage>() ?: return false
+        val pageIndex = pages.indexOfFirst { it === page }.takeIf { it >= 0 } ?: page.index
+        val currentIndex = if (page.chapter === getCurrentChapter()) {
+            chapterPageIndex
+        } else {
+            page.chapter.requestedPage
+        }
+        return ReaderPageWarmWindow.contains(pageIndex, currentIndex, pages.lastIndex)
+    }
+
 
     override fun onCleared() {
         val currentChapters = state.value.viewerChapters
@@ -809,6 +906,8 @@ class ReaderViewModel @JvmOverloads constructor(
         if (inDownloadRange) {
             downloadNextChapters()
         }
+
+        updateTranslationWorkingSet(selectedChapter, pageIndex, dispatchRefresh = true)
 
         if (translationPreferences.translationEnabled().get() &&
             translationPreferences.autoTranslate().get()
@@ -1510,8 +1609,37 @@ class ReaderViewModel @JvmOverloads constructor(
         val manga = manga ?: return
         val chapter = getCurrentChapter()?.chapter ?: return
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        // deleteTranslation now cancels all in-flight single-page/auto jobs,
+        // evicts the shared store, and deletes the on-disk file + companion
+        // images asynchronously. Mirror cancelTranslationForChapter's per-page
+        // + observer cleanup so the reader reflects the delete immediately and
+        // is ready to re-translate against a fresh store:
+        //   - clear the per-page translated fields so a holder still pointing at
+        //     these pages falls back to the original image (and releases the
+        //     captured translated stream bitmaps) instead of showing the
+        //     about-to-be-deleted rendered image;
+        //   - re-observe the live store AFTER delete so the reader binds to the
+        //     fresh lazy store deleteTranslation's eviction created, and live
+        //     updates flow again on the next translate.
+        getCurrentChapter()?.pages?.forEach { page ->
+            page.translatedStream = null
+            page.translation = null
+            page.showTranslatedImage = false
+        }
         translationManager.deleteTranslation(chapter.toDomainChapter()!!, manga, source)
+        // Re-subscribe to the (now fresh) store. deleteTranslation's store
+        // eviction runs on a background coroutine; observeLiveTranslationStore
+        // calls openOrCreateActiveChapterTranslationStore which will create a new
+        // lazy store if the old one was already evicted, or reuse it if not yet —
+        // either way the reader observes a store that is not bound to the deleted
+        // file. This is best-effort on ordering; the manager's resolver also
+        // re-resolves a fresh store on the next translate, so a translate after
+        // delete always lands on a valid store.
+        observeLiveTranslationStore()
+        batchTranslationState = Translation.State.NOT_TRANSLATED
+        liveTranslationState = Translation.State.NOT_TRANSLATED
         mutableState.update { it.copy(translationState = Translation.State.NOT_TRANSLATED) }
+        recomputeTranslationState()
     }
 
     fun translateSinglePage(page: ReaderPage) {
@@ -1606,9 +1734,9 @@ class ReaderViewModel @JvmOverloads constructor(
 
     /**
      * TachiyomiAT: downloads the page image from [source] and returns a stream
-     * closure backed by the captured bytes. Used when [ReaderPage.originalStream]
-     * is null (the page hasn't been cached yet by HttpPageLoader) but the page has
-     * an [imageUrl].
+     * closure backed by the chapter disk cache. Used when
+     * [ReaderPage.originalStream] is null (the page hasn't been cached yet by
+     * HttpPageLoader) but the page has an [imageUrl].
      *
      * This is a [suspend] function (called from a tracked coroutine scope) so the
      * download is cancellable — if the reader switches chapters mid-download, the
@@ -1618,9 +1746,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * download (thread-pool starvation) AND could not be cancelled, so a chapter
      * switch left the download running to completion against a recycled page.
      *
-     * The bytes are downloaded eagerly (rather than lazily inside the closure) so
-     * the translator's decode path — which runs on Dispatchers.IO inside the
-     * permit — only reads from memory instead of doing blocking network I/O.
+     * The bytes are downloaded eagerly, then stored in the chapter disk cache.
      */
     private suspend fun createLazyHttpStream(
         source: HttpSource,
@@ -1628,11 +1754,11 @@ class ReaderViewModel @JvmOverloads constructor(
         imageUrl: String,
     ): () -> InputStream {
         val sPage = Page(page.index, page.url, imageUrl)
-        // Read the body fully while we're in a cancellable suspend context. The
-        // resulting byte array is captured by the returned closure, which the
-        // translator invokes synchronously from its decode path.
-        val bytes = source.getImage(sPage).body.bytes()
-        return { ByteArrayInputStream(bytes) }
+        if (!chapterCache.isImageInCache(imageUrl)) {
+            val response = source.getImage(sPage)
+            chapterCache.putImageToCache(imageUrl, response)
+        }
+        return { chapterCache.getImageFile(imageUrl).inputStream() }
     }
 
     /**
@@ -1884,18 +2010,10 @@ class ReaderViewModel @JvmOverloads constructor(
                     }
                     if (displayImageName != null || updated.isTextlessTerminal) translatedCount++
                     if (isFailed && !hasRendered && !hasCleaned) translatedCount++
-                    if (hasRendered) {
-                        readerPage.translatedStream = translationManager.getRenderedImageStream(
-                            manga.title, source, chapter.name, chapter.scanlator, updated.renderedImageName!!,
-                        )
-                    } else if (hasCleaned) {
-                        readerPage.translatedStream = translationManager.getCleanedImageStream(
-                            manga.title, source, chapter.name, chapter.scanlator, updated.cleanedImageName!!,
-                        )
-                    } else {
-                        readerPage.translatedStream = null
-                    }
                     readerPage.translation = updated
+                }
+                state.value.viewerChapters?.currChapter?.let { current ->
+                    updateTranslationWorkingSet(current, chapterPageIndex, dispatchRefresh = false)
                 }
                 // Derive the live state from what we just observed, then merge
                 // with the batch state. TRANSLATING wins; then ERROR; then
@@ -1954,23 +2072,7 @@ class ReaderViewModel @JvmOverloads constructor(
             .onEach { updated ->
                 if (updated == null) return@onEach
                 page.translation = updated
-                page.translatedStream = when {
-                    updated.renderedImageName != null -> translationManager.getRenderedImageStream(
-                        manga.title,
-                        source,
-                        chapter.name,
-                        chapter.scanlator,
-                        updated.renderedImageName!!,
-                    )
-                    updated.displayImageName == updated.cleanedImageName && updated.cleanedImageName != null -> translationManager.getCleanedImageStream(
-                        manga.title,
-                        source,
-                        chapter.name,
-                        chapter.scanlator,
-                        updated.cleanedImageName!!,
-                    )
-                    else -> null
-                }
+                attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
             }
             .map { it.toPageView() }
             .distinctUntilChanged()

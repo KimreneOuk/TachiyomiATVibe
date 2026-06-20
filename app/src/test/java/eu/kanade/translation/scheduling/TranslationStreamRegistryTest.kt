@@ -68,6 +68,34 @@ class TranslationStreamRegistryTest {
     }
 
     @Test
+    fun `clearPage evicts only one page`() {
+        val registry = TranslationStreamRegistry()
+        registry.register(1, 10, 100, "001.jpg", streamOf(byteArrayOf(1)))
+        registry.register(1, 10, 100, "002.jpg", streamOf(byteArrayOf(2)))
+
+        registry.clearPage(1, 10, 100, "001.jpg")
+
+        registry.peek(1, 10, 100, "001.jpg") shouldBe null
+        (registry.peek(1, 10, 100, "002.jpg") != null) shouldBe true
+    }
+
+    @Test
+    fun `clearOutsideWindow keeps only selected page keys for chapter`() {
+        val registry = TranslationStreamRegistry()
+        registry.register(1, 10, 100, "001.jpg", streamOf(byteArrayOf(1)))
+        registry.register(1, 10, 100, "002.jpg", streamOf(byteArrayOf(2)))
+        registry.register(1, 10, 100, "003.jpg", streamOf(byteArrayOf(3)))
+        registry.register(1, 10, 101, "001.jpg", streamOf(byteArrayOf(4)))
+
+        registry.clearOutsideWindow(1, 10, 100, setOf("002.jpg"))
+
+        registry.peek(1, 10, 100, "001.jpg") shouldBe null
+        (registry.peek(1, 10, 100, "002.jpg") != null) shouldBe true
+        registry.peek(1, 10, 100, "003.jpg") shouldBe null
+        (registry.peek(1, 10, 101, "001.jpg") != null) shouldBe true
+    }
+
+    @Test
     fun `register replaces a prior entry for the same page`() {
         val registry = TranslationStreamRegistry()
         val first = streamOf(byteArrayOf(1))

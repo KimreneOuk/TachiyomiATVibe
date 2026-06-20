@@ -4,10 +4,8 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.displayImageName
 import mihon.core.archive.ArchiveReader
 import tachiyomi.core.common.util.system.ImageUtil
-import java.io.InputStream
 
 /**
  * Loader used to load a chapter from an archive file.
@@ -15,7 +13,6 @@ import java.io.InputStream
 internal class ArchivePageLoader(
     private val reader: ArchiveReader,
     private val translations: Map<String, PageTranslation>,
-    private val cleanedImageResolver: ((String, PageTranslation) -> (() -> InputStream)?)? = null,
 ) : PageLoader() {
     override var isLocal: Boolean = true
 
@@ -37,9 +34,6 @@ internal class ArchivePageLoader(
                     originalStream = {
                         reader.getInputStream(entry.name)
                             ?: throw java.io.IOException("Archive entry '${entry.name}' could not be opened")
-                    }
-                    if (translation?.displayImageName != null && cleanedImageResolver != null) {
-                        translatedStream = cleanedImageResolver.invoke(entry.name, translation!!)
                     }
                     status = Page.State.READY
                 }

@@ -161,14 +161,10 @@ class PagerPageHolder(
      * cancel affordance vs. the translate affordance.
      */
     private fun isPageBeingTranslated(): Boolean = page.translation?.let { t ->
-        (
-            t.ocrStatus == "RUNNING" ||
-                t.inpaintStatus == "RUNNING" ||
-                t.translationStatus == "RUNNING" ||
-                t.renderStatus == "RUNNING"
-            ) &&
-            t.renderedImageName == null &&
-            (t.cleanedImageName == null || t.blocks.isNotEmpty())
+        t.ocrStatus == "RUNNING" ||
+            t.inpaintStatus == "RUNNING" ||
+            t.translationStatus == "RUNNING" ||
+            t.renderStatus == "RUNNING"
     } ?: false
 
     /**

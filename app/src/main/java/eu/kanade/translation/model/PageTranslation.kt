@@ -12,6 +12,9 @@ data class PageTranslation(
     var imgHeight: Float = 0f,
     var cleanedImageName: String? = null,
     var renderedImageName: String? = null,
+    var renderQuality: String = RenderQuality.UNKNOWN,
+    var renderedWidth: Int = 0,
+    var renderedHeight: Int = 0,
     var recognitionEngine: String? = null,
     var detectionCount: Int = 0,
     var ocrBlockCount: Int = 0,
@@ -31,7 +34,8 @@ data class PageTranslation(
     // skipping a FAILED page forever or retrying it in an infinite loop.
     var retryCount: Int = 0,
     // Incremented when the rendered file's bytes are rewritten. The file name is
-    // stable (<page>.rendered.webp), so UI dedup must not key on the name alone.
+    // stable (<page>.rendered.png for new renders), so UI dedup must not key on
+    // the name alone.
     var inpaintRevision: Int = 0,
     var renderRevision: Long = 0L,
 ) {
@@ -70,6 +74,12 @@ object StageStatus {
      * NOT bound by this (it always retries), so a user can force more attempts.
      */
     const val MAX_STAGE_RETRIES = 2
+}
+
+object RenderQuality {
+    const val UNKNOWN = "UNKNOWN"
+    const val FULL = "FULL"
+    const val SIZE_LIMITED = "SIZE_LIMITED"
 }
 
 @Serializable

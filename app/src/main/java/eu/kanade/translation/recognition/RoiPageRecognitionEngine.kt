@@ -45,6 +45,22 @@ class RoiPageRecognitionEngine(
     private var initialized = false
     private var initFailed = false
     private val initMutex = Mutex()
+    /**
+     * TachiyomiAT: serializes native ONNX inference (analyze/inpaint) against
+     * close(). Every close() call site is already guarded by the translator
+     * permit (closeEngines tryAcquires it; the rebuild path holds it), so in
+     * practice a native run and a close never overlap. This mutex is the
+     * defense-in-depth belt-and-suspenders: analyze()/inpaint() hold it across
+     * each native OrtSession.run(), and close() acquires it before freeing the
+     * sessions. If the permit guard were ever bypassed, this guarantees close()
+     * cannot free a session an in-flight run is using (the SIGSEGV acknowledged
+     * in the [closed] comment below). close() is non-suspend and called from the
+     * main thread, so it uses a BOUNDED tryLock on a background dispatcher
+     * rather than runBlocking — it never ANRs; on the (permit-guarded,
+     * unreachable-in-practice) timeout it logs and proceeds, leaving the
+     * [closed] flag + permit guard as the backstop.
+     */
+    private val nativeGuard = Mutex()
     // TachiyomiAT: cooperative close flag. closeEngines() in ChapterTranslator
     // runs WITHOUT the translator permit (called from stop() on the main thread),
     // so it can race an in-flight analyze()/inpaint(). The locals-capture pattern
@@ -53,7 +69,8 @@ class RoiPageRecognitionEngine(
     // past a suspension point — a potential SIGSEGV rather than the catchable
     // IllegalStateException. analyze()/inpaint() poll this flag before each ONNX
     // invocation and bail cleanly (throwing) so the page is marked retryable
-    // instead of crashing the process.
+    // instead of crashing the process. The [nativeGuard] mutex above closes the
+    // remaining window by serializing native runs against close().
     @Volatile
     private var closed = false
 
@@ -140,44 +157,47 @@ class RoiPageRecognitionEngine(
             ?: throw IllegalStateException("ONNX OCR engine closed mid-analyze")
         val startTime = System.nanoTime()
         TranslationMemoryBudget.logSnapshot("analyze_start", bitmap.width, bitmap.height)
-        // TachiyomiAT: re-check the closed flag right before the first native
-        // (detect) call; close() may have run between the top-of-method check
-        // and here (e.g. after initialize() completed).
-        if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
-        val detections = localDetector.detect(bitmap)
-        val bubbles = detections.filter { it.label == 0 }
-        val textDetections = detections.filter { it.label == 1 || it.label == 2 }
-        val pageTranslation = PageTranslation(
-            imgWidth = bitmap.width.toFloat(),
-            imgHeight = bitmap.height.toFloat(),
-            recognitionEngine = "onnx",
-            detectionCount = detections.size,
-            ocrStatus = StageStatus.RUNNING,
-            updatedAt = System.currentTimeMillis(),
-        )
-        val geometricallyDeduped = dedupeTextDetections(textDetections, bubbles)
-        val filteredDetections = suppressCrossLabelDuplicates(geometricallyDeduped, bubbles)
-        // TachiyomiAT: stash on the per-page translation instead of a shared
-        // engine field so concurrent pages can't overwrite each other's data
-        // before inpaint() reads it back.
-        pageTranslation.allTextDetections =
-            filteredDetections + (textDetections.filter { it !in filteredDetections && it !in geometricallyDeduped })
-        logcat(LogPriority.INFO) {
-            "ONNX recognition detections: bubbles=${bubbles.size} text=${textDetections.size} " +
-                "geometricText=${geometricallyDeduped.size} filteredText=${filteredDetections.size}"
-        }
-        val recognizedBlocks = mutableListOf<RecognizedBlock>()
-        // localOcrEngine was null-checked at the top of analyze(); reuse it
-        // instead of re-dereferencing the nullable field (which close() may
-        // have nulled by now).
-        val engine = localOcrEngine
-        for (detection in filteredDetections) {
-            // TachiyomiAT: cooperative close — bail out of the per-ROI OCR loop
-            // if close() ran between iterations, before invoking the (native)
-            // OCR engine. Throwing keeps the page degradable instead of SIGSEGV.
-            if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
-            val bbox = detection.bbox
-            val crop = cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
+        // TachiyomiAT: hold nativeGuard across detect + the per-ROI OCR loop so
+        // close() cannot free a native session out from under an in-flight
+        // OrtSession.run(). See [nativeGuard]. The whole detect+OCR region is one
+        // critical section: detect is one native pass and each recognize() is a
+        // native pass, and close() must wait for whichever is in flight.
+        val analyzed = nativeGuard.withLock {
+            if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
+            val detections = localDetector.detect(bitmap)
+            val bubbles = detections.filter { it.label == 0 }
+            val textDetections = detections.filter { it.label == 1 || it.label == 2 }
+            val lockedPageTranslation = PageTranslation(
+                imgWidth = bitmap.width.toFloat(),
+                imgHeight = bitmap.height.toFloat(),
+                recognitionEngine = "onnx",
+                detectionCount = detections.size,
+                ocrStatus = StageStatus.RUNNING,
+                updatedAt = System.currentTimeMillis(),
+            )
+            val geometricallyDeduped = dedupeTextDetections(textDetections, bubbles)
+            val filteredDetections = suppressCrossLabelDuplicates(geometricallyDeduped, bubbles)
+            // TachiyomiAT: stash on the per-page translation instead of a shared
+            // engine field so concurrent pages can't overwrite each other's data
+            // before inpaint() reads it back.
+            lockedPageTranslation.allTextDetections =
+                filteredDetections + (textDetections.filter { it !in filteredDetections && it !in geometricallyDeduped })
+            logcat(LogPriority.INFO) {
+                "ONNX recognition detections: bubbles=${bubbles.size} text=${textDetections.size} " +
+                    "geometricText=${geometricallyDeduped.size} filteredText=${filteredDetections.size}"
+            }
+            val lockedRecognizedBlocks = mutableListOf<RecognizedBlock>()
+            // localOcrEngine was null-checked at the top of analyze(); reuse it
+            // instead of re-dereferencing the nullable field (which close() may
+            // have nulled by now).
+            val engine = localOcrEngine
+            for (detection in filteredDetections) {
+                // TachiyomiAT: cooperative close — bail out of the per-ROI OCR loop
+                // if close() ran between iterations, before invoking the (native)
+                // OCR engine. Throwing keeps the page degradable instead of SIGSEGV.
+                if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
+                val bbox = detection.bbox
+                val crop = cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
             // TachiyomiAT: PaddleOCR's rec model reads HORIZONTAL text lines (it is a
             // CNN+CTC trained on left-to-right lines — confirmed against the official
             // PaddleOCR text-recognition docs, which run a separate orientation
@@ -222,15 +242,18 @@ class RoiPageRecognitionEngine(
             val splitVerticalColumns = isVerticalLanguage &&
                 engine.prefersHorizontalText &&
                 boxHeightPre > boxWidthPre * 1.5f
-            val text = if (splitVerticalColumns) {
-                recognizeVerticalColumns(engine, crop)
-            } else {
-                engine.recognize(crop)
+            val text = try {
+                if (splitVerticalColumns) {
+                    recognizeVerticalColumns(engine, crop)
+                } else {
+                    engine.recognize(crop)
+                }
+            } finally {
+                crop.recycle()
             }
             // Kept for the diagnostics log tag below; mirrors the rotation the
             // per-column path applies internally.
             val rotatedForOcr = splitVerticalColumns
-            crop.recycle()
             // TachiyomiAT: diagnostics — log each detected box and its OCR output so
             // recognition quality can be inspected from logcat. Gated by the opt-in
             // translation_diagnostics pref (same gate as the per-engine timing logs).
@@ -279,7 +302,7 @@ class RoiPageRecognitionEngine(
             // unaffected. isVerticalLanguage is computed once above (shared with the
             // OCR-rotation decision) — reused here.
             val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
-            recognizedBlocks.add(
+            lockedRecognizedBlocks.add(
                 RecognizedBlock(
                     detection = detection,
                     block = TranslationBlock(
@@ -304,7 +327,14 @@ class RoiPageRecognitionEngine(
                 ),
                 ),
             )
+            }
+            // End of native critical section. Return both the page translation
+            // (carrying detections + dedupe state) and the recognized blocks so
+            // the post-lock dedupe/assembly below runs outside nativeGuard.
+            RecognizedAnalyzeResult(lockedPageTranslation, lockedRecognizedBlocks)
         }
+        val pageTranslation = analyzed.pageTranslation
+        val recognizedBlocks = analyzed.recognizedBlocks
         val finalRecognizedBlocks = removePostOcrDuplicateBlocks(recognizedBlocks)
         pageTranslation.blocks.addAll(finalRecognizedBlocks.map { it.block })
         pageTranslation.ocrBlockCount = pageTranslation.blocks.size
@@ -326,8 +356,21 @@ class RoiPageRecognitionEngine(
             pageTranslation.updatedAt = System.currentTimeMillis()
             return null
         }
-        return (pageInpainter ?: PageInpaintingEngine(inpaintingMode, inpainting ?: AOTInpainting()))
-            .inpaint(bitmap, pageTranslation)
+        // TachiyomiAT: hold nativeGuard across the (neural) inpaint pass so
+        // close() cannot free the AOT inpainter's native session mid-run. Mirrors
+        // the analyze() critical section. Re-check [closed] inside the lock in
+        // case close() ran between the top-of-method check and acquiring it.
+        return nativeGuard.withLock {
+            if (closed) {
+                pageTranslation.inpaintStatus = StageStatus.FAILED
+                pageTranslation.errorMessage = "ONNX recognition engine closed before inpaint"
+                pageTranslation.updatedAt = System.currentTimeMillis()
+                null
+            } else {
+                (pageInpainter ?: PageInpaintingEngine(inpaintingMode, inpainting ?: AOTInpainting()))
+                    .inpaint(bitmap, pageTranslation)
+            }
+        }
 
         val inpainter = inpainting
         // TachiyomiAT: a page whose OCR found ZERO text blocks is a SUCCESSFUL
@@ -446,20 +489,75 @@ class RoiPageRecognitionEngine(
         val block: TranslationBlock,
     )
 
+    /**
+     * TachiyomiAT: carrier for analyze()'s native critical-section output. The
+     * detect + OCR loop runs under [nativeGuard] and returns this so the
+     * post-lock dedupe/assembly (removePostOcrDuplicateBlocks, blocks.addAll)
+     * runs outside the native lock — it is pure Kotlin and need not block close().
+     */
+    private data class RecognizedAnalyzeResult(
+        val pageTranslation: PageTranslation,
+        val recognizedBlocks: MutableList<RecognizedBlock>,
+    )
+
     override fun close() {
         // TachiyomiAT: set the cooperative close flag FIRST, before freeing the
         // native sessions. An in-flight analyze()/inpaint() that polls [closed]
         // between ONNX calls will see this and bail cleanly (throwing) instead of
         // touching a session freed on the line below — a potential native crash.
         closed = true
-        detector?.close()
-        roiOcrEngine?.close()
-        inpainting?.close()
-        detector = null
-        roiOcrEngine = null
-        inpainting = null
-        pageInpainter = null
-        initialized = false
+        // TachiyomiAT: serialize close() against in-flight native OrtSession.run().
+        // analyze()/inpaint() hold [nativeGuard] across each native pass. tryLock
+        // is non-suspend and returns IMMEDIATELY (never blocks the main thread
+        // close() is called from), which is correct here because every close()
+        // call site is already guarded by the translator permit — so when close()
+        // runs, no translate (hence no native run) is in flight and the lock is
+        // free. tryLock is the defense-in-depth assertion of that invariant: if it
+        // ever fails (permit guard bypassed), we do NOT free the native sessions
+        // out from under a running inference — we log and leave them for the
+        // permit guard / a subsequent close to handle, so close() degrades safely
+        // instead of SIGSEGV-ing. The [closed] flag set above still makes any
+        // in-flight run bail at its next checkpoint.
+        val nativeDrained = nativeGuard.tryLock()
+        if (!nativeDrained) {
+            logcat(LogPriority.WARN) {
+                "RoiPageRecognitionEngine.close: nativeGuard held (unexpected — permit guard " +
+                    "should prevent an in-flight native run at close time); skipping native " +
+                    "session free to avoid use-after-free. Engine will be rebuilt on next use."
+            }
+            // Leave detector/roiOcrEngine/inpainting references in place; the
+            // [closed] flag + enginesClosed rebuild gate ensure a fresh engine is
+            // built on the next translate. The leaked sessions are bounded (one
+            // engine lifetime) and preferable to a native crash.
+            initialized = false
+            return
+        }
+        try {
+            detector?.close()
+            roiOcrEngine?.close()
+            inpainting?.close()
+            detector = null
+            roiOcrEngine = null
+            inpainting = null
+            pageInpainter = null
+            initialized = false
+        } finally {
+            // Release the nativeGuard acquired above so a rebuilt engine's
+            // analyze()/inpaint() can proceed. (Mutex.unlock is non-suspend.)
+            nativeGuard.unlock()
+        }
+    }
+
+    override fun reclaimPooledMemory() {
+        // TachiyomiAT: free off-heap pooled state held by the sub-engines WITHOUT
+        // tearing them down. Called by TranslationPipeline's OOM recovery so the
+        // native pressure that caused an OOM on one page doesn't carry into the
+        // next. The OCR engine's direct KV-cache buffers are the main resident
+        // (MangaOcr); the inpainter's working buffers are heap arrays already
+        // covered by GC, but reclaiming via the same hook keeps the contract
+        // uniform. Guarded so a partial init (null sub-engines) is a no-op.
+        try { roiOcrEngine?.reclaimPooledMemory() } catch (_: Exception) {}
+        try { inpainting?.reclaimPooledMemory() } catch (_: Exception) {}
     }
 
     private fun suppressCrossLabelDuplicates(

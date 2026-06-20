@@ -19,10 +19,21 @@ sealed interface PageLifecycle {
 
 val PageTranslation.displayImageName: String?
     get() = when {
-        blocks.isEmpty() -> renderedImageName ?: cleanedImageName
-        hasCurrentInpaintResult -> renderedImageName
+        blocks.isEmpty() -> when {
+            renderedImageName != null && hasTrustedRenderScale -> renderedImageName
+            cleanedImageName != null && decodeSampleSize <= 1 -> cleanedImageName
+            else -> null
+        }
+        hasCurrentInpaintResult && hasTrustedRenderScale -> renderedImageName
         else -> null
     }
+
+val PageTranslation.hasTrustedRenderScale: Boolean
+    get() = renderedImageName != null && (
+        renderQuality == RenderQuality.FULL ||
+            renderQuality == RenderQuality.SIZE_LIMITED ||
+            (renderQuality == RenderQuality.UNKNOWN && decodeSampleSize <= 1)
+        )
 
 val PageTranslation.hasCurrentInpaintResult: Boolean
     get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
@@ -61,6 +72,22 @@ fun PageTranslation.cancelInFlightStages() {
         if (translationStatus == StageStatus.RUNNING) translationStatus = StageStatus.CANCELLED
         if (inpaintStatus == StageStatus.RUNNING) inpaintStatus = StageStatus.CANCELLED
         if (renderStatus == StageStatus.RUNNING) renderStatus = StageStatus.CANCELLED
+    }
+}
+
+fun PageTranslation.prepareForcedRetry() {
+    retryCount = 0
+    ocrStatus = StageStatus.RUNNING
+    translationStatus = StageStatus.PENDING
+    inpaintStatus = StageStatus.PENDING
+    renderStatus = StageStatus.PENDING
+    errorMessage = null
+    if (!hasRenderedResult) {
+        renderedImageName = null
+        cleanedImageName = null
+        renderQuality = RenderQuality.UNKNOWN
+        renderedWidth = 0
+        renderedHeight = 0
     }
 }
 

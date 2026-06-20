@@ -23,6 +23,22 @@ object TranslationMemoryBudget {
         val availableHeapBytes: Long,
     )
 
+    enum class DecodeDecisionKind {
+        FULL,
+        HEAP_CONSTRAINED,
+        SOURCE_TOO_LARGE,
+    }
+
+    data class DecodeDecision(
+        val kind: DecodeDecisionKind,
+        val sampleSize: Int,
+        val rawBitmapBytes: Long,
+        val sampledBitmapBytes: Long,
+        val sourcePixels: Long,
+        val sampledPixels: Long,
+        val snapshot: Snapshot,
+    )
+
     fun snapshot(): Snapshot {
         val runtime = Runtime.getRuntime()
         val maxHeap = runtime.maxMemory()
@@ -43,13 +59,15 @@ object TranslationMemoryBudget {
         val rawBitmapBytes = pixels * 4L
 
         // TachiyomiAT: read the heap snapshot ONCE for the whole decision.
-        // Previously snapshot() was called at the early-return check AND inside
-        // the while-loop on every iteration, each reading Runtime totals. Not
-        // only is that extra work, but the heap can change between the two reads
-        // (GC during the loop), making the computed sample size nondeterministic
-        // — usually benign, but it could pick a larger-than-needed sample on a
-        // transient spike. A single snapshot makes the decision atomic.
-        val available = snapshot().availableHeapBytes
+        // If memory appears low (which would trigger downscaling), proactively trigger
+        // a Garbage Collection first. This reclaims memory from previously recycled
+        // bitmaps and dead objects that haven't been swept by lazy GC yet, preventing
+        // premature downscaling (blurry pages) on consecutive page loads.
+        var available = snapshot().availableHeapBytes
+        if (pixels > MAX_FULL_RES_DECODE_PIXELS || rawBitmapBytes > available * 25L / 100L) {
+            System.gc()
+            available = snapshot().availableHeapBytes
+        }
 
         // TachiyomiAT: thresholds lowered from 40%/35% to 25%/20% of available
         // heap. The previous values were too aggressive on small-heaped devices
@@ -74,6 +92,78 @@ object TranslationMemoryBudget {
             sample *= 2
         }
         return sample
+    }
+
+    fun chooseDecodeDecision(
+        width: Int,
+        height: Int,
+        snapshot: Snapshot = snapshot(),
+    ): DecodeDecision {
+        if (width <= 0 || height <= 0) {
+            return DecodeDecision(
+                kind = DecodeDecisionKind.FULL,
+                sampleSize = 1,
+                rawBitmapBytes = 0L,
+                sampledBitmapBytes = 0L,
+                sourcePixels = 0L,
+                sampledPixels = 0L,
+                snapshot = snapshot,
+            )
+        }
+        val pixels = width.toLong() * height.toLong()
+        val rawBitmapBytes = pixels * 4L
+        val available = snapshot.availableHeapBytes
+
+        if (pixels <= MAX_FULL_RES_DECODE_PIXELS) {
+            return if (rawBitmapBytes <= available * 25L / 100L) {
+                DecodeDecision(
+                    kind = DecodeDecisionKind.FULL,
+                    sampleSize = 1,
+                    rawBitmapBytes = rawBitmapBytes,
+                    sampledBitmapBytes = rawBitmapBytes,
+                    sourcePixels = pixels,
+                    sampledPixels = pixels,
+                    snapshot = snapshot,
+                )
+            } else {
+                val diagnosticSample = heapDiagnosticSampleSize(pixels, available)
+                val sampledPixels = pixels / (diagnosticSample.toLong() * diagnosticSample.toLong())
+                DecodeDecision(
+                    kind = DecodeDecisionKind.HEAP_CONSTRAINED,
+                    sampleSize = diagnosticSample,
+                    rawBitmapBytes = rawBitmapBytes,
+                    sampledBitmapBytes = sampledPixels * 4L,
+                    sourcePixels = pixels,
+                    sampledPixels = sampledPixels,
+                    snapshot = snapshot,
+                )
+            }
+        }
+
+        val sourceSample = sourceLimitSampleSize(pixels)
+        val sampledPixels = pixels / (sourceSample.toLong() * sourceSample.toLong())
+        val sampledBytes = sampledPixels * 4L
+        return if (sampledBytes <= available * 20L / 100L) {
+            DecodeDecision(
+                kind = DecodeDecisionKind.SOURCE_TOO_LARGE,
+                sampleSize = sourceSample,
+                rawBitmapBytes = rawBitmapBytes,
+                sampledBitmapBytes = sampledBytes,
+                sourcePixels = pixels,
+                sampledPixels = sampledPixels,
+                snapshot = snapshot,
+            )
+        } else {
+            DecodeDecision(
+                kind = DecodeDecisionKind.HEAP_CONSTRAINED,
+                sampleSize = sourceSample,
+                rawBitmapBytes = rawBitmapBytes,
+                sampledBitmapBytes = sampledBytes,
+                sourcePixels = pixels,
+                sampledPixels = sampledPixels,
+                snapshot = snapshot,
+            )
+        }
     }
 
     fun canRunNeuralInpaint(pageWidth: Int, pageHeight: Int, cropWidth: Int, cropHeight: Int): Boolean {
@@ -150,6 +240,24 @@ object TranslationMemoryBudget {
         return (available * 5L / 10L)
             .coerceAtLeast(MIN_SINGLE_PAGE_BUDGET_BYTES)
             .coerceAtMost(MAX_SINGLE_PAGE_BUDGET_BYTES)
+    }
+
+    private fun sourceLimitSampleSize(pixels: Long): Int {
+        var sample = 1
+        while (pixels / (sample.toLong() * sample.toLong()) > MAX_FULL_RES_DECODE_PIXELS) {
+            sample *= 2
+        }
+        return sample
+    }
+
+    private fun heapDiagnosticSampleSize(pixels: Long, available: Long): Int {
+        var sample = 1
+        while (true) {
+            val sampledPixels = pixels / (sample.toLong() * sample.toLong())
+            val sampledBytes = sampledPixels * 4L
+            if (sampledBytes <= available * 20L / 100L) return sample
+            sample *= 2
+        }
     }
 
     private fun Long.toMiB(): Long = this / MIB

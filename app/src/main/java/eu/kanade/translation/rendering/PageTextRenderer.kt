@@ -46,7 +46,7 @@ class PageTextRenderer(context: Context) {
      * Canvas constructor". Callers MUST compress/save the RETURNED bitmap, not
      * the one they passed in, otherwise they save the un-drawn-on original.
      */
-    fun render(bitmap: Bitmap, blocks: List<TranslationBlock>): Bitmap {
+    fun render(bitmap: Bitmap, blocks: List<TranslationBlock>, sampleSize: Int = 1): Bitmap {
         // TachiyomiAT: Canvas(bitmap) throws "Immutable bitmap passed to Canvas
         // constructor" if the bitmap isn't mutable. Bitmaps returned by
         // BitmapFactory.decodeStream are immutable by default (the caller,
@@ -61,7 +61,7 @@ class PageTextRenderer(context: Context) {
             val text = block.translation.ifBlank { block.text }
             if (text.isBlank()) continue
 
-            val (baseX, baseY, baseW, baseH, safeW, safeH) = computeRects(block)
+            val (baseX, baseY, baseW, baseH, safeW, safeH) = computeRects(block, sampleSize)
             if (safeW < 1f || safeH < 1f) continue
 
             val isVertical = block.direction == "TTB" && text.any(::isCJK)
@@ -71,9 +71,10 @@ class PageTextRenderer(context: Context) {
                 safeH = safeH,
                 containerW = baseW,
                 isVertical = isVertical,
+                sampleSize = sampleSize,
             )
 
-            val strokeWidth = computeStrokeWidth(block, fontSizePx)
+            val strokeWidth = computeStrokeWidth(block, fontSizePx, sampleSize)
             val textColor = block.textColor.toInt()
             val strokeColor = block.strokeColor.toInt()
 
@@ -226,10 +227,12 @@ class PageTextRenderer(context: Context) {
         safeH: Float,
         containerW: Float,
         isVertical: Boolean,
+        sampleSize: Int = 1,
     ): Float {
-        val startSize = max(containerW * 1.5f, 36f).toInt()
-        var high = min(max(startSize, 36), 72)
-        var low = 8
+        val scale = 1f / sampleSize
+        val startSize = max(containerW * 1.5f, 36f * scale).toInt()
+        var high = min(max(startSize, (36 * scale).toInt()), (72 * scale).toInt())
+        var low = max(2, (8 * scale).toInt())
         var best = low.toFloat()
 
         val testPaint = Paint().apply {
@@ -273,17 +276,18 @@ class PageTextRenderer(context: Context) {
         return best
     }
 
-    private fun computeStrokeWidth(block: TranslationBlock, fontSizePx: Float): Float {
+    private fun computeStrokeWidth(block: TranslationBlock, fontSizePx: Float, sampleSize: Int = 1): Float {
+        val scale = 1f / sampleSize
         if (block.strokeWidth > 0f) {
-            val startSizeEstimate = max(block.width * 1.5f, 36f)
+            val startSizeEstimate = max(block.width * 1.5f, 36f * scale)
             val scaled = if (startSizeEstimate > 0f && fontSizePx < startSizeEstimate) {
-                block.strokeWidth * (fontSizePx / startSizeEstimate)
+                (block.strokeWidth * scale) * (fontSizePx / startSizeEstimate)
             } else {
-                block.strokeWidth
+                block.strokeWidth * scale
             }
-            return max(1.0f, scaled)
+            return max(1.0f * scale, scaled)
         }
-        return max(1.5f, fontSizePx * 0.07f)
+        return max(1.5f * scale, fontSizePx * 0.07f)
     }
 
     companion object {
@@ -314,12 +318,13 @@ class PageTextRenderer(context: Context) {
                 (cp in 0xFE30..0xFE4F)
         }
 
-        internal fun computeRects(block: TranslationBlock): RectResult {
+        internal fun computeRects(block: TranslationBlock, sampleSize: Int = 1): RectResult {
             val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
+            val scale = 1f / sampleSize
             val textPad = if (hasParent) {
-                max(12f, 0.15f * min(block.parentWidth, block.parentHeight))
+                max(12f * scale, 0.15f * min(block.parentWidth, block.parentHeight))
             } else {
-                max(4f, 0.03f * min(block.width, block.height))
+                max(4f * scale, 0.03f * min(block.width, block.height))
             }
             var baseX = if (hasParent) block.parentX else block.x
             var baseY = if (hasParent) block.parentY else block.y

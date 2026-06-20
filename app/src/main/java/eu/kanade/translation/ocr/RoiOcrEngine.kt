@@ -7,6 +7,20 @@ interface RoiOcrEngine : Closeable {
     suspend fun recognize(crop: Bitmap): String
 
     /**
+     * TachiyomiAT: release engine-owned off-heap/pooled memory that [close]
+     * would free but that can otherwise persist across calls.
+     *
+     * Unlike [close], this leaves the engine usable: the next [recognize]
+     * re-acquires whatever it needs. The motivating consumer is OOM recovery —
+     * [MangaOcrEngine] holds direct (off-heap) KV-cache buffers in a pool that
+     * survives every ROI and every page; `BitmapPool.releaseAll()` + a Java GC
+     * cannot reclaim them, so chronic native pressure from a long session never
+     * relieves and the OOM recurs on the next page. Engines without pooled
+     * native memory do nothing.
+     */
+    fun reclaimPooledMemory() {}
+
+    /**
      * TachiyomiAT: whether this engine reads HORIZONTAL text lines only.
      *
      * Manga speech is often laid out VERTICALLY (top-to-bottom columns). Some

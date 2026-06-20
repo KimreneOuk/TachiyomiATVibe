@@ -26,7 +26,7 @@ fun PageTranslation?.toPageView(): PageView {
     }
     val imageName = displayImageName
     val overlay = when {
-        isStageRunning && imageName == null -> PageView.OverlayState.Running
+        isStageRunning -> PageView.OverlayState.Running
         isStageFailed && imageName == null -> PageView.OverlayState.Error
         else -> PageView.OverlayState.Idle
     }

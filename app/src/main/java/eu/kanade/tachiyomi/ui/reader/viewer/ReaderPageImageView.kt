@@ -177,23 +177,33 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var errorText: android.widget.TextView? = null
 
     // TachiyomiAT: per-page translate button at top-left corner
-    private var translateButton: MaterialButton? = null
+    private var translateButton: AppCompatImageView? = null
 
     private fun ensureTranslateButton() {
         if (translateButton != null) return
-        val btn = MaterialButton(context).apply {
-            setIconResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
-            iconSize = (24 * resources.displayMetrics.density).toInt()
-            iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
-            text = "" // icon-only button
-            insetTop = 0
-            insetBottom = 0
-            cornerRadius = (4 * resources.displayMetrics.density).toInt()
-            strokeWidth = 0
-            setBackgroundColor(0x66000000) // semi-transparent dark
+        val btn = AppCompatImageView(context).apply {
+            setImageResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
+            imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            val p = (5 * resources.displayMetrics.density).toInt()
+            setPadding(p, p, p, p)
+            
+            // Circular ripple background with 40% transparent black
+            val mask = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(android.graphics.Color.WHITE)
+            }
+            val content = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x66000000.toInt())
+            }
+            val rippleColor = android.content.res.ColorStateList.valueOf(0x33FFFFFF.toInt())
+            background = android.graphics.drawable.RippleDrawable(rippleColor, content, mask)
+
             isClickable = true
             isFocusable = true
-            layoutParams = FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+            val btnSize = (32 * resources.displayMetrics.density).toInt()
+            layoutParams = FrameLayout.LayoutParams(btnSize, btnSize).apply {
                 gravity = Gravity.TOP or Gravity.START
                 val margin = (8 * resources.displayMetrics.density).toInt()
                 setMargins(margin, margin, 0, 0)
@@ -416,10 +426,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (running == translateButtonShowingCancel) return
         translateButtonShowingCancel = running
         if (running) {
-            btn.setIconResource(eu.kanade.tachiyomi.R.drawable.ic_close_24dp)
+            btn.setImageResource(eu.kanade.tachiyomi.R.drawable.ic_close_24dp)
             btn.setOnClickListener { onCancelTranslateClicked?.invoke() }
         } else {
-            btn.setIconResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
+            btn.setImageResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
             btn.setOnClickListener { onTranslateClicked?.invoke() }
         }
     }

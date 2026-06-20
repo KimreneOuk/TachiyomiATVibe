@@ -18,7 +18,6 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
 import kotlin.math.max
-import kotlin.math.min
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
 import tachiyomi.domain.translation.TranslationPreferences
@@ -51,13 +50,14 @@ class MangaOcrEngine : RoiOcrEngine {
         }
 
         // TachiyomiAT: manga-ocr runs an autoregressive decoder loop (up to 300
-        // steps/ROI) on tiny per-step graphlets. NNAPI/NPU is a terrible fit:
+        // steps/ROI) on tiny per-step graphlets. NNAPI/NPU is a terrible fit —
         // it partitions the graph into dozens of segments with a CPU<->NPU sync
-        // point on each boundary, and that overhead multiplied by 300 steps can
-        // blow up memory and destabilize sessions. forceCpu=true keeps the OCR
-        // pipeline on CPU regardless of the global EP strategy. The AOT
-        // inpainting model (single big generative pass) is the only one that
-        // benefits from the accelerator; it does not pass forceCpu.
+        // point on each boundary, and that overhead × 300 steps blew up memory
+        // and destabilized sessions (triggering autoFallbackToFast → MLKit,
+        // which has no inpainter → "Inpainting unavailable"). forceCpu=true
+        // keeps the OCR pipeline on CPU regardless of the global EP strategy.
+        // The AOT inpainting model (single big generative pass) is the only one
+        // that benefits from the accelerator — it does NOT pass forceCpu.
         val encoderOpts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
         try {
             encoderSession = OnnxRuntimeProvider.environment.createSession(encoderFile.absolutePath, encoderOpts)
@@ -215,13 +215,12 @@ class MangaOcrEngine : RoiOcrEngine {
             )
 
             for (stepIdx in 0 until MAX_GENERATION_LENGTH) {
-                if (pos >= MAX_LEN) break
-                if (currentInputId !in 0L until DECODER_TOKEN_COUNT.toLong()) {
-                    logcat(LogPriority.WARN) {
-                        "MangaOCR decoder stopped before invalid input_id=$currentInputId at step=$stepIdx"
-                    }
-                    break
-                }
+                // TachiyomiAT: bound pos by the POSITION-EMBEDDING size (128),
+                // not MAX_LEN (256, the larger KV-cache dimension). pos==128
+                // overflows node_embedding_1 -> native Gather throws -> chapter
+                // ERROR. On long bubbles the decoder generates 128+ tokens, so
+                // MAX_LEN is not a safe ceiling. See DECODER_POSITION_COUNT.
+                if (pos >= DECODER_POSITION_COUNT) break
 
                 stepInputIdsBuf.put(0, currentInputId)
                 stepPositionIdsBuf.put(0, currentPositionId)
@@ -232,13 +231,9 @@ class MangaOcrEngine : RoiOcrEngine {
                     val logitsTensor = stepResult[0] as OnnxTensor
                     val logitsBuf = logitsTensor.floatBuffer
                     val vocabSize = logitsBuf.remaining()
-                    // The decoder embedding table accepts ids 0..127. Some
-                    // exported logits include an extra class at 128; selecting
-                    // it and feeding it back as input_ids crashes ORT Gather.
-                    val validDecoderTokenCount = min(vocabSize, DECODER_TOKEN_COUNT)
                     var maxVal = Float.NEGATIVE_INFINITY
                     var maxIdx = 0
-                    for (vi in 0 until validDecoderTokenCount) {
+                    for (vi in 0 until vocabSize) {
                         val v = logitsBuf.get(vi)
                         if (v > maxVal) {
                             maxVal = v
@@ -302,6 +297,11 @@ class MangaOcrEngine : RoiOcrEngine {
             selfKCacheBuf?.let { kCachePool.release(it) }
             selfVCacheBuf?.let { vCachePool.release(it) }
         }
+    }
+
+    override fun reclaimPooledMemory() {
+        kCachePool.clear()
+        vCachePool.clear()
     }
 
     override fun close() {
@@ -437,7 +437,17 @@ class MangaOcrEngine : RoiOcrEngine {
         private const val START_TOKEN = 2
         private const val END_TOKEN = 3
         private const val MAX_LEN = 256
-        private const val DECODER_TOKEN_COUNT = 128
+        // TachiyomiAT: ceiling for the decode loop's position id. The decoder
+        // (model_type=gpt2) position-embedding Gather (ONNX node node_embedding_1)
+        // has exactly 128 entries (indices 0..127). A position_id of 128 overflows
+        // it: onnxruntime throws "indices element ... not in the exclusive range
+        // [-128,127]" and the whole chapter is marked ERROR. This is SEPARATE from
+        // MAX_LEN (256), which is only the KV-cache sequence dimension — the cache
+        // is larger than the position table, so bounding by MAX_LEN alone lets pos
+        // reach 128 and crash on long bubbles (128+ generated tokens). 128 here is
+        // the real ceiling on generation length. See docs/ocr-engine-notes.md
+        // "MangaOcr ONNX decoder contract" before changing this.
+        private const val DECODER_POSITION_COUNT = 128
 
         /**
          * TachiyomiAT: mirrors the translation_diagnostics preference. The per-ROI

@@ -2,6 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.RenderQuality
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.shouldBe
@@ -94,6 +95,21 @@ class TranslationLifecyclePolicyTest {
         TranslationLifecyclePolicy.classify(stale) shouldBe PageLifecycle.NeedsRender
         TranslationLifecyclePolicy.shouldSchedule(stale) shouldBe true
         TranslationLifecyclePolicy.shouldSchedule(current) shouldBe false
+    }
+
+    @Test
+    fun `unknown downsampled rendered page is scheduled again unless size limited`() {
+        val stale = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            renderedImageName = "001.rendered.webp"
+            decodeSampleSize = 2
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+        }
+        val sizeLimited = stale.copy(renderQuality = RenderQuality.SIZE_LIMITED)
+
+        TranslationLifecyclePolicy.classify(stale) shouldBe PageLifecycle.NeedsRender
+        TranslationLifecyclePolicy.shouldSchedule(stale) shouldBe true
+        TranslationLifecyclePolicy.shouldSchedule(sizeLimited) shouldBe false
     }
 
     private fun translatedPage(): PageTranslation {

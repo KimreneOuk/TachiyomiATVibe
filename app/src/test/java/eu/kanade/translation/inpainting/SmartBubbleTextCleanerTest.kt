@@ -346,4 +346,40 @@ class SmartBubbleTextCleanerTest {
         g shouldNotBe 128.0
         b shouldBeGreaterThan 80.0
     }
+
+    @Test
+    fun `getWorkingBuffers does not cache when size exceeds limit`() {
+        val cleaner = SmartBubbleTextCleaner()
+        val getWorkingBuffersMethod = cleaner.javaClass.getDeclaredMethod("getWorkingBuffers", Int::class.java)
+        getWorkingBuffersMethod.isAccessible = true
+
+        // Acquire buffers below the limit
+        val result1 = getWorkingBuffersMethod.invoke(cleaner, 100) as Pair<*, *>
+        val buffer1a = result1.first as IntArray
+        val buffer1b = result1.second as IntArray
+
+        // Acquire buffers below the limit again with same size -> should be the same arrays
+        val result2 = getWorkingBuffersMethod.invoke(cleaner, 100) as Pair<*, *>
+        (result2.first === buffer1a) shouldBe true
+        (result2.second === buffer1b) shouldBe true
+
+        // Acquire buffers above the limit (1_000_000)
+        val result3 = getWorkingBuffersMethod.invoke(cleaner, 1_000_001) as Pair<*, *>
+        val buffer3a = result3.first as IntArray
+        val buffer3b = result3.second as IntArray
+
+        // Acquire buffers above the limit again with same size -> should be DIFFERENT arrays (not cached)
+        val result4 = getWorkingBuffersMethod.invoke(cleaner, 1_000_001) as Pair<*, *>
+        val buffer4a = result4.first as IntArray
+        val buffer4b = result4.second as IntArray
+        (buffer3a === buffer4a) shouldBe false
+        (buffer3b === buffer4b) shouldBe false
+
+        // Check that the cached buffers in the cleaner are still the smaller ones
+        val buffer1Field = cleaner.javaClass.getDeclaredField("workingBuffer1")
+        buffer1Field.isAccessible = true
+        val cached1 = buffer1Field.get(cleaner) as IntArray
+        cached1.size shouldBe 100
+    }
 }
+

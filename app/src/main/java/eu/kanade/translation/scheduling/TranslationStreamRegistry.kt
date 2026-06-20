@@ -101,6 +101,29 @@ class TranslationStreamRegistry {
         }
     }
 
+    fun clearPage(sourceId: Long, mangaId: Long, chapterId: Long, pageKey: String) {
+        streams.remove(key(sourceId, mangaId, chapterId, pageKey))
+    }
+
+    fun clearOutsideWindow(
+        sourceId: Long,
+        mangaId: Long,
+        chapterId: Long,
+        keepPageKeys: Set<String>,
+    ) {
+        val p = prefix(sourceId, mangaId, chapterId)
+        val keep = keepPageKeys.mapTo(HashSet()) { key(sourceId, mangaId, chapterId, it) }
+        val iterator = streams.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            if (entry.key.startsWith(p) && entry.key !in keep) {
+                iterator.remove()
+            }
+        }
+    }
+
+    fun size(): Int = streams.size
+
     /**
      * Evicts EVERY registered reader page stream, regardless of chapter. Used on
      * reader background / "stop all translation" so backgrounding the reader

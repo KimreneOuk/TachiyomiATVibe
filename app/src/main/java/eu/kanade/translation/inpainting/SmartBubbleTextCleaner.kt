@@ -28,6 +28,9 @@ class SmartBubbleTextCleaner(
     private var currentBufferSize = 0
 
     private fun getWorkingBuffers(size: Int): Pair<IntArray, IntArray> {
+        if (size > MAX_CACHED_PIXELS) {
+            return Pair(IntArray(size), IntArray(size))
+        }
         return if (size == currentBufferSize &&
             workingBuffer1 != null &&
             workingBuffer2 != null
@@ -1359,6 +1362,7 @@ class SmartBubbleTextCleaner(
 
     private companion object {
         private const val MIN_OCR_TEXT_MASK_COVERAGE = 3.0f
+        private const val MAX_CACHED_PIXELS = 1_000_000
     }
 
     fun clearWorkingBuffers() {

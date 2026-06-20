@@ -1,0 +1,776 @@
+06-20 20:13:47.433   390   390 D Zygote  : Forked child process 15831
+06-20 20:13:47.437  1138  1166 I ActivityManager: Start proc 15831:app.kanade.tachiyomi.at.debug/u0a107 for broadcast {app.kanade.tachiyomi.at.debug/androidx.glance.appwidget.MyPackageReplacedReceiver}
+06-20 20:13:47.446 15831 15831 I Zygote  : seccomp disabled by setenforce 0
+06-20 20:13:47.446 15831 15831 I hiyomi.at.debug: Late-enabling -Xcheck:jni
+06-20 20:13:47.557 15831 15831 W hiyomi.at.debug: Unexpected CPU variant for x86: x86_64.
+06-20 20:13:47.557 15831 15831 W hiyomi.at.debug: Known variants: atom, sandybridge, silvermont, kabylake, default
+06-20 20:13:47.580 15831 15831 I libnb   : Try to open native bridge: /system/lib64/libhoudini.so.
+06-20 20:13:47.689 15831 15831 I libnb   : Successfully opened '/system/lib64/libhoudini.so' and found NativeBridgeItf version 6
+06-20 20:13:47.689 15831 15831 I libnb   : Houdini library detected (/system/lib64/libhoudini.so), applying patches.
+06-20 20:13:47.697 15831 15831 I houdini : [15831] Houdini now in android app mode
+06-20 20:13:47.697 15831 15831 I houdini : [15831] Intel Bridge Technology for Customer Bluestacks emulator, Copyright(C) Intel Corp. 2012-2026.
+06-20 20:13:47.697 15831 15831 I houdini : [15831] Use permitted only under a valid software commercial license agreement - all other rights reserved. It will expire on 20270101.
+06-20 20:13:47.697 15831 15831 I houdini : [15831] Initialize library(version: 13.0.1_z.bluestacks_com1.5 RELEASE)... successfully.
+06-20 20:13:47.717 15831 15831 D CompatibilityChangeReporter: Compat change id reported: 171979766; UID 10107; state: ENABLED
+06-20 20:13:47.725 15831 15831 W ziparchive: Unable to open '/data/app/~~lnc7Yz9yDNsfg-IqFeqWZw==/app.kanade.tachiyomi.at.debug-S7BqcaI332dCcvRF8U_KZw==/base.dm': No such file or directory
+06-20 20:13:47.725 15831 15831 W ziparchive: Unable to open '/data/app/~~lnc7Yz9yDNsfg-IqFeqWZw==/app.kanade.tachiyomi.at.debug-S7BqcaI332dCcvRF8U_KZw==/base.dm': No such file or directory
+06-20 20:13:48.963 15831 15831 V GraphicsEnvironment: ANGLE Developer option for 'app.kanade.tachiyomi.at.debug' set to: 'default'
+06-20 20:13:48.963 15831 15831 V GraphicsEnvironment: ANGLE GameManagerService for app.kanade.tachiyomi.at.debug: false
+06-20 20:13:48.963 15831 15831 V GraphicsEnvironment: Neither updatable production driver nor prerelease driver is supported.
+06-20 20:13:48.965 15831 15831 D NetworkSecurityConfig: Using Network Security Config from resource network_security_config debugBuild: true
+06-20 20:13:48.966 15831 15831 D NetworkSecurityConfig: Using Network Security Config from resource network_security_config debugBuild: true
+06-20 20:13:48.983 15831 15831 D CompatibilityChangeReporter: Compat change id reported: 183155436; UID 10107; state: ENABLED
+06-20 20:13:48.994 15831 15831 D SessionsDependencies: Dependency to CRASHLYTICS added.
+06-20 20:13:48.998 15831 15831 I FirebaseApp: Device unlocked: initializing all Firebase APIs for app [DEFAULT]
+06-20 20:13:49.019 15831 15831 I FirebaseCrashlytics: Initializing Firebase Crashlytics 19.3.0 for app.kanade.tachiyomi.at.debug
+06-20 20:13:49.024 15831 15849 W System  : ClassLoader referenced unknown path: /data/user_de/0/com.google.android.gms/app_chimera/m/00000002/DynamiteLoader.uncompressed.apk
+06-20 20:13:49.079 15831 15831 D SessionsDependencies: Subscriber CRASHLYTICS registered.
+06-20 20:13:49.165 15831 15857 I FirebaseCrashlytics: No version control information found
+06-20 20:13:49.197 15831 15831 D FirebaseSessions: Initializing Firebase Sessions SDK.
+06-20 20:13:49.204 15831 15831 I FirebaseInitProvider: FirebaseApp initialization successful
+06-20 20:13:49.233 15831 15831 D WM-WrkMgrInitializer: Initializing WorkManager with default configuration.
+06-20 20:13:49.249 15831 15855 D SessionConfigFetcher: Fetching settings from server.
+06-20 20:13:49.260 15831 15831 D WM-PackageManagerHelper: Skipping component enablement for androidx.work.impl.background.systemjob.SystemJobService
+06-20 20:13:49.260 15831 15831 D WM-Schedulers: Created SystemJobScheduler and enabled SystemJobService
+06-20 20:13:49.261 15831 15856 D TrafficStats: tagSocket(67) with statsTag=0xffffffff, statsUid=-1
+06-20 20:13:49.284 15831 15868 D WM-ForceStopRunnable: The default process name was not specified.
+06-20 20:13:49.284 15831 15868 D WM-ForceStopRunnable: Performing cleanup operations.
+06-20 20:13:49.294 15831 15831 W hiyomi.at.debug: Accessing hidden method Landroid/os/ServiceManager;->getService(Ljava/lang/String;)Landroid/os/IBinder; (unsupported, reflection, allowed)
+06-20 20:13:49.294 15831 15831 D ShizukuProvider: Initialize Sui: false
+06-20 20:13:49.319 15831 15868 D CompatibilityChangeReporter: Compat change id reported: 160794467; UID 10107; state: ENABLED
+06-20 20:13:49.321 15831 15868 D WM-ForceStopRunnable: Application was force-stopped, rescheduling.
+06-20 20:13:49.352 15831 15868 D CompatibilityChangeReporter: Compat change id reported: 194532703; UID 10107; state: ENABLED
+06-20 20:13:49.352 15831 15868 D WM-SystemJobScheduler: Scheduling work ID 268226ed-253a-4327-aa25-867629eb9d1dJob ID 2
+06-20 20:13:49.366 15831 15868 D WM-PackageManagerHelper: Skipping component enablement for androidx.work.impl.background.systemalarm.RescheduleReceiver
+06-20 20:13:49.427 15831 15831 I WebViewFactory: Loading com.android.chrome version 116.0.5845.173 (code 584517327)
+06-20 20:13:49.622 15831 15856 D SessionConfigFetcher: Fetched settings: {"settings_version":3,"cache_duration":174963,"features":{"collect_logged_exceptions":true,"collect_reports":true,"collect_analytics":false,"prompt_enabled":false,"push_enabled":false,"firebase_crashlytics_enabled":false,"collect_anrs":true,"collect_metric_kit":false,"collect_build_ids":true},"app":{"status":"activated","update_required":false,"report_upload_variant":2,"native_report_upload_variant":2},"fabric":{"org_id":"67b87abbf33b6c784df98b3b","bundle_id":"app.kanade.tachiyomi.at"},"on_demand_upload_rate_per_minute":10,"on_demand_backoff_base":1.2,"on_demand_backoff_step_duration_seconds":60,"app_quality":{"sessions_enabled":true,"sampling_rate":1,"session_timeout_seconds":1800},"on_demand_thread_recording_suspension_enabled":true}
+06-20 20:13:49.641 15831 15853 D LifecycleServiceBinder: Binding service to application.
+06-20 20:13:49.846 15831 15831 I cr_WVCFactoryProvider: Loaded version=116.0.5845.173 minSdkVersion=1 isBundle=true multiprocess=true packageId=2
+06-20 20:13:49.895 15831 15849 I DynamiteModule: Considering local module com.google.android.gms.measurement.dynamite:127 and remote module com.google.android.gms.measurement.dynamite:109
+06-20 20:13:49.895 15831 15849 I DynamiteModule: Selected local version of com.google.android.gms.measurement.dynamite
+06-20 20:13:49.905 15831 15831 I cr_LibraryLoader: Successfully loaded native library
+06-20 20:13:49.905 15831 15831 I cr_CachingUmaRecorder: Flushed 7 samples from 7 histograms, 0 samples were dropped.
+06-20 20:13:49.989 15831 15890 I FA      : App measurement initialized, version: 106000
+06-20 20:13:49.989 15831 15890 I FA      : To enable debug logging run: adb shell setprop log.tag.FA VERBOSE
+06-20 20:13:49.989 15831 15890 I FA      : To enable faster debug mode event logging run:
+06-20 20:13:49.989 15831 15890 I FA      :   adb shell setprop debug.firebase.analytics.app app.kanade.tachiyomi.at.debug
+06-20 20:13:50.026 15831 15831 W hiyomi.at.debug: Unsupported class loader
+06-20 20:13:50.037 15831 15831 W hiyomi.at.debug: Unsupported class loader
+06-20 20:13:50.192 15831 15831 D SessionLifecycleService: Service bound to new client on process 15831
+06-20 20:13:50.195 15831 15905 D SessionLifecycleService: App has not yet foregrounded. Using previously stored session.
+06-20 20:13:50.195 15831 15905 D SessionLifecycleService: Client android.os.Messenger@7e04cd2 bound at 41697251. Clients: 1
+06-20 20:13:50.203 15831 15831 D SessionLifecycleClient: Connected to SessionLifecycleService. Queue size 0
+06-20 20:13:52.104 15831 15831 W hiyomi.at.debug: Accessing hidden method Landroid/view/ViewGroup;->makeOptionalFitsSystemWindows()V (unsupported, reflection, allowed)
+06-20 20:13:52.110 15831 15854 D SessionLifecycleClient: Sending lifecycle 1 to service
+06-20 20:13:52.110 15831 15905 D SessionLifecycleService: Activity foregrounding at 41699169.
+06-20 20:13:52.111 15831 15905 D SessionLifecycleService: Cold start detected.
+06-20 20:13:52.111 15831 15905 D SessionLifecycleService: Generated new session.
+06-20 20:13:52.111 15831 15905 D SessionLifecycleService: Broadcasting new session
+06-20 20:13:52.112 15831 15854 D SessionFirelogPublisher: Data Collection is enabled for at least one Subscriber
+06-20 20:13:52.118 15831 15831 D SessionLifecycleClient: Session update received.
+06-20 20:13:52.119 15831 15855 D SessionLifecycleClient: Notified CRASHLYTICS of new session 459318de531d485b8f7742467b65e04b
+06-20 20:13:52.141 15831 15853 D EventGDTLogger: Session Event Type: SESSION_START
+06-20 20:13:52.141 15831 15853 D SessionFirelogPublisher: Successfully logged Session Start event.
+06-20 20:13:52.144 15831 15852 D TelephonyManager: creating subscriptionInfo Record, context : eu.kanade.tachiyomi.App@327f46f
+06-20 20:13:52.151 15831 15890 I FA      : Tag Manager is not found and thus will not be used
+06-20 20:13:52.174 15831 15852 D TelephonyManager: mBstSubscriptionInfo = {id=1 iccId=8901260112143914441 simSlotIndex=0 carrierId=-1 displayName=SIM 1 carrierName=T-Mobile nameSource=0 iconTint=-16777216 number=null dataRoaming=0 iconBitmap=android.graphics.Bitmap@1f63167 mcc=310 mnc=260 countryIso=us isEmbedded=false nativeAccessRules=null cardString=null cardId=-1 portIndex=0 isOpportunistic=false groupUUID=null isGroupDisabled=false profileClass=-1 ehplmns=null hplmns=null subscriptionType=0 groupOwner=null carrierConfigAccessRules=null areUiccApplicationsEnabled=true usageSetting=0}
+06-20 20:13:52.284 15831 15924 D HostConnection: createUnique: call
+06-20 20:13:52.284 15831 15924 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 104
+06-20 20:13:52.284 15831 15924 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15924
+06-20 20:13:52.285 15831 15924 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:13:52.286 15831 15924 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74ad0d7000 with size 4194304
+06-20 20:13:52.286 15831 15924 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15924)
+06-20 20:13:52.287 15831 15924 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:13:52.289 15831 15924 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:13:52.316 15831 15924 D EGL_emulation: eglCreateContext: 0x7e763f41c950: maj 3 min 2 rcv 5
+06-20 20:13:52.357 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:13:52.358 15831 15924 I AGA     : The gl query need cache 0
+06-20 20:13:52.365 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0) (first time)
+06-20 20:13:52.367 15831 15924 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:13:52.367 15831 15924 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:13:52.368 15831 15924 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:13:52.368 15831 15924 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:13:52.389 15831 15924 E eglCodecCommon: glUtilsParamSize: unknow param 0x00008e7e
+06-20 20:13:52.389 15831 15924 E eglCodecCommon: glUtilsParamSize: unknow param 0x00008e7e
+06-20 20:13:52.452 15831 15924 I Gralloc4: mapper 4.x is not supported
+06-20 20:13:52.452 15831 15924 W Gralloc3: mapper 3.x is not supported
+06-20 20:13:52.537 15831 15924 W Gralloc4: allocator 4.x is not supported
+06-20 20:13:52.537 15831 15924 W Gralloc3: allocator 3.x is not supported
+06-20 20:13:52.547 15831 15924 D HostConnection: createUnique: call
+06-20 20:13:52.547 15831 15924 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 108
+06-20 20:13:52.547 15831 15924 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15924
+06-20 20:13:52.547 15831 15924 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:13:52.548 15831 15924 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74ac8c3000 with size 4194304
+06-20 20:13:52.548 15831 15924 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15924)
+06-20 20:13:52.549 15831 15924 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:13:52.557 15831 15924 E EGL_emulation: tid 15924: eglSurfaceAttrib(1726): error 0x3009 (EGL_BAD_MATCH)
+06-20 20:13:52.557 15831 15924 W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface 0x7e759f445bb0, error=EGL_BAD_MATCH
+06-20 20:13:52.557 15831 15924 E OpenGLRenderer: Unable to match the desired swap behavior.
+06-20 20:13:52.788 15831 15831 I Choreographer: Skipped 38 frames!  The application may be doing too much work on its main thread.
+06-20 20:13:53.047 15831 15924 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:13:53.049 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:13:53.052 15831 15924 D emuglGLESv2_enc: check GLMBRH with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:13:53.053 15831 15924 D emuglGLESv2_enc: check GLUBPerf with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:13:53.053 15831 15963 D TrafficStats: tagSocket(111) with statsTag=0xffffffff, statsUid=-1
+06-20 20:13:53.068 15831 15924 D emuglGLESv2_enc: GL app.kanade.tachiyomi.at.debug ViewportNeedFlush 0
+06-20 20:13:53.894 15831 15924 W Parcel  : Expecting binder but got null!
+06-20 20:13:53.896 15831 15831 I Choreographer: Skipped 52 frames!  The application may be doing too much work on its main thread.
+06-20 20:13:53.925 15831 15846 I OpenGLRenderer: Davey! duration=865ms; Flags=1, FrameTimelineVsyncId=11089390, IntendedVsync=41700065998664, Vsync=41700065998664, InputEventId=0, HandleInputStart=41700066221240, AnimationStart=41700066222472, PerformTraversalsStart=41700066773790, DrawStart=41700067022874, FrameDeadline=41700082665330, FrameInterval=41700066216291, FrameStartTime=16666666, SyncQueued=41700087208918, SyncStart=41700108492026, IssueDrawCommandsStart=41700108860603, SwapBuffers=41700951517112, FrameCompleted=41700952311393, DequeueBufferDuration=4799, QueueBufferDuration=212636, GpuCompleted=41700951517112, SwapBuffersCompleted=41700952311393, DisplayPresentTime=0, CommandSubmissionCompleted=41700951517112, 
+06-20 20:13:54.186 15831 15831 W hiyomi.at.debug: Unsupported class loader
+06-20 20:13:54.187 15831 15831 W hiyomi.at.debug: Unsupported class loader
+06-20 20:13:55.252 15831 15974 D ProfileInstaller: Installing profile for app.kanade.tachiyomi.at.debug
+06-20 20:14:36.807 15831 15839 I hiyomi.at.debug: Compiler allocated 4355KB to compile void android.view.ViewRootImpl.performTraversals()
+06-20 20:14:36.845 15831 15988 D HostConnection: createUnique: call
+06-20 20:14:36.845 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 126
+06-20 20:14:36.845 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:14:36.845 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:36.846 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a7db6000 with size 4194304
+06-20 20:14:36.846 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:14:36.847 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:36.848 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:14:36.871 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f43f960: maj 3 min 2 rcv 5
+06-20 20:14:36.902 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f43f960: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:14:36.903 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:14:36.903 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f43f960: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:14:36.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:14:36.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:14:36.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:14:36.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:14:36.909 15831 15955 D HostConnection: createUnique: call
+06-20 20:14:36.910 15831 15955 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 127
+06-20 20:14:36.910 15831 15955 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15955
+06-20 20:14:36.910 15831 15944 D HostConnection: createUnique: call
+06-20 20:14:36.910 15831 15944 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 130
+06-20 20:14:36.910 15831 15944 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15944
+06-20 20:14:36.910 15831 15938 D HostConnection: createUnique: call
+06-20 20:14:36.910 15831 15938 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 131
+06-20 20:14:36.910 15831 15938 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15938
+06-20 20:14:36.910 15831 15955 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:36.911 15831 15938 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:36.911 15831 15944 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:36.911 15831 15955 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a79b6000 with size 4194304
+06-20 20:14:36.911 15831 15955 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15955)
+06-20 20:14:36.912 15831 15938 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a75b6000 with size 4194304
+06-20 20:14:36.912 15831 15938 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15938)
+06-20 20:14:36.912 15831 15944 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a71b6000 with size 4194304
+06-20 20:14:36.912 15831 15944 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15944)
+06-20 20:14:36.913 15831 15955 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:36.913 15831 15938 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:36.913 15831 15944 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:36.913 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:14:37.433 15831 15940 D HostConnection: createUnique: call
+06-20 20:14:37.433 15831 15940 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 103
+06-20 20:14:37.433 15831 15940 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15940
+06-20 20:14:37.434 15831 15940 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:37.435 15831 15861 D HostConnection: createUnique: call
+06-20 20:14:37.435 15831 15861 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 122
+06-20 20:14:37.435 15831 15861 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15861
+06-20 20:14:37.435 15831 15940 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a6db6000 with size 4194304
+06-20 20:14:37.436 15831 15940 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15940)
+06-20 20:14:37.436 15831 15861 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:37.436 15831 15861 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a5723000 with size 4194304
+06-20 20:14:37.436 15831 15861 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15861)
+06-20 20:14:37.436 15831 15940 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:37.437 15831 15861 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:40.812 15831 15855 D SessionLifecycleClient: Sending lifecycle 2 to service
+06-20 20:14:40.813 15831 15905 D SessionLifecycleService: Activity backgrounding at 41747871
+06-20 20:14:40.875 15831 15831 D CompatibilityChangeReporter: Compat change id reported: 171228096; UID 10107; state: ENABLED
+06-20 20:14:40.882 15831 15831 D CompatibilityChangeReporter: Compat change id reported: 147798919; UID 10107; state: ENABLED
+06-20 20:14:40.888 15831 15853 D SessionLifecycleClient: Sending lifecycle 1 to service
+06-20 20:14:40.888 15831 15905 D SessionLifecycleService: Activity foregrounding at 41747947.
+06-20 20:14:40.893  1138  1308 W WindowManager: Failed looking up window session=Session{c52fdbe 15831:u0a10107} callers=com.android.server.wm.WindowManagerService.windowForClientLocked:6151 com.android.server.wm.Session.updateRequestedVisibilities:701 android.view.IWindowSession$Stub.onTransact:1075 
+06-20 20:14:40.898 15831 15831 D AutofillManager: Fill dialog is enabled:false, hints=[]
+06-20 20:14:40.945 15831 15965 D TrafficStats: tagSocket(5) with statsTag=0xffffffff, statsUid=-1
+06-20 20:14:40.947 15831 15924 E EGL_emulation: tid 15924: eglSurfaceAttrib(1726): error 0x3009 (EGL_BAD_MATCH)
+06-20 20:14:40.947 15831 15924 W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface 0x7e759f4564a0, error=EGL_BAD_MATCH
+06-20 20:14:40.947 15831 15924 E OpenGLRenderer: Unable to match the desired swap behavior.
+06-20 20:14:40.955 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:40.961 15831 15924 W Parcel  : Expecting binder but got null!
+06-20 20:14:40.964 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:40.973 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:40.977 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:40.983 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:40.994 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.002 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.027 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.029 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.043 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.047 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.050 15831 15840 W hiyomi.at.debug: Cleared Reference was only reachable from finalizer (only reported once)
+06-20 20:14:41.060 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.063 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.076 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.078 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.126 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.128 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.176 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.178 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.226 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.228 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.259 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.261 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.276 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.278 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:41.296 15831 15924 D OpenGLRenderer: endAllActiveAnimators on 0x7e763f445380 (UnprojectedRipple) with handle 0x7e754f479aa0
+06-20 20:14:41.576 15831 15965 D TrafficStats: tagSocket(107) with statsTag=0xffffffff, statsUid=-1
+06-20 20:14:41.582 15831 16001 D TrafficStats: tagSocket(109) with statsTag=0xffffffff, statsUid=-1
+06-20 20:14:41.586 15831 15831 D CompatibilityChangeReporter: Compat change id reported: 210923482; UID 10107; state: ENABLED
+06-20 20:14:42.202 15831 15988 D HostConnection: createUnique: call
+06-20 20:14:42.202 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:14:42.202 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:14:42.203 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:42.204 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a30e3000 with size 4194304
+06-20 20:14:42.204 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:14:42.205 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:42.206 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:14:42.226 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f48cd60: maj 3 min 2 rcv 5
+06-20 20:14:42.256 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f48cd60: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:14:42.256 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:14:42.256 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f48cd60: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:14:42.259 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:14:42.259 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:14:42.259 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:14:42.259 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:14:42.260 15831 16007 D HostConnection: createUnique: call
+06-20 20:14:42.261 15831 16007 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 143
+06-20 20:14:42.261 15831 16007 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 16007
+06-20 20:14:42.261 15831 16007 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:42.262 15831 16007 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a38a8000 with size 262144
+06-20 20:14:42.263 15831 16007 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 16007) 0
+06-20 20:14:42.265 15831 16007 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:42.265 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:14:42.284 15831 15874 W hiyomi.at.debug: Long monitor contention with owner OkHttp rcdn.kyut.dev (15967) at void okhttp3.internal.http2.Http2Stream$FramingSource.receive$okhttp(okio.BufferedSource, long)(Http2Stream.kt:502) waiters=1 in void java.lang.Object.wait(long, int) for 18446744073.708s
+06-20 20:14:45.337 15831 15940 I Manager : DeviceManager::DeviceManager
+06-20 20:14:45.337 15831 15940 I Manager : findAvailableDevices
+06-20 20:14:45.337 15831 15940 I Manager : Enabled devices: .*
+06-20 20:14:45.426 15831 15924 E EGL_emulation: tid 15924: eglSurfaceAttrib(1726): error 0x3009 (EGL_BAD_MATCH)
+06-20 20:14:45.426 15831 15924 W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface 0x7e759f4fa930, error=EGL_BAD_MATCH
+06-20 20:14:45.426 15831 15924 E OpenGLRenderer: Unable to match the desired swap behavior.
+06-20 20:14:45.437 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.442 15831 15924 W Parcel  : Expecting binder but got null!
+06-20 20:14:45.452 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.453 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.461 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.479 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.495 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.497 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.510 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.512 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.521 15831 15940 W onnxruntime:  [W:onnxruntime:, nnapi_execution_provider.cc:229 GetCapability] NnapiExecutionProvider::GetCapability, number of partitions supported by NNAPI: 10 number of nodes in the graph: 450 number of nodes supported by NNAPI: 10
+06-20 20:14:45.528 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.529 15831 15940 W onnxruntime:  [W:onnxruntime:, nnapi_execution_provider.cc:229 GetCapability] NnapiExecutionProvider::GetCapability, number of partitions supported by NNAPI: 10 number of nodes in the graph: 450 number of nodes supported by NNAPI: 10
+06-20 20:14:45.529 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.535 15831 15940 I TypeManager: Failed to read /vendor/etc/nnapi_extensions_app_allowlist ; No app allowlisted for vendor extensions use.
+06-20 20:14:45.537 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.538 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.540 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.541 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.543 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.543 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.544 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.545 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.546 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.548 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.548 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.549 15831 15940 I ExecutionPlan: ExecutionPlan::SimpleBody::finish: compilation finished successfully on nnapi-reference
+06-20 20:14:45.559 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.560 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.576 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.577 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.581 15831 15940 W onnxruntime:  [W:onnxruntime:, session_state.cc:1263 VerifyEachNodeIsAssignedToAnEp] Some nodes were not assigned to the preferred execution providers which may or may not have an negative impact on performance. e.g. ORT explicitly assigns shape related ops to CPU to improve perf.
+06-20 20:14:45.581 15831 15940 W onnxruntime:  [W:onnxruntime:, session_state.cc:1265 VerifyEachNodeIsAssignedToAnEp] Rerunning with verbose output on a non-minimal build will show node assignments.
+06-20 20:14:45.592 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.593 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.609 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.610 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.626 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.626 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.642 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.643 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.659 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.660 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.677 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.678 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.693 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.694 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.709 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.710 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.735 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.736 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.742 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.743 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.759 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.760 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.776 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.777 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.792 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.793 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.809 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.812 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:45.826 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.459 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.460 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.477 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.478 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.493 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.514 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.517 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.526 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.528 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.543 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.545 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.559 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.562 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.576 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.578 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.592 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.595 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.609 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.612 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.626 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.628 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.642 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.645 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.660 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.663 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.675 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.678 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.693 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.695 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.709 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.711 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.726 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.729 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.742 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.746 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.759 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.760 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.776 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.778 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.793 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.796 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.809 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.811 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.827 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.829 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.843 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.845 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.859 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.861 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.876 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.877 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.893 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.894 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.909 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.913 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.926 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.928 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.943 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.946 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.959 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.962 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.976 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.979 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.992 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:46.995 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.009 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.012 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.025 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.028 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.042 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.045 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.059 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.062 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.075 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.078 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.092 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.095 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.109 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.112 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.126 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.128 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.142 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.145 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.159 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.160 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.175 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.178 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.192 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.195 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.209 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.226 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.243 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.245 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.259 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.276 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.288 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.290 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.295 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.297 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.309 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.311 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.326 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.328 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.342 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.344 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.359 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.360 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.376 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.377 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.393 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.394 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.409 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.410 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.425 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.427 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.442 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.444 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.459 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.460 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.476 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.478 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.492 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.493 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.509 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.510 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.526 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.527 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.543 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.546 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.559 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.560 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.577 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.578 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.594 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.595 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:47.610 15831 15924 D EGL_emulation: eglMakeCurrent: 0x7e763f41c950: ver 3 2 (tinfo 0x7e754f4610b0)
+06-20 20:14:52.121 15831 15875 D MediaScannerConnection: Scanned /tree/primary:Documents/document/primary:Documents/translations/Rawkuma (JA)/Okiraku Ryoushu no Tanoshii Ryouchi Bouei ~Seisan-kei Majutsu de Na mo na Kimura wo Saikyou no Jousai Toshi ni~/Chapter 30_images to null
+06-20 20:14:52.576 15831 15966 D TrafficStats: tagSocket(140) with statsTag=0xffffffff, statsUid=-1
+06-20 20:14:58.041 15831 15988 D HostConnection: createUnique: call
+06-20 20:14:58.041 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 137
+06-20 20:14:58.041 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:14:58.041 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:14:58.042 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748f5ab000 with size 4194304
+06-20 20:14:58.042 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:14:58.043 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:14:58.044 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:14:58.066 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f4d8130: maj 3 min 2 rcv 5
+06-20 20:14:58.091 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f4d8130: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:14:58.091 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:14:58.092 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f4d8130: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:14:58.093 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:14:58.093 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:14:58.093 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:14:58.093 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:14:58.095 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:15:03.174 15831 15988 D HostConnection: createUnique: call
+06-20 20:15:03.174 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 137
+06-20 20:15:03.174 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:15:03.174 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:03.175 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748f5ad000 with size 4194304
+06-20 20:15:03.175 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:15:03.176 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:03.177 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:15:03.197 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f4f8430: maj 3 min 2 rcv 5
+06-20 20:15:03.220 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f4f8430: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:15:03.220 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:15:03.220 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f4f8430: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:15:03.222 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:03.222 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:03.222 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:03.222 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:03.224 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:15:05.205 15831 15852 I TRuntime.CctTransportBackend: Making request to: https://firebaselogging-pa.googleapis.com/v1/firelog/legacy/batchlog
+06-20 20:15:05.206 15831 15852 D TrafficStats: tagSocket(147) with statsTag=0xffffffff, statsUid=-1
+06-20 20:15:07.809 15831 15852 I TRuntime.CctTransportBackend: Status Code: 200
+06-20 20:15:08.272 15831 15988 D HostConnection: createUnique: call
+06-20 20:15:08.272 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 137
+06-20 20:15:08.272 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:15:08.272 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:08.273 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748eecf000 with size 4194304
+06-20 20:15:08.273 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:15:08.274 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:08.275 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:15:08.298 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f512d10: maj 3 min 2 rcv 5
+06-20 20:15:08.327 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f512d10: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:15:08.327 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:15:08.327 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f512d10: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:15:08.329 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:08.329 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:08.329 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:08.329 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:08.332 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:15:09.364 15831 15966 D TrafficStats: tagSocket(140) with statsTag=0xffffffff, statsUid=-1
+06-20 20:15:23.837 15831 15966 D TrafficStats: tagSocket(137) with statsTag=0xffffffff, statsUid=-1
+06-20 20:15:24.358 15831 15988 D HostConnection: createUnique: call
+06-20 20:15:24.358 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:15:24.358 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:15:24.359 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:24.360 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747693e000 with size 4194304
+06-20 20:15:24.360 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:15:24.361 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:24.361 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:15:24.384 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f518da0: maj 3 min 2 rcv 5
+06-20 20:15:24.410 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f518da0: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:15:24.410 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:15:24.410 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f518da0: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:15:24.411 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:24.411 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:24.411 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:24.412 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:24.413 15831 16090 D HostConnection: createUnique: call
+06-20 20:15:24.413 15831 16090 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 170
+06-20 20:15:24.413 15831 16090 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 16090
+06-20 20:15:24.414 15831 16090 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:24.414 15831 16090 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74ac224000 with size 262144
+06-20 20:15:24.418 15831 16090 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 16090) 0
+06-20 20:15:24.419 15831 16090 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:24.420 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:15:35.538 15831 15988 D HostConnection: createUnique: call
+06-20 20:15:35.538 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:15:35.538 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:15:35.538 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:35.539 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748efc2000 with size 4194304
+06-20 20:15:35.539 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:15:35.540 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:35.540 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:15:35.561 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f4fbe20: maj 3 min 2 rcv 5
+06-20 20:15:35.585 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f4fbe20: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:15:35.585 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:15:35.586 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f4fbe20: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:15:35.588 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:35.588 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:35.588 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:35.588 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:35.590 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:15:42.143 15831 15966 D TrafficStats: tagSocket(137) with statsTag=0xffffffff, statsUid=-1
+06-20 20:15:42.968 15831 15988 D HostConnection: createUnique: call
+06-20 20:15:42.968 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:15:42.968 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:15:42.969 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:42.970 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748efc2000 with size 4194304
+06-20 20:15:42.970 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:15:42.971 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:42.971 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:15:42.991 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f5579e0: maj 3 min 2 rcv 5
+06-20 20:15:43.015 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f5579e0: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:15:43.015 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:15:43.015 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f5579e0: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:15:43.017 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:43.017 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:43.017 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:43.017 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:43.019 15831 16127 D HostConnection: createUnique: call
+06-20 20:15:43.019 15831 16127 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 150
+06-20 20:15:43.019 15831 16127 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 16127
+06-20 20:15:43.020 15831 16127 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:43.020 15831 16127 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74ac1e4000 with size 262144
+06-20 20:15:43.020 15831 16127 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 16127) 0
+06-20 20:15:43.021 15831 16127 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:43.021 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:15:45.861 15831 15839 I hiyomi.at.debug: Compiler allocated 4160KB to compile void android.widget.TextView.<init>(android.content.Context, android.util.AttributeSet, int, int)
+06-20 20:15:49.547 15831 15840 W hiyomi.at.debug: Suspending all threads took: 18446744073.709s
+06-20 20:15:49.765 15831 15988 D HostConnection: createUnique: call
+06-20 20:15:49.765 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:15:49.765 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:15:49.765 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:49.766 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748f000000 with size 4194304
+06-20 20:15:49.766 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:15:49.767 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:49.768 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:15:49.791 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f56fc20: maj 3 min 2 rcv 5
+06-20 20:15:49.816 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f56fc20: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:15:49.816 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:15:49.816 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f56fc20: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:15:49.818 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:49.818 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:49.818 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:49.818 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:49.819 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:15:55.035 15831 15988 D HostConnection: createUnique: call
+06-20 20:15:55.035 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:15:55.035 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:15:55.036 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:15:55.037 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748ee41000 with size 4194304
+06-20 20:15:55.037 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:15:55.038 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:15:55.038 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:15:55.068 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f577670: maj 3 min 2 rcv 5
+06-20 20:15:55.097 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f577670: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:15:55.097 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:15:55.101 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f577670: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:15:55.102 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:55.102 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:15:55.103 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:55.103 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:15:55.106 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:16:01.199 15831 15988 D HostConnection: createUnique: call
+06-20 20:16:01.199 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:16:01.199 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:16:01.200 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:16:01.200 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748ee41000 with size 4194304
+06-20 20:16:01.201 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:16:01.202 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:16:01.202 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:16:01.225 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f574fd0: maj 3 min 2 rcv 5
+06-20 20:16:01.249 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f574fd0: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:16:01.249 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:16:01.250 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f574fd0: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:16:01.251 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:01.251 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:01.251 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:01.251 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:01.253 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:16:07.337 15831 15988 D HostConnection: createUnique: call
+06-20 20:16:07.337 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:16:07.337 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:16:07.338 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:16:07.339 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e748f000000 with size 4194304
+06-20 20:16:07.339 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:16:07.339 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:16:07.340 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:16:07.361 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f575640: maj 3 min 2 rcv 5
+06-20 20:16:07.385 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f575640: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:16:07.385 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:16:07.385 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f575640: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:16:07.387 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:07.387 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:07.387 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:07.387 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:07.389 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:16:13.854 15831 15988 D HostConnection: createUnique: call
+06-20 20:16:13.854 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:16:13.855 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:16:13.855 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:16:13.856 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e746db7d000 with size 4194304
+06-20 20:16:13.856 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:16:13.858 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:16:13.858 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:16:13.880 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f575cb0: maj 3 min 2 rcv 5
+06-20 20:16:13.904 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f575cb0: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:16:13.904 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:16:13.905 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f575cb0: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:16:13.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:13.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:13.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:13.906 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:13.908 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:16:27.950 15831 15965 D TrafficStats: tagSocket(137) with statsTag=0xffffffff, statsUid=-1
+06-20 20:16:30.180 15831 15839 I hiyomi.at.debug: JIT allocated 65KB for compiled code of java.lang.Object eu.kanade.translation.TranslationPipeline.translateSinglePageInternal(tachiyomi.domain.manga.model.Manga, tachiyomi.domain.chapter.model.Chapter, eu.kanade.tachiyomi.source.online.HttpSource, java.lang.String, kotlin.jvm.functions.Function0, boolean, kotlin.coroutines.Continuation)
+06-20 20:16:30.181 15831 15839 I hiyomi.at.debug: Compiler allocated 7340KB to compile java.lang.Object eu.kanade.translation.TranslationPipeline.translateSinglePageInternal(tachiyomi.domain.manga.model.Manga, tachiyomi.domain.chapter.model.Chapter, eu.kanade.tachiyomi.source.online.HttpSource, java.lang.String, kotlin.jvm.functions.Function0, boolean, kotlin.coroutines.Continuation)
+06-20 20:16:30.282 15831 15988 D HostConnection: createUnique: call
+06-20 20:16:30.282 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:16:30.282 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:16:30.282 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:16:30.283 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e746d778000 with size 4194304
+06-20 20:16:30.283 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:16:30.284 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:16:30.285 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:16:30.312 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f595940: maj 3 min 2 rcv 5
+06-20 20:16:30.342 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f595940: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:16:30.343 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:16:30.343 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f595940: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:16:30.344 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:30.344 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:30.344 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:30.344 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:30.346 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:16:46.676 15831 15966 D TrafficStats: tagSocket(137) with statsTag=0xffffffff, statsUid=-1
+06-20 20:16:48.569 15831 15988 D HostConnection: createUnique: call
+06-20 20:16:48.569 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 140
+06-20 20:16:48.569 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:16:48.570 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:16:48.571 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e746d09a000 with size 4194304
+06-20 20:16:48.571 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:16:48.572 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:16:48.573 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:16:48.596 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f5b8fc0: maj 3 min 2 rcv 5
+06-20 20:16:48.625 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f5b8fc0: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:16:48.625 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:16:48.626 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f5b8fc0: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:16:48.627 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:48.627 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:16:48.627 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:48.627 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:16:48.629 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:16:51.525 15831 16237 D HostConnection: createUnique: call
+06-20 20:16:51.525 15831 16237 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 143
+06-20 20:16:51.525 15831 16237 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 16237
+06-20 20:16:51.525 15831 16237 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:16:51.526 15831 16237 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e749c846000 with size 262144
+06-20 20:16:51.526 15831 16237 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 16237) 0
+06-20 20:16:51.527 15831 16237 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:17:00.693 15831 16302 D HostConnection: createUnique: call
+06-20 20:17:00.694 15831 16302 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 141
+06-20 20:17:00.694 15831 16302 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 16302
+06-20 20:17:00.694 15831 16302 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:17:00.695 15831 16302 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74981b3000 with size 262144
+06-20 20:17:00.695 15831 16302 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 16302) 0
+06-20 20:17:00.696 15831 16302 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:17:01.563 15831 15965 D TrafficStats: tagSocket(137) with statsTag=0xffffffff, statsUid=-1
+06-20 20:17:05.354 15831 16311 D HostConnection: createUnique: call
+06-20 20:17:05.355 15831 16311 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 143
+06-20 20:17:05.355 15831 16311 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 16311
+06-20 20:17:05.355 15831 16311 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:17:05.356 15831 16311 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74ac1ec000 with size 262144
+06-20 20:17:05.356 15831 16311 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 16311) 0
+06-20 20:17:05.358 15831 16311 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:17:10.428 15831 15988 D HostConnection: createUnique: call
+06-20 20:17:10.428 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 99
+06-20 20:17:10.428 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:17:10.429 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:17:10.430 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e746c3d6000 with size 4194304
+06-20 20:17:10.430 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:17:10.431 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:17:10.431 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:17:10.452 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f58d880: maj 3 min 2 rcv 5
+06-20 20:17:10.486 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f58d880: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:17:10.486 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:17:10.486 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f58d880: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:17:10.488 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:17:10.488 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:17:10.488 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:17:10.488 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:17:10.489 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:17:12.274 15831 15966 D TrafficStats: tagSocket(137) with statsTag=0xffffffff, statsUid=-1
+06-20 20:17:31.301 15831 15988 D HostConnection: createUnique: call
+06-20 20:17:31.301 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 99
+06-20 20:17:31.301 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:17:31.301 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:17:31.302 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e746ce00000 with size 4194304
+06-20 20:17:31.302 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:17:31.303 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:17:31.304 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:17:31.322 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f430b30: maj 3 min 2 rcv 5
+06-20 20:17:31.349 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f430b30: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:17:31.349 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:17:31.350 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f430b30: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:17:31.352 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:17:31.352 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:17:31.352 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:17:31.352 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:17:31.354 15831 16334 D HostConnection: createUnique: call
+06-20 20:17:31.354 15831 16334 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 146
+06-20 20:17:31.354 15831 16334 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 16334
+06-20 20:17:31.355 15831 16334 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:17:31.355 15831 16334 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74ac144000 with size 262144
+06-20 20:17:31.355 15831 16334 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 16334) 0
+06-20 20:17:31.356 15831 16334 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:17:31.357 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 20:17:50.702 15831 15988 D HostConnection: createUnique: call
+06-20 20:17:50.702 15831 15988 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 143
+06-20 20:17:50.702 15831 15988 I AGA     : Attempting to create new SOCKET connection pid = 15831, tid = 15988
+06-20 20:17:50.703 15831 15988 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 20:17:50.703 15831 15988 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e7469c42000 with size 4194304
+06-20 20:17:50.703 15831 15988 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 15831, tid 15988)
+06-20 20:17:50.704 15831 15988 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 20:17:50.705 15831 15988 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 20:17:50.728 15831 15988 D EGL_emulation: eglCreateContext: 0x7e763f45dc30: maj 3 min 2 rcv 5
+06-20 20:17:50.762 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f45dc30: ver 3 2 (tinfo 0x7e754f474f70)
+06-20 20:17:50.762 15831 15988 I AGA     : The gl query need cache 0
+06-20 20:17:50.762 15831 15988 D EGL_emulation: eglMakeCurrent: 0x7e763f45dc30: ver 3 2 (tinfo 0x7e754f474f70) (first time)
+06-20 20:17:50.764 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:17:50.764 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 20:17:50.764 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:17:50.764 15831 15988 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 20:17:50.766 15831 15988 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]

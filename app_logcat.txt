@@ -1,0 +1,1220 @@
+--------- beginning of main
+06-20 16:30:38.644 13142 13142 I Zygote  : seccomp disabled by setenforce 0
+06-20 16:30:38.651 13142 13142 I hiyomi.at.debug: Late-enabling -Xcheck:jni
+06-20 16:30:38.801 13142 13142 W hiyomi.at.debug: Unexpected CPU variant for x86: x86_64.
+06-20 16:30:38.801 13142 13142 W hiyomi.at.debug: Known variants: atom, sandybridge, silvermont, kabylake, default
+06-20 16:30:38.804 13142 13142 I libnb   : Try to open native bridge: /system/lib64/libhoudini.so.
+06-20 16:30:38.844 13142 13142 I libnb   : Successfully opened '/system/lib64/libhoudini.so' and found NativeBridgeItf version 6
+06-20 16:30:38.844 13142 13142 I libnb   : Houdini library detected (/system/lib64/libhoudini.so), applying patches.
+06-20 16:30:38.854 13142 13142 I houdini : [13142] Houdini now in android app mode
+06-20 16:30:38.854 13142 13142 I houdini : [13142] Intel Bridge Technology for Customer Bluestacks emulator, Copyright(C) Intel Corp. 2012-2026.
+06-20 16:30:38.854 13142 13142 I houdini : [13142] Use permitted only under a valid software commercial license agreement - all other rights reserved. It will expire on 20270101.
+06-20 16:30:38.854 13142 13142 I houdini : [13142] Initialize library(version: 13.0.1_z.bluestacks_com1.5 RELEASE)... successfully.
+06-20 16:30:38.897 13142 13142 D CompatibilityChangeReporter: Compat change id reported: 171979766; UID 10107; state: ENABLED
+06-20 16:30:38.903 13142 13142 W ziparchive: Unable to open '/data/app/~~5qHuEB3X5a6J3lnNm_6HZA==/app.kanade.tachiyomi.at.debug-KXIuvUfdaomdvhRjsnqimw==/base.dm': No such file or directory
+06-20 16:30:38.903 13142 13142 W ziparchive: Unable to open '/data/app/~~5qHuEB3X5a6J3lnNm_6HZA==/app.kanade.tachiyomi.at.debug-KXIuvUfdaomdvhRjsnqimw==/base.dm': No such file or directory
+06-20 16:30:39.792 13142 13142 V GraphicsEnvironment: ANGLE Developer option for 'app.kanade.tachiyomi.at.debug' set to: 'default'
+06-20 16:30:39.792 13142 13142 V GraphicsEnvironment: ANGLE GameManagerService for app.kanade.tachiyomi.at.debug: false
+06-20 16:30:39.792 13142 13142 V GraphicsEnvironment: Neither updatable production driver nor prerelease driver is supported.
+06-20 16:30:39.794 13142 13142 D NetworkSecurityConfig: Using Network Security Config from resource network_security_config debugBuild: true
+06-20 16:30:39.795 13142 13142 D NetworkSecurityConfig: Using Network Security Config from resource network_security_config debugBuild: true
+06-20 16:30:39.812 13142 13142 D CompatibilityChangeReporter: Compat change id reported: 183155436; UID 10107; state: ENABLED
+06-20 16:30:39.819 13142 13142 D SessionsDependencies: Dependency to CRASHLYTICS added.
+06-20 16:30:39.822 13142 13142 I FirebaseApp: Device unlocked: initializing all Firebase APIs for app [DEFAULT]
+06-20 16:30:39.831 13142 13142 I FirebaseCrashlytics: Initializing Firebase Crashlytics 19.3.0 for app.kanade.tachiyomi.at.debug
+06-20 16:30:39.838 13142 13175 W System  : ClassLoader referenced unknown path: /data/user_de/0/com.google.android.gms/app_chimera/m/00000002/DynamiteLoader.uncompressed.apk
+06-20 16:30:39.844 13142 13142 D SessionsDependencies: Subscriber CRASHLYTICS registered.
+06-20 16:30:39.903 13142 13183 I FirebaseCrashlytics: No version control information found
+06-20 16:30:39.907 13142 13142 D FirebaseSessions: Initializing Firebase Sessions SDK.
+06-20 16:30:39.910 13142 13142 I FirebaseInitProvider: FirebaseApp initialization successful
+06-20 16:30:39.922 13142 13142 D WM-WrkMgrInitializer: Initializing WorkManager with default configuration.
+06-20 16:30:39.930 13142 13179 D LifecycleServiceBinder: Binding service to application.
+06-20 16:30:39.939 13142 13142 D WM-PackageManagerHelper: Skipping component enablement for androidx.work.impl.background.systemjob.SystemJobService
+06-20 16:30:39.939 13142 13142 D WM-Schedulers: Created SystemJobScheduler and enabled SystemJobService
+06-20 16:30:39.950 13142 13189 D WM-ForceStopRunnable: The default process name was not specified.
+06-20 16:30:39.950 13142 13189 D WM-ForceStopRunnable: Performing cleanup operations.
+06-20 16:30:39.959 13142 13142 W hiyomi.at.debug: Accessing hidden method Landroid/os/ServiceManager;->getService(Ljava/lang/String;)Landroid/os/IBinder; (unsupported, reflection, allowed)
+06-20 16:30:39.959 13142 13142 D ShizukuProvider: Initialize Sui: false
+06-20 16:30:39.963 13142 13189 D CompatibilityChangeReporter: Compat change id reported: 160794467; UID 10107; state: ENABLED
+06-20 16:30:39.964 13142 13189 D WM-ForceStopRunnable: Application was force-stopped, rescheduling.
+06-20 16:30:39.972 13142 13189 D CompatibilityChangeReporter: Compat change id reported: 194532703; UID 10107; state: ENABLED
+06-20 16:30:39.972 13142 13189 D WM-SystemJobScheduler: Scheduling work ID 268226ed-253a-4327-aa25-867629eb9d1dJob ID 2
+06-20 16:30:39.980 13142 13191 D WM-PackageManagerHelper: Skipping component enablement for androidx.work.impl.background.systemalarm.RescheduleReceiver
+06-20 16:30:40.033 13142 13142 D SessionLifecycleService: Service bound to new client on process 13142
+06-20 16:30:40.035 13142 13196 D SessionLifecycleService: App has not yet foregrounded. Using previously stored session.
+06-20 16:30:40.035 13142 13196 D SessionLifecycleService: Client android.os.Messenger@a6dede4 bound at 28307091. Clients: 1
+06-20 16:30:40.042 13142 13142 I WebViewFactory: Loading com.android.chrome version 116.0.5845.173 (code 584517327)
+06-20 16:30:40.209 13142 13142 I cr_WVCFactoryProvider: Loaded version=116.0.5845.173 minSdkVersion=1 isBundle=true multiprocess=true packageId=2
+06-20 16:30:40.229 13142 13175 I DynamiteModule: Considering local module com.google.android.gms.measurement.dynamite:127 and remote module com.google.android.gms.measurement.dynamite:109
+06-20 16:30:40.229 13142 13175 I DynamiteModule: Selected local version of com.google.android.gms.measurement.dynamite
+06-20 16:30:40.245 13142 13142 I cr_LibraryLoader: Successfully loaded native library
+06-20 16:30:40.246 13142 13142 I cr_CachingUmaRecorder: Flushed 7 samples from 7 histograms, 0 samples were dropped.
+06-20 16:30:40.281 13142 13204 I FA      : App measurement initialized, version: 106000
+06-20 16:30:40.281 13142 13204 I FA      : To enable debug logging run: adb shell setprop log.tag.FA VERBOSE
+06-20 16:30:40.281 13142 13204 I FA      : To enable faster debug mode event logging run:
+06-20 16:30:40.281 13142 13204 I FA      :   adb shell setprop debug.firebase.analytics.app app.kanade.tachiyomi.at.debug
+06-20 16:30:40.357 13142 13142 W hiyomi.at.debug: Unsupported class loader
+06-20 16:30:40.358 13142 13142 W hiyomi.at.debug: Unsupported class loader
+06-20 16:30:40.441 13142 13142 D SessionLifecycleClient: Connected to SessionLifecycleService. Queue size 0
+06-20 16:30:45.037 13142 13210 D ProfileInstaller: Installing profile for app.kanade.tachiyomi.at.debug
+06-20 16:37:29.017 13142 13142 W hiyomi.at.debug: Accessing hidden method Landroid/view/ViewGroup;->makeOptionalFitsSystemWindows()V (unsupported, reflection, allowed)
+06-20 16:37:29.023 13142 13181 D SessionLifecycleClient: Sending lifecycle 1 to service
+06-20 16:37:29.023 13142 13196 D SessionLifecycleService: Activity foregrounding at 28716082.
+06-20 16:37:29.023 13142 13196 D SessionLifecycleService: Cold start detected.
+06-20 16:37:29.024 13142 13196 D SessionLifecycleService: Generated new session.
+06-20 16:37:29.024 13142 13196 D SessionLifecycleService: Broadcasting new session
+06-20 16:37:29.025 13142 13181 D SessionFirelogPublisher: Data Collection is enabled for at least one Subscriber
+06-20 16:37:29.030 13142 13183 D EventGDTLogger: Session Event Type: SESSION_START
+06-20 16:37:29.030 13142 13183 D SessionFirelogPublisher: Successfully logged Session Start event.
+06-20 16:37:29.032 13142 13142 D SessionLifecycleClient: Session update received.
+06-20 16:37:29.032 13142 13180 D SessionLifecycleClient: Notified CRASHLYTICS of new session 0ed36d219c804e1480423778db08e01f
+06-20 16:37:29.034 13142 13178 D TelephonyManager: creating subscriptionInfo Record, context : eu.kanade.tachiyomi.App@7948c96
+06-20 16:37:29.035 13142 13178 D TelephonyManager: mBstSubscriptionInfo = {id=1 iccId=8901260112143914441 simSlotIndex=0 carrierId=-1 displayName=SIM 1 carrierName=T-Mobile nameSource=0 iconTint=-16777216 number=null dataRoaming=0 iconBitmap=android.graphics.Bitmap@14d1533 mcc=310 mnc=260 countryIso=us isEmbedded=false nativeAccessRules=null cardString=null cardId=-1 portIndex=0 isOpportunistic=false groupUUID=null isGroupDisabled=false profileClass=-1 ehplmns=null hplmns=null subscriptionType=0 groupOwner=null carrierConfigAccessRules=null areUiccApplicationsEnabled=true usageSetting=0}
+06-20 16:37:29.042 13142 13250 I FA      : Tag Manager is not found and thus will not be used
+06-20 16:37:29.184 13142 13244 D HostConnection: createUnique: call
+06-20 16:37:29.184 13142 13244 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 93
+06-20 16:37:29.184 13142 13244 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13244
+06-20 16:37:29.185 13142 13244 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:29.355 13142 13244 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74bb05c000 with size 4194304
+06-20 16:37:29.355 13142 13244 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13244)
+06-20 16:37:29.424 13142 13244 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:29.445 13142 13244 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:37:29.491 13142 13244 D EGL_emulation: eglCreateContext: 0x7e763f414220: maj 3 min 2 rcv 5
+06-20 16:37:29.541 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:29.542 13142 13244 I AGA     : The gl query need cache 0
+06-20 16:37:29.542 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0) (first time)
+06-20 16:37:29.548 13142 13244 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:29.548 13142 13244 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:29.548 13142 13244 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:29.548 13142 13244 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:29.569 13142 13244 E eglCodecCommon: glUtilsParamSize: unknow param 0x00008e7e
+06-20 16:37:29.569 13142 13244 E eglCodecCommon: glUtilsParamSize: unknow param 0x00008e7e
+06-20 16:37:29.595 13142 13244 I Gralloc4: mapper 4.x is not supported
+06-20 16:37:29.595 13142 13244 W Gralloc3: mapper 3.x is not supported
+06-20 16:37:29.599 13142 13142 I Choreographer: Skipped 32 frames!  The application may be doing too much work on its main thread.
+06-20 16:37:29.600 13142 13244 W Gralloc4: allocator 4.x is not supported
+06-20 16:37:29.600 13142 13244 W Gralloc3: allocator 3.x is not supported
+06-20 16:37:29.605 13142 13244 D HostConnection: createUnique: call
+06-20 16:37:29.605 13142 13244 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 96
+06-20 16:37:29.605 13142 13244 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13244
+06-20 16:37:29.605 13142 13244 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:29.606 13142 13244 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74ab754000 with size 4194304
+06-20 16:37:29.606 13142 13244 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13244)
+06-20 16:37:29.608 13142 13244 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:29.614 13142 13244 E EGL_emulation: tid 13244: eglSurfaceAttrib(1726): error 0x3009 (EGL_BAD_MATCH)
+06-20 16:37:29.614 13142 13244 W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface 0x7e759f442a30, error=EGL_BAD_MATCH
+06-20 16:37:29.614 13142 13244 E OpenGLRenderer: Unable to match the desired swap behavior.
+06-20 16:37:29.848 13142 13244 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:37:29.853 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:29.857 13142 13244 D emuglGLESv2_enc: check GLMBRH with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:37:29.857 13142 13244 D emuglGLESv2_enc: check GLUBPerf with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:37:29.859 13142 13244 D emuglGLESv2_enc: GL app.kanade.tachiyomi.at.debug ViewportNeedFlush 0
+06-20 16:37:30.119 13142 13244 W Parcel  : Expecting binder but got null!
+06-20 16:37:32.251 13142 13156 I hiyomi.at.debug: Compiler allocated 4355KB to compile void android.view.ViewRootImpl.performTraversals()
+06-20 16:37:32.688 13142 13291 D HostConnection: createUnique: call
+06-20 16:37:32.688 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 118
+06-20 16:37:32.688 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:37:32.688 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:32.689 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a62ff000 with size 4194304
+06-20 16:37:32.689 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:37:32.690 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:32.690 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:37:32.717 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f450150: maj 3 min 2 rcv 5
+06-20 16:37:32.749 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f450150: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:37:32.749 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:37:32.750 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f450150: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:37:32.751 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:32.751 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:32.751 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:32.751 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:32.753 13142 13272 D HostConnection: createUnique: call
+06-20 16:37:32.753 13142 13256 D HostConnection: createUnique: call
+06-20 16:37:32.753 13142 13256 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 122
+06-20 16:37:32.753 13142 13256 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13256
+06-20 16:37:32.753 13142 13265 D HostConnection: createUnique: call
+06-20 16:37:32.753 13142 13265 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 123
+06-20 16:37:32.753 13142 13265 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13265
+06-20 16:37:32.753 13142 13272 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 120
+06-20 16:37:32.753 13142 13272 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13272
+06-20 16:37:32.754 13142 13265 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:32.754 13142 13256 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:32.755 13142 13272 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:32.755 13142 13265 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a5e02000 with size 4194304
+06-20 16:37:32.755 13142 13265 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13265)
+06-20 16:37:32.755 13142 13256 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a5a02000 with size 4194304
+06-20 16:37:32.755 13142 13256 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13256)
+06-20 16:37:32.755 13142 13272 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a5602000 with size 4194304
+06-20 16:37:32.755 13142 13272 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13272)
+06-20 16:37:32.756 13142 13265 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:32.756 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:37:32.757 13142 13256 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:32.814 13142 13272 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:33.651 13142 13274 D HostConnection: createUnique: call
+06-20 16:37:33.652 13142 13274 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 107
+06-20 16:37:33.652 13142 13274 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13274
+06-20 16:37:33.652 13142 13274 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:33.654 13142 13271 D HostConnection: createUnique: call
+06-20 16:37:33.654 13142 13271 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 114
+06-20 16:37:33.654 13142 13271 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13271
+06-20 16:37:33.654 13142 13274 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a4e86000 with size 4194304
+06-20 16:37:33.654 13142 13274 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13274)
+06-20 16:37:33.654 13142 13271 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:33.656 13142 13274 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:33.656 13142 13271 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a4a17000 with size 4194304
+06-20 16:37:33.656 13142 13271 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13271)
+06-20 16:37:33.718 13142 13271 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:36.479 13142 13179 D SessionLifecycleClient: Sending lifecycle 2 to service
+06-20 16:37:36.479 13142 13196 D SessionLifecycleService: Activity backgrounding at 28723538
+06-20 16:37:36.548 13142 13142 D CompatibilityChangeReporter: Compat change id reported: 171228096; UID 10107; state: ENABLED
+06-20 16:37:36.554 13142 13142 D CompatibilityChangeReporter: Compat change id reported: 147798919; UID 10107; state: ENABLED
+06-20 16:37:36.559 13142 13180 D SessionLifecycleClient: Sending lifecycle 1 to service
+06-20 16:37:36.559 13142 13196 D SessionLifecycleService: Activity foregrounding at 28723618.
+06-20 16:37:36.570 13142 13142 D AutofillManager: Fill dialog is enabled:false, hints=[]
+06-20 16:37:36.635 13142 13244 E EGL_emulation: tid 13244: eglSurfaceAttrib(1726): error 0x3009 (EGL_BAD_MATCH)
+06-20 16:37:36.635 13142 13244 W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface 0x7e759f45e600, error=EGL_BAD_MATCH
+06-20 16:37:36.635 13142 13244 E OpenGLRenderer: Unable to match the desired swap behavior.
+06-20 16:37:36.646 13142 13302 D TrafficStats: tagSocket(102) with statsTag=0xffffffff, statsUid=-1
+06-20 16:37:36.649 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.653 13142 13244 W Parcel  : Expecting binder but got null!
+06-20 16:37:36.656 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.666 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.669 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.713 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.720 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.728 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.744 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.759 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.761 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.775 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.777 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.792 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.793 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.809 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.812 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.825 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.828 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.842 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.845 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.859 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.862 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.876 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.878 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.892 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.895 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.909 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.912 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.926 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.928 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.943 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.962 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.976 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:36.992 13142 13244 D OpenGLRenderer: endAllActiveAnimators on 0x7e763f43f2f0 (UnprojectedRipple) with handle 0x7e754f474b80
+06-20 16:37:37.479 13142 13142 D CompatibilityChangeReporter: Compat change id reported: 210923482; UID 10107; state: ENABLED
+06-20 16:37:37.509 13142 13305 D TrafficStats: tagSocket(95) with statsTag=0xffffffff, statsUid=-1
+06-20 16:37:37.541 13142 13304 D TrafficStats: tagSocket(135) with statsTag=0xffffffff, statsUid=-1
+06-20 16:37:37.601 13142 13157 W hiyomi.at.debug: Cleared Reference was only reachable from finalizer (only reported once)
+06-20 16:37:37.710 13142 13316 D HostConnection: createUnique: call
+06-20 16:37:37.710 13142 13316 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 98
+06-20 16:37:37.710 13142 13316 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13316
+06-20 16:37:37.711 13142 13316 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:37.712 13142 13316 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a2687000 with size 262144
+06-20 16:37:37.712 13142 13316 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13316) 0
+06-20 16:37:37.713 13142 13316 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:37.779 13142 13315 D HostConnection: createUnique: call
+06-20 16:37:37.779 13142 13315 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 135
+06-20 16:37:37.779 13142 13315 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13315
+06-20 16:37:37.779 13142 13315 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:37.780 13142 13315 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a2e33000 with size 262144
+06-20 16:37:37.780 13142 13315 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13315) 0
+06-20 16:37:37.782 13142 13315 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:39.012 13142 13244 E EGL_emulation: tid 13244: eglSurfaceAttrib(1726): error 0x3009 (EGL_BAD_MATCH)
+06-20 16:37:39.012 13142 13244 W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface 0x7e759f4b1850, error=EGL_BAD_MATCH
+06-20 16:37:39.012 13142 13244 E OpenGLRenderer: Unable to match the desired swap behavior.
+06-20 16:37:39.019 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.025 13142 13244 W Parcel  : Expecting binder but got null!
+06-20 16:37:39.033 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.035 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.044 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.063 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.108 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.110 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.115 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.127 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.131 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.143 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.147 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.160 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.162 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.176 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.179 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.193 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.196 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.210 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.212 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.226 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.229 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.243 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.247 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.260 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.263 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.276 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.279 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.293 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.296 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.310 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.312 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.326 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.329 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.343 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.346 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.360 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.362 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.376 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.379 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.396 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.399 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.410 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.413 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.459 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.461 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.910 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.911 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.978 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.979 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.994 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:39.997 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.011 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.014 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.029 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.030 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.045 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.046 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.062 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.063 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.078 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.080 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.094 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.095 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.110 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.111 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.127 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.128 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.143 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.144 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.327 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.328 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.343 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.344 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.360 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.361 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.377 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.379 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.393 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.394 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.409 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.410 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.476 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.477 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.493 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:40.494 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:37:45.381 13142 13314 D TrafficStats: tagSocket(98) with statsTag=0xffffffff, statsUid=-1
+06-20 16:37:51.316 13142 13291 D HostConnection: createUnique: call
+06-20 16:37:51.316 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:37:51.316 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:37:51.318 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:51.318 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a0438000 with size 4194304
+06-20 16:37:51.318 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:37:51.319 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:51.320 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:37:51.350 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f5004f0: maj 3 min 2 rcv 5
+06-20 16:37:51.385 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f5004f0: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:37:51.385 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:37:51.386 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f5004f0: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:37:51.387 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:51.387 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:51.388 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:51.388 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:51.391 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:37:57.371 13142 13291 D HostConnection: createUnique: call
+06-20 16:37:57.372 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:37:57.372 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:37:57.372 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:57.373 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e7480c2c000 with size 4194304
+06-20 16:37:57.373 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:37:57.374 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:37:57.375 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:37:57.404 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f4ff810: maj 3 min 2 rcv 5
+06-20 16:37:57.439 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4ff810: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:37:57.439 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:37:57.439 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4ff810: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:37:57.441 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:57.441 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:37:57.441 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:57.441 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:37:57.443 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:37:58.296 13142 13330 D HostConnection: createUnique: call
+06-20 16:37:58.296 13142 13330 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 132
+06-20 16:37:58.296 13142 13330 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13330
+06-20 16:37:58.297 13142 13330 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:37:58.297 13142 13330 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a2a7e000 with size 262144
+06-20 16:37:58.297 13142 13330 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13330) 0
+06-20 16:37:58.298 13142 13330 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:38:15.631 13142 13291 D HostConnection: createUnique: call
+06-20 16:38:15.631 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:38:15.631 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:38:15.632 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:38:15.633 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747dc00000 with size 4194304
+06-20 16:38:15.633 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:38:15.634 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:38:15.634 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:38:15.660 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f5329a0: maj 3 min 2 rcv 5
+06-20 16:38:15.690 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f5329a0: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:38:15.690 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:38:15.690 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f5329a0: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:38:15.692 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:15.692 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:15.692 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:15.692 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:15.695 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:38:19.767 13142 13345 D HostConnection: createUnique: call
+06-20 16:38:19.767 13142 13345 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 116
+06-20 16:38:19.767 13142 13345 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13345
+06-20 16:38:19.768 13142 13345 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:38:19.768 13142 13345 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74a6315000 with size 262144
+06-20 16:38:19.768 13142 13345 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13345) 0
+06-20 16:38:19.769 13142 13345 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:38:21.571 13142 13178 I TRuntime.CctTransportBackend: Making request to: https://firebaselogging-pa.googleapis.com/v1/firelog/legacy/batchlog
+06-20 16:38:21.602 13142 13178 D TrafficStats: tagSocket(136) with statsTag=0xffffffff, statsUid=-1
+06-20 16:38:23.928 13142 13178 I TRuntime.CctTransportBackend: Status Code: 200
+06-20 16:38:24.233 13142 13156 I hiyomi.at.debug: Compiler allocated 4160KB to compile void android.widget.TextView.<init>(android.content.Context, android.util.AttributeSet, int, int)
+06-20 16:38:37.821 13142 13291 D HostConnection: createUnique: call
+06-20 16:38:37.821 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:38:37.821 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:38:37.822 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:38:37.823 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747c4da000 with size 4194304
+06-20 16:38:37.823 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:38:37.824 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:38:37.824 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:38:37.851 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f560780: maj 3 min 2 rcv 5
+06-20 16:38:37.885 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f560780: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:38:37.885 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:38:37.886 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f560780: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:38:37.888 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:37.888 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:37.888 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:37.888 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:37.890 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:38:40.994 13142 13244 E EGL_emulation: tid 13244: eglSurfaceAttrib(1726): error 0x3009 (EGL_BAD_MATCH)
+06-20 16:38:40.994 13142 13244 W OpenGLRenderer: Failed to set EGL_SWAP_BEHAVIOR on surface 0x7e759f50fbd0, error=EGL_BAD_MATCH
+06-20 16:38:40.994 13142 13244 E OpenGLRenderer: Unable to match the desired swap behavior.
+06-20 16:38:41.003 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.010 13142 13244 W Parcel  : Expecting binder but got null!
+06-20 16:38:41.019 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.020 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.026 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.046 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.061 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.063 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.078 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.080 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.095 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.096 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.110 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.111 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.127 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.128 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.143 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.144 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.149 13142 13197 D MediaScannerConnection: Scanned /tree/primary:Documents/document/primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 293_images to null
+06-20 16:38:41.160 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.161 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.176 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.177 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.193 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.194 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.210 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.211 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.226 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.227 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.244 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.245 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.260 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.261 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.277 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.278 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.294 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.295 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.310 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.311 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.327 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.328 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.343 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.344 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.360 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.361 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.376 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.379 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.387 13142 13314 D TrafficStats: tagSocket(98) with statsTag=0xffffffff, statsUid=-1
+06-20 16:38:41.393 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.494 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.495 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.510 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.512 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.527 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.528 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.544 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.545 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.560 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.561 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.578 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.579 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.593 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.594 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.610 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.611 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.627 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.628 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.643 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.644 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.660 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.661 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.677 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.678 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.693 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.695 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.710 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.711 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.727 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.728 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.742 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.745 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.761 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.777 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.794 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.795 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.809 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.811 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.827 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.829 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.844 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.846 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.862 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.863 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.877 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.878 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.893 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.894 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.910 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.912 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.927 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.931 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.943 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.945 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.960 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.961 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.976 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.977 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.993 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:41.994 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.010 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.011 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.026 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.027 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.043 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.044 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.061 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.062 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.077 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.078 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.094 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.095 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.110 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.111 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.127 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.128 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.143 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.144 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.160 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.161 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.176 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.177 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.193 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.194 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.210 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.211 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.227 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.228 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.243 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.245 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.260 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.262 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.277 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.278 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.294 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.296 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.310 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.311 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.327 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.328 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.344 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.350 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.361 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.363 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.376 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.378 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.393 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.394 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.410 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.411 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.427 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.429 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.443 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.444 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.460 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.461 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.476 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.478 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.494 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.495 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.510 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.511 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.525 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.528 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.544 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.545 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.560 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.561 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.577 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.579 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.593 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.595 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.611 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.612 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.627 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.629 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.644 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.645 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.660 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.662 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.676 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.679 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.692 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.694 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.710 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.712 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.727 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.728 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.742 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.744 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.759 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.761 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.778 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.779 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.794 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.795 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.809 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.811 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.827 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.828 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.842 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:42.844 13142 13244 D EGL_emulation: eglMakeCurrent: 0x7e763f414220: ver 3 2 (tinfo 0x7e754f4571e0)
+06-20 16:38:43.954 13142 13291 D HostConnection: createUnique: call
+06-20 16:38:43.954 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:38:43.954 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:38:43.954 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:38:43.955 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747d454000 with size 4194304
+06-20 16:38:43.955 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:38:43.956 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:38:43.956 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:38:43.988 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f536390: maj 3 min 2 rcv 5
+06-20 16:38:44.015 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f536390: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:38:44.015 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:38:44.016 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f536390: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:38:44.017 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:44.017 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:44.017 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:44.017 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:44.019 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:38:54.181 13142 13291 D HostConnection: createUnique: call
+06-20 16:38:54.181 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:38:54.181 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:38:54.182 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:38:54.183 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747d456000 with size 4194304
+06-20 16:38:54.183 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:38:54.185 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:38:54.185 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:38:54.219 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f562140: maj 3 min 2 rcv 5
+06-20 16:38:54.258 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f562140: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:38:54.258 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:38:54.259 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f562140: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:38:54.262 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:54.262 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:38:54.262 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:54.262 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:38:54.265 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:39:07.030 13142 13291 D HostConnection: createUnique: call
+06-20 16:39:07.030 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 132
+06-20 16:39:07.030 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:39:07.031 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:39:07.032 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747ce2c000 with size 4194304
+06-20 16:39:07.032 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:39:07.033 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:39:07.034 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:39:07.060 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f55da70: maj 3 min 2 rcv 5
+06-20 16:39:07.091 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f55da70: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:39:07.091 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:39:07.092 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f55da70: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:39:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:07.095 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:39:21.962 13142 13291 D HostConnection: createUnique: call
+06-20 16:39:21.962 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:39:21.962 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:39:21.962 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:39:21.963 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747ce2c000 with size 4194304
+06-20 16:39:21.963 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:39:21.964 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:39:21.964 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:39:21.990 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f55da70: maj 3 min 2 rcv 5
+06-20 16:39:22.018 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f55da70: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:39:22.018 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:39:22.018 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f55da70: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:39:22.019 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:22.019 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:22.020 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:22.020 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:22.021 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:39:29.692 13142 13380 D HostConnection: createUnique: call
+06-20 16:39:29.693 13142 13380 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 132
+06-20 16:39:29.693 13142 13380 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13380
+06-20 16:39:29.693 13142 13380 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:39:29.694 13142 13380 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e74bbc86000 with size 262144
+06-20 16:39:29.694 13142 13380 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13380) 0
+06-20 16:39:29.695 13142 13380 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:39:44.522 13142 13197 D MediaScannerConnection: Scanned /tree/primary:Documents/document/primary:Documents/translations/Rawkuma (JA)/Isekai Nonbiri Nouka/Chapter 294_images to null
+06-20 16:39:44.661 13142 13306 D TrafficStats: tagSocket(98) with statsTag=0xffffffff, statsUid=-1
+06-20 16:39:48.326 13142 13291 D HostConnection: createUnique: call
+06-20 16:39:48.326 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 100
+06-20 16:39:48.326 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:39:48.326 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:39:48.327 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747ca56000 with size 4194304
+06-20 16:39:48.327 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:39:48.328 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:39:48.328 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:39:48.354 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f563b00: maj 3 min 2 rcv 5
+06-20 16:39:48.383 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f563b00: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:39:48.383 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:39:48.384 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f563b00: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:39:48.385 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:48.385 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:48.385 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:48.385 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:48.387 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:39:53.484 13142 13291 D HostConnection: createUnique: call
+06-20 16:39:53.484 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 85
+06-20 16:39:53.484 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:39:53.485 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:39:53.485 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747ca56000 with size 4194304
+06-20 16:39:53.485 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:39:53.486 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:39:53.486 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:39:53.519 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f4256f0: maj 3 min 2 rcv 5
+06-20 16:39:53.551 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4256f0: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:39:53.551 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:39:53.551 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4256f0: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:39:53.553 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:53.553 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:39:53.553 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:53.553 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:39:53.555 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:39:54.332 13142 13306 D TrafficStats: tagSocket(98) with statsTag=0xffffffff, statsUid=-1
+06-20 16:40:03.826 13142 13156 I hiyomi.at.debug: JIT allocated 58KB for compiled code of java.lang.Object eu.kanade.translation.TranslationPipeline.translateSinglePageInternal(tachiyomi.domain.manga.model.Manga, tachiyomi.domain.chapter.model.Chapter, eu.kanade.tachiyomi.source.online.HttpSource, java.lang.String, kotlin.jvm.functions.Function0, boolean, kotlin.coroutines.Continuation)
+06-20 16:40:03.826 13142 13156 I hiyomi.at.debug: Compiler allocated 6546KB to compile java.lang.Object eu.kanade.translation.TranslationPipeline.translateSinglePageInternal(tachiyomi.domain.manga.model.Manga, tachiyomi.domain.chapter.model.Chapter, eu.kanade.tachiyomi.source.online.HttpSource, java.lang.String, kotlin.jvm.functions.Function0, boolean, kotlin.coroutines.Continuation)
+06-20 16:40:07.030 13142 13291 D HostConnection: createUnique: call
+06-20 16:40:07.030 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 85
+06-20 16:40:07.030 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:40:07.030 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:40:07.031 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747d82c000 with size 4194304
+06-20 16:40:07.031 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:40:07.032 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:40:07.032 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:40:07.061 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f454e90: maj 3 min 2 rcv 5
+06-20 16:40:07.091 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f454e90: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:40:07.091 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:40:07.091 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f454e90: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:40:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:07.093 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:07.095 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:40:22.937 13142 13291 D HostConnection: createUnique: call
+06-20 16:40:22.937 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 85
+06-20 16:40:22.937 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:40:22.937 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:40:22.938 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747d82c000 with size 4194304
+06-20 16:40:22.938 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:40:22.939 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:40:22.939 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:40:22.966 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f4cccf0: maj 3 min 2 rcv 5
+06-20 16:40:22.995 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4cccf0: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:40:22.995 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:40:22.996 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4cccf0: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:40:22.997 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:22.997 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:22.997 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:22.997 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:22.999 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:40:33.983 13142 13314 D TrafficStats: tagSocket(85) with statsTag=0xffffffff, statsUid=-1
+06-20 16:40:37.021 13142 13291 D HostConnection: createUnique: call
+06-20 16:40:37.021 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 98
+06-20 16:40:37.021 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:40:37.021 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:40:37.022 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747dc00000 with size 4194304
+06-20 16:40:37.022 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:40:37.023 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:40:37.024 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:40:37.058 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f591f50: maj 3 min 2 rcv 5
+06-20 16:40:37.094 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f591f50: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:40:37.094 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:40:37.094 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f591f50: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:40:37.096 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:37.096 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:37.096 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:37.096 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:37.098 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:40:47.009 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.009 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.009 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.020 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 86760(3395KB) AllocSpace objects, 38(2036KB) LOS objects, 4% free, 483MB/507MB, paused 43us,14us total 11.359ms
+06-20 16:40:47.020 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.020 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:40:47.020 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.050 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 24685(1107KB) AllocSpace objects, 4(136KB) LOS objects, 4% free, 482MB/506MB, paused 20us,19us total 29.941ms
+06-20 16:40:47.050 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.050 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 25165824 free bytes and 29MB until OOM, target footprint 530991016, growth limit 536870912" (VmSize 33992468 kB)
+06-20 16:40:47.052 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.052 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.052 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.057 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.057 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:40:47.057 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.081 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 5466(169KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 484MB/508MB, paused 18us,18us total 24.240ms
+06-20 16:40:47.081 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.081 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 25165824 free bytes and 27MB until OOM, target footprint 532686952, growth limit 536870912" (VmSize 33994080 kB)
+06-20 16:40:47.081 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.081 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.081 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.086 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 754(98KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 485MB/508MB, paused 12us,11us total 5.028ms
+06-20 16:40:47.086 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.086 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:40:47.086 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.108 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 1149(43KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 485MB/509MB, paused 69us,18us total 21.308ms
+06-20 16:40:47.108 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.108 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 25165824 free bytes and 26MB until OOM, target footprint 534506872, growth limit 536870912" (VmSize 33994080 kB)
+06-20 16:40:47.108 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.108 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.108 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.112 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.112 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:40:47.112 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.137 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 543(57KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 487MB/511MB, paused 89us,17us total 24.859ms
+06-20 16:40:47.137 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.137 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 25165824 free bytes and 24MB until OOM, target footprint 536345840, growth limit 536870912" (VmSize 33994080 kB)
+06-20 16:40:47.140 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 4919296, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.140 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.140 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.144 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 4919296, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.144 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 4800KB allocation
+06-20 16:40:47.144 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.168 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 513MB to 512MB
+06-20 16:40:47.168 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 636(61KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 489MB/512MB, paused 25us,18us total 24.055ms
+06-20 16:40:47.168 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 4919296, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.168 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 4915212 byte allocation with 23804776 free bytes and 22MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33994080 kB)
+06-20 16:40:47.170 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 4919296, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.170 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.170 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.174 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 4919296, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.174 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 4800KB allocation
+06-20 16:40:47.174 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:47.199 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 518MB to 512MB
+06-20 16:40:47.199 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 1976(78KB) AllocSpace objects, 0(0B) LOS objects, 3% free, 494MB/512MB, paused 112us,19us total 24.317ms
+06-20 16:40:47.199 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 4919296, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:47.199 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 4915219 byte allocation with 18870768 free bytes and 17MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33994080 kB)
+06-20 16:40:47.707 13142 13291 D HostConnection: createUnique: call
+06-20 16:40:47.708 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 98
+06-20 16:40:47.708 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:40:47.709 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:40:47.710 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747cd37000 with size 4194304
+06-20 16:40:47.710 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:40:47.711 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:40:47.711 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:40:47.740 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f4c8620: maj 3 min 2 rcv 5
+06-20 16:40:47.770 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4c8620: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:40:47.770 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:40:47.770 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4c8620: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:40:47.772 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:47.772 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:47.772 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:47.772 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:47.774 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:40:48.636 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:48.636 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:48.636 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:48.643 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 22340(1632KB) AllocSpace objects, 4(260KB) LOS objects, 2% free, 501MB/512MB, paused 16us,14us total 6.681ms
+06-20 16:40:48.643 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:48.643 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:48.643 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:48.671 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 3844(16MB) AllocSpace objects, 0(0B) LOS objects, 4% free, 484MB/508MB, paused 36us,18us total 28.519ms
+06-20 16:40:48.671 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:48.671 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 25165824 free bytes and 27MB until OOM, target footprint 533176808, growth limit 536870912" (VmSize 34001456 kB)
+06-20 16:40:48.949 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:48.950 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:48.950 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:48.956 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 3286(377KB) AllocSpace objects, 30(1388KB) LOS objects, 4% free, 486MB/508MB, paused 34us,15us total 6.277ms
+06-20 16:40:48.956 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:48.956 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:48.956 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:48.978 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 4560(151KB) AllocSpace objects, 2(1184KB) LOS objects, 4% free, 485MB/509MB, paused 10us,19us total 22.070ms
+06-20 16:40:48.978 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:48.978 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 25165824 free bytes and 26MB until OOM, target footprint 534060200, growth limit 536870912" (VmSize 34000640 kB)
+06-20 16:40:49.085 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.085 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.085 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.089 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.090 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:49.090 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.113 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 259(23KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 486MB/510MB, paused 13us,21us total 23.039ms
+06-20 16:40:49.113 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.113 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 25165824 free bytes and 25MB until OOM, target footprint 535102424, growth limit 536870912" (VmSize 34000640 kB)
+06-20 16:40:49.436 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.436 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.436 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.444 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 4242(505KB) AllocSpace objects, 42(1880KB) LOS objects, 4% free, 488MB/510MB, paused 51us,71us total 7.829ms
+06-20 16:40:49.444 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.444 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:49.444 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.468 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 257(37KB) AllocSpace objects, 2(1184KB) LOS objects, 4% free, 487MB/511MB, paused 11us,22us total 24.129ms
+06-20 16:40:49.468 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.468 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 25165824 free bytes and 24MB until OOM, target footprint 536151944, growth limit 536870912" (VmSize 34000640 kB)
+06-20 16:40:49.576 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.576 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.576 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.580 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.580 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:49.580 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.603 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 512MB to 512MB
+06-20 16:40:49.603 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 97(19KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 488MB/512MB, paused 14us,28us total 22.184ms
+06-20 16:40:49.603 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.603 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 24838352 free bytes and 23MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000640 kB)
+06-20 16:40:49.850 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.850 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.850 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.855 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.855 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:49.855 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:49.879 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 513MB to 512MB
+06-20 16:40:49.879 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 180(21KB) AllocSpace objects, 2(1184KB) LOS objects, 4% free, 489MB/512MB, paused 9us,22us total 24.237ms
+06-20 16:40:49.879 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:49.879 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 23788936 free bytes and 22MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000640 kB)
+06-20 16:40:50.012 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.012 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.012 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.020 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 760(62KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 490MB/512MB, paused 42us,28us total 7.391ms
+06-20 16:40:50.020 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.020 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:50.020 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.053 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 514MB to 512MB
+06-20 16:40:50.053 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 54(17KB) AllocSpace objects, 0(0B) LOS objects, 4% free, 490MB/512MB, paused 19us,24us total 32.509ms
+06-20 16:40:50.053 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.053 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 22740216 free bytes and 21MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000640 kB)
+06-20 16:40:50.407 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.407 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.407 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.413 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 3330(329KB) AllocSpace objects, 24(1120KB) LOS objects, 3% free, 492MB/512MB, paused 143us,22us total 6.027ms
+06-20 16:40:50.413 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.413 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:50.413 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.444 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 515MB to 512MB
+06-20 16:40:50.444 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 244(37KB) AllocSpace objects, 2(1184KB) LOS objects, 4% free, 491MB/512MB, paused 15us,30us total 30.351ms
+06-20 16:40:50.444 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.444 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 21690664 free bytes and 20MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000796 kB)
+06-20 16:40:50.565 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.565 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.565 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.572 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 680(62KB) AllocSpace objects, 0(0B) LOS objects, 3% free, 492MB/512MB, paused 19us,23us total 6.455ms
+06-20 16:40:50.572 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.572 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:50.572 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.596 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 516MB to 512MB
+06-20 16:40:50.596 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 45(17KB) AllocSpace objects, 0(0B) LOS objects, 3% free, 492MB/512MB, paused 9us,21us total 23.907ms
+06-20 16:40:50.596 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.596 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 20641656 free bytes and 19MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000796 kB)
+06-20 16:40:50.876 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.876 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.876 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.881 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.881 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:50.881 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:50.902 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 517MB to 512MB
+06-20 16:40:50.902 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 183(5776B) AllocSpace objects, 2(1184KB) LOS objects, 3% free, 493MB/512MB, paused 10us,16us total 21.580ms
+06-20 16:40:50.902 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:50.902 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 19576320 free bytes and 18MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:51.010 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.010 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.010 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.014 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.014 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:51.014 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.036 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 518MB to 512MB
+06-20 16:40:51.036 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 57(17KB) AllocSpace objects, 0(0B) LOS objects, 3% free, 494MB/512MB, paused 9us,18us total 21.467ms
+06-20 16:40:51.036 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.036 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 18543984 free bytes and 17MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:51.276 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.276 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.276 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.280 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.280 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:51.280 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.302 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 519MB to 512MB
+06-20 16:40:51.302 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 175(5504B) AllocSpace objects, 2(1184KB) LOS objects, 3% free, 495MB/512MB, paused 10us,16us total 21.536ms
+06-20 16:40:51.302 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.302 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 17478376 free bytes and 16MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:51.408 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.408 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.408 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.412 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.412 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:51.412 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.433 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 520MB to 512MB
+06-20 16:40:51.433 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 53(17KB) AllocSpace objects, 0(0B) LOS objects, 3% free, 496MB/512MB, paused 8us,18us total 20.795ms
+06-20 16:40:51.433 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.433 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 16446040 free bytes and 15MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:51.670 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.670 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.670 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.675 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.675 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:51.675 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.697 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 521MB to 512MB
+06-20 16:40:51.697 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 258(37KB) AllocSpace objects, 2(1184KB) LOS objects, 2% free, 497MB/512MB, paused 13us,17us total 21.573ms
+06-20 16:40:51.697 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.697 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 15380424 free bytes and 14MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:51.804 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.804 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.804 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.808 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.808 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:51.808 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:51.830 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 522MB to 512MB
+06-20 16:40:51.830 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 129(17KB) AllocSpace objects, 0(0B) LOS objects, 2% free, 498MB/512MB, paused 8us,16us total 21.184ms
+06-20 16:40:51.830 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:51.830 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 14348096 free bytes and 13MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:52.095 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.095 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.095 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.100 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.100 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:52.100 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.122 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 523MB to 512MB
+06-20 16:40:52.122 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 178(5832B) AllocSpace objects, 2(1184KB) LOS objects, 2% free, 499MB/512MB, paused 10us,18us total 21.811ms
+06-20 16:40:52.122 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.122 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 13282480 free bytes and 12MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:52.229 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.229 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.229 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.233 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.233 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:52.233 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.255 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 524MB to 512MB
+06-20 16:40:52.255 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 53(17KB) AllocSpace objects, 0(0B) LOS objects, 2% free, 500MB/512MB, paused 8us,18us total 21.601ms
+06-20 16:40:52.255 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.255 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 12250144 free bytes and 11MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34000908 kB)
+06-20 16:40:52.470 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.470 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.470 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.475 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.475 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:52.475 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.498 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 525MB to 512MB
+06-20 16:40:52.498 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 256(37KB) AllocSpace objects, 2(1184KB) LOS objects, 2% free, 501MB/512MB, paused 11us,17us total 22.604ms
+06-20 16:40:52.498 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.498 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 11184552 free bytes and 10MB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34001072 kB)
+06-20 16:40:52.606 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.606 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.606 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.611 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.611 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:52.611 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.632 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 526MB to 512MB
+06-20 16:40:52.632 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 133(17KB) AllocSpace objects, 0(0B) LOS objects, 1% free, 502MB/512MB, paused 8us,17us total 21.118ms
+06-20 16:40:52.632 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.632 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 10152224 free bytes and 9914KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 34001072 kB)
+06-20 16:40:52.850 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.850 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.850 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.855 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.855 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:52.855 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.877 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 527MB to 512MB
+06-20 16:40:52.877 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 177(5608B) AllocSpace objects, 2(1184KB) LOS objects, 1% free, 503MB/512MB, paused 12us,17us total 22.804ms
+06-20 16:40:52.878 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.878 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 9086760 free bytes and 8873KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33995880 kB)
+06-20 16:40:52.986 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.986 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.986 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:52.991 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:52.991 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:52.991 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.014 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 528MB to 512MB
+06-20 16:40:53.014 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 104(33KB) AllocSpace objects, 0(0B) LOS objects, 1% free, 504MB/512MB, paused 34us,22us total 22.858ms
+06-20 16:40:53.014 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:53.014 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 8054264 free bytes and 7865KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33995880 kB)
+06-20 16:40:53.229 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:53.229 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.229 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.234 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:53.234 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:53.234 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.256 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 529MB to 512MB
+06-20 16:40:53.256 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 187(6120B) AllocSpace objects, 2(1184KB) LOS objects, 1% free, 505MB/512MB, paused 9us,20us total 21.860ms
+06-20 16:40:53.256 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:53.256 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 6988960 free bytes and 6825KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33995880 kB)
+06-20 16:40:53.366 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:53.366 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.366 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.370 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:53.370 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1024KB allocation
+06-20 16:40:53.370 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.392 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 530MB to 512MB
+06-20 16:40:53.392 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 53(17KB) AllocSpace objects, 0(0B) LOS objects, 1% free, 506MB/512MB, paused 8us,20us total 21.703ms
+06-20 16:40:53.392 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1052672, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:40:53.392 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1048595 byte allocation with 5956648 free bytes and 5817KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33995880 kB)
+06-20 16:40:53.553 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.553 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.558 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 58KB allocation
+06-20 16:40:53.558 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:40:53.582 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 530MB to 512MB
+06-20 16:40:53.582 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 235(37KB) AllocSpace objects, 2(1184KB) LOS objects, 1% free, 506MB/512MB, paused 25us,20us total 24.234ms
+06-20 16:40:53.850 13142 13314 D TrafficStats: tagSocket(85) with statsTag=0xffffffff, statsUid=-1
+06-20 16:40:57.771 13142 13291 D HostConnection: createUnique: call
+06-20 16:40:57.771 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 98
+06-20 16:40:57.771 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:40:57.772 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:40:57.773 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747dc00000 with size 4194304
+06-20 16:40:57.773 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:40:57.774 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:40:57.774 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:40:57.800 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f4da160: maj 3 min 2 rcv 5
+06-20 16:40:57.830 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4da160: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:40:57.830 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:40:57.831 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4da160: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:40:57.832 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:57.832 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:40:57.832 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:57.832 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:40:57.834 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:41:41.536 13142 13157 I hiyomi.at.debug: Clamp target GC heap from 530MB to 512MB
+06-20 16:41:42.641 13142 13291 D HostConnection: createUnique: call
+06-20 16:41:42.642 13142 13291 I AGA     : hstInit: opened /dev/bstpgaipc: fd = 98
+06-20 16:41:42.642 13142 13291 I AGA     : Attempting to create new SOCKET connection pid = 13142, tid = 13291
+06-20 16:41:42.642 13142 13291 I AGA     : hstInitClientPgaIpc: Attempting to get GROUP2 cid
+06-20 16:41:42.643 13142 13291 I AGA     : hstInitClientPgaIpc: data mapped to 0x7e747d200000 with size 4194304
+06-20 16:41:42.643 13142 13291 I AGA     : New SOCKET connection: app.kanade.tachiyomi.at.debug (pid 13142, tid 13291)
+06-20 16:41:42.644 13142 13291 D HostConnection: HostComposition ext ANDROID_EMU_vulkan ANDROID_EMU_deferred_vulkan_commands ANDROID_EMU_vulkan_create_resources_with_requirements ANDROID_EMU_vulkan_shader_float16_int8 ANDROID_EMU_vulkan_async_queue_submit ANDROID_EMU_vulkan_queue_submit_with_commands ANDROID_EMU_vulkan_batched_descriptor_set_update ANDROID_EMU_vulkan_enabled ANDROID_EMU_vulkan_initialized GL_OES_EGL_image_external_essl3 GL_OES_vertex_array_object GL_KHR_texture_compression_astc_ldr ANDROID_EMU_gles_max_version_3_2 
+06-20 16:41:42.644 13142 13291 W OpenGLRenderer: Failed to initialize 101010-2 format, error = EGL_SUCCESS
+06-20 16:41:42.671 13142 13291 D EGL_emulation: eglCreateContext: 0x7e763f4d8130: maj 3 min 2 rcv 5
+06-20 16:41:42.707 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4d8130: ver 3 2 (tinfo 0x7e754f467800)
+06-20 16:41:42.707 13142 13291 I AGA     : The gl query need cache 0
+06-20 16:41:42.708 13142 13291 D EGL_emulation: eglMakeCurrent: 0x7e763f4d8130: ver 3 2 (tinfo 0x7e754f467800) (first time)
+06-20 16:41:42.709 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:41:42.709 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082da
+06-20 16:41:42.709 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:41:42.709 13142 13291 E eglCodecCommon: glUtilsParamSize: unknow param 0x000082e5
+06-20 16:41:42.711 13142 13291 D emuglGLESv2_enc: check TTCDisabled with pkg[app.kanade.tachiyomi.at.debug] with res[0]
+06-20 16:41:42.994 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:42.994 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:42.994 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.002 13142 13256 I hiyomi.at.debug: Alloc young concurrent copying GC freed 17797(1358KB) AllocSpace objects, 6(800KB) LOS objects, 1% free, 506MB/512MB, paused 81us,14us total 7.869ms
+06-20 16:41:43.002 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:43.002 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:43.002 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.028 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 530MB to 512MB
+06-20 16:41:43.028 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 7675(303KB) AllocSpace objects, 0(0B) LOS objects, 1% free, 506MB/512MB, paused 70us,29us total 25.752ms
+06-20 16:41:43.028 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:43.028 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 5945424 free bytes and 5806KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33994000 kB)
+06-20 16:41:43.031 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:43.031 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.031 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.035 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:43.035 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.059 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 532MB to 512MB
+06-20 16:41:43.059 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 1288(50KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 508MB/512MB, paused 16us,18us total 23.733ms
+06-20 16:41:43.059 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 4128040 free bytes and 4031KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993020 kB)
+06-20 16:41:43.059 13142 13256 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:43.059 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.059 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.063 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:43.063 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.086 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 533MB to 512MB
+06-20 16:41:43.086 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 797(69KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 509MB/512MB, paused 44us,18us total 22.648ms
+06-20 16:41:43.086 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 2314680 free bytes and 2260KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993020 kB)
+06-20 16:41:43.086 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.086 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.090 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:43.090 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.112 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 535MB to 512MB
+06-20 16:41:43.112 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 599(42KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 511MB/512MB, paused 9us,17us total 21.905ms
+06-20 16:41:43.112 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 477696 free bytes and 466KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993020 kB)
+06-20 16:41:43.112 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.112 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.117 13142 13256 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:43.117 13142 13256 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:43.138 13142 13256 I hiyomi.at.debug: Clamp target GC heap from 535MB to 512MB
+06-20 16:41:43.138 13142 13256 I hiyomi.at.debug: Alloc concurrent copying GC freed 555(43KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 511MB/512MB, paused 9us,17us total 21.368ms
+06-20 16:41:43.138 13142 13256 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638416 byte allocation with 474936 free bytes and 463KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993020 kB)
+06-20 16:41:43.423 13142 13157 I hiyomi.at.debug: Clamp target GC heap from 530MB to 512MB
+06-20 16:41:46.953 13142 13258 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:46.953 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:46.953 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:46.962 13142 13258 I hiyomi.at.debug: Alloc young concurrent copying GC freed 30042(963KB) AllocSpace objects, 5(780KB) LOS objects, 1% free, 506MB/512MB, paused 14us,15us total 8.918ms
+06-20 16:41:46.964 13142 13258 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:46.964 13142 13258 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:46.964 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:46.989 13142 13258 I hiyomi.at.debug: Clamp target GC heap from 530MB to 512MB
+06-20 16:41:46.989 13142 13258 I hiyomi.at.debug: Alloc concurrent copying GC freed 11938(428KB) AllocSpace objects, 0(0B) LOS objects, 1% free, 506MB/512MB, paused 11us,18us total 25.236ms
+06-20 16:41:46.989 13142 13258 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:46.989 13142 13258 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 5975328 free bytes and 5835KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33994068 kB)
+06-20 16:41:46.993 13142 13258 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:46.993 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:46.993 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:46.998 13142 13258 I hiyomi.at.debug: Alloc young concurrent copying GC freed 906(96KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 508MB/512MB, paused 23us,15us total 5.115ms
+06-20 16:41:46.998 13142 13258 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:46.998 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.025 13142 13258 I hiyomi.at.debug: Clamp target GC heap from 532MB to 512MB
+06-20 16:41:47.025 13142 13258 I hiyomi.at.debug: Alloc concurrent copying GC freed 1190(66KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 508MB/512MB, paused 104us,19us total 26.568ms
+06-20 16:41:47.025 13142 13258 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 4142832 free bytes and 4045KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993088 kB)
+06-20 16:41:47.025 13142 13258 W hiyomi.at.debug: Large object allocation failed: Failed anonymous mmap(0x0, 1642496, 0x3, 0x22, -1, 0): Out of memory. See process maps in the log.
+06-20 16:41:47.025 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.025 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.030 13142 13258 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:47.030 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.055 13142 13258 I hiyomi.at.debug: Clamp target GC heap from 533MB to 512MB
+06-20 16:41:47.055 13142 13258 I hiyomi.at.debug: Alloc concurrent copying GC freed 897(69KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 509MB/512MB, paused 11us,18us total 24.984ms
+06-20 16:41:47.055 13142 13258 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 2330664 free bytes and 2276KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993088 kB)
+06-20 16:41:47.055 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.055 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.060 13142 13258 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:47.060 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.086 13142 13258 I hiyomi.at.debug: Clamp target GC heap from 535MB to 512MB
+06-20 16:41:47.086 13142 13258 I hiyomi.at.debug: Alloc concurrent copying GC freed 696(76KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 511MB/512MB, paused 11us,18us total 25.978ms
+06-20 16:41:47.086 13142 13258 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638412 byte allocation with 494280 free bytes and 482KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993088 kB)
+06-20 16:41:47.086 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.086 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.091 13142 13258 I hiyomi.at.debug: Forcing collection of SoftReferences for 1600KB allocation
+06-20 16:41:47.091 13142 13258 I hiyomi.at.debug: Starting a blocking GC Alloc
+06-20 16:41:47.117 13142 13258 I hiyomi.at.debug: Clamp target GC heap from 535MB to 512MB
+06-20 16:41:47.117 13142 13258 I hiyomi.at.debug: Alloc concurrent copying GC freed 304(35KB) AllocSpace objects, 0(0B) LOS objects, 0% free, 511MB/512MB, paused 74us,18us total 26.631ms
+06-20 16:41:47.117 13142 13258 W hiyomi.at.debug: Throwing OutOfMemoryError "Failed to allocate a 1638416 byte allocation with 482488 free bytes and 471KB until OOM, target footprint 536870912, growth limit 536870912" (VmSize 33993088 kB)
+06-20 16:41:47.393 13142 13157 I hiyomi.at.debug: Clamp target GC heap from 530MB to 512MB

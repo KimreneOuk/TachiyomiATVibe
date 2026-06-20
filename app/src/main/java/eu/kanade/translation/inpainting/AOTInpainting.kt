@@ -22,6 +22,17 @@ import kotlin.math.roundToInt
 
 class AOTInpainting {
 
+    companion object {
+        private const val MAX_INFERENCE_DIM = 768
+        private const val MAX_TOTAL_PIXELS = MAX_INFERENCE_DIM * MAX_INFERENCE_DIM
+
+        private val sharedImgData = ThreadLocal.withInitial { FloatArray(3 * MAX_TOTAL_PIXELS) }
+        private val sharedMaskData = ThreadLocal.withInitial { FloatArray(MAX_TOTAL_PIXELS) }
+        private val sharedImgPixels = ThreadLocal.withInitial { IntArray(MAX_TOTAL_PIXELS) }
+        private val sharedMaskPixels = ThreadLocal.withInitial { IntArray(MAX_TOTAL_PIXELS) }
+        private val sharedResultPixels = ThreadLocal.withInitial { IntArray(MAX_TOTAL_PIXELS) }
+    }
+
     private var session: OrtSession? = null
     // TachiyomiAT: retained so [obtainCpuFallbackSession] can build a fallback
     // CPU session when the accelerated (NNAPI) session is detected returning
@@ -303,6 +314,17 @@ class AOTInpainting {
         val cropH = cropY2 - cropY1
 
         if (!TranslationMemoryBudget.canRunNeuralInpaint(w, h, cropW, cropH)) {
+            // TachiyomiAT: log the neural-inpaint downgrade UNCONDITIONALLY (not
+            // just under translation_diagnostics). This is a user-visible quality
+            // degradation — bubbles get flat-filled instead of neural-repainted,
+            // which is exactly the "image gets blurry / worse" symptom. Hiding it
+            // behind the diagnostics flag made the fallback invisible by default,
+            // so the root cause (heap pressure) was never diagnosable. The full
+            // heap snapshot still goes through the gated logSnapshot below.
+            logcat(LogPriority.WARN) {
+                "Neural inpaint SKIPPED on heap pressure: page=${w}x$h crop=${cropW}x$cropH " +
+                    "boxes=${normalizedBoxes.size} — falling back to flat bubble fill (visible quality drop)"
+            }
             TranslationMemoryBudget.logSnapshot(
                 tag = "skip_neural_inpaint",
                 width = w,
@@ -368,17 +390,10 @@ class AOTInpainting {
         val cropW = xMax - xMin
         val cropH = yMax - yMin
 
-        val maxInferenceDim = 768
-        val needsResize = max(cropW, cropH) > maxInferenceDim
+        val needsResize = max(cropW, cropH) > MAX_INFERENCE_DIM
         var inferW: Int
         var inferH: Int
 
-        val imgCrop = Bitmap.createBitmap(image, xMin, yMin, cropW, cropH)
-        val maskCropForBlend = if (maskAlreadyCropped) {
-            maskBitmap
-        } else {
-            Bitmap.createBitmap(maskBitmap, xMin, yMin, cropW, cropH)
-        }
         var imgInput: Bitmap? = null
         var maskInput: Bitmap? = null
         var imgTensor: OnnxTensor? = null
@@ -389,26 +404,23 @@ class AOTInpainting {
         var blended: Bitmap? = null
         try {
             if (needsResize) {
-                val scale = maxInferenceDim.toFloat() / max(cropW, cropH)
+                val scale = MAX_INFERENCE_DIM.toFloat() / max(cropW, cropH)
                 inferW = max(8, (cropW * scale).toInt())
                 inferH = max(8, (cropH * scale).toInt())
                 inferW = inferW + (8 - inferW % 8) % 8
                 inferH = inferH + (8 - inferH % 8) % 8
+                
                 imgInput = BitmapPool.getARGB8888(inferW, inferH)
                 val imgInputCanvas = android.graphics.Canvas(imgInput)
-                imgInputCanvas.drawBitmap(imgCrop, null, android.graphics.RectF(0f, 0f, inferW.toFloat(), inferH.toFloat()), null)
-                    val maskCrop = if (maskAlreadyCropped) {
-                        maskBitmap
-                    } else {
-                        Bitmap.createBitmap(maskBitmap, xMin, yMin, cropW, cropH)
-                    }
-                    try {
-                        maskInput = BitmapPool.getARGB8888(inferW, inferH)
-                        val maskInputCanvas = android.graphics.Canvas(maskInput)
-                        maskInputCanvas.drawBitmap(maskCrop, null, android.graphics.RectF(0f, 0f, inferW.toFloat(), inferH.toFloat()), null)
-                    } finally {
-                        if (!maskAlreadyCropped) maskCrop.recycle()
-                    }
+                imgInputCanvas.drawBitmap(image, android.graphics.Rect(xMin, yMin, xMin + cropW, yMin + cropH), android.graphics.RectF(0f, 0f, inferW.toFloat(), inferH.toFloat()), null)
+
+                maskInput = BitmapPool.getARGB8888(inferW, inferH)
+                val maskInputCanvas = android.graphics.Canvas(maskInput)
+                if (maskAlreadyCropped) {
+                    maskInputCanvas.drawBitmap(maskBitmap, android.graphics.Rect(0, 0, maskBitmap.width, maskBitmap.height), android.graphics.RectF(0f, 0f, inferW.toFloat(), inferH.toFloat()), null)
+                } else {
+                    maskInputCanvas.drawBitmap(maskBitmap, android.graphics.Rect(xMin, yMin, xMin + cropW, yMin + cropH), android.graphics.RectF(0f, 0f, inferW.toFloat(), inferH.toFloat()), null)
+                }
             } else {
                 inferW = cropW
                 inferH = cropH
@@ -418,38 +430,42 @@ class AOTInpainting {
                     imgInput = BitmapPool.getARGB8888(inferW + padW, inferH + padH)
                     imgInput.eraseColor(0)
                     val canvas = android.graphics.Canvas(imgInput)
-                    canvas.drawBitmap(imgCrop, 0f, 0f, null)
+                    canvas.drawBitmap(image, android.graphics.Rect(xMin, yMin, xMin + cropW, yMin + cropH), android.graphics.Rect(0, 0, cropW, cropH), null)
+
                     maskInput = BitmapPool.getARGB8888(inferW + padW, inferH + padH)
                     maskInput.eraseColor(0)
-                    val maskCrop = if (maskAlreadyCropped) {
-                        maskBitmap
+                    val maskCanvas = android.graphics.Canvas(maskInput)
+                    if (maskAlreadyCropped) {
+                        maskCanvas.drawBitmap(maskBitmap, 0f, 0f, null)
                     } else {
-                        Bitmap.createBitmap(maskBitmap, xMin, yMin, cropW, cropH)
-                    }
-                    try {
-                        val maskCanvas = android.graphics.Canvas(maskInput)
-                        maskCanvas.drawBitmap(maskCrop, 0f, 0f, null)
-                    } finally {
-                        if (!maskAlreadyCropped) maskCrop.recycle()
+                        maskCanvas.drawBitmap(maskBitmap, android.graphics.Rect(xMin, yMin, xMin + cropW, yMin + cropH), android.graphics.Rect(0, 0, cropW, cropH), null)
                     }
                     inferW += padW
                     inferH += padH
-                } else {
-                    imgInput = imgCrop
-                    maskInput = if (maskAlreadyCropped) maskBitmap else Bitmap.createBitmap(maskBitmap, xMin, yMin, cropW, cropH)
                 }
             }
 
             val totalPixels = inferW * inferH
-            val imgInputBitmap = imgInput ?: throw IllegalStateException("Inpainting image input was not created")
-            val maskInputBitmap = maskInput ?: throw IllegalStateException("Inpainting mask input was not created")
-            val imgData = FloatArray(3 * totalPixels)
-            val maskData = FloatArray(totalPixels)
+            val imgData = sharedImgData.get()!!
+            val maskData = sharedMaskData.get()!!
+            val imgPixels = sharedImgPixels.get()!!
+            val maskPixels = sharedMaskPixels.get()!!
 
-            val imgPixels = IntArray(totalPixels)
-            imgInputBitmap.getPixels(imgPixels, 0, inferW, 0, 0, inferW, inferH)
-            val maskPixels = IntArray(totalPixels)
-            maskInputBitmap.getPixels(maskPixels, 0, inferW, 0, 0, inferW, inferH)
+            if (imgInput != null && maskInput != null) {
+                imgInput.getPixels(imgPixels, 0, inferW, 0, 0, inferW, inferH)
+                maskInput.getPixels(maskPixels, 0, inferW, 0, 0, inferW, inferH)
+            } else {
+                for (i in 0 until totalPixels) {
+                    imgPixels[i] = 0
+                    maskPixels[i] = 0
+                }
+                image.getPixels(imgPixels, 0, inferW, xMin, yMin, cropW, cropH)
+                if (maskAlreadyCropped) {
+                    maskBitmap.getPixels(maskPixels, 0, inferW, 0, 0, cropW, cropH)
+                } else {
+                    maskBitmap.getPixels(maskPixels, 0, inferW, xMin, yMin, cropW, cropH)
+                }
+            }
 
             for (y in 0 until inferH) {
                 for (x in 0 until inferW) {
@@ -466,8 +482,8 @@ class AOTInpainting {
                 }
             }
 
-            val imgBuffer = FloatBuffer.wrap(imgData)
-            val maskBuffer = FloatBuffer.wrap(maskData)
+            val imgBuffer = FloatBuffer.wrap(imgData, 0, 3 * totalPixels)
+            val maskBuffer = FloatBuffer.wrap(maskData, 0, totalPixels)
 
             imgTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
@@ -484,14 +500,6 @@ class AOTInpainting {
             val imgTensorValue = imgTensor!!
             val maskTensorValue = maskTensor!!
             val feed = mapOf("image" to imgTensorValue, "mask" to maskTensorValue)
-            // TachiyomiAT: detect the silent-gray failure mode. A broken NNAPI
-            // driver can return an all-zero output tensor; the denorm below maps
-            // 0.0 -> 128 gray, so the whole masked region renders mid-gray.
-            // [runDetectingZeroOutput] samples the output and, if it is
-            // uniformly near-zero on an accelerated session, marks the EP failed
-            // and re-runs the SAME tensors on a CPU-only session before
-            // accepting the result. OnnxTensor inputs are independent of the
-            // session, so the retry is just a second sess.run — no re-encode.
             results = runDetectingZeroOutput(sess, feed)
             val t1 = System.nanoTime()
 
@@ -504,7 +512,7 @@ class AOTInpainting {
             val resultH = if (needsResize) outH else min(outH, cropH)
             val resultW = if (needsResize) outW else min(outW, cropW)
 
-            val resultPixels = IntArray(resultW * resultH)
+            val resultPixels = sharedResultPixels.get()!!
             val outChannels = outH * outW
             for (y in 0 until resultH) {
                 for (x in 0 until resultW) {
@@ -532,7 +540,7 @@ class AOTInpainting {
             }
 
             val candidate = scaled ?: throw IllegalStateException("Inpainting output was not created")
-            if (isSuspiciousGrayOutput(candidate, maskCropForBlend, cropW, cropH)) {
+            if (isSuspiciousGrayOutput(candidate, maskBitmap, maskAlreadyCropped, xMin, yMin, cropW, cropH)) {
                 logcat(LogPriority.WARN) {
                     "[inpaint] suspicious uniform mid-gray output; falling back to smart cleaner"
                 }
@@ -540,7 +548,7 @@ class AOTInpainting {
                 return bubbleCleaner.cleanRegions(image, boxesForFallback)
             }
 
-            blended = featherBlend(imgCrop, candidate, maskCropForBlend, cropW, cropH)
+            blended = featherBlend(image, candidate, maskBitmap, maskAlreadyCropped, xMin, yMin, cropW, cropH)
 
             val canvas = android.graphics.Canvas(image)
             canvas.drawBitmap(blended ?: throw IllegalStateException("Inpainting blend was not created"), xMin.toFloat(), yMin.toFloat(), null)
@@ -557,15 +565,8 @@ class AOTInpainting {
             if (blended != null) BitmapPool.putARGB8888(blended)
             if (scaled != null && scaled !== resultBitmap) BitmapPool.putARGB8888(scaled)
             if (resultBitmap != null) BitmapPool.putARGB8888(resultBitmap)
-            if (maskInput != null && maskInput !== maskBitmap) {
-                if (maskInput != maskCropForBlend) BitmapPool.putARGB8888(maskInput)
-                else maskInput.recycle()
-            }
-            if (imgInput != null && imgInput !== imgCrop) {
-                BitmapPool.putARGB8888(imgInput)
-            }
-            if (maskCropForBlend !== maskBitmap) maskCropForBlend.recycle()
-            imgCrop.recycle()
+            if (maskInput != null) BitmapPool.putARGB8888(maskInput)
+            if (imgInput != null) BitmapPool.putARGB8888(imgInput)
         }
     }
 
@@ -629,13 +630,20 @@ class AOTInpainting {
     private fun isSuspiciousGrayOutput(
         inpainted: Bitmap,
         mask: Bitmap,
+        maskAlreadyCropped: Boolean,
+        xMin: Int,
+        yMin: Int,
         width: Int,
         height: Int,
     ): Boolean {
-        val inpaintedPixels = IntArray(width * height)
-        val maskPixels = IntArray(width * height)
+        val inpaintedPixels = sharedResultPixels.get()!!
+        val maskPixels = sharedMaskPixels.get()!!
         inpainted.getPixels(inpaintedPixels, 0, width, 0, 0, width, height)
-        mask.getPixels(maskPixels, 0, width, 0, 0, width, height)
+        if (maskAlreadyCropped) {
+            mask.getPixels(maskPixels, 0, width, 0, 0, width, height)
+        } else {
+            mask.getPixels(maskPixels, 0, width, xMin, yMin, width, height)
+        }
         return AotOutputGuard.isSuspiciousGrayFill(inpaintedPixels, maskPixels, width, height)
     }
 
@@ -692,19 +700,27 @@ class AOTInpainting {
         original: Bitmap,
         inpainted: Bitmap,
         mask: Bitmap,
+        maskAlreadyCropped: Boolean,
+        xMin: Int,
+        yMin: Int,
         width: Int,
         height: Int,
     ): Bitmap {
         val result = BitmapPool.getARGB8888(width, height)
-        val origPixels = IntArray(width * height)
-        val inpPixels = IntArray(width * height)
-        val maskPixels = IntArray(width * height)
-        original.getPixels(origPixels, 0, width, 0, 0, width, height)
+        val origPixels = sharedImgPixels.get()!!
+        val inpPixels = sharedResultPixels.get()!!
+        val maskPixels = sharedMaskPixels.get()!!
+        
+        original.getPixels(origPixels, 0, width, xMin, yMin, width, height)
         inpainted.getPixels(inpPixels, 0, width, 0, 0, width, height)
-        mask.getPixels(maskPixels, 0, width, 0, 0, width, height)
+        
+        if (maskAlreadyCropped) {
+            mask.getPixels(maskPixels, 0, width, 0, 0, width, height)
+        } else {
+            mask.getPixels(maskPixels, 0, width, xMin, yMin, width, height)
+        }
 
         val featherR = max(2, min(6, min(width, height) / 8))
-        val resultPixels = IntArray(width * height)
         for (y in 0 until height) {
             for (x in 0 until width) {
                 val idx = y * width + x
@@ -725,10 +741,10 @@ class AOTInpainting {
                     }
                     if (total == 0) 0.0f else covered.toFloat() / total.toFloat()
                 }
-                resultPixels[idx] = if (alpha <= 0.0f) origPixels[idx] else blendPixel(origPixels[idx], inpPixels[idx], alpha)
+                origPixels[idx] = if (alpha <= 0.0f) origPixels[idx] else blendPixel(origPixels[idx], inpPixels[idx], alpha)
             }
         }
-        result.setPixels(resultPixels, 0, width, 0, 0, width, height)
+        result.setPixels(origPixels, 0, width, 0, 0, width, height)
         return result
     }
 
@@ -843,6 +859,22 @@ class AOTInpainting {
         // an engine teardown after a zero-output recovery doesn't leak it.
         cpuFallbackSession?.close()
         cpuFallbackSession = null
+    }
+
+    /**
+     * TachiyomiAT: drop the cross-call working buffers while staying usable.
+     *
+     * [SmartBubbleTextCleaner] retains its largest-seen IntArray pair for the
+     * engine's lifetime (so a dense early page pins large heap arrays for the
+     * whole session). On OOM recovery we want that heap back; the next inpaint
+     * simply reallocates a buffer sized to the page it actually sees. The
+     * ThreadLocal inference scratch arrays are intentionally NOT touched here:
+     * they are thread-local, so clearing them from a different worker thread
+     * (the OOM path may run off the inpaint thread) is a no-op, and on the
+     * same thread they are reused each call rather than leaked.
+     */
+    fun reclaimPooledMemory() {
+        bubbleCleaner.clearWorkingBuffers()
     }
 
     private fun adaptiveInferenceDim(cropW: Int, cropH: Int): Int {

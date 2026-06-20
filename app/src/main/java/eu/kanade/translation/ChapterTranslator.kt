@@ -354,15 +354,25 @@ class ChapterTranslator(
             }
 
             try {
-                for ((fileName, streamFn) in streams) {
-                    if (translationJob?.isActive != true) break
-                    pipeline.translateSinglePageFromStream(
+                // TachiyomiAT: run the chapter through the STAGED BATCH pipeline
+                // (DETECT+OCR batch → inpaint ‖ translate → render) instead of the
+                // old page-1-first sequential loop. Order pages so the user's
+                // resume position is translated first: forward from the last-read
+                // page to the end, then backfill the pages before it. This makes
+                // pre-translating a chapter you're mid-way through actually useful
+                // — the page you'll read next is ready first, not page 1.
+                val resumeIndex = translation.chapter.lastPageRead.toInt()
+                val orderedStreams = eu.kanade.translation.util.ResumeOrdering
+                    .forwardFirstThenBackfill(streams, resumeIndex)
+                if (translationJob?.isActive != true) {
+                    logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
+                } else {
+                    pipeline.translateBatch(
                         translation.manga,
                         translation.chapter,
                         translation.source,
-                        fileName,
-                        streamFn,
-                        force = true,
+                        store,
+                        orderedStreams,
                     )
                 }
             } finally {
