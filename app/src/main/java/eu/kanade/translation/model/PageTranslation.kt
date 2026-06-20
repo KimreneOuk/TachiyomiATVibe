@@ -32,8 +32,9 @@ data class PageTranslation(
     var retryCount: Int = 0,
     // Incremented when the rendered file's bytes are rewritten. The file name is
     // stable (<page>.rendered.webp), so UI dedup must not key on the name alone.
+    var inpaintRevision: Int = 0,
     var renderRevision: Long = 0L,
-    ) {
+) {
     @Transient
     var cleanedBitmap: Bitmap? = null
 
@@ -48,9 +49,9 @@ data class PageTranslation(
     var allTextDetections: List<Detection> = emptyList()
 
     companion object {
+        const val CURRENT_INPAINT_REVISION = 7
         val EMPTY = PageTranslation()
     }
-
 }
 
 object StageStatus {

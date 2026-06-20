@@ -124,7 +124,7 @@ class MangaScreen(
             onBackClicked = navigator::pop,
             onChapterClicked = { openChapter(context, it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
-            //TachiyomiAT
+            // TachiyomiAT
             onTranslationChapter = screenModel::runChapterTranslationActions,
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()

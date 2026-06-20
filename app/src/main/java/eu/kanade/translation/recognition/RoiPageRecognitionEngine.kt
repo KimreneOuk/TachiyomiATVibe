@@ -6,7 +6,9 @@ import eu.kanade.translation.detection.Detection
 import eu.kanade.translation.detection.OnnxPageTextDetector
 import eu.kanade.translation.inpainting.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
+import eu.kanade.translation.inpainting.PageInpaintingEngine
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.MangaOcrEngine
@@ -39,6 +41,7 @@ class RoiPageRecognitionEngine(
     private var detector: OnnxPageTextDetector? = null
     private var roiOcrEngine: RoiOcrEngine? = null
     private var inpainting: AOTInpainting? = null
+    private var pageInpainter: PageInpaintingEngine? = null
     @Volatile
     private var initialized = false
     private var initFailed = false
@@ -50,8 +53,8 @@ class RoiPageRecognitionEngine(
     // NATIVE sessions can still be freed by close() while analyze() is mid-call
     // past a suspension point — a potential SIGSEGV rather than the catchable
     // IllegalStateException. analyze()/inpaint() poll this flag before each ONNX
-    // invocation and bail cleanly (throwing) so the page degrades to the ML Kit
-    // fallback instead of crashing the process.
+    // invocation and bail cleanly (throwing) so the page is marked retryable
+    // instead of crashing the process.
     @Volatile
     private var closed = false
 
@@ -99,10 +102,17 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
-                logcat(LogPriority.INFO) { "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), starting inpainting initialization" }
-                paths.inpaintModel?.let { model ->
-                    inpainting = AOTInpainting().also { it.initialize(model) }
+                logcat(LogPriority.INFO) { "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), preparing inpainting (mode=$inpaintingMode)" }
+                val localInpainting = AOTInpainting()
+                if (inpaintingMode == InpaintingMode.QUALITY) {
+                    paths.inpaintModel?.let { model ->
+                        localInpainting.initialize(model)
+                    }
+                } else {
+                    logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping AOT session initialization" }
                 }
+                inpainting = localInpainting
+                pageInpainter = PageInpaintingEngine(inpaintingMode, localInpainting)
                 initialized = true
                 val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
                 logcat(LogPriority.INFO) { "RoiPageRecognitionEngine initialized in ${elapsedMs}ms" }
@@ -123,8 +133,8 @@ class RoiPageRecognitionEngine(
         // concurrently (closeEngines does NOT hold translatorPermit) and nulls
         // these fields; the previous detector!!/roiOcrEngine!! dereferences were
         // an NPE crash if close() raced mid-analyze. Throwing a catchable
-        // IllegalStateException here lets processSinglePage's fallback degrade
-        // to ML Kit instead of crashing the app.
+        // IllegalStateException here lets processSinglePage surface a retryable
+        // ONNX failure instead of crashing the app.
         val localDetector = detector
             ?: throw IllegalStateException("ONNX detector closed mid-analyze")
         val localOcrEngine = roiOcrEngine
@@ -297,7 +307,8 @@ class RoiPageRecognitionEngine(
             )
         }
         val finalRecognizedBlocks = removePostOcrDuplicateBlocks(recognizedBlocks)
-        pageTranslation.blocks.addAll(finalRecognizedBlocks.map { it.block })
+        val mergedBlocks = PageTranslationHelper.mergeRelatedBlocks(finalRecognizedBlocks.map { it.block })
+        pageTranslation.blocks.addAll(mergedBlocks)
         pageTranslation.ocrBlockCount = pageTranslation.blocks.size
         pageTranslation.ocrStatus = StageStatus.READY
         pageTranslation.updatedAt = System.currentTimeMillis()
@@ -311,6 +322,15 @@ class RoiPageRecognitionEngine(
 
     override suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         if (!initialized) initialize()
+        if (closed) {
+            pageTranslation.inpaintStatus = StageStatus.FAILED
+            pageTranslation.errorMessage = "ONNX recognition engine closed before inpaint"
+            pageTranslation.updatedAt = System.currentTimeMillis()
+            return null
+        }
+        return (pageInpainter ?: PageInpaintingEngine(inpaintingMode, inpainting ?: AOTInpainting()))
+            .inpaint(bitmap, pageTranslation)
+
         val inpainter = inpainting
         // TachiyomiAT: a page whose OCR found ZERO text blocks is a SUCCESSFUL
         // recognition (there is genuinely nothing to translate — a splash page,
@@ -372,7 +392,7 @@ class RoiPageRecognitionEngine(
                             detBox[3] + 3,
                         )
                         ocrBlockBoxes.none { ocrBox ->
-                            computeIou(expanded, ocrBox) > 0.4f
+                            BoxGeometry.iou(expanded, ocrBox) > 0.4f
                         }
                     }
                     .distinctBy { it.toList() }
@@ -382,7 +402,12 @@ class RoiPageRecognitionEngine(
                 logcat(LogPriority.INFO) {
                     "ONNX inpainting input: boxes=${combinedBoxes.size} extraDetector=${extraDetectorBoxes.size} labels=${combinedLabels.groupingBy { it }.eachCount()}"
                 }
-                TranslationMemoryBudget.logSnapshot("before_inpaint", bitmap.width, bitmap.height, "boxes=${combinedBoxes.size}")
+                TranslationMemoryBudget.logSnapshot(
+                    "before_inpaint",
+                    bitmap.width,
+                    bitmap.height,
+                    "boxes=${combinedBoxes.size}",
+                )
                 // TachiyomiAT: cooperative close — bail before the native inpaint
                 // call if close() ran while building the input boxes. See [closed].
                 if (closed) {
@@ -435,6 +460,7 @@ class RoiPageRecognitionEngine(
         detector = null
         roiOcrEngine = null
         inpainting = null
+        pageInpainter = null
         initialized = false
     }
 
@@ -463,7 +489,7 @@ class RoiPageRecognitionEngine(
                 val parentJ = parentMap[System.identityHashCode(keep[j])]
                 if (parentJ !== parentI) continue
                 if (keep[i].label == keep[j].label) continue
-                val iou = computeIou(keep[i].bbox, keep[j].bbox)
+                val iou = BoxGeometry.iou(keep[i].bbox, keep[j].bbox)
                 if (iou > 0.3f) {
                     val victim = if (keep[i].score < keep[j].score) keep[i] else keep[j]
                     toRemove.add(victim)
@@ -538,46 +564,17 @@ class RoiPageRecognitionEngine(
 
     private fun parentContainmentScore(det: Detection, parent: Detection?): Float {
         val parentBox = parent?.bbox ?: return 0f
-        val area = bboxArea(det.bbox)
+        val area = BoxGeometry.bboxArea(det.bbox)
         if (area <= 0) return 0f
-        return intersectionArea(det.bbox, parentBox).toFloat() / area.toFloat()
+        return BoxGeometry.intersectionArea(det.bbox, parentBox).toFloat() / area.toFloat()
     }
 
     private fun normalizeOcrText(text: String): String = text
         .lowercase()
         .filterNot { it.isWhitespace() || it.isISOControl() }
 
-    private fun isTextBoxDuplicate(a: IntArray, b: IntArray): Boolean {
-        if (computeIou(a, b) > TEXT_IOU_DUPLICATE_THRESHOLD) return true
-        val minArea = min(bboxArea(a), bboxArea(b))
-        if (minArea > 0 && intersectionArea(a, b).toFloat() / minArea.toFloat() > TEXT_CONTAINMENT_DUPLICATE_THRESHOLD) {
-            return true
-        }
-
-        val aw = max(1, a[2] - a[0])
-        val ah = max(1, a[3] - a[1])
-        val bw = max(1, b[2] - b[0])
-        val bh = max(1, b[3] - b[1])
-        val centerDx = abs((a[0] + a[2]) - (b[0] + b[2])) / 2f
-        val centerDy = abs((a[1] + a[3]) - (b[1] + b[3])) / 2f
-        return centerDx <= TEXT_CENTER_DUPLICATE_THRESHOLD * min(aw, bw) &&
-            centerDy <= TEXT_CENTER_DUPLICATE_THRESHOLD * min(ah, bh) &&
-            abs(aw - bw).toFloat() <= TEXT_SIZE_DUPLICATE_THRESHOLD * max(aw, bw) &&
-            abs(ah - bh).toFloat() <= TEXT_SIZE_DUPLICATE_THRESHOLD * max(ah, bh)
-    }
-
-    private fun computeIou(a: IntArray, b: IntArray): Float {
-        val ix1 = max(a[0], b[0])
-        val iy1 = max(a[1], b[1])
-        val ix2 = min(a[2], b[2])
-        val iy2 = min(a[3], b[3])
-        if (ix2 <= ix1 || iy2 <= iy1) return 0.0f
-        val inter = (ix2 - ix1) * (iy2 - iy1)
-        val aArea = max(0, a[2] - a[0]) * max(0, a[3] - a[1])
-        val bArea = max(0, b[2] - b[0]) * max(0, b[3] - b[1])
-        val union = aArea + bArea - inter
-        return if (union > 0) inter.toFloat() / union.toFloat() else 0.0f
-    }
+    private fun isTextBoxDuplicate(a: IntArray, b: IntArray): Boolean =
+        BoxGeometry.isGeometricDuplicate(a, b, TEXT_DEDUP_THRESHOLDS)
 
     private fun cropBitmap(source: Bitmap, x1: Int, y1: Int, x2: Int, y2: Int): Bitmap {
         val clampedX1 = x1.coerceIn(0, source.width)
@@ -728,7 +725,7 @@ class RoiPageRecognitionEngine(
 
             val sibArea = max(0, sx2 - sx1) * max(0, sy2 - sy1)
             if (sibArea == 0) continue
-            val inter = intersectionArea(intArrayOf(px1, py1, px2, py2), sib)
+            val inter = BoxGeometry.intersectionArea(intArrayOf(px1, py1, px2, py2), sib)
             if (inter < 0.45f * sibArea) continue
 
             val scx = (sx1 + sx2) / 2.0
@@ -769,22 +766,17 @@ class RoiPageRecognitionEngine(
         return intArrayOf(px1, py1, px2, py2)
     }
 
-    private fun intersectionArea(a: IntArray, b: IntArray): Int {
-        val ix1 = max(a[0], b[0])
-        val iy1 = max(a[1], b[1])
-        val ix2 = min(a[2], b[2])
-        val iy2 = min(a[3], b[3])
-        if (ix2 <= ix1 || iy2 <= iy1) return 0
-        return (ix2 - ix1) * (iy2 - iy1)
-    }
-
-    private fun bboxArea(box: IntArray): Int = max(0, box[2] - box[0]) * max(0, box[3] - box[1])
-
     private companion object {
-        private const val TEXT_IOU_DUPLICATE_THRESHOLD = 0.62f
-        private const val TEXT_CONTAINMENT_DUPLICATE_THRESHOLD = 0.86f
-        private const val TEXT_CENTER_DUPLICATE_THRESHOLD = 0.12f
-        private const val TEXT_SIZE_DUPLICATE_THRESHOLD = 0.20f
+        /**
+         * Tuned thresholds for the post-OCR text-block dedupe. The algorithm
+         * lives in [BoxGeometry]; only the constants are stage-specific.
+         */
+        private val TEXT_DEDUP_THRESHOLDS = BoxGeometry.DedupThresholds(
+            iou = 0.62f,
+            containment = 0.86f,
+            center = 0.12f,
+            size = 0.20f,
+        )
         // TachiyomiAT: vertical-column detection thresholds for splitting a
         // multi-column manga bubble before OCR. Tuned against the verified Python
         // reproduction (whole-box 1/6 vs per-column 6/6 on multi-column cases).

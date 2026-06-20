@@ -8,7 +8,7 @@ open class ReaderPage(
     index: Int,
     url: String = "",
     imageUrl: String? = null,
-    var translation : PageTranslation?=null,
+    var translation: PageTranslation? = null,
     var originalStream: (() -> InputStream)? = null,
     var translatedStream: (() -> InputStream)? = null,
     /**

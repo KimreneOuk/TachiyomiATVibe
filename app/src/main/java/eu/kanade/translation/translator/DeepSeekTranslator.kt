@@ -14,7 +14,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.regex.Pattern
 
 class DeepSeekTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -33,19 +32,6 @@ class DeepSeekTranslator(
         .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .build()
-
-    private val ocrArtifactPattern = "(?:[N\\uff2e][\\u00ba\\u00b0\\u02da]|[N\\uff2e]\\u2070|\\u2116|\\uff2e\\uff10|N0)"
-    private val ocrArtifactInlineRe = Regex("\\s+$ocrArtifactPattern(?=\\s|$)")
-    private val ocrArtifactBeforePunctRe = Regex("\\s+$ocrArtifactPattern(?=[.,!?;:\\-])")
-    private val ocrArtifactLeadingRe = Regex("^$ocrArtifactPattern\\s*")
-
-    private fun sanitizeOcrArtifacts(text: String): String {
-        var cleaned = ocrArtifactBeforePunctRe.replace(text, "")
-        cleaned = ocrArtifactInlineRe.replace(cleaned, " ")
-        cleaned = ocrArtifactLeadingRe.replace(cleaned, "")
-        cleaned = Regex("\\s{2,}").replace(cleaned, " ").trim()
-        return cleaned
-    }
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         if (apiKey.isBlank()) {
@@ -73,7 +59,7 @@ class DeepSeekTranslator(
                 You are an expert manga/comic translator and localization specialist. Translate the following list of sequential text blocks from ${fromLang.label} to ${toLang.label}.
 
                 CRITICAL GUIDELINES:
-                1. READING ORDER: Manga panels and bubbles fundamentally follow a Right-to-Left (RTL) and Top-to-Bottom (TTB) flow. Interpret the sequential blocks with this context in mind to maintain narrative coherence across adjacent speech bubbles.
+                1. READING ORDER: The sequential blocks are loosely ordered based on physical coordinates (Top-to-Bottom, then Left-to-Right or Right-to-Left depending on the format). However, complex comic panel layouts mean this numbering is just a nudge. Use your narrative judgment to connect dialogue logically across adjacent speech bubbles if the numbered sequence seems slightly out of order.
                 2. HONORIFICS: Honorifics (-san, -kun, -chan, -sama, -senpai, etc.) are highly expressive of character relationships. Preserve them natively (e.g., 'Taro-kun') if the tone is character-driven/anime-style, or translate them to natural relational equivalents (like 'Mr.', 'Sir', or dropping them) if a more conventional western localization is appropriate for the dialogue.
                 3. BUBBLE SIZE & CONCISENESS: Manga speech bubbles have very limited space. Keep your translations highly concise, punchy, and natural. Avoid wordy phrasing. The length of the translated text should roughly match the original block size.
                 4. STYLE & TONE: Adapt register, slang, and dialect to fit character personalities. For sound effects (SFX) / onomatopoeia, provide standard comic-styled english/localized equivalents (e.g., 'Gasp', 'Thud', *rumble*).
@@ -96,7 +82,10 @@ class DeepSeekTranslator(
                     }
                     addJsonObject {
                         put("role", "user")
-                        put("content", "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr")
+                        put(
+                            "content",
+                            "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
+                        )
                     }
                 }
             }.toString()
@@ -125,43 +114,20 @@ class DeepSeekTranslator(
                 )
             }
 
-            val parsedTranslations = parseResponse(rawOutput, flatBlocks.size)
+            val parsedTranslations = NumberedLineResponseParser.parse(rawOutput, flatBlocks.size)
 
             flatBlocks.forEachIndexed { index, (block, originalText) ->
                 var translated = parsedTranslations[index] ?: ""
                 if (translated.isBlank()) {
                     translated = originalText
                 }
-                block.translation = sanitizeOcrArtifacts(translated)
+                block.translation = OcrArtifactSanitizer.sanitize(translated)
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)
-
         } catch (e: Exception) {
             logcat { "DeepSeek Translation Error : ${e.stackTraceToString()}" }
             throw e
         }
-    }
-
-    private fun parseResponse(raw: String, expectedCount: Int): Map<Int, String> {
-        val result = mutableMapOf<Int, String>()
-        val pattern = Pattern.compile("^\\[(\\d+)\\]\\s*(.+)$", Pattern.MULTILINE)
-        val matcher = pattern.matcher(raw)
-        while (matcher.find()) {
-            val idx = matcher.group(1)!!.toInt()
-            val text = matcher.group(2)!!.trim()
-            result[idx] = text
-        }
-
-        if (result.isEmpty()) {
-            val lines = raw.trim().split("\n")
-            lines.forEachIndexed { i, line ->
-                val trimmed = line.trim()
-                if (trimmed.isNotEmpty() && i < expectedCount) {
-                    result[i] = trimmed
-                }
-            }
-        }
-        return result
     }
 
     override fun close() {

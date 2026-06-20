@@ -18,7 +18,14 @@ sealed interface PageLifecycle {
 }
 
 val PageTranslation.displayImageName: String?
-    get() = renderedImageName ?: cleanedImageName?.takeIf { blocks.isEmpty() }
+    get() = when {
+        blocks.isEmpty() -> renderedImageName ?: cleanedImageName
+        hasCurrentInpaintResult -> renderedImageName
+        else -> null
+    }
+
+val PageTranslation.hasCurrentInpaintResult: Boolean
+    get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
 
 val PageTranslation.hasRenderedResult: Boolean
     get() = displayImageName != null
@@ -41,6 +48,22 @@ val PageTranslation.isStageFailed: Boolean
         inpaintStatus == StageStatus.FAILED ||
         renderStatus == StageStatus.FAILED
 
+/**
+ * Flip every non-terminal RUNNING/PENDING stage to CANCELLED in place, used to
+ * clear a page stranded in-flight after a cancellation (chapter switch, reader
+ * exit, per-page cancel). Centralises the per-stage rewrite that was previously
+ * copy-pasted in the scheduler's [markPageCancelled] / [markPageAutoSoftSkipped].
+ * A cancel is NOT a failure, so retryCount is left untouched.
+ */
+fun PageTranslation.cancelInFlightStages() {
+    apply {
+        if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) ocrStatus = StageStatus.CANCELLED
+        if (translationStatus == StageStatus.RUNNING) translationStatus = StageStatus.CANCELLED
+        if (inpaintStatus == StageStatus.RUNNING) inpaintStatus = StageStatus.CANCELLED
+        if (renderStatus == StageStatus.RUNNING) renderStatus = StageStatus.CANCELLED
+    }
+}
+
 val PageTranslation.isTextlessTerminal: Boolean
     get() = ocrStatus == StageStatus.READY &&
         blocks.isEmpty() &&
@@ -60,9 +83,6 @@ val PageTranslation.shouldSkipAutoScheduling: Boolean
         isStageRunning ||
         hasExhaustedRetries ||
         isTextlessTerminal
-
-val PageTranslation.shouldSkipSequentialScheduling: Boolean
-    get() = hasRenderedResult || isTextlessTerminal
 
 val PageTranslation.lifecycle: PageLifecycle
     get() = when {

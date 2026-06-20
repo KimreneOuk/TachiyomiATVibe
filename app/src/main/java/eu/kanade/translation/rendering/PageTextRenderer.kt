@@ -8,7 +8,6 @@ import android.graphics.Typeface
 import androidx.core.content.res.ResourcesCompat
 import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.TranslationBlock
-import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
@@ -299,13 +298,20 @@ class PageTextRenderer(context: Context) {
 
         private fun isCJK(ch: Char): Boolean {
             val cp = ch.code
-            return (cp in 0x4E00..0x9FFF) || (cp in 0x3400..0x4DBF) ||
-                (cp in 0x20000..0x2A6DF) || (cp in 0x2A700..0x2B73F) ||
-                (cp in 0x2B740..0x2B81F) || (cp in 0xF900..0xFAFF) ||
-                (cp in 0x2F800..0x2FA1F) || (cp in 0x3000..0x303F) ||
-                (cp in 0x3040..0x309F) || (cp in 0x30A0..0x30FF) ||
-                (cp in 0x31F0..0x31FF) || (cp in 0xAC00..0xD7AF) ||
-                (cp in 0xFF00..0xFFEF) || (cp in 0xFE30..0xFE4F)
+            return (cp in 0x4E00..0x9FFF) ||
+                (cp in 0x3400..0x4DBF) ||
+                (cp in 0x20000..0x2A6DF) ||
+                (cp in 0x2A700..0x2B73F) ||
+                (cp in 0x2B740..0x2B81F) ||
+                (cp in 0xF900..0xFAFF) ||
+                (cp in 0x2F800..0x2FA1F) ||
+                (cp in 0x3000..0x303F) ||
+                (cp in 0x3040..0x309F) ||
+                (cp in 0x30A0..0x30FF) ||
+                (cp in 0x31F0..0x31FF) ||
+                (cp in 0xAC00..0xD7AF) ||
+                (cp in 0xFF00..0xFFEF) ||
+                (cp in 0xFE30..0xFE4F)
         }
 
         internal fun computeRects(block: TranslationBlock): RectResult {

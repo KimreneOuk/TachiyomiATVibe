@@ -15,9 +15,11 @@ class PaddleCtcDecoderTest {
     }
 
     @Test
-    fun `decode maps final paddle class to space`() {
+    fun `decode maps the class one past the dictionary to space`() {
+        // PaddleOCR reserves the index (dictionary.size + 1) as the space token.
+        // For a 2-entry dictionary that is index 3.
         PaddleCtcDecoder.decode(
-            intArrayOf(1, 4, 2),
+            intArrayOf(1, 3, 2),
             listOf("a", "b"),
         ) shouldBe "a b"
     }

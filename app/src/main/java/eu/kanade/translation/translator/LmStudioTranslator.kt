@@ -15,7 +15,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
-import java.util.regex.Pattern
 
 class LmStudioTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -84,7 +83,10 @@ class LmStudioTranslator(
                     }
                     addJsonObject {
                         put("role", "user")
-                        put("content", "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr")
+                        put(
+                            "content",
+                            "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
+                        )
                     }
                 }
             }.toString()
@@ -109,7 +111,7 @@ class LmStudioTranslator(
                 )
             }
 
-            val parsedTranslations = parseResponse(rawOutput, flatBlocks.size)
+            val parsedTranslations = NumberedLineResponseParser.parse(rawOutput, flatBlocks.size)
             flatBlocks.forEachIndexed { index, (block, originalText) ->
                 val translated = parsedTranslations[index].takeUnless { it.isNullOrBlank() } ?: originalText
                 block.translation = translated
@@ -119,27 +121,6 @@ class LmStudioTranslator(
             logcat { "LM Studio Translation Error : ${e.stackTraceToString()}" }
             throw e
         }
-    }
-
-    private fun parseResponse(raw: String, expectedCount: Int): Map<Int, String> {
-        val result = mutableMapOf<Int, String>()
-        val pattern = Pattern.compile("^\\[(\\d+)\\]\\s*(.+)$", Pattern.MULTILINE)
-        val matcher = pattern.matcher(raw)
-        while (matcher.find()) {
-            val idx = matcher.group(1)!!.toInt()
-            val text = matcher.group(2)!!.trim()
-            result[idx] = text
-        }
-
-        if (result.isEmpty()) {
-            raw.trim().split("\n").forEachIndexed { i, line ->
-                val trimmed = line.trim()
-                if (trimmed.isNotEmpty() && i < expectedCount) {
-                    result[i] = trimmed
-                }
-            }
-        }
-        return result
     }
 
     override fun close() {

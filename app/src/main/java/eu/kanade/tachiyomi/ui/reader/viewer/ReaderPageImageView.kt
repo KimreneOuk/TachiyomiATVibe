@@ -92,7 +92,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         processingIndicator?.hide()
     }
 
-    //TachiyomiAT : need this for textblock placements
+    // TachiyomiAT : need this for textblock placements
     var pageView: View? = null
 
     private var config: Config? = null
@@ -100,7 +100,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     var onImageLoaded: (() -> Unit)? = null
     var onImageLoadError: (() -> Unit)? = null
     var onScaleChanged: ((newScale: Float) -> Unit)? = null
-    //TachiyomiAT
+
+    // TachiyomiAT
     var onCenterChanged: ((newCenter: PointF) -> Unit)? = null
 
     var onViewClicked: (() -> Unit)? = null
@@ -147,7 +148,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         relayoutTranslateButton()
     }
 
-    //TachiyomiAT
+    // TachiyomiAT
     @CallSuper
     open fun onCenterChanged(newCenter: PointF?) {
         if (newCenter != null) onCenterChanged?.invoke(newCenter)
@@ -184,12 +185,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
             setIconResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
             iconSize = (24 * resources.displayMetrics.density).toInt()
             iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
-            text = ""  // icon-only button
+            text = "" // icon-only button
             insetTop = 0
             insetBottom = 0
             cornerRadius = (4 * resources.displayMetrics.density).toInt()
             strokeWidth = 0
-            setBackgroundColor(0x66000000)  // semi-transparent dark
+            setBackgroundColor(0x66000000) // semi-transparent dark
             isClickable = true
             isFocusable = true
             layoutParams = FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
@@ -673,7 +674,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     }
 
                     override fun onCenterChanged(newCenter: PointF?, origin: Int) {
-                        //TachiyomiAT
+                        // TachiyomiAT
                         this@ReaderPageImageView.onCenterChanged(newCenter)
                     }
                 },

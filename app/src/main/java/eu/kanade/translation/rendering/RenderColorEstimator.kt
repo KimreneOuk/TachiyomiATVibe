@@ -2,11 +2,9 @@ package eu.kanade.translation.rendering
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.TranslationBlock
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-import kotlin.math.sqrt
 
 /**
  * TachiyomiAT: shared text-color / stroke-color / stroke-width estimator.
@@ -45,18 +43,26 @@ import kotlin.math.sqrt
 object RenderColorEstimator {
 
     // (textColor, strokeColor, strokeWidth)
-    private val DARK_BG_COLORS = Triple(0xFFFFFFFF, 0xFF000000, 4.5f)   // white text on dark
-    private val LIGHT_BG_COLORS = Triple(0xFF000000, 0xFFFFFFFF, 3.0f)  // black text on light
+    private val DARK_BG_COLORS = Triple(0xFFFFFFFF, 0xFF000000, 4.5f) // white text on dark
+    private val LIGHT_BG_COLORS = Triple(0xFF000000, 0xFFFFFFFF, 3.0f) // black text on light
 
     // Luma thresholds for background classification (Rec.601 weights).
     private const val DARK_BG_LUMA = 85f
 
-    // Gray-snap band. A chosen text color in [GRAY_MIN_LUMA, GRAY_MAX_LUMA] AND
-    // with low saturation is snapped to pure black — mid-gray text on a
-    // mid-gray inpaint is illegible and there is no reason to keep it gray.
-    private const val GRAY_MIN_LUMA = 40f
-    private const val GRAY_MAX_LUMA = 200f
-    private const val GRAY_MAX_SAT = 25f // max channel spread for "gray"
+    /**
+     * Pure, Bitmap-free color decision: given the dominant background luma
+     * (Rec.601, 0..255), pick (textColor, strokeColor, strokeWidth) and apply
+     * the gray-snap. Extracted from [estimate] so the policy is unit-testable
+     * without an `android.graphics.Bitmap`.
+     *
+     *  - dark background  → white text + black stroke (wide)
+     *  - light background → black text + white stroke (narrower)
+     *  - then snap any low-saturation mid-gray text color to pure black.
+     */
+    internal fun colorPolicy(bgLuma: Float): Triple<Long, Long, Float> {
+        val base = if (bgLuma < DARK_BG_LUMA) DARK_BG_COLORS else LIGHT_BG_COLORS
+        return snapGray(base)
+    }
 
     /**
      * Estimate (textColor, strokeColor, strokeWidth) for a single bounding box
@@ -97,8 +103,18 @@ object RenderColorEstimator {
         bitmap.getPixels(pixels, 0, cropW, left, top, cropW, cropH)
         val step = max(1, pixels.size / 1200)
 
-        // 2-means (seeded black vs white, 5 iterations) — identical to the
-        // legacy estimators so behavior is preserved on the non-inverted path.
+        val bgColor = dominantBackgroundCluster(pixels, step)
+        val brightness = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
+        return colorPolicy(brightness)
+    }
+
+    /**
+     * 2-means (seeded black vs white, 5 iterations) to find the dominant
+     * background cluster of [pixels] sampled every [step]. Returns the RGB
+     * center of the more populous cluster. Identical to the legacy estimators
+     * so behavior is preserved on the non-inverted path.
+     */
+    private fun dominantBackgroundCluster(pixels: IntArray, step: Int): FloatArray {
         var center0 = floatArrayOf(0f, 0f, 0f)
         var center1 = floatArrayOf(255f, 255f, 255f)
         var count0 = 0
@@ -117,9 +133,15 @@ object RenderColorEstimator {
                 val d0 = (r - center0[0]).pow(2) + (g - center0[1]).pow(2) + (b - center0[2]).pow(2)
                 val d1 = (r - center1[0]).pow(2) + (g - center1[1]).pow(2) + (b - center1[2]).pow(2)
                 if (d0 < d1) {
-                    sum0[0] += r; sum0[1] += g; sum0[2] += b; count0++
+                    sum0[0] += r
+                    sum0[1] += g
+                    sum0[2] += b
+                    count0++
                 } else {
-                    sum1[0] += r; sum1[1] += g; sum1[2] += b; count1++
+                    sum1[0] += r
+                    sum1[1] += g
+                    sum1[2] += b
+                    count1++
                 }
             }
             if (count0 > 0) {
@@ -133,13 +155,7 @@ object RenderColorEstimator {
                 center1[2] = sum1[2] / count1
             }
         }
-
-        // The dominant (more populous) cluster is the background.
-        val bgColor = if (count0 >= count1) center0 else center1
-        val brightness = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
-
-        val base = if (brightness < DARK_BG_LUMA) DARK_BG_COLORS else LIGHT_BG_COLORS
-        return snapGray(base)
+        return if (count0 >= count1) center0 else center1
     }
 
     /**
@@ -189,8 +205,12 @@ object RenderColorEstimator {
      * the legacy 0xFF1A1A1A) on a mid-gray inpaint is illegible, and there is
      * no good reason to render gray text — snap to black. Saturated colors
      * (e.g. a deliberately colored translation) are preserved.
+     *
+     * Gray-snap band: a chosen text color with luma in
+     * [GRAY_MIN_LUMA, GRAY_MAX_LUMA] AND channel spread ≤ GRAY_MAX_SAT snaps
+     * to pure black. `internal` so the policy is unit-testable.
      */
-    private fun snapGray(triple: Triple<Long, Long, Float>): Triple<Long, Long, Float> {
+    internal fun snapGray(triple: Triple<Long, Long, Float>): Triple<Long, Long, Float> {
         val textArgb = triple.first
         val a = (textArgb shr 24 and 0xFF).toInt()
         val r = (textArgb shr 16 and 0xFF).toInt()
@@ -207,4 +227,11 @@ object RenderColorEstimator {
         }
         return triple
     }
+
+    // Gray-snap band. A chosen text color in [GRAY_MIN_LUMA, GRAY_MAX_LUMA] AND
+    // with low saturation is snapped to pure black — mid-gray text on a
+    // mid-gray inpaint is illegible and there is no reason to keep it gray.
+    private const val GRAY_MIN_LUMA = 40f
+    private const val GRAY_MAX_LUMA = 200f
+    private const val GRAY_MAX_SAT = 25f // max channel spread for "gray"
 }

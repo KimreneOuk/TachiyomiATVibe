@@ -114,10 +114,8 @@ class GeminiTranslator(
                     }
                 }
                 v.blocks.forEachIndexed { i, b ->
-                    run {
-                        val res = resJson.optJSONArray(k)?.optString(i, "NULL")
-                        b.translation = if (res == null || res == "NULL") b.text else res
-                    }
+                    val res = resJson.optJSONArray(k)?.optString(i, "NULL")
+                    b.translation = if (res == null || res == "NULL") b.text else res
                 }
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)

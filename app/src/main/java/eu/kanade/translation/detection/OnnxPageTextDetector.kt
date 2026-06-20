@@ -1,8 +1,9 @@
 package eu.kanade.translation.detection
 
-import android.graphics.Bitmap
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
+import android.graphics.Bitmap
+import eu.kanade.translation.recognition.BoxGeometry
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -10,9 +11,6 @@ import tachiyomi.domain.translation.pools.BitmapPool
 import java.io.File
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
 class OnnxPageTextDetector {
 
@@ -193,7 +191,7 @@ class OnnxPageTextDetector {
                 .sortedByDescending { it.second.score }
             val keep = mutableListOf<Detection>()
             for ((_, det) in indexed) {
-                if (keep.any { isGeometricDuplicate(det.bbox, it.bbox) }) {
+                if (keep.any { BoxGeometry.isGeometricDuplicate(det.bbox, it.bbox, DEDUP_THRESHOLDS) }) {
                     removed.add(det)
                 } else {
                     keep.add(det)
@@ -206,55 +204,18 @@ class OnnxPageTextDetector {
         return detections.filter { it !in removed }
     }
 
-    private fun isGeometricDuplicate(a: IntArray, b: IntArray): Boolean {
-        val iou = computeIou(a, b)
-        if (iou > IOU_THRESHOLD) return true
-        val minArea = min(bboxArea(a), bboxArea(b))
-        if (minArea > 0 && intersectionArea(a, b).toFloat() / minArea.toFloat() > CONTAINMENT_THRESHOLD) return true
-
-        val aw = max(1, a[2] - a[0])
-        val ah = max(1, a[3] - a[1])
-        val bw = max(1, b[2] - b[0])
-        val bh = max(1, b[3] - b[1])
-        val centerDx = kotlin.math.abs((a[0] + a[2]) - (b[0] + b[2])) / 2f
-        val centerDy = kotlin.math.abs((a[1] + a[3]) - (b[1] + b[3])) / 2f
-        return centerDx <= CENTER_THRESHOLD * min(aw, bw) &&
-            centerDy <= CENTER_THRESHOLD * min(ah, bh) &&
-            kotlin.math.abs(aw - bw).toFloat() <= SIZE_THRESHOLD * max(aw, bw) &&
-            kotlin.math.abs(ah - bh).toFloat() <= SIZE_THRESHOLD * max(ah, bh)
-    }
-
-    private fun computeIou(a: IntArray, b: IntArray): Float {
-        val ax1 = a[0]; val ay1 = a[1]; val ax2 = a[2]; val ay2 = a[3]
-        val bx1 = b[0]; val by1 = b[1]; val bx2 = b[2]; val by2 = b[3]
-        val ix1 = max(ax1, bx1)
-        val iy1 = max(ay1, by1)
-        val ix2 = min(ax2, bx2)
-        val iy2 = min(ay2, by2)
-        if (ix2 <= ix1 || iy2 <= iy1) return 0.0f
-        val inter = (ix2 - ix1) * (iy2 - iy1)
-        val aArea = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-        val bArea = max(0, bx2 - bx1) * max(0, by2 - by1)
-        val union = aArea + bArea - inter
-        return if (union > 0) inter.toFloat() / union.toFloat() else 0.0f
-    }
-
-    private fun intersectionArea(a: IntArray, b: IntArray): Int {
-        val ix1 = max(a[0], b[0])
-        val iy1 = max(a[1], b[1])
-        val ix2 = min(a[2], b[2])
-        val iy2 = min(a[3], b[3])
-        if (ix2 <= ix1 || iy2 <= iy1) return 0
-        return (ix2 - ix1) * (iy2 - iy1)
-    }
-
-    private fun bboxArea(box: IntArray): Int = max(0, box[2] - box[0]) * max(0, box[3] - box[1])
-
     companion object {
         private const val CONFIDENCE_THRESHOLD = 0.45f
-        private const val IOU_THRESHOLD = 0.75f
-        private const val CONTAINMENT_THRESHOLD = 0.88f
-        private const val CENTER_THRESHOLD = 0.12f
-        private const val SIZE_THRESHOLD = 0.18f
+
+        /**
+         * Tuned thresholds for the detector-stage geometric dedupe. The
+         * algorithm lives in [BoxGeometry]; only the constants are stage-specific.
+         */
+        private val DEDUP_THRESHOLDS = BoxGeometry.DedupThresholds(
+            iou = 0.75f,
+            containment = 0.88f,
+            center = 0.12f,
+            size = 0.18f,
+        )
     }
 }

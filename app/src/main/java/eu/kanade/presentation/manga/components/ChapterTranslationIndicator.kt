@@ -165,7 +165,7 @@ private fun TranslatedIndicator(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painter= painterResource(R.drawable.ic_translate_circle_filled),
+            painter = painterResource(R.drawable.ic_translate_circle_filled),
             contentDescription = null,
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,

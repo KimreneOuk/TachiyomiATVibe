@@ -2,6 +2,7 @@ package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
@@ -65,8 +66,58 @@ class ChapterTranslationStore(
         }
     }
 
+    /**
+     * Clears queue-like entries after a user cancel/auto-window replacement.
+     * Pages with a rendered/cleaned result are kept; transient running, pending,
+     * cancelled, and failed entries without output are reset so the reader queue
+     * reflects only the next active window.
+     */
+    suspend fun clearTransientQueuePages(reason: String? = null) {
+        mutex.withLock {
+            var changed = false
+            val now = System.currentTimeMillis()
+            pages = pages.mapValues { (_, page) ->
+                if (page.hasRenderedResult || !page.isQueueVisibleTransient()) {
+                    page
+                } else {
+                    changed = true
+                    page.copy(
+                        ocrStatus = page.ocrStatus.cancelIfTransient(),
+                        translationStatus = page.translationStatus.cancelIfTransient(),
+                        inpaintStatus = page.inpaintStatus.cancelIfTransient(),
+                        renderStatus = page.renderStatus.cancelIfTransient(),
+                        errorMessage = reason,
+                        updatedAt = now,
+                    )
+                }
+            }.toPersistentMap()
+            if (changed) {
+                persistLocked()
+                _state.value = snapshotPages()
+            }
+        }
+    }
+
     private fun snapshotPages(): Map<String, PageTranslation> =
         pages.entries.associate { (key, page) -> key to page.copy() }
+
+    private fun PageTranslation.isQueueVisibleTransient(): Boolean {
+        return ocrStatus.isQueueTransient() ||
+            translationStatus.isQueueTransient() ||
+            inpaintStatus.isQueueTransient() ||
+            renderStatus.isQueueTransient()
+    }
+
+    private fun String.isQueueTransient(): Boolean {
+        return this == StageStatus.PENDING ||
+            this == StageStatus.RUNNING ||
+            this == StageStatus.FAILED ||
+            this == StageStatus.CANCELLED
+    }
+
+    private fun String.cancelIfTransient(): String {
+        return if (isQueueTransient()) StageStatus.CANCELLED else this
+    }
 
     private fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
         if (updated.hasRenderedResult || updated.isStageFailed) return true
@@ -131,7 +182,9 @@ class ChapterTranslationStore(
             try {
                 tempFile.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
             } catch (e: Exception) {
-                try { tempFile.delete() } catch (_: Exception) {}
+                try {
+                    tempFile.delete()
+                } catch (_: Exception) {}
                 throw e
             }
             // Replace the target with the completed temp file. SAF's
@@ -157,7 +210,9 @@ class ChapterTranslationStore(
                         target.openOutputStream().use { output -> input.copyTo(output) }
                     }
                 } finally {
-                    try { tempFile.delete() } catch (_: Exception) {}
+                    try {
+                        tempFile.delete()
+                    } catch (_: Exception) {}
                 }
             }
         } catch (e: Exception) {

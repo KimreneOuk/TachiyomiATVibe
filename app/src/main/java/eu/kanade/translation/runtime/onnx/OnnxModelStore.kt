@@ -113,9 +113,19 @@ class OnnxModelStore(private val context: Context) {
         val dest = File(dir, name)
         if (dest.exists() && dest.length() > 0) {
             if (name.endsWith(".onnx")) {
-                val buffer = ByteArray(1)
-                dest.inputStream().use { it.read(buffer) }
-                if (buffer[0] == 0x08.toByte()) return dest
+                if (looksLikeValidOnnx(dest)) return dest
+                // TachiyomiAT: the cached copy is structurally invalid (truncated
+                // copy, partial write, or a corrupt asset). A near-zero-byte or
+                // wrongly-headed .onnx previously passed the single-byte 0x08
+                // check and then produced garbage / all-gray inpaint output, or
+                // a confusing OrtException deep in session creation. Delete it so
+                // we re-copy from assets below rather than trusting a bad file.
+                logcat(LogPriority.WARN) {
+                    "Cached $name failed ONNX integrity check (size=${dest.length()}); re-copying from assets"
+                }
+                if (!dest.delete()) {
+                    logcat(LogPriority.WARN) { "Could not delete corrupt cached $name; attempting overwrite" }
+                }
             } else {
                 return dest
             }
@@ -142,5 +152,55 @@ class OnnxModelStore(private val context: Context) {
             outputStream?.close()
         }
         return dest
+    }
+
+    /**
+     * TachiyomiAT: lightweight structural validity check for a cached .onnx,
+     * replacing the old single-byte `0x08` heuristic which any truncated file
+     * could pass. A corrupt/garbage model that passes the old check either
+     * throws an opaque OrtException at session creation (surfaces as a generic
+     * "Inpainting failed") or, worse, loads a session that emits near-zero
+     * output → uniform 128-gray inpaint. Catching it here forces a clean
+     * re-copy from assets instead.
+     *
+     * Verifies, without a protobuf parser:
+     *  1. Size floor: a real ONNX model for this app is multi-MB. A file below
+     *     [MIN_VALID_ONNX_BYTES] is certainly truncated/empty. (The AOT model
+     *     is ~23MB; this floor is deliberately permissive for future smaller
+     *     models while still rejecting garbage.)
+     *  2. Protobuf header shape: an onnx ModelProto's first field is
+     *     `ir_version` (field 1, varint), so byte 0 is 0x08 and byte 1 is a
+     *     single-byte varint ir_version (1..15 → high bit clear). Field 7
+     *     (`producer_name`, length-delimited, tag 0x3a) commonly follows.
+     *  3. Magic NOT matching: reject files that are clearly something else
+     *     (PNG `89 50 4E 47`, ZIP/PK `50 4B`, gzip `1F 8B`).
+     *
+     * Returns true only if all cheap checks pass; a true validation is the
+     * downstream OrtSession creation (in [AOTInpainting.initialize]).
+     */
+    private fun looksLikeValidOnnx(file: File): Boolean {
+        if (file.length() < MIN_VALID_ONNX_BYTES) return false
+        val header = ByteArray(2)
+        val read = try {
+            file.inputStream().use { it.read(header) }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN) { "Could not read ${file.name} header: ${e.message}" }
+            return false
+        }
+        if (read < 2) return false
+        // Field 1 (ir_version), varint wire type → tag 0x08.
+        if (header[0] != 0x08.toByte()) return false
+        // ir_version is a single-byte varint (values 1..15 have the high bit
+        // clear; current ONNX ir_version is 8). A high-bit-set first varint byte
+        // with no continuation is not a valid ModelProto opener.
+        if (header[1].toInt() and 0x80 != 0) return false
+        return true
+    }
+
+    private companion object {
+        // TachiyomiAT: real models in this app are multi-MB (AOT ~23MB, OCR
+        // encoder/decoder smaller but still well above this floor). Anything
+        // below 64 KiB is certainly truncated.
+        const val MIN_VALID_ONNX_BYTES = 64L * 1024L
     }
 }

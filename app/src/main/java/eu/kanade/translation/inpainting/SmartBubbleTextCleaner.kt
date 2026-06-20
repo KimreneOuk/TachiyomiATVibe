@@ -2,19 +2,17 @@ package eu.kanade.translation.inpainting
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import java.util.ArrayDeque
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 
 class SmartBubbleTextCleaner(
     private val contextPad: Int = 10,
     private val textMaskPad: Int = 2,
-    private val textThreshold: Int = 25,
     private val colorDistanceThreshold: Float = 45.0f,
     // TachiyomiAT: 2 → 3 iterations. With faint-text detection now also keying off
     // the ring-sampled background median (see generateTextMask), the text mask
@@ -31,8 +29,9 @@ class SmartBubbleTextCleaner(
 
     private fun getWorkingBuffers(size: Int): Pair<IntArray, IntArray> {
         return if (size == currentBufferSize &&
-                   workingBuffer1 != null &&
-                   workingBuffer2 != null) {
+            workingBuffer1 != null &&
+            workingBuffer2 != null
+        ) {
             Pair(workingBuffer1!!, workingBuffer2!!)
         } else {
             workingBuffer1 = IntArray(size)
@@ -77,6 +76,7 @@ class SmartBubbleTextCleaner(
             val ly2 = min(contextH, box[3] - cy1)
             intArrayOf(lx1, ly1, lx2, ly2)
         }
+        val eraseBoxes = expandBoxes(localTextBoxes, max(textMaskPad, 8), contextW, contextH)
 
         val ringMask = ByteArray(contextW * contextH) { 1.toByte() }
         val border = 2
@@ -93,7 +93,7 @@ class SmartBubbleTextCleaner(
             }
         }
         for (box in localTextBoxes) {
-            val mp = textMaskPad
+            val mp = textMaskPad + 6
             val ex1 = max(0, box[0] - mp)
             val ey1 = max(0, box[1] - mp)
             val ex2 = min(contextW, box[2] + mp)
@@ -123,9 +123,9 @@ class SmartBubbleTextCleaner(
         val bgStats = sampleBackgroundStats(contextPixels, ringMask, contextW, contextH)
         val bgType = classifyBackground(bgStats)
 
-        val combinedMask = ByteArray(contextW * contextH)
+        var combinedMask = ByteArray(contextW * contextH)
         for (box in localTextBoxes) {
-            val mp = textMaskPad
+            val mp = max(textMaskPad, 8)
             val ex1 = max(0, box[0] - mp)
             val ey1 = max(0, box[1] - mp)
             val ex2 = min(contextW, box[2] + mp)
@@ -160,7 +160,11 @@ class SmartBubbleTextCleaner(
             // only as a last resort fill the box. Most of the time the recovery
             // pass succeeds and the box is never blindly filled.
             val recovered = recoverFaintTextMask(
-                contextPixels, bgStats, localTextBoxes, contextW, contextH,
+                contextPixels,
+                bgStats,
+                localTextBoxes,
+                contextW,
+                contextH,
             )
             if (recovered.any { it != 0.toByte() }) {
                 for (i in recovered.indices) {
@@ -168,29 +172,58 @@ class SmartBubbleTextCleaner(
                 }
             } else {
                 val tightFallback = tightDifferenceMask(
-                    contextPixels, bgStats, localTextBoxes, contextW, contextH,
+                    contextPixels,
+                    bgStats,
+                    localTextBoxes,
+                    contextW,
+                    contextH,
                 )
                 for (i in tightFallback.indices) {
                     if (tightFallback[i] != 0.toByte()) combinedMask[i] = 1
                 }
             }
         }
+        combinedMask = unionMasks(
+            combinedMask,
+            buildLocalContrastTextMask(
+                pixels = contextPixels,
+                boxes = eraseBoxes,
+                width = contextW,
+                height = contextH,
+            ),
+        )
 
-        val roundedAllowed = buildRoundedAllowedMask(localTextBoxes, contextW, contextH)
-        val bubbleInterior = buildBubbleInteriorMask(
-            intArrayOf(bx1 - cx1, by1 - cy1, bx2 - cx1, by2 - cy1),
+        var finalMask = combinedMask
+        finalMask = BubbleMaskBuilder.dilateMask(finalMask, contextW, contextH, dilationIterations)
+        if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE && eraseBoxes.isNotEmpty()) {
+            val aggressiveContrast = buildLocalContrastTextMask(
+                pixels = contextPixels,
+                boxes = eraseBoxes,
+                width = contextW,
+                height = contextH,
+                aggressive = true,
+            )
+            finalMask = unionMasks(finalMask, aggressiveContrast)
+            if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE) {
+                logcat(LogPriority.INFO) {
+                    "[bubble_cleaner] low text-mask coverage; leaving OCR boxes unfilled groupBoxes=${textBoxes.size}"
+                }
+            }
+        }
+        val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, featherRadius)
+
+        // TachiyomiAT: local per-pixel background instead of one flat median —
+        // see buildLocalBackground. This is the fix for the gray-rectangle
+        // symptom: on grayscale/tinted backgrounds the ring median was gray
+        // (~128) and got painted over the whole masked region.
+        val localBg = buildLocalBackground(
+            contextPixels,
+            finalMask,
             contextW,
             contextH,
-            bubbleErode + 2,
+            bgStats.medianColor,
+            preferFlatFill = shouldUseSolidFlatFill(bgType, bgStats),
         )
-        var finalMask = andMasks(combinedMask, roundedAllowed)
-        finalMask = andMasks(finalMask, bubbleInterior)
-        finalMask = dilateMask(finalMask, contextW, contextH)
-        val alpha = buildFeatherAlpha(finalMask, contextW, contextH)
-
-        val medianR = (bgStats.medianColor shr 16 and 0xFF).toInt()
-        val medianG = (bgStats.medianColor shr 8 and 0xFF).toInt()
-        val medianB = (bgStats.medianColor and 0xFF).toInt()
 
         for (y in 0 until contextH) {
             for (x in 0 until contextW) {
@@ -201,9 +234,13 @@ class SmartBubbleTextCleaner(
                 val pr = (px shr 16 and 0xFF)
                 val pg = (px shr 8 and 0xFF)
                 val pb = (px and 0xFF)
-                val r = (pr * (1.0f - a) + medianR * a).toInt().coerceIn(0, 255)
-                val g = (pg * (1.0f - a) + medianG * a).toInt().coerceIn(0, 255)
-                val b = (pb * (1.0f - a) + medianB * a).toInt().coerceIn(0, 255)
+                val bgpx = localBg[idx]
+                val bgR = (bgpx shr 16 and 0xFF)
+                val bgG = (bgpx shr 8 and 0xFF)
+                val bgB = (bgpx and 0xFF)
+                val r = (pr * (1.0f - a) + bgR * a).toInt().coerceIn(0, 255)
+                val g = (pg * (1.0f - a) + bgG * a).toInt().coerceIn(0, 255)
+                val b = (pb * (1.0f - a) + bgB * a).toInt().coerceIn(0, 255)
                 resultPixels[idx] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
             }
         }
@@ -211,7 +248,7 @@ class SmartBubbleTextCleaner(
         image.setPixels(resultPixels, 0, contextW, cx1, cy1, contextW, contextH)
         logcat(LogPriority.INFO) {
             "[bubble_cleaner] group boxes=${textBoxes.size} bg=$bgType std=${bgStats.grayStd.format1()} " +
-                "mask=${maskCoverage(finalMask).format1()}% roi=${contextW}x${contextH}"
+                "mask=${BubbleMaskBuilder.maskCoverage(finalMask).format1()}% roi=${contextW}x$contextH"
         }
         return image
     }
@@ -233,7 +270,10 @@ class SmartBubbleTextCleaner(
 
     private fun cleanSingleRegion(
         image: Bitmap,
-        x1: Int, y1: Int, x2: Int, y2: Int,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
     ) {
         val w = image.width
         val h = image.height
@@ -257,11 +297,17 @@ class SmartBubbleTextCleaner(
         val localX2 = x2 - cx1
         val localY2 = y2 - cy1
 
-        val mp = textMaskPad
+        val mp = max(textMaskPad, 8)
         val ex1 = max(0, localX1 - mp)
         val ey1 = max(0, localY1 - mp)
         val ex2 = min(contextW, localX2 + mp)
         val ey2 = min(contextH, localY2 + mp)
+
+        val ringMp = textMaskPad + 6
+        val ringEx1 = max(0, localX1 - ringMp)
+        val ringEy1 = max(0, localY1 - ringMp)
+        val ringEx2 = min(contextW, localX2 + ringMp)
+        val ringEy2 = min(contextH, localY2 + ringMp)
 
         val ringMask = ByteArray(contextW * contextH) { 1.toByte() }
         val border = 2
@@ -277,8 +323,8 @@ class SmartBubbleTextCleaner(
                 ringMask[(contextH - 1 - by) * contextW + bx] = 0
             }
         }
-        for (ry in ey1 until ey2) {
-            for (rx in ex1 until ex2) {
+        for (ry in ringEy1 until ringEy2) {
+            for (rx in ringEx1 until ringEx2) {
                 ringMask[ry * contextW + rx] = 0
             }
         }
@@ -293,7 +339,7 @@ class SmartBubbleTextCleaner(
             ex1, ey1, ex2, ey2, contextW, contextH,
         )
 
-        val combinedMask = ByteArray(contextW * contextH)
+        var combinedMask = ByteArray(contextW * contextH)
         val zoneW = ex2 - ex1
         val zoneH = ey2 - ey1
         var hasAny = false
@@ -313,7 +359,11 @@ class SmartBubbleTextCleaner(
             // entire box — the "gray rectangle" symptom on grayscale panels).
             val singleBox = intArrayOf(ex1, ey1, ex2, ey2)
             val recovered = recoverFaintTextMask(
-                contextPixels, bgStats, listOf(singleBox), contextW, contextH,
+                contextPixels,
+                bgStats,
+                listOf(singleBox),
+                contextW,
+                contextH,
             )
             if (recovered.any { it != 0.toByte() }) {
                 for (i in recovered.indices) {
@@ -321,22 +371,56 @@ class SmartBubbleTextCleaner(
                 }
             } else {
                 val tightFallback = tightDifferenceMask(
-                    contextPixels, bgStats, listOf(singleBox), contextW, contextH,
+                    contextPixels,
+                    bgStats,
+                    listOf(singleBox),
+                    contextW,
+                    contextH,
                 )
                 for (i in tightFallback.indices) {
                     if (tightFallback[i] != 0.toByte()) combinedMask[i] = 1
                 }
             }
         }
+        combinedMask = unionMasks(
+            combinedMask,
+            buildLocalContrastTextMask(
+                pixels = contextPixels,
+                boxes = listOf(intArrayOf(ex1, ey1, ex2, ey2)),
+                width = contextW,
+                height = contextH,
+            ),
+        )
 
-        val roundedAllowed = buildRoundedAllowedMask(listOf(intArrayOf(ex1, ey1, ex2, ey2)), contextW, contextH)
-        var finalMask = andMasks(combinedMask, roundedAllowed)
-        finalMask = dilateMask(finalMask, contextW, contextH)
-        val alpha = buildFeatherAlpha(finalMask, contextW, contextH)
+        var finalMask = combinedMask
+        finalMask = BubbleMaskBuilder.dilateMask(finalMask, contextW, contextH, dilationIterations)
+        if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE) {
+            val aggressiveContrast = buildLocalContrastTextMask(
+                pixels = contextPixels,
+                boxes = listOf(intArrayOf(ex1, ey1, ex2, ey2)),
+                width = contextW,
+                height = contextH,
+                aggressive = true,
+            )
+            finalMask = unionMasks(finalMask, aggressiveContrast)
+            if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE) {
+                logcat(LogPriority.INFO) {
+                    "[bubble_cleaner] low text-mask coverage; leaving OCR region unfilled"
+                }
+            }
+        }
+        val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, featherRadius)
 
-        val medianR = (bgStats.medianColor shr 16 and 0xFF).toInt()
-        val medianG = (bgStats.medianColor shr 8 and 0xFF).toInt()
-        val medianB = (bgStats.medianColor and 0xFF).toInt()
+        // TachiyomiAT: local per-pixel background — same gray-rectangle fix as
+        // cleanBubbleGroup (see buildLocalBackground).
+        val localBg = buildLocalBackground(
+            contextPixels,
+            finalMask,
+            contextW,
+            contextH,
+            bgStats.medianColor,
+            preferFlatFill = shouldUseSolidFlatFill(bgType, bgStats),
+        )
 
         for (yy in 0 until contextH) {
             for (xx in 0 until contextW) {
@@ -347,9 +431,13 @@ class SmartBubbleTextCleaner(
                 val pr = (px shr 16 and 0xFF)
                 val pg = (px shr 8 and 0xFF)
                 val pb = (px and 0xFF)
-                val r = (pr * (1.0f - a) + medianR * a).toInt().coerceIn(0, 255)
-                val g = (pg * (1.0f - a) + medianG * a).toInt().coerceIn(0, 255)
-                val b = (pb * (1.0f - a) + medianB * a).toInt().coerceIn(0, 255)
+                val bgpx = localBg[idx]
+                val bgR = (bgpx shr 16 and 0xFF)
+                val bgG = (bgpx shr 8 and 0xFF)
+                val bgB = (bgpx and 0xFF)
+                val r = (pr * (1.0f - a) + bgR * a).toInt().coerceIn(0, 255)
+                val g = (pg * (1.0f - a) + bgG * a).toInt().coerceIn(0, 255)
+                val b = (pb * (1.0f - a) + bgB * a).toInt().coerceIn(0, 255)
                 resultPixels[idx] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
             }
         }
@@ -357,7 +445,7 @@ class SmartBubbleTextCleaner(
         image.setPixels(resultPixels, 0, contextW, cx1, cy1, contextW, contextH)
         logcat(LogPriority.INFO) {
             "[bubble_cleaner] region bg=$bgType std=${bgStats.grayStd.format1()} " +
-                "mask=${maskCoverage(finalMask).format1()}% roi=${contextW}x${contextH}"
+                "mask=${BubbleMaskBuilder.maskCoverage(finalMask).format1()}% roi=${contextW}x$contextH"
         }
     }
 
@@ -455,7 +543,7 @@ class SmartBubbleTextCleaner(
             if (!zoneHasAny) continue
             // Drop components that touch the zone edge (likely anti-aliasing
             // bleed, not real text) — same hygiene as generateTextMask.
-            val filtered = removeEdgeTouchingComponents(zoneMask, zoneW, zoneH)
+            val filtered = BubbleMaskBuilder.removeEdgeTouchingComponents(zoneMask, zoneW, zoneH)
             for (zy in 0 until zoneH) {
                 for (zx in 0 until zoneW) {
                     if (filtered[zy * zoneW + zx] != 0.toByte()) {
@@ -569,8 +657,11 @@ class SmartBubbleTextCleaner(
                 if (x > 0 && y > 0) {
                     val left = pixels[y * width + (x - 1)]
                     val up = pixels[(y - 1) * width + x]
-                    val leftGray = (((left shr 16 and 0xFF) * 299) + ((left shr 8 and 0xFF) * 587) + ((left and 0xFF) * 114)) / 1000
-                    val upGray = (((up shr 16 and 0xFF) * 299) + ((up shr 8 and 0xFF) * 587) + ((up and 0xFF) * 114)) / 1000
+                    val leftGray =
+                        (((left shr 16 and 0xFF) * 299) + ((left shr 8 and 0xFF) * 587) + ((left and 0xFF) * 114)) /
+                            1000
+                    val upGray =
+                        (((up shr 16 and 0xFF) * 299) + ((up shr 8 and 0xFF) * 587) + ((up and 0xFF) * 114)) / 1000
                     if (abs(gray - leftGray) + abs(gray - upGray) > 80) edgeCount++
                 }
             }
@@ -624,8 +715,12 @@ class SmartBubbleTextCleaner(
         pixels: IntArray,
         stats: BackgroundStats,
         bgType: String,
-        x1: Int, y1: Int, x2: Int, y2: Int,
-        contextW: Int, contextH: Int,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        contextW: Int,
+        contextH: Int,
     ): ByteArray {
         val zoneW = x2 - x1
         val zoneH = y2 - y1
@@ -682,7 +777,7 @@ class SmartBubbleTextCleaner(
                 }
             }
         }
-        return removeEdgeTouchingComponents(mask, zoneW, zoneH)
+        return BubbleMaskBuilder.removeEdgeTouchingComponents(mask, zoneW, zoneH)
     }
 
     private fun findBackgroundCluster(
@@ -761,26 +856,313 @@ class SmartBubbleTextCleaner(
         return ColorCluster(bgR, bgG, bgB, fgDistance)
     }
 
-    private fun removeEdgeTouchingComponents(
+    private fun sq(value: Float): Float = value * value
+
+    private fun Float.format1(): String = "%.1f".format(this)
+
+    /**
+     * TachiyomiAT: per-pixel LOCAL background color, replacing the single flat
+     * ring-median fill that produced the reported "gray rectangle over the
+     * whole bounding box" on grayscale/tinted backgrounds.
+     *
+     * The old fill painted every masked pixel with [BackgroundStats.medianColor]
+     * — one global color sampled from the border ring. On a grayscale manga
+     * panel or a tinted bubble, that median IS gray (~128), so the cleaned text
+     * region became a uniform gray patch regardless of the local artwork.
+     *
+     * This builds a background estimate that varies per pixel: for each pixel,
+     * it averages the colors of the SURROUNDING non-masked (background) pixels
+     * within a box kernel, weighted by a Gaussian falloff so nearer background
+     * pixels count more. Background pixels keep their own color; masked pixels
+     * get the local-average background — i.e. the background is interpolated
+     * across the text hole (a poor-man's inpaint). On a gradient or textured
+     * background this matches the local artwork instead of one flat gray.
+     *
+     * [medianColor] is still used as a fallback: if no background pixels fall in
+     * the kernel (e.g. the mask fills the whole context — every neighbor is also
+     * masked), the pixel uses the ring median. This preserves the previous
+     * behavior in the degenerate all-masked case while fixing the common case.
+     *
+     * Cost is O(n·ksize²), the same complexity class as [buildFeatherAlpha]
+     * (which already does a per-pixel radius loop), so this is not a perf
+     * regression relative to the existing feather step.
+     *
+     * `internal` so [SmartBubbleTextCleanerTest] can exercise the pure
+     * pixel→color logic without an Android Bitmap (the public clean* API
+     * operates on android.graphics.Bitmap, which plain JVM tests can't load).
+     */
+    internal fun buildLocalBackground(
+        pixels: IntArray,
         mask: ByteArray,
         width: Int,
         height: Int,
+        medianColor: Int,
+        preferFlatFill: Boolean = false,
+    ): IntArray {
+        val n = width * height
+        val bg = IntArray(n)
+        val medianR = (medianColor shr 16 and 0xFF)
+        val medianG = (medianColor shr 8 and 0xFF)
+        val medianB = (medianColor and 0xFF)
+
+        if (preferFlatFill) {
+            val fill = (0xFF shl 24) or (medianR shl 16) or (medianG shl 8) or medianB
+            for (i in 0 until n) {
+                bg[i] = if (mask[i] == 0.toByte()) pixels[i] else fill
+            }
+            return bg
+        }
+
+        val r = max(2, featherRadius)
+        val kernelGaussian = FloatArray(r * 2 + 1) { dy ->
+            val fy = dy - r
+            // sigma ~ r/2 gives a gentle falloff over the kernel half-width.
+            kotlin.math.exp(-(fy * fy).toFloat() / (2.0f * (r / 2.0f) * (r / 2.0f)))
+        }
+        val directionalBg = buildDirectionalBackground(pixels, mask, width, height)
+
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val idx = y * width + x
+                // Background pixels keep their own color — no estimation needed.
+                if (mask[idx] == 0.toByte()) {
+                    bg[idx] = pixels[idx]
+                    continue
+                }
+                var sumR = 0f
+                var sumG = 0f
+                var sumB = 0f
+                var weight = 0f
+                for (ky in -r..r) {
+                    val ny = y + ky
+                    if (ny !in 0 until height) continue
+                    val wy = kernelGaussian[ky + r]
+                    val rowOff = ny * width
+                    for (kx in -r..r) {
+                        val nx = x + kx
+                        if (nx !in 0 until width) continue
+                        val ni = rowOff + nx
+                        if (mask[ni] != 0.toByte()) continue // only background neighbors
+                        val px = pixels[ni]
+                        val w = wy * kernelGaussian[kx + r]
+                        sumR += (px shr 16 and 0xFF) * w
+                        sumG += (px shr 8 and 0xFF) * w
+                        sumB += (px and 0xFF) * w
+                        weight += w
+                    }
+                }
+                bg[idx] = if (weight > 1e-3f) {
+                    val rr = (sumR / weight).roundToInt().coerceIn(0, 255)
+                    val gg = (sumG / weight).roundToInt().coerceIn(0, 255)
+                    val bb = (sumB / weight).roundToInt().coerceIn(0, 255)
+                    (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+                } else if (directionalBg[idx] != 0) {
+                    directionalBg[idx]
+                } else {
+                    // Degenerate: every neighbor is masked too. Fall back to the
+                    // ring median so the pixel isn't left as the original text.
+                    (0xFF shl 24) or (medianR shl 16) or (medianG shl 8) or medianB
+                }
+            }
+        }
+        return bg
+    }
+
+    private fun expandBoxes(
+        boxes: List<IntArray>,
+        pad: Int,
+        width: Int,
+        height: Int,
+    ): List<IntArray> = boxes.mapNotNull { box ->
+        val x1 = max(0, box[0] - pad)
+        val y1 = max(0, box[1] - pad)
+        val x2 = min(width, box[2] + pad)
+        val y2 = min(height, box[3] + pad)
+        if (x2 <= x1 || y2 <= y1) null else intArrayOf(x1, y1, x2, y2)
+    }
+
+    private fun unionMasks(a: ByteArray, b: ByteArray): ByteArray {
+        val result = ByteArray(min(a.size, b.size))
+        for (i in result.indices) {
+            if (a[i] != 0.toByte() || b[i] != 0.toByte()) result[i] = 1
+        }
+        return result
+    }
+
+    internal fun buildLocalContrastTextMask(
+        pixels: IntArray,
+        boxes: List<IntArray>,
+        width: Int,
+        height: Int,
+        aggressive: Boolean = false,
     ): ByteArray {
-        val filtered = ByteArray(mask.size)
+        val n = min(pixels.size, width * height)
+        if (n <= 0 || boxes.isEmpty()) return ByteArray(width * height)
+
+        val gray = IntArray(width * height)
+        for (i in 0 until n) {
+            val px = pixels[i]
+            gray[i] = ((px shr 16 and 0xFF) * 299 + (px shr 8 and 0xFF) * 587 + (px and 0xFF) * 114) / 1000
+        }
+        val integralW = width + 1
+        val integral = LongArray((width + 1) * (height + 1))
+        val integralSq = LongArray((width + 1) * (height + 1))
+        for (y in 0 until height) {
+            var rowSum = 0L
+            var rowSqSum = 0L
+            for (x in 0 until width) {
+                val g = gray[y * width + x]
+                rowSum += g
+                rowSqSum += g.toLong() * g.toLong()
+                val dst = (y + 1) * integralW + (x + 1)
+                integral[dst] = integral[dst - integralW] + rowSum
+                integralSq[dst] = integralSq[dst - integralW] + rowSqSum
+            }
+        }
+
+        val combined = ByteArray(width * height)
+        for (box in boxes) {
+            val bx1 = box[0].coerceIn(0, width)
+            val by1 = box[1].coerceIn(0, height)
+            val bx2 = box[2].coerceIn(bx1, width)
+            val by2 = box[3].coerceIn(by1, height)
+            if (bx2 <= bx1 || by2 <= by1) continue
+
+            val zoneW = bx2 - bx1
+            val zoneH = by2 - by1
+            val radius = (min(zoneW, zoneH) / 7).coerceIn(4, if (aggressive) 14 else 10)
+            val dominantLightBackground = isDominantLightBackground(gray, bx1, by1, bx2, by2, width)
+            val zoneMask = ByteArray(zoneW * zoneH)
+            val strongTextMask = ByteArray(zoneW * zoneH)
+            for (y in by1 until by2) {
+                val sy1 = max(0, y - radius)
+                val sy2 = min(height, y + radius + 1)
+                for (x in bx1 until bx2) {
+                    val sx1 = max(0, x - radius)
+                    val sx2 = min(width, x + radius + 1)
+                    val count = (sx2 - sx1) * (sy2 - sy1)
+                    if (count <= 0) continue
+                    val sum = rectSum(integral, integralW, sx1, sy1, sx2, sy2)
+                    val sumSq = rectSum(integralSq, integralW, sx1, sy1, sx2, sy2)
+                    val mean = sum.toFloat() / count.toFloat()
+                    val variance = sumSq.toFloat() / count.toFloat() - mean * mean
+                    val std = sqrt(max(0f, variance))
+                    val value = gray[y * width + x].toFloat()
+                    val delta = abs(value - mean)
+                    val threshold = if (aggressive) {
+                        max(10f, min(34f, std * 0.70f + 7f))
+                    } else {
+                        max(14f, min(42f, std * 0.85f + 10f))
+                    }
+                    val darkStroke = value < mean - threshold || (value < 82f && mean > 110f)
+                    val lightStroke = !dominantLightBackground && value > mean + threshold && value > 172f && mean < 205f
+                    if (darkStroke || lightStroke) {
+                        val zi = (y - by1) * zoneW + (x - bx1)
+                        zoneMask[zi] = 1
+                        if (value < 92f || value > 232f) {
+                            strongTextMask[zi] = 1
+                        }
+                    }
+                }
+            }
+
+            val filtered = filterTextLikeComponents(
+                suppressLongThinBands(zoneMask, strongTextMask, zoneW, zoneH),
+                zoneW,
+                zoneH,
+                aggressive,
+            )
+            for (zy in 0 until zoneH) {
+                for (zx in 0 until zoneW) {
+                    if (filtered[zy * zoneW + zx] != 0.toByte()) {
+                        combined[(by1 + zy) * width + (bx1 + zx)] = 1
+                    }
+                }
+            }
+        }
+        return combined
+    }
+
+    private fun isDominantLightBackground(
+        gray: IntArray,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        width: Int,
+    ): Boolean {
+        val hist = IntArray(256)
+        var count = 0
+        for (y in y1 until y2) {
+            for (x in x1 until x2) {
+                hist[gray[y * width + x].coerceIn(0, 255)]++
+                count++
+            }
+        }
+        if (count <= 0) return false
+        val median = percentileGray(hist, count, 0.50f)
+        val p75 = percentileGray(hist, count, 0.75f)
+        return median > 220 && p75 > 238
+    }
+
+    private fun percentileGray(hist: IntArray, count: Int, percentile: Float): Int {
+        val target = (count * percentile).roundToInt().coerceIn(1, count)
+        var seen = 0
+        for (value in hist.indices) {
+            seen += hist[value]
+            if (seen >= target) return value
+        }
+        return hist.lastIndex
+    }
+
+    private fun rectSum(
+        integral: LongArray,
+        stride: Int,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+    ): Long {
+        val a = y1 * stride + x1
+        val b = y1 * stride + x2
+        val c = y2 * stride + x1
+        val d = y2 * stride + x2
+        return integral[d] - integral[b] - integral[c] + integral[a]
+    }
+
+    private fun filterTextLikeComponents(
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        aggressive: Boolean,
+    ): ByteArray {
+        val result = ByteArray(mask.size)
         val visited = BooleanArray(mask.size)
         val queue = ArrayDeque<Int>()
+        val minArea = if (aggressive) 2 else max(3, (width * height * 0.00008f).roundToInt())
+        val maxArea = max(16, (width * height * 0.60f).roundToInt())
+
         for (start in mask.indices) {
             if (mask[start] == 0.toByte() || visited[start]) continue
             visited[start] = true
             queue.add(start)
             val component = mutableListOf<Int>()
+            var minX = width
+            var minY = height
+            var maxX = 0
+            var maxY = 0
             var touchesEdge = false
             while (queue.isNotEmpty()) {
                 val idx = queue.removeFirst()
                 component.add(idx)
                 val x = idx % width
                 val y = idx / width
+                if (x < minX) minX = x
+                if (y < minY) minY = y
+                if (x > maxX) maxX = x
+                if (y > maxY) maxY = y
                 if (x <= 1 || y <= 1 || x >= width - 2 || y >= height - 2) touchesEdge = true
+
                 for (dy in -1..1) {
                     for (dx in -1..1) {
                         if (dx == 0 && dy == 0) continue
@@ -795,151 +1177,168 @@ class SmartBubbleTextCleaner(
                     }
                 }
             }
-            if (!touchesEdge) {
-                for (idx in component) filtered[idx] = 1
+
+            val area = component.size
+            val componentW = maxX - minX + 1
+            val componentH = maxY - minY + 1
+            val likelyTextureDot = area < minArea && componentW <= 3 && componentH <= 3
+            val likelyPanelOrHatch = touchesEdge && (componentW > width * 0.65f || componentH > height * 0.65f)
+            val likelyBandArtifact =
+                (componentH <= 3 && componentW > width * 0.55f) ||
+                    (componentW <= 3 && componentH > height * 0.55f)
+            val tooLarge = area > maxArea || (componentW > width * 0.95f && componentH > height * 0.75f)
+            if (!likelyTextureDot && !likelyPanelOrHatch && !likelyBandArtifact && !tooLarge) {
+                for (idx in component) result[idx] = 1
             }
-        }
-        return filtered
-    }
-
-    private fun buildRoundedAllowedMask(
-        boxes: List<IntArray>,
-        width: Int,
-        height: Int,
-    ): ByteArray {
-        val mask = ByteArray(width * height)
-        for (box in boxes) {
-            val x1 = box[0].coerceIn(0, width)
-            val y1 = box[1].coerceIn(0, height)
-            val x2 = box[2].coerceIn(x1, width)
-            val y2 = box[3].coerceIn(y1, height)
-            val bw = x2 - x1
-            val bh = y2 - y1
-            if (bw <= 0 || bh <= 0) continue
-            val radius = (min(bw, bh) * 0.25f).roundToInt().coerceIn(8, 20).coerceAtMost(min(bw, bh) / 2)
-            for (y in y1 until y2) {
-                for (x in x1 until x2) {
-                    if (insideRoundedRect(x - x1, y - y1, bw, bh, radius)) {
-                        mask[y * width + x] = 1
-                    }
-                }
-            }
-        }
-        return mask
-    }
-
-    private fun buildBubbleInteriorMask(
-        bubble: IntArray,
-        width: Int,
-        height: Int,
-        erodePx: Int,
-    ): ByteArray {
-        val x1 = (bubble[0] + erodePx).coerceIn(0, width)
-        val y1 = (bubble[1] + erodePx).coerceIn(0, height)
-        val x2 = (bubble[2] - erodePx).coerceIn(x1, width)
-        val y2 = (bubble[3] - erodePx).coerceIn(y1, height)
-        val mask = ByteArray(width * height)
-        for (y in y1 until y2) {
-            for (x in x1 until x2) {
-                mask[y * width + x] = 1
-            }
-        }
-        return mask
-    }
-
-    private fun insideRoundedRect(x: Int, y: Int, width: Int, height: Int, radius: Int): Boolean {
-        if (radius <= 0) return true
-        val left = x < radius
-        val right = x >= width - radius
-        val top = y < radius
-        val bottom = y >= height - radius
-        if (!(left || right) || !(top || bottom)) return true
-        val cx = if (left) radius else width - radius - 1
-        val cy = if (top) radius else height - radius - 1
-        val dx = x - cx
-        val dy = y - cy
-        return dx * dx + dy * dy <= radius * radius
-    }
-
-    private fun andMasks(a: ByteArray, b: ByteArray): ByteArray {
-        val result = ByteArray(a.size)
-        for (i in a.indices) {
-            if (a[i] != 0.toByte() && b[i] != 0.toByte()) result[i] = 1
         }
         return result
     }
 
-    private fun maskCoverage(mask: ByteArray): Float {
-        if (mask.isEmpty()) return 0f
-        return mask.count { it != 0.toByte() } * 100f / mask.size
-    }
-
-    private fun sq(value: Float): Float = value * value
-
-    private fun Float.format1(): String = "%.1f".format(this)
-
-    private fun dilateMask(
+    private fun suppressLongThinBands(
         mask: ByteArray,
+        strongTextMask: ByteArray,
         width: Int,
         height: Int,
     ): ByteArray {
         val result = mask.copyOf()
-        for (iter in 0 until dilationIterations) {
-            val temp = result.copyOf()
-            for (y in 1 until height - 1) {
-                for (x in 1 until width - 1) {
-                    if (mask[y * width + x] != 0.toByte()) {
-                        temp[y * width + x] = 1
-                        temp[(y - 1) * width + x] = 1
-                        temp[(y + 1) * width + x] = 1
-                        temp[y * width + (x - 1)] = 1
-                        temp[y * width + (x + 1)] = 1
-                    }
-                }
+        val rowThreshold = (width * 0.55f).roundToInt().coerceAtLeast(12)
+        val colThreshold = (height * 0.55f).roundToInt().coerceAtLeast(12)
+
+        for (y in 0 until height) {
+            val row = y * width
+            var count = 0
+            for (x in 0 until width) {
+                if (mask[row + x] != 0.toByte()) count++
             }
-            for (i in result.indices) result[i] = temp[i]
+            if (count < rowThreshold) continue
+            for (x in 0 until width) {
+                if (strongTextMask[row + x] == 0.toByte()) result[row + x] = 0
+            }
         }
+
+        for (x in 0 until width) {
+            var count = 0
+            for (y in 0 until height) {
+                if (mask[y * width + x] != 0.toByte()) count++
+            }
+            if (count < colThreshold) continue
+            for (y in 0 until height) {
+                val idx = y * width + x
+                if (strongTextMask[idx] == 0.toByte()) result[idx] = 0
+            }
+        }
+
         return result
     }
 
-    private fun buildFeatherAlpha(
+    private fun shouldUseSolidFlatFill(bgType: String, stats: BackgroundStats): Boolean =
+        bgType == "flat_white" ||
+            ((bgType == "flat_colored" || bgType == "dark_flat") && stats.grayStd < 10f && stats.edgeDensity < 0.04f)
+
+    private fun buildDirectionalBackground(
+        pixels: IntArray,
         mask: ByteArray,
         width: Int,
         height: Int,
-    ): FloatArray {
-        val alpha = FloatArray(width * height)
-        val coreBool = BooleanArray(width * height)
-        for (i in mask.indices) coreBool[i] = mask[i] != 0.toByte()
+    ): IntArray {
+        val n = width * height
+        val leftColor = IntArray(n)
+        val leftDist = IntArray(n) { Int.MAX_VALUE }
+        val rightColor = IntArray(n)
+        val rightDist = IntArray(n) { Int.MAX_VALUE }
+        val topColor = IntArray(n)
+        val topDist = IntArray(n) { Int.MAX_VALUE }
+        val bottomColor = IntArray(n)
+        val bottomDist = IntArray(n) { Int.MAX_VALUE }
 
-        val hasAny = coreBool.any { it }
-        if (!hasAny) return alpha
-
-        val fr = max(2, featherRadius)
-        val ksize = fr * 2 + 1
-
-        val blurred = FloatArray(width * height)
         for (y in 0 until height) {
+            var lastColor = 0
+            var lastX = -1
+            val row = y * width
             for (x in 0 until width) {
-                var sum = 0f
-                var count = 0
-                for (ky in -fr..fr) {
-                    for (kx in -fr..fr) {
-                        val ny = y + ky
-                        val nx = x + kx
-                        if (ny in 0 until height && nx in 0 until width) {
-                            sum += if (coreBool[ny * width + nx]) 255f else 0f
-                            count++
-                        }
-                    }
+                val idx = row + x
+                if (mask[idx] == 0.toByte()) {
+                    lastColor = pixels[idx]
+                    lastX = x
+                } else if (lastX >= 0) {
+                    leftColor[idx] = lastColor
+                    leftDist[idx] = x - lastX
                 }
-                blurred[y * width + x] = if (count > 0) sum / count / 255f else 0f
+            }
+            lastColor = 0
+            lastX = -1
+            for (x in width - 1 downTo 0) {
+                val idx = row + x
+                if (mask[idx] == 0.toByte()) {
+                    lastColor = pixels[idx]
+                    lastX = x
+                } else if (lastX >= 0) {
+                    rightColor[idx] = lastColor
+                    rightDist[idx] = lastX - x
+                }
             }
         }
 
-        for (i in alpha.indices) {
-            alpha[i] = if (coreBool[i]) 1.0f else blurred[i]
+        for (x in 0 until width) {
+            var lastColor = 0
+            var lastY = -1
+            for (y in 0 until height) {
+                val idx = y * width + x
+                if (mask[idx] == 0.toByte()) {
+                    lastColor = pixels[idx]
+                    lastY = y
+                } else if (lastY >= 0) {
+                    topColor[idx] = lastColor
+                    topDist[idx] = y - lastY
+                }
+            }
+            lastColor = 0
+            lastY = -1
+            for (y in height - 1 downTo 0) {
+                val idx = y * width + x
+                if (mask[idx] == 0.toByte()) {
+                    lastColor = pixels[idx]
+                    lastY = y
+                } else if (lastY >= 0) {
+                    bottomColor[idx] = lastColor
+                    bottomDist[idx] = lastY - y
+                }
+            }
         }
-        return alpha
+
+        val out = IntArray(n)
+        for (i in 0 until n) {
+            if (mask[i] == 0.toByte()) {
+                out[i] = pixels[i]
+                continue
+            }
+            var sumR = 0f
+            var sumG = 0f
+            var sumB = 0f
+            var weight = 0f
+
+            fun add(color: Int, dist: Int) {
+                if (dist == Int.MAX_VALUE || color == 0) return
+                val w = 1.0f / max(1, dist).toFloat()
+                sumR += (color shr 16 and 0xFF) * w
+                sumG += (color shr 8 and 0xFF) * w
+                sumB += (color and 0xFF) * w
+                weight += w
+            }
+
+            add(leftColor[i], leftDist[i])
+            add(rightColor[i], rightDist[i])
+            add(topColor[i], topDist[i])
+            add(bottomColor[i], bottomDist[i])
+
+            if (weight > 1e-3f) {
+                val r = (sumR / weight).roundToInt().coerceIn(0, 255)
+                val g = (sumG / weight).roundToInt().coerceIn(0, 255)
+                val b = (sumB / weight).roundToInt().coerceIn(0, 255)
+                out[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        return out
     }
 
     private data class BackgroundStats(
@@ -957,6 +1356,10 @@ class SmartBubbleTextCleaner(
         val b: Float,
         val foregroundDistance: Float,
     )
+
+    private companion object {
+        private const val MIN_OCR_TEXT_MASK_COVERAGE = 3.0f
+    }
 
     fun clearWorkingBuffers() {
         workingBuffer1 = null

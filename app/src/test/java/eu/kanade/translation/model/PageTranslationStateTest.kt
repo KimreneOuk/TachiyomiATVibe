@@ -25,6 +25,32 @@ class PageTranslationStateTest {
     }
 
     @Test
+    fun `rendered text page from old inpaint revision is schedulable`() {
+        val page = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            renderedImageName = "001.rendered.webp"
+            inpaintRevision = 0
+        }
+
+        page.lifecycle shouldBe PageLifecycle.NeedsRender
+        page.shouldSkipAutoScheduling shouldBe false
+        page.displayImageName shouldBe null
+    }
+
+    @Test
+    fun `rendered text page from current inpaint revision is done`() {
+        val page = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            renderedImageName = "001.rendered.webp"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+        }
+
+        page.lifecycle shouldBe PageLifecycle.Done
+        page.shouldSkipAutoScheduling shouldBe true
+        page.displayImageName shouldBe "001.rendered.webp"
+    }
+
+    @Test
     fun `cancelled page is schedulable and does not count as retry exhaustion`() {
         val page = PageTranslation(
             ocrStatus = StageStatus.CANCELLED,

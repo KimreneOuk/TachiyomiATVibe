@@ -282,7 +282,7 @@ dependencies {
 
     testImplementation(kotlinx.coroutines.test)
 
-    //TachiyomiAT
+    // TachiyomiAT
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.japanese)
     implementation(libs.mlkit.text.recognition.korean)

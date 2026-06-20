@@ -1,12 +1,12 @@
 package eu.kanade.translation.translator
 
-import eu.kanade.translation.util.await
 import com.google.mlkit.common.model.DownloadConditions
 import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.util.await
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -68,6 +68,4 @@ class MLKitTranslator(
         } catch (_: Exception) {
         }
     }
-
-
 }

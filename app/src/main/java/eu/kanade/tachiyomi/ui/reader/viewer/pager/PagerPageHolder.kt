@@ -4,9 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.PointF
 import android.view.LayoutInflater
-import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.core.view.isVisible
-import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
@@ -16,11 +14,10 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
-
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
@@ -47,11 +44,11 @@ class PagerPageHolder(
     readerThemedContext: Context,
     val viewer: PagerViewer,
     val page: ReaderPage,
-    //TachiyomiAT
+    // TachiyomiAT
     readerPreferences: ReaderPreferences = Injekt.get(),
 ) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {
 
-    //TachiyomiAT
+    // TachiyomiAT
     private var showTranslations = true
 
     // TachiyomiAT: master gate for the per-page translate button. Updated live
@@ -118,7 +115,7 @@ class PagerPageHolder(
         // and shows the scrim/spinner immediately; it only touches the overlay +
         // button, never re-decodes, so it's safe to call before the image loads.
         syncTranslationStatus()
-        //TachiyomiAT
+        // TachiyomiAT
         showTranslations = readerPreferences.showTranslations().get()
         readerPreferences.showTranslations().changes().onEach {
             showTranslations = it
@@ -164,9 +161,14 @@ class PagerPageHolder(
      * cancel affordance vs. the translate affordance.
      */
     private fun isPageBeingTranslated(): Boolean = page.translation?.let { t ->
-        (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-            t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && (t.cleanedImageName == null || t.blocks.isNotEmpty())
+        (
+            t.ocrStatus == "RUNNING" ||
+                t.inpaintStatus == "RUNNING" ||
+                t.translationStatus == "RUNNING" ||
+                t.renderStatus == "RUNNING"
+            ) &&
+            t.renderedImageName == null &&
+            (t.cleanedImageName == null || t.blocks.isNotEmpty())
     } ?: false
 
     /**
@@ -517,7 +519,7 @@ class PagerPageHolder(
         viewer.activity.hideMenu()
     }
 
-    //TachiyomiAT
+    // TachiyomiAT
     override fun onCenterChanged(newCenter: PointF?) {
         super.onCenterChanged(newCenter)
     }

@@ -8,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.AiModelListState
 import eu.kanade.presentation.more.settings.widget.AiModelPickerWidget
@@ -20,11 +19,12 @@ import eu.kanade.translation.data.TranslationFont
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiModelFetcher
-import eu.kanade.translation.translator.AiTranslators
-import eu.kanade.translation.translator.StandardTranslators
+import eu.kanade.translation.translator.AiTranslatorKind
+import eu.kanade.translation.translator.StandardTranslatorKind
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
+import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
@@ -110,7 +110,7 @@ object SettingsTranslationScreen : SearchableSettings {
                             pref.set(newValue)
                             TextRecognizerLanguage.entries
                                 .firstOrNull { it.name == newValue }
-                            ?.let { OcrModelCatalog.selectedModel(translationPreferences, it) }
+                                ?.let { OcrModelCatalog.selectedModel(translationPreferences, it) }
                             val updated = TranslationPreferences.encodeRecentLanguages(listOf(newValue) + recentLangs)
                             recentPref.set(updated)
                         },
@@ -217,13 +217,13 @@ object SettingsTranslationScreen : SearchableSettings {
     private fun standardEngineItems(
         translationPreferences: TranslationPreferences,
     ): List<Preference.PreferenceItem<out Any>> {
-        val engines = StandardTranslators.entries
+        val engines = StandardTranslatorKind.entries
         return listOf(
             Preference.PreferenceItem.ListPreference(
                 pref = translationPreferences.translationStandardEngine(),
                 title = stringResource(ATMR.strings.pref_standard_engine),
                 // The pref stores a StandardEngine; entries are keyed by the
-                // matching StandardEngine and labelled from StandardTranslators.
+                // matching StandardEngine and labelled from StandardTranslatorKind.
                 entries = engines.associate { translator ->
                     StandardEngine.valueOf(translator.name) to translator.label
                 }.toImmutableMap(),
@@ -236,7 +236,7 @@ object SettingsTranslationScreen : SearchableSettings {
         translationPreferences: TranslationPreferences,
     ): List<Preference.PreferenceItem<out Any>> {
         val scope = rememberCoroutineScope()
-        val providers = AiTranslators.entries
+        val providers = AiTranslatorKind.entries
 
         // Live AI-provider selection drives the API key / model / picker rows.
         val aiEngine by translationPreferences.translationAiEngine().collectAsState()

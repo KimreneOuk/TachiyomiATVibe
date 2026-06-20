@@ -1,7 +1,6 @@
 package eu.kanade.translation.recognition
 
 import android.graphics.Bitmap
-import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
 import java.io.Closeable
 

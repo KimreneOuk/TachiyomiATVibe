@@ -9,9 +9,13 @@ import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 import java.nio.FloatBuffer
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -19,7 +23,47 @@ import kotlin.math.roundToInt
 class AOTInpainting {
 
     private var session: OrtSession? = null
+    // TachiyomiAT: retained so [obtainCpuFallbackSession] can build a fallback
+    // CPU session when the accelerated (NNAPI) session is detected returning
+    // all-zero output. Set in [initialize] alongside the primary session; null
+    // when not initialized.
+    @Volatile
+    private var modelPath: String? = null
+    // TachiyomiAT: lazily-created CPU-only session, used once to recover from an
+    // accelerated-EP zero-output result (see [runDetectingZeroOutput]). Created
+    // on demand and cached; closed in [close].
+    @Volatile
+    private var cpuFallbackSession: OrtSession? = null
     private val bubbleCleaner = SmartBubbleTextCleaner()
+
+    /**
+     * TachiyomiAT: an output magnitude above this is treated as "real content".
+     * The model output lives in ~[-1, 1]; a value within this epsilon of 0.0
+     * denormalizes to ~128 (mid-gray). Verified offline that real output has
+     * per-channel std 20-32 (well above this epsilon), so a uniformly sub-epsilon
+     * tensor is the signature of a zero-output (broken accelerator) result.
+     */
+    private val ZERO_OUTPUT_EPSILON = 0.02f
+
+    // TachiyomiAT: cached value of the translation_diagnostics preference.
+    // The graph-spec dump in [initialize] fires once per session creation and
+    // the per-inference zero-output sample in [inpaint] fires per cluster, so
+    // both read this lazily-once to avoid SharedPreferences reads on the hot
+    // path. Mirrors the resolveDiagnostics() pattern in the OCR engines.
+    @Volatile
+    private var translationDiagnosticsEnabled: Boolean = false
+    @Volatile
+    private var diagnosticsResolved: Boolean = false
+    private fun resolveDiagnostics(): Boolean {
+        if (diagnosticsResolved) return translationDiagnosticsEnabled
+        translationDiagnosticsEnabled = try {
+            Injekt.get<TranslationPreferences>().translationDiagnostics().get()
+        } catch (_: Throwable) {
+            false
+        }
+        diagnosticsResolved = true
+        return translationDiagnosticsEnabled
+    }
 
     fun initialize(modelFile: File) {
         if (!modelFile.exists()) {
@@ -36,7 +80,56 @@ class AOTInpainting {
         } finally {
             opts.close()
         }
+        modelPath = modelFile.absolutePath
         logcat(LogPriority.INFO) { "AOT Inpainting session created from ${modelFile.name}" }
+
+        // TachiyomiAT: dump the model's tensor contract once at session creation
+        // so the names the [inpaint] wiring assumes can be verified from logcat
+        // without a desktop ONNX parse. Gated behind the opt-in
+        // translation_diagnostics pref (off by default) to avoid spamming on
+        // every chapter's first page. Verified offline to be: inputs
+        // image(1,3,H,W) + mask(1,1,H,W), output inpainted(1,3,H,W), NCHW,
+        // [-1,1] normalization. Full shapes/dtypes are available via
+        // scripts/inspect_aot_onnx.py.
+        val sess = session
+        if (sess != null) {
+            assertContract(sess)
+            if (resolveDiagnostics()) {
+                try {
+                    logcat(LogPriority.INFO) {
+                        "[inpaint] contract inputs=${sess.inputNames} outputs=${sess.outputNames}"
+                    }
+                } catch (e: Throwable) {
+                    logcat(LogPriority.WARN) { "[inpaint] could not dump graph contract: ${e.message}" }
+                }
+            }
+        }
+    }
+
+    /**
+     * TachiyomiAT: verify the session's inputs match what [inpaint] feeds it
+     * ("image" and "mask"). A mismatch previously surfaced only as an
+     * [OrtException] from sess.run that the caller caught generically and
+     * turned into a silent inpaintStatus=FAILED ("Inpainting unavailable"),
+     * hiding the real cause. Asserting here turns a name mismatch into a clear,
+     * readable error in the log so the cause isn't buried. Throws
+     * [IllegalStateException] on mismatch — the model is unusable as wired.
+     */
+    private fun assertContract(sess: OrtSession) {
+        val names = try {
+            sess.inputNames
+        } catch (e: Throwable) {
+            logcat(LogPriority.WARN) { "[inpaint] could not read input names: ${e.message}" }
+            return
+        }
+        require(names.contains("image")) {
+            "[inpaint] model has no 'image' input; actual inputs=$names. " +
+                "AOTInpainting feeds {\"image\",\"mask\"} — the wiring must be updated."
+        }
+        require(names.contains("mask")) {
+            "[inpaint] model has no 'mask' input; actual inputs=$names. " +
+                "AOTInpainting feeds {\"image\",\"mask\"} — the wiring must be updated."
+        }
     }
 
     fun isInitialized(): Boolean = session != null
@@ -236,7 +329,14 @@ class AOTInpainting {
 
             val dilated = dilateMask(maskBitmap, kernel = 5, iterations = 2)
             dilatedMask = dilated
-            return inpaint(sess, image, dilated, intArrayOf(cropX1, cropY1, cropX2, cropY2), maskAlreadyCropped = true)
+            return inpaint(
+                sess = sess,
+                image = image,
+                maskBitmap = dilated,
+                cropBounds = intArrayOf(cropX1, cropY1, cropX2, cropY2),
+                maskAlreadyCropped = true,
+                fallbackBoxes = normalizedBoxes,
+            )
         } finally {
             if (dilatedMask != null) BitmapPool.putARGB8888(dilatedMask)
             BitmapPool.putALPHA8(maskBitmap)
@@ -249,6 +349,7 @@ class AOTInpainting {
         maskBitmap: Bitmap,
         cropBounds: IntArray,
         maskAlreadyCropped: Boolean = false,
+        fallbackBoxes: List<IntArray> = emptyList(),
     ): Bitmap {
         val cropMargin = 32
         val origW = image.width
@@ -382,10 +483,19 @@ class AOTInpainting {
             val t0 = System.nanoTime()
             val imgTensorValue = imgTensor!!
             val maskTensorValue = maskTensor!!
-            results = sess.run(mapOf("image" to imgTensorValue, "mask" to maskTensorValue))
+            val feed = mapOf("image" to imgTensorValue, "mask" to maskTensorValue)
+            // TachiyomiAT: detect the silent-gray failure mode. A broken NNAPI
+            // driver can return an all-zero output tensor; the denorm below maps
+            // 0.0 -> 128 gray, so the whole masked region renders mid-gray.
+            // [runDetectingZeroOutput] samples the output and, if it is
+            // uniformly near-zero on an accelerated session, marks the EP failed
+            // and re-runs the SAME tensors on a CPU-only session before
+            // accepting the result. OnnxTensor inputs are independent of the
+            // session, so the retry is just a second sess.run — no re-encode.
+            results = runDetectingZeroOutput(sess, feed)
             val t1 = System.nanoTime()
 
-            val outputTensor = results[0] as OnnxTensor
+            val outputTensor = results!![0] as OnnxTensor
             val outputShape = outputTensor.info.shape
             val outH = outputShape[2].toInt()
             val outW = outputShape[3].toInt()
@@ -417,10 +527,20 @@ class AOTInpainting {
                 scaled = BitmapPool.getARGB8888(cropW, cropH)
                 val scaledCanvas = android.graphics.Canvas(scaled)
                 scaledCanvas.drawBitmap(resultBitmap, null, android.graphics.RectF(0f, 0f, cropW.toFloat(), cropH.toFloat()), null)
-                blended = featherBlend(imgCrop, scaled!!, maskCropForBlend, cropW, cropH)
             } else {
-                blended = featherBlend(imgCrop, resultBitmap, maskCropForBlend, cropW, cropH)
+                scaled = resultBitmap
             }
+
+            val candidate = scaled ?: throw IllegalStateException("Inpainting output was not created")
+            if (isSuspiciousGrayOutput(candidate, maskCropForBlend, cropW, cropH)) {
+                logcat(LogPriority.WARN) {
+                    "[inpaint] suspicious uniform mid-gray output; falling back to smart cleaner"
+                }
+                val boxesForFallback = fallbackBoxes.ifEmpty { listOf(intArrayOf(bx1, by1, bx2, by2)) }
+                return bubbleCleaner.cleanRegions(image, boxesForFallback)
+            }
+
+            blended = featherBlend(imgCrop, candidate, maskCropForBlend, cropW, cropH)
 
             val canvas = android.graphics.Canvas(image)
             canvas.drawBitmap(blended ?: throw IllegalStateException("Inpainting blend was not created"), xMin.toFloat(), yMin.toFloat(), null)
@@ -446,6 +566,125 @@ class AOTInpainting {
             }
             if (maskCropForBlend !== maskBitmap) maskCropForBlend.recycle()
             imgCrop.recycle()
+        }
+    }
+
+    /**
+     * TachiyomiAT: run inference on [sess] and detect the silent-gray failure.
+     *
+     * AOTInpainting denormalizes the model output as `(value + 1) * 127.5`. If a
+     * broken NNAPI/NPU driver returns an all-zero output tensor, every channel
+     * denormalizes to exactly 128 — a uniform mid-gray patch over the whole
+     * masked region. This is the prime suspect for on-device gray inpaint,
+     * because the model + Kotlin preprocessing are verified correct offline
+     * (scripts/inspect_aot_onnx.py), so a correct model producing gray output
+     * can only mean the accelerator returned zeros.
+     *
+     * Strategy: run the accelerated session. Sample the output tensor; if it is
+     * uniformly within [ZERO_OUTPUT_EPSILON] of 0.0 (which denorms to gray) AND
+     * the session was accelerated, mark the accelerated EP failed for the
+     * process and re-run the SAME input tensors on a lazily-created CPU-only
+     * session. OnnxTensor is bound to the OrtEnvironment, not the session, so
+     * the retry needs no re-encoding — just a second sess.run. The CPU result
+     * replaces the gray one before decode/blend.
+     *
+     * Only retries once per call. If the CPU session also returns zeros (the
+     * model itself is genuinely broken), returns the CPU result as-is rather
+     * than looping — the caller's blend then shows whatever the model produced.
+     */
+    private fun runDetectingZeroOutput(
+        sess: OrtSession,
+        feed: Map<String, OnnxTensor>,
+    ): OrtSession.Result {
+        val accelerated = OnnxRuntimeProvider.acceleratedEpAvailable()
+        val first = sess.run(feed)
+        if (!accelerated) return first
+        if (!isOutputNearZero(first)) return first
+
+        logcat(LogPriority.WARN) {
+            "[inpaint] zero_output detected from accelerated EP — denorm would " +
+                "produce uniform 128 gray. Marking accelerated EP failed and retrying on CPU."
+        }
+        OnnxRuntimeProvider.markAcceleratedEpFailed()
+        first.close()
+
+        val cpu = obtainCpuFallbackSession()
+            ?: // Could not build a CPU session (e.g. model path lost); return a
+            // fresh empty result so the caller sees the failure rather than the
+            // gray one. This path is extremely unlikely given [initialize]
+            // succeeded, but is handled defensively.
+            return sess.run(feed)
+        val retried = cpu.run(feed)
+        if (isOutputNearZero(retried)) {
+            logcat(LogPriority.WARN) {
+                "[inpaint] zero_output ALSO on CPU — the model itself may be " +
+                "broken for this input; accepting the result as-is."
+            }
+        } else {
+            logcat(LogPriority.INFO) { "[inpaint] CPU retry produced real output" }
+        }
+        return retried
+    }
+
+    private fun isSuspiciousGrayOutput(
+        inpainted: Bitmap,
+        mask: Bitmap,
+        width: Int,
+        height: Int,
+    ): Boolean {
+        val inpaintedPixels = IntArray(width * height)
+        val maskPixels = IntArray(width * height)
+        inpainted.getPixels(inpaintedPixels, 0, width, 0, 0, width, height)
+        mask.getPixels(maskPixels, 0, width, 0, 0, width, height)
+        return AotOutputGuard.isSuspiciousGrayFill(inpaintedPixels, maskPixels, width, height)
+    }
+
+    /**
+     * TachiyomiAT: true if the session result's first output tensor is uniformly
+     * within [ZERO_OUTPUT_EPSILON] of 0.0 — i.e. it would denormalize to uniform
+     * 128 gray. Samples a stride across the tensor (not every element) so this
+     * stays cheap relative to the model forward pass. An all-zero tensor has
+     * zero variance, so a coarse sample is sufficient to detect it.
+     */
+    private fun isOutputNearZero(result: OrtSession.Result): Boolean {
+        return try {
+            val tensor = result[0] as? OnnxTensor ?: return false
+            val buf = tensor.floatBuffer
+            val n = buf.remaining()
+            if (n <= 0) return false
+            // Sample ~256 points across the buffer with a stride; if ALL are
+            // near zero the whole tensor is near zero (real content has large
+            // positive/negative swings — verified offline std ~20-32).
+            val stride = max(1, n / 256)
+            var sampleCount = 0
+            var i = 0
+            while (i < n) {
+                if (abs(buf.get(i)) > ZERO_OUTPUT_EPSILON) return false
+                sampleCount++
+                i += stride
+            }
+            sampleCount > 0
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun obtainCpuFallbackSession(): OrtSession? {
+        cpuFallbackSession?.let { return it }
+        val path = modelPath ?: return null
+        return try {
+            val opts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
+            try {
+                val s = OnnxRuntimeProvider.environment.createSession(path, opts)
+                cpuFallbackSession = s
+                logcat(LogPriority.INFO) { "[inpaint] created CPU fallback session" }
+                s
+            } finally {
+                opts.close()
+            }
+        } catch (e: Throwable) {
+            logcat(LogPriority.WARN, e) { "[inpaint] failed to create CPU fallback session" }
+            null
         }
     }
 
@@ -600,6 +839,10 @@ class AOTInpainting {
         bubbleCleaner.clearWorkingBuffers()
         session?.close()
         session = null
+        // TachiyomiAT: also release the lazily-created CPU fallback session so
+        // an engine teardown after a zero-output recovery doesn't leak it.
+        cpuFallbackSession?.close()
+        cpuFallbackSession = null
     }
 
     private fun adaptiveInferenceDim(cropW: Int, cropH: Int): Int {

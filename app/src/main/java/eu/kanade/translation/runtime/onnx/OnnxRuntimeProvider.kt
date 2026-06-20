@@ -27,6 +27,7 @@ object OnnxRuntimeProvider {
      */
     @Volatile
     private var strategyInitialized: Boolean = false
+
     @Volatile
     private var cachedStrategy: DeviceCapability.EpStrategy = DeviceCapability.EpStrategy.CPU
 
@@ -37,11 +38,14 @@ object OnnxRuntimeProvider {
             val prefs = Injekt.get<TranslationPreferences>()
             when (prefs.translationExperimentalQnn().get()) {
                 true -> {
-                    if (DeviceCapability.supportsQnnCandidate()) DeviceCapability.EpStrategy.QNN
-                    else DeviceCapability.defaultStrategy().also {
-                        logcat(LogPriority.WARN) {
-                            "Experimental QNN requested but device is not a QNN candidate " +
-                                "(${DeviceCapability.describe()}); using default strategy"
+                    if (DeviceCapability.supportsQnnCandidate()) {
+                        DeviceCapability.EpStrategy.QNN
+                    } else {
+                        DeviceCapability.defaultStrategy().also {
+                            logcat(LogPriority.WARN) {
+                                "Experimental QNN requested but device is not a QNN candidate " +
+                                    "(${DeviceCapability.describe()}); using default strategy"
+                            }
                         }
                     }
                 }
@@ -78,7 +82,9 @@ object OnnxRuntimeProvider {
     fun markAcceleratedEpFailed() {
         if (!acceleratedEpDisabled) {
             acceleratedEpDisabled = true
-            logcat(LogPriority.WARN) { "Accelerated EP failed; subsequent ONNX sessions will use CPU only for this process" }
+            logcat(LogPriority.WARN) {
+                "Accelerated EP failed; subsequent ONNX sessions will use CPU only for this process"
+            }
         }
     }
 
@@ -115,16 +121,14 @@ object OnnxRuntimeProvider {
             val effectiveStrategy = when {
                 // TachiyomiAT: callers that run autoregressive / tiny-op models
                 // (manga-ocr decoder) pass forceCpu=true. The NPU is a poor fit
-                // there — each decode step is a small graphlet, and NNAPI
+                // there: each decode step is a small graphlet, and NNAPI
                 // partitions it into dozens of segments with a CPU<->accelerator
                 // sync point on every boundary. On the decoder that loop runs up
-                // to 300 times per ROI; the partitioning overhead × 300 blew up
-                // memory and destabilized sessions, which triggered
-                // autoFallbackToFast → forced MLKit (which has no inpainter) →
-                // "Inpainting unavailable". So the decoder (and its encoder
-                // sibling, which is cheap on CPU) MUST stay on CPU. The AOT
-                // inpainting model is the only one that genuinely benefits from
-                // the accelerator (single big generative pass).
+                // to 300 times per ROI; the partitioning overhead can blow up
+                // memory and destabilize sessions. So the decoder (and its
+                // encoder sibling, which is cheap on CPU) must stay on CPU. The
+                // AOT inpainting model is the one that benefits from the
+                // accelerator (single big generative pass).
                 forceCpu -> DeviceCapability.EpStrategy.CPU
                 acceleratedEpDisabled -> DeviceCapability.EpStrategy.CPU
                 else -> strategy

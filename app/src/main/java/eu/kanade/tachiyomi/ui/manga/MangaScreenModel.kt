@@ -103,7 +103,7 @@ class MangaScreenModel(
     private val trackerManager: TrackerManager = Injekt.get(),
     private val trackChapter: TrackChapter = Injekt.get(),
     private val downloadManager: DownloadManager = Injekt.get(),
-    //TachiyomiAT
+    // TachiyomiAT
     private val translationManager: TranslationManager = Injekt.get(),
     private val downloadCache: DownloadCache = Injekt.get(),
     private val getMangaAndChapters: GetMangaWithChapters = Injekt.get(),
@@ -174,9 +174,9 @@ class MangaScreenModel(
                 getMangaAndChapters.subscribe(mangaId, applyScanlatorFilter = true).distinctUntilChanged(),
                 downloadCache.changes,
                 downloadManager.queueState,
-                //TachiyomiAT
+                // TachiyomiAT
                 translationManager.queueState,
-            ) { mangaAndChapters, _, _,_ -> mangaAndChapters }
+            ) { mangaAndChapters, _, _, _ -> mangaAndChapters }
                 .flowWithLifecycle(lifecycle)
                 .collectLatest { (manga, chapters) ->
                     updateSuccessState {
@@ -211,7 +211,7 @@ class MangaScreenModel(
         }
 
         observeDownloads()
-        //TachiyomiAT
+        // TachiyomiAT
         observeTranslations()
 
         screenModelScope.launchIO {
@@ -508,7 +508,7 @@ class MangaScreenModel(
         }
     }
 
-    //TachiyomiAT
+    // TachiyomiAT
     private fun observeTranslations() {
         screenModelScope.launchIO {
             translationManager.statusFlow()
@@ -523,7 +523,7 @@ class MangaScreenModel(
         }
     }
 
-    //TachiyomiAT
+    // TachiyomiAT
     private fun updateTranslationState(translation: Translation) {
         updateSuccessState { successState ->
             val modifiedIndex = successState.chapters.indexOfFirst { it.id == translation.chapter.id }
@@ -570,7 +570,7 @@ class MangaScreenModel(
                 downloaded -> Download.State.DOWNLOADED
                 else -> Download.State.NOT_DOWNLOADED
             }
-            //TachiyomiAT
+            // TachiyomiAT
             var translationState = Translation.State.NOT_TRANSLATED
             if (downloadState == Download.State.DOWNLOADED) {
                 translationState = translationManager.getChapterTranslationStatus(
@@ -587,7 +587,7 @@ class MangaScreenModel(
                 downloadState = downloadState,
                 downloadProgress = activeDownload?.progress ?: 0,
                 selected = chapter.id in selectedChapterIds,
-                //TachiyomiAT
+                // TachiyomiAT
                 translationState = translationState,
             )
         }
@@ -659,11 +659,11 @@ class MangaScreenModel(
                 val downloadAction: ChapterDownloadAction = when (chapterItem.downloadState) {
                     Download.State.ERROR,
                     Download.State.NOT_DOWNLOADED,
-                        -> ChapterDownloadAction.START_NOW
+                    -> ChapterDownloadAction.START_NOW
 
                     Download.State.QUEUE,
                     Download.State.DOWNLOADING,
-                        -> ChapterDownloadAction.CANCEL
+                    -> ChapterDownloadAction.CANCEL
 
                     Download.State.DOWNLOADED -> ChapterDownloadAction.DELETE
                 }
@@ -728,17 +728,17 @@ class MangaScreenModel(
         }
     }
 
-    //TachiyomiAT
+    // TachiyomiAT
     fun runChapterTranslationActions(
         item: ChapterList.Item,
         action: ChapterTranslationAction,
     ) {
         when (action) {
             ChapterTranslationAction.START -> {
-                if (item.downloadState != Download.State.DOWNLOADED) return;
+                if (item.downloadState != Download.State.DOWNLOADED) return
                 val manga = successState?.manga ?: return
                 screenModelScope.launchNonCancellable {
-                    translationManager.translateChapter(manga,item.chapter)
+                    translationManager.translateChapter(manga, item.chapter)
                 }
             }
 
@@ -757,7 +757,7 @@ class MangaScreenModel(
                                 state.manga,
                                 state.source,
                             )
-                             updateSuccessState { successState ->
+                            updateSuccessState { successState ->
                                 val modifiedIndex = successState.chapters.indexOfFirst { it.id == item.chapter.id }
                                 if (modifiedIndex < 0) return@updateSuccessState successState
 
@@ -1284,7 +1284,7 @@ sealed class ChapterList {
     data class Item(
         val chapter: Chapter,
         val downloadState: Download.State,
-        //TachiyomiAT
+        // TachiyomiAT
         val translationState: Translation.State = Translation.State.NOT_TRANSLATED,
         val downloadProgress: Int,
         val selected: Boolean = false,

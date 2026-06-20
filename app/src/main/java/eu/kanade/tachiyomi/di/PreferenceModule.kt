@@ -56,7 +56,7 @@ class PreferenceModule(val app: Application) : InjektModule {
         addSingletonFactory {
             DownloadPreferences(get())
         }
-        //TachiyomiAT
+        // TachiyomiAT
         addSingletonFactory {
             TranslationPreferences(get())
         }

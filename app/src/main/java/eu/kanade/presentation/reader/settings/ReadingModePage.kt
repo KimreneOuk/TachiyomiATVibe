@@ -29,7 +29,7 @@ internal fun ColumnScope.ReadingModePage(screenModel: ReaderSettingsScreenModel)
     HeadingItem(MR.strings.pref_category_for_this_series)
     val manga by screenModel.mangaFlow.collectAsState()
 
-    //TachiyomiAT
+    // TachiyomiAT
     CheckboxItem(
         label = stringResource(ATMR.strings.pref_show_translations),
         pref = screenModel.preferences.showTranslations(),

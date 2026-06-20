@@ -27,11 +27,11 @@ import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
-import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.ocr.OcrModelCatalog
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiModelFetcher
-import eu.kanade.translation.translator.AiTranslators
-import eu.kanade.translation.translator.StandardTranslators
+import eu.kanade.translation.translator.AiTranslatorKind
+import eu.kanade.translation.translator.StandardTranslatorKind
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.launch
@@ -394,7 +394,7 @@ private fun ColumnScope.EngineSection(prefs: TranslationPreferences) {
 private fun ColumnScope.StandardEngineRows(prefs: TranslationPreferences) {
     val pref = prefs.translationStandardEngine()
     val value by pref.collectAsState()
-    val engines = StandardTranslators.entries.associate {
+    val engines = StandardTranslatorKind.entries.associate {
         StandardEngine.valueOf(it.name) to it.label
     }.toImmutableMap()
 
@@ -409,7 +409,7 @@ private fun ColumnScope.StandardEngineRows(prefs: TranslationPreferences) {
 @Composable
 private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
     val scope = rememberCoroutineScope()
-    val providers = AiTranslators.entries.associate { it.engine to it.label }.toImmutableMap()
+    val providers = AiTranslatorKind.entries.associate { it.engine to it.label }.toImmutableMap()
 
     val enginePref = prefs.translationAiEngine()
     val aiEngine by enginePref.collectAsState()

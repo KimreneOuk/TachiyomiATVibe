@@ -17,11 +17,10 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
-
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
@@ -131,9 +130,14 @@ class WebtoonPageHolder(
      * affordance vs. the translate affordance.
      */
     private fun isPageBeingTranslated(): Boolean = page?.translation?.let { t ->
-        (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-            t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && (t.cleanedImageName == null || t.blocks.isNotEmpty())
+        (
+            t.ocrStatus == "RUNNING" ||
+                t.inpaintStatus == "RUNNING" ||
+                t.translationStatus == "RUNNING" ||
+                t.renderStatus == "RUNNING"
+            ) &&
+            t.renderedImageName == null &&
+            (t.cleanedImageName == null || t.blocks.isNotEmpty())
     } ?: false
 
     /**

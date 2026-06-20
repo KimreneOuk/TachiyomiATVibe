@@ -60,7 +60,7 @@ class TranslationPreferences(
     fun translateToLanguage() = preferenceStore.getString("translate_language_to", "ENGLISH")
     fun translationFont() = preferenceStore.getInt("translation_font", 0)
 
-    fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "QUALITY")
+    fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "FAST")
 
     /**
      * TachiyomiAT: ONNX Runtime execution-provider strategy.

@@ -2,11 +2,17 @@ package eu.kanade.translation.translator
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import logcat.LogPriority
 import logcat.logcat
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONObject
 import tachiyomi.domain.translation.AiEngine
 import java.util.concurrent.TimeUnit
 
@@ -76,24 +82,7 @@ object AiModelFetcher {
             validateAuth(response.code)
             val body = response.body?.string().orEmpty()
             if (body.isBlank()) return emptyList()
-            val json = JSONObject(body)
-            val arr = json.optJSONArray("models") ?: return emptyList()
-            val result = mutableListOf<String>()
-            for (i in 0 until arr.length()) {
-                val model = arr.optJSONObject(i) ?: continue
-                // Only surface models that can generate content; this filters
-                // out embedding-only entries that can't translate text.
-                val methods = model.optJSONArray("supportedGenerationMethods") ?: continue
-                val supportsGenerate = (0 until methods.length()).any { idx ->
-                    methods.optString(idx) == "generateContent"
-                }
-                if (!supportsGenerate) continue
-                val rawName = model.optString("name")
-                // Provider returns "models/gemini-1.5-pro"; strip the prefix.
-                val id = rawName.removePrefix("models/").trim()
-                if (id.isNotEmpty()) result.add(id)
-            }
-            return result
+            return parseGeminiModels(Json.parseToJsonElement(body).jsonObject)
         }
     }
 
@@ -108,8 +97,7 @@ object AiModelFetcher {
             validateAuth(response.code)
             val body = response.body?.string().orEmpty()
             if (body.isBlank()) return emptyList()
-            val json = JSONObject(body)
-            return parseOpenAiModels(json)
+            return parseOpenAiModels(Json.parseToJsonElement(body).jsonObject)
         }
     }
 
@@ -124,9 +112,8 @@ object AiModelFetcher {
             validateAuth(response.code)
             val body = response.body?.string().orEmpty()
             if (body.isBlank()) return emptyList()
-            val json = JSONObject(body)
             // DeepSeek exposes the list under "data" like OpenAI/OpenRouter.
-            return parseOpenAiModels(json)
+            return parseOpenAiModels(Json.parseToJsonElement(body).jsonObject)
         }
     }
 
@@ -142,21 +129,58 @@ object AiModelFetcher {
             validateAuth(response.code)
             val body = response.body?.string().orEmpty()
             if (body.isBlank()) return emptyList()
-            return parseOpenAiModels(JSONObject(body))
+            return parseOpenAiModels(Json.parseToJsonElement(body).jsonObject)
         }
     }
 
     fun normalizeBaseUrl(baseUrl: String): String =
         baseUrl.trim().trimEnd('/')
 
-    fun parseOpenAiModels(json: JSONObject): List<String> {
-        val arr = json.optJSONArray("data") ?: return emptyList()
+    fun parseOpenAiModels(json: JsonObject): List<String> {
+        val arr = json["data"]?.jsonArray ?: return emptyList()
+        return arr.mapNotNull { entry ->
+            entry.jsonObject.stringOrNull("id")?.trim()?.takeIf { it.isNotEmpty() }
+        }
+    }
+
+    /**
+     * Parse the Gemini `/models` response. Only models that advertise
+     * `generateContent` in `supportedGenerationMethods` are surfaced — this
+     * filters out embedding/vision-only entries that cannot translate text. The
+     * provider returns ids like `models/gemini-1.5-pro`; the prefix is stripped.
+     */
+    fun parseGeminiModels(json: JsonObject): List<String> {
+        val arr = json["models"]?.jsonArray ?: return emptyList()
         val result = mutableListOf<String>()
-        for (i in 0 until arr.length()) {
-            val id = arr.optJSONObject(i)?.optString("id")?.trim().orEmpty()
-            if (id.isNotEmpty()) result.add(id)
+        for (entry in arr) {
+            val model = entry.jsonObject
+            val methods = model["supportedGenerationMethods"]?.jsonArray ?: continue
+            val supportsGenerate = methods.any { it.contentOrNull() == "generateContent" }
+            if (!supportsGenerate) continue
+            val id = model.stringOrNull("name")?.removePrefix("models/")?.trim()
+            if (!id.isNullOrEmpty()) result.add(id)
         }
         return result
+    }
+
+    /**
+     * Null-safe string read from a [JsonObject]. Returns null when the key is
+     * absent OR its value is JSON null — matching `org.json`'s `optString`
+     * semantics (which the original code relied on) rather than throwing on a
+     * `JsonNull` value like `?.jsonPrimitive?.content` would.
+     */
+    private fun JsonObject.stringOrNull(key: String): String? {
+        val element = this[key] ?: return null
+        return element.contentOrNull()
+    }
+
+    /**
+     * Null-safe string read from a single [JsonElement]. Returns null for
+     * `JsonNull` (or non-primitive) elements instead of throwing.
+     */
+    private fun JsonElement.contentOrNull(): String? {
+        if (this is JsonNull) return null
+        return jsonPrimitive.content
     }
 
     private fun validateAuth(code: Int) {

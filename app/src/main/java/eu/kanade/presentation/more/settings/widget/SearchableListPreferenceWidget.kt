@@ -3,10 +3,7 @@ package eu.kanade.presentation.more.settings.widget
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.selectable
@@ -56,7 +53,7 @@ fun <T> SearchableListPreferenceWidget(
 
     if (isDialogShown) {
         var query by remember { mutableStateOf("") }
-        
+
         AlertDialog(
             onDismissRequest = { isDialogShown = false },
             title = { Text(text = title) },
@@ -72,7 +69,7 @@ fun <T> SearchableListPreferenceWidget(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                     )
-                    
+
                     Box(modifier = Modifier.weight(1f, fill = false)) {
                         val state = rememberLazyListState()
                         ScrollbarLazyColumn(state = state) {
@@ -80,8 +77,8 @@ fun <T> SearchableListPreferenceWidget(
                                 query.isBlank() || it.value.contains(query, ignoreCase = true)
                             }
                             val filteredRecent = recentItems.filter {
-                                (query.isBlank() || entries[it]?.contains(query, ignoreCase = true) == true)
-                                && entries.containsKey(it)
+                                (query.isBlank() || entries[it]?.contains(query, ignoreCase = true) == true) &&
+                                    entries.containsKey(it)
                             }
                             val filteredAll = filteredEntries.keys.filter { it !in filteredRecent }
 
@@ -118,7 +115,7 @@ fun <T> SearchableListPreferenceWidget(
                                     }
                                 }
                             }
-                            
+
                             if (filteredRecent.isEmpty() && filteredAll.isEmpty()) {
                                 item {
                                     Text(

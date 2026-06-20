@@ -42,6 +42,7 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.TranslationPageId
 import eu.kanade.translation.TranslationPageRequest
 import eu.kanade.translation.TranslationWorkKind
@@ -53,6 +54,8 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -117,6 +120,8 @@ class ReaderViewModel @JvmOverloads constructor(
     private val updateChapter: UpdateChapter = Injekt.get(),
     private val setMangaViewerFlags: SetMangaViewerFlags = Injekt.get(),
     private val translationManager: TranslationManager = Injekt.get(),
+    private val translationScheduler: TranslationScheduler = Injekt.get(),
+    private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
     private val translationPreferences: tachiyomi.domain.translation.TranslationPreferences = Injekt.get(),
 ) : ViewModel() {
 
@@ -409,7 +414,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 } else {
                     lastAutoTranslateKey = ""
                     lastAutoTranslateAtMs = 0L
-                    getCurrentChapter()?.chapter?.id?.let { translationManager.cancelAutoTranslations(it) }
+                    getCurrentChapter()?.chapter?.id?.let { translationScheduler.cancelAutoTranslations(it) }
                 }
             }
             .launchIn(viewModelScope)
@@ -834,8 +839,8 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Enqueues translation of the current page and the next [depth] pages
-     * (within the current chapter) for background processing.
+     * Enqueues translation of the current page and enough following pages to
+     * fill the configured auto-translate window.
      *
      * Behaviour (per the refactor decisions):
      * - Additive only: never cancels prior enqueued work on page change.
@@ -862,15 +867,15 @@ class ReaderViewModel @JvmOverloads constructor(
         val currentIndex = pages.indexOfFirst { it === currentPage }
         if (currentIndex < 0) return
 
-        val depth = translationPreferences.autoTranslatePrefetchCount().get().coerceIn(1, 5)
-        val lastIndex = (currentIndex + depth).coerceAtMost(pages.lastIndex)
+        val windowSize = translationPreferences.autoTranslatePrefetchCount().get().coerceIn(1, 5)
+        val lastIndex = (currentIndex + windowSize - 1).coerceAtMost(pages.lastIndex)
 
         val prefetchHeadroomOk =
             eu.kanade.translation.util.TranslationMemoryBudget.hasHeadroomForPrefetch()
 
         logcat(LogPriority.INFO) {
             "TachiyomiAT auto-translate enqueue: currentIndex=$currentIndex lastIndex=$lastIndex " +
-                "depth=$depth pageKey=${resolvePageKey(currentPage)} loader=${currentPage.chapter.pageLoader?.javaClass?.simpleName} " +
+                "windowSize=$windowSize pageKey=${resolvePageKey(currentPage)} loader=${currentPage.chapter.pageLoader?.javaClass?.simpleName} " +
                 "prefetchHeadroomOk=$prefetchHeadroomOk"
         }
 
@@ -925,7 +930,7 @@ class ReaderViewModel @JvmOverloads constructor(
             )
         }
 
-        translationManager.requestAutoWindow(session, requests)
+        translationScheduler.requestAutoWindow(session, requests)
     }
 
     /**
@@ -1465,7 +1470,7 @@ class ReaderViewModel @JvmOverloads constructor(
         translationManager.getQueuedTranslationOrNull(chapterId)?.let {
             translationManager.cancelQueuedTranslation(it)
         }
-        eu.kanade.translation.ChapterTranslator.clearReaderPageStreams(
+        streamRegistry.clearChapter(
             sourceId = manga.source,
             mangaId = manga.id,
             chapterId = chapterId,
@@ -1551,7 +1556,7 @@ class ReaderViewModel @JvmOverloads constructor(
             return
         }
         page.originalStream?.let { streamFn ->
-            eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
+            streamRegistry.register(
                 manga,
                 chapter.toDomainChapter()!!,
                 source,
@@ -1559,7 +1564,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 streamFn,
             )
             // TachiyomiAT: bytes already available — kick off translation now.
-            translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+            translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
         } ?: page.imageUrl?.let { imageUrl ->
             // TachiyomiAT: for online pages not yet cached (originalStream is
             // null), download the image bytes in a cancellable coroutine and
@@ -1577,14 +1582,24 @@ class ReaderViewModel @JvmOverloads constructor(
                     }
                     return@launchIO
                 }
-                eu.kanade.translation.ChapterTranslator.registerReaderPageStream(
+                streamRegistry.register(
                     manga,
                     chapter.toDomainChapter()!!,
                     source,
                     pageKey,
                     streamFn,
                 )
-                translationManager.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+            }
+        } ?: run {
+            if (pageChapterDownloaded) {
+                // Downloaded chapters may not expose a live ReaderPage.originalStream
+                // after holder rebinding. The pipeline can reopen the page from disk,
+                // so enqueue the job instead of silently falling through.
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT manual translate page request using downloaded chapter fallback: pageKey=$pageKey"
+                }
+                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
             }
         }
     }
@@ -1632,7 +1647,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // no-op for a page whose chapter differs from getCurrentChapter().
         val chapterId = page.chapter.chapter.id ?: return
         val pageKey = resolvePageKey(page)
-        translationManager.cancelPageTranslation(chapterId, pageKey)
+        translationScheduler.cancelPageTranslation(chapterId, pageKey)
     }
 
     /**
@@ -1654,7 +1669,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // ReaderPage / ByteArray references are released. Without this, the
         // process-lifetime readerPageStreams map keeps page bytes alive after the
         // user explicitly stops translation.
-        eu.kanade.translation.ChapterTranslator.clearAllReaderPageStreams()
+        streamRegistry.clearAll()
         batchTranslationState = Translation.State.NOT_TRANSLATED
         liveTranslationState = Translation.State.NOT_TRANSLATED
         recomputeTranslationState()
@@ -1674,7 +1689,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // TachiyomiAT: evict registered reader page streams so their captured
         // page bytes are freed while the reader sits in the background, instead
         // of pinning them in the process-lifetime map.
-        eu.kanade.translation.ChapterTranslator.clearAllReaderPageStreams()
+        streamRegistry.clearAll()
     }
 
     fun onMemoryPressure(level: Int) {
@@ -1726,7 +1741,7 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     private suspend fun sweepStrandedPageStatus(store: eu.kanade.translation.ChapterTranslationStore) {
         val now = System.currentTimeMillis()
-        val staleAfterMs = eu.kanade.translation.ChapterTranslator.SINGLE_PAGE_TIMEOUT_MS
+        val staleAfterMs = TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS
         val snapshot = store.state.value
         for ((pageKey, pt) in snapshot) {
             val isTerminal = pt.ocrStatus == StageStatus.FAILED ||
@@ -2004,4 +2019,3 @@ class ReaderViewModel @JvmOverloads constructor(
         data class RefreshTranslationPages(val pages: Set<ReaderPage>) : Event
     }
 }
-                                                                                                                               
