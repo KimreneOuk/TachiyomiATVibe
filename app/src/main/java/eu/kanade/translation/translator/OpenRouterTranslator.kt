@@ -22,7 +22,7 @@ class OpenRouterTranslator(
     val modelName: String,
     val maxOutputToken: Int,
     val temp: Float,
-) : TextTranslator {
+) : ContextualTextTranslator {
     // TachiyomiAT: explicit 60s timeouts instead of OkHttpClient's default 10s,
     // which is too short for batch AI calls. Consistent with DeepSeek's 60s.
     // The batch path wraps every page in withTimeoutOrNull(120s), so if an HTTP
@@ -33,10 +33,27 @@ class OpenRouterTranslator(
         .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .build()
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        translateInternal(pages, rollingContext = "", outputTokenLimit = maxOutputToken)
+    }
+
+    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.maxOutputTokens)
+    }
+
+    private suspend fun translateInternal(
+        pages: MutableMap<String, PageTranslation>,
+        rollingContext: String,
+        outputTokenLimit: Int,
+    ) {
 
         try {
             val data = pages.mapValues { (k, v) -> v.blocks.map { b -> b.text } }
             val json = JSONObject(data)
+            val contextPrefix = if (rollingContext.isBlank()) {
+                ""
+            } else {
+                "Previous concise context/glossary/recent pairs:\n$rollingContext\n\n"
+            }
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val jsonObject = buildJsonObject {
                 put("model", modelName)
@@ -44,7 +61,7 @@ class OpenRouterTranslator(
                 put("top_p", 0.5f)
                 put("top_k", 30)
                 put("temperature", temp)
-                put("max_tokens", maxOutputToken)
+                put("max_tokens", outputTokenLimit)
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "system")
@@ -87,7 +104,7 @@ class OpenRouterTranslator(
                     }
                     addJsonObject {
                         put("role", "user")
-                        put("content", "JSON $json")
+                        put("content", contextPrefix + "JSON $json")
                     }
                 }
 
@@ -118,6 +135,14 @@ class OpenRouterTranslator(
             val resJson = JSONObject(content)
 
             for ((k, v) in pages) {
+                val expected = v.blocks.size
+                val actual = resJson.optJSONArray(k)?.length() ?: 0
+                if (expected != actual) {
+                    logcat {
+                        "OpenRouter response length mismatch for '$k': expected=$expected actual=$actual " +
+                            "(mismatched blocks keep their original text)"
+                    }
+                }
                 v.blocks.forEachIndexed { i, b ->
                     val res = resJson.optJSONArray(k)?.optString(i, "NULL")
                     b.translation = if (res == null || res == "NULL") b.text else res

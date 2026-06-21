@@ -107,6 +107,38 @@ object OnnxRuntimeProvider {
      *
      * The [strategy] is honored as a hint; if accelerated EPs have been
      * disabled by a prior failure, CPU is used regardless.
+     *
+     * TachiyomiAT (memory): the CPU memory arena and memory-pattern optimizer
+     * are DISABLED here. With them ON (the ORT default), every session
+     * pre-allocates an arena sized to its largest-seen tensor workspace and
+     * HOLDS it for the session lifetime — the ORT maintainers document this
+     * as the single largest ORT-side native-memory consumer on Android
+     * (microsoft/onnxruntime#11627). This app creates up to SIX concurrent
+     * sessions (detector + MangaOcr encoder/decoder_init/decoder_step + AOT
+     * inpainting + its lazily-created CPU fallback), so six arenas compound
+     * into hundreds of MB of resident native heap that never gets released
+     * back to the system even after every page's inference completes. That
+     * resident native footprint is invisible to the Java GC but DOES count
+     * against the device's physical RAM, which trips the
+     * `ActivityManager.lowMemory` / `availMem < threshold` gates in
+     * `TranslationMemoryBudget.canStartAnalyze`/`canStartInpaint` — so a
+     * chapter that should have heap headroom gets deferred as "low memory"
+     * purely because the ORT arenas are squatting on the device's RAM. The
+     * 200-page pre-translation OOM investigation (June 2026) traced the
+     * runaway native pressure back here.
+     *
+     * Turning both OFF trades a modest per-inference CPU cost (the arena
+     * also serves as a free-list, so without it each inference goes through
+     * malloc/free) for a dramatically lower resident footprint — the correct
+     * trade-off for the 6GB / 20-30% heap target device class. If a future
+     * high-RAM device class needs the arena for speed, gate this on
+     * DeviceCapability rather than re-enabling globally. Verified via the
+     * ORT 1.21 Java API: setCPUArenaAllocator(false) +
+     * setMemoryPatternOptimization(false) are the type-safe equivalents of
+     * the string config keys "session.enable_cpu_mem_arena"="0" and
+     * "session.enable_mem_pattern"="0"; the type-safe methods are preferred
+     * because a typo in addConfigEntry silently no-ops, whereas these throw
+     * at session creation if unsupported (which they are not in 1.21).
      */
     fun createSessionOptions(
         strategy: DeviceCapability.EpStrategy = resolveStrategy(),
@@ -117,6 +149,23 @@ object OnnxRuntimeProvider {
             setInterOpNumThreads(2)
             setIntraOpNumThreads(2)
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            // See the doc comment on createSessionOptions: disabled to bound
+            // resident native memory across the six concurrent ONNX sessions
+            // this app holds. Each call to createSessionOptions goes through
+            // this funnel, so every session (including the AOT cpuFallback)
+            // gets the same low-footprint configuration.
+            runCatching { setCPUArenaAllocator(false) }
+                .onFailure { e ->
+                    logcat(LogPriority.WARN, e) {
+                        "setCPUArenaAllocator(false) rejected; arena will stay on (higher native footprint)"
+                    }
+                }
+            runCatching { setMemoryPatternOptimization(false) }
+                .onFailure { e ->
+                    logcat(LogPriority.WARN, e) {
+                        "setMemoryPatternOptimization(false) rejected; mem-pattern will stay on"
+                    }
+                }
 
             val effectiveStrategy = when {
                 // TachiyomiAT: callers that run autoregressive / tiny-op models

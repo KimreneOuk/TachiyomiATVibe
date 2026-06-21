@@ -44,6 +44,9 @@ import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationSettingsSummary
+import eu.kanade.translation.model.snapshotTranslationSummary
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
@@ -86,6 +89,7 @@ import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
+import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
@@ -105,6 +109,7 @@ class MangaScreenModel(
     private val downloadManager: DownloadManager = Injekt.get(),
     // TachiyomiAT
     private val translationManager: TranslationManager = Injekt.get(),
+    private val translationPreferences: TranslationPreferences = Injekt.get(),
     private val downloadCache: DownloadCache = Injekt.get(),
     private val getMangaAndChapters: GetMangaWithChapters = Injekt.get(),
     private val getDuplicateLibraryManga: GetDuplicateLibraryManga = Injekt.get(),
@@ -531,23 +536,22 @@ class MangaScreenModel(
 
     private fun observeTranslationProgress(chapterId: Long) {
         if (translationProgressJobs[chapterId]?.isActive == true) return
-        val progressFlow = translationManager.observeTranslationProgress(chapterId) ?: return
         translationProgressJobs[chapterId] = screenModelScope.launchIO {
-            progressFlow
+            translationManager.observeTranslationProgress(chapterId)
                 .catch { error -> logcat(LogPriority.ERROR, error) }
                 .flowWithLifecycle(lifecycle)
-                .collect { (done, total) ->
-                    withUIContext { updateTranslationProgress(chapterId, done to total) }
+                .collect { progress ->
+                    withUIContext { updateTranslationProgress(chapterId, progress) }
                 }
         }
     }
 
     private fun stopTranslationProgress(chapterId: Long) {
         translationProgressJobs.remove(chapterId)?.cancel()
-        updateTranslationProgress(chapterId, 0 to 0)
+        updateTranslationProgress(chapterId, null)
     }
 
-    private fun updateTranslationProgress(chapterId: Long, progress: Pair<Int, Int>) {
+    private fun updateTranslationProgress(chapterId: Long, progress: TranslationProgressSnapshot?) {
         updateSuccessState { successState ->
             val idx = successState.chapters.indexOfFirst { it.id == chapterId }
             if (idx < 0) return@updateSuccessState successState
@@ -566,11 +570,9 @@ class MangaScreenModel(
         // indicator only tracks chapters actively translating, and stops (and
         // resets to no-fraction) once the chapter reaches a terminal state.
         val chapterId = translation.chapter.id
-        if (chapterId != null) {
-            when (translation.status) {
-                Translation.State.QUEUE, Translation.State.TRANSLATING -> observeTranslationProgress(chapterId)
-                else -> stopTranslationProgress(chapterId)
-            }
+        when (translation.status) {
+            Translation.State.QUEUE, Translation.State.TRANSLATING -> observeTranslationProgress(chapterId)
+            else -> stopTranslationProgress(chapterId)
         }
         updateSuccessState { successState ->
             val modifiedIndex = successState.chapters.indexOfFirst { it.id == translation.chapter.id }
@@ -627,6 +629,9 @@ class MangaScreenModel(
                     manga.title,
                     manga.source,
                 )
+            }
+            if (translationState == Translation.State.QUEUE || translationState == Translation.State.TRANSLATING) {
+                chapter.id?.let(::observeTranslationProgress)
             }
 
             ChapterList.Item(
@@ -792,14 +797,23 @@ class MangaScreenModel(
                     }
                     return
                 }
-                val manga = successState?.manga ?: return
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT translate START: chapter=${item.chapter.name} manga=${manga.title} " +
-                        "lastPageRead=${item.chapter.lastPageRead}"
+                // TachiyomiAT: gate batch translation behind a read-only settings
+                // review popup so the user can verify source/target language,
+                // engine/model, OCR model, and output tokens before the chapter is
+                // processed. Suppressed via the "Don't show this again" checkbox
+                // (translationConfirmPretranslate preference); the reader per-page
+                // path is unaffected.
+                if (translationPreferences.translationConfirmPretranslate().get()) {
+                    showConfirmTranslationDialog(item)
+                } else {
+                    confirmChapterTranslation(item)
                 }
-                screenModelScope.launchNonCancellable {
-                    translationManager.translateChapter(manga, item.chapter)
-                }
+            }
+
+            ChapterTranslationAction.DETAILS -> {
+                val chapterId = item.chapter.id ?: return
+                observeTranslationProgress(chapterId)
+                updateSuccessState { it.copy(dialog = Dialog.TranslationProgress(chapterId)) }
             }
 
             ChapterTranslationAction.CANCEL -> {
@@ -836,6 +850,50 @@ class MangaScreenModel(
             }
         }
     }
+
+    /**
+     * TachiyomiAT: shows the read-only settings review popup before a batch
+     * translation runs. The popup renders the current [TranslationSettingsSummary]
+     * and lets the user proceed, open settings, or suppress future popups.
+     */
+    fun showConfirmTranslationDialog(item: ChapterList.Item) {
+        val summary = translationPreferences.snapshotTranslationSummary()
+        updateSuccessState { it.copy(dialog = Dialog.ConfirmTranslation(item, summary)) }
+    }
+
+    /**
+     * TachiyomiAT: proceeds with the batch translation after the confirmation
+     * popup is accepted (or when the popup is suppressed via the
+     * `translationConfirmPretranslate` preference). Encapsulates the download
+     * guard + launch that previously lived inline in the START branch.
+     */
+    fun confirmChapterTranslation(item: ChapterList.Item) {
+        val manga = successState?.manga ?: return
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT translate START: chapter=${item.chapter.name} manga=${manga.title} " +
+                "lastPageRead=${item.chapter.lastPageRead}"
+        }
+        screenModelScope.launchNonCancellable {
+            translationManager.translateChapter(manga, item.chapter)
+        }
+    }
+
+    /**
+     * TachiyomiAT: toggles the confirmation popup for future batch translations.
+     * Bound to the popup's "Don't show this again" checkbox so the choice is
+     * applied immediately whether the user proceeds or cancels.
+     */
+    fun setConfirmPretranslate(show: Boolean) {
+        translationPreferences.translationConfirmPretranslate().set(show)
+    }
+
+    /**
+     * TachiyomiAT: reads whether the confirmation popup will show for the next
+     * batch translation. The popup checkbox binds to this so it reflects the
+     * live preference value.
+     */
+    fun translationConfirmPretranslate(): Boolean =
+        translationPreferences.translationConfirmPretranslate().get()
 
     fun runChapterDownloadActions(
         items: List<ChapterList.Item>,
@@ -1221,6 +1279,11 @@ class MangaScreenModel(
         data object SettingsSheet : Dialog
         data object TrackSheet : Dialog
         data object FullCover : Dialog
+        data class TranslationProgress(val chapterId: Long) : Dialog
+        data class ConfirmTranslation(
+            val item: ChapterList.Item,
+            val summary: TranslationSettingsSummary,
+        ) : Dialog
     }
 
     fun dismissDialog() {
@@ -1346,9 +1409,9 @@ sealed class ChapterList {
         val downloadState: Download.State,
         // TachiyomiAT
         val translationState: Translation.State = Translation.State.NOT_TRANSLATED,
-        // TachiyomiAT: (done, total) batch translation progress for the chapter
-        // list indicator. (0, 0) means no batch in flight / unknown total.
-        val translationProgress: Pair<Int, Int> = 0 to 0,
+        // TachiyomiAT: rich batch translation progress for the manga-screen
+        // indicator and progress sheet. Null means no active batch.
+        val translationProgress: TranslationProgressSnapshot? = null,
         val downloadProgress: Int,
         val selected: Boolean = false,
     ) : ChapterList() {

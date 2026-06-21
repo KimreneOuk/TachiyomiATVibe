@@ -9,7 +9,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationProgress
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.lifecycle
@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
@@ -124,6 +125,7 @@ class TranslationManager(
 
     private val activeTranslationStores = mutableMapOf<Long, ChapterTranslationStore>()
     private val activeStoreJobs = mutableMapOf<Long, Job>()
+    private val _activeStoreMap = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     private val _activeStoreState = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
     val activeStoreState: StateFlow<Map<String, PageTranslation>> = _activeStoreState.asStateFlow()
 
@@ -170,6 +172,13 @@ class TranslationManager(
 
     fun getQueuedTranslationOrNull(chapterId: Long): Translation? {
         return queueState.value.find { it.chapter.id == chapterId }
+    }
+
+    fun isBatchTranslationActive(chapterId: Long): Boolean {
+        return queueState.value.any { translation ->
+            translation.chapter.id == chapterId &&
+                (translation.status == Translation.State.QUEUE || translation.status == Translation.State.TRANSLATING)
+        }
     }
 
     fun translateChapter(manga: Manga, chapters: Chapter) {
@@ -276,6 +285,7 @@ class TranslationManager(
         // reader's already-captured StateFlow keeps observing the same object.
         if (activeTranslationStores[chapterId] === store) return
         activeTranslationStores[chapterId] = store
+        _activeStoreMap.value = activeTranslationStores.toMap()
         // Launch the aggregate collector on the manager's OWN scope (not
         // GlobalScope) and track the Job so unregisterActiveTranslationStore can
         // cancel it. Previously this leaked a GlobalScope collector per chapter
@@ -291,6 +301,7 @@ class TranslationManager(
     fun unregisterActiveTranslationStore(chapterId: Long) {
         activeStoreJobs.remove(chapterId)?.cancel()
         activeTranslationStores.remove(chapterId)
+        _activeStoreMap.value = activeTranslationStores.toMap()
         if (activeTranslationStores.isEmpty()) {
             _activeStoreState.value = emptyMap()
         }
@@ -371,10 +382,23 @@ class TranslationManager(
      * [chapterId]; null when no active store exists for the chapter (no batch in
      * flight) — callers should then show no progress fraction.
      */
-    fun observeTranslationProgress(chapterId: Long): Flow<Pair<Int, Int>>? {
-        val store = activeTranslationStores[chapterId] ?: return null
-        return store.state
-            .map { pages -> TranslationProgress.compute(pages) }
+    fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
+        return _activeStoreMap
+            .flatMapLatest { stores ->
+                val state = getQueuedTranslationOrNull(chapterId)?.status ?: Translation.State.NOT_TRANSLATED
+                val store = stores[chapterId]
+                if (store == null) {
+                    flowOf(TranslationProgressSnapshot.empty(chapterId, state))
+                } else {
+                    store.state.map { pages ->
+                        TranslationProgressSnapshot.compute(
+                            chapterId = chapterId,
+                            state = getQueuedTranslationOrNull(chapterId)?.status ?: state,
+                            pageMap = pages,
+                        )
+                    }
+                }
+            }
             .distinctUntilChanged()
     }
 
@@ -510,6 +534,9 @@ class TranslationManager(
      */
     suspend fun cancelPageTranslations(chapterId: Long) {
         scheduler.cancelPageTranslations(chapterId)
+        if (isBatchTranslationActive(chapterId)) {
+            return
+        }
         activeTranslationStores[chapterId]?.clearTransientQueuePages("Translation cancelled")
         // Evict the shared store for this chapter now that we've left it; the
         // reader re-opens the store via observeLiveTranslationStore on the next
@@ -526,9 +553,11 @@ class TranslationManager(
      * Job cancellation is delegated to the scheduler; store eviction + chapter
      * queue clearing are manager-owned concerns.
      */
-    fun cancelAllPageTranslations() {
+    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) {
         scheduler.cancelAllPageTranslations()
-        val stores = activeTranslationStores.values.toList()
+        val chapterIdsToEvict = activeTranslationStores.keys
+            .filter { cancelBatchQueue || !isBatchTranslationActive(it) }
+        val stores = chapterIdsToEvict.mapNotNull { activeTranslationStores[it] }
         if (stores.isNotEmpty()) {
             storeScope.launch {
                 stores.forEach { store ->
@@ -537,9 +566,10 @@ class TranslationManager(
             }
         }
         // Evict every shared store + its collector.
-        val chapterIds = activeTranslationStores.keys.toList()
-        chapterIds.forEach { unregisterActiveTranslationStore(it) }
-        translator.clearQueue()
+        chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
+        if (cancelBatchQueue) {
+            translator.clearQueue()
+        }
     }
 
     fun statusFlow(): Flow<Translation> = queueState

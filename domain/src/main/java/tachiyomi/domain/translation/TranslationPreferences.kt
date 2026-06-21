@@ -42,6 +42,16 @@ class TranslationPreferences(
     fun translationEnabled() = preferenceStore.getBoolean("translation_enabled", false)
 
     /**
+     * Show a read-only confirmation popup (current source/target language,
+     * engine/model, OCR model, output tokens) before the manga-screen batch
+     * "Translate chapter" action runs. The reader per-page/on-the-fly path is
+     * unaffected. Defaults to true so users review their settings at least
+     * once; the popup's "Don't show this again" checkbox and the Translation
+     * settings sheet both toggle this off.
+     */
+    fun translationConfirmPretranslate() = preferenceStore.getBoolean("translation_confirm_pretranslate", true)
+
+    /**
      * Reader auto-translation: when enabled (and [translationEnabled] is on),
      * the reader proactively translates the current page and pre-processes
      * upcoming pages on each page change. Work is additive (never cancelled

@@ -25,12 +25,40 @@ class AOTInpainting {
     companion object {
         private const val MAX_INFERENCE_DIM = 768
         private const val MAX_TOTAL_PIXELS = MAX_INFERENCE_DIM * MAX_INFERENCE_DIM
+    }
 
-        private val sharedImgData = ThreadLocal.withInitial { FloatArray(3 * MAX_TOTAL_PIXELS) }
-        private val sharedMaskData = ThreadLocal.withInitial { FloatArray(MAX_TOTAL_PIXELS) }
-        private val sharedImgPixels = ThreadLocal.withInitial { IntArray(MAX_TOTAL_PIXELS) }
-        private val sharedMaskPixels = ThreadLocal.withInitial { IntArray(MAX_TOTAL_PIXELS) }
-        private val sharedResultPixels = ThreadLocal.withInitial { IntArray(MAX_TOTAL_PIXELS) }
+    private val scratchLock = Any()
+
+    private var sharedImgData: FloatArray? = null
+    private var sharedMaskData: FloatArray? = null
+    private var sharedImgPixels: IntArray? = null
+    private var sharedMaskPixels: IntArray? = null
+    private var sharedResultPixels: IntArray? = null
+
+    private fun getImgData(): FloatArray {
+        return sharedImgData ?: FloatArray(3 * MAX_TOTAL_PIXELS).also { sharedImgData = it }
+    }
+    private fun getMaskData(): FloatArray {
+        return sharedMaskData ?: FloatArray(MAX_TOTAL_PIXELS).also { sharedMaskData = it }
+    }
+    private fun getImgPixels(): IntArray {
+        return sharedImgPixels ?: IntArray(MAX_TOTAL_PIXELS).also { sharedImgPixels = it }
+    }
+    private fun getMaskPixels(): IntArray {
+        return sharedMaskPixels ?: IntArray(MAX_TOTAL_PIXELS).also { sharedMaskPixels = it }
+    }
+    private fun getResultPixels(): IntArray {
+        return sharedResultPixels ?: IntArray(MAX_TOTAL_PIXELS).also { sharedResultPixels = it }
+    }
+
+    fun clearScratch() {
+        synchronized(scratchLock) {
+            sharedImgData = null
+            sharedMaskData = null
+            sharedImgPixels = null
+            sharedMaskPixels = null
+            sharedResultPixels = null
+        }
     }
 
     private var session: OrtSession? = null
@@ -287,7 +315,7 @@ class AOTInpainting {
         image: Bitmap,
         boxes: List<IntArray>,
         padding: Int,
-    ): Bitmap {
+    ): Bitmap = synchronized(scratchLock) {
         val w = image.width
         val h = image.height
 
@@ -446,10 +474,10 @@ class AOTInpainting {
             }
 
             val totalPixels = inferW * inferH
-            val imgData = sharedImgData.get()!!
-            val maskData = sharedMaskData.get()!!
-            val imgPixels = sharedImgPixels.get()!!
-            val maskPixels = sharedMaskPixels.get()!!
+            val imgData = getImgData()
+            val maskData = getMaskData()
+            val imgPixels = getImgPixels()
+            val maskPixels = getMaskPixels()
 
             if (imgInput != null && maskInput != null) {
                 imgInput.getPixels(imgPixels, 0, inferW, 0, 0, inferW, inferH)
@@ -512,7 +540,7 @@ class AOTInpainting {
             val resultH = if (needsResize) outH else min(outH, cropH)
             val resultW = if (needsResize) outW else min(outW, cropW)
 
-            val resultPixels = sharedResultPixels.get()!!
+            val resultPixels = getResultPixels()
             val outChannels = outH * outW
             for (y in 0 until resultH) {
                 for (x in 0 until resultW) {
@@ -636,8 +664,8 @@ class AOTInpainting {
         width: Int,
         height: Int,
     ): Boolean {
-        val inpaintedPixels = sharedResultPixels.get()!!
-        val maskPixels = sharedMaskPixels.get()!!
+        val inpaintedPixels = getResultPixels()
+        val maskPixels = getMaskPixels()
         inpainted.getPixels(inpaintedPixels, 0, width, 0, 0, width, height)
         if (maskAlreadyCropped) {
             mask.getPixels(maskPixels, 0, width, 0, 0, width, height)
@@ -707,9 +735,9 @@ class AOTInpainting {
         height: Int,
     ): Bitmap {
         val result = BitmapPool.getARGB8888(width, height)
-        val origPixels = sharedImgPixels.get()!!
-        val inpPixels = sharedResultPixels.get()!!
-        val maskPixels = sharedMaskPixels.get()!!
+        val origPixels = getImgPixels()
+        val inpPixels = getResultPixels()
+        val maskPixels = getMaskPixels()
         
         original.getPixels(origPixels, 0, width, xMin, yMin, width, height)
         inpainted.getPixels(inpPixels, 0, width, 0, 0, width, height)
@@ -859,6 +887,7 @@ class AOTInpainting {
         // an engine teardown after a zero-output recovery doesn't leak it.
         cpuFallbackSession?.close()
         cpuFallbackSession = null
+        clearScratch()
     }
 
     /**
@@ -867,14 +896,15 @@ class AOTInpainting {
      * [SmartBubbleTextCleaner] retains its largest-seen IntArray pair for the
      * engine's lifetime (so a dense early page pins large heap arrays for the
      * whole session). On OOM recovery we want that heap back; the next inpaint
-     * simply reallocates a buffer sized to the page it actually sees. The
-     * ThreadLocal inference scratch arrays are intentionally NOT touched here:
-     * they are thread-local, so clearing them from a different worker thread
-     * (the OOM path may run off the inpaint thread) is a no-op, and on the
-     * same thread they are reused each call rather than leaked.
+     * simply reallocates a buffer sized to the page it actually sees.
      */
     fun reclaimPooledMemory() {
         bubbleCleaner.clearWorkingBuffers()
+    }
+
+    fun forceReleaseNativeBuffers() {
+        bubbleCleaner.clearWorkingBuffers()
+        clearScratch()
     }
 
     private fun adaptiveInferenceDim(cropW: Int, cropH: Int): Int {

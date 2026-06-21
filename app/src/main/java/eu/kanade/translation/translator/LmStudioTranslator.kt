@@ -23,7 +23,7 @@ class LmStudioTranslator(
     val modelName: String,
     val maxOutputToken: Int,
     val temp: Float,
-) : TextTranslator {
+) : ContextualTextTranslator {
 
     private val normalizedBaseUrl = AiModelFetcher.normalizeBaseUrl(baseUrl)
 
@@ -34,6 +34,18 @@ class LmStudioTranslator(
         .build()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        translateInternal(pages, rollingContext = "", outputTokenLimit = maxOutputToken)
+    }
+
+    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.maxOutputTokens)
+    }
+
+    private suspend fun translateInternal(
+        pages: MutableMap<String, PageTranslation>,
+        rollingContext: String,
+        outputTokenLimit: Int,
+    ) {
         if (normalizedBaseUrl.isBlank()) {
             throw IllegalArgumentException("LM Studio base URL is required")
         }
@@ -56,6 +68,11 @@ class LmStudioTranslator(
             val textBlocksStr = flatBlocks.mapIndexed { index, (_, text) ->
                 "[$index] $text"
             }.joinToString("\n")
+            val contextPrefix = if (rollingContext.isBlank()) {
+                ""
+            } else {
+                "Previous concise context/glossary/recent pairs:\n$rollingContext\n\n"
+            }
 
             val systemPrompt = """
                 You are an expert manga/comic translator and localization specialist. Translate the following list of sequential text blocks from ${fromLang.label} to ${toLang.label}.
@@ -75,7 +92,7 @@ class LmStudioTranslator(
             val jsonObject = buildJsonObject {
                 put("model", modelName)
                 put("temperature", temp)
-                put("max_tokens", maxOutputToken)
+                put("max_tokens", outputTokenLimit)
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "system")
@@ -85,7 +102,8 @@ class LmStudioTranslator(
                         put("role", "user")
                         put(
                             "content",
-                            "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
+                            contextPrefix +
+                                "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
                         )
                     }
                 }

@@ -20,6 +20,8 @@ interface RoiOcrEngine : Closeable {
      */
     fun reclaimPooledMemory() {}
 
+    fun forceReleaseNativeBuffers() {}
+
     /**
      * TachiyomiAT: whether this engine reads HORIZONTAL text lines only.
      *

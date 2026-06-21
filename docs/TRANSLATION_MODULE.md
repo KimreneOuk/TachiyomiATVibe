@@ -36,7 +36,8 @@ translation/
 │  ├─ PageTranslationHelper.kt   ★ PURE overlapping-block merge (mergeOverlap)
 │  ├─ PageTranslationState.kt    ★ PURE lifecycle/status predicates + cancelInFlightStages
 │  ├─ PageView.kt                Reader-side view model
-│  └─ Translation.kt             Per-chapter Translation aggregate
+│  ├─ Translation.kt             Per-chapter Translation aggregate
+│  └─ TranslationSettingsSummary.kt ★ PURE read-only config snapshot for the pre-translation confirm popup
 │
 ├─ ocr/
 │  ├─ MangaOcrEngine.kt          Japanese manga OCR (ONNX); see Memory contract #2
@@ -205,6 +206,116 @@ streams are attached only inside that warm window and reopened from disk on
 demand. This keeps a 200-page chapter proportional to the visible working set,
 not to total chapter length.
 
+### 11. ONNX CPU arena and memory-pattern optimizer are DISABLED (`OnnxRuntimeProvider.createSessionOptions`)
+The ORT default is `enable_cpu_mem_arena=true` + `enable_mem_pattern=true`. With
+those on, every session pre-allocates an arena sized to its largest-seen tensor
+workspace and holds it for the session lifetime — the ORT maintainers document
+this as the single largest ORT-side native-memory consumer on Android
+(microsoft/onnxruntime#11627). This app creates up to SIX concurrent sessions
+(text detector + MangaOcr encoder/decoder_init/decoder_step + AOT inpainting +
+its lazily-created CPU fallback), so six arenas compound into hundreds of MB of
+resident native heap that GC cannot reclaim. That footprint is invisible to the
+Java GC (it's native malloc) but DOES count against the device's physical RAM,
+which trips the `ActivityManager.lowMemory` / `availMem < threshold` gates in
+`TranslationMemoryBudget.canStartAnalyze`/`canStartInpaint` — a chapter that
+should have heap headroom gets deferred as "low memory" purely because the ORT
+arenas are squatting on the device's RAM. This was traced as the dominant
+runaway-native-pressure source during the 200-page pre-translation OOM
+investigation (June 2026).
+
+`createSessionOptions` calls the type-safe `setCPUArenaAllocator(false)` +
+`setMemoryPatternOptimization(false)` (verified present in the ORT 1.21.0
+Javadoc; preferred over `addConfigEntry("session.enable_cpu_mem_arena","0")`
+because a typo in the string key silently no-ops whereas the type-safe methods
+fail loudly). Both calls are wrapped in `runCatching` that logs at WARN if a
+future ORT version removes them — the session is still created, just with the
+default (arena-on) config, so a forward ORT bump cannot brick translation.
+
+The trade-off is a modest per-inference CPU cost (the arena also serves as a
+free-list, so without it each inference goes through malloc/free) in exchange
+for a dramatically lower resident footprint — the correct trade-off for the
+6GB / 20-30% heap target device class. If a future high-RAM device class needs
+the arena for speed, gate the setting on `DeviceCapability` rather than
+re-enabling it globally.
+
+### 12. MangaOcr encoder input MUST use a direct, pooled buffer (`MangaOcrEngine.recognize`)
+The encoder input tensor is built from the 224×224×3 normalized pixel array.
+The previous code used `FloatBuffer.wrap(pixels)` — a **heap-backed** buffer.
+ORT cannot use heap memory directly for native inference, so it allocates an
+internal native copy. Per ORT issue #16937 (maintainer reply: *"FloatBuffer.wrap
+will copy it into the float buffer, but it's not a direct one so we need to copy
+it again in ORT. I recommend making the buffer direct"*), that native copy has
+its own lifecycle: `OnnxTensor.close()` releases the Java tensor wrapper, but
+the native-side copy ORT made is retained by the session's internal heap and
+accumulates across calls. The ORT Javadoc on `OnnxTensor.close()` confirms:
+*"Closes the tensor, releasing its underlying memory (if it's not backed by an
+NIO buffer)."*
+
+This was the dominant leak in the 200-page pre-translation OOM (June 2026). An
+Eclipse MAT heap dump captured at the failure moment showed a single
+`MangaOcrEngine` instance retaining **445 MiB across 562 `byte[]` instances**
+(~773 KiB each — ORT's per-call native copy of the 600 KiB encoder input).
+`recognize()` is called once per text ROI per page, so a text-heavy chapter
+makes thousands of calls; each left one native copy behind, and the cumulative
+445 MiB pinned the JVM heap at 494/512 MiB so no page could decode.
+
+**Contract: every ONNX input tensor that holds more than a scalar MUST be
+backed by a direct (`ByteBuffer.allocateDirect`) buffer, pooled when the shape
+is fixed.** `MangaOcrEngine.recognize` now uses `inputPixelPool` (a
+`DirectBufferPool` of 600 KiB direct buffers, `maxPoolSize = 2`) acquired
+inside the `try` and released in the `finally`, mirroring the existing
+`kCachePool`/`vCachePool` pattern for the KV-cache buffers. The start-token
+`LongBuffer.wrap(longArrayOf(2))` is exempt — it's an 8-byte scalar whose
+native copy is negligible. `forceReleaseNativeBuffers()` and `close()` clear
+`inputPixelPool` alongside the KV-cache pools so OOM recovery and engine
+teardown release it uniformly.
+
+Verify any new ONNX tensor creation against this contract — a heap-backed
+buffer on a hot per-ROI path will reintroduce this exact leak class. The
+diagnostic signal is a heap dump whose top retainer is `MangaOcrEngine`
+(or any engine) holding hundreds of `byte[]` of roughly the input-tensor
+size.
+
+### 13. `DirectBufferPool` MUST track in-use buffers by identity, not content (`DirectBufferPool.inUseBuffers`)
+The pool's `inUseBuffers` set uses `Collections.newSetFromMap(IdentityHashMap())`,
+NOT `ConcurrentHashMap.newKeySet()`. This is load-bearing: `java.nio.FloatBuffer.equals()`
+and `hashCode()` are **content- and position-dependent** (per the JDK contract:
+*"the hash code depends upon the remaining elements"*, which depends on
+position and limit). The consumer (`MangaOcrEngine.recognize`) mutates the
+buffer's position and limit between acquire and release (`clear → put → flip`),
+so a content-equality set loses track of the buffer — `release()`'s `remove(buffer)`
+silently returns false, the buffer is stranded in the in-use set forever, and
+every subsequent `acquire()` allocates a fresh `ByteBuffer.allocateDirect`.
+
+This was the **dominant** leak in the 200-page pre-translation OOM (June 2026),
+found via a second Eclipse MAT pass after the contract #12 fix alone did not
+resolve it. The heap dump showed `MangaOcrEngine` retaining **440 MiB across
+489 `DirectByteBuffer` instances held by 3 `DirectBufferPool`s configured with
+`maxPoolSize = 2`** — i.e. 163 buffers per pool where 2 was the cap. The pre-existing
+`kCachePool`/`vCachePool` (KV-cache, 1 MiB each) each leaked ~171 MiB; the
+`inputPixelPool` added by contract #12 (600 KiB each) leaked ~98 MiB on top.
+
+`IdentityHashMap` uses `System.identityHashCode` + `===`, which are stable
+across position/limit mutation. The set is wrapped in `synchronizedSet` as
+defense-in-depth; all mutation already happens under `bufferLock`. See
+`DirectBufferPoolTest.mutating buffer position between acquire and release
+does not leak` and `pool with maxPoolSize one never allocates more than one
+buffer under churn` — these two tests reproduce the exact acquire→clear→put→
+flip→release pattern and fail loudly against any future regression to
+content-equality tracking.
+
+The diagnostic signal is a heap dump whose dominator tree shows
+`DirectBufferPool` instances holding far more than `maxPoolSize` backing
+buffers (e.g. `DirectByteBuffer` count >> `maxPoolSize`). The `totalBuffers`
+`AtomicInteger` is also a runtime tell — if it climbs unboundedly across
+calls while `availableBuffers` stays empty, the in-use set is leaking.
+
+**Lesson:** when pooling NIO buffers, NEVER use a content-equality collection
+(`HashMap`, `ConcurrentHashMap.newKeySet`, `HashSet`) for in-use tracking.
+NIO buffer equality is defined over mutable state, which makes it unsuitable
+as a map key across mutations. Use identity collections (`IdentityHashMap`)
+or wrap the buffer in a stable identity holder.
+
 ---
 
 ## Translation status semantics & delete teardown
@@ -274,6 +385,41 @@ bug above.
 
 ---
 
+## Pre-translation confirmation popup
+
+The manga-screen "Translate chapter" action (`MangaScreenModel.runChapterTranslationActions`
+`START` branch) is gated behind a read-only settings review popup so the user
+can verify what will run before the staged batch commits. The **reader per-page
+/ auto path is unaffected** — only the batch trigger is intercepted.
+
+- Gate preference: `TranslationPreferences.translationConfirmPretranslate()`
+  (default `true`). When `false`, START runs the translate directly (the
+  pre-feature behavior).
+- Popup: `ConfirmTranslationDialog` (`presentation/manga/components/`), an
+  `AlertDialog` mirroring `DeleteChaptersDialog`. Renders chapter name + the
+  `TranslationSettingsSummary` rows (Translate From, Translate To, Translator
+  Engine [+ LLM Model for AI_MODEL], OCR model, [Max Output Token Count for
+  AI_MODEL], Inpainting mode), a "Don't show this again" `LabeledCheckbox`
+  bound to the gate preference, and an "Open settings" `TextButton` that
+  pushes `SettingsScreen(SettingsScreen.Destination.Translation)`.
+- Settings snapshot: `TranslationSettingsSummary` + `snapshotTranslationSummary()`
+  (`translation/model/`) is a ★ pure, side-effect-free resolver. It reads the
+  preference store but never writes it (language fallbacks use label lookups
+  instead of the mutating `*.fromPref` helpers, and OCR coercion passes
+  `persistCorrection = false`), so a read for display cannot corrupt the stored
+  config. `inpaintingMode` is carried as the raw `"FAST"/"QUALITY"` value; the
+  composable maps it through the resource strings.
+- Re-enable: the Translation settings screen exposes a `SwitchPreference` for
+  `translationConfirmPretranslate` so a user who suppressed the popup can turn
+  it back on.
+
+`MangaScreenModel` exposes `confirmChapterTranslation(item)` (the moved launch
+body), `showConfirmTranslationDialog(item)` (snapshot + set dialog state),
+`translationConfirmPretranslate()` (read), and `setConfirmPretranslate(show)`
+(write) so the composable binds directly to the ScreenModel.
+
+---
+
 ## Test coverage (`app/src/test/java/eu/kanade/translation/`)
 
 All tests are **plain JVM unit tests** — JUnit 5 + Kotest assertions, no
@@ -318,11 +464,20 @@ the `Translation`) seeds the split. The helper is pure + unit-tested
 **Re-decode per stage**: the page bitmap is recycled after analyze and re-decoded
 for inpaint. `decodePageBitmapForTranslation` buffers source bytes into a private
 `ByteArray`, so there is no shared-stream race (and the reader is not open on
-this path, so no concurrent display decode). One bitmap alive at a time honors
-the 6GB / 20-30% heap constraint. Translation (HTTP) and render (Canvas) need no
-ONNX permit and overlap the inpaint serial loop. Because the reader is closed,
-memory is more relaxed than the in-reader path — but we keep the one-bitmap
-discipline rather than hold N bitmaps, to avoid OOM on the target devices.
+this path, so no concurrent display decode). One **decode** bitmap alive at a time
+honors the 6GB / 20-30% heap constraint. Translation (HTTP) and render (Canvas)
+need no ONNX permit and overlap the inpaint serial loop.
+
+**Cleaned bitmaps are per-page, not accumulated.** `inpaintPage` persists each
+cleaned image to disk (`.cleaned.png`, setting `cleanedImageName`) and stage 2
+then recycles the in-memory `cleanedBitmap` immediately — it never carries it
+into the `inpainted` map. Stage 3 reloads each cleaned image from disk one at a
+time via `loadPersistedCleanedBitmap` (the same helper the reader's
+`resumeInpaintAndRender` uses). The batch therefore holds **at most one cleaned
+bitmap at any instant** regardless of chapter length. (Previously stage 2 kept
+every cleaned bitmap live across the whole chapter until stage 3 released them
+one per render — for a 200-page chapter that was ~200 full-page bitmaps
+simultaneously and OOM'd with "failed to recover memory".)
 
 ### Stage split (`analyzePage` / `inpaintPage`)
 The fused `processSinglePage` (which calls `recognize` = analyze+inpaint) is
@@ -333,15 +488,63 @@ The `PageRecognitionEngine` interface already exposes `analyze`/`inpaint`
 separately; `inpaint` reads `allTextDetections` + `blocks` from the passed-in
 translation.
 
-### Per-chapter progress indicator (`TranslationProgress`)
-The chapter-list translate indicator turns **determinate** while a batch runs,
-showing `done/total` (e.g. `12/40`). `TranslationProgress.compute` derives
-(done, total) from the active `ChapterTranslationStore` page map: total = entries
-the batch has registered; done = pages at a terminal state (rendered, textless,
-or retry-exhausted). `TranslationManager.observeTranslationProgress(chapterId)`
-exposes it as a flow; `MangaScreenModel` starts a per-chapter collector when the
-chapter enters `QUEUE`/`TRANSLATING` and stops it on a terminal state. Pure +
-unit-tested (`TranslationProgressTest`).
+### Per-chapter progress snapshot (`TranslationProgressSnapshot`)
+The chapter-list translate indicator turns determinate while a batch runs,
+showing `done/total` (for example `12/40`). Tapping the running indicator opens
+the manga-screen `TranslationProgressSheet`, which shows a linear progress bar,
+active page/stage, queued/failed counts, per-page stage rows, failed reasons,
+and a cancel action.
+
+`ChapterTranslator.translateChapterInternal` sets chapter status to
+`TRANSLATING` when real batch work starts and pre-registers all ordered page
+keys in the shared `ChapterTranslationStore` before OCR. These placeholders are
+memory-only, so the sheet can show the full chapter total immediately without
+creating a false translated file on disk.
+
+`TranslationManager.observeTranslationProgress(chapterId)` always returns a
+live flow. If the manga screen subscribes while the chapter is only queued, it
+emits an empty snapshot first, then switches to the store-backed snapshot once
+the translator registers the active store. `TranslationProgressSnapshot.compute`
+derives per-page stages from `PageTranslation` statuses and counts failed pages
+as completed for batch-progress convergence. Pure + unit-tested
+(`TranslationProgressSnapshotTest`).
+
+### Reader ownership while pre-translation runs
+Reader auto/manual translation uses the same active chapter store as batch
+pre-translation. While a chapter batch is `QUEUE` or `TRANSLATING`, reader
+auto/manual scheduling for that same chapter is suppressed; the reader only
+observes the shared store. Unrelated chapters can still schedule reader page
+jobs normally.
+
+Reader pause/close/background cleanup cancels reader page/auto jobs and evicts
+reader streams, but it does not clear active batch queues or unregister active
+batch stores. The explicit "Stop all translation" action and the master
+translation disable path call `cancelAllPageTranslations(cancelBatchQueue =
+true)`, which also clears the chapter batch queue.
+
+### AI 8k context budget (`TranslationContextChunkPlanner`)
+AI_MODEL batch pre-translation now translates ordered multi-page chunks after
+OCR instead of calling `translatePage` once per page. The hard budget is
+`MAX_CONTEXT_TOKENS = 8192` with `SAFETY_MARGIN = 512`; token estimates are
+conservative, treating CJK characters as one token and Latin runs as roughly
+four characters per token. The user `translationAiOutputTokens` preference is
+only an upper bound: each chunk receives a reduced output cap so estimated
+prompt + rolling context + output + margin stays inside the 8k budget.
+
+Rolling context is concise and opportunistic: recent source/translation pairs
+are included only when they fit within the prompt budget and the rolling-context
+cap. If a page is too large, the planner splits it by blocks. If a single block
+cannot fit even with no rolling context and the minimum output reserve, the page
+is marked failed with a context-budget error instead of sending an oversized AI
+request.
+
+AI providers implement `ContextualTextTranslator`. DeepSeek/LM Studio keep the
+numbered-line protocol, while OpenRouter/Gemini keep the JSON page-key protocol.
+Both protocols preserve page keys and block counts as much as the provider
+allows, remove watermark blocks via `TranslationBlockFilters`, and log response
+length mismatches so bad AI output is visible. Pure chunk-budget tests live in
+`TranslationContextChunkPlannerTest`; numbered parser mismatch/gap behavior is
+covered by `NumberedLineResponseParserTest`.
 
 ---
 
@@ -358,6 +561,7 @@ unit-tested (`TranslationProgressTest`).
 | `model/PageTranslationStateTest` | lifecycle, retry exhaustion, cancelled-page rescheduling, render-quality trust, forced retry reset |
 | `model/ChapterTranslatedPredicateTest` | `isChapterTranslated` content predicate: placeholder/pending/failed/running → not translated; rendered or recognized → translated; mixed/empty lists |
 | `model/TranslationProgressTest` | batch (done,total): rendered/textless/retry-exhausted count as done; pending/running don't; empty → (0,0) |
+| `model/TranslationSettingsSummaryTest` | confirm-popup snapshot: STANDARD (no model/tokens rows) vs AI_MODEL (engine+model+tokens); MLKIT/GOOGLE/Gemini/OpenRouter/DeepSeek/LM Studio labels; blank model/tokens → null; unknown source/target language fallback without mutating store; Japanese OCR coercion is read-only; inpainting raw passthrough |
 | `util/ResumeOrderingTest` | forward-first-then-backfill ordering; resume mid/start/end/last; empty; no aliasing |
 | `ChapterTranslationStorePersistTest` | `shouldPersistUpdate`: placeholders (CANCELLED+error, pending, running) not persisted; rendered/cleaned/blocks/failed/transition ARE persisted |
 | `model/PageTranslationHelperTest` | overlapping-block merge, orientation guard, transitive merge |

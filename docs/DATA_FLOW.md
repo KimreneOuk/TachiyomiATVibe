@@ -334,6 +334,27 @@ TranslationManager (central coordinator)
            Provides status callbacks to UI
 ```
 
+Batch pre-translation ownership:
+
+- Manga-screen chapter translation opens/registers a shared
+  `ChapterTranslationStore`, pre-registers all ordered page keys, then emits
+  `TranslationProgressSnapshot` updates to the chapter row and progress sheet.
+  The START action is gated behind a read-only confirmation popup
+  (`MangaScreenModel.Dialog.ConfirmTranslation` → `ConfirmTranslationDialog`)
+  unless the `translationConfirmPretranslate` preference is off. The popup
+  renders a `TranslationSettingsSummary` (source/target language, engine/model,
+  OCR model, output tokens, inpaint mode), offers a "Don't show this again"
+  checkbox bound to that preference, and an "Open settings" link to
+  `SettingsScreen.Destination.Translation`. The reader per-page path is not
+  affected.
+- If the reader opens the same chapter while the batch is active, reader
+  auto/manual page scheduling is suppressed for that chapter and the reader only
+  observes the shared store. Reader pause/close cancels reader jobs and streams
+  without clearing active batch queues or unregistering active batch stores.
+- AI_MODEL batch translation chunks OCR text with
+  `TranslationContextChunkPlanner` under an 8192-token context budget before
+  inpaint/render. Standard translators keep the per-page translate path.
+
 ---
 
 ## 5. Backup/Restore Flow

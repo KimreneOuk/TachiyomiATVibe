@@ -67,6 +67,29 @@ class ChapterTranslationStore(
     }
 
     /**
+     * Registers the full ordered page set for a chapter before OCR starts.
+     *
+     * These placeholders are intentionally memory-only: they let progress UI show
+     * the chapter total immediately, but they do not create/dirty the on-disk
+     * translation file until real OCR/inpaint/translation work lands.
+     */
+    suspend fun preRegisterPages(pageKeys: List<String>) {
+        if (pageKeys.isEmpty()) return
+        mutex.withLock {
+            var changed = false
+            pageKeys.forEach { pageKey ->
+                if (!pages.containsKey(pageKey)) {
+                    pages = pages.put(pageKey, PageTranslation(sourceFileName = pageKey))
+                    changed = true
+                }
+            }
+            if (changed) {
+                _state.value = snapshotPages()
+            }
+        }
+    }
+
+    /**
      * Clears queue-like entries after a user cancel/auto-window replacement.
      * Pages with a rendered/cleaned result are kept; transient running, pending,
      * cancelled, and failed entries without output are reset so the reader queue
@@ -257,7 +280,7 @@ class ChapterTranslationStore(
          * rename atomicity pattern. It is created in the same directory as the
          * target translation file and renamed over it once encoding completes.
          */
-        private const val TEMP_FILE_NAME = ".translation.tmp"
+        private const val TEMP_FILE_NAME = "translation.tmp"
 
         /** Fallback name for the rename target if [UniFile.getName] is null. */
         private const val DEFAULT_FILE_NAME = "translation.json"

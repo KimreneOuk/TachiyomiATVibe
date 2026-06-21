@@ -35,6 +35,23 @@ class MangaOcrEngine : RoiOcrEngine {
     private val decoderThreadCount = maxOf(1, minOf(Runtime.getRuntime().availableProcessors() / 2, 2))
     private val kCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
     private val vCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
+    // TachiyomiAT: pooled DIRECT buffer for the encoder input tensor
+    // (1 x 3 x 224 x 224 floats). The previous code used FloatBuffer.wrap(pixels)
+    // — a HEAP-backed buffer — which forced ORT to allocate an internal NATIVE
+    // copy of the input on every recognize() call (ORT issue #16937:
+    // "FloatBuffer.wrap will copy it into the float buffer, but it's not a
+    // direct one so we need to copy it again in ORT"). ORT's close() releases
+    // the Java tensor wrapper but the native copy it made lingers on the
+    // session's internal heap, accumulating across thousands of recognize()
+    // calls (one per text ROI per page). A heap dump of the 200-page pre-
+    // translation OOM (June 2026) showed MangaOcrEngine retaining 445 MiB
+    // across 562 byte[] instances — exactly this native-copy accumulation.
+    // Using a direct buffer lets ORT use the buffer in place with NO internal
+    // copy, so there is nothing to leak. The buffer is pooled (maxPoolSize=2)
+    // so it is allocated once and reused for every ROI; recognize() is
+    // serialized under the translator permit, so one live buffer at a time
+    // is sufficient. Capacity = 3*224*224 floats * 4 bytes = 600 KiB.
+    private val inputPixelPool = DirectBufferPool(3 * 224 * 224 * 4, maxPoolSize = 2)
 
     fun initialize(
         encoderFile: File,
@@ -108,7 +125,6 @@ class MangaOcrEngine : RoiOcrEngine {
 
         val t1 = System.nanoTime()
 
-        val pixelBuffer = FloatBuffer.wrap(pixels)
         var inputTensor: OnnxTensor? = null
         var encResult: OrtSession.Result? = null
         var startIdsTensor: OnnxTensor? = null
@@ -120,8 +136,26 @@ class MangaOcrEngine : RoiOcrEngine {
         var stepPositionIdsTensor: OnnxTensor? = null
         var selfKCacheBuf: java.nio.FloatBuffer? = null
         var selfVCacheBuf: java.nio.FloatBuffer? = null
+        // TachiyomiAT: declared nullable outside the try (so the finally can
+        // release it) and assigned inside, matching selfKCacheBuf/VCacheBuf.
+        // This guarantees the pool acquire/release pair is balanced even if a
+        // later line in the try throws — there is no window between acquire
+        // and try where an exception could leak the buffer from the pool.
+        var pixelBuffer: java.nio.FloatBuffer? = null
 
         try {
+            // TachiyomiAT: use a POOLED DIRECT FloatBuffer for the encoder input.
+            // FloatBuffer.wrap(pixels) is heap-backed, forcing ORT to allocate an
+            // internal native copy that leaks across recognize() calls (see the
+            // inputPixelPool doc comment + ORT issue #16937). Copying `pixels`
+            // into a direct buffer is a one-time 600 KiB memcpy; the payoff is
+            // that ORT uses this buffer in place with no internal copy, so there
+            // is nothing for the session to retain after the tensor is closed.
+            pixelBuffer = inputPixelPool.acquire().apply {
+                clear()
+                put(pixels)
+                flip()
+            }
             inputTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
                 pixelBuffer,
@@ -296,12 +330,18 @@ class MangaOcrEngine : RoiOcrEngine {
             initResult?.close()
             selfKCacheBuf?.let { kCachePool.release(it) }
             selfVCacheBuf?.let { vCachePool.release(it) }
+            pixelBuffer?.let { inputPixelPool.release(it) }
         }
     }
 
     override fun reclaimPooledMemory() {
+        // Direct buffers are already returned to pools in recognize finally block.
+    }
+
+    override fun forceReleaseNativeBuffers() {
         kCachePool.clear()
         vCachePool.clear()
+        inputPixelPool.clear()
     }
 
     override fun close() {
@@ -313,6 +353,7 @@ class MangaOcrEngine : RoiOcrEngine {
         decoderStepSession = null
         kCachePool.clear()
         vCachePool.clear()
+        inputPixelPool.clear()
     }
 
     private fun preprocess(cropBitmap: Bitmap): FloatArray {

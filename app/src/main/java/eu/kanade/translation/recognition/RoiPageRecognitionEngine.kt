@@ -560,6 +560,11 @@ class RoiPageRecognitionEngine(
         try { inpainting?.reclaimPooledMemory() } catch (_: Exception) {}
     }
 
+    override fun forceReleaseNativeBuffers() {
+        try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+    }
+
     private fun suppressCrossLabelDuplicates(
         textDetections: List<Detection>,
         bubbles: List<Detection>,

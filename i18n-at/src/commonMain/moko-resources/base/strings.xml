@@ -4,6 +4,12 @@
     <string name="pref_category_translations">Translations</string>
     <string name="pref_translation_summary">Automatic Translations</string>
     <string name="manga_translate">Translate</string>
+    <string name="manga_translation_progress">Translation progress</string>
+    <string name="manga_translation_counts">%1$d/%2$d pages done - %3$d queued - %4$d failed</string>
+    <string name="manga_translation_active">Page %1$d - %2$s</string>
+    <string name="manga_translation_no_progress">Waiting for the chapter queue to start</string>
+    <string name="manga_translation_failed_reasons">Failed pages</string>
+    <string name="manga_translation_pages">Pages</string>
     <string name="error_mlkit_language_unsupported">MLKit doesn't support this language</string>
     <string name="pref_show_translations">Show Translations</string>
     <string name="pref_translate_after_downloading">Translate After Downloading</string>
@@ -86,4 +92,12 @@
     <string name="pref_auto_translate">Auto-translate pages</string>
     <string name="pref_auto_translate_summary">Translates the current page and pre-processes upcoming pages automatically</string>
     <string name="pref_auto_translate_prefetch">Prefetch pages ahead</string>
+
+    <!-- TachiyomiAT: pre-translation confirmation popup (manga screen batch action) -->
+    <string name="translation_confirm_title">Translate this chapter?</string>
+    <string name="translation_confirm_summary">Current settings</string>
+    <string name="translation_confirm_dont_show">Don\'t show this again</string>
+    <string name="translation_confirm_open_settings">Translation settings</string>
+    <string name="pref_confirm_pretranslate">Confirm before batch translation</string>
+    <string name="pref_confirm_pretranslate_summary">Show a settings review popup before translating a chapter from the manga screen</string>
 </resources>

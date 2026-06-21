@@ -19,11 +19,11 @@ import org.json.JSONObject
 class GeminiTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
-     apiKey: String,
-     modelName: String,
+    private val apiKey: String,
+    private val modelName: String,
     val maxOutputToken: Int,
     val temp: Float,
-) : TextTranslator {
+) : ContextualTextTranslator {
 
     private var model: GenerativeModel = GenerativeModel(
         modelName = modelName,
@@ -82,11 +82,58 @@ class GeminiTranslator(
         },
     )
 
+    private fun createContextualModel(outputTokenLimit: Int): GenerativeModel = GenerativeModel(
+        modelName = modelName,
+        apiKey = apiKey,
+        generationConfig = generationConfig {
+            topK = 30
+            topP = 0.5f
+            temperature = temp
+            maxOutputTokens = outputTokenLimit
+            responseMimeType = "application/json"
+        },
+        safetySettings = listOf(
+            SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.NONE),
+        ),
+        systemInstruction = content {
+            text(
+                "Translate manga/comic OCR text from ${fromLang.label} to ${toLang.label}. " +
+                    "Return only JSON with the exact same page keys and array lengths as the input. " +
+                    "Replace watermark or site-link blocks with RTMTH.",
+            )
+        },
+    )
+
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        translateInternal(pages, rollingContext = "", outputTokenLimit = maxOutputToken)
+    }
+
+    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.maxOutputTokens)
+    }
+
+    private suspend fun translateInternal(
+        pages: MutableMap<String, PageTranslation>,
+        rollingContext: String,
+        outputTokenLimit: Int,
+    ) {
         try {
             val data = pages.mapValues { (k, v) -> v.blocks.map { b -> b.text } }
             val json = JSONObject(data)
-            val response = model.generateContent(json.toString())
+            val prompt = if (rollingContext.isBlank()) {
+                json.toString()
+            } else {
+                "Previous concise context/glossary/recent pairs:\n$rollingContext\n\nJSON $json"
+            }
+            val activeModel = if (rollingContext.isBlank() && outputTokenLimit == maxOutputToken) {
+                model
+            } else {
+                createContextualModel(outputTokenLimit)
+            }
+            val response = activeModel.generateContent(prompt)
             // TachiyomiAT: response.text is null when the model refuses, is
             // safety-filtered, or errors internally. The old code did
             // JSONObject("${response.text}") which turned a null into the literal

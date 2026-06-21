@@ -99,4 +99,78 @@ class DirectBufferPoolTest {
         reused.capacity() shouldBe 4
         pool.release(reused)
     }
+
+    /**
+     * TachiyomiAT: regression guard for the DirectBufferPool identity-tracking
+     * leak (June 2026 OOM investigation).
+     *
+     * The real consumer (MangaOcrEngine.recognize) does acquire -> clear() ->
+     * put(data) -> flip() -> ... -> release. `clear()` / `put()` / `flip()`
+     * mutate the FloatBuffer's position and limit, and java.nio.FloatBuffer's
+     * equals/hashCode are CONTENT- AND POSITION-DEPENDENT (per the JDK
+     * contract: "the hash code depends upon the remaining elements" — which
+     * in turn depends on position and limit).
+     *
+     * If the pool tracks in-use buffers in a structure keyed on FloatBuffer
+     * equality (e.g. ConcurrentHashMap.newKeySet, the JDK default), the
+     * mutated buffer no longer hashes to the same bucket it was added under,
+     * so release()'s remove(buffer) silently fails (returns false). The
+     * buffer is stranded in the in-use set forever, the available queue stays
+     * empty, and every subsequent acquire allocates a brand-new
+     * ByteBuffer.allocateDirect. Across hundreds of recognize() calls this
+     * leaked hundreds of MB (an on-device heap dump showed 489 DirectByteBuffer
+     * instances retained by 3 pools configured with maxPoolSize=2).
+     *
+     * This test reproduces the mutation-across-release pattern and asserts the
+     * pool NEVER allocates more than maxPoolSize backing buffers, regardless
+     * of how the consumer mutates the buffer's position/limit between acquire
+     * and release. Track via System.identityHashCode — the pool must use
+     * identity equality, not content equality.
+     */
+    @Test
+    fun `mutating buffer position between acquire and release does not leak`() {
+        // The pool must use IDENTITY equality for in-use tracking, NOT the
+        // FloatBuffer's content/position-dependent equals/hashCode. See the
+        // long doc comment above for the leak mechanism.
+        val bytes = 16 * Float.SIZE_BYTES
+        val pool = DirectBufferPool(bytes, maxPoolSize = 1)
+
+        val first = pool.acquire()
+        // Mutate position/limit the way MangaOcrEngine.recognize does — this
+        // changes the FloatBuffer's hash, which would make a content-equality
+        // set lose track of it.
+        first.clear()
+        first.put(FloatArray(first.capacity()) { it.toFloat() })
+        first.flip()
+        pool.release(first)
+
+        // If the pool leaked, this returns a brand-new buffer (different instance).
+        val second = pool.acquire()
+        (second === first) shouldBe true
+        pool.release(second)
+    }
+
+    @Test
+    fun `pool with maxPoolSize one never allocates more than one buffer under churn`() {
+        // Stress version: many acquire-mutate-release cycles. With correct
+        // identity-based tracking, every acquire returns the SAME instance.
+        // With the content-equality bug, every cycle allocates a new buffer.
+        val bytes = 16 * Float.SIZE_BYTES
+        val pool = DirectBufferPool(bytes, maxPoolSize = 1)
+
+        val canonical = pool.acquire()
+        pool.release(canonical)
+
+        val allSameInstance = (1..100).all {
+            val buf = pool.acquire()
+            // Mutate like the real consumer.
+            buf.clear()
+            buf.put(FloatArray(buf.capacity()) { it.toFloat() })
+            buf.flip()
+            val same = buf === canonical
+            pool.release(buf)
+            same
+        }
+        allSameInstance shouldBe true
+    }
 }

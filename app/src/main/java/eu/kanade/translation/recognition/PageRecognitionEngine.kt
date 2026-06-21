@@ -22,6 +22,11 @@ interface PageRecognitionEngine : Closeable {
      */
     fun reclaimPooledMemory() {}
 
+    /**
+     * TachiyomiAT: force release native buffers and pools when memory pressure is high.
+     */
+    fun forceReleaseNativeBuffers() {}
+
     suspend fun recognize(bitmap: Bitmap): PageTranslation {
         val pageTranslation = analyze(bitmap)
         pageTranslation.cleanedBitmap = inpaint(bitmap, pageTranslation)

@@ -1,0 +1,5 @@
+[2026-06-21T20:17:56.8824785+07:00[Asia/Bangkok]] [INFO] Started opening dump C:\Users\ADMIN\Documents\Coding Related\manga_translation_optimized\manga_translation_optimized\android_app\TachiyomiAT-1.16.8-dev\TachiyomiAT-1.16.8-dev\baseline-oom-std.hprof at 2026-06-21T20:17:56.87698+07:00[Asia/Bangkok]
+[2026-06-21T20:17:57.6520441+07:00[Asia/Bangkok]] [INFO] Heap C:\Users\ADMIN\Documents\Coding Related\manga_translation_optimized\manga_translation_optimized\android_app\TachiyomiAT-1.16.8-dev\TachiyomiAT-1.16.8-dev\baseline-oom-std.hprof contains 1,249,090 objects
+[2026-06-21T20:18:00.0274815+07:00[Asia/Bangkok]] [INFO] The keep unreachable objects condition is set to false. This may come either from the preference or dump condition requirements.
+[2026-06-21T20:18:00.1691158+07:00[Asia/Bangkok]] [INFO] Removed 463,904 unreachable objects using 12,398,928 bytes
+[2026-06-21T20:18:05.354062+07:00[Asia/Bangkok]] [INFO] Finished opening dump in 8.47 seconds (8.4735706s) at 2026-06-21T20:18:05.3505506+07:00[Asia/Bangkok]

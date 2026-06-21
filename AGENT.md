@@ -107,6 +107,20 @@ Leverage these tools to:
 
 ***
 
+## Communication Style
+
+Keep commentary minimal and purposeful.
+
+* Avoid talking at every turn during routine work such as reading files, writing code, or running tools.
+* Only provide commentary when it is genuinely needed, such as:
+  * Giving a final report
+  * Explaining a decision or finding
+  * Sharing a plan
+  * Asking a clarifying question
+* Prefer silent progress during implementation and reserve speech for meaningful handoffs or decisions.
+
+***
+
 ## Key Principles
 
 * Performance-first mindset

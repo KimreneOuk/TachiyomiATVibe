@@ -154,6 +154,11 @@ class ChapterTranslator(
         cancelTranslatorJob()
         queueState.value.filter { it.status == Translation.State.TRANSLATING }
             .forEach { it.status = Translation.State.ERROR }
+        
+        if (reason == "reader backgrounded") {
+            try { pipeline.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        }
+
         // TachiyomiAT: the historical `if (reason != null) return` skipped
         // closeEngines() for EVERY non-null-reason stop — including the user's
         // explicit "Stop all translation". That left the cached textTranslator /
@@ -173,6 +178,7 @@ class ChapterTranslator(
 
     fun onMemoryPressure(level: Int) {
         tachiyomi.domain.translation.pools.BitmapPool.releaseAll()
+        try { pipeline.forceReleaseNativeBuffers() } catch (_: Exception) {}
         when {
             level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
                 stop("memory pressure")
@@ -323,6 +329,7 @@ class ChapterTranslator(
                 translation.status = Translation.State.ERROR
                 return
             }
+            translation.status = Translation.State.TRANSLATING
 
             // TachiyomiAT: for archive chapters, share one ArchiveReader across
             // the entire batch instead of reopening + full decompression per page
@@ -364,6 +371,7 @@ class ChapterTranslator(
                 val resumeIndex = translation.chapter.lastPageRead.toInt()
                 val orderedStreams = eu.kanade.translation.util.ResumeOrdering
                     .forwardFirstThenBackfill(streams, resumeIndex)
+                store.preRegisterPages(orderedStreams.map { it.first })
                 if (translationJob?.isActive != true) {
                     logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
                 } else {

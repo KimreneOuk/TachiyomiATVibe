@@ -435,7 +435,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     // User disabled translation: cancel everything in flight so
                     // no orphaned page jobs keep running (and keep holding the
                     // translator permit) after the per-page buttons disappear.
-                    translationManager.cancelAllPageTranslations()
+                    translationManager.cancelAllPageTranslations(cancelBatchQueue = true)
                     // TachiyomiAT: user disabled translation — tear down engines so a
                     // subsequent re-enable picks up any config changes made while off.
                     translationManager.translatorStop("translation disabled", closeEngines = true)
@@ -948,6 +948,12 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     private fun handleAutoTranslation(currentPage: ReaderPage) {
         val chapterId = currentPage.chapter.chapter.id ?: return
+        if (translationManager.isBatchTranslationActive(chapterId)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT auto-translate suppressed: batch owns chapterId=$chapterId"
+            }
+            return
+        }
         val dedupKey = "$chapterId:${resolvePageKey(currentPage)}"
         val now = System.currentTimeMillis()
         val sinceLast = if (dedupKey == lastAutoTranslateKey) now - lastAutoTranslateAtMs else -1L
@@ -1654,6 +1660,13 @@ class ReaderViewModel @JvmOverloads constructor(
         // under the wrong store key (skipped-pages bug) and register reader-page
         // streams for a chapter the translator can't match to disk files.
         val chapter = page.chapter.chapter
+        val chapterId = chapter.id ?: return
+        if (translationManager.isBatchTranslationActive(chapterId)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT manual translate suppressed: batch owns chapterId=$chapterId"
+            }
+            return
+        }
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val pageKey = resolvePageKey(page)
         logcat(LogPriority.INFO) {
@@ -1784,7 +1797,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * short of navigating away or disabling the master toggle.
      */
     fun stopAllTranslation() {
-        translationManager.cancelAllPageTranslations()
+        translationManager.cancelAllPageTranslations(cancelBatchQueue = true)
         // TachiyomiAT: closeEngines = true so the cached textTranslator /
         // recognitionEngine are torn down and enginesClosed is set. Without this,
         // any config change made after stopping (engine, provider, API key, model,
@@ -2054,23 +2067,57 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     fun observePageView(page: ReaderPage): Flow<eu.kanade.translation.model.PageView>? {
-        val manga = manga ?: return null
+        val manga = manga ?: run {
+            logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: manga null (pageIdx=${page.index})" }
+            return null
+        }
         val chapter = page.chapter.chapter
-        val chapterId = chapter.id ?: return null
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+        val chapterId = chapter.id ?: run {
+            logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: chapterId null (pageIdx=${page.index})" }
+            return null
+        }
+        val source = sourceManager.get(manga.source) as? HttpSource ?: run {
+            logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: source null (pageIdx=${page.index})" }
+            return null
+        }
         val store = translationManager.openOrCreateActiveChapterTranslationStore(
             chapterId,
             chapter.name,
             chapter.scanlator,
             manga.title,
             source,
-        ) ?: return null
+        ) ?: run {
+            logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: store null (pageIdx=${page.index})" }
+            return null
+        }
         val pageKey = resolvePageKey(page)
+        // TachiyomiAT (diagnostic): log the lookup so a chapter-open capture can
+        // name exactly why a pre-translated page shows its original image. Gated
+        // behind translation_diagnostics (already a cached pref read) so there's
+        // zero overhead in production. Remove once the display-path bug is fixed.
+        val diag = translationDiagnosticsEnabled
+        if (diag) {
+            val storeSize = store.state.value.size
+            val hasKey = store.state.value.containsKey(pageKey)
+            val sampleKeys = store.state.value.keys.take(3)
+            val entry = store.state.value[pageKey]
+            logcat(LogPriority.INFO) {
+                "[reader_translate_diag] observePageView pageIdx=${page.index} pageKey=$pageKey " +
+                    "sourceFileName=${page.sourceFileName} storeSize=$storeSize hasKey=$hasKey " +
+                    "sampleKeys=$sampleKeys " +
+                    "entryRendered=${entry?.renderedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus} render=${it.renderStatus}" }}"
+            }
+        }
         return store.state
             .map { pages -> pages[pageKey] }
             .distinctUntilChanged()
             .onEach { updated ->
-                if (updated == null) return@onEach
+                if (updated == null) {
+                    if (diag) logcat(LogPriority.WARN) {
+                        "[reader_translate_diag] store emitted NULL for pageKey=$pageKey (no matching entry)"
+                    }
+                    return@onEach
+                }
                 page.translation = updated
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
             }

@@ -38,6 +38,7 @@ import tachiyomi.presentation.core.util.secondaryItemAlpha
 
 enum class ChapterTranslationAction {
     START,
+    DETAILS,
     CANCEL,
     DELETE,
 }
@@ -119,7 +120,7 @@ private fun TranslatingIndicator(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
                 onLongClick = { onClick(ChapterTranslationAction.CANCEL) },
-                onClick = { isMenuExpanded = true },
+                onClick = { onClick(ChapterTranslationAction.DETAILS) },
             ),
         contentAlignment = Alignment.Center,
     ) {

@@ -22,7 +22,7 @@ class DeepSeekTranslator(
     val modelName: String,
     val maxOutputToken: Int,
     val temp: Float,
-) : TextTranslator {
+) : ContextualTextTranslator {
 
     // TachiyomiAT: tightened from 180s → 60s. The batch path now wraps every
     // page in withTimeoutOrNull(120s), so an HTTP timeout within that period
@@ -34,6 +34,18 @@ class DeepSeekTranslator(
         .build()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        translateInternal(pages, rollingContext = "", outputTokenLimit = maxOutputToken)
+    }
+
+    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.maxOutputTokens)
+    }
+
+    private suspend fun translateInternal(
+        pages: MutableMap<String, PageTranslation>,
+        rollingContext: String,
+        outputTokenLimit: Int,
+    ) {
         if (apiKey.isBlank()) {
             throw IllegalArgumentException("DeepSeek API key is required")
         }
@@ -54,6 +66,11 @@ class DeepSeekTranslator(
             val textBlocksStr = flatBlocks.mapIndexed { index, (_, text) ->
                 "[$index] $text"
             }.joinToString("\n")
+            val contextPrefix = if (rollingContext.isBlank()) {
+                ""
+            } else {
+                "Previous concise context/glossary/recent pairs:\n$rollingContext\n\n"
+            }
 
             val systemPrompt = """
                 You are an expert manga/comic translator and localization specialist. Translate the following list of sequential text blocks from ${fromLang.label} to ${toLang.label}.
@@ -74,7 +91,7 @@ class DeepSeekTranslator(
             val jsonObject = buildJsonObject {
                 put("model", if (modelName.isBlank()) "deepseek-chat" else modelName)
                 put("temperature", temp)
-                put("max_tokens", maxOutputToken)
+                put("max_tokens", outputTokenLimit)
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "system")
@@ -84,7 +101,8 @@ class DeepSeekTranslator(
                         put("role", "user")
                         put(
                             "content",
-                            "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
+                            contextPrefix +
+                                "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
                         )
                     }
                 }
