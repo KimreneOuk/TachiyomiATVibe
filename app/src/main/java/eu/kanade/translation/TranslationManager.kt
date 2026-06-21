@@ -483,19 +483,25 @@ class TranslationManager(
     }
 
     fun getCleanedImageStream(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?, cleanedImageName: String): (() -> java.io.InputStream)? {
-        val file = provider.findPageCleanedImage(mangaTitle, source, chapterName, chapterScanlator, cleanedImageName)
-        if (file?.exists() == true) {
-            return { file.openInputStream() }
+        return {
+            val file = provider.findPageCleanedImage(mangaTitle, source, chapterName, chapterScanlator, cleanedImageName)
+            if (file?.exists() == true) {
+                file.openInputStream()
+            } else {
+                throw java.io.FileNotFoundException("Cleaned image not found: $cleanedImageName")
+            }
         }
-        return null
     }
 
     fun getRenderedImageStream(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?, renderedImageName: String): (() -> java.io.InputStream)? {
-        val file = provider.findPageRenderedImage(mangaTitle, source, chapterName, chapterScanlator, renderedImageName)
-        if (file?.exists() == true) {
-            return { file.openInputStream() }
+        return {
+            val file = provider.findPageRenderedImage(mangaTitle, source, chapterName, chapterScanlator, renderedImageName)
+            if (file?.exists() == true) {
+                file.openInputStream()
+            } else {
+                throw java.io.FileNotFoundException("Rendered image not found: $renderedImageName")
+            }
         }
-        return null
     }
 
     fun getCompanionImageDirForChapter(chapterName: String, scanlator: String?, title: String, source: Source): UniFile? {

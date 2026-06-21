@@ -801,7 +801,7 @@ private fun LazyListScope.sharedChapterItems(
                     downloadStateProvider = { item.downloadState },
                     // TachiyomiAT
                     translationStateProvider = { item.translationState },
-                    translationProgressProvider = { item.translationProgress?.countPair ?: (0 to 0) },
+                    translationProgressProvider = { item.translationProgress },
                     downloadProgressProvider = { item.downloadProgress },
                     chapterSwipeStartAction = chapterSwipeStartAction,
                     chapterSwipeEndAction = chapterSwipeEndAction,

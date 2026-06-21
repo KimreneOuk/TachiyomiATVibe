@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.IconButtonTokens
@@ -48,9 +49,8 @@ fun ChapterTranslationIndicator(
     enabled: Boolean,
     translationStateProvider: () -> Translation.State,
     onClick: (ChapterTranslationAction) -> Unit,
-    // TachiyomiAT: (done, total) batch progress; (0,0) or total==0 renders an
-    // indeterminate spinner (e.g. reader per-page path, where total is unknown).
-    translationProgressProvider: () -> Pair<Int, Int> = { 0 to 0 },
+    // TachiyomiAT: batch translation progress snapshot for the indicator.
+    translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
     modifier: Modifier = Modifier,
 ) {
     when (val translationState = translationStateProvider()) {
@@ -63,7 +63,7 @@ fun ChapterTranslationIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
-            progress = translationProgressProvider(),
+            snapshot = translationProgressProvider(),
         )
         Translation.State.TRANSLATED -> TranslatedIndicator(
             enabled = enabled,
@@ -110,7 +110,7 @@ private fun TranslatingIndicator(
     enabled: Boolean,
     onClick: (ChapterTranslationAction) -> Unit,
     modifier: Modifier = Modifier,
-    progress: Pair<Int, Int> = 0 to 0,
+    snapshot: TranslationProgressSnapshot? = null,
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
@@ -125,12 +125,9 @@ private fun TranslatingIndicator(
         contentAlignment = Alignment.Center,
     ) {
         val strokeColor = MaterialTheme.colorScheme.onSurfaceVariant
-        val (done, total) = progress
-        // TachiyomiAT: determinate "12/40" progress for the staged batch path
-        // (total known from the active store); indeterminate for the reader
-        // per-page path or before the batch registers any pages (total == 0).
-        val progressFraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-        val isDeterminate = total > 0
+        // TachiyomiAT: stage-based progress fraction
+        val isDeterminate = snapshot != null && snapshot.totalStages > 0
+        val progressFraction = if (isDeterminate) snapshot!!.fraction else 0f
 
         CircularProgressIndicator(
             progress = { if (isDeterminate) progressFraction else 0f },
@@ -156,11 +153,11 @@ private fun TranslatingIndicator(
             modifier = TranslatingModifier,
             tint = strokeColor,
         )
-        // TachiyomiAT: small "done/total" label under the icon so the user can
-        // watch pre-translation advance without opening the reader.
+        // TachiyomiAT: stage-based percentage label under the icon
         if (isDeterminate) {
+            val percentageText = "${(progressFraction * 100).toInt()}%"
             Text(
-                text = "$done/$total",
+                text = percentageText,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 0.dp),

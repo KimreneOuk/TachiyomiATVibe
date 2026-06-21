@@ -81,6 +81,20 @@ fun TranslationProgressSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            if (snapshot.totalPages > 0) {
+                val ocrCount = snapshot.pages.count { it.stage == TranslationProgressStage.OCR }
+                val inpaintCount = snapshot.pages.count { it.stage == TranslationProgressStage.INPAINT }
+                val translateCount = snapshot.pages.count { it.stage == TranslationProgressStage.TRANSLATE }
+                val renderCount = snapshot.pages.count { it.stage == TranslationProgressStage.RENDER }
+                val doneCount = snapshot.pages.count { it.stage == TranslationProgressStage.DONE }
+
+                Text(
+                    text = "OCR: $ocrCount  |  Inpaint: $inpaintCount  |  Translate: $translateCount  |  Render: $renderCount  |  Done: $doneCount",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
             val failures = snapshot.pages.filter { it.stage == TranslationProgressStage.FAILED }
             if (failures.isNotEmpty()) {
                 HorizontalDivider()

@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import me.saket.swipe.SwipeableActionsBox
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
@@ -59,8 +60,8 @@ fun MangaChapterListItem(
     downloadStateProvider: () -> Download.State,
     // TachiyomiAT
     translationStateProvider: () -> Translation.State,
-    // TachiyomiAT: (done, total) batch translation progress for the indicator.
-    translationProgressProvider: () -> Pair<Int, Int> = { 0 to 0 },
+    // TachiyomiAT: batch translation progress for the indicator.
+    translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,

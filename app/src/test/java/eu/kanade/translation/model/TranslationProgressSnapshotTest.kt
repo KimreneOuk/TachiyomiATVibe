@@ -86,5 +86,8 @@ class TranslationProgressSnapshotTest {
         snapshot.donePages shouldBe 2
         snapshot.activePage shouldBe 1
         snapshot.activeStage shouldBe TranslationProgressStage.OCR
+        snapshot.doneStages shouldBe 14
+        snapshot.totalStages shouldBe 24
+        snapshot.fraction shouldBe (14f / 24f)
     }
 }

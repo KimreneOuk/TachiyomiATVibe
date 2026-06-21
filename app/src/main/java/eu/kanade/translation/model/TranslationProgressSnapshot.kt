@@ -18,9 +18,11 @@ data class TranslationProgressSnapshot(
     val queuedCount: Int,
     val failedCount: Int,
     val pages: List<Page>,
+    val doneStages: Int = 0,
+    val totalStages: Int = 0,
 ) {
     val fraction: Float
-        get() = if (totalPages > 0) (donePages.toFloat() / totalPages).coerceIn(0f, 1f) else 0f
+        get() = if (totalStages > 0) (doneStages.toFloat() / totalStages).coerceIn(0f, 1f) else 0f
 
     val countPair: Pair<Int, Int>
         get() = donePages to totalPages
@@ -45,6 +47,8 @@ data class TranslationProgressSnapshot(
                 queuedCount = 0,
                 failedCount = 0,
                 pages = emptyList(),
+                doneStages = 0,
+                totalStages = 0,
             )
 
         fun compute(
@@ -71,6 +75,9 @@ data class TranslationProgressSnapshot(
             val active = rows.firstOrNull { it.stage.isRunning }
                 ?: rows.firstOrNull { it.stage == TranslationProgressStage.QUEUED }
 
+            val doneStages = pageMap.values.sumOf { it.completedStages() }
+            val totalStages = pageMap.size * 4
+
             return TranslationProgressSnapshot(
                 chapterId = chapterId,
                 state = state,
@@ -82,6 +89,8 @@ data class TranslationProgressSnapshot(
                 queuedCount = queued,
                 failedCount = failed,
                 pages = rows,
+                doneStages = doneStages,
+                totalStages = totalStages,
             )
         }
 
@@ -121,4 +130,14 @@ private fun PageTranslation.progressStage(): TranslationProgressStage {
     if (ocrStatus == StageStatus.RUNNING) return TranslationProgressStage.OCR
     if (isTextlessTerminal) return TranslationProgressStage.DONE
     return TranslationProgressStage.QUEUED
+}
+
+private fun PageTranslation.completedStages(): Int {
+    if (hasRenderedResult || (isTextlessTerminal && !isStageRunning) || isStageFailed) return 4
+    var count = 0
+    if (ocrStatus == StageStatus.READY) count++
+    if (translationStatus == StageStatus.READY) count++
+    if (inpaintStatus == StageStatus.READY) count++
+    if (renderStatus == StageStatus.READY) count++
+    return count
 }
