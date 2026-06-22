@@ -152,6 +152,20 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                     // which are BGR. Android bitmaps are ARGB, so write the
                     // tensor planes as B, G, R to match the exported model's
                     // training/inference pipeline.
+                    //
+                    // TachiyomiAT (Track B — UNRESOLVED): the audit-driven fixes
+                    // spec (Track B) flags that the report's "garbage output"
+                    // diagnosis blamed this BGR order and proposed swapping to
+                    // RGB. The general claim ("PaddleOCR models are trained on
+                    // RGB") is plausible but UNVALIDATED against THIS specific
+                    // exported ONNX model — the export could have baked in a
+                    // channel swap. Swapping unvalidated could *introduce* the
+                    // garbage output described. The swap ships ONLY after an
+                    // on-device A/B comparison: run known text crops through
+                    // both orderings (flip the three lines below), compare
+                    // recognition output in logcat. If RGB wins, apply the swap
+                    // and update this comment with the validation date. If BGR
+                    // wins, leave as-is and close Track B as misdiagnosed.
                     result[offset] = normalize(pixel and 0xFF)
                     result[planeSize + offset] = normalize(pixel shr 8 and 0xFF)
                     result[planeSize * 2 + offset] = normalize(pixel shr 16 and 0xFF)
