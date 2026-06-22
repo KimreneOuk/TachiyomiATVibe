@@ -615,6 +615,39 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * TachiyomiAT: eagerly resolve a page's translated image stream from the
+     * store, callable from a page holder's [setImage] path BEFORE deciding
+     * which image to decode.
+     *
+     * Background: the per-holder `observePageView` collector attaches the
+     * translated stream on `Dispatchers.Main.immediate`, which in the common
+     * case delivers the store value synchronously inside the holder `init`
+     * block — so the stream is usually attached before `setImage()` runs. But
+     * there is NO explicit ordering guarantee, and the attachment is bypassed
+     * in two real paths: (a) a holder built just outside the warm window,
+     * where [attachTranslatedStreamIfWarm] actively nulls the stream until
+     * scrolling makes the page warm; (b) `observePageView` bails on a null
+     * store/source. In both, `setImage()` reads `page.translatedStream == null`
+     * and decodes the ORIGINAL image, then a later collector emission flips
+     * it to the translated image — the user sees a brief flash of the source
+     * page. The in-code diagnostic at observePageView confirms this is a real,
+     * unfixed display-path bug.
+     *
+     * This public wrapper lets the holder guarantee the stream is attached
+     * (when the page is in the warm window and has a rendered/cleaned result)
+     * before the single decode pass, eliminating the flash. It is main-thread
+     * safe: [TranslationManager.getRenderedImageStream] / getCleanedImageStream
+     * return LAZY `(() -> InputStream)?` factories — no disk I/O happens here,
+     * only when Coil invokes the lambda on its decoder thread.
+     */
+    fun attachTranslatedStreamForPage(page: ReaderPage) {
+        val manga = manga ?: return
+        val chapter = getCurrentChapter() ?: return
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        attachTranslatedStreamIfWarm(page, manga, chapter, source)
+    }
+
     private fun isInTranslationWarmWindow(page: ReaderPage): Boolean {
         val pages = page.chapter.pages?.filterIsInstance<ReaderPage>() ?: return false
         val pageIndex = pages.indexOfFirst { it === page }.takeIf { it >= 0 } ?: page.index
@@ -1887,7 +1920,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 pt.inpaintStatus == StageStatus.FAILED ||
                 pt.translationStatus == StageStatus.FAILED ||
                 pt.renderStatus == StageStatus.FAILED ||
-                pt.displayImageName != null
+                pt.displayImageName != null ||
+                pt.isTextlessTerminal
             if (isTerminal) continue
             val isNonTerminal = pt.ocrStatus == StageStatus.RUNNING ||
                 pt.ocrStatus == StageStatus.PENDING ||
@@ -1910,7 +1944,8 @@ class ReaderViewModel @JvmOverloads constructor(
                     safe.inpaintStatus == StageStatus.FAILED ||
                     safe.translationStatus == StageStatus.FAILED ||
                     safe.renderStatus == StageStatus.FAILED ||
-                    safe.displayImageName != null
+                    safe.displayImageName != null ||
+                    safe.isTextlessTerminal
                 if (safeTerminal) return@updatePage safe
                 safe.apply {
                     if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {

@@ -6,6 +6,7 @@ import android.graphics.PointF
 import android.view.LayoutInflater
 import androidx.core.view.isVisible
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
+import eu.kanade.translation.model.shouldSurfaceError
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -203,8 +204,15 @@ class PagerPageHolder(
             showTranslateButton(translationEnabled)
             setTranslating(false)
         }
-        // Surface errors only when idle (matches refreshTranslation's guard).
-        val errorMsg = if (!isBeingTranslated) page.translation?.errorMessage else null
+        // Surface errors only for a genuine terminal failure (matches
+        // refreshTranslation's guard). PARTIAL/Cancelled/Textless pages carry
+        // an explanatory errorMessage that must NOT be painted red.
+        val translation = page.translation
+        val errorMsg = if (translation != null && translation.shouldSurfaceError) {
+            translation.errorMessage
+        } else {
+            null
+        }
         showTranslationError(errorMsg)
     }
 
@@ -292,6 +300,20 @@ class PagerPageHolder(
     private suspend fun setImage() {
         progressIndicator?.setProgress(0)
 
+        // TachiyomiAT: eagerly resolve the translated stream before deciding
+        // which image to show. The per-holder observePageView collector usually
+        // attaches it synchronously via Dispatchers.Main.immediate, but there is
+        // no ordering guarantee and the attachment is bypassed off the warm
+        // window and when observePageView bails — leaving translatedStream null
+        // here, decoding the ORIGINAL image, then flipping to translated on a
+        // later collector emission (the user-visible "original-then-translated
+        // flash" on navigation to a pre-translated page). Forcing attachment now
+        // makes the single decode pass go straight to the translated image when
+        // one exists. Cheap and main-thread safe: the stream factory is lazy,
+        // disk I/O only happens on Coil's decoder thread.
+        if (page.translatedStream == null && showTranslations) {
+            viewer.activity.viewModel.attachTranslatedStreamForPage(page)
+        }
         page.showTranslatedImage = showTranslations && page.translatedStream != null
         val streamFn = page.stream ?: return
 
@@ -420,12 +442,18 @@ class PagerPageHolder(
         // the original (not a translated stream) there's no name to track.
         lastShownImageName = if (page.showTranslatedImage) newName else null
         lastShownRenderRevision = if (page.showTranslatedImage) newRevision else -1L
-        // TachiyomiAT: surface translation errors to the user — but only when the
-        // page is NOT currently running. A page that's being retried may carry
-        // a stale errorMessage from a prior failed attempt; showing it alongside
-        // the RUNNING overlay is misleading. Only surface the error when the
-        // page is idle and actually has a terminal failure.
-        val errorMsg = if (!isBeingTranslated) page.translation?.errorMessage else null
+        // TachiyomiAT: surface translation errors to the user — but only for a
+        // genuine terminal failure. Cancellation, the stranded-page sweep, and
+        // PARTIAL all write an explanatory errorMessage that is NOT a failure;
+        // painting those red over a page that produced output (or was stopped
+        // deliberately) is misleading. shouldSurfaceError admits only real
+        // FAILED stages with no rendered/cleaned result to show instead.
+        val translation = page.translation
+        val errorMsg = if (translation != null && translation.shouldSurfaceError) {
+            translation.errorMessage
+        } else {
+            null
+        }
         showTranslationError(errorMsg)
     }
 

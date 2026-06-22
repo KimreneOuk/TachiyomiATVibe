@@ -11,6 +11,7 @@ import androidx.core.view.updateLayoutParams
 import androidx.core.view.updateMargins
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
+import eu.kanade.translation.model.shouldSurfaceError
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
@@ -289,6 +290,16 @@ class WebtoonPageHolder(
         val myGeneration = bindGeneration
         val boundPage = page ?: return
 
+        // TachiyomiAT: eagerly resolve the translated stream before deciding
+        // which image to show. Same race as PagerPageHolder.setImage: the
+        // collector usually attaches synchronously via Main.immediate, but the
+        // warm-window / collector-bail paths leave translatedStream null here,
+        // decoding the ORIGINAL image then flashing to translated. Forcing
+        // attachment now makes the single decode pass go straight to the
+        // translated image. Main-thread safe (lazy stream factory).
+        if (boundPage.translatedStream == null && showTranslations) {
+            viewer.activity.viewModel.attachTranslatedStreamForPage(boundPage)
+        }
         boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
         val streamFn = boundPage.stream ?: return
 
@@ -407,10 +418,16 @@ class WebtoonPageHolder(
         // translated stream) there's no name to track.
         lastShownImageName = if (currentPage.showTranslatedImage) newName else null
         lastShownRenderRevision = if (currentPage.showTranslatedImage) newRevision else -1L
-        // TachiyomiAT: surface translation errors — but only when the page is NOT
-        // currently running, to avoid showing stale errors from a prior failed
-        // attempt alongside the RUNNING overlay.
-        val errorMsg = if (!isBeingTranslated) currentPage.translation?.errorMessage else null
+        // TachiyomiAT: surface translation errors — but only for a genuine
+        // terminal failure. Cancellation, the stranded-page sweep, and PARTIAL
+        // all write an explanatory errorMessage that is NOT a failure;
+        // shouldSurfaceError admits only real FAILED stages with no result.
+        val translation = currentPage.translation
+        val errorMsg = if (translation != null && translation.shouldSurfaceError) {
+            translation.errorMessage
+        } else {
+            null
+        }
         frame.showTranslationError(errorMsg)
     }
 
