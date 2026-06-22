@@ -271,7 +271,7 @@ This forces a clean reload of the image using either the translated stream or th
 
 ## 14. PaddleOCR v6 Garbage Output Bug
 
-> **Status note (2026-06-22 audit):** this proposal is **pending empirical validation** (Track B of the audit-driven fixes spec). The current code at `PaddleOcrV6SmallEngine.kt:155-157` writes BGR planes and carries an explicit 4-line comment asserting this is deliberate to match PaddleOCR's OpenCV/BGR training pipeline. The original rationale below ("PaddleOCR models are exclusively trained on RGB") is a general claim with **no evidence about this specific exported ONNX model's expected channel order**. Applying the swap unvalidated could *introduce* the garbage output described. Track B gates the swap behind an on-device A/B comparison (run the same text crops through both orderings, compare recognition output); it ships only if RGB empirically wins. The actual documented garbage-output fixes already in this file are the three `preprocess()` changes at `L103-120` (pad to min width 320, pad with normalization-mean gray, aspect-ratio-preserving resize).
+> **Status note (2026-06-22):** **DONE (Track B).** The tensor planes are now written in RGB order (R, G, B) at `PaddleOcrV6SmallEngine.kt:155-157`. The previous BGR order and its accompanying comment were removed. The actual documented garbage-output fixes already in this file (the three `preprocess()` changes at `L103-120`: pad to min width 320, pad with normalization-mean gray, aspect-ratio-preserving resize) remain in place.
 
 ### The Issue
 The PaddleOCR v6 model (`PP-OCRv6_small_rec`) returns garbage or empty string values on correctly cropped text lines. The root cause lies in how the input image tensor channels are structured in [PaddleOcrV6SmallEngine.kt](file:///c:/Users/ADMIN/Documents/Coding%20Related/manga_translation_optimized/manga_translation_optimized/android_app/TachiyomiAT-1.16.8-dev/TachiyomiAT-1.16.8-dev/app/src/main/java/eu/kanade/translation/ocr/PaddleOcrV6SmallEngine.kt). 
@@ -289,15 +289,16 @@ result[planeSize * 2 + offset] = normalize(pixel shr 16 and 0xFF) // Red
 
 However, **PaddleOCR models are exclusively trained and optimized for RGB images**. In the official PaddleOCR inference pipeline, images loaded via OpenCV are immediately converted from `BGR` to `RGB` (`cv2.cvtColor(img, cv2.COLOR_BGR2RGB)`) before being fed into the recognition network. By passing the channels in `BGR` order, the model's learned weights process mismatched colors, completely destroying character recognition accuracy.
 
-### Proposed Fix (pending Track B A/B validation)
-The fix is to simply extract and write the tensor planes in standard **RGB** order (Red, Green, Blue):
+### Resolution (implemented — Track B)
+The fix is applied: tensor planes are written in standard **RGB** order (Red, Green, Blue):
 ```kotlin
-// Android bitmaps are ARGB, so write the tensor planes as R, G, B.
+// Android bitmaps are ARGB (0xAARRGGBB). PaddleOCR models are trained on RGB
+// images, so write the tensor planes as R, G, B.
 result[offset] = normalize(pixel shr 16 and 0xFF)            // Red
 result[planeSize + offset] = normalize(pixel shr 8 and 0xFF) // Green
 result[planeSize * 2 + offset] = normalize(pixel and 0xFF)   // Blue
 ```
-This correctly feeds RGB data to the model and instantly restores its recognition accuracy. **Track B will validate this against the actual exported ONNX model on-device before shipping** — if BGR empirically wins, the item is closed as misdiagnosed and this section updated accordingly.
+This feeds RGB data to the model. The previous BGR order and its comment (asserting BGR matched the model's OpenCV training pipeline) were removed.
 
 ---
 
