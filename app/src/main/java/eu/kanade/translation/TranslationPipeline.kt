@@ -896,6 +896,31 @@ class TranslationPipeline(
                 onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                 onForceRelease = {},
             ) {
+                // TachiyomiAT: resume short-circuit. If this page already has a
+                // current cleaned image persisted on disk (inpaintStatus READY +
+                // cleanedImageName set + matches the current inpaint revision),
+                // skip the expensive re-decode + neural inpaint entirely. Stage 3
+                // reloads the cleaned image from disk one-at-a-time regardless, so
+                // we only need cleanedImageName set here. This is the biggest
+                // resume-path perf win: without it, a resumed batch re-ran the
+                // neural inpainter (one of the 3 most expensive stages) on every
+                // already-finished page. The hasCurrentInpaintResult gate preserves
+                // contract #14a — a stale cleaned image (old revision) is NOT
+                // trusted and gets re-inpainted.
+                val existingPage = store.state.value[pageKey]
+                if (existingPage != null &&
+                    existingPage.cleanedImageName != null &&
+                    existingPage.inpaintStatus == StageStatus.READY &&
+                    existingPage.hasCurrentInpaintResult
+                ) {
+                    pageTranslation.cleanedImageName = existingPage.cleanedImageName
+                    pageTranslation.inpaintStatus = StageStatus.READY
+                    pageTranslation.cleanedBitmap = null
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT batch stage2 inpaint SKIP (cleaned image on disk): $pageKey"
+                    }
+                    return@withLeakProofPermit
+                }
                 val streamFn = orderedStreams.firstOrNull { it.first == pageKey }?.second
                 if (streamFn == null) {
                     pageTranslation.inpaintStatus = StageStatus.FAILED
@@ -1155,6 +1180,23 @@ class TranslationPipeline(
                 onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                 onForceRelease = {},
             ) {
+                // TachiyomiAT: resume short-circuit — see the non-AI stage 2 block
+                // for the full rationale. Skip re-decode + neural inpaint when a
+                // current cleaned image is already on disk.
+                val existingPage = store.state.value[pageKey]
+                if (existingPage != null &&
+                    existingPage.cleanedImageName != null &&
+                    existingPage.inpaintStatus == StageStatus.READY &&
+                    existingPage.hasCurrentInpaintResult
+                ) {
+                    pageTranslation.cleanedImageName = existingPage.cleanedImageName
+                    pageTranslation.inpaintStatus = StageStatus.READY
+                    pageTranslation.cleanedBitmap = null
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT batch AI stage2 inpaint SKIP (cleaned image on disk): $pageKey"
+                    }
+                    return@withLeakProofPermit
+                }
                 val streamFn = orderedStreams.firstOrNull { it.first == pageKey }?.second
                 if (streamFn == null) {
                     pageTranslation.inpaintStatus = StageStatus.FAILED
