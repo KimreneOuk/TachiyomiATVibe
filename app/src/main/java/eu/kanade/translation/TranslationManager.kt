@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -60,6 +61,13 @@ class TranslationManager(
 ) {
     private val pipeline = TranslationPipeline(context, provider)
     private val translator = ChapterTranslator(context, provider, pipeline = pipeline);
+
+    /**
+     * TachiyomiAT: application-lifetime scope for one-off init work (queue
+     * rehydration). SupervisorJob so a failure in restoreQueue does not cancel
+     * unrelated work; IO dispatcher because restoreQueue does DB reads.
+     */
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * TachiyomiAT: owns single-page + auto-prefetch job scheduling, dedup, and
@@ -109,6 +117,13 @@ class TranslationManager(
                 scheduler.markPageJobStuck(chapterId, pageKey)
             }
         }
+
+        // TachiyomiAT: rehydrate any persisted batch queue so a crash mid-batch
+        // no longer loses the queue. Runs on IO; restoreQueue does suspend DB
+        // lookups (Translation.fromChapterId). Rehydrated entries get status
+        // QUEUE — the user sees them queued and must tap Start to resume. Never
+        // auto-starts background OCR/LLM work on launch (owner decision).
+        applicationScope.launch { translator.restoreQueue() }
     }
 
     /**

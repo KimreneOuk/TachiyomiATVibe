@@ -8,6 +8,9 @@ import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.translator.TextTranslatorLanguage
@@ -52,6 +55,7 @@ class ChapterTranslator(
     private val sourceManager: SourceManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
+    private val queueStore: TranslationQueueStore = TranslationQueueStore(context),
     private val pipeline: TranslationPipeline = TranslationPipeline(
         context,
         provider,
@@ -127,6 +131,53 @@ class ChapterTranslator(
 
     private val _queueState = MutableStateFlow<List<Translation>>(emptyList())
     val queueState = _queueState.asStateFlow()
+
+    /**
+     * TachiyomiAT: persists the current queue (ordered chapter ids) to disk so
+     * a crash mid-batch no longer loses the queue. Called after every queue
+     * mutation (add/remove/clear). Cheap: one SharedPreferences editor batch.
+     * Idempotent — safe to call when the queue is unchanged.
+     */
+    private fun persistQueue() {
+        queueStore.save(_queueState.value.map { it.chapter.id ?: return })
+    }
+
+    /**
+     * TachiyomiAT: rehydrates the queue from disk on launch. Each persisted
+     * chapter id is rebuilt into a full [Translation] via
+     * [Translation.fromChapterId] (a suspend lookup). Deleted chapters
+     * self-heal — `fromChapterId` returns null for a gone chapter, so stale
+     * ids are silently dropped. Rehydrated entries get status QUEUE (per the
+     * owner decision: rehydrate but require Start — never auto-start
+     * background OCR/LLM work on launch).
+     *
+     * Must be called from a coroutine (suspend lookups). Called once from
+     * [TranslationManager]'s init via [TranslationManager.restoreQueuedTranslations].
+     */
+    suspend fun restoreQueue() {
+        val ids = queueStore.load()
+        if (ids.isEmpty()) return
+        val restored = mutableListOf<Translation>()
+        for (id in ids) {
+            val translation = Translation.fromChapterId(id) ?: continue
+            translation.status = Translation.State.QUEUE
+            restored += translation
+        }
+        if (restored.isNotEmpty()) {
+            _queueState.update { restored }
+            // Re-save so any self-healed (null) drops are persisted.
+            queueStore.save(restored.mapNotNull { it.chapter.id })
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT restored ${restored.size}/${ids.size} queued translations from disk"
+            }
+        } else {
+            // All persisted ids were stale (chapters deleted) — clear the store.
+            queueStore.clear()
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT queue restore: all ${ids.size} persisted ids were stale; cleared store"
+            }
+        }
+    }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -273,8 +324,24 @@ class ChapterTranslator(
         }
         provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
         if (queueState.value.any { it.chapter.id == chapter.id }) return
-        val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+        // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
+        // (corrupted/migrated pref). This method is invoked from a UI action
+        // (TranslationManager.translateChapter), so a thrown exception would
+        // crash the UI thread. Catch the config error and surface it as a toast
+        // (matching the ML Kit unsupported pattern below) instead of queuing a
+        // translation that will fail every page with the same message.
+        val fromLang: TextRecognizerLanguage
+        val toLang: TextTranslatorLanguage
+        try {
+            fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
+            toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+        } catch (e: IllegalArgumentException) {
+            logcat(LogPriority.ERROR, e) { "TachiyomiAT queueChapter aborted: invalid translation config" }
+            scope.launchUI {
+                context.toast(e.message ?: "Invalid translation configuration")
+            }
+            return
+        }
         if (TranslationEngineBuilder.isMlKitActive(translationPreferences) &&
             !TextTranslatorLanguage.mlkitSupportedLanguages().contains(toLang)
         ) {
@@ -392,7 +459,25 @@ class ChapterTranslator(
                 } catch (_: Exception) {}
             }
 
-            translation.status = Translation.State.TRANSLATED
+            // TachiyomiAT: reflect per-page outcomes in the chapter status.
+            // translateBatch swallows per-page failures internally (marks the page
+            // FAILED, doesn't throw), so reaching here used to mean the chapter
+            // was unconditionally TRANSLATED — even when pages had failed OCR /
+            // translation / inpaint. That hid partial failures behind a green
+            // checkmark. Now: if any page that SHOULD have produced output is in
+            // a non-terminal or failed state, the chapter is ERROR so the user
+            // sees something went wrong and can retry. A page counts as "should
+            // have produced output" when it was registered for the batch (i.e. it
+            // is present in the store) and is neither textless-done nor rendered.
+            val pageStates = store.state.value
+            val requiredPageFailed = pageStates.values.any { page ->
+                !page.hasRenderedResult && !page.isTextlessTerminal && page.isStageFailed
+            }
+            translation.status = if (requiredPageFailed) {
+                Translation.State.ERROR
+            } else {
+                Translation.State.TRANSLATED
+            }
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             BitmapPool.releaseAll()
@@ -462,6 +547,7 @@ class ChapterTranslator(
         _queueState.update {
             it + translation
         }
+        persistQueue()
     }
 
     private fun removeFromQueue(translation: Translation) {
@@ -471,6 +557,7 @@ class ChapterTranslator(
             }
             it - translation
         }
+        persistQueue()
     }
 
     private inline fun removeFromQueueIf(predicate: (Translation) -> Boolean) {
@@ -485,6 +572,7 @@ class ChapterTranslator(
             }
             queue - translations
         }
+        persistQueue()
     }
 
     fun removeFromQueue(chapter: Chapter) {
@@ -506,5 +594,6 @@ class ChapterTranslator(
             }
             emptyList()
         }
+        persistQueue()
     }
 }
