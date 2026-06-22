@@ -223,14 +223,29 @@ class AOTInpainting {
         val freeSmallBoxes = mutableListOf<IntArray>()
         val pageArea = image.width.toLong() * image.height.toLong()
         val smallBoxAreaThreshold = pageArea / 200
+        // TachiyomiAT: route order changed so small boxes can reach the neural
+        // path. Previously the small-box check ran FIRST and force-routed every
+        // sub-threshold box to flat-fill regardless of QUALITY mode — so a user
+        // in QUALITY mode expecting neural reconstruction on a small bubble
+        // silently got the flat color-average fill, which destroys screentone
+        // (averaging dots → flat gray). Now: (1) flat-background regions route
+        // to flat-fill (fast and correct for genuinely flat backgrounds);
+        // (2) small boxes route to flat-fill ONLY when memory is constrained;
+        // (3) otherwise the box reaches the neural path for screentone-capable
+        // reconstruction. The memory gate preserves the OOM-safety intent of
+        // the original absolute-area bypass.
         for (box in freeBoxesForAot) {
             val boxArea = (box[2] - box[0]).toLong() * (box[3] - box[1]).toLong()
-            if (boxArea < smallBoxAreaThreshold) {
-                freeSmallBoxes.add(box)
-            } else if (bubbleCleaner.isFlatBackgroundRegion(result, box)) {
-                freeFlatBoxes.add(box)
-            } else {
-                freeNeuralBoxes.add(box)
+            when {
+                bubbleCleaner.isFlatBackgroundRegion(result, box) -> freeFlatBoxes.add(box)
+                boxArea < smallBoxAreaThreshold &&
+                    !TranslationMemoryBudget.canRunNeuralInpaint(
+                        pageWidth = image.width,
+                        pageHeight = image.height,
+                        cropWidth = box[2] - box[0],
+                        cropHeight = box[3] - box[1],
+                    ) -> freeSmallBoxes.add(box)
+                else -> freeNeuralBoxes.add(box)
             }
         }
 
