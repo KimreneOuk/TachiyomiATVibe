@@ -85,6 +85,7 @@
     <string name="reader_compare_show_original">Show original</string>
     <string name="reader_compare_show_translated">Show translated</string>
     <string name="reader_compare_open_settings">Translation settings</string>
+    <string name="reader_compare_delete_translation">Delete translation</string>
 
     <!-- Reader overlay translation settings sheet -->
     <string name="translation_settings">Translation</string>
