@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Test
  * Guards the pure mask-construction and morphology helpers extracted from
  * [SmartBubbleTextCleaner]. These byte-array algorithms were previously private
  * and untestable; they are easy to get wrong (corner geometry, flood-fill edge
- * margins, the dilation quirk), so each behaviour is pinned here.
+ * margins, multi-pass dilation compounding), so each behaviour is pinned here.
  */
 class BubbleMaskBuilderTest {
 
@@ -118,7 +118,7 @@ class BubbleMaskBuilderTest {
         mask.count { it != 0.toByte() } shouldBe 0
     }
 
-    // ---- dilateMask (pins the documented quirk) ----
+    // ---- dilateMask (true multi-pass dilation) ----
 
     @Test
     fun `dilateMask with one iteration grows set pixels by a 4-neighbourhood`() {
@@ -127,29 +127,137 @@ class BubbleMaskBuilderTest {
 
         val out = BubbleMaskBuilder.dilateMask(mask, width = 3, height = 3, iterations = 1)
 
-        // Centre + up/down/left/right set; corners untouched.
+        // Centre + up/down/left/right set; corners untouched after a single pass.
         out.toList() shouldBe listOf(0, 1, 0, 1, 1, 1, 0, 1, 0).map { it.toByte() }
     }
 
     @Test
-    fun `dilateMask re-reads the original mask each iteration, not the running result`() {
-        // Regression guard for the documented quirk: because the inner loop reads
-        // the ORIGINAL `mask`, multiple iterations do NOT compound a normal
-        // multi-pass dilation. A single isolated pixel dilated N times grows to
-        // the same plus-shape as 1 iteration (the corners never fill), unlike a
-        // true multi-pass dilate which would fill the whole 3x3 by iteration 2.
+    fun `dilateMask compounds growth across iterations forming a diamond by pass 2`() {
+        // Regression guard for the dilation quirk: the implementation MUST read
+        // the running result each pass (not the original `mask`), so iterations
+        // compound. A 4-neighbourhood dilation reaches pixels by Manhattan
+        // distance, so 2 passes from a single centre pixel fill a diamond (L1
+        // ball) of radius 2: 1 + 4 + 8 = 13 cells. The old quirk-capped
+        // implementation only ever produced the 5-cell plus-shape of pass 1
+        // regardless of iteration count.
+        val mask = ByteArray(25).also { it[12] = 1 }
+
+        val twoPass = BubbleMaskBuilder.dilateMask(mask, width = 5, height = 5, iterations = 2)
+
+        twoPass.count { it != 0.toByte() } shouldBe 13
+        // Diamond corners (the 4 corners of the 5x5, Manhattan distance 4 from
+        // centre) are NOT reached at 2 iterations.
+        twoPass[0] shouldBe 0
+        twoPass[4] shouldBe 0
+        twoPass[20] shouldBe 0
+        twoPass[24] shouldBe 0
+    }
+
+    @Test
+    fun `dilateMask grows a single pixel by exactly iterations pixels along the axes`() {
+        // 9x9 grid, single centre pixel at (4,4), iterations = 3 → arms reach
+        // centre ± 3 along each axis (Manhattan distance ≤ 3), i.e. x in [1,7]
+        // on the centre row and y in [1,7] on the centre column. The far ends
+        // (x=0, x=8) are at Manhattan distance 4 and are NOT reached.
+        val mask = ByteArray(81).also { it[40] = 1 }
+
+        val threePass = BubbleMaskBuilder.dilateMask(mask, width = 9, height = 9, iterations = 3)
+
+        // Centre row: x in [1,7] set; x=0 and x=8 NOT set (distance 4).
+        for (x in 1..7) {
+            threePass[4 * 9 + x] shouldBe 1
+        }
+        threePass[4 * 9 + 0] shouldBe 0
+        threePass[4 * 9 + 8] shouldBe 0
+        // Centre column: y in [1,7] set; y=0 and y=8 NOT set.
+        for (y in 1..7) {
+            threePass[y * 9 + 4] shouldBe 1
+        }
+        threePass[0 * 9 + 4] shouldBe 0
+        threePass[8 * 9 + 4] shouldBe 0
+        // Canvas corners never reached.
+        threePass[0] shouldBe 0
+        threePass[8 * 9 + 8] shouldBe 0
+    }
+
+    @Test
+    fun `dilateMask with zero iterations returns a copy of the input`() {
         val mask = ByteArray(9).also { it[4] = 1 }
 
-        val onePass = BubbleMaskBuilder.dilateMask(mask, width = 3, height = 3, iterations = 1)
-        val threePass = BubbleMaskBuilder.dilateMask(mask, width = 3, height = 3, iterations = 3)
+        val out = BubbleMaskBuilder.dilateMask(mask, width = 3, height = 3, iterations = 0)
 
-        // Identical output under both — proving the quirk (no compaction).
-        onePass.toList() shouldBe threePass.toList()
-        // Corners stay 0 under both.
-        threePass[0] shouldBe 0
-        threePass[2] shouldBe 0
-        threePass[6] shouldBe 0
-        threePass[8] shouldBe 0
+        out.toList() shouldBe mask.toList()
+        // Returned copy, not the same reference.
+        (out !== mask) shouldBe true
+    }
+
+    // ---- dilateMaskDisk (circular structuring element) ----
+
+    @Test
+    fun `dilateMaskDisk with zero radius returns a copy of the input`() {
+        val mask = ByteArray(9).also { it[4] = 1 }
+
+        val out = BubbleMaskBuilder.dilateMaskDisk(mask, width = 3, height = 3, radius = 0)
+
+        out.toList() shouldBe mask.toList()
+        (out !== mask) shouldBe true
+    }
+
+    @Test
+    fun `dilateMaskDisk radius 1 from a single pixel fills the 4-neighbourhood plus the centre`() {
+        // radius 1 disk = {dx²+dy² ≤ 1} = centre + up/down/left/right (the
+        // 4-neighbourhood). Same 5-cell plus-shape as dilateMask iterations=1.
+        val mask = ByteArray(9).also { it[4] = 1 }
+
+        val out = BubbleMaskBuilder.dilateMaskDisk(mask, width = 3, height = 3, radius = 1)
+
+        out.toList() shouldBe listOf(0, 1, 0, 1, 1, 1, 0, 1, 0).map { it.toByte() }
+    }
+
+    @Test
+    fun `dilateMaskDisk radius 2 fills a true circle including diagonals`() {
+        // radius 2 disk = {dx²+dy² ≤ 4}. From a centre pixel this reaches the
+        // 4 axis neighbours (distance 1), the 4 diagonals (distance sqrt(2)≈1.41),
+        // and the axis-2 neighbours (distance 2). The (2,2) corner diagonal
+        // (distance sqrt(8)≈2.83) is NOT reached — that is the key difference
+        // from a square SE and what rounds rectangle corners.
+        // On a 5x5 grid, centre (2,2). Set cells: 13 (centre + 4 axis-1 + 4
+        // diagonal + 4 axis-2). Corners (0,0),(0,4),(4,0),(4,4) NOT set.
+        val mask = ByteArray(25).also { it[12] = 1 }
+
+        val out = BubbleMaskBuilder.dilateMaskDisk(mask, width = 5, height = 5, radius = 2)
+
+        out.count { it != 0.toByte() } shouldBe 13
+        // Corners of the 5x5 are at distance sqrt(8) > 2 — NOT reached.
+        out[0] shouldBe 0
+        out[4] shouldBe 0
+        out[20] shouldBe 0
+        out[24] shouldBe 0
+        // Diagonals at distance sqrt(2) ARE reached (this is what rounds corners).
+        out[6] shouldBe 1   // (1,1)
+        out[8] shouldBe 1   // (3,1)
+        out[16] shouldBe 1  // (1,3)
+        out[18] shouldBe 1  // (3,3)
+    }
+
+    @Test
+    fun `dilateMaskDisk rounds rectangle corners unlike the diamond dilateMask`() {
+        // A 3x3 filled rectangle (the kind of mask buildTightTextRegionMask
+        // produces) dilated by radius 2: the disk grows the rectangle but
+        // ROUNDS its corners (the corner cells beyond the disk are not set),
+        // whereas the 4-neighbourhood dilateMask chamfers them at 45°.
+        // On a 7x7 canvas, rectangle at rows 2-4 cols 2-4.
+        val rect = ByteArray(49)
+        for (y in 2..4) for (x in 2..4) rect[y * 7 + x] = 1
+
+        val diskOut = BubbleMaskBuilder.dilateMaskDisk(rect, width = 7, height = 7, radius = 2)
+
+        // The corner-most grown cells (e.g. (0,0)) are outside the disk from
+        // every rectangle pixel, so they stay 0 — the corner is rounded.
+        diskOut[0] shouldBe 0
+        diskOut[6] shouldBe 0
+        diskOut[42] shouldBe 0
+        diskOut[48] shouldBe 0
     }
 
     // ---- featherAlpha ----

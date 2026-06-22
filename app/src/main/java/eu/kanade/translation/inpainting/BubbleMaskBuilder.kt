@@ -152,13 +152,25 @@ object BubbleMaskBuilder {
 
     /**
      * Dilate the set pixels of [mask] by one pixel (4-neighbourhood), repeated
-     * [iterations] times.
+     * [iterations] times — a true multi-pass dilation that grows set pixels by
+     * [iterations] pixels outward along each axis.
      *
-     * NOTE: behavior is preserved byte-for-byte from the cleaner's original
-     * private copy, which reads the *original* [mask] inside every iteration
-     * rather than the running result — so beyond the first iteration the
-     * dilation is effectively re-applied to the source each pass. Callers that
-     * want a true multi-pass dilation should pass iterations = 1.
+     * TachiyomiAT: each pass reads the *running* result (snapshotted into a
+     * separate read buffer) rather than the original [mask]. The earlier
+     * implementation read [mask] on every pass, which re-applied the same
+     * single-pixel dilation each time and capped growth at 1px no matter how
+     * large [iterations] was — callers setting `iterations = 3` to cover
+     * anti-aliased stroke edges (see [SmartBubbleTextCleaner]) only ever got
+     * 1px, leaving stroke fringes half-covered at the fill boundary. Reading
+     * the snapshot makes growth compound correctly.
+     *
+     * Growth shape: a 4-neighbourhood dilation reaches pixels by Manhattan
+     * distance, so after N iterations a single isolated pixel fills a diamond
+     * (L1 ball) of radius N — the axes grow N pixels (centre ± N), and the
+     * diagonal corner of an enclosing square fills only at iteration 2·N
+     * (corner Manhattan distance). Callers wanting a square block must use
+     * 8-neighbourhood (Chebyshev) dilation; this 4-neighbourhood variant is
+     * intentionally conservative so it does not bridge across thin gaps.
      */
     fun dilateMask(
         mask: ByteArray,
@@ -166,12 +178,14 @@ object BubbleMaskBuilder {
         height: Int,
         iterations: Int,
     ): ByteArray {
-        val result = mask.copyOf()
-        for (iter in 0 until iterations) {
+        if (iterations <= 0) return mask.copyOf()
+        var result = mask.copyOf()
+        repeat(iterations) {
+            val source = result
             val temp = result.copyOf()
             for (y in 1 until height - 1) {
                 for (x in 1 until width - 1) {
-                    if (mask[y * width + x] != 0.toByte()) {
+                    if (source[y * width + x] != 0.toByte()) {
                         temp[y * width + x] = 1
                         temp[(y - 1) * width + x] = 1
                         temp[(y + 1) * width + x] = 1
@@ -180,7 +194,60 @@ object BubbleMaskBuilder {
                     }
                 }
             }
-            for (i in result.indices) result[i] = temp[i]
+            result = temp
+        }
+        return result
+    }
+
+    /**
+     * TachiyomiAT: disk (circular) structuring-element dilation.
+     *
+     * Unlike the 4-neighbourhood [dilateMask] (Manhattan-diamond growth, which
+     * produces 45° chamfered corners on rectangular masks), this grows set
+     * pixels isotropically — a disk of radius [radius] — so rectangle corners
+     * become genuinely rounded rather than chamfered. This directly addresses
+     * the reported "corners too sharp" inpainting artifact: the erase mask's
+     * corners are the corners the user sees on the cleaned bubble, and a disk
+     * SE rounds them while a diamond SE chamfers them.
+     *
+     * The disk does NOT bridge thin gaps more than the diamond would at the
+     * same radius (a disk of radius N has the same diagonal reach as a diamond
+     * of radius N), so the "intentionally conservative" property cited on
+     * [dilateMask] is preserved.
+     *
+     * Implementation: precompute the disk kernel offsets once (dx,dy pairs
+     * where dx²+dy² ≤ radius²), then for each set source pixel OR the kernel
+     * into the output. Single-pass, no iteration loop — [radius] IS the growth.
+     */
+    fun dilateMaskDisk(
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        radius: Int,
+    ): ByteArray {
+        if (radius <= 0) return mask.copyOf()
+        val result = mask.copyOf()
+        // Precompute disk kernel offsets (relative coords where dx²+dy² ≤ r²).
+        val kernel = mutableListOf<Pair<Int, Int>>()
+        for (dy in -radius..radius) {
+            for (dx in -radius..radius) {
+                if (dx * dx + dy * dy <= radius * radius) {
+                    kernel += dx to dy
+                }
+            }
+        }
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                if (mask[y * width + x] != 0.toByte()) {
+                    for ((dx, dy) in kernel) {
+                        val nx = x + dx
+                        val ny = y + dy
+                        if (nx in 0 until width && ny in 0 until height) {
+                            result[ny * width + nx] = 1
+                        }
+                    }
+                }
+            }
         }
         return result
     }
