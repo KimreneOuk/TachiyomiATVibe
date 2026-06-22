@@ -27,6 +27,31 @@ class SmartBubbleTextCleaner(
     private var workingBuffer2: IntArray? = null
     private var currentBufferSize = 0
 
+    /**
+     * TachiyomiAT: scale the feather radius and dilation radius by the bubble's
+     * shorter side instead of using the absolute [featherRadius] /
+     * [dilationIterations] fields. On a 40px bubble a fixed 6px feather ring
+     * consumes ~15% of each side and produces a muddy over-erased halo; on a
+     * 200px bubble it's negligible. Scaling keeps the feather proportional so
+     * small/tight bubbles get a tighter, cleaner fill. Floors prevent zero on
+     * tiny bubbles; caps preserve the tuned behaviour on large bubbles.
+     *
+     * Returns (featherRadius, dilationRadius) for the given min dimension.
+     */
+    private fun scaledMorphology(minDim: Int): Pair<Int, Int> {
+        val feather = featherRadius.coerceAtMost(max(2, minDim / 12)).coerceAtLeast(2)
+        val dilation = dilationIterations.coerceAtMost(max(1, minDim / 20)).coerceAtLeast(1)
+        return feather to dilation
+    }
+
+    /**
+     * TachiyomiAT: scale the text-mask pad (mp) by bubble size. The fixed
+     * `max(textMaskPad, 8)` pad pushes the erase zone 8px past every text box
+     * edge — on a small bubble whose text nearly fills it, that pad reaches
+     * past the bubble boundary and over-erases surrounding artwork.
+     */
+    private fun scaledTextMaskPad(minDim: Int): Int = max(textMaskPad, min(8, minDim / 8))
+
     private fun getWorkingBuffers(size: Int): Pair<IntArray, IntArray> {
         if (size > MAX_CACHED_PIXELS) {
             return Pair(IntArray(size), IntArray(size))
@@ -126,9 +151,15 @@ class SmartBubbleTextCleaner(
         val bgStats = sampleBackgroundStats(contextPixels, ringMask, contextW, contextH)
         val bgType = classifyBackground(bgStats)
 
+        // TachiyomiAT: scale morphology by bubble size so small/tight bubbles
+        // get a proportional (not oversized) feather + dilation + text-mask pad.
+        val minBubbleDim = min(bubbleW, bubbleH)
+        val (scaledFeather, scaledDilation) = scaledMorphology(minBubbleDim)
+        val scaledMp = scaledTextMaskPad(minBubbleDim)
+
         var combinedMask = ByteArray(contextW * contextH)
         for (box in localTextBoxes) {
-            val mp = max(textMaskPad, 8)
+            val mp = scaledMp
             val ex1 = max(0, box[0] - mp)
             val ey1 = max(0, box[1] - mp)
             val ex2 = min(contextW, box[2] + mp)
@@ -215,7 +246,7 @@ class SmartBubbleTextCleaner(
                 }
             }
         }
-        val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, featherRadius)
+        val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, scaledFeather)
 
         // TachiyomiAT: activate feathering. The fill region is the mask CORE
         // plus the feather RING (every pixel where alpha > 0). The earlier code
@@ -319,7 +350,9 @@ class SmartBubbleTextCleaner(
         val localX2 = x2 - cx1
         val localY2 = y2 - cy1
 
-        val mp = max(textMaskPad, 8)
+        // TachiyomiAT: scale the text-mask pad by region size (see cleanBubbleGroup).
+        val minRegionDim = min(localX2 - localX1, localY2 - localY1).coerceAtLeast(1)
+        val mp = scaledTextMaskPad(minRegionDim)
         val ex1 = max(0, localX1 - mp)
         val ey1 = max(0, localY1 - mp)
         val ex2 = min(contextW, localX2 + mp)
@@ -415,8 +448,11 @@ class SmartBubbleTextCleaner(
         )
 
         var finalMask = combinedMask
-        // TachiyomiAT: disk SE rounds mask corners (vs the diamond's chamfer).
-        finalMask = BubbleMaskBuilder.dilateMaskDisk(finalMask, contextW, contextH, dilationIterations)
+        // TachiyomiAT: scale morphology by region size so small free-text
+        // regions get a proportional feather + dilation (see cleanBubbleGroup).
+        // minRegionDim was computed above from the region box.
+        val (scaledFeather, scaledDilation) = scaledMorphology(minRegionDim)
+        finalMask = BubbleMaskBuilder.dilateMaskDisk(finalMask, contextW, contextH, scaledDilation)
         if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE) {
             val aggressiveContrast = buildLocalContrastTextMask(
                 pixels = contextPixels,
@@ -432,7 +468,7 @@ class SmartBubbleTextCleaner(
                 }
             }
         }
-        val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, featherRadius)
+        val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, scaledFeather)
 
         // TachiyomiAT: activate feathering — same fix as cleanBubbleGroup. The
         // fill region is the mask CORE plus the feather RING (alpha > 0), and
