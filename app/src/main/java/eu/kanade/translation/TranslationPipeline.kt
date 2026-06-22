@@ -16,6 +16,7 @@ import eu.kanade.translation.model.RenderQuality
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.prepareForcedRetry
@@ -25,11 +26,15 @@ import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.recognition.RoiPageRecognitionEngine
+import eu.kanade.translation.translator.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.ContextualTextTranslator
+import eu.kanade.translation.translator.LmStudioTranslator
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.TranslationContextChunk
 import eu.kanade.translation.translator.TranslationEngineBuilder
+import eu.kanade.translation.translator.TranslationBlockValidation
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
@@ -97,6 +102,18 @@ class TranslationPipeline(
          * on a large image), but finite.
          */
         const val SINGLE_PAGE_TIMEOUT_MS = 120_000L
+
+        /**
+         * Maximum number of local retries the single-page path performs when a
+         * translation comes back PARTIAL (some blocks translated, some not).
+         * Each retry re-requests ONLY the still-untranslated blocks via
+         * [AiTranslationRetryPlanner.untranslatedBlocks]. Mirrors the batch
+         * path's adaptive retry behaviour so the interactive reader path
+         * benefits from the same second-chance logic. Does NOT bump the page's
+         * persistent retryCount — PARTIAL must not burn the permanent retry
+         * budget (contract #14b); this is a local loop counter only.
+         */
+        const val SINGLE_PAGE_PARTIAL_MAX_RETRIES = 2
     }
 
     /**
@@ -301,15 +318,56 @@ class TranslationPipeline(
     private fun shortHash(value: String): String = ShortHash.hash(value)
 
     init {
-        val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        val ocrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
-        currentFromLang = fromLang
-        currentOcrModel = ocrModel
-        currentInpaintingMode = inpaintingModeFromPref()
-        recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
-        textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
-        currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
+        // TachiyomiAT: STRICT no-fallback. fromPref/build now THROW on invalid
+        // config (see TextRecognizerLanguage / TextTranslatorLanguage /
+        // StandardTranslatorKind). The throw is the intended behavior on the
+        // translate path (the entry points catch it and mark the page FAILED
+        // with a "reconfigure settings" message). But this object is
+        // constructed eagerly as a field initializer in TranslationManager —
+        // an invalid pref at startup must NOT crash the app here. So build the
+        // engines defensively: on a config error, fall back to the safest
+        // defaults so the object constructs, and let the first translate
+        // attempt's fromPref re-throw and surface the real error via the
+        // pipeline's try/catch. ensureEnginesBuiltFor (called at every
+        // translate) overwrites whatever is built here once config is valid.
+        try {
+            val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
+            val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+            val ocrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
+            currentFromLang = fromLang
+            currentOcrModel = ocrModel
+            currentInpaintingMode = inpaintingModeFromPref()
+            recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
+            textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
+            currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) {
+                "TachiyomiAT pipeline init: invalid translation config, deferring to first translate"
+            }
+            currentFromLang = TextRecognizerLanguage.JAPANESE
+            currentOcrModel = OcrModel.MLKIT
+            currentInpaintingMode = InpaintingMode.FAST
+            recognitionEngine = createRecognitionEngine(
+                TextRecognizerLanguage.JAPANESE,
+                OcrModel.MLKIT,
+                InpaintingMode.FAST,
+            )
+            // A no-op translator that throws on use — nothing should call it
+            // because the entry-point fromPref throws first, but it guarantees
+            // the field is never null without a lateinit crash.
+            textTranslator = object : TextTranslator {
+                override val fromLang = TextRecognizerLanguage.JAPANESE
+                override val toLang = TextTranslatorLanguage.ENGLISH
+                override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+                    throw IllegalStateException("Translation pipeline not initialized (invalid config)")
+                }
+                override fun close() {}
+            }
+            currentTranslatorSignature = computeTranslatorSignature(
+                TextRecognizerLanguage.JAPANESE,
+                TextTranslatorLanguage.ENGLISH,
+            )
+        }
     }
 
     private fun inpaintingModeFromPref(): InpaintingMode {
@@ -441,9 +499,17 @@ class TranslationPipeline(
         source: HttpSource,
         pageKey: String,
     ) {
-        val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        val syntheticTranslation = Translation(source, manga, chapter, fromLang, toLang)
+        // TachiyomiAT: resolve store with SAFE language fallbacks, not the
+        // throwing fromPref. This helper runs in an error/timeout path; if the
+        // CAUSE was invalid config, calling fromPref here would throw AGAIN
+        // and mask the original failure, leaving the page unmarked. The store
+        // is keyed on manga/chapter (not language), so the language here only
+        // satisfies the Translation constructor — any valid value works.
+        val syntheticTranslation = Translation(
+            source, manga, chapter,
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.ENGLISH,
+        )
         val store = activeStoreResolver?.invoke(syntheticTranslation) ?: return
         store.updatePage(pageKey) { existing ->
             // Don't overwrite a page that already produced a result (rendered/
@@ -474,9 +540,14 @@ class TranslationPipeline(
         pageKey: String,
         error: Throwable,
     ) {
-        val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        val syntheticTranslation = Translation(source, manga, chapter, fromLang, toLang)
+        // TachiyomiAT: resolve store with SAFE language fallbacks (see
+        // markPageTimedOut). This runs in the catch path; if invalid config
+        // caused the failure, fromPref here would re-throw and mask it.
+        val syntheticTranslation = Translation(
+            source, manga, chapter,
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.ENGLISH,
+        )
         val store = activeStoreResolver?.invoke(syntheticTranslation) ?: return
         store.updatePage(pageKey) { existing ->
             // Don't overwrite a page that already produced a result (rendered/
@@ -678,9 +749,20 @@ class TranslationPipeline(
         val analyzed = mutableMapOf<String, PageTranslation>()
         for ((pageKey, streamFn) in orderedStreams) {
             coroutineContext.ensureActive()
-            // Resume skip: already analyzed with blocks -> reuse, don't re-OCR.
+            // Resume skip: already analyzed with blocks AND a persisted inpaint
+            // mask for the current inpaint revision -> reuse, don't re-OCR.
+            // TachiyomiAT: requiring the mask too closes the resume hole where a
+            // page OCR'd before this fix (no inpaintMaskBoxes, or a mask at an
+            // older inpaint revision) was reused and then inpainted with only its
+            // surviving OCR blocks — leaving detector-only + watermark regions
+            // visible. A page without a current mask is re-OCR'd so a fresh,
+            // complete mask is captured. Textless pages (empty blocks) are always
+            // skipped: they have nothing to inpaint.
             val already = existing(pageKey)
-            if (already != null && already.ocrStatus == StageStatus.READY && already.blocks.isNotEmpty()) {
+            if (already != null && already.ocrStatus == StageStatus.READY &&
+                (already.blocks.isNotEmpty() || already.inpaintMaskBoxes.isEmpty()) &&
+                already.hasCurrentInpaintMask
+            ) {
                 analyzed[pageKey] = already
                 logcat(LogPriority.INFO) { "TachiyomiAT batch stage1 SKIP (already analyzed): $pageKey" }
                 continue
@@ -782,7 +864,13 @@ class TranslationPipeline(
                         }
                     }
                     textTranslator.translatePage(pageKey, pageTranslation)
-                    pageTranslation.translationStatus = StageStatus.READY
+                    // TachiyomiAT: validate the standard-engine output. ML Kit /
+                    // Google can leave a block's translation blank on a mid-call
+                    // failure (IllegalStateException, HTTP 429, JSON parse error)
+                    // without throwing, which the old code accepted as READY.
+                    // Turning an incomplete page into FAILED here matches the AI
+                    // path and stops the renderer from drawing partial output.
+                    TranslationBlockValidation.applyTo(pageTranslation)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
                     pageTranslation.translationStatus = StageStatus.FAILED
@@ -792,6 +880,7 @@ class TranslationPipeline(
                     store.updatePage(pageKey) {
                         (it ?: pageTranslation).apply {
                             translationStatus = pageTranslation.translationStatus
+                            errorMessage = pageTranslation.errorMessage
                             updatedAt = System.currentTimeMillis()
                         }
                     }
@@ -863,8 +952,13 @@ class TranslationPipeline(
         for ((pageKey, _) in inpainted) {
             coroutineContext.ensureActive()
             val pageTranslation = inpainted[pageKey] ?: continue
-            // Render only when translate succeeded AND we have a cleaned bitmap.
-            if (pageTranslation.translationStatus != StageStatus.READY) continue
+            // Render only when translate produced usable output AND we have a
+            // cleaned bitmap. READY (all blocks) and PARTIAL (some blocks; the
+            // rest render blank on the cleaned image) both proceed — a single
+            // bad block no longer skips the whole page. FAILED is skipped.
+            if (pageTranslation.translationStatus != StageStatus.READY &&
+                pageTranslation.translationStatus != StageStatus.PARTIAL
+            ) continue
             val cleanedBitmap = pageTranslation.cleanedImageName?.let {
                 loadPersistedCleanedBitmap(manga, chapter, source, it)
             }
@@ -935,7 +1029,16 @@ class TranslationPipeline(
 
         val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
             ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
-        val plan = TranslationContextChunkPlanner.plan(orderedAnalyzed, requestedOutputTokens)
+        val chunkProfile = if (contextualTranslator is LmStudioTranslator) {
+            TranslationContextChunkPlanner.Profile.LM_STUDIO
+        } else {
+            TranslationContextChunkPlanner.Profile.DEFAULT
+        }
+        val plan = TranslationContextChunkPlanner.plan(
+            pages = orderedAnalyzed,
+            requestedOutputTokens = requestedOutputTokens,
+            profile = chunkProfile,
+        )
 
         plan.rejectedPages.forEach { (pageKey, reason) ->
             orderedAnalyzed[pageKey]?.let { pageTranslation ->
@@ -956,15 +1059,35 @@ class TranslationPipeline(
 
         val failedPageKeys = linkedSetOf<String>()
         var rollingContext = ""
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT batch stage2-AI: chunks=${plan.chunks.size} pages=${plannedPageKeys.size} " +
+                "rejected=${plan.rejectedPages.size} translator=${contextualTranslator::class.simpleName} " +
+                "profile=$chunkProfile " +
+                "baseUrl/Model resolution is the translator's own"
+        }
         for ((chunkIndex, chunk) in plan.chunks.withIndex()) {
             coroutineContext.ensureActive()
             val contextualChunk = TranslationContextChunkPlanner.withRollingContext(
                 chunk = chunk,
                 rollingContext = rollingContext,
                 requestedOutputTokens = requestedOutputTokens,
+                profile = chunkProfile,
             )
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT batch stage2-AI chunk ${chunkIndex + 1}/${plan.chunks.size}: " +
+                    "pages=${chunk.pages.keys} blocks=${chunk.pages.values.sumOf { it.blocks.size }} " +
+                    "promptTokens=${contextualChunk.estimatedPromptTokens} maxOutput=${contextualChunk.maxOutputTokens}"
+            }
             try {
-                contextualTranslator.translateContextual(contextualChunk)
+                translateAiChunkWithAdaptiveRetry(
+                    translator = contextualTranslator,
+                    chunk = contextualChunk,
+                    requestedOutputTokens = requestedOutputTokens,
+                    profile = chunkProfile,
+                    allowFailureSplit = contextualTranslator is LmStudioTranslator,
+                    label = "${chunkIndex + 1}/${plan.chunks.size}",
+                    retryDepth = 0,
+                )
                 contextualChunk.pages.keys.forEach { pageKey ->
                     val pageTranslation = orderedAnalyzed[pageKey] ?: return@forEach
                     store.updatePage(pageKey) {
@@ -998,31 +1121,32 @@ class TranslationPipeline(
             }
         }
 
+        // TachiyomiAT: validate the AI output per page. A block whose
+        // translation is still blank OR identical to its source text counts as
+        // untranslated — adapters no longer paper over those with a source-text
+        // fallback, and this gate turns an incomplete page into a detectable
+        // FAILED instead of a READY that mixes real + OCR text. Covers partial
+        // AI output, NULL/missing JSON entries, and fewer-numbered-line returns.
         for ((pageKey, pageTranslation) in orderedAnalyzed) {
             if (pageKey in plan.rejectedPages || pageKey in failedPageKeys) continue
-            val expected = pageTranslation.blocks.count { it.text.isNotBlank() }
-            val translated = pageTranslation.blocks.count { it.text.isNotBlank() && it.translation.isNotBlank() }
-            if (expected > 0 && translated < expected) {
-                markBatchTranslationFailed(
-                    store = store,
-                    pageKey = pageKey,
-                    pageTranslation = pageTranslation,
-                    reason = "AI returned $translated/$expected block translations",
-                )
-            } else {
-                pageTranslation.translationStatus = StageStatus.READY
-                store.updatePage(pageKey) {
-                    (it ?: pageTranslation).apply {
-                        translationStatus = StageStatus.READY
-                        updatedAt = System.currentTimeMillis()
+            val status = TranslationBlockValidation.applyTo(pageTranslation)
+            store.updatePage(pageKey) {
+                (it ?: pageTranslation).apply {
+                    translationStatus = pageTranslation.translationStatus
+                    if (status == StageStatus.FAILED) {
+                        errorMessage = pageTranslation.errorMessage
+                        retryCount = pageTranslation.retryCount
                     }
+                    updatedAt = System.currentTimeMillis()
                 }
             }
         }
 
         for ((pageKey, pageTranslation) in orderedAnalyzed) {
             coroutineContext.ensureActive()
-            if (pageTranslation.translationStatus != StageStatus.READY) continue
+            if (pageTranslation.translationStatus != StageStatus.READY &&
+                pageTranslation.translationStatus != StageStatus.PARTIAL
+            ) continue
             withLeakProofPermit(
                 permit = translatorPermit,
                 timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
@@ -1069,6 +1193,99 @@ class TranslationPipeline(
             inpainted[pageKey] = pageTranslation
         }
         return inpainted
+    }
+
+    private suspend fun translateAiChunkWithAdaptiveRetry(
+        translator: ContextualTextTranslator,
+        chunk: TranslationContextChunk,
+        requestedOutputTokens: Int,
+        profile: TranslationContextChunkPlanner.Profile,
+        allowFailureSplit: Boolean,
+        label: String,
+        retryDepth: Int,
+    ) {
+        coroutineContext.ensureActive()
+        try {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT batch stage2-AI request $label pass=$retryDepth: " +
+                    "pages=${chunk.pages.size} blocks=${chunk.blockCount} " +
+                    "promptTokens=${chunk.estimatedPromptTokens} maxOutput=${chunk.maxOutputTokens}"
+            }
+            translator.translateContextual(chunk)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            if (!allowFailureSplit || chunk.blockCount <= 1) {
+                if (allowFailureSplit || retryDepth > 0) {
+                    logcat(LogPriority.WARN, e) {
+                        "TachiyomiAT batch stage2-AI terminal chunk failure $label pass=$retryDepth: " +
+                            "pages=${chunk.pages.keys} blocks=${chunk.blockCount}"
+                    }
+                    return
+                }
+                throw e
+            }
+            val split = AiTranslationRetryPlanner.planFailureSplit(
+                chunk = chunk,
+                requestedOutputTokens = requestedOutputTokens,
+                profile = profile,
+            )
+            if (split.chunks.isEmpty()) {
+                logcat(LogPriority.WARN, e) {
+                    "TachiyomiAT batch stage2-AI failed and produced no retry chunks $label pass=$retryDepth"
+                }
+                return
+            }
+            logcat(LogPriority.WARN, e) {
+                "TachiyomiAT batch stage2-AI splitting failed chunk $label pass=$retryDepth: " +
+                    "blocks=${chunk.blockCount} retryChunks=${split.chunks.size}"
+            }
+            split.chunks.forEachIndexed { index, retryChunk ->
+                translateAiChunkWithAdaptiveRetry(
+                    translator = translator,
+                    chunk = retryChunk,
+                    requestedOutputTokens = requestedOutputTokens,
+                    profile = profile,
+                    allowFailureSplit = allowFailureSplit,
+                    label = "$label.${index + 1}",
+                    retryDepth = retryDepth + 1,
+                )
+            }
+            return
+        }
+
+        val missingPages = AiTranslationRetryPlanner.untranslatedPages(chunk)
+        val missingBlocks = missingPages.values.sumOf { it.blocks.size }
+        if (missingBlocks == 0) return
+
+        if (chunk.blockCount <= 1) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT batch stage2-AI terminal partial $label pass=$retryDepth: " +
+                    "remainingBlocks=$missingBlocks"
+            }
+            return
+        }
+
+        val missingPlan = AiTranslationRetryPlanner.planMissingRetry(
+            chunk = chunk,
+            requestedOutputTokens = requestedOutputTokens,
+            profile = profile,
+        )
+        if (missingPlan.chunks.isEmpty()) return
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT batch stage2-AI partial $label pass=$retryDepth: " +
+                "remainingBlocks=$missingBlocks retryChunks=${missingPlan.chunks.size}"
+        }
+        missingPlan.chunks.forEachIndexed { index, retryChunk ->
+            translateAiChunkWithAdaptiveRetry(
+                translator = translator,
+                chunk = retryChunk,
+                requestedOutputTokens = requestedOutputTokens,
+                profile = profile,
+                allowFailureSplit = allowFailureSplit,
+                label = "$label.missing${index + 1}",
+                retryDepth = retryDepth + 1,
+            )
+        }
     }
 
     private suspend fun markBatchTranslationFailed(
@@ -1397,15 +1614,41 @@ class TranslationPipeline(
                     )
                     pageTranslation.translationStatus = StageStatus.RUNNING
                     textTranslator.translatePage(pageKey, pageTranslation)
-                    pageTranslation.translationStatus = StageStatus.READY
-                    // Confirm the translator actually produced output. If every
-                    // block's `translation` is still null/blank after a "READY"
-                    // result, the translator is silently a no-op (the bug we're
-                    // hunting). Log the outcome so it's visible without diagnostics.
+                    // TachiyomiAT: validate the translator actually produced a
+                    // usable translation for every OCR'd block. A blank / null /
+                    // source-equal translation flips the page to FAILED (none
+                    // translated) or PARTIAL (some translated, some not).
+                    // PARTIAL is still rendered — the renderer draws only
+                    // block.translation (blank for failures), so a partial page
+                    // shows translated bubbles + blank bubbles rather than a red
+                    // error overlay. See contract #14b.
+                    TranslationBlockValidation.applyTo(pageTranslation)
+                    // TachiyomiAT: local adaptive retry for PARTIAL single pages.
+                    // Mirrors the batch path's AiTranslationRetryPlanner: if some
+                    // blocks came back blank/source-equal, re-request ONLY those
+                    // blocks (up to 2 retries) before settling on PARTIAL. This
+                    // does NOT bump pageTranslation.retryCount — PARTIAL must not
+                    // burn the page's permanent retry budget (contract #14b); the
+                    // bound here is a local loop counter only.
+                    var singlePageRetry = 0
+                    while (pageTranslation.translationStatus == StageStatus.PARTIAL &&
+                        singlePageRetry < SINGLE_PAGE_PARTIAL_MAX_RETRIES &&
+                        AiTranslationRetryPlanner.untranslatedBlocks(pageTranslation).isNotEmpty()
+                    ) {
+                        singlePageRetry++
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT single-page PARTIAL retry $singlePageRetry/$SINGLE_PAGE_PARTIAL_MAX_RETRIES: pageKey=$pageKey"
+                        }
+                        pageTranslation.translationStatus = StageStatus.RUNNING
+                        textTranslator.translatePage(pageKey, pageTranslation)
+                        TranslationBlockValidation.applyTo(pageTranslation)
+                    }
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT translate step DONE: pageKey=$pageKey " +
-                            "translated=$translatedCount/${pageTranslation.blocks.size}"
+                            "translated=$translatedCount/${pageTranslation.blocks.size} " +
+                            "status=${pageTranslation.translationStatus}" +
+                            (if (singlePageRetry > 0) " partialRetries=$singlePageRetry" else "")
                     }
                     if (transDiag) {
                         pageTranslation.blocks.forEachIndexed { idx, b ->
@@ -1428,7 +1671,18 @@ class TranslationPipeline(
             // to render/compress/persist for a page the reader has left behind.
             coroutineContext.ensureActive()
 
-            if (pageTranslation.blocks.isNotEmpty() && pageTranslation.translationStatus == StageStatus.READY) {
+            // TachiyomiAT: admit both READY (fully translated) and PARTIAL (some
+            // blocks translated, some not). PARTIAL pages still render — the
+            // renderer draws only block.translation, which is blank for failed
+            // blocks, so the user sees translated bubbles + blank bubbles rather
+            // than a red error overlay. This aligns the single-page path with
+            // the batch path (TranslationPipeline batch Stage 2/3) and with docs
+            // contract #14b. Previously this gate was strict == READY, so one
+            // failed block skipped the entire page's render.
+            if (pageTranslation.blocks.isNotEmpty() &&
+                (pageTranslation.translationStatus == StageStatus.READY ||
+                    pageTranslation.translationStatus == StageStatus.PARTIAL)
+            ) {
                 // TachiyomiAT: decouple render from inpaint. Previously render
                 // REQUIRED pageTranslation.cleanedBitmap (the inpainted, text-erased
                 // bitmap); when inpaint failed or was unavailable (ML Kit mode has
@@ -1496,9 +1750,18 @@ class TranslationPipeline(
                     // honest error/retry affordance, never a half-translated page.
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT render blocked for $pageKey: inpaint produced no cleaned bitmap; " +
-                            "not retrying at lower resolution"
+                            "retrying at lower resolution"
                     }
-                    val retriedCleaned = pageTranslation.cleanedBitmap
+                    val retryResult = retryInpaintDownscaled(
+                        manga = manga,
+                        chapter = chapter,
+                        source = source,
+                        pageKey = pageKey,
+                        streams = streams,
+                        decoded = decoded,
+                        pageTranslation = pageTranslation,
+                    )
+                    val retriedCleaned = retryResult.cleanedBitmap
                     if (retriedCleaned != null) {
                         try {
                             pageTranslation.renderStatus = StageStatus.RUNNING
@@ -2013,13 +2276,17 @@ class TranslationPipeline(
                 "engine=${pageTranslation.recognitionEngine} sample=${pageTranslation.decodeSampleSize} " +
                 "elapsedMs=${(System.nanoTime() - pageStart) / 1_000_000}"
         }
-        // Persist the recognized blocks so the stage is resumable: a later run
-        // skips pages whose ocrStatus is already READY with non-empty blocks.
+        // Persist the recognized blocks + the durable inpaint mask so the stage
+        // is resumable: a later run skips pages whose ocrStatus is already READY
+        // with non-empty blocks AND a mask matching the current inpaint revision.
+        // The mask is what makes detector-only + watermark regions still get
+        // erased after a resume/reopen (see PageInpaintingPlanner + contract #14).
         store.updatePage(fileName) { existing ->
             (existing ?: pageTranslation).apply {
                 sourceFileName = fileName
                 blocks = pageTranslation.blocks
                 allTextDetections = pageTranslation.allTextDetections
+                inpaintMaskBoxes = pageTranslation.inpaintMaskBoxes
                 ocrStatus = pageTranslation.ocrStatus
                 inpaintStatus = pageTranslation.inpaintStatus
                 decodeSampleSize = pageTranslation.decodeSampleSize
