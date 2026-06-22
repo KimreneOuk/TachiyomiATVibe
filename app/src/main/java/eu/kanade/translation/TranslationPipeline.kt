@@ -1082,6 +1082,37 @@ class TranslationPipeline(
             }
         }
 
+        // TachiyomiAT: resume — pages whose blocks are ALL already translated
+        // produce no refs, so they appear in no chunk and would otherwise be
+        // left at their prior status (PENDING/RUNNING) and skipped by the
+        // downstream inpaint/render gates. Detect them here and mark READY so
+        // they proceed through inpaint (which itself short-circuits via Track G
+        // when a cleaned image exists) and render. A page with zero source
+        // blocks is textless and stays out of this path (handled elsewhere).
+        orderedAnalyzed.forEach { (pageKey, pageTranslation) ->
+            if (pageKey in plannedPageKeys || pageKey in plan.rejectedPages) return@forEach
+            val sourceBlocks = pageTranslation.blocks.count { it.text.isNotBlank() }
+            if (sourceBlocks == 0) return@forEach
+            val translatedBlocks = pageTranslation.blocks.count {
+                it.text.isNotBlank() &&
+                    it.translation.isNotBlank() &&
+                    it.translation.trim() != it.text.trim()
+            }
+            if (translatedBlocks == sourceBlocks) {
+                pageTranslation.translationStatus = StageStatus.READY
+                store.updatePage(pageKey) {
+                    (it ?: pageTranslation).apply {
+                        translationStatus = StageStatus.READY
+                        errorMessage = null
+                        updatedAt = System.currentTimeMillis()
+                    }
+                }
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT batch stage2-AI resume: $pageKey already fully translated ($translatedBlocks/$sourceBlocks) -> READY"
+                }
+            }
+        }
+
         val failedPageKeys = linkedSetOf<String>()
         var rollingContext = ""
         logcat(LogPriority.INFO) {

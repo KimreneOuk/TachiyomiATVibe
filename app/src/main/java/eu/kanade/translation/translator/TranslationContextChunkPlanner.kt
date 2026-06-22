@@ -17,6 +17,21 @@ object TranslationContextChunkPlanner {
     const val PROMPT_OVERHEAD_TOKENS = 900
     const val MAX_ROLLING_CONTEXT_TOKENS = 768
 
+    enum class Profile {
+        DEFAULT,
+        LM_STUDIO,
+    }
+
+    data class Constraints(
+        val maxContextTokens: Int,
+        val safetyMargin: Int,
+        val minOutputTokens: Int,
+        val promptOverheadTokens: Int,
+        val maxRollingContextTokens: Int,
+        val maxBlocksPerChunk: Int,
+        val maxPagesPerChunk: Int,
+    )
+
     data class Result(
         val chunks: List<TranslationContextChunk>,
         val rejectedPages: Map<String, String>,
@@ -25,19 +40,28 @@ object TranslationContextChunkPlanner {
     fun plan(
         pages: LinkedHashMap<String, PageTranslation>,
         requestedOutputTokens: Int,
+        profile: Profile = Profile.DEFAULT,
+        maxBlocksPerChunk: Int? = null,
+        maxPagesPerChunk: Int? = null,
     ): Result {
-        val outputUpperBound = requestedOutputTokens.coerceAtLeast(MIN_OUTPUT_TOKENS)
-        val maxPromptTokens = MAX_CONTEXT_TOKENS - SAFETY_MARGIN - MIN_OUTPUT_TOKENS
+        val constraints = constraintsFor(profile).let {
+            it.copy(
+                maxBlocksPerChunk = maxBlocksPerChunk ?: it.maxBlocksPerChunk,
+                maxPagesPerChunk = maxPagesPerChunk ?: it.maxPagesPerChunk,
+            )
+        }
+        val outputUpperBound = requestedOutputTokens.coerceAtLeast(constraints.minOutputTokens)
+        val maxPromptTokens = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
         val chunks = mutableListOf<TranslationContextChunk>()
         val rejected = linkedMapOf<String, String>()
         var current = mutableListOf<BlockRef>()
-        var currentTokens = PROMPT_OVERHEAD_TOKENS
+        var currentTokens = constraints.promptOverheadTokens
 
         fun flush() {
             if (current.isEmpty()) return
-            chunks += buildChunk(current, outputUpperBound)
+            chunks += buildChunk(current, outputUpperBound, constraints)
             current = mutableListOf()
-            currentTokens = PROMPT_OVERHEAD_TOKENS
+            currentTokens = constraints.promptOverheadTokens
         }
 
         pages.forEach pageLoop@ { (pageKey, page) ->
@@ -46,10 +70,21 @@ object TranslationContextChunkPlanner {
             page.blocks.forEachIndexed { blockIndex, block ->
                 if (rejectReason != null) return@forEachIndexed
                 if (block.text.isBlank()) return@forEachIndexed
+                // TachiyomiAT: resume — skip blocks that already carry a real
+                // translation. On a resumed AI batch, blocks translated in a
+                // prior run would otherwise be re-sent to the LLM, wasting
+                // tokens + HTTP round-trips per finished block. A "real"
+                // translation is non-blank AND not source-equal (trim compare
+                // guards against adapters that echo the source verbatim or
+                // wrap it in stray whitespace). Mirrors the predicate in
+                // AiTranslationRetryPlanner.untranslatedBlocks.
+                if (block.translation.isNotBlank() && block.translation.trim() != block.text.trim()) {
+                    return@forEachIndexed
+                }
                 val ref = BlockRef(pageKey, blockIndex, block)
                 val refTokens = estimateBlockTokens(ref)
-                if (PROMPT_OVERHEAD_TOKENS + refTokens > maxPromptTokens) {
-                    rejectReason = "Text block exceeds the 8k AI context budget"
+                if (constraints.promptOverheadTokens + refTokens > maxPromptTokens) {
+                    rejectReason = "Text block exceeds the ${constraints.maxContextTokens / 1024}k AI context budget"
                     return@forEachIndexed
                 }
                 pageRefs += ref to refTokens
@@ -60,7 +95,16 @@ object TranslationContextChunkPlanner {
                 return@pageLoop
             }
             pageRefs.forEach { (ref, refTokens) ->
-                if (current.isNotEmpty() && currentTokens + refTokens > maxPromptTokens) {
+                val prospectivePageCount = current.mapTo(linkedSetOf()) { it.pageKey }
+                    .also { it += ref.pageKey }
+                    .size
+                if (current.isNotEmpty() &&
+                    (
+                        currentTokens + refTokens > maxPromptTokens ||
+                            current.size >= constraints.maxBlocksPerChunk ||
+                            prospectivePageCount > constraints.maxPagesPerChunk
+                        )
+                ) {
                     flush()
                 }
                 current += ref
@@ -76,21 +120,23 @@ object TranslationContextChunkPlanner {
         chunk: TranslationContextChunk,
         rollingContext: String,
         requestedOutputTokens: Int,
+        profile: Profile = Profile.DEFAULT,
     ): TranslationContextChunk {
+        val constraints = constraintsFor(profile)
         val trimmedContext = rollingContext.trim()
         if (trimmedContext.isEmpty()) {
-            return chunk.withOutputCap(requestedOutputTokens)
+            return chunk.withOutputCap(requestedOutputTokens, constraints)
         }
         val contextTokens = estimateTokens(trimmedContext)
         val candidateTokens = chunk.estimatedPromptTokens + contextTokens
-        val maxContextPrompt = MAX_CONTEXT_TOKENS - SAFETY_MARGIN - MIN_OUTPUT_TOKENS
-        if (contextTokens > MAX_ROLLING_CONTEXT_TOKENS || candidateTokens > maxContextPrompt) {
-            return chunk.withOutputCap(requestedOutputTokens)
+        val maxContextPrompt = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
+        if (contextTokens > constraints.maxRollingContextTokens || candidateTokens > maxContextPrompt) {
+            return chunk.withOutputCap(requestedOutputTokens, constraints)
         }
         return chunk.copy(
             rollingContext = trimmedContext,
             estimatedPromptTokens = candidateTokens,
-        ).withOutputCap(requestedOutputTokens)
+        ).withOutputCap(requestedOutputTokens, constraints)
     }
 
     fun updateRollingContext(previous: String, translatedPages: Map<String, PageTranslation>): String {
@@ -147,6 +193,7 @@ object TranslationContextChunkPlanner {
     private fun buildChunk(
         refs: List<BlockRef>,
         requestedOutputTokens: Int,
+        constraints: Constraints,
     ): TranslationContextChunk {
         val grouped = linkedMapOf<String, PageTranslation>()
         refs.groupBy { it.pageKey }.forEach { (pageKey, blockRefs) ->
@@ -154,25 +201,53 @@ object TranslationContextChunkPlanner {
                 blocks = blockRefs.map { it.block }.toMutableList(),
             )
         }
-        val promptTokens = PROMPT_OVERHEAD_TOKENS + refs.sumOf(::estimateBlockTokens)
+        val promptTokens = constraints.promptOverheadTokens + refs.sumOf(::estimateBlockTokens)
         return TranslationContextChunk(
             pages = grouped,
             blockCount = refs.size,
             rollingContext = "",
             estimatedPromptTokens = promptTokens,
-            maxOutputTokens = effectiveOutputCap(promptTokens, requestedOutputTokens),
+            maxOutputTokens = effectiveOutputCap(promptTokens, requestedOutputTokens, constraints),
         )
     }
 
-    private fun TranslationContextChunk.withOutputCap(requestedOutputTokens: Int): TranslationContextChunk =
-        copy(maxOutputTokens = effectiveOutputCap(estimatedPromptTokens, requestedOutputTokens))
+    private fun TranslationContextChunk.withOutputCap(
+        requestedOutputTokens: Int,
+        constraints: Constraints,
+    ): TranslationContextChunk =
+        copy(maxOutputTokens = effectiveOutputCap(estimatedPromptTokens, requestedOutputTokens, constraints))
 
-    private fun effectiveOutputCap(promptTokens: Int, requestedOutputTokens: Int): Int {
-        val available = MAX_CONTEXT_TOKENS - SAFETY_MARGIN - promptTokens
+    private fun effectiveOutputCap(
+        promptTokens: Int,
+        requestedOutputTokens: Int,
+        constraints: Constraints,
+    ): Int {
+        val available = constraints.maxContextTokens - constraints.safetyMargin - promptTokens
         return requestedOutputTokens
-            .coerceAtLeast(MIN_OUTPUT_TOKENS)
+            .coerceAtLeast(constraints.minOutputTokens)
             .coerceAtMost(available)
-            .coerceAtLeast(MIN_OUTPUT_TOKENS)
+            .coerceAtLeast(constraints.minOutputTokens)
+    }
+
+    fun constraintsFor(profile: Profile): Constraints = when (profile) {
+        Profile.DEFAULT -> Constraints(
+            maxContextTokens = MAX_CONTEXT_TOKENS,
+            safetyMargin = SAFETY_MARGIN,
+            minOutputTokens = MIN_OUTPUT_TOKENS,
+            promptOverheadTokens = PROMPT_OVERHEAD_TOKENS,
+            maxRollingContextTokens = MAX_ROLLING_CONTEXT_TOKENS,
+            maxBlocksPerChunk = Int.MAX_VALUE,
+            maxPagesPerChunk = Int.MAX_VALUE,
+        )
+        Profile.LM_STUDIO -> Constraints(
+            maxContextTokens = 4_096,
+            safetyMargin = SAFETY_MARGIN,
+            minOutputTokens = MIN_OUTPUT_TOKENS,
+            promptOverheadTokens = PROMPT_OVERHEAD_TOKENS,
+            maxRollingContextTokens = 384,
+            maxBlocksPerChunk = 32,
+            maxPagesPerChunk = 4,
+        )
     }
 
     private fun estimateBlockTokens(ref: BlockRef): Int {
