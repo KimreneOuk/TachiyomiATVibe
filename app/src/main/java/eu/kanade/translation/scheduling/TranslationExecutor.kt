@@ -16,10 +16,16 @@ import java.io.InputStream
  * cares that the executor runs one page to completion (or failure) under its
  * own single permit, with stage-resume + watchdog semantics already handled.
  *
- * The `force` flag mirrors the existing contract: `false` resumes from the
- * latest persisted stage (no re-OCR when valid blocks exist); `true` redoes the
- * whole pipeline. Auto-prefetch always passes `false`; the manual per-page
- * button passes `true`.
+ * The `force` flag: `false` resumes from the latest persisted stage (no
+ * re-OCR when valid blocks exist, no re-translate when blocks are translated,
+ * no re-inpaint when a cleaned image exists — see Tracks G/H); `true` redoes
+ * the whole pipeline. The default is `false` so that a manual tap on a page
+ * that was already translated (e.g. by auto-prefetch) resumes instead of
+ * burning a full re-OCR + re-translate + re-inpaint + re-render. An explicit
+ * `force = true` is reserved for a future "re-translate this page" UI
+ * affordance. Both auto-prefetch and the manual per-page button pass the
+ * default (`false`); the scheduler's [translatePage] threads an optional
+ * `force` through for that future affordance.
  */
 interface TranslationExecutor {
 
@@ -28,7 +34,7 @@ interface TranslationExecutor {
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
-        force: Boolean = true,
+        force: Boolean = false,
     )
 
     suspend fun translateSinglePageFromStream(
@@ -37,6 +43,6 @@ interface TranslationExecutor {
         source: HttpSource,
         pageKey: String,
         streamFn: () -> InputStream,
-        force: Boolean = true,
+        force: Boolean = false,
     )
 }

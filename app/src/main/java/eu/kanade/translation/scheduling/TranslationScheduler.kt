@@ -415,7 +415,7 @@ class TranslationScheduler(
         }
     }
 
-    fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) {
+    fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String, force: Boolean = false) {
         val jobKey = "${chapter.id}:$pageKey"
         // TachiyomiAT: do NOT cancel an in-flight job for this same page on a
         // duplicate request. The previous `activePageJobs[jobKey]?.cancel()`
@@ -440,7 +440,7 @@ class TranslationScheduler(
         val job = scope.launch {
             var cancelledMidFlight = false
             try {
-                executor.translateSinglePage(manga, chapter, source, pageKey)
+                executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // The job was cancelled (chapter switch, reader exit, Stop all).
                 // If this happened after the executor wrote ocrStatus=RUNNING
