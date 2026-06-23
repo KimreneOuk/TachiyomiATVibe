@@ -20,16 +20,23 @@ class GoogleTranslator(
     val okHttpClient = OkHttpClient()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        // TachiyomiAT: pass the CONFIGURED source language to Google instead of
+        // the hardcoded "auto". The old `sl=auto` made Google guess the source
+        // language per request — which sounds helpful but is a silent fallback:
+        // it hid misconfigured source-language settings (user picked the wrong
+        // OCR language) by auto-detecting around them, and produced
+        // inconsistent results across blocks. Pinning sl=fromLang.code makes
+        // the configured language actually authoritative.
         pages.mapValues { (_, v) ->
             v.blocks.map { b ->
-                b.translation = translateText(toLang.code, b.text)
+                b.translation = translateText(toLang.code, fromLang.code, b.text)
             }
         }
     }
 
-    private suspend fun translateText(lang: String, text: String): String {
+    private suspend fun translateText(lang: String, sourceLang: String, text: String): String {
         if (text.isBlank()) return ""
-        val access = getTranslateUrl(lang, text)
+        val access = getTranslateUrl(lang, sourceLang, text)
         val build: Request = Request.Builder().url(access).build()
         val newCall = okHttpClient.newCall(build)
         val response = newCall.await()
@@ -60,16 +67,16 @@ class GoogleTranslator(
         return ""
     }
 
-    private fun getTranslateUrl(lang: String, text: String): String {
+    private fun getTranslateUrl(lang: String, sourceLang: String, text: String): String {
         try {
             val client = client1
             val calculateToken = calculateToken(text)
             val encode: String = URLEncoder.encode(text, "utf-8")
-            return "https://translate.google.com/translate_a/single?client=$client&sl=auto&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken&q=$encode"
+            return "https://translate.google.com/translate_a/single?client=$client&sl=$sourceLang&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken&q=$encode"
         } catch (unused: UnsupportedEncodingException) {
             val client2 = client1
             val calculateToken2 = calculateToken(text)
-            return "https://translate.google.com/translate_a/single?client=$client2&sl=auto&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken2&q=$text"
+            return "https://translate.google.com/translate_a/single?client=$client2&sl=$sourceLang&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken2&q=$text"
         }
     }
 

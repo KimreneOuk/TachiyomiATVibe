@@ -29,12 +29,14 @@ translation/
 │  ├─ AOTInpainting.kt           AOT-based bubble inpainting
 │  ├─ BubbleMaskBuilder.kt       ★ PURE mask/morphology helpers (BubbleMaskBuilderTest)
 │  ├─ InpaintingMode.kt          QUALITY / FAST enum
+│  ├─ PageInpaintingEngine.kt    Inpaint entry; delegates box planning to PageInpaintingPlanner
+│  ├─ PageInpaintingPlanner.kt   ★ PURE erase-mask planner: computeMask (at OCR time) + build (persisted-aware)
 │  └─ SmartBubbleTextCleaner.kt  Bubble cleaning core; delegates masks to BubbleMaskBuilder
 │
 ├─ model/
-│  ├─ PageTranslation.kt         Page state + TranslationBlock + StageStatus
+│  ├─ PageTranslation.kt         Page state + TranslationBlock + StageStatus + InpaintMaskBox (durable erase mask)
 │  ├─ PageTranslationHelper.kt   ★ PURE overlapping-block merge (mergeOverlap)
-│  ├─ PageTranslationState.kt    ★ PURE lifecycle/status predicates + cancelInFlightStages
+│  ├─ PageTranslationState.kt    ★ PURE lifecycle/status predicates + cancelInFlightStages + hasCurrentInpaintMask
 │  ├─ PageView.kt                Reader-side view model
 │  ├─ Translation.kt             Per-chapter Translation aggregate
 │  └─ TranslationSettingsSummary.kt ★ PURE read-only config snapshot for the pre-translation confirm popup
@@ -46,7 +48,7 @@ translation/
 │  ├─ MlKitRoiOcrEngine.kt       ML Kit ROI OCR
 │  ├─ OcrModelCatalog.kt         ★ PURE model/language catalog (entries, coerce, defaults)
 │  ├─ PaddleCtcDecoder.kt        ★ PURE CTC decode (decode, argmaxIndices)
-│  ├─ PaddleOcrV6SmallEngine.kt  PaddleOCR v6 small engine (ONNX)
+│  ├─ PaddleOcrV6SmallEngine.kt  PaddleOCR v6 small engine (HF `inference.onnx`)
 │  ├─ RoiOcrEngine.kt            ROI OCR interface + reclaimPooledMemory contract
 │  ├─ TextRecognizer.kt          OCR engine selector facade
 │  └─ TextRecognizerLanguage.kt  Source-language enum
@@ -59,7 +61,7 @@ translation/
 │                                 reclaims sub-engine native caches on OOM)
 │
 ├─ rendering/
-│  ├─ PageTextRenderer.kt        Draws translated text onto cleaned pages
+│  ├─ PageTextRenderer.kt        Draws translated text onto cleaned pages (no source-text fallback)
 │  └─ RenderColorEstimator.kt    ★ PURE colorPolicy/snapGray + Bitmap-bound estimate()
 │
 ├─ runtime/onnx/
@@ -82,13 +84,14 @@ translation/
 │  ├─ GoogleTranslator.kt        Google Translate adapter
 │  ├─ LmStudioTranslator.kt      LM Studio adapter (delegates parsing to NumberedLineResponseParser)
 │  ├─ MLKitTranslator.kt         On-device ML Kit translator
-│  ├─ NumberedLineResponseParser.kt ★ PURE `[index] text` parser (DeepSeek/LM Studio)
+│  ├─ NumberedLineResponseParser.kt ★ PURE STRICT `[index] text` parser (DeepSeek/LM Studio); no positional fallback, rejects out-of-range/dup/blank/CJK-leak
 │  ├─ OcrArtifactSanitizer.kt    ★ PURE OCR misread (N°/№/Ｎ０) stripper
 │  ├─ OpenRouterTranslator.kt    OpenRouter adapter
 │  ├─ StandardTranslatorKind.kt  Standard translator enum (ML Kit/Google)
 │  ├─ TextTranslator.kt          Translator interface
 │  ├─ TextTranslatorLanguage.kt  Target-language enum
 │  ├─ TranslationBlockFilters.kt ★ PURE watermark (RTMTH) block removal
+│  ├─ TranslationBlockValidation.kt ★ PURE post-translate validation (blank/source-equal → PARTIAL/FAILED; all→READY)
 │  └─ TranslationEngineBuilder.kt Resolves active translator from preferences
 │
 └─ util/
@@ -211,9 +214,9 @@ The ORT default is `enable_cpu_mem_arena=true` + `enable_mem_pattern=true`. With
 those on, every session pre-allocates an arena sized to its largest-seen tensor
 workspace and holds it for the session lifetime — the ORT maintainers document
 this as the single largest ORT-side native-memory consumer on Android
-(microsoft/onnxruntime#11627). This app creates up to SIX concurrent sessions
-(text detector + MangaOcr encoder/decoder_init/decoder_step + AOT inpainting +
-its lazily-created CPU fallback), so six arenas compound into hundreds of MB of
+(microsoft/onnxruntime#11627). This app creates multiple concurrent sessions
+(text detector + MangaOcr encoder/decoder_init/decoder_step + AOT inpainting),
+so arenas compound into hundreds of MB of
 resident native heap that GC cannot reclaim. That footprint is invisible to the
 Java GC (it's native malloc) but DOES count against the device's physical RAM,
 which trips the `ActivityManager.lowMemory` / `availMem < threshold` gates in
@@ -230,6 +233,11 @@ because a typo in the string key silently no-ops whereas the type-safe methods
 fail loudly). Both calls are wrapped in `runCatching` that logs at WARN if a
 future ORT version removes them — the session is still created, just with the
 default (arena-on) config, so a forward ORT bump cannot brick translation.
+
+All translation ONNX sessions are CPU-only. NNAPI/QNN registration is not used
+in the current runtime; stale execution-provider preferences are ignored.
+Future NPU support should be a separate Qualcomm QNN/QAIRT backend with
+converted models, not a generic NNAPI fallback.
 
 The trade-off is a modest per-inference CPU cost (the arena also serves as a
 free-list, so without it each inference goes through malloc/free) in exchange
@@ -316,6 +324,195 @@ NIO buffer equality is defined over mutable state, which makes it unsuitable
 as a map key across mutations. Use identity collections (`IdentityHashMap`)
 or wrap the buffer in a stable identity holder.
 
+### 14. Inpaint mask is durable + adapters never fall back to source text (`PageInpaintingPlanner`, `TranslationBlockValidation`, `PageTextRenderer`)
+Two coupled invariants fix the "mixed source + translated text on one page" and
+"translated text rendered on top of un-erased source" symptoms reported together.
+
+**(a) The inpaint erase set MUST be captured at OCR time and persisted.**
+`PageInpaintingPlanner.computeMask` runs ONCE at the end of
+`PageRecognitionEngine.analyze` and writes the result to
+`PageTranslation.inpaintMaskBoxes` (a new SERIALIZABLE field of `InpaintMaskBox`,
+NOT the `@Transient allTextDetections`). The mask is the full erase set: every
+OCR block's bubble box + text box, every detector-only region (filtered out of
+OCR by dedupe/suppression but still needing erase), and would include watermark
+boxes if present. At inpaint time `PageInpaintingPlanner.build` PREFERS the
+persisted mask and only recomputes from the live `allTextDetections` when no
+persisted mask exists (the fresh single-page path). This is load-bearing because:
+  - `allTextDetections` is `@Transient`, so it is lost on serialize/deserialize
+    (store reopen, process death, batch resume). Deriving the mask from it at
+    inpaint time on the resume path produced an erase set of ONLY the surviving
+    OCR blocks, leaving detector-only + watermark regions visible.
+  - Watermark blocks are removed from `blocks` by `TranslationBlockFilters`
+    AFTER translate (which runs before inpaint in the batch flow), so deriving
+    the mask from `blocks` at inpaint time lost the watermark boxes too.
+  - `PageTranslation.CURRENT_INPAINT_REVISION` was bumped 8 → 9 so pre-fix
+    chapters (no `inpaintMaskBoxes`, or a mask at the old revision) are re-OCR'd
+    via the `hasCurrentInpaintMask` resume gate rather than reused with a
+    partial mask.
+
+The stage-1 resume gate now requires BOTH non-empty blocks AND a current mask
+(`hasCurrentInpaintMask`) before skipping re-OCR. A textless page (empty blocks)
+is always treated as having a current mask — it has nothing to erase.
+
+**(b) A blank / source-equal translation MUST NOT be treated as success.**
+The AI adapters (`DeepSeekTranslator`, `GeminiTranslator`, `OpenRouterTranslator`,
+`LmStudioTranslator`) previously pre-filled `block.translation = block.text` when
+the model returned blank/`NULL`/missing output, and the renderer drew that via
+`block.translation.ifBlank { block.text }`. Together this made a page with some
+real translations + some untranslated blocks render the OCR text in place of the
+missing translations while still counting as READY. Now:
+  - Adapters leave `block.translation` BLANK on missing output (no source fallback).
+  - `TranslationBlockValidation.applyTo` runs after EVERY translate path (AI batch,
+    non-AI batch, single-page) and classifies the page into three outcomes:
+    *all blocks translated → `READY`*; *some translated, some not → `PARTIAL`*
+    (rendered; the missing regions render blank on the cleaned image; retryCount
+    is NOT bumped so a partial doesn't burn the page's retry budget); *none
+    translated → `FAILED`* (retryCount bumped, render skipped). It rejects blank
+    AND source-equal translations by default.
+  - The render gates in `TranslationPipeline` admit `READY` and `PARTIAL` alike,
+    so a single bad block no longer skips the whole page.
+  - `PageTextRenderer.render` draws ONLY `block.translation` by default
+    (`renderSourceText` defaults to `false`); a blank translation renders as
+    nothing. The translate path never passes `renderSourceText = true`, so
+    drawing source text on a translated page is now impossible by construction.
+
+**(c) Chapter status reflects per-page failures.**
+`ChapterTranslator.translateChapterInternal` now inspects the store after the
+batch: if any page that should have produced output (not textless, not rendered)
+is in a failed stage, the chapter is `ERROR`, not `TRANSLATED`. Previously the
+unconditional `TRANSLATED` after `translateBatch` returned hid partial failures
+behind a green checkmark.
+
+**Diagnostics:** `PageInpaintingPlanner.InpaintingInput.source`
+(`PERSISTED` vs `RECOMPUTED`) is logged by `PageInpaintingEngine` so a resumed
+batch that somehow lost its mask is visible. `TranslationBlockValidation` writes
+a `"Translation incomplete: X/Y blocks translated"` reason on FAILED pages and a
+`"Translation partial: X/Y blocks translated"` reason on PARTIAL pages.
+
+### 15. Strict no-fallback policy (`NumberedLineResponseParser`, `PageTextRenderer`, config resolvers, `MLKitTranslator`, `PageInpaintingEngine`, reader UI)
+"No fallback" means nothing is ever silently substituted: not source text for a
+blank translation (contract #14b), not positional guesses for malformed model
+output, not vertical layout for a stray CJK glyph, not a default language/engine/
+inpaint mode for an invalid or unavailable config, and not a stale error message
+for a page that produced output or was deliberately stopped.
+
+**(a) The numbered-line parser never guesses.** `NumberedLineResponseParser.parse`
+matches `^[index] text$` lines and rejects (drops) any entry that: has no
+`[index]` prefix, has an index outside `[0, expectedCount)`, is a duplicate index
+(first wins), is blank, or — when `targetLang` is a non-CJK language — contains
+CJK characters (source-script leakage guard, e.g. a leaked `(笑)` in an English
+translation). The old positional fallback that assigned unnumbered prose lines
+to `0, 1, 2, ...` is GONE: a model that ignores the format contributes nothing,
+every block stays blank, and the page is PARTIAL/FAILED by validation. Gemini/
+OpenRouter are JSON-protocol and unaffected.
+
+**(b) Vertical layout is majority-CJK only.** `PageTextRenderer` renders a block
+vertical only when CJK characters are the MAJORITY (>50%) of its non-whitespace
+text (`shouldRenderVertical` / `cjkRatio`). The old `text.any(::isCJK)` rule
+flipped the whole block vertical on a single CJK glyph, so an English line with
+one residual Japanese char (`(笑)`, an untranslated name) got its Latin letters
+stacked. `"(笑)"` (1/3) → horizontal; `"こんにちは"` (5/5) → vertical.
+
+**(c) Invalid/unavailable config throws, it does not silently default.** The
+config resolvers now THROW `IllegalArgumentException` on an unknown stored value
+instead of silently rewriting it: `TextRecognizerLanguage.fromPref` (was →
+Chinese), `TextTranslatorLanguage.fromPref` (was → English),
+`StandardTranslatorKind.fromPref` (was → ML Kit). `MLKitTranslator.translate`
+throws `IllegalStateException` when closed/unavailable (was: silent skip leaving
+all blocks blank). `PageInpaintingEngine` throws when QUALITY mode is requested
+but the neural inpainter isn't initialized (was: silent downgrade to FAST). The
+pipeline's `init{}` builds engines defensively so a config error at startup
+defers to the first translate attempt instead of crashing app launch; the
+translate entry points' try/catch surfaces the error as a FAILED page with a
+"reconfigure translation settings" message; `ChapterTranslator.queueChapter`
+surfaces it as a toast. `GoogleTranslator` now pins `sl=<configured source lang>`
+instead of `sl=auto` so the configured language is authoritative. (OCR model
+incompatibility stays a non-throwing `coerce` because the settings UI
+legitimately auto-corrects it on language switch; the runtime surfaces a true
+unavailability via `createRecognitionEngine` throwing.)
+
+**(d) The reader error UI only surfaces real failures.** `PageTranslation.shouldSurfaceError`
+admits only genuine terminal `FAILED` stages with no rendered/cleaned result.
+PARTIAL pages, textless-terminal pages, cancelled pages, and pages carrying an
+explanatory `errorMessage` ("Translation cancelled", "Page was stranded...",
+"Translation partial: X/Y") are NOT painted red — the user sees the translated
+image or nothing, never a stale/misleading error. The stranded-page sweep treats
+textless-terminal pages as terminal so they are never flipped to CANCELLED.
+
+### 16. Inpainting quality — feathering active, dilation compounds, tight AOT mask (`BubbleMaskBuilder`, `SmartBubbleTextCleaner`, `AOTInpainting`, `PageTranslationHelper`)
+A bundle of coupled fixes for the three reported inpainting artifacts (box
+borders around bubbles, destructive over-erasure, duplicate/overlapping text).
+Each invariant closes a specific defect; together they make the cleaned image
+match the local artwork instead of producing visible rectangles.
+
+**(a) Dilation MUST compound across iterations.** `BubbleMaskBuilder.dilateMask`
+reads the *running* result each pass (snapshotted), not the original input
+mask. The earlier implementation re-applied a single-pixel dilation every
+pass, capping growth at 1px regardless of `iterations` — so callers setting
+`iterations = 3` (to cover anti-aliased stroke edges) only got 1px, leaving
+fringes half-covered at the fill boundary. Growth is a 4-neighbourhood
+(Manhattan-diamond) dilation: `iterations = N` grows set pixels by N px along
+each axis. Pinned by `BubbleMaskBuilderTest`.
+
+**(b) Feathering at the mask boundary MUST be active.** `SmartBubbleTextCleaner`
+computes a `featherAlpha` map (core = 1.0, ring = box-blurred ramp 0→1) and
+the fill loop gates on `alpha > 0` (not `mask != 0`). The earlier code
+`continue`d on every non-mask pixel, discarding the entire feather ring; with
+`alpha` always 1.0 inside the mask the fill had a hard 1px edge — the reported
+"box border" artifact, worst on speech bubbles (which route exclusively through
+`cleanBubbleGroup`). The shared fill body is extracted as the pure, tested
+`applyFeatheredFill`, and `buildLocalBackground` interpolates a background for
+the feather ring too (otherwise the ring blend would be a no-op).
+
+**(c) The last-resort fallback marks pixels, not a solid rectangle.**
+`SmartBubbleTextCleaner.tightDifferenceMask` sets the mask only on pixels that
+actually differ from the ring median, never filling the whole enclosing
+bounding box. The downstream dilation (now correct per (a)) covers the
+anti-aliased fringe. This stops the "too much space" destruction where the
+fallback erased all background between strokes. Pinned by
+`SmartBubbleTextCleanerTest`.
+
+**(d) Background sampling for a bubble MUST stay inside the bubble.**
+`buildLocalBackground` / `buildDirectionalBackground` accept an optional
+`bgSourceMask` (the eroded bubble interior); when supplied, only pixels inside
+that region count as background references. Without it, the directional/Gaussian
+scan reached past the bubble boundary into surrounding artwork and pulled that
+color (e.g. blue sky) into the bubble fill — the reported color-bleed. The
+free-text path (no parent bubble) leaves `bgSourceMask` null, preserving the
+whole-context behavior.
+
+**(e) The AOT/neural path masks a TIGHT text region, not the loose detector
+box.** `AOTInpainting.inpaintFreeRegions` builds the mask via
+`SmartBubbleTextCleaner.buildTightTextRegionMask`, which runs the detector
+chain to find WHERE text is, then fills a SOLID rectangle tightly fitted to
+the detected text (clamped to the original box). This matches production
+AOT-GAN manga-translation practice: feed one clean hole per text block so the
+generative model reconstructs a tight region rather than redrawing the whole
+loose detector box. A per-box solid fallback (full original box) guarantees no
+coverage regression when detection genuinely finds nothing. The crop margin is
+proportional to the text-region size (`2.5×` the longer side, clamped to
+`[64, 256]`) instead of a fixed 32px, giving the model enough surrounding
+context (bubble borders, screentone, line art) to reconstruct naturally — a
+known artifact source per AOT-GAN guidance.
+
+**(f) Overlapping blocks MUST be geometrically deduped before render.**
+`PageTranslationHelper.dedupeGeometricOverlaps` drops the lower-score block of
+any pair that is geometrically the same region (`BoxGeometry.isGeometricDuplicate`
+with the shared `BoxGeometry.TEXT_DEDUP_THRESHOLDS` — iou 0.62 / containment
+0.86 / center 0.12 / size 0.20). It is label-, parent-, and text-agnostic, so
+it closes the gaps the recognition engine's own dedupe stages leave open
+(cross-label overlaps, no-parent overlaps, differing-text overlaps) — the
+reported "translated text rendered on top of itself". Wired into both
+`RoiPageRecognitionEngine.analyze` (after post-OCR dedupe) and
+`MlKitFullPageRecognitionEngine.convertToPageTranslation` (which previously did
+no dedupe at all). Drop, not merge: merging concatenates OCR text and changes
+the translation unit's semantics. Pinned by `PageTranslationHelperDedupeTest`.
+
+**Diagnostics:** each recognition engine logs how many blocks the geometric
+dedupe dropped. `BoxGeometry.TEXT_DEDUP_THRESHOLDS` is the single source of
+truth for text-box dedup (previously a private constant on
+`RoiPageRecognitionEngine`).
+
 ---
 
 ## Translation status semantics & delete teardown
@@ -336,6 +533,18 @@ on every chapter open) and by failed/aborted translations, so a chapter merely
 opened once read as fully translated. Requiring real content closes that
 false-positive. (Downloading a chapter never creates a translation file; it
 only makes the chapter list query status, so the icon "appeared on download.")
+
+### Batch chapter status reflects per-page failures (`ChapterTranslator.translateChapterInternal`)
+`translateBatch` swallows per-page failures internally — a failed page is marked
+`FAILED` in the store and the batch keeps going (it never throws). So reaching
+the end of the batch used to mean an unconditional `Translation.State.TRANSLATED`,
+which hid partial failures (some pages failed OCR/translate/inpaint) behind a
+green checkmark. Now, after the batch returns, the chapter inspects every store
+page: if any page that SHOULD have produced output (not textless, not rendered)
+is in a failed stage, the chapter is `ERROR` so the user sees the failure and
+can retry. This pairs with `TranslationBlockValidation` (contract #14), which
+turns an incomplete translation into a page-level `FAILED` — without it a
+half-translated page would still count as READY and slip past this gate.
 
 ### Placeholder pages are not persisted (`ChapterTranslationStore.shouldPersistUpdate`)
 `updatePage` persists only durable progress: a rendered result, recognized
@@ -550,7 +759,7 @@ covered by `NumberedLineResponseParserTest`.
 
 | Test | Guards |
 |------|--------|
-| `translator/NumberedLineResponseParserTest` | `[index] text` parse, sparse/gaps, positional fallback, expectedCount cap, index>count contract, index collisions |
+| `translator/NumberedLineResponseParserTest` | `[index] text` strict parse: in-order/sparse/gaps preserved; rejects unnumbered prose (NO positional fallback), out-of-range index, duplicate index (first wins), blank value, CJK-leakage when targetLang is non-CJK; CJK-target & null-targetLang bypass the leakage check |
 | `translator/OcrArtifactSanitizerTest` | N°/Nº/№/Ｎ０/N⁰ strip (before-punct / inline / leading / end-of-string), space collapse, glued-word limitation |
 | `translator/TranslationBlockFiltersTest` | RTMTH watermark removal (case-insensitive, multi-page, embedded) |
 | `translator/AiModelFetcherParseTest` | OpenAI `data[].id` + Gemini model filtering/prefix-strip, kotlinx Json, JSON-null id guard |
@@ -558,16 +767,22 @@ covered by `NumberedLineResponseParserTest`.
 | `ocr/MangaOcrDecoderGuardTest` | (REMOVED — the guard helpers it tested were reverted; see Memory contract #2. Do not reintroduce without an on-device regression test.) |
 | `ocr/OcrModelCatalogTest` | entries/coerce/defaultFor/isCompatible/labelsFor |
 | `recognition/BoxGeometryTest` | IoU/area/intersection, degenerate boxes, dedupe thresholds (iou/containment/center+size paths) |
-| `model/PageTranslationStateTest` | lifecycle, retry exhaustion, cancelled-page rescheduling, render-quality trust, forced retry reset |
+| `model/PageTranslationStateTest` | lifecycle, retry exhaustion, cancelled-page rescheduling, render-quality trust, forced retry reset, shouldSurfaceError (FAILED surfaces; PARTIAL/Cancelled/Textless/rendered suppress), hasRecognizedTranslation admits PARTIAL |
 | `model/ChapterTranslatedPredicateTest` | `isChapterTranslated` content predicate: placeholder/pending/failed/running → not translated; rendered or recognized → translated; mixed/empty lists |
 | `model/TranslationProgressTest` | batch (done,total): rendered/textless/retry-exhausted count as done; pending/running don't; empty → (0,0) |
 | `model/TranslationSettingsSummaryTest` | confirm-popup snapshot: STANDARD (no model/tokens rows) vs AI_MODEL (engine+model+tokens); MLKIT/GOOGLE/Gemini/OpenRouter/DeepSeek/LM Studio labels; blank model/tokens → null; unknown source/target language fallback without mutating store; Japanese OCR coercion is read-only; inpainting raw passthrough |
 | `util/ResumeOrderingTest` | forward-first-then-backfill ordering; resume mid/start/end/last; empty; no aliasing |
 | `ChapterTranslationStorePersistTest` | `shouldPersistUpdate`: placeholders (CANCELLED+error, pending, running) not persisted; rendered/cleaned/blocks/failed/transition ARE persisted |
 | `model/PageTranslationHelperTest` | overlapping-block merge, orientation guard, transitive merge |
+| `model/PageTranslationHelperDedupeTest` | geometric dedupe: overlapping different-text/identical/cross-label/nested/touching-bubbles; preserves reading order; no mutation; degenerate-box kept |
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
-| `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard) |
-| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage/insideRoundedRect/bubbleInteriorMask/roundedAllowedMask + dilateMask quirk pin + removeEdgeTouchingComponents 2px margin + featherAlpha |
+| `rendering/PageTextRendererDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
+| `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard); buildTightTextRegionMask solid tight region + per-box fallback + dilation |
+| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage/insideRoundedRect/bubbleInteriorMask/roundedAllowedMask + dilateMask compounding growth (iterations→px, diamond shape) + removeEdgeTouchingComponents 2px margin + featherAlpha |
+| `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
+| `model/InpaintMaskSerializationTest` | inpaintMaskBoxes round-trips through JSON; InpaintMaskBox.toIntArray; hasCurrentInpaintMask (current / pre-fix-empty / textless) |
+| `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped) + reason |
+| `translator/StrictConfigFromPrefTest` | strict no-fallback config: TextRecognizerLanguage/TextTranslatorLanguage `fromPref` throw on unknown value (was → Chinese/English); StandardTranslatorKind.fromPref throw branch is unreachable (closed enum) and documented |
 | `scheduling/TranslationStreamRegistryTest` | per-page/chapter/all/window stream registry eviction semantics |
 | `scheduling/TranslationLifecyclePolicyTest` | shouldSchedule / classify / retry-exhaustion |
 | `util/ShortHashTest` | FNV-1a digest: empty input, equality, determinism, hex output |

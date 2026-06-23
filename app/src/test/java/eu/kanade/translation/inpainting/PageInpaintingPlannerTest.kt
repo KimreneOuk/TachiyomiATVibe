@@ -22,6 +22,7 @@ class PageInpaintingPlannerTest {
         input.boxes.map { it.toList() }.shouldContainExactly(listOf(listOf(10, 20, 40, 60)))
         input.labels.shouldContainExactly(listOf(1))
         input.extraDetectorCount shouldBe 0
+        input.source shouldBe PageInpaintingPlanner.MaskSource.RECOMPUTED
     }
 
     @Test
@@ -88,6 +89,85 @@ class PageInpaintingPlannerTest {
         input.boxes.map { it.toList() }.shouldContainExactly(listOf(listOf(10, 10, 40, 40)))
         input.labels.shouldContainExactly(listOf(1))
         input.extraDetectorCount shouldBe 0
+    }
+
+    // ── computeMask + persisted-mask path ───────────────────────────────────
+    // The resume/reopen path: allTextDetections (@Transient) is gone, so the
+    // planner must load the mask from the persisted inpaintMaskBoxes captured
+    // at OCR time. computeMask is the single source of truth for that capture.
+
+    @Test
+    fun `computeMask captures bubble + text + detector-only boxes`() {
+        val page = PageTranslation(
+            blocks = mutableListOf(
+                block(
+                    x = 25f, y = 35f, width = 30f, height = 40f, label = 1,
+                    parentX = 10f, parentY = 20f, parentWidth = 80f, parentHeight = 90f,
+                ),
+                block(x = 10f, y = 10f, width = 20f, height = 20f, label = 1),
+            ),
+        )
+        page.allTextDetections = listOf(
+            // detector-only region, disjoint from the OCR boxes
+            Detection(intArrayOf(100, 100, 130, 130), label = 2, score = 0.9f, className = "text"),
+        )
+
+        val mask = PageInpaintingPlanner.computeMask(page)
+        page.inpaintMaskBoxes = mask
+
+        // bubble box (label 0), two text boxes (label 1 each), detector-only (label 2)
+        mask.map { it.label } shouldBe listOf(0, 1, 1, 2)
+        mask.map { listOf(it.x1, it.y1, it.x2, it.y2) }.shouldContainExactly(
+            listOf(
+                listOf(10, 20, 90, 110), // bubble
+                listOf(25, 35, 55, 75), // text under bubble
+                listOf(10, 10, 30, 30), // standalone text
+                listOf(100, 100, 130, 130), // detector-only
+            ),
+        )
+    }
+
+    @Test
+    fun `build prefers the persisted mask over live allTextDetections`() {
+        // Simulate a resumed page: inpaintMaskBoxes was persisted at OCR time,
+        // and allTextDetections (transient) is empty. build must load the
+        // persisted mask, not recompute an incomplete one from the empty
+        // transient field.
+        val page = PageTranslation(
+            blocks = mutableListOf(block(x = 10f, y = 10f, width = 20f, height = 20f, label = 1)),
+        )
+        page.inpaintMaskBoxes = listOf(
+            eu.kanade.translation.model.InpaintMaskBox(10, 10, 30, 30, 1),
+            eu.kanade.translation.model.InpaintMaskBox(100, 100, 130, 130, 2),
+        )
+        page.allTextDetections = emptyList() // lost on resume
+
+        val input = PageInpaintingPlanner.build(page)
+
+        input.source shouldBe PageInpaintingPlanner.MaskSource.PERSISTED
+        input.boxes.map { it.toList() }.shouldContainExactly(
+            listOf(listOf(10, 10, 30, 30), listOf(100, 100, 130, 130)),
+        )
+        input.labels.shouldContainExactly(listOf(1, 2))
+        input.extraDetectorCount shouldBe 1
+    }
+
+    @Test
+    fun `build with no persisted mask still recomputes from live detections`() {
+        // The fresh single-page path: no persisted mask yet, but allTextDetections
+        // is populated in memory. build must recompute (back-compat for the path
+        // that has not been through computeMask yet).
+        val page = PageTranslation(
+            blocks = mutableListOf(block(x = 10f, y = 10f, width = 20f, height = 20f, label = 1)),
+        )
+        page.allTextDetections = listOf(
+            Detection(intArrayOf(100, 100, 130, 130), label = 2, score = 0.9f, className = "text"),
+        )
+
+        val input = PageInpaintingPlanner.build(page)
+
+        input.source shouldBe PageInpaintingPlanner.MaskSource.RECOMPUTED
+        input.extraDetectorCount shouldBe 1
     }
 
     private fun block(

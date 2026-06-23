@@ -82,6 +82,7 @@ class DeepSeekTranslator(
                 4. STYLE & TONE: Adapt register, slang, and dialect to fit character personalities. For sound effects (SFX) / onomatopoeia, provide standard comic-styled english/localized equivalents (e.g., 'Gasp', 'Thud', *rumble*).
                 5. NO EXTRA TEXT: Your output MUST contain only the translations in the exact numbered format below, one block per line. Do not include explanations, notes, or preambles.
                 6. OCR ARTIFACTS: The source text comes from OCR and may contain misread glyphs such as "N0", "N°", "Nº", "№", or "Ｎ０". These are NOT meaningful — they are scanner misreads of Japanese characters like の. Do NOT preserve or translate them literally. Simply omit them and translate the intended meaning naturally.
+                7. SCRIPT FIDELITY: If the target language is English or any Latin-script language, do NOT output Japanese/Chinese/Korean characters. Localize sound-effect parentheses like (笑) to "lol", "(laugh)", or an equivalent in the target language.
 
                 Format:
                 [index] translation
@@ -132,14 +133,25 @@ class DeepSeekTranslator(
                 )
             }
 
-            val parsedTranslations = NumberedLineResponseParser.parse(rawOutput, flatBlocks.size)
+            val parsedTranslations = NumberedLineResponseParser.parse(
+                raw = rawOutput,
+                expectedCount = flatBlocks.size,
+                targetLang = toLang,
+            )
 
-            flatBlocks.forEachIndexed { index, (block, originalText) ->
-                var translated = parsedTranslations[index] ?: ""
-                if (translated.isBlank()) {
-                    translated = originalText
+            // TachiyomiAT: do NOT fall back to the source text when the model
+            // returns a blank/missing line. Leaving `block.translation` empty
+            // lets the batch validation gate (TranslationPipeline) mark this
+            // block/page as PARTIAL/FAILED instead of silently passing OCR text
+            // off as a successful translation — the root cause of pages that
+            // mixed real translations with untouched source text. The renderer
+            // no longer falls back to `block.text` either, so a blank
+            // translation renders as nothing rather than the original text.
+            flatBlocks.forEachIndexed { index, (block, _) ->
+                val translated = parsedTranslations[index] ?: ""
+                if (translated.isNotBlank()) {
+                    block.translation = OcrArtifactSanitizer.sanitize(translated)
                 }
-                block.translation = OcrArtifactSanitizer.sanitize(translated)
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)
         } catch (e: Exception) {

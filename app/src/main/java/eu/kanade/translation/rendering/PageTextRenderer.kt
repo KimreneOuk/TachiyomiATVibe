@@ -45,8 +45,23 @@ class PageTextRenderer(context: Context) {
      * draw on — Canvas(bitmap) otherwise throws "Immutable bitmap passed to
      * Canvas constructor". Callers MUST compress/save the RETURNED bitmap, not
      * the one they passed in, otherwise they save the un-drawn-on original.
+     *
+     * TachiyomiAT: by default only a block's *translation* is drawn. A block
+     * whose translation is blank (the model returned nothing for it) now renders
+     * as nothing — it does NOT fall back to `block.text`. That old fallback is
+     * what made a page with some real translations + some untranslated blocks
+     * render the original OCR text in place of the missing translations while
+     * still counting as READY, i.e. exactly the "mixed source + translated text"
+     * symptom. Pass [renderSourceText] = true ONLY for an explicit draft/debug
+     * mode that wants to overlay the source on top of the cleaned image; the
+     * translate path never does.
      */
-    fun render(bitmap: Bitmap, blocks: List<TranslationBlock>, sampleSize: Int = 1): Bitmap {
+    fun render(
+        bitmap: Bitmap,
+        blocks: List<TranslationBlock>,
+        sampleSize: Int = 1,
+        renderSourceText: Boolean = false,
+    ): Bitmap {
         // TachiyomiAT: Canvas(bitmap) throws "Immutable bitmap passed to Canvas
         // constructor" if the bitmap isn't mutable. Bitmaps returned by
         // BitmapFactory.decodeStream are immutable by default (the caller,
@@ -58,13 +73,17 @@ class PageTextRenderer(context: Context) {
         val target = if (bitmap.isMutable) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(target)
         for (block in blocks) {
-            val text = block.translation.ifBlank { block.text }
+            val text = if (renderSourceText) {
+                block.translation.ifBlank { block.text }
+            } else {
+                block.translation
+            }
             if (text.isBlank()) continue
 
             val (baseX, baseY, baseW, baseH, safeW, safeH) = computeRects(block, sampleSize)
             if (safeW < 1f || safeH < 1f) continue
 
-            val isVertical = block.direction == "TTB" && text.any(::isCJK)
+            val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
             val fontSizePx = binarySearchFontSize(
                 text = text,
                 safeW = safeW,
@@ -317,6 +336,36 @@ class PageTextRenderer(context: Context) {
                 (cp in 0xFF00..0xFFEF) ||
                 (cp in 0xFE30..0xFE4F)
         }
+
+        /**
+         * TachiyomiAT: fraction of non-whitespace characters that are CJK, in
+         * `[0, 1]`. 0 when the text is blank/whitespace-only (caller decides).
+         *
+         * Used by [shouldRenderVertical] to decide layout direction. The old
+         * rule was `text.any(::isCJK)`, which flipped the WHOLE block vertical
+         * the moment a single CJK glyph appeared — so an English line that
+         * still contained one residual Japanese char (e.g. a leaked `(笑)` SFX)
+         * got its Latin letters stacked top-to-bottom. Majority rule fixes
+         * that: only CJK-dominant text stacks vertically.
+         */
+        internal fun cjkRatio(text: String): Float {
+            val chars = text.asSequence().filter { !it.isWhitespace() }
+            val total = chars.count()
+            if (total == 0) return 0f
+            val cjk = text.count { !it.isWhitespace() && isCJK(it) }
+            return cjk.toFloat() / total.toFloat()
+        }
+
+        /**
+         * TachiyomiAT: vertical layout only when CJK chars make up the MAJORITY
+         * (>50%) of the non-whitespace text. Guards against one residual CJK
+         * glyph in an otherwise-Latin translation (a leaked `(笑)`, an
+         * untranslated name) forcing the whole English line to stack
+         * vertically. A 50/50 split defaults to horizontal — CJK-dominant
+         * phrases like `"こんにちは"` (5/5) or `"今日 is the day"` (2/3) still
+         * stack; `"(笑)"` (1/3) and `"What's up?"` (0) do not.
+         */
+        internal fun shouldRenderVertical(text: String): Boolean = cjkRatio(text) > 0.5f
 
         internal fun computeRects(block: TranslationBlock, sampleSize: Int = 1): RectResult {
             val hasParent = block.parentWidth > 0f && block.parentHeight > 0f

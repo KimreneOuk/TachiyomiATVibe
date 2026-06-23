@@ -7,11 +7,14 @@ import eu.kanade.translation.detection.OnnxPageTextDetector
 import eu.kanade.translation.inpainting.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
+import eu.kanade.translation.inpainting.PageInpaintingPlanner
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.MangaOcrEngine
 import eu.kanade.translation.ocr.MlKitRoiOcrEngine
+import eu.kanade.translation.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -39,6 +42,15 @@ class RoiPageRecognitionEngine(
     private val modelStore = OnnxModelStore(context)
     private var detector: OnnxPageTextDetector? = null
     private var roiOcrEngine: RoiOcrEngine? = null
+    /**
+     * TachiyomiAT: PP-OCRv6 small **det** engine, used to split a vertical-text
+     * ROI into individual text lines for the PaddleOCR rec path. Only built when
+     * the selected OCR model is [OcrModel.PADDLEOCR_V6_SMALL] (the only
+     * horizontal-line rec engine). Stays null otherwise; the rec path checks for
+     * null and falls back to the ink-gap heuristic. See
+     * `docs/superpowers/specs/2026-06-23-paddleocr-v6-det-onnx-integration-design.md`.
+     */
+    private var paddleDet: PaddleOcrV6DetEngine? = null
     private var inpainting: AOTInpainting? = null
     private var pageInpainter: PageInpaintingEngine? = null
     @Volatile
@@ -115,6 +127,27 @@ class RoiPageRecognitionEngine(
                     OcrModel.PADDLEOCR_V6_SMALL -> PaddleOcrV6SmallEngine().also {
                         val paddlePaths = modelStore.ensurePaddleOcrV6Small()
                         it.initialize(paddlePaths.recognitionModel, paddlePaths.dictionary)
+                        // TachiyomiAT: the PaddleOCR rec head reads horizontal
+                        // lines; vertical manga columns must be split + rotated
+                        // first. The det model replaces the ink-gap heuristic for
+                        // that split. Build it best-effort: if the det asset is
+                        // missing or fails to load, rec falls back to the
+                        // heuristic (never blocks OCR).
+                        if (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable()) {
+                            try {
+                                val detPaths = modelStore.ensurePaddleOcrV6Det()
+                                paddleDet = PaddleOcrV6DetEngine().also { it.initialize(detPaths.detectionModel) }
+                                logcat(LogPriority.INFO) { "ONNX init: PaddleOCR det OK (replaces ink-gap heuristic)" }
+                            } catch (e: Exception) {
+                                logcat(LogPriority.WARN, e) {
+                                    "ONNX init: PaddleOCR det failed; falling back to ink-gap heuristic"
+                                }
+                            }
+                        } else {
+                            logcat(LogPriority.WARN) {
+                                "ONNX init: PaddleOCR det asset missing; using ink-gap heuristic"
+                            }
+                        }
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
@@ -244,7 +277,11 @@ class RoiPageRecognitionEngine(
                 boxHeightPre > boxWidthPre * 1.5f
             val text = try {
                 if (splitVerticalColumns) {
-                    recognizeVerticalColumns(engine, crop)
+                    // TachiyomiAT: capture the det engine into a local — close()
+                    // can null the field mid-analyze. Pass it down so the split
+                    // path uses the learned det model when available, and falls
+                    // back to the ink-gap heuristic otherwise.
+                    recognizeVerticalColumns(engine, crop, paddleDet)
                 } else {
                     engine.recognize(crop)
                 }
@@ -336,10 +373,33 @@ class RoiPageRecognitionEngine(
         val pageTranslation = analyzed.pageTranslation
         val recognizedBlocks = analyzed.recognizedBlocks
         val finalRecognizedBlocks = removePostOcrDuplicateBlocks(recognizedBlocks)
-        pageTranslation.blocks.addAll(finalRecognizedBlocks.map { it.block })
+        // TachiyomiAT: apply the geometric dedupe to the final block list.
+        // removePostOcrDuplicateBlocks only collapses identical-text overlaps;
+        // this second pass collapses any remaining geometric overlaps (cross-
+        // label, no-parent, differing-text) so two overlapping boxes never
+        // reach the renderer and get drawn on top of each other. See
+        // PageTranslationHelper.dedupeGeometricOverlaps for the full rationale.
+        val dedupedBlocks = PageTranslationHelper.dedupeGeometricOverlaps(
+            finalRecognizedBlocks.map { it.block },
+        )
+        val droppedByGeoDedupe = finalRecognizedBlocks.size - dedupedBlocks.size
+        if (droppedByGeoDedupe > 0) {
+            logcat(LogPriority.INFO) {
+                "Geometric block dedupe dropped $droppedByGeoDedupe overlapping block(s) after OCR"
+            }
+        }
+        pageTranslation.blocks.addAll(dedupedBlocks)
         pageTranslation.ocrBlockCount = pageTranslation.blocks.size
         pageTranslation.ocrStatus = StageStatus.READY
         pageTranslation.updatedAt = System.currentTimeMillis()
+        // TachiyomiAT: capture the durable inpaint mask NOW, at OCR time, from
+        // the full recognition result (OCR blocks + detector-only detections).
+        // This must happen before translation/watermark filtering removes blocks
+        // and before the page is persisted (allTextDetections is @Transient).
+        // Persisting this mask means a resumed batch (after interrupt/OOM/reopen)
+        // still erases detector-only + watermark regions instead of just the
+        // surviving OCR blocks. See PageInpaintingPlanner + contract #14.
+        pageTranslation.inpaintMaskBoxes = PageInpaintingPlanner.computeMask(pageTranslation)
         val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
         logcat(LogPriority.INFO) {
             "RoiPageRecognitionEngine analyzed ${pageTranslation.blocks.size} blocks " +
@@ -360,6 +420,15 @@ class RoiPageRecognitionEngine(
         // close() cannot free the AOT inpainter's native session mid-run. Mirrors
         // the analyze() critical section. Re-check [closed] inside the lock in
         // case close() ran between the top-of-method check and acquiring it.
+        //
+        // The actual box/label computation is delegated to PageInpaintingEngine
+        // → PageInpaintingPlanner, which prefers the persisted inpaintMaskBoxes
+        // (captured at OCR time) and falls back to recomputing from the live
+        // blocks + allTextDetections. The textless-page (empty mask) and
+        // null-inpainter handling lives inside PageInpaintingEngine.inpaint; do
+        // NOT duplicate it here — an earlier copy of that logic was unreachable
+        // (this method returned inside the withLock above) and silently masked
+        // the real planner path, which is exactly how the resume-mask bug hid.
         return nativeGuard.withLock {
             if (closed) {
                 pageTranslation.inpaintStatus = StageStatus.FAILED
@@ -371,117 +440,6 @@ class RoiPageRecognitionEngine(
                     .inpaint(bitmap, pageTranslation)
             }
         }
-
-        val inpainter = inpainting
-        // TachiyomiAT: a page whose OCR found ZERO text blocks is a SUCCESSFUL
-        // recognition (there is genuinely nothing to translate — a splash page,
-        // an art-only spread). Previously this fell through to the generic
-        // FAILED branch below and set inpaintStatus=FAILED + retryCount++, which
-        // made the page look like a *failing* page to auto-translate's dedup
-        // gate (ReaderViewModel.handleAutoTranslation). The gate re-enqueued it
-        // on every page navigation until retryCount saturated at MAX_STAGE_RETRIES,
-        // re-running detection+OCR each time — the reported "auto-translate keeps
-        // reprocessing the same image" bug. A textless page needs no inpaint and
-        // no retry: mark READY and bail cleanly so the dedup treats it as done.
-        if (pageTranslation.blocks.isEmpty()) {
-            pageTranslation.inpaintStatus = StageStatus.READY
-            pageTranslation.errorMessage = null
-            pageTranslation.updatedAt = System.currentTimeMillis()
-            return null
-        }
-        if (inpainter != null && inpainter.isInitialized()) {
-            try {
-                pageTranslation.inpaintStatus = StageStatus.RUNNING
-                pageTranslation.updatedAt = System.currentTimeMillis()
-                val bubbleBoxes = pageTranslation.blocks
-                    .filter { it.parentWidth > 0f && it.parentHeight > 0f }
-                    .map { block ->
-                        intArrayOf(
-                            block.parentX.toInt(),
-                            block.parentY.toInt(),
-                            (block.parentX + block.parentWidth).toInt(),
-                            (block.parentY + block.parentHeight).toInt(),
-                        )
-                    }
-                    .distinctBy { it.toList() }
-                val textBoxes = pageTranslation.blocks.map { block ->
-                    intArrayOf(
-                        block.x.toInt(),
-                        block.y.toInt(),
-                        (block.x + block.width).toInt(),
-                        (block.y + block.height).toInt(),
-                    )
-                }
-                val allBoxes = bubbleBoxes + textBoxes
-                val allLabels = List(bubbleBoxes.size) { 0 } + pageTranslation.blocks.map { it.label }
-
-                val ocrBlockBoxes = pageTranslation.blocks.map { block ->
-                    intArrayOf(
-                        block.x.toInt(),
-                        block.y.toInt(),
-                        (block.x + block.width).toInt(),
-                        (block.y + block.height).toInt(),
-                    )
-                }.toSet()
-                val extraDetectorBoxes = pageTranslation.allTextDetections
-                    .map { it.bbox }
-                    .filter { detBox ->
-                        val expanded = intArrayOf(
-                            max(0, detBox[0] - 3),
-                            max(0, detBox[1] - 3),
-                            detBox[2] + 3,
-                            detBox[3] + 3,
-                        )
-                        ocrBlockBoxes.none { ocrBox ->
-                            BoxGeometry.iou(expanded, ocrBox) > 0.4f
-                        }
-                    }
-                    .distinctBy { it.toList() }
-                val combinedBoxes = allBoxes + extraDetectorBoxes
-                val combinedLabels = allLabels + extraDetectorBoxes.map { 2 }
-
-                logcat(LogPriority.INFO) {
-                    "ONNX inpainting input: boxes=${combinedBoxes.size} extraDetector=${extraDetectorBoxes.size} labels=${combinedLabels.groupingBy { it }.eachCount()}"
-                }
-                TranslationMemoryBudget.logSnapshot(
-                    "before_inpaint",
-                    bitmap.width,
-                    bitmap.height,
-                    "boxes=${combinedBoxes.size}",
-                )
-                // TachiyomiAT: cooperative close — bail before the native inpaint
-                // call if close() ran while building the input boxes. See [closed].
-                if (closed) {
-                    pageTranslation.inpaintStatus = StageStatus.FAILED
-                    return null
-                }
-                val cleaned = inpainter.inpaintRegions(bitmap, combinedBoxes, combinedLabels, mode = inpaintingMode)
-                pageTranslation.inpaintStatus = StageStatus.READY
-                pageTranslation.updatedAt = System.currentTimeMillis()
-                return cleaned
-            } catch (e: Exception) {
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.retryCount++
-                pageTranslation.errorMessage = e.message
-                pageTranslation.updatedAt = System.currentTimeMillis()
-                logcat(LogPriority.WARN, e) { "Inpainting failed, continuing without cleaned bitmap" }
-            }
-        }
-        pageTranslation.inpaintStatus = StageStatus.FAILED
-        pageTranslation.retryCount++
-        // TachiyomiAT: record WHY inpaint was skipped. This branch is now ONLY
-        // reached when there ARE blocks but the inpainter itself is
-        // null/uninitialized (the empty-blocks case is handled above as a clean
-        // READY). Previously it also caught empty-blocks pages and marked them
-        // FAILED, which fed the auto-translate reprocess loop. The message is
-        // kept diagnostic so a "blank error" in the store is never produced.
-        pageTranslation.errorMessage = when {
-            inpainter == null -> "Inpainting model not available"
-            !inpainter.isInitialized() -> "Inpainting engine not initialized"
-            else -> "Inpainting skipped"
-        }
-        pageTranslation.updatedAt = System.currentTimeMillis()
-        return null
     }
 
     private data class RecognizedBlock(
@@ -535,9 +493,11 @@ class RoiPageRecognitionEngine(
         try {
             detector?.close()
             roiOcrEngine?.close()
+            paddleDet?.close()
             inpainting?.close()
             detector = null
             roiOcrEngine = null
+            paddleDet = null
             inpainting = null
             pageInpainter = null
             initialized = false
@@ -557,11 +517,13 @@ class RoiPageRecognitionEngine(
         // covered by GC, but reclaiming via the same hook keeps the contract
         // uniform. Guarded so a partial init (null sub-engines) is a no-op.
         try { roiOcrEngine?.reclaimPooledMemory() } catch (_: Exception) {}
+        try { paddleDet?.reclaimPooledMemory() } catch (_: Exception) {}
         try { inpainting?.reclaimPooledMemory() } catch (_: Exception) {}
     }
 
     override fun forceReleaseNativeBuffers() {
         try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        try { paddleDet?.forceReleaseNativeBuffers() } catch (_: Exception) {}
         try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
     }
 
@@ -675,7 +637,7 @@ class RoiPageRecognitionEngine(
         .filterNot { it.isWhitespace() || it.isISOControl() }
 
     private fun isTextBoxDuplicate(a: IntArray, b: IntArray): Boolean =
-        BoxGeometry.isGeometricDuplicate(a, b, TEXT_DEDUP_THRESHOLDS)
+        BoxGeometry.isGeometricDuplicate(a, b, BoxGeometry.TEXT_DEDUP_THRESHOLDS)
 
     private fun cropBitmap(source: Bitmap, x1: Int, y1: Int, x2: Int, y2: Int): Bitmap {
         val clampedX1 = x1.coerceIn(0, source.width)
@@ -692,17 +654,109 @@ class RoiPageRecognitionEngine(
      * horizontal line. See the comment at the call site for why this is needed
      * (a whole multi-column bubble, even after rotation, garbles in the CTC head).
      *
-     * Pipeline (mirrors the verified Python reproduction):
-     *   1. Detect vertical text columns by ink-gap analysis on the crop.
-     *   2. For each column (in manga reading order, right-to-left): rotate 90° CCW
-     *      and OCR it as one horizontal line.
-     *   3. Concatenate the per-column results.
+     * Two column-detection strategies, in priority order:
+     *   1. **PP-OCRv6 det model** ([paddleDet]) — a learned DB text-line detector
+     *      that finds each vertical column precisely. Preferred when available.
+     *   2. **Ink-gap heuristic** ([detectVerticalColumns]) — the original fallback.
+     *      Used when the det engine is null/uninitialized or returns no lines.
      *
-     * A single-column bubble (or one where no gap is found) falls back to rotating
+     * Either way, each column is then rotated 90° CCW and OCR'd as one horizontal
+     * line, concatenated in manga reading order (right-to-left).
+     *
+     * A single-column bubble (or one where no split is found) degrades to rotating
      * and recognizing the whole crop as one line, so this never does worse than the
      * old whole-box path.
      */
     private suspend fun recognizeVerticalColumns(
+        engine: RoiOcrEngine,
+        crop: Bitmap,
+        paddleDet: PaddleOcrV6DetEngine?,
+    ): String {
+        // Try the learned det model first. Det runs on the whole crop in one pass.
+        if (paddleDet != null) {
+            try {
+                val lines = paddleDet.detectLines(crop)
+                if (lines.isNotEmpty()) {
+                    return recognizeDetColumns(engine, crop, lines)
+                }
+                // Det returned nothing -> fall through to the heuristic. A true
+                // negative on a real text region is preferable to empty output.
+                logcat(LogPriority.INFO) {
+                    "[paddle_det] returned 0 lines; falling back to ink-gap heuristic"
+                }
+            } catch (e: Exception) {
+                // Never let a det-model failure abort OCR — degrade to the heuristic
+                // for this ROI and log loudly (AGENT.md: never suppress errors).
+                logcat(LogPriority.WARN, e) {
+                    "[paddle_det] failed; falling back to ink-gap heuristic for this ROI"
+                }
+            }
+        }
+        return recognizeHeuristicColumns(engine, crop)
+    }
+
+    /**
+     * Recognize using PP-OCRv6 det-detected text lines. Each [TextLine.bbox] is in
+     * crop pixel coords; sort in manga reading order (vertical: right-to-left by
+     * x-center; horizontal: top-to-bottom), crop, rotate CCW if vertical, OCR.
+     */
+    private suspend fun recognizeDetColumns(
+        engine: RoiOcrEngine,
+        crop: Bitmap,
+        lines: List<eu.kanade.translation.ocr.TextLine>,
+    ): String {
+        // Classify + order. Vertical columns sort right-to-left (manga); horizontal
+        // lines sort top-to-bottom. Vertical first, then horizontal, mirroring the
+        // validated Python prototype (det_rec_any.py).
+        data class Item(val bbox: IntArray, val vertical: Boolean, val sortKey: Int)
+        val items = lines.mapNotNull { l ->
+            val b = l.bbox
+            if (b.size < 4 || b[2] <= b[0] || b[3] <= b[1]) return@mapNotNull null
+            val w = b[2] - b[0]
+            val h = b[3] - b[1]
+            if (w < MIN_COLUMN_WIDTH_PX || h < MIN_COLUMN_WIDTH_PX) return@mapNotNull null
+            if (w > MAX_COLUMN_WIDTH_PX || h > MAX_COLUMN_HEIGHT_PX) return@mapNotNull null
+            val vertical = h > w * 1.5f
+            // Vertical: sort by x-center DESC (right-to-left). Horizontal: by y ASC.
+            val key = if (vertical) -(b[0] + b[2]) / 2 else (b[1] + b[3]) / 2
+            Item(b, vertical, key)
+        }.sortedBy { it.sortKey }
+
+        if (items.isEmpty()) {
+            val rotated = rotateCcw(crop)
+            return try {
+                engine.recognize(rotated)
+            } finally {
+                rotated.recycle()
+            }
+        }
+
+        val parts = ArrayList<String>(items.size)
+        for (it in items) {
+            if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
+            val b = it.bbox
+            val columnCrop = cropBitmap(crop, b[0], b[1], b[2], b[3])
+            try {
+                val feed = if (it.vertical) rotateCcw(columnCrop) else columnCrop
+                val feedOwned = if (it.vertical) feed else null
+                try {
+                    val part = engine.recognize(feed)
+                    if (part.isNotEmpty()) parts.add(part)
+                } finally {
+                    feedOwned?.recycle()
+                }
+            } finally {
+                columnCrop.recycle()
+            }
+        }
+        return parts.joinToString("")
+    }
+
+    /**
+     * Original ink-gap-heuristic column splitter + per-column OCR. Kept as the
+     * fallback path when the det model is unavailable or returns no lines.
+     */
+    private suspend fun recognizeHeuristicColumns(
         engine: RoiOcrEngine,
         crop: Bitmap,
     ): String {
@@ -868,16 +922,6 @@ class RoiPageRecognitionEngine(
     }
 
     private companion object {
-        /**
-         * Tuned thresholds for the post-OCR text-block dedupe. The algorithm
-         * lives in [BoxGeometry]; only the constants are stage-specific.
-         */
-        private val TEXT_DEDUP_THRESHOLDS = BoxGeometry.DedupThresholds(
-            iou = 0.62f,
-            containment = 0.86f,
-            center = 0.12f,
-            size = 0.20f,
-        )
         // TachiyomiAT: vertical-column detection thresholds for splitting a
         // multi-column manga bubble before OCR. Tuned against the verified Python
         // reproduction (whole-box 1/6 vs per-column 6/6 on multi-column cases).
@@ -891,6 +935,11 @@ class RoiPageRecognitionEngine(
         private const val COLUMN_GAP_INK_FRACTION = 0.02f
         private const val MIN_COLUMN_GAP_PX = 10
         private const val MIN_COLUMN_WIDTH_PX = 12
+        // TachiyomiAT: det-line size guard for [recognizeDetColumns]. Rejects
+        // sub-glyph noise (det sometimes emits tiny fragments) and false merges
+        // (huge regions spanning multiple bubbles). Sized in crop pixel coords.
+        private const val MAX_COLUMN_WIDTH_PX = 400
+        private const val MAX_COLUMN_HEIGHT_PX = 800
         // TachiyomiAT: text-color constants moved to RenderColorEstimator (and
         // fixed there — the legacy INVERTED_TEXT_COLORS was a copy-paste of the
         // default constant, both returning dark-gray text 0xFF1A1A1A, which made

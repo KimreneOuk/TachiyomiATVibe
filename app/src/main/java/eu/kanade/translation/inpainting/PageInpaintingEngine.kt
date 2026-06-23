@@ -37,7 +37,21 @@ class PageInpaintingEngine(
                 bitmap.height,
                 "boxes=${input.boxes.size}",
             )
-            val effectiveMode = if (mode == InpaintingMode.QUALITY && inpainter.isInitialized()) {
+            // TachiyomiAT: strict no-fallback. The old code silently downgraded
+            // QUALITY → FAST when the neural inpainter wasn't initialized,
+            // producing a visibly worse clean (median-fill instead of AOT
+            // reconstruction) with no signal to the user that their chosen
+            // QUALITY mode didn't actually run. Throwing lets the stage's
+            // try/catch mark the page FAILED with this message, so the user
+            // sees "QUALITY inpainting unavailable" and can switch to FAST or
+            // fix the model load — instead of a silent quality regression.
+            if (mode == InpaintingMode.QUALITY && !inpainter.isInitialized()) {
+                throw IllegalStateException(
+                    "QUALITY inpainting unavailable (neural model not loaded); " +
+                        "set inpainting to FAST or load the AOT model",
+                )
+            }
+            val effectiveMode = if (mode == InpaintingMode.QUALITY) {
                 InpaintingMode.QUALITY
             } else {
                 InpaintingMode.FAST

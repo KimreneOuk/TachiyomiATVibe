@@ -5,9 +5,16 @@ import org.junit.jupiter.api.Test
 
 /**
  * Guards the shared `[index] text` parser used by the chat-style LLM
- * translators (DeepSeek, LM Studio). Extracted from those translators so a fix
- * to the parsing rule lives in one tested place rather than two copy-pasted
- * copies.
+ * translators (DeepSeek, LM Studio).
+ *
+ * TachiyomiAT: STRICT no-fallback contract. The parser must NEVER guess a
+ * block's translation. A model that emits unnumbered prose, a duplicate
+ * index, an out-of-range index, a blank value, or source-script leakage
+ * contributes nothing for that block — the block stays blank and the page
+ * is turned PARTIAL/FAILED by [TranslationBlockValidation] so the failure is
+ * visible instead of papered over with junk/source text. These tests pin
+ * every one of those rejection rules so the old positional fallback can never
+ * be re-introduced.
  */
 class NumberedLineResponseParserTest {
 
@@ -27,7 +34,7 @@ class NumberedLineResponseParserTest {
         val parsed = NumberedLineResponseParser.parse("[2] c\n[0] a", expectedCount = 3)
 
         // The format-respecting path keeps the model's own indices; gaps stay
-        // absent and the caller falls back to the original text for them.
+        // absent and the caller leaves the block blank for them.
         parsed shouldBe mapOf(0 to "a", 2 to "c")
     }
 
@@ -45,29 +52,50 @@ class NumberedLineResponseParserTest {
         parsed[0] shouldBe "spaced out"
     }
 
+    // ── STRICT: rejection rules (no positional fallback) ────────────────────
+
     @Test
-    fun `when no numbered prefix is present, non-blank lines fall back to positional indices`() {
-        // A model that ignores the format but still returns one translation per
-        // line must not yield an empty map — the positional fallback rescues it.
+    fun `unnumbered prose is rejected with no positional fallback`() {
+        // The single most important pin: a model that ignores the format and
+        // returns one translation per line must yield NOTHING. The old parser
+        // would have assigned these to indices 0/1/2 — masking the failure.
         val parsed = NumberedLineResponseParser.parse("first\nsecond\nthird", expectedCount = 3)
 
-        parsed shouldBe mapOf(0 to "first", 1 to "second", 2 to "third")
+        parsed shouldBe emptyMap()
     }
 
     @Test
-    fun `positional fallback stops at expectedCount even if more lines are present`() {
-        val parsed = NumberedLineResponseParser.parse("a\nb\nc\nd", expectedCount = 2)
+    fun `a refusal paragraph is rejected`() {
+        val parsed = NumberedLineResponseParser.parse(
+            "I'm sorry, but I can't help with translating this content.",
+            expectedCount = 4,
+        )
 
-        parsed shouldBe mapOf(0 to "a", 1 to "b")
+        parsed shouldBe emptyMap()
     }
 
     @Test
-    fun `positional fallback skips blank lines but keeps counting position`() {
-        // Mirrors the original: forEachIndexed assigns by line position, and
-        // blank lines are skipped (not assigned) but still advance the index.
-        val parsed = NumberedLineResponseParser.parse("keep\n\nalso", expectedCount = 3)
+    fun `duplicate index keeps the first occurrence`() {
+        val parsed = NumberedLineResponseParser.parse("[0] first\n[0] second", expectedCount = 2)
 
-        parsed shouldBe mapOf(0 to "keep", 2 to "also")
+        parsed shouldBe mapOf(0 to "first")
+    }
+
+    @Test
+    fun `out-of-range indices are dropped`() {
+        // The old parser kept out-of-range indices verbatim. Under the strict
+        // contract anything outside [0, expectedCount) is dropped — the caller
+        // only asked for `expectedCount` blocks, an index beyond that is noise.
+        val parsed = NumberedLineResponseParser.parse("[0] a\n[5] b", expectedCount = 2)
+
+        parsed shouldBe mapOf(0 to "a")
+    }
+
+    @Test
+    fun `blank translation value is dropped`() {
+        val parsed = NumberedLineResponseParser.parse("[0] hello\n[1]    ", expectedCount = 2)
+
+        parsed shouldBe mapOf(0 to "hello")
     }
 
     @Test
@@ -75,22 +103,40 @@ class NumberedLineResponseParserTest {
         NumberedLineResponseParser.parse("", expectedCount = 3) shouldBe emptyMap()
     }
 
-    @Test
-    fun `numbered-line indices above expectedCount are preserved as-is`() {
-        // Contract pin: the numbered path does NOT clamp to expectedCount (only
-        // the positional fallback does). An out-of-range index is kept, so the
-        // caller decides what to do with a model that returns index 5 when only
-        // 2 blocks were sent. This is intentional — document it, don't silently
-        // change it.
-        val parsed = NumberedLineResponseParser.parse("[0] a\n[5] b", expectedCount = 2)
+    // ── STRICT: source-script leakage (no-CJK for Latin targets) ────────────
 
-        parsed shouldBe mapOf(0 to "a", 5 to "b")
+    @Test
+    fun `cjk leakage into English target is dropped when targetLang is English`() {
+        // (笑) echoed back in an English translation is a leak, not a
+        // translation. The strict parser drops it so the block stays blank.
+        val parsed = NumberedLineResponseParser.parse(
+            "[0] (笑)\n[1] What's up?",
+            expectedCount = 2,
+            targetLang = TextTranslatorLanguage.ENGLISH,
+        )
+
+        parsed shouldBe mapOf(1 to "What's up?")
     }
 
     @Test
-    fun `colliding numbered indices keep the last value`() {
-        val parsed = NumberedLineResponseParser.parse("[0] first\n[0] second", expectedCount = 2)
+    fun `cjk content is kept when targetLang is a CJK language`() {
+        // Japanese -> Chinese (Traditional) translation legitimately contains
+        // CJK characters; the leakage check must not fire for CJK targets.
+        val parsed = NumberedLineResponseParser.parse(
+            "[0] 你好\n[1] 沒事吧？",
+            expectedCount = 2,
+            targetLang = TextTranslatorLanguage.CHINESETRAD,
+        )
 
-        parsed shouldBe mapOf(0 to "second")
+        parsed shouldBe mapOf(0 to "你好", 1 to "沒事吧？")
+    }
+
+    @Test
+    fun `cjk content is kept when targetLang is null (format-only parsing)`() {
+        // Callers that don't care about script fidelity (pure-format callers,
+        // legacy tests) get the raw strict-parse without the leakage check.
+        val parsed = NumberedLineResponseParser.parse("[0] (笑)", expectedCount = 1)
+
+        parsed shouldBe mapOf(0 to "(笑)")
     }
 }

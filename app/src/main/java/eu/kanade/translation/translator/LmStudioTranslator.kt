@@ -15,6 +15,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import logcat.LogPriority
 
 class LmStudioTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -83,12 +84,19 @@ class LmStudioTranslator(
                 3. STYLE & TONE: Adapt register, slang, dialect, and sound effects to fit the character and scene.
                 4. WATERMARKS: Replace watermark or site-link text with RTMTH.
                 5. NO EXTRA TEXT: Output only the translations in the exact numbered format below, one block per line. Do not include explanations, notes, or preambles.
+                6. SCRIPT FIDELITY: If the target language is English or any Latin-script language, do NOT output Japanese/Chinese/Korean characters. Localize sound-effect parentheses like (笑) to "lol", "(laugh)", or an equivalent in the target language.
 
                 Format:
                 [index] translation
             """.trimIndent()
 
             val mediaType = "application/json; charset=utf-8".toMediaType()
+            logcat(LogPriority.INFO) {
+                "LM Studio request: pages=${pages.size} blocks=${flatBlocks.size} " +
+                    "promptTokens=${TranslationContextChunkPlanner.estimateTokens(contextPrefix + textBlocksStr)} " +
+                    "chunkPromptTokens=${if (rollingContext.isBlank()) -1 else TranslationContextChunkPlanner.estimateTokens(rollingContext)} " +
+                    "maxOutput=$outputTokenLimit"
+            }
             val jsonObject = buildJsonObject {
                 put("model", modelName)
                 put("temperature", temp)
@@ -119,20 +127,64 @@ class LmStudioTranslator(
             val response = okHttpClient.newCall(request).await()
             val responseBody = response.body
                 ?: throw IllegalStateException("Empty response body from LM Studio API")
-            val responseJson = JSONObject(responseBody.string())
-            val rawOutput = responseJson.optJSONArray("choices")?.optJSONObject(0)
+            val responseStr = responseBody.string()
+            val responseJson = JSONObject(responseStr)
+            // TachiyomiAT: surface the raw LM Studio response so a blank/partial
+            // translation is diagnosable. The HTTP code, the presence of choices,
+            // the content length, and a snippet of the content are logged
+            // unconditionally — this path was previously a black box (no logs on
+            // success), which hid the root cause of whole-chapter blank output.
+            val choicesArr = responseJson.optJSONArray("choices")
+            val rawOutput = choicesArr?.optJSONObject(0)
                 ?.optJSONObject("message")?.optString("content")
+            logcat(LogPriority.INFO) {
+                "LM Studio response: http=${response.code} hasChoices=${choicesArr != null} " +
+                    "choicesLen=${choicesArr?.length() ?: -1} contentLen=${rawOutput?.length ?: -1} " +
+                    "finishReason=${choicesArr?.optJSONObject(0)?.optString("finish_reason")}"
+            }
             if (rawOutput.isNullOrBlank()) {
+                val snippet = if (responseStr.length > 300) responseStr.substring(0, 300) else responseStr
+                logcat(LogPriority.WARN) {
+                    "LM Studio returned no usable content. Raw response snippet: $snippet"
+                }
                 throw IllegalStateException(
                     "LM Studio returned no content (choices missing or empty): " +
                         responseJson.optString("error", responseJson.toString()),
                 )
             }
 
-            val parsedTranslations = NumberedLineResponseParser.parse(rawOutput, flatBlocks.size)
-            flatBlocks.forEachIndexed { index, (block, originalText) ->
-                val translated = parsedTranslations[index].takeUnless { it.isNullOrBlank() } ?: originalText
-                block.translation = translated
+            val parsedTranslations = NumberedLineResponseParser.parse(
+                raw = rawOutput,
+                expectedCount = flatBlocks.size,
+                targetLang = toLang,
+            )
+            // TachiyomiAT: log the parse yield. A common failure mode is the
+            // model ignoring the [index] text format AND the positional fallback
+            // (e.g. it returns a single prose paragraph) — parse then yields 0
+            // entries and every block stays blank. Surface that here.
+            val parsedCount = parsedTranslations.count { (_, v) -> v.isNotBlank() }
+            logcat(LogPriority.INFO) {
+                "LM Studio parse: requested=${flatBlocks.size} parsed=$parsedCount " +
+                    "contentFirstLine=${rawOutput.lineSequence().firstOrNull()?.take(80)}"
+            }
+            if (parsedCount < flatBlocks.size) {
+                val missingCount = flatBlocks.size - parsedCount
+                logcat(LogPriority.WARN) {
+                    "LM Studio response parsed $parsedCount/${flatBlocks.size} translations; " +
+                        "remainingMissing=$missingCount. The batch pipeline will retry missing blocks " +
+                        "with smaller requests when possible."
+                }
+            }
+            // TachiyomiAT: do NOT fall back to the source text when the model
+            // returns a blank/missing line. See DeepSeekTranslator for the full
+            // rationale (leaving translation blank lets the batch validation
+            // gate mark the block/page PARTIAL/FAILED instead of rendering OCR
+            // text as a translation).
+            flatBlocks.forEachIndexed { index, (block, _) ->
+                val translated = parsedTranslations[index]
+                if (!translated.isNullOrBlank()) {
+                    block.translation = translated
+                }
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)
         } catch (e: Exception) {

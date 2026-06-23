@@ -22,10 +22,22 @@ enum class StandardTranslatorKind(val label: String) {
     }
 
     companion object {
+        /**
+         * TachiyomiAT: STRICT no-fallback. The old code silently returned MLKIT
+         * for an unknown stored engine — a corrupted/migrated pref quietly ran
+         * on-device ML Kit instead of the configured Google/AI engine. Under
+         * the strict policy an invalid value throws; the pipeline's try/catch
+         * surfaces it as a FAILED page so the user fixes the setting.
+         */
         fun fromPref(pref: Preference<StandardEngine>): StandardTranslatorKind {
             val engine = pref.get()
             val translator = entries.firstOrNull { it.name == engine.name }
-            return translator ?: MLKIT
+            if (translator == null) {
+                throw IllegalArgumentException(
+                    "Unknown translator engine '${engine.name}'. Reconfigure translation settings.",
+                )
+            }
+            return translator
         }
     }
 }

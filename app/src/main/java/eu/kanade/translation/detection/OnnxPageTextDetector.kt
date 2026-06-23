@@ -26,12 +26,9 @@ class OnnxPageTextDetector {
         logcat(LogPriority.INFO) {
             "Detector init: ${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        // TachiyomiAT: detector stays on CPU. It's one cheap 640x640 pass per
-        // page and runs in the same init sequence as the manga-ocr sessions;
-        // keeping it off the accelerator avoids any chance an NNAPI partitioning
-        // hiccup destabilizes the OCR session init that follows. The AOT
-        // inpainting model is the only model that opts into the accelerator
-        // (single big generative pass — its ideal workload).
+        // TachiyomiAT: detector stays on CPU. It is one cheap 640x640 pass per
+        // page and runs in the same init sequence as OCR. All translation ONNX
+        // sessions are CPU-only in this runtime.
         val opts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)

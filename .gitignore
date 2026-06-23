@@ -18,3 +18,7 @@ local.properties
 # Logs
 *.log
 
+
+# Tool caches (not project artifacts)
+.codex-remote-attachments/
+.codex/

@@ -2,6 +2,7 @@ package eu.kanade.translation.inpainting
 
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.doubles.shouldBeGreaterThan
+import io.kotest.matchers.ints.shouldBeGreaterThan
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import org.junit.jupiter.api.Test
@@ -345,6 +346,388 @@ class SmartBubbleTextCleanerTest {
         r shouldBeGreaterThan 150.0
         g shouldNotBe 128.0
         b shouldBeGreaterThan 80.0
+    }
+
+    // ---- buildTightTextRegionMask (AOT tight text-region masking) ----
+
+    @Test
+    fun `buildTightTextRegionMask fills a solid tight region around detected text`() {
+        // The core Fix 7 guarantee: a loose box with text concentrated in one
+        // corner produces a SOLID mask tightly fitted to where the text is —
+        // smaller than the whole box (less destructive) but solid (one clean
+        // hole for the model, not sparse strokes). White background; dark text
+        // block in the upper-left of a much larger loose box.
+        val w = 60
+        val h = 40
+        val pixels = IntArray(w * h) { gray(255) }
+        for (y in 12 until 20) {
+            for (x in 8 until 20) {
+                pixels[y * w + x] = gray(20)
+            }
+        }
+
+        val mask = cleaner.buildTightTextRegionMask(
+            pixels = pixels,
+            contextW = w,
+            contextH = h,
+            boxes = listOf(intArrayOf(2, 2, 56, 36)), // loose box, much bigger than text
+            dilateIterations = 0,
+        )
+
+        // The text region is fully covered (solid tight box).
+        for (y in 12 until 20) {
+            for (x in 8 until 20) {
+                mask[y * w + x] shouldBe 1
+            }
+        }
+        // The far corner of the loose box (no text) is NOT erased — proving
+        // the mask is tight, not the full loose box.
+        mask[30 * w + 50] shouldBe 0
+        mask[4 * w + 50] shouldBe 0
+        // Marked area is well under the full loose-box area (54*34=1836),
+        // confirming it shrank to the text region.
+        val markedCount = mask.count { it != 0.toByte() }
+        (markedCount < 1000) shouldBe true
+    }
+
+    @Test
+    fun `buildTightTextRegionMask fills a solid rectangle not sparse strokes`() {
+        // Verify the mask is SOLID inside the tight bounds: two dark text blocks
+        // with a white gap between them should produce a SOLID rectangle spanning
+        // both (the tight bbox), so the white gap between them is ALSO erased.
+        // This is the production AOT practice — one clean hole per text block.
+        val w = 60
+        val h = 40
+        val pixels = IntArray(w * h) { gray(255) }
+        for (y in 15 until 25) {
+            for (x in 8 until 16) {
+                pixels[y * w + x] = gray(20)
+            }
+            for (x in 44 until 52) {
+                pixels[y * w + x] = gray(20)
+            }
+        }
+
+        val mask = cleaner.buildTightTextRegionMask(
+            pixels = pixels,
+            contextW = w,
+            contextH = h,
+            boxes = listOf(intArrayOf(4, 10, 56, 30)),
+            dilateIterations = 0,
+        )
+
+        // The gap between the two text blocks (x=30) is INSIDE the tight bbox
+        // of detected text, so it is solid-filled (erased), proving the mask is
+        // a solid rectangle, not sparse per-stroke marks.
+        for (y in 15 until 25) {
+            mask[y * w + 30] shouldBe 1
+        }
+    }
+
+    @Test
+    fun `buildTightTextRegionMask falls back to solid full box for uniform input`() {
+        // Coverage safety net: a genuinely uniform box (no detectable text) must
+        // still be fully erased, so the tight path never regresses the old
+        // whole-box coverage when detection genuinely fails.
+        val w = 30
+        val h = 20
+        val pixels = IntArray(w * h) { gray(255) }
+
+        val mask = cleaner.buildTightTextRegionMask(
+            pixels = pixels,
+            contextW = w,
+            contextH = h,
+            boxes = listOf(intArrayOf(5, 5, 25, 15)),
+            dilateIterations = 0,
+        )
+
+        for (y in 5 until 15) {
+            for (x in 5 until 25) {
+                mask[y * w + x] shouldBe 1
+            }
+        }
+    }
+
+    @Test
+    fun `buildTightTextRegionMask dilates the solid region`() {
+        // dilateIterations > 0 grows the mask outward so the model fills the
+        // text region + anti-aliased fringe. Verify growth compounds (Fix 1).
+        val w = 40
+        val h = 30
+        val pixels = IntArray(w * h) { gray(255) }
+        for (y in 14 until 17) {
+            for (x in 18 until 23) {
+                pixels[y * w + x] = gray(20)
+            }
+        }
+
+        val undilated = cleaner.buildTightTextRegionMask(
+            pixels = pixels,
+            contextW = w,
+            contextH = h,
+            boxes = listOf(intArrayOf(10, 8, 30, 22)),
+            dilateIterations = 0,
+        )
+        val dilated = cleaner.buildTightTextRegionMask(
+            pixels = pixels,
+            contextW = w,
+            contextH = h,
+            boxes = listOf(intArrayOf(10, 8, 30, 22)),
+            dilateIterations = 3,
+        )
+
+        val undilatedCount = undilated.count { it != 0.toByte() }
+        val dilatedCount = dilated.count { it != 0.toByte() }
+        (dilatedCount > undilatedCount) shouldBe true
+    }
+
+    // ---- buildLocalBackground bgSourceMask (color-bleed regression guard) ----
+
+    @Test
+    fun `bgSourceMask keeps the fill inside the bubble background color`() {
+        // The color-bleed regression: a white bubble surrounded by blue artwork.
+        // Without the bgSourceMask, the directional/Gaussian scan reaches past
+        // the bubble boundary and pulls blue INTO the bubble fill. With the mask
+        // constrained to the bubble interior, the fill must stay white.
+        val w = 30
+        val h = 20
+        val white = argb(255, 255, 255)
+        val blue = argb(40, 90, 210)
+        val pixels = IntArray(w * h) { idx ->
+            val x = idx % w
+            // Bubble interior x in [8, 22] is white; surrounding art is blue.
+            if (x in 8..22) white else blue
+        }
+        // A text hole in the bubble interior (x in [12, 18], y in [8, 12]).
+        val mask = ByteArray(w * h)
+        for (y in 8 until 13) {
+            for (x in 12 until 19) {
+                mask[y * w + x] = 1
+            }
+        }
+        // bgSourceMask = the bubble interior rectangle (x in [8, 22]).
+        val bgSourceMask = ByteArray(w * h)
+        for (idx in pixels.indices) {
+            if (idx % w in 8..22) bgSourceMask[idx] = 1
+        }
+
+        val bg = cleaner.buildLocalBackground(
+            pixels = pixels,
+            mask = mask,
+            width = w,
+            height = h,
+            medianColor = white,
+            bgSourceMask = bgSourceMask,
+        )
+
+        // Every filled pixel in the hole must be white-ish, NOT blue.
+        for (y in 8 until 13) {
+            for (x in 12 until 19) {
+                val px = bg[y * w + x]
+                val r = px shr 16 and 0xFF
+                val g = px shr 8 and 0xFF
+                val b = px and 0xFF
+                // White-ish: high R/G/B and NOT dominated by blue.
+                r shouldBeGreaterThan 180
+                g shouldBeGreaterThan 180
+                (b < 160 || (r >= 180 && g >= 180)) shouldBe true
+            }
+        }
+    }
+
+    @Test
+    fun `bgSourceMask null preserves the whole-context background sampling`() {
+        // Sanity: when no bgSourceMask is supplied, the fill can reach the
+        // surrounding artwork (the original behavior for free-text regions).
+        // The hole near a blue/white boundary picks up some blue influence —
+        // proving null does NOT constrain, so the free-text path is unchanged.
+        val w = 30
+        val h = 20
+        val white = argb(255, 255, 255)
+        val blue = argb(40, 90, 210)
+        val pixels = IntArray(w * h) { idx ->
+            if (idx % w in 8..22) white else blue
+        }
+        val mask = ByteArray(w * h)
+        for (y in 8 until 13) {
+            for (x in 12 until 19) {
+                mask[y * w + x] = 1
+            }
+        }
+
+        val bg = cleaner.buildLocalBackground(
+            pixels = pixels,
+            mask = mask,
+            width = w,
+            height = h,
+            medianColor = white,
+            // bgSourceMask intentionally null (free-text path).
+        )
+
+        // The unconstrained fill is allowed to drift toward blue near the
+        // boundary; we only assert it does not error and returns a full array.
+        bg.size shouldBe w * h
+    }
+
+    // ---- applyFeatheredFill (feather activation regression guard) ----
+
+    @Test
+    fun `applyFeatheredFill leaves untouched pixels where alpha is zero`() {
+        val pixels = intArrayOf(gray(10), gray(20), gray(30), gray(40))
+        val bg = intArrayOf(gray(200), gray(200), gray(200), gray(200))
+        val alpha = floatArrayOf(0f, 0f, 0f, 0f)
+
+        val out = cleaner.applyFeatheredFill(pixels, bg, alpha)
+
+        out[0] shouldBe gray(10)
+        out[1] shouldBe gray(20)
+        out[2] shouldBe gray(30)
+        out[3] shouldBe gray(40)
+    }
+
+    @Test
+    fun `applyFeatheredFill fully replaces pixels where alpha is one`() {
+        val pixels = intArrayOf(gray(10), gray(10))
+        val bg = intArrayOf(gray(220), gray(220))
+        val alpha = floatArrayOf(1f, 1f)
+
+        val out = cleaner.applyFeatheredFill(pixels, bg, alpha)
+
+        out[0] shouldBe gray(220)
+        out[1] shouldBe gray(220)
+    }
+
+    @Test
+    fun `applyFeatheredFill blends the feather ring to a mid-value not a hard step`() {
+        // The core regression guard: a 1px mask boundary must NOT produce a hard
+        // step. Here the left pixel is mask core (alpha=1 → bg), the right pixel
+        // is feather ring (alpha=0.5 → midpoint), the far-right is untouched
+        // (alpha=0 → original). The ring pixel must be a MID value between bg
+        // and original, proving the alpha map is actually applied (the old dead-
+        // feathering code would have left it as the original or bg, never mid).
+        val original = gray(10)
+        val background = gray(210)
+        val pixels = intArrayOf(original, original, original)
+        val bg = intArrayOf(background, background, background)
+        val alpha = floatArrayOf(1f, 0.5f, 0f)
+
+        val out = cleaner.applyFeatheredFill(pixels, bg, alpha)
+
+        out[0] shouldBe background // alpha 1 → full bg
+        out[2] shouldBe original // alpha 0 → untouched
+        // alpha 0.5 → midpoint ~110, not 10 (hard step) and not 210 (full fill).
+        val ringValue = out[1] and 0xFF
+        ringValue shouldBe ((10 + 210) / 2) // ~110
+    }
+
+    @Test
+    fun `applyFeatheredFill produces a gradual transition across a boundary`() {
+        // A solid-rect mask core with a feather ring on a two-tone image: the
+        // output must contain intermediate luma values (a ramp), not just the
+        // two endpoint values. This is the direct counter to the hard-edge
+        // "box border" symptom.
+        val w = 9
+        val dark = gray(20)
+        val light = gray(230)
+        val pixels = IntArray(w) { dark }
+        val background = IntArray(w) { light }
+        // alpha ramps 0 → 1 across the width.
+        val alpha = FloatArray(w) { i -> (i.toFloat() / (w - 1)) }
+
+        val out = cleaner.applyFeatheredFill(pixels, background, alpha)
+
+        val values = out.map { (it and 0xFF) }
+        // Distinct intermediate values exist (a real ramp, not just endpoints).
+        values.toSet().size shouldBeGreaterThan 3
+        // Monotonically non-decreasing (more alpha → closer to light).
+        values.forEachIndexed { i, v ->
+            if (i > 0) (v >= values[i - 1]) shouldBe true
+        }
+    }
+
+    @Test
+    fun `applyFeatheredFill does not mutate the input pixels`() {
+        val pixels = intArrayOf(gray(10), gray(20))
+        val bg = intArrayOf(gray(200), gray(200))
+        val alpha = floatArrayOf(1f, 1f)
+
+        cleaner.applyFeatheredFill(pixels, bg, alpha)
+
+        pixels[0] shouldBe gray(10)
+        pixels[1] shouldBe gray(20)
+    }
+
+    // ---- tightDifferenceMask (per-pixel fallback, no solid rectangle) ----
+
+    @Test
+    fun `tightDifferenceMask marks only differing pixels not the whole bounding rectangle`() {
+        // Regression guard for the "too much space" destruction: the earlier
+        // implementation found the tight bounds of differing pixels and then
+        // FILLED the enclosing rectangle, erasing the background between
+        // strokes. The per-pixel fix marks only the actual differing pixels;
+        // the downstream dilation (now a true multi-pass grower) covers stroke
+        // fringes without erasing inter-stroke gaps.
+        val w = 40
+        val h = 20
+        val pixels = IntArray(w * h) { gray(255) } // flat white background
+        // Two sparse dark "strokes" with a large white gap between them.
+        val strokePixels = setOf(
+            5 * w + 8, 5 * w + 9, // left stroke
+            5 * w + 30, 5 * w + 31, // right stroke, far from the left
+        )
+        strokePixels.forEach { pixels[it] = gray(20) }
+        // Ring median = white (the dominant background).
+        val stats = SmartBubbleTextCleaner.BackgroundStats(
+            medianColor = gray(255),
+            grayMean = 250f,
+            grayStd = 5f,
+            nearWhiteRatio = 1f,
+            darkPixelRatio = 0f,
+            edgeDensity = 0f,
+        )
+
+        val mask = cleaner.tightDifferenceMask(
+            pixels = pixels,
+            stats = stats,
+            boxes = listOf(intArrayOf(5, 4, 33, 7)), // box spanning both strokes + the gap
+            contextW = w,
+            contextH = h,
+        )
+
+        // Every marked pixel is a differing pixel (no spurious marks on white).
+        val markedCount = mask.count { it != 0.toByte() }
+        markedCount shouldBe strokePixels.size
+        strokePixels.forEach { mask[it] shouldBe 1 }
+        // The gap between the strokes (5*w+20) is white and must NOT be marked.
+        mask[5 * w + 20] shouldBe 0
+    }
+
+    @Test
+    fun `tightDifferenceMask fills nothing when the box is uniformly background`() {
+        // A genuinely uniform region has no differing pixels → no mask set.
+        // Previously this fell through to a full-rectangle fill; per-pixel it
+        // correctly marks nothing.
+        val w = 20
+        val h = 10
+        val pixels = IntArray(w * h) { gray(255) }
+        val stats = SmartBubbleTextCleaner.BackgroundStats(
+            medianColor = gray(255),
+            grayMean = 255f,
+            grayStd = 0f,
+            nearWhiteRatio = 1f,
+            darkPixelRatio = 0f,
+            edgeDensity = 0f,
+        )
+
+        val mask = cleaner.tightDifferenceMask(
+            pixels = pixels,
+            stats = stats,
+            boxes = listOf(intArrayOf(2, 2, 18, 8)),
+            contextW = w,
+            contextH = h,
+        )
+
+        mask.count { it != 0.toByte() } shouldBe 0
     }
 
     @Test

@@ -65,16 +65,8 @@ class MangaOcrEngine : RoiOcrEngine {
                 "decoderStep=${decoderStepFile.absolutePath} (${decoderStepFile.length()}B exists=${decoderStepFile.exists()}), " +
                 "vocab=${vocabFile.absolutePath} (${vocabFile.length()}B exists=${vocabFile.exists()})"
         }
-
-        // TachiyomiAT: manga-ocr runs an autoregressive decoder loop (up to 300
-        // steps/ROI) on tiny per-step graphlets. NNAPI/NPU is a terrible fit —
-        // it partitions the graph into dozens of segments with a CPU<->NPU sync
-        // point on each boundary, and that overhead × 300 steps blew up memory
-        // and destabilized sessions (triggering autoFallbackToFast → MLKit,
-        // which has no inpainter → "Inpainting unavailable"). forceCpu=true
-        // keeps the OCR pipeline on CPU regardless of the global EP strategy.
-        // The AOT inpainting model (single big generative pass) is the only one
-        // that benefits from the accelerator — it does NOT pass forceCpu.
+        // TachiyomiAT: manga-ocr runs an autoregressive decoder loop on many
+        // tiny per-step graphlets. Keep it on the shared CPU-only ONNX runtime.
         val encoderOpts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
         try {
             encoderSession = OnnxRuntimeProvider.environment.createSession(encoderFile.absolutePath, encoderOpts)

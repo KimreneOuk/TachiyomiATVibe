@@ -21,6 +21,17 @@ data class PaddleOcrV6SmallPaths(
     val dictionary: File,
 )
 
+/**
+ * TachiyomiAT: resolved paths for the PP-OCRv6 small **detection** (det) model.
+ * The det model runs inside each ROI crop from Stage-1 detection to find
+ * individual text lines (polygons), replacing the ink-gap column heuristic for
+ * the PaddleOCR rec path. See
+ * `docs/superpowers/specs/2026-06-23-paddleocr-v6-det-onnx-integration-design.md`.
+ */
+data class PaddleOcrV6DetPaths(
+    val detectionModel: File,
+)
+
 class OnnxModelStore(private val context: Context) {
 
     private val modelsDir: File by lazy {
@@ -80,7 +91,7 @@ class OnnxModelStore(private val context: Context) {
     fun paddleOcrV6SmallAvailable(): Boolean {
         val dir = File(modelsDir, "paddle-v6-small")
         return listOf(
-            "PP-OCRv6_small_rec.onnx",
+            "inference.onnx",
             "PP-OCRv6_small_rec.txt",
         ).all { File(dir, it).exists() }
     }
@@ -98,13 +109,46 @@ class OnnxModelStore(private val context: Context) {
         return PaddleOcrV6SmallPaths(
             recognitionModel = copyIfNeeded(
                 dir,
-                "PP-OCRv6_small_rec.onnx",
-                "models/ocr/paddle-v6-small/PP-OCRv6_small_rec.onnx",
+                "inference.onnx",
+                "models/ocr/paddle-v6-small/inference.onnx",
             ),
             dictionary = copyIfNeeded(
                 dir,
                 "PP-OCRv6_small_rec.txt",
                 "models/ocr/paddle-v6-small/PP-OCRv6_small_rec.txt",
+            ),
+        )
+    }
+
+    /**
+     * TachiyomiAT: PP-OCRv6 small **detection** model availability.
+     *
+     * The det model is an optional refinement of the PaddleOCR rec path: when
+     * present it replaces the ink-gap vertical-column heuristic with a learned
+     * text-line detector. The pipeline must therefore tolerate its absence
+     * (graceful fallback) — [paddleOcrV6DetAvailable] / [assetsAvailable] gate
+     * whether the det engine is built.
+     */
+    fun paddleOcrV6DetAvailable(): Boolean {
+        val dir = File(modelsDir, "paddle-v6-small/det")
+        return File(dir, "inference.onnx").exists()
+    }
+
+    fun paddleOcrV6DetAssetsAvailable(): Boolean {
+        return try {
+            context.assets.list("models/ocr/paddle-v6-small/det")?.isNotEmpty() == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun ensurePaddleOcrV6Det(): PaddleOcrV6DetPaths {
+        val dir = File(modelsDir, "paddle-v6-small/det").also { if (!it.exists()) it.mkdirs() }
+        return PaddleOcrV6DetPaths(
+            detectionModel = copyIfNeeded(
+                dir,
+                "inference.onnx",
+                "models/ocr/paddle-v6-small/det/inference.onnx",
             ),
         )
     }

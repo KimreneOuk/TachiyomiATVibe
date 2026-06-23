@@ -160,9 +160,16 @@ class GeminiTranslator(
                             "(mismatched blocks keep their original text)"
                     }
                 }
+                // TachiyomiAT: do NOT fall back to `b.text` when the model returns
+                // null/"NULL"/missing. Leaving translation blank lets the batch
+                // validation gate mark the block/page PARTIAL/FAILED instead of
+                // passing OCR text off as a translation (the mixed-source-text
+                // bug). The renderer no longer falls back to `b.text` either.
                 v.blocks.forEachIndexed { i, b ->
                     val res = resJson.optJSONArray(k)?.optString(i, "NULL")
-                    b.translation = if (res == null || res == "NULL") b.text else res
+                    if (res != null && res != "NULL" && res.isNotBlank()) {
+                        b.translation = res
+                    }
                 }
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)

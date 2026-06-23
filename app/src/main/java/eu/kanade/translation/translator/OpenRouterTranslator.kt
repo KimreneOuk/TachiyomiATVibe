@@ -143,9 +143,15 @@ class OpenRouterTranslator(
                             "(mismatched blocks keep their original text)"
                     }
                 }
+                // TachiyomiAT: do NOT fall back to `b.text` when the model returns
+                // null/"NULL"/missing. See GeminiTranslator for the full rationale
+                // (leaving translation blank lets validation mark the page
+                // PARTIAL/FAILED instead of rendering source text as a translation).
                 v.blocks.forEachIndexed { i, b ->
                     val res = resJson.optJSONArray(k)?.optString(i, "NULL")
-                    b.translation = if (res == null || res == "NULL") b.text else res
+                    if (res != null && res != "NULL" && res.isNotBlank()) {
+                        b.translation = res
+                    }
                 }
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)

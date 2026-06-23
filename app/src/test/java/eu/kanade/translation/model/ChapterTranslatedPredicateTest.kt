@@ -77,6 +77,21 @@ class ChapterTranslatedPredicateTest {
     }
 
     @Test
+    fun `page with PARTIAL translation counts as translated`() {
+        // hasRecognizedTranslation admits PARTIAL too: a page that rendered some
+        // blocks and left others blank still produced real output, so the
+        // chapter-level "is anything translated" check must count it.
+        val partial = PageTranslation(
+            blocks = mutableListOf(block()),
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.PARTIAL,
+        )
+
+        partial.hasRecognizedTranslation shouldBe true
+        listOf(partial).any { it.hasRenderedResult || it.hasRecognizedTranslation } shouldBe true
+    }
+
+    @Test
     fun `page with rendered image counts as translated`() {
         val rendered = PageTranslation(
             blocks = mutableListOf(block()),

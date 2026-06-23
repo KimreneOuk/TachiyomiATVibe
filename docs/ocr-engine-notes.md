@@ -75,6 +75,59 @@ The maintainer-suggested workarounds (not implemented) are:
 - **Use a different model**: MangaOcr for Japanese, or the **full** (non-small,
   34.5M-parameter) PP-OCRv6 rec model for stronger Chinese.
 
+### Bundled PaddleOCR v6 small source package
+
+The bundled PaddleOCR v6 small recognition asset is sourced from
+`PaddlePaddle/PP-OCRv6_small_rec_onnx` on Hugging Face. The upstream files are
+checked in under `app/src/main/assets/models/ocr/paddle-v6-small/`:
+`inference.onnx`, `inference.yml`, `inference.json`, `README.md`, and
+`.gitattributes`.
+
+Runtime still reads `PP-OCRv6_small_rec.txt` as a plain UTF-8 dictionary instead
+of parsing YAML on-device. That text file is the `PostProcess.character_dict`
+from `inference.yml` flattened to one character per line; it has 18,708 entries,
+matching the `inference.onnx` CTC class count of 18,710
+(blank + 18,708 labels + space).
+
+### PP-OCRv6 small **det** model — replacing the ink-gap column splitter
+
+The vertical-text workarounds above (per-column splitting + 90° CCW rotation)
+relied on an **ink-gap heuristic** (`RoiPageRecognitionEngine.detectVerticalColumns`)
+to split a tall manga bubble into individual text columns. That heuristic is
+brittle: it merges multi-column bubbles, splits on inter-character gaps, and
+cannot see tilted/curved text.
+
+It is now replaced — for the PaddleOCR rec path only — by the **PP-OCRv6 small
+det** ONNX model (`PaddlePaddle/PP-OCRv6_small_det_onnx`, 2.48M params, ~10 MB),
+checked in under `app/src/main/assets/models/ocr/paddle-v6-small/det/`. The det
+model is a DB (Differentiable Binarization) text-line detector that runs inside
+each Stage-1 ROI crop (the bubble boxes `detector-v4-s` already finds) and emits
+precise text-line boxes. Stage-1 detection, the `Detection` label semantics
+(0/1/2), and all inpaint/parent-bubble logic are unchanged — det is strictly a
+Stage-2 refinement of the column split.
+
+Key components:
+- `DbPostProcess` — pure DB postprocess (threshold → connected components →
+  axis-aligned bbox → unclip). Unit-tested in isolation.
+- `DbPostProcess.mergeLineFragments` — **required fix** discovered during
+  validation: the axis-aligned connected-components step over-segments a
+  horizontal CJK line into one box per character (normal inter-character spacing
+  becomes a component boundary). Without merge, a Chinese bubble reading
+  `所因誤` came back as 5 fragments (`因誤`, `所`, `以`, `為`, `2`); after merge
+  it correctly returns 2 lines (`所因誤`, `以為？`). Merge joins same-row
+  horizontal fragments (and symmetrically same-column vertical fragments) and is
+  iterated to a fixed point. Validated on both a Japanese vertical crop and a
+  Chinese horizontal bubble — merge fixes horizontal without breaking vertical.
+- `PaddleOcrV6DetEngine` — ONNX I/O glue + preprocess (BGR, resize-longer-to-736
+  pad-square, ImageNet mean/std) + back-projection (map→crop coords).
+
+The det model is **optional and best-effort**: if the asset is missing or fails
+to load, `RoiPageRecognitionEngine` falls back to the ink-gap heuristic, so OCR
+degrades to prior behavior instead of breaking. Per-ROI det failures also fall
+back to the heuristic for that ROI (logged, never suppressed).
+
+Design spec: `docs/superpowers/specs/2026-06-23-paddleocr-v6-det-onnx-integration-design.md`.
+
 ### How to investigate further (diagnostics already in place)
 
 The per-block diagnostic logging added during this investigation is kept and

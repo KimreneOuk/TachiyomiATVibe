@@ -7,8 +7,6 @@ import com.google.mlkit.nl.translate.TranslatorOptions
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.util.await
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 
 class MLKitTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -34,29 +32,27 @@ class MLKitTranslator(
         .build()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        // TachiyomiAT: strict no-fallback. A closed/unavailable ML Kit engine
+        // is a real failure — the old code silently returned, leaving every
+        // block's translation blank, and the page slipped through as READY
+        // (or PARTIAL) with no visible cause. Throwing lets the pipeline's
+        // try/catch mark the page FAILED with this message so the user sees
+        // "ML Kit translator was closed/unavailable" instead of a blank page.
         if (closed) {
-            logcat(LogPriority.WARN) { "MLKitTranslator.translate() called after close(); skipping" }
-            return
+            throw IllegalStateException("ML Kit translator was closed/unavailable")
         }
         val activeTranslator = translator
-        try {
-            activeTranslator.downloadModelIfNeeded(conditions).await()
-            pages.forEach { (_, v) ->
-                v.blocks.forEach { b ->
-                    b.translation = b.text.split("\n").map { line ->
-                        if (line.isNotEmpty()) {
-                            activeTranslator.translate(line).await()
-                        } else {
-                            ""
-                        }
-                    }.joinToString("\n")
-                }
+        activeTranslator.downloadModelIfNeeded(conditions).await()
+        pages.forEach { (_, v) ->
+            v.blocks.forEach { b ->
+                b.translation = b.text.split("\n").map { line ->
+                    if (line.isNotEmpty()) {
+                        activeTranslator.translate(line).await()
+                    } else {
+                        ""
+                    }
+                }.joinToString("\n")
             }
-        } catch (e: IllegalStateException) {
-            // The underlying Translator was closed out from under us (a
-            // concurrent rebuild/stop). Leave translations blank for this call
-            // rather than crashing the translation pipeline.
-            logcat(LogPriority.WARN, e) { "MLKit Translator unavailable mid-translate; skipping" }
         }
     }
 

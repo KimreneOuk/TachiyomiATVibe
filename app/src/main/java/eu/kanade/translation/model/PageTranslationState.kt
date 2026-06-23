@@ -38,6 +38,29 @@ val PageTranslation.hasTrustedRenderScale: Boolean
 val PageTranslation.hasCurrentInpaintResult: Boolean
     get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
 
+/**
+ * TachiyomiAT: true when this page carries a persisted inpaint mask captured by
+ * the current OCR logic, so a resumed batch can safely skip re-OCR and still
+ * erase detector-only + watermark regions.
+ *
+ * Signal: [PageTranslation.inpaintMaskBoxes] is a new persisted field whose
+ * default is the empty list, so any page OCR'd before this field existed (or
+ * whose OCR was skipped under the old resume gate) deserializes with an empty
+ * mask and is re-OCR'd to capture a complete one. A page OCR'd by current code
+ * always has a non-empty mask (unless it is genuinely textless).
+ *
+ * A textless page (empty blocks) is considered to have a current mask by
+ * definition — it has nothing to erase — so the stage-1 resume gate treats it
+ * as done instead of re-OCR'ing it forever.
+ *
+ * This is INDEPENDENT of [hasCurrentInpaintResult], which tracks whether the
+ * inpaint OUTPUT (cleaned image) matches the current revision. A page can have
+ * a current mask but a stale cleaned image (OCR'd, interrupted before inpaint)
+ * — that page skips re-OCR but still runs inpaint.
+ */
+val PageTranslation.hasCurrentInpaintMask: Boolean
+    get() = blocks.isEmpty() || inpaintMaskBoxes.isNotEmpty()
+
 val PageTranslation.hasRenderedResult: Boolean
     get() = displayImageName != null
 
@@ -82,13 +105,11 @@ fun PageTranslation.prepareForcedRetry() {
     inpaintStatus = StageStatus.PENDING
     renderStatus = StageStatus.PENDING
     errorMessage = null
-    if (!hasRenderedResult) {
-        renderedImageName = null
-        cleanedImageName = null
-        renderQuality = RenderQuality.UNKNOWN
-        renderedWidth = 0
-        renderedHeight = 0
-    }
+    renderedImageName = null
+    cleanedImageName = null
+    renderQuality = RenderQuality.UNKNOWN
+    renderedWidth = 0
+    renderedHeight = 0
 }
 
 val PageTranslation.isTextlessTerminal: Boolean
@@ -99,7 +120,7 @@ val PageTranslation.isTextlessTerminal: Boolean
 
 val PageTranslation.hasRecognizedTranslation: Boolean
     get() = ocrStatus == StageStatus.READY &&
-        translationStatus == StageStatus.READY &&
+        (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
         blocks.isNotEmpty()
 
 val PageTranslation.hasExhaustedRetries: Boolean
@@ -127,3 +148,26 @@ val PageTranslation.lifecycle: PageLifecycle
         hasRecognizedTranslation -> PageLifecycle.NeedsRender
         else -> PageLifecycle.Pending
     }
+
+/**
+ * TachiyomiAT: true when this page's [errorMessage] should be shown as a red
+ * error in the reader overlay.
+ *
+ * The view holders previously surfaced ANY non-null `errorMessage` once the
+ * page was idle — but cancellation, the stranded-page sweep, and textless
+ * terminal pages all write an explanatory `errorMessage` ("Translation
+ * cancelled", "Page was stranded mid-translation...", PARTIAL's "N/M blocks
+ * translated"). Those are NOT failures and must not be painted red over a
+ * page that produced output or was deliberately stopped.
+ *
+ * Rule: the error surfaces only when the page reached a genuine terminal
+ * [PageLifecycle.Failed] state (a stage FAILED, no rendered/cleaned result to
+ * show instead). PARTIAL, Textless, Cancelled, Done, and any in-flight state
+ * all suppress the error — the user sees either the translated image or
+ * nothing, never a stale/misleading red message.
+ */
+val PageTranslation.shouldSurfaceError: Boolean
+    get() = !hasRenderedResult &&
+        !isTextlessTerminal &&
+        !isStageCancelled &&
+        isStageFailed

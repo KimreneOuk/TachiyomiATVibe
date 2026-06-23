@@ -73,32 +73,20 @@ class TranslationPreferences(
     fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "FAST")
 
     /**
-     * TachiyomiAT: ONNX Runtime execution-provider strategy.
+     * Legacy ONNX execution-provider preference.
      *
-     * Values:
-     *   "AUTO"   — pick the safe default for this device (NNAPI where supported,
-     *              else CPU). This is the recommended value and the default.
-     *   "NNAPI"  — force the NNAPI EP (NPU/GPU/DSP via Android's driver layer).
-     *              Useful to opt back in after AUTO chose CPU on a misdetected
-     *              device, or to force NNAPI for benchmarking.
-     *   "CPU"    — force CPU-only (the legacy behavior). Use if a device's NNAPI
-     *              driver is unstable (rare; the runtime also auto-disables
-     *              NNAPI for the process after one failure).
-     *
-     * NOTE: "QNN" is intentionally NOT a value here. QNN (Qualcomm HTP) requires
-     * the onnxruntime-android-qnn artifact and QNN-quantized models, neither of
-     * which ship yet. It is gated behind [translationExperimentalQnn] below and
-     * wired in a future cycle — enabling it without the prerequisites is a
-     * silent no-op (see OnnxRuntimeProvider.registerQnnSafely).
+     * Translation ONNX sessions are CPU-only now. This key remains for backward
+     * compatibility with existing installs, but runtime code intentionally
+     * ignores it. Future NPU support should be a separate Qualcomm QNN/QAIRT
+     * backend with converted models, not generic NNAPI.
      */
     fun translationOnnxEp() = preferenceStore.getString("translation_onnx_ep", "AUTO")
 
     /**
-     * TachiyomiAT: experimental QNN (Qualcomm HTP/NPU) toggle. OFF by default
-     * and NOT functional until onnxruntime-android-qnn + QNN-quantized models
-     * are shipped. When ON, ChapterTranslator's ONNX sessions will be created
-     * with EpStrategy.QNN — which is currently a logged no-op falling back to
-     * CPU. Surfaced as a preference now so the integration point is stable.
+     * Legacy experimental QNN toggle.
+     *
+     * Kept only so old preference files deserialize cleanly. Current translation
+     * ONNX runtime ignores it and always creates CPU sessions.
      */
     fun translationExperimentalQnn() = preferenceStore.getBoolean("translation_experimental_qnn", false)
 

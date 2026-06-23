@@ -1,22 +1,91 @@
 package eu.kanade.translation.inpainting
 
+import eu.kanade.translation.detection.Detection
+import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.recognition.BoxGeometry
 import kotlin.math.max
 
+/**
+ * TachiyomiAT: builds the list of regions the inpainter must erase for one page.
+ *
+ * Two entry points, one source of truth:
+ *  - [computeMask] is called ONCE at the end of [PageRecognitionEngine.analyze]
+ *    (i.e. at OCR time, BEFORE translation/watermark filtering) to capture a
+ *    durable mask. It is persisted on [PageTranslation.inpaintMaskBoxes].
+ *  - [build] is called at inpaint time. It returns the persisted mask when
+ *    present (the resume / reopened-store path, where the transient
+ *    `allTextDetections` has been lost) and otherwise recomputes from the live
+ *    `blocks` + `allTextDetections` (the fresh single-page path).
+ *
+ * Why a durable mask matters: the inpainter must erase detector-only regions
+ * (filtered out of OCR by dedupe/suppression) and watermark regions (removed
+ * from `blocks` by [TranslationBlockFilters] after translate). Both classes of
+ * region vanish from `blocks` before inpaint on the resume path, so deriving
+ * the mask from `blocks` alone at inpaint time leaves source text / watermarks
+ * visible. Capturing the full erase set at OCR time and persisting it closes
+ * that hole.
+ */
 object PageInpaintingPlanner {
 
     data class InpaintingInput(
         val boxes: List<IntArray>,
         val labels: List<Int>,
         val extraDetectorCount: Int,
+        val source: MaskSource,
     ) {
         val isEmpty: Boolean
             get() = boxes.isEmpty()
     }
 
+    /** Where [InpaintingInput.boxes] came from — surfaced for diagnostics. */
+    enum class MaskSource {
+        /** Mask was loaded from the persisted [PageTranslation.inpaintMaskBoxes]. */
+        PERSISTED,
+
+        /** Mask was recomputed from live blocks + allTextDetections (fresh path). */
+        RECOMPUTED,
+    }
+
+    /**
+     * Builds the inpaint input at inpaint time. Prefers the persisted mask
+     * ([PageTranslation.inpaintMaskBoxes]); only recomputes when no persisted
+     * mask exists (the fresh single-page path, where `allTextDetections` is
+     * still populated in memory).
+     */
     fun build(pageTranslation: PageTranslation): InpaintingInput {
-        val bubbleBoxes = pageTranslation.blocks
+        val persisted = pageTranslation.inpaintMaskBoxes
+        if (persisted.isNotEmpty()) {
+            val boxes = persisted.map { it.toIntArray() }
+            val extraDetectorCount = persisted.count { it.label == DETECTOR_TEXT_LABEL }
+            return InpaintingInput(
+                boxes = boxes,
+                labels = persisted.map { it.label },
+                extraDetectorCount = extraDetectorCount,
+                source = MaskSource.PERSISTED,
+            )
+        }
+        return recomputeFromLiveDetections(pageTranslation)
+    }
+
+    /**
+     * Captures the durable erase mask from the recognition result. Call this
+     * exactly once, at the end of [PageRecognitionEngine.analyze], and persist
+     * the result onto [PageTranslation.inpaintMaskBoxes]. Computing here (not
+     * at inpaint time) is what makes the mask survive translation-stage block
+     * removal and process death.
+     *
+     * The returned mask includes, for every OCR'd block, BOTH its bubble box
+     * (label 0, when a parent bubble exists) and its text box (label = the
+     * block's own label, 1 or 2), plus every detector-only text region that
+     * was filtered out of OCR (label 2). It deliberately does NOT consult
+     * `block.translation` — translation has not run yet at OCR time, so this
+     * is naturally immune to the watermark-block-removal ordering.
+     */
+    fun computeMask(pageTranslation: PageTranslation): List<InpaintMaskBox> {
+        val blocks = pageTranslation.blocks
+
+        val bubbleBoxes = blocks
             .filter { it.parentWidth > 0f && it.parentHeight > 0f }
             .map { block ->
                 intArrayOf(
@@ -29,7 +98,73 @@ object PageInpaintingPlanner {
             .filterValid()
             .distinctBy { it.toList() }
 
-        val textBoxLabels = pageTranslation.blocks
+        val textBoxLabels = blocks
+            .mapNotNull { block ->
+                val box = intArrayOf(
+                    block.x.toInt(),
+                    block.y.toInt(),
+                    (block.x + block.width).toInt(),
+                    (block.y + block.height).toInt(),
+                )
+                if (box.isValid()) box to block.label else null
+            }
+        val textBoxes = textBoxLabels.map { it.first }
+
+        val ocrBlockBoxes = textBoxes.map { it.copyOf() }
+        val extraDetectorBoxes = pageTranslation.allTextDetections
+            .map { it.bbox }
+            .filterValid()
+            .filter { detBox ->
+                val expanded = intArrayOf(
+                    max(0, detBox[0] - DETECTOR_OVERLAP_PAD),
+                    max(0, detBox[1] - DETECTOR_OVERLAP_PAD),
+                    detBox[2] + DETECTOR_OVERLAP_PAD,
+                    detBox[3] + DETECTOR_OVERLAP_PAD,
+                )
+                ocrBlockBoxes.none { ocrBox ->
+                    BoxGeometry.iou(expanded, ocrBox) > DETECTOR_OCR_IOU_THRESHOLD
+                }
+            }
+            .distinctBy { it.toList() }
+
+        val mask = mutableListOf<InpaintMaskBox>()
+        bubbleBoxes.forEach { box ->
+            mask.add(InpaintMaskBox(box[0], box[1], box[2], box[3], BUBBLE_LABEL))
+        }
+        textBoxLabels.forEach { (box, label) ->
+            mask.add(InpaintMaskBox(box[0], box[1], box[2], box[3], label))
+        }
+        extraDetectorBoxes.forEach { box ->
+            mask.add(InpaintMaskBox(box[0], box[1], box[2], box[3], DETECTOR_TEXT_LABEL))
+        }
+        return mask
+    }
+
+    /**
+     * Live (non-resume) path: derive the mask from the in-memory
+     * [PageTranslation.blocks] + [PageTranslation.allTextDetections]. This is
+     * byte-equivalent to [computeMask]; it exists only because [build] must
+     * return [InpaintingInput] (IntArrays for the inpainter API) rather than
+     * the serializable [InpaintMaskBox] list, and the fresh path skips the
+     * intermediate persisted form.
+     */
+    private fun recomputeFromLiveDetections(pageTranslation: PageTranslation): InpaintingInput {
+        val blocks = pageTranslation.blocks
+
+        val bubbleBoxes = blocks
+            .filter { it.parentWidth > 0f && it.parentHeight > 0f }
+            .map { block ->
+                intArrayOf(
+                    block.parentX.toInt(),
+                    block.parentY.toInt(),
+                    (block.parentX + block.parentWidth).toInt(),
+                    (block.parentY + block.parentHeight).toInt(),
+                )
+            }
+            .filterValid()
+            .distinctBy { it.toList() }
+
+        val textBoxLabels = blocks
             .mapNotNull { block ->
                 val box = intArrayOf(
                     block.x.toInt(),
@@ -67,6 +202,7 @@ object PageInpaintingPlanner {
             boxes = boxes,
             labels = labels,
             extraDetectorCount = extraDetectorBoxes.size,
+            source = MaskSource.RECOMPUTED,
         )
     }
 

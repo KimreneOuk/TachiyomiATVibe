@@ -7,6 +7,7 @@ import eu.kanade.translation.inpainting.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizer
@@ -64,22 +65,34 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
                 bitmap,
                 bounds.left, bounds.top, bounds.right, bounds.bottom,
             )
-            translation.blocks.add(
-                TranslationBlock(
-                    text = block.text,
-                    width = bounds.width().toFloat(),
-                    height = bounds.height().toFloat(),
-                    symWidth = symBounds.width().toFloat(),
-                    symHeight = symBounds.height().toFloat(),
-                    angle = angle,
-                    x = bounds.left.toFloat(),
-                    y = bounds.top.toFloat(),
-                    direction = if (isVertical) "TTB" else "LTR",
-                    textColor = contrastColors.first,
-                    strokeColor = contrastColors.second,
-                    strokeWidth = contrastColors.third,
-                ),
-            )
+                translation.blocks.add(
+                    TranslationBlock(
+                        text = block.text,
+                        width = bounds.width().toFloat(),
+                        height = bounds.height().toFloat(),
+                        symWidth = symBounds.width().toFloat(),
+                        symHeight = symBounds.height().toFloat(),
+                        angle = angle,
+                        x = bounds.left.toFloat(),
+                        y = bounds.top.toFloat(),
+                        direction = if (isVertical) "TTB" else "LTR",
+                        textColor = contrastColors.first,
+                        strokeColor = contrastColors.second,
+                        strokeWidth = contrastColors.third,
+                    ),
+                )
+            }
+        // TachiyomiAT: ML Kit emits one block per TextBlock with NO dedupe, so
+        // overlapping TextBlocks (a common ML Kit artefact on dense pages) both
+        // survive and render on top of each other. Apply the same geometric
+        // dedupe the ONNX path uses so both engines produce a clean block list.
+        // Runs before ocrBlockCount is set so the count reflects post-dedupe.
+        if (translation.blocks.size > 1) {
+            val deduped = PageTranslationHelper.dedupeGeometricOverlaps(translation.blocks.toList())
+            if (deduped.size < translation.blocks.size) {
+                translation.blocks.clear()
+                translation.blocks.addAll(deduped)
+            }
         }
         translation.ocrBlockCount = translation.blocks.size
         translation.ocrStatus = StageStatus.READY
