@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inpaint Debug Viewer</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <div>
+        <h1>Inpaint Debug Viewer</h1>
+        <p id="imageMeta">No image loaded</p>
+      </div>
+    </div>
+    <label class="file-button">
+      <input id="fileInput" type="file" accept="image/*">
+      Upload image
+    </label>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <section class="controls">
+        <h2>Boxes</h2>
+        <div class="button-row">
+          <button id="addBoxBtn" type="button">Draw box</button>
+          <button id="autoBoxBtn" type="button">Run models</button>
+          <button id="clearBoxesBtn" type="button">Clear</button>
+        </div>
+        <p id="drawHint" class="hint">Click Draw box, then drag on the Bounding Box image.</p>
+        <div id="boxList" class="box-list"></div>
+      </section>
+
+      <section class="controls">
+        <h2>Paddle DET</h2>
+        <label>
+          Crop pad
+          <input id="paddleCropPadInput" type="range" min="0" max="48" value="12">
+          <output id="paddleCropPadOut">12</output>
+        </label>
+        <label>
+          Pixel threshold
+          <input id="paddleThreshInput" type="range" min="5" max="35" value="18">
+          <output id="paddleThreshOut">0.18</output>
+        </label>
+        <label>
+          Box threshold
+          <input id="paddleBoxThreshInput" type="range" min="15" max="55" value="34">
+          <output id="paddleBoxThreshOut">0.34</output>
+        </label>
+      </section>
+
+      <section class="controls">
+        <h2>Inpaint Settings</h2>
+        <label>
+          Inpainting Mode
+          <select id="modeSelect">
+            <option value="quality" selected>QUALITY</option>
+            <option value="fast">FAST</option>
+          </select>
+        </label>
+        <label>
+          Box pad
+          <input id="padInput" type="range" min="0" max="24" value="8">
+          <output id="padOut">8</output>
+        </label>
+        <label>
+          Feather
+          <input id="featherInput" type="range" min="0" max="24" value="8">
+          <output id="featherOut">8</output>
+        </label>
+        <label>
+          Low-res scale
+          <input id="scaleInput" type="range" min="5" max="25" value="10">
+          <output id="scaleOut">10%</output>
+        </label>
+        <label>
+          Smooth passes
+          <input id="passesInput" type="range" min="4" max="80" value="36">
+          <output id="passesOut">36</output>
+        </label>
+        <button id="downloadBtn" type="button">Download inpainted</button>
+      </section>
+    </aside>
+
+    <section class="viewer-grid">
+      <article class="pane">
+        <h2>Original</h2>
+        <canvas id="originalCanvas"></canvas>
+      </article>
+      <article class="pane">
+        <h2>Bounding Box</h2>
+        <canvas id="boxCanvas"></canvas>
+      </article>
+      <article class="pane">
+        <h2>Mask Only</h2>
+        <canvas id="maskCanvas"></canvas>
+      </article>
+      <article class="pane">
+        <h2>Inpainted</h2>
+        <canvas id="inpaintCanvas"></canvas>
+      </article>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

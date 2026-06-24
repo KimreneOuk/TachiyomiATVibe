@@ -16,14 +16,13 @@ import kotlin.math.roundToInt
  */
 object BubbleMaskBuilder {
 
-    // TachiyomiAT: Navier-Stokes inpaint defaults. The pure-Kotlin port of the
-    // prototype demo's `method = "ns"` (cv2.inpaint INPAINT_NS), used for the
-    // FAST free-text fill. Internal constants (prototype-style defaults) — no
+    // TachiyomiAT: Laplace/harmonic inpaint defaults used by [laplaceInpaint].
+    // This is a harmonic (Laplace) solve, NOT a Navier-Stokes solve — a real
+    // Bertalmio NS solver (vorticity transport + isophote continuity) is a
+    // future follow-up. Internal constants (prototype-style defaults) — no
     // settings surface, per the task's "tunables stay internal" requirement.
-    private const val NS_DOWNSAMPLE = 0.25f
-    private const val NS_OUTER_STEPS = 50
-    private const val NS_POISSON_ITERS = 40
-    private const val NS_VISCOSITY = 1.0f
+    private const val LAPLACE_DOWNSAMPLE = 0.25f
+    private const val LAPLACE_ITERS = 120
 
     /**
      * Build a filled mask over the union of [boxes], each drawn as a rounded
@@ -166,34 +165,21 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: pure-Kotlin Navier-Stokes inpaint.
+     * TachiyomiAT: pure-Kotlin harmonic (Laplace) inpaint.
      *
-     * Replaces the flat-median FAST free-text fill with the same algorithm the
-     * prototype demo's `method = "ns"` (`cv2.inpaint(INPAINT_NS)`) uses: the
-     * Bertalmio/Bertozzi/Sapiro (CVPR 2001) vorticity-stream formulation. The
-     * app has no OpenCV dependency, so this is a from-scratch finite-difference
-     * implementation rather than a `cv2` call.
+     * PLACEHOLDER solver. This solves the Laplace/harmonic equation ∇²I = 0
+     * inside the hole Ω with Dirichlet boundary conditions taken from the known
+     * pixels on ∂Ω — i.e. each reconstructed pixel is driven to the average of
+     * its neighbours, which smoothly propagates the surrounding intensities/
+     * gradient into the hole. Per channel, on the downsampled grid, then
+     * bilinearly upsampled to full res.
      *
-     * What NS does (and why it looks better than a flat/weighted fill): it
-     * treats image intensity as a 2D fluid stream function and solves the
-     * incompressible-NS equations inside the hole Ω, with Dirichlet boundary
-     * conditions from ∂Ω. The defining visual property is **isophote
-     * continuity** — equal-intensity lines arriving at the hole boundary
-     * continue smoothly across it without crossing, so a gradient that enters
-     * the hole on the left flows out on the right at the right value. A flat
-     * or weighted-average fill cannot reproduce this; it produces the white
-     * block this solver exists to eliminate.
-     *
-     * Scheme (per channel, on the downsampled grid — matching the prototype,
-     * which runs cv2.inpaint at small scale too), iterated to steady state:
-     *  1. Vorticity: ω = ∇⊥I · ∇²I, where ∇⊥ = (∂/∂y, −∂/∂x) is the 90°-
-     *     rotated gradient (isophote tangent) and ∇²I is the 5-pt Laplacian.
-     *  2. Vorticity transport: enforce ∇·(∇⊥I · ω) = 0 — vorticity flows
-     *     along isophotes, not across them (the steady isophote-continuity
-     *     condition).
-     *  3. Poisson reconstruction: solve ∇²I = ω inside Ω with Dirichlet BC
-     *     from ∂Ω (Jacobi iteration).
-     *  4. Repeat until convergence, then bilinear-upsample to full res.
+     * It is NOT a Navier-Stokes solve despite the historical name. A real
+     * Bertalmio/Bertozzi/Sapiro (CVPR 2001) vorticity-stream NS solver (vorticity
+     * transport + isophote continuity) is a future follow-up; the private
+     * [computeVorticity]/[diffuseVorticity]/[poissonSolve] helpers below are
+     * retained as scaffolding for that. With vorticity forced to zero they
+     * degenerate to exactly this Laplace solve.
      *
      * Pure (no Android, no OpenCV): `IntArray` ARGB in, `IntArray` ARGB out,
      * so it is unit-tested on the JVM. The caller feather-composites the
@@ -204,23 +190,19 @@ object BubbleMaskBuilder {
      * @param width / height image dimensions.
      * @param downsample small-grid scale (0..1). The PDE runs on
      *   `(width*downsample) × (height*downsample)`; smaller = faster but less
-     *   detail. The prototype uses ~0.10 for cv2.inpaint; 0.25 gives the
-     *   finite-difference stencil enough resolution to be stable.
-     * @param outerSteps vorticity-transport + Poisson outer iterations.
-     * @param poissonIters Jacobi sweeps per Poisson solve.
-     * @param viscosityNu ν in ∂ω/∂t = ν∇²ω (vorticity diffusion smoothing).
+     *   detail.
+     * @param iters Poisson/Jacobi sweeps used to solve ∇²I = ω (=0) to steady
+     *   state.
      * @return filled ARGB IntArray (full res); hole pixels reconstructed,
      *   non-hole pixels unchanged.
      */
-    fun navierStokesInpaint(
+    fun laplaceInpaint(
         pixels: IntArray,
         mask: ByteArray,
         width: Int,
         height: Int,
-        downsample: Float = NS_DOWNSAMPLE,
-        outerSteps: Int = NS_OUTER_STEPS,
-        poissonIters: Int = NS_POISSON_ITERS,
-        viscosityNu: Float = NS_VISCOSITY,
+        downsample: Float = LAPLACE_DOWNSAMPLE,
+        iters: Int = LAPLACE_ITERS,
     ): IntArray {
         if (width <= 0 || height <= 0) return pixels.copyOf()
         // No hole → nothing to do.
@@ -237,10 +219,10 @@ object BubbleMaskBuilder {
         val smallB = downsampleChannel(pixels, mask, width, height, sw, sh) { px -> (px and 0xFF).toFloat() }
         val smallMask = downsampleMask(mask, width, height, sw, sh)
 
-        // Solve NS per channel (intensity = channel value).
-        solveChannel(smallR, smallMask, sw, sh, outerSteps, poissonIters, viscosityNu)
-        solveChannel(smallG, smallMask, sw, sh, outerSteps, poissonIters, viscosityNu)
-        solveChannel(smallB, smallMask, sw, sh, outerSteps, poissonIters, viscosityNu)
+        // Solve the harmonic equation per channel (intensity = channel value).
+        solveChannel(smallR, smallMask, sw, sh, iters)
+        solveChannel(smallG, smallMask, sw, sh, iters)
+        solveChannel(smallB, smallMask, sw, sh, iters)
 
         // Bilinear upsample back to full res, recombining ARGB. Non-hole pixels
         // keep their ORIGINAL value (Dirichlet BC already held them fixed in the
@@ -278,24 +260,12 @@ object BubbleMaskBuilder {
         mask: ByteArray,
         w: Int,
         h: Int,
-        outerSteps: Int,
-        poissonIters: Int,
-        nu: Float,
+        iters: Int,
     ) {
         val n = w * h
-        val omega = FloatArray(n)   // vorticity
+        val omega = FloatArray(n)   // zero vorticity -> Laplace/harmonic solve
         val scratch = FloatArray(n) // Poisson Jacobi scratch
-        for (step in 0 until outerSteps) {
-            // 1. Vorticity ω = ∇⊥I · ∇²I over the WHOLE grid (needed inside Ω
-            //    for the Poisson RHS and just outside Ω for transport).
-            computeVorticity(u, omega, mask, w, h)
-            // 2. Vorticity transport: diffuse vorticity along isophotes inside
-            //    Ω (ν∇²ω smoothing toward steady ∇·(∇⊥I·ω)=0). One explicit
-            //    diffusion sweep keeps it cheap and stable.
-            if (nu > 0f) diffuseVorticity(omega, mask, w, h, nu)
-            // 3. Poisson reconstruction: ∇²I = ω inside Ω, Dirichlet BC on ∂Ω.
-            poissonSolve(u, omega, mask, w, h, poissonIters, scratch)
-        }
+        poissonSolve(u, omega, mask, w, h, iters, scratch)
     }
 
     /**

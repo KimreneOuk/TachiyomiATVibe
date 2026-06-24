@@ -333,6 +333,103 @@ class SmartBubbleTextCleaner(
         return image
     }
 
+    fun cleanBubbleGroupFmm(
+        image: Bitmap,
+        bubbleBbox: IntArray,
+        textBoxes: List<IntArray>,
+        paddleDet: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null,
+    ): Bitmap {
+        val w = image.width
+        val h = image.height
+        val bx1 = bubbleBbox[0].coerceIn(0, w)
+        val by1 = bubbleBbox[1].coerceIn(0, h)
+        val bx2 = bubbleBbox[2].coerceIn(bx1, w)
+        val by2 = bubbleBbox[3].coerceIn(by1, h)
+        if (bx2 <= bx1 || by2 <= by1) return image
+
+        val cx1 = max(0, bx1 - contextPad)
+        val cy1 = max(0, by1 - contextPad)
+        val cx2 = min(w, bx2 + contextPad)
+        val cy2 = min(h, by2 + contextPad)
+        val contextW = cx2 - cx1
+        val contextH = cy2 - cy1
+
+        val contextSize = contextW * contextH
+        if (currentBufferSize < contextSize) {
+            workingBuffer1 = IntArray(contextSize)
+            workingBuffer2 = IntArray(contextSize)
+            currentBufferSize = contextSize
+        }
+        val contextPixels = workingBuffer1!!
+
+        image.getPixels(contextPixels, 0, contextW, cx1, cy1, contextW, contextH)
+
+        val localTextBoxes = textBoxes.map { box ->
+            val lx1 = max(0, box[0] - cx1)
+            val ly1 = max(0, box[1] - cy1)
+            val lx2 = min(contextW, box[2] - cx1)
+            val ly2 = min(contextH, box[3] - cy1)
+            intArrayOf(lx1, ly1, lx2, ly2)
+        }
+
+        val combinedMask = ByteArray(contextW * contextH)
+        var totalCoveredArea = 0
+        val cropArea = contextW * contextH
+
+        val paddleBoxes = mutableListOf<IntArray>()
+        if (paddleDet != null) {
+            val cropBmp = Bitmap.createBitmap(contextPixels, contextW, contextH, Bitmap.Config.ARGB_8888)
+            val lines = try {
+                paddleDet.detectLines(cropBmp)
+            } catch (e: Exception) {
+                emptyList()
+            } finally {
+                cropBmp.recycle()
+            }
+            for (line in lines) {
+                val b = line.bbox
+                paddleBoxes.add(intArrayOf(max(0, b[0]), max(0, b[1]), min(contextW, b[2]), min(contextH, b[3])))
+            }
+        } else {
+            for (b in localTextBoxes) paddleBoxes.add(b)
+        }
+
+        if (paddleBoxes.isNotEmpty()) {
+            for (box in paddleBoxes) {
+                val ex1 = max(0, box[0] - 6)
+                val ey1 = max(0, box[1] - 6)
+                val ex2 = min(contextW, box[2] + 6)
+                val ey2 = min(contextH, box[3] + 6)
+                for (y in ey1 until ey2) {
+                    for (x in ex1 until ex2) {
+                        combinedMask[y * contextW + x] = 1
+                    }
+                }
+                totalCoveredArea += (ex2 - ex1) * (ey2 - ey1)
+            }
+        }
+
+        if (paddleBoxes.isEmpty() || totalCoveredArea < 0.10 * cropArea) {
+            val bin = FastMarchingMethod.adaptiveThresholdGaussian(
+                pixels = contextPixels, width = contextW, height = contextH,
+                blockSize = 15, C = 10
+            )
+            val closed = FastMarchingMethod.morphologyClose(bin, contextW, contextH, radius = 1)
+            val fallbackMask = FastMarchingMethod.dilate(closed, contextW, contextH, radius = 5)
+            
+            for (i in 0 until contextSize) {
+                if (fallbackMask[i] != 0.toByte()) {
+                    combinedMask[i] = 1
+                }
+            }
+        }
+
+        FastMarchingMethod.inpaintTelea(contextPixels, combinedMask, contextW, contextH, radius = 3)
+
+        image.setPixels(contextPixels, 0, contextW, cx1, cy1, contextW, contextH)
+        return image
+    }
+
     fun cleanRegions(
         image: Bitmap,
         boxes: List<IntArray>,
@@ -390,21 +487,15 @@ class SmartBubbleTextCleaner(
     /**
      * TachiyomiAT: body of [fillSolidBoxes] for one padded SOLID box. The erase
      * mask is the SOLID padded box (no pixel-heuristic detection — see
-     * [fillSolidBoxes]), and the fill is a pure-Kotlin **Navier-Stokes inpaint**
-     * ([BubbleMaskBuilder.navierStokesInpaint]) — the same algorithm the
-     * prototype demo's `method = "ns"` (`cv2.inpaint(INPAINT_NS)`) uses.
+     * [fillSolidBoxes]), and the fill is the **Telea Fast Marching Method**
+     * ([FastMarchingMethod.inpaintTelea]) — the same algorithm the prototype
+     * demo's `method = "telea"` (`cv2.inpaint(INPAINT_TELEA)`) uses.
      *
-     * NS reconstructs the hole from the ∂Ω boundary via the vorticity-stream
-     * PDE, so isophotes (equal-intensity lines) continue smoothly across the
-     * hole. This is the fix for the flat-white-block symptom: on white paper the
-     * previous flat-median fill painted the ring median (white) over the whole
-     * padded box; NS pulls the surrounding gradient/texture in instead. A
-     * feathered blend ([featherAlpha] + [applyFeatheredFill]) softens the
-     * boundary between the reconstructed hole and the kept artwork.
-     *
-     * No background-stats / ring sampling here: NS's Dirichlet BC is the known
-     * context pixels themselves, which is a more faithful reference than the
-     * ring median.
+     * Telea reconstructs each hole pixel from its known neighbours in fast-
+     * marching arrival order, so the surrounding gradient/texture flows in
+     * instead of a flat white block. A feathered blend ([featherAlpha] +
+     * [applyFeatheredFill]) softens the boundary between the reconstructed hole
+     * and the kept artwork.
      */
     private fun fillSolidRegion(
         image: Bitmap,
@@ -456,15 +547,12 @@ class SmartBubbleTextCleaner(
             .coerceAtMost((localY2 - localY1).coerceAtLeast(1))
         val (scaledFeather, _) = scaledMorphology(minRegionDim)
 
-        // Navier-Stokes reconstruction of the hole. NS runs on the downsampled
-        // grid internally and returns a full-res IntArray where hole pixels are
-        // reconstructed and non-hole pixels are unchanged.
-        val reconstructed = BubbleMaskBuilder.navierStokesInpaint(
-            pixels = contextPixels,
-            mask = solidMask,
-            width = contextW,
-            height = contextH,
-        )
+        // Telea Fast Marching Method reconstruction of the hole. inpaintTelea
+        // solves in place, so reconstruct on a COPY and leave contextPixels as
+        // the original for the feathered blend below. radius=3 matches the
+        // prototype (cv2.inpaint flag 3) and cleanBubbleGroupFmm.
+        val reconstructed = contextPixels.copyOf()
+        FastMarchingMethod.inpaintTelea(reconstructed, solidMask, contextW, contextH, radius = 3)
 
         // Feather-blend the reconstruction into the original so the hole boundary
         // is a soft ramp, not a hard edge. alpha covers the mask core + ring.
@@ -474,7 +562,7 @@ class SmartBubbleTextCleaner(
 
         image.setPixels(resultPixels, 0, contextW, cx1, cy1, contextW, contextH)
         logcat(LogPriority.INFO) {
-            "[bubble_cleaner] ns solid box " +
+            "[bubble_cleaner] telea solid box " +
                 "mask=${BubbleMaskBuilder.maskCoverage(solidMask).format1()}% roi=${contextW}x$contextH"
         }
     }

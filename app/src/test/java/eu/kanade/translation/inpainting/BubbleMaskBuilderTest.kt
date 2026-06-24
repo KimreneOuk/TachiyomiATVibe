@@ -441,31 +441,27 @@ class BubbleMaskBuilderTest {
         mask[2 * 9 + 6] shouldBe 0 // (6,2)
     }
 
-    // ---- navierStokesInpaint (pure-Kotlin NS, FAST free-text fill) ----
-    // The Bertalmio vorticity-stream solver. Its defining property is isophote
-    // (equal-intensity line) continuity across the hole: a gradient entering
-    // the hole on one side continues smoothly to the other. A flat fill cannot
-    // do this; NS must.
+    // ---- laplaceInpaint (harmonic/Laplace inpaint; the FAST free-text fill now uses inpaintTelea, this guards the retained Laplace path) ----
 
     private fun grayPixel(v: Int): Int = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
 
     private fun redOf(px: Int): Int = (px shr 16) and 0xFF
 
     @Test
-    fun `navierStokesInpaint returns input unchanged when there is no hole`() {
+    fun `laplaceInpaint returns input unchanged when there is no hole`() {
         val w = 16
         val h = 8
         val pixels = IntArray(w * h) { grayPixel(100 + (it % w) * 5) }
         val mask = ByteArray(w * h) // all zero — no hole
 
-        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
 
         // No hole → byte-for-byte identical to input (early-return copy).
         out.toList() shouldBe pixels.toList()
     }
 
     @Test
-    fun `navierStokesInpaint continues a horizontal gradient across the hole, not a flat fill`() {
+    fun `laplaceInpaint continues a horizontal gradient across the hole, not a flat fill`() {
         // NS's defining property: isophote continuity. Build a horizontal
         // gray gradient (left=40, right=215), punch a hole in the middle, and
         // assert the reconstructed hole CONTINUES the gradient — the left edge
@@ -479,7 +475,7 @@ class BubbleMaskBuilderTest {
         val mask = ByteArray(w * h)
         for (y in 8..15) for (x in 14..25) mask[y * w + x] = 1
 
-        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
 
         // Non-hole pixels MUST be unchanged (Dirichlet BC honored + no round-trip drift).
         for (i in pixels.indices) {
@@ -507,7 +503,7 @@ class BubbleMaskBuilderTest {
     }
 
     @Test
-    fun `navierStokesInpaint leaves a flat-uniform page flat (no regression vs flat fill)`() {
+    fun `laplaceInpaint leaves a flat-uniform page flat (no regression vs flat fill)`() {
         // A genuinely uniform page: NS should reconstruct the hole as the same
         // uniform value (gradient magnitude is zero everywhere → vorticity is
         // zero → Poisson solves to the constant BC). This guards against the
@@ -518,7 +514,7 @@ class BubbleMaskBuilderTest {
         val mask = ByteArray(w * h)
         for (y in 5..10) for (x in 8..15) mask[y * w + x] = 1
 
-        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
 
         // Every reconstructed hole pixel should be ~180 (within a few gray
         // levels of the uniform BC; the PDE steady state is exactly 180).
@@ -531,7 +527,7 @@ class BubbleMaskBuilderTest {
     }
 
     @Test
-    fun `navierStokesInpaint honors the Dirichlet boundary - reconstruction stays within neighbor range`() {
+    fun `laplaceInpaint honors the Dirichlet boundary - reconstruction stays within neighbor range`() {
         // The discrete maximum principle for Poisson reconstruction: with a
         // bounded source, the reconstructed value inside the hole cannot exceed
         // the range of its boundary (∂Ω) neighbors. Place a hole in a SMOOTH
@@ -545,7 +541,7 @@ class BubbleMaskBuilderTest {
         val mask = ByteArray(w * h)
         for (y in 6..9) for (x in 6..13) mask[y * w + x] = 1
 
-        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
 
         // Every reconstructed hole pixel must be within a small tolerance of the
         // uniform BC (30). The NS steady state on a zero-gradient field is
@@ -558,5 +554,63 @@ class BubbleMaskBuilderTest {
         }
         // Non-hole pixels unchanged (Dirichlet BC + no round-trip drift).
         out[midY * w + 19] shouldBe pixels[midY * w + 19]
+    }
+
+    // ---- inpaintTelea (real Telea FMM; the actual FAST free-text fill) ----
+
+    @Test
+    fun `inpaintTelea returns input unchanged when there is no hole`() {
+        val w = 8
+        val h = 8
+        val pixels = IntArray(w * h) { grayPixel((it % w) * 10) }
+        val mask = ByteArray(w * h)
+        val before = pixels.copyOf()
+        FastMarchingMethod.inpaintTelea(pixels, mask, w, h)
+        pixels.toList() shouldBe before.toList()
+    }
+
+    @Test
+    fun `inpaintTelea continues a horizontal gradient across a solid-box hole, not a flat fill`() {
+        // Telea directional propagation continues the linear gradient across the
+        // hole. A flat fill (constant across all hole columns) fails monotonicity.
+        val w = 8
+        val h = 8
+        val pixels = IntArray(w * h) { grayPixel((it % w) * 10) } // 0..70 L→R
+        val mask = ByteArray(w * h)
+        for (y in 0 until h) for (x in 3..5) mask[y * w + x] = 1
+        FastMarchingMethod.inpaintTelea(pixels, mask, w, h)
+        val midY = 4
+        // Linearly-interpolated gradient at column 4 is ~40; allow ±15 tolerance.
+        val midHole = redOf(pixels[midY * w + 4])
+        (midHole in 25..55) shouldBe true
+        // Monotonically increasing across hole columns (flat fill would be constant).
+        (redOf(pixels[midY * w + 3]) < redOf(pixels[midY * w + 4])) shouldBe true
+        (redOf(pixels[midY * w + 4]) < redOf(pixels[midY * w + 5])) shouldBe true
+    }
+
+    @Test
+    fun `inpaintTelea honors the Dirichlet boundary - reconstruction stays within neighbor range`() {
+        val w = 8
+        val h = 8
+        val pixels = IntArray(w * h) { grayPixel((it % w) * 10) } // 0..70 L→R
+        val mask = ByteArray(w * h)
+        for (y in 2..5) for (x in 2..5) mask[y * w + x] = 1
+        val before = pixels.copyOf()
+        FastMarchingMethod.inpaintTelea(pixels, mask, w, h)
+        var minVal = 255
+        var maxVal = 0
+        for (i in before.indices) {
+            if (mask[i] == 0.toByte()) {
+                val v = redOf(before[i])
+                if (v < minVal) minVal = v
+                if (v > maxVal) maxVal = v
+            }
+        }
+        for (i in pixels.indices) {
+            if (mask[i] != 0.toByte()) {
+                val v = redOf(pixels[i])
+                (v in minVal..maxVal) shouldBe true
+            }
+        }
     }
 }

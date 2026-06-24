@@ -225,7 +225,7 @@ class AOTInpainting {
         if (grouped.isNotEmpty()) {
             for ((_, groupBoxes) in grouped) {
                 val bubbleBbox = findParentBubble(groupBoxes.first(), bubbleBoxes) ?: continue
-                result = bubbleCleaner.cleanBubbleGroup(result, bubbleBbox, groupBoxes, paddleDet, usePaddleMasking)
+                result = bubbleCleaner.cleanBubbleGroupFmm(result, bubbleBbox, groupBoxes, paddleDet)
             }
         }
 

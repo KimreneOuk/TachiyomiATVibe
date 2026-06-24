@@ -507,8 +507,13 @@ to its detector-v4 box (counted in the `[inpaint] paddle_boxes` diagnostics log
 alongside detectorText / paddleLines / fallback / finalMaskBoxes). The same
 Paddle-box mask is the erase target for BOTH paths: the neural (AOT/QUALITY)
 path (`inpaintFreeRegions` → `buildRectMask`) and the FAST path
-(`SmartBubbleTextCleaner.fillSolidBoxes` — solid padded boxes via the existing
-background+feather fill, no pixel heuristics).
+(`SmartBubbleTextCleaner.fillSolidBoxes` — for each box `fillSolidRegion` calls
+**`FastMarchingMethod.inpaintTelea`** (Telea Fast Marching Method, radius 3),
+matching the prototype's `free_method = "telea"` / `cv2.inpaint(INPAINT_TELEA)`).
+
+`BubbleMaskBuilder.navierStokesInpaint` was renamed to `laplaceInpaint`
+(Laplace/harmonic ∇²I=0); retained as a placeholder — a real Bertalmio
+Navier-Stokes solver is a future follow-up.
 
 `buildTightTextRegionMask` / `cleanRegions` are RETAINED as the null-`paddleDet`
 legacy fallback (detector-v4 boxes + pixel heuristics), so a device without the
@@ -863,7 +868,7 @@ covered by `NumberedLineResponseParserTest`.
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
 | `rendering/PageTextRendererDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
 | `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard); buildTightTextRegionMask solid tight region + per-box fallback + dilation |
-| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage/insideRoundedRect/bubbleInteriorMask/roundedAllowedMask + dilateMask compounding growth (iterations→px, diamond shape) + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) |
+| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage/insideRoundedRect/bubbleInteriorMask/roundedAllowedMask + dilateMask compounding growth (iterations→px, diamond shape) + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + laplaceInpaint (gradient continuation, Dirichlet boundary, flat-page regression) + inpaintTelea (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
 | `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
 | `model/InpaintMaskSerializationTest` | inpaintMaskBoxes round-trips through JSON; InpaintMaskBox.toIntArray; hasCurrentInpaintMask (current / pre-fix-empty / textless) |
 | `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped + attemptCount charged once via recordAttemptFailure) + reason |
