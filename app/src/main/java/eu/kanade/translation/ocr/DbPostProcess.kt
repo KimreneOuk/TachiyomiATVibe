@@ -164,6 +164,14 @@ object DbPostProcess {
         // Python prototype: a Chinese bubble reading 所因誤 came back as 5
         // fragments before merge and 2 clean lines after.
         val merged = mergeLineFragments(out).toMutableList()
+        // Clamp to image bounds
+        for (i in merged.indices) {
+            val b = merged[i].bbox
+            b[0] = b[0].coerceIn(0, width - 1)
+            b[1] = b[1].coerceIn(0, height - 1)
+            b[2] = b[2].coerceIn(0, width - 1)
+            b[3] = b[3].coerceIn(0, height - 1)
+        }
         // Stable, deterministic order (top-to-bottom, left-to-right) so the caller
         // can apply its own reading-order policy (e.g. manga right-to-left) on a
         // predictable input.
@@ -331,16 +339,13 @@ object DbPostProcess {
      * Double literal to match.
      */
     private fun unclip(c: Component, ratio: Double, width: Int, height: Int): IntArray {
-        val cx = (c.minX + c.maxX) / 2.0
-        val cy = (c.minY + c.maxY) / 2.0
-        val halfW = (c.maxX - c.minX) / 2.0
-        val halfH = (c.maxY - c.minY) / 2.0
-        val sx = halfW * ratio
-        val sy = halfH * ratio
-        val x1 = (cx - sx).toInt().coerceIn(0, width - 1)
-        val y1 = (cy - sy).toInt().coerceIn(0, height - 1)
-        val x2 = (cx + sx).toInt().coerceIn(0, width - 1)
-        val y2 = (cy + sy).toInt().coerceIn(0, height - 1)
+        val w = (c.maxX - c.minX).toDouble()
+        val h = (c.maxY - c.minY).toDouble()
+        val distance = if (w + h <= 0.0) 0.0 else (w * h * ratio) / (2.0 * (w + h))
+        val x1 = kotlin.math.floor(c.minX - distance).toInt()
+        val y1 = kotlin.math.floor(c.minY - distance).toInt()
+        val x2 = kotlin.math.ceil(c.maxX + distance).toInt()
+        val y2 = kotlin.math.ceil(c.maxY + distance).toInt()
         return intArrayOf(x1, y1, x2, y2)
     }
 

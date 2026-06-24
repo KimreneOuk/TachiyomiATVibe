@@ -151,8 +151,45 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
+                val usePaddleMasking = Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationExperimentalPaddleMasking().get()
+                // TachiyomiAT: load the PaddleOCR-v6 det engine for the INPAINTER
+                // whenever the det asset is available — independent of OCR model and
+                // of the experimental-paddle-masking pref. The det engine now drives
+                // the free-text erase mask directly (Paddle line boxes → solid mask;
+                // see AOTInpainting.refineFreeTextBoxes), which must run by default,
+                // not behind the experimental gate. Previously it only loaded under
+                // `ocrModel != PADDLEOCR_V6_SMALL && usePaddleMasking`, so the
+                // default Japanese path (MANGAOCR) — the common case — never got
+                // Paddle-driven masking. The PADDLEOCR_V6_SMALL branch above already
+                // built it for the rec path; this block is the no-op-if-already-loaded
+                // loader for every other model. usePaddleMasking still gates ONLY the
+                // parented-bubble path (cleanBubbleGroup), passed to the inpainter below.
+                if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL && paddleDet == null &&
+                    (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable())
+                ) {
+                    try {
+                        val detPaths = modelStore.ensurePaddleOcrV6Det()
+                        paddleDet = PaddleOcrV6DetEngine().also { it.initialize(detPaths.detectionModel) }
+                        logcat(LogPriority.INFO) {
+                            "ONNX init: PaddleOCR det OK (free-text erase mask" +
+                                if (usePaddleMasking) " + experimental bubble masking)" else ")"
+                        }
+                    } catch (e: Exception) {
+                        logcat(LogPriority.WARN, e) {
+                            "ONNX init: PaddleOCR det failed; free-text erase falls back to detector-v4 boxes"
+                        }
+                    }
+                } else if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL &&
+                    !(modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable())
+                ) {
+                    logcat(LogPriority.WARN) {
+                        "ONNX init: PaddleOCR det asset missing; free-text erase falls back to detector-v4 boxes"
+                    }
+                }
                 logcat(LogPriority.INFO) { "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), preparing inpainting (mode=$inpaintingMode)" }
                 val localInpainting = AOTInpainting()
+                localInpainting.paddleDet = paddleDet
+                localInpainting.usePaddleMasking = usePaddleMasking
                 if (inpaintingMode == InpaintingMode.QUALITY) {
                     paths.inpaintModel?.let { model ->
                         localInpainting.initialize(model)

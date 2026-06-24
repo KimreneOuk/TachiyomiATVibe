@@ -1681,7 +1681,7 @@ class ReaderViewModel @JvmOverloads constructor(
         recomputeTranslationState()
     }
 
-    fun translateSinglePage(page: ReaderPage) {
+    fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
         val manga = manga ?: run {
             logcat(LogPriority.WARN) { "translateSinglePage: manga is null, cannot translate" }
             return
@@ -1702,10 +1702,29 @@ class ReaderViewModel @JvmOverloads constructor(
         }
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val pageKey = resolvePageKey(page)
+        // TachiyomiAT: resolve force from the page's live translation state.
+        // A FAILED stage means the page is stuck (the "cannot reprocess /
+        // retranslate" bug) and the retry MUST reset the bookkeeping via
+        // prepareForcedRetry() — which only happens when force=true. For every
+        // other state (PENDING/RUNNING/READY/PARTIAL/CANCELLED, or a healthy
+        // rendered page), keep the resume default (force=false) so a manual tap
+        // on an already-translated page resumes instead of burning a full
+        // re-OCR + re-translate + re-inpaint + re-render. Callers may override
+        // by passing an explicit force. See PageTranslation.prepareForcedRetry
+        // + MAX_STAGE_RETRIES + hasExhaustedRetries.
+        val effectiveForce = force ?: run {
+            val t = page.translation
+            t != null && (
+                t.ocrStatus == "FAILED" ||
+                    t.translationStatus == "FAILED" ||
+                    t.inpaintStatus == "FAILED" ||
+                    t.renderStatus == "FAILED"
+                )
+        }
         logcat(LogPriority.INFO) {
             "TachiyomiAT manual translate page request: index=${page.index} pageKey=$pageKey " +
                 "sourceFileName=${page.sourceFileName} imageUrl=${page.imageUrl} " +
-                "loader=${page.chapter.pageLoader?.javaClass?.simpleName}"
+                "loader=${page.chapter.pageLoader?.javaClass?.simpleName} force=$effectiveForce"
         }
         // TachiyomiAT: resolve a stream for the translator. A page is
         // translatable when ANY of these byte sources is available:
@@ -1738,7 +1757,11 @@ class ReaderViewModel @JvmOverloads constructor(
                 streamFn,
             )
             // TachiyomiAT: bytes already available — kick off translation now.
-            translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+            // force is resolved from the page's live state: true when a stage is
+            // FAILED (so prepareForcedRetry resets the bookkeeping and the page
+            // can be reprocessed), false otherwise (resume optimization). See the
+            // resolution above + PageTranslation.prepareForcedRetry.
+            translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
         } ?: page.imageUrl?.let { imageUrl ->
             // TachiyomiAT: for online pages not yet cached (originalStream is
             // null), download the image bytes in a cancellable coroutine and
@@ -1763,7 +1786,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     pageKey,
                     streamFn,
                 )
-                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
             }
         } ?: run {
             if (pageChapterDownloaded) {
@@ -1773,7 +1796,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT manual translate page request using downloaded chapter fallback: pageKey=$pageKey"
                 }
-                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey)
+                translationScheduler.translatePage(manga, chapter.toDomainChapter()!!, source, pageKey, force = effectiveForce)
             }
         }
     }

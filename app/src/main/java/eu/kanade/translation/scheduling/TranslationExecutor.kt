@@ -19,13 +19,22 @@ import java.io.InputStream
  * The `force` flag: `false` resumes from the latest persisted stage (no
  * re-OCR when valid blocks exist, no re-translate when blocks are translated,
  * no re-inpaint when a cleaned image exists — see Tracks G/H); `true` redoes
- * the whole pipeline. The default is `false` so that a manual tap on a page
- * that was already translated (e.g. by auto-prefetch) resumes instead of
- * burning a full re-OCR + re-translate + re-inpaint + re-render. An explicit
- * `force = true` is reserved for a future "re-translate this page" UI
- * affordance. Both auto-prefetch and the manual per-page button pass the
- * default (`false`); the scheduler's [translatePage] threads an optional
- * `force` through for that future affordance.
+ * the whole pipeline AND calls [PageTranslation.prepareForcedRetry], which
+ * resets the per-attempt exhaustion counter ([PageTranslation.attemptCount])
+ * and clears prior FAILED/cleaned/rendered state. That reset is load-bearing:
+ * without it, a manual re-translate on a page that failed inpaint ran with
+ * `force=false`, never cleared the FAILED bookkeeping, and the page stayed
+ * blacklisted by [PageTranslation.hasExhaustedRetries] — the "cannot reprocess
+ * / retranslate" bug.
+ *
+ * The MANUAL per-page translate button (ReaderViewModel.translateSinglePage)
+ * resolves `force` from the page's live state: `true` when a stage is FAILED
+ * (so [PageTranslation.prepareForcedRetry] resets the bookkeeping and the page
+ * can be reprocessed), `false` otherwise (resume optimization for healthy /
+ * partially-translated pages). The AUTO-prefetch path
+ * (TranslationScheduler.requestAutoWindow) does NOT go through that method and
+ * keeps `force=false` (resume) semantics; the scheduler's [translatePage]
+ * threads the caller's `force` value through to this executor.
  */
 interface TranslationExecutor {
 

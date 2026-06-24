@@ -164,6 +164,7 @@ class TranslationBlockValidationTest {
         status shouldBe StageStatus.FAILED
         page.translationStatus shouldBe StageStatus.FAILED
         page.retryCount shouldBe 2
+        page.attemptCount shouldBe 1 // first terminal stage charges the attempt once
         page.errorMessage shouldContain "0/2"
     }
 

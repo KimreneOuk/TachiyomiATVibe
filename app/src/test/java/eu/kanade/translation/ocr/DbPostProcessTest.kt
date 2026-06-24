@@ -38,13 +38,13 @@ class DbPostProcessTest {
         val lines = DbPostProcess.detectLines(map, width, height)
         lines shouldHaveSize 1
         val b = lines[0].bbox
-        // detectLines already applies unclip(ratio=1.4) about the centroid
-        // (cx=7.5, cy=5), with half-extents (2.5, 1):
-        //   sx = 2.5 * 1.4 = 3.5,  sy = 1 * 1.4 = 1.4
-        //   x1 = (7.5 - 3.5) = 4,  y1 = (5 - 1.4) = 3.6 -> 3
-        //   x2 = (7.5 + 3.5) = 11, y2 = (5 + 1.4) = 6.4 -> 6
-        // all within map bounds [0,19]x[0,11], so no clamping changes them.
-        b.toList() shouldBe listOf(4, 3, 11, 6)
+        // detectLines already applies unclip(ratio=1.4) using uniform distance:
+        //   w = 5.0, h = 2.0, area = 10.0, perimeter = 14.0
+        //   distance = 10.0 * 1.4 / 14.0 = 1.0
+        //   x1 = 5 - 1 = 4, y1 = 4 - 1 = 3
+        //   x2 = 10 + 1 = 11, y2 = 6 + 1 = 7
+        // all within map bounds [0,19]x[0,15], so no clamping changes them.
+        b.toList() shouldBe listOf(4, 3, 11, 7)
         // Score is the mean prob over the component (uniform 0.9). Use an
         // approximate comparison — summing 18 copies of 0.9f and dividing drifts
         // to 0.89999986f in IEEE-754 single precision; exact equality is brittle.
@@ -60,12 +60,14 @@ class DbPostProcessTest {
         for (y in 8..12) for (x in 12..16) map[y * width + x] = 0.8f
         val lines = DbPostProcess.detectLines(map, width, height)
         lines shouldHaveSize 2
-        // detectLines unclips each box (ratio 1.4 about centroid) AND sorts by
-        // (y, x). The top rectangle's centroid is (3,3); unclipped y1 = 3-2.8 = 0.
-        // The bottom rectangle's centroid is (10,14); unclipped y1 = 10-2.8 = 7.
+        // detectLines unclips each box (ratio 1.4) AND sorts by (y, x).
+        // The bottom rectangle has minX=12, maxX=16, minY=8, maxY=12.
+        // w = 4.0, h = 4.0, area = 16.0, perimeter = 16.0
+        // distance = 16.0 * 1.4 / 16.0 = 1.4
+        // y1 = 8 - 1.4 = 6.6 -> 6
         // Assert on the SORT ORDER (top first), not exact pre-unclip coords.
         lines[0].bbox[1] shouldBe 0
-        lines[1].bbox[1] shouldBe 7
+        lines[1].bbox[1] shouldBe 6
     }
 
     @Test
@@ -79,6 +81,24 @@ class DbPostProcessTest {
     fun `lowering box_thresh recovers the weak rectangle`() {
         val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.3f)
         val lines = DbPostProcess.detectLines(map, width, height, boxThresh = 0.2f)
+        lines shouldHaveSize 1
+    }
+
+    @Test
+    fun `thresh param is threaded to the binarization step`() {
+        // TachiyomiAT: proves the inpaint path's lowered `thresh` (0.18) actually
+        // changes detection vs the default (0.2). A prob map at 0.19 is BELOW the
+        // default thresh (0.2) → no lines — but ABOVE 0.18 → one line. This is the
+        // exact contract PaddleOcrV6DetEngine.detectLines(thresh=0.18) relies on to
+        // find the same text for erasing that the default-threshold rec path might
+        // under-detect.
+        val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.19f)
+        // Default thresh 0.2 > 0.19 → binarized to nothing.
+        DbPostProcess.detectLines(map, width, height) shouldBe emptyList()
+        // Inpaint thresh 0.18 < 0.19 → binarized, and box_thresh default (0.45)
+        // drops it (mean 0.19 < 0.45); so also lower box_thresh to recover it,
+        // matching how the inpaint path calls both lowered thresholds together.
+        val lines = DbPostProcess.detectLines(map, width, height, thresh = 0.18f, boxThresh = 0.1f)
         lines shouldHaveSize 1
     }
 

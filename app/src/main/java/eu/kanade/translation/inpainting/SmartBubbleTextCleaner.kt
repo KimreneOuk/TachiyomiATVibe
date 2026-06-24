@@ -73,6 +73,8 @@ class SmartBubbleTextCleaner(
         image: Bitmap,
         bubbleBbox: IntArray,
         textBoxes: List<IntArray>,
+        paddleDet: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null,
+        usePaddleMasking: Boolean = false,
     ): Bitmap {
         val w = image.width
         val h = image.height
@@ -158,22 +160,47 @@ class SmartBubbleTextCleaner(
         val scaledMp = scaledTextMaskPad(minBubbleDim)
 
         var combinedMask = ByteArray(contextW * contextH)
-        for (box in localTextBoxes) {
-            val mp = scaledMp
-            val ex1 = max(0, box[0] - mp)
-            val ey1 = max(0, box[1] - mp)
-            val ex2 = min(contextW, box[2] + mp)
-            val ey2 = min(contextH, box[3] + mp)
-            if (ex2 <= ex1 || ey2 <= ey1) continue
-
-            val boxMask = generateTextMask(
-                contextPixels, bgStats, bgType,
-                ex1, ey1, ex2, ey2, contextW, contextH,
-            )
-            for (y in ey1 until ey2) {
-                for (x in ex1 until ex2) {
-                    if (boxMask[(y - ey1) * (ex2 - ex1) + (x - ex1)] != 0.toByte()) {
+        if (usePaddleMasking && paddleDet != null) {
+            val cropBmp = Bitmap.createBitmap(contextPixels, contextW, contextH, Bitmap.Config.ARGB_8888)
+            val lines = try {
+                paddleDet.detectLines(cropBmp)
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "PaddleOCR masking DET failed" }
+                emptyList()
+            } finally {
+                cropBmp.recycle()
+            }
+            for (line in lines) {
+                val b = line.bbox
+                val mp = scaledMp
+                val ex1 = max(0, b[0] - mp)
+                val ey1 = max(0, b[1] - mp)
+                val ex2 = min(contextW, b[2] + mp)
+                val ey2 = min(contextH, b[3] + mp)
+                for (y in ey1 until ey2) {
+                    for (x in ex1 until ex2) {
                         combinedMask[y * contextW + x] = 1
+                    }
+                }
+            }
+        } else {
+            for (box in localTextBoxes) {
+                val mp = scaledMp
+                val ex1 = max(0, box[0] - mp)
+                val ey1 = max(0, box[1] - mp)
+                val ex2 = min(contextW, box[2] + mp)
+                val ey2 = min(contextH, box[3] + mp)
+                if (ex2 <= ex1 || ey2 <= ey1) continue
+
+                val boxMask = generateTextMask(
+                    contextPixels, bgStats, bgType,
+                    ex1, ey1, ex2, ey2, contextW, contextH,
+                )
+                for (y in ey1 until ey2) {
+                    for (x in ex1 until ex2) {
+                        if (boxMask[(y - ey1) * (ex2 - ex1) + (x - ex1)] != 0.toByte()) {
+                            combinedMask[y * contextW + x] = 1
+                        }
                     }
                 }
             }
@@ -319,6 +346,137 @@ class SmartBubbleTextCleaner(
             cleanSingleRegion(image, x1, y1, x2, y2)
         }
         return image
+    }
+
+    /**
+     * TachiyomiAT: FAST free-text erase driven by SOLID boxes (the prototype
+     * `mask_mode = paddle_boxes` behavior for the non-neural path).
+     *
+     * The boxes passed in are already the PaddleOCR-v6 line boxes back-projected
+     * to page coords by [AOTInpainting.refineFreeTextBoxes] (or a detector-v4
+     * fallback box when Paddle found no lines for a region). Each box is padded
+     * outward by [maskPad] and filled SOLID — NO `generateTextMask`, NO
+     * `buildLocalContrastTextMask`, NO faint-recovery. The prior bug was caused
+     * by shrinking/over-processing masks after detection; this is intentionally
+     * boring and direct: solid padded box → fill.
+     *
+     * The fill itself reuses the cleaner's established background-estimate +
+     * feathered-blend machinery ([sampleBackgroundStats] →
+     * [buildLocalBackground] → [applyFeatheredFill]) so the color/feather
+     * behavior is consistent with [cleanSingleRegion]; only the *erase mask*
+     * source changes (solid boxes instead of detected pixels).
+     *
+     * Used by the FAST free-text route in [AOTInpainting.inpaintRegions] when
+     * Paddle-refined boxes are available. When `paddleDet` is null the caller
+     * keeps using [cleanRegions] (detector-v4 boxes + pixel heuristics), which
+     * remains the conservative fallback.
+     */
+    fun fillSolidBoxes(
+        image: Bitmap,
+        boxes: List<IntArray>,
+        maskPad: Int,
+    ): Bitmap {
+        for (box in boxes) {
+            val x1 = box[0].coerceIn(0, image.width)
+            val y1 = box[1].coerceIn(0, image.height)
+            val x2 = box[2].coerceIn(x1, image.width)
+            val y2 = box[3].coerceIn(y1, image.height)
+            if (x2 <= x1 || y2 <= y1) continue
+            fillSolidRegion(image, x1, y1, x2, y2, maskPad)
+        }
+        return image
+    }
+
+    /**
+     * TachiyomiAT: body of [fillSolidBoxes] for one padded SOLID box. The erase
+     * mask is the SOLID padded box (no pixel-heuristic detection — see
+     * [fillSolidBoxes]), and the fill is a pure-Kotlin **Navier-Stokes inpaint**
+     * ([BubbleMaskBuilder.navierStokesInpaint]) — the same algorithm the
+     * prototype demo's `method = "ns"` (`cv2.inpaint(INPAINT_NS)`) uses.
+     *
+     * NS reconstructs the hole from the ∂Ω boundary via the vorticity-stream
+     * PDE, so isophotes (equal-intensity lines) continue smoothly across the
+     * hole. This is the fix for the flat-white-block symptom: on white paper the
+     * previous flat-median fill painted the ring median (white) over the whole
+     * padded box; NS pulls the surrounding gradient/texture in instead. A
+     * feathered blend ([featherAlpha] + [applyFeatheredFill]) softens the
+     * boundary between the reconstructed hole and the kept artwork.
+     *
+     * No background-stats / ring sampling here: NS's Dirichlet BC is the known
+     * context pixels themselves, which is a more faithful reference than the
+     * ring median.
+     */
+    private fun fillSolidRegion(
+        image: Bitmap,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        maskPad: Int,
+    ) {
+        val w = image.width
+        val h = image.height
+
+        val pad = contextPad
+        val cx1 = max(0, x1 - pad)
+        val cy1 = max(0, y1 - pad)
+        val cx2 = min(w, x2 + pad)
+        val cy2 = min(h, y2 + pad)
+
+        val contextW = cx2 - cx1
+        val contextH = cy2 - cy1
+        val contextSize = contextW * contextH
+
+        val (contextPixels, resultPixels) = getWorkingBuffers(contextSize)
+        image.getPixels(contextPixels, 0, contextW, cx1, cy1, contextW, contextH)
+        contextPixels.copyInto(resultPixels, endIndex = contextSize)
+
+        val localX1 = x1 - cx1
+        val localY1 = y1 - cy1
+        val localX2 = x2 - cx1
+        val localY2 = y2 - cy1
+
+        // The erase mask: the SOLID padded box. No text detection. Localized to
+        // the context crop and clamped to its bounds.
+        val fx1 = max(0, localX1 - maskPad)
+        val fy1 = max(0, localY1 - maskPad)
+        val fx2 = min(contextW, localX2 + maskPad)
+        val fy2 = min(contextH, localY2 + maskPad)
+        val solidMask = ByteArray(contextW * contextH)
+        if (fx2 > fx1 && fy2 > fy1) {
+            for (y in fy1 until fy2) {
+                val row = y * contextW
+                for (x in fx1 until fx2) {
+                    solidMask[row + x] = 1
+                }
+            }
+        }
+
+        val minRegionDim = (localX2 - localX1).coerceAtLeast(1)
+            .coerceAtMost((localY2 - localY1).coerceAtLeast(1))
+        val (scaledFeather, _) = scaledMorphology(minRegionDim)
+
+        // Navier-Stokes reconstruction of the hole. NS runs on the downsampled
+        // grid internally and returns a full-res IntArray where hole pixels are
+        // reconstructed and non-hole pixels are unchanged.
+        val reconstructed = BubbleMaskBuilder.navierStokesInpaint(
+            pixels = contextPixels,
+            mask = solidMask,
+            width = contextW,
+            height = contextH,
+        )
+
+        // Feather-blend the reconstruction into the original so the hole boundary
+        // is a soft ramp, not a hard edge. alpha covers the mask core + ring.
+        val alpha = BubbleMaskBuilder.featherAlpha(solidMask, contextW, contextH, scaledFeather)
+        val filled = applyFeatheredFill(contextPixels, reconstructed, alpha)
+        System.arraycopy(filled, 0, resultPixels, 0, contextW * contextH)
+
+        image.setPixels(resultPixels, 0, contextW, cx1, cy1, contextW, contextH)
+        logcat(LogPriority.INFO) {
+            "[bubble_cleaner] ns solid box " +
+                "mask=${BubbleMaskBuilder.maskCoverage(solidMask).format1()}% roi=${contextW}x$contextH"
+        }
     }
 
     private fun cleanSingleRegion(

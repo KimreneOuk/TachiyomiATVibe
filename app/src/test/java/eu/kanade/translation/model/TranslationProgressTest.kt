@@ -39,7 +39,7 @@ class TranslationProgressTest {
     @Test
     fun `failed page below retry cap is NOT done`() {
         val pages = mapOf(
-            "1" to PageTranslation(ocrStatus = StageStatus.FAILED, retryCount = 1),
+            "1" to PageTranslation(ocrStatus = StageStatus.FAILED).apply { attemptCount = 1 },
         )
         TranslationProgress.compute(pages) shouldBe (0 to 1)
     }
@@ -49,8 +49,7 @@ class TranslationProgressTest {
         val pages = mapOf(
             "1" to PageTranslation(
                 ocrStatus = StageStatus.FAILED,
-                retryCount = StageStatus.MAX_STAGE_RETRIES,
-            ),
+            ).apply { attemptCount = StageStatus.MAX_STAGE_RETRIES },
         )
         TranslationProgress.compute(pages) shouldBe (1 to 1)
     }
@@ -73,8 +72,7 @@ class TranslationProgressTest {
             "3" to PageTranslation(ocrStatus = StageStatus.PENDING), // in flight
             "4" to PageTranslation( // permanently failed
                 ocrStatus = StageStatus.FAILED,
-                retryCount = StageStatus.MAX_STAGE_RETRIES,
-            ),
+            ).apply { attemptCount = StageStatus.MAX_STAGE_RETRIES },
             "5" to PageTranslation(ocrStatus = StageStatus.READY), // analyzed, not done
         )
         // done = 1, 2, 4 => 3 of 5

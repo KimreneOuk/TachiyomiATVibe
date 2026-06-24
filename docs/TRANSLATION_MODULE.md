@@ -481,19 +481,43 @@ color (e.g. blue sky) into the bubble fill — the reported color-bleed. The
 free-text path (no parent bubble) leaves `bgSourceMask` null, preserving the
 whole-context behavior.
 
-**(e) The AOT/neural path masks a TIGHT text region, not the loose detector
-box.** `AOTInpainting.inpaintFreeRegions` builds the mask via
-`SmartBubbleTextCleaner.buildTightTextRegionMask`, which runs the detector
-chain to find WHERE text is, then fills a SOLID rectangle tightly fitted to
-the detected text (clamped to the original box). This matches production
-AOT-GAN manga-translation practice: feed one clean hole per text block so the
-generative model reconstructs a tight region rather than redrawing the whole
-loose detector box. A per-box solid fallback (full original box) guarantees no
-coverage regression when detection genuinely finds nothing. The crop margin is
-proportional to the text-region size (`2.5×` the longer side, clamped to
-`[64, 256]`) instead of a fixed 32px, giving the model enough surrounding
-context (bubble borders, screentone, line art) to reconstruct naturally — a
-known artifact source per AOT-GAN guidance.
+**(e) The free-text erase mask is driven by PaddleOCR-v6 line boxes, not
+detector-v4 rectangles or pixel heuristics.** This is the prototype
+`mask_mode = paddle_boxes` (`tools/inpaint-debug-viewer/server.py`) ported into
+the app. detector-v4 still supplies the COARSE free-text regions and the parent-
+bubble grouping, but the actual erase target for free text is now:
+
+1. For every detector-v4 free-text box, crop the page with `PADDLE_CROP_PAD`
+   (12 px) of context.
+2. Run PaddleOCR-v6 DET on that crop at the inpaint thresholds
+   (`PADDLE_THRESH` 0.18 / `PADDLE_BOX_THRESH` 0.34 — lower than the rec-path
+   defaults so Paddle finds the same text for erasing that it finds for
+   recognition).
+3. Back-project the returned line boxes to PAGE coords (crop origin + line
+   bbox, clamped) — `AOTInpainting.refineFreeTextBoxes`.
+4. Build the erase mask with `BubbleMaskBuilder.buildRectMask`: each Paddle box
+   padded by `MASK_PAD` (8 px), filled SOLID, dilated with a disk SE (radius 2).
+
+This is deliberately boring and direct: Paddle box → pad → mask → inpaint. The
+prior bug was caused by shrinking/over-processing masks after detection (the
+pixel-heuristic `buildTightTextRegionMask` over detector-v4 rectangles produced
+sparse glyph-only pixels or whole detector rectangles). Per-region fallback:
+when Paddle returns 0 lines for a detector text region, that region falls back
+to its detector-v4 box (counted in the `[inpaint] paddle_boxes` diagnostics log
+alongside detectorText / paddleLines / fallback / finalMaskBoxes). The same
+Paddle-box mask is the erase target for BOTH paths: the neural (AOT/QUALITY)
+path (`inpaintFreeRegions` → `buildRectMask`) and the FAST path
+(`SmartBubbleTextCleaner.fillSolidBoxes` — solid padded boxes via the existing
+background+feather fill, no pixel heuristics).
+
+`buildTightTextRegionMask` / `cleanRegions` are RETAINED as the null-`paddleDet`
+legacy fallback (detector-v4 boxes + pixel heuristics), so a device without the
+det asset still erases free text. `fillSolidBoxes` is the Paddle-active FAST
+equivalent. Only FREE text is Paddle-refined; parented bubbles keep
+`cleanBubbleGroup` (AOT stays free-text-only). The det engine loads for the
+inpainter whenever the asset is available, decoupled from the
+`translation_experimental_paddle_masking` pref (which now gates ONLY the
+parented-bubble path).
 
 **(f) Overlapping blocks MUST be geometrically deduped before render.**
 `PageTranslationHelper.dedupeGeometricOverlaps` drops the lower-score block of
@@ -512,6 +536,67 @@ the translation unit's semantics. Pinned by `PageTranslationHelperDedupeTest`.
 dedupe dropped. `BoxGeometry.TEXT_DEDUP_THRESHOLDS` is the single source of
 truth for text-box dedup (previously a private constant on
 `RoiPageRecognitionEngine`).
+
+### 17. Retry exhaustion counts DISTINCT attempts, and the manual re-translate button forces a reset (`PageTranslationState.recordAttemptFailure`, `attemptCount`, `prepareForcedRetry`, `ReaderViewModel.translateSinglePage`)
+Two coupled invariants fix the "once inpainting fails, the page can no longer
+be reprocessed or retranslated" bug (reproduced in both QUALITY and FAST modes).
+
+**(a) `retryCount` no longer gates auto-scheduling; a new `attemptCount` does.**
+A single reader-path attempt touches multiple stages (OCR → inpaint →
+translate → render), and an inpaint failure naturally cascades into a render
+failure. The old code bumped `retryCount` in **every** failed-stage catch
+block (`PageInpaintingEngine.inpaint`, the render-block else-branch,
+`persistCleanedBitmap`, batch `inpaintPage`, `markBatchTranslationFailed`,
+`TranslationBlockValidation.applyTo`, the OOM/decode placeholders, …). One
+transient inpaint failure therefore incremented `retryCount` **twice** in one
+attempt, immediately tripping `hasExhaustedRetries` (`MAX_STAGE_RETRIES = 2`).
+Because `isStageFailed` triggers persistence, that state survived a chapter
+reopen / process restart, so the page was permanently blacklisted for both
+auto- and manual re-translation.
+
+The fix introduces `PageTranslation.attemptCount` (`@Transient` — NOT
+serialized, so exhaustion never survives a process restart) and a single
+`PageTranslationState.recordAttemptFailure()` helper that increments it **at
+most once per attempt**: it is a no-op when any stage is already FAILED, so
+the downstream render-block path that fires as a consequence of an inpaint
+failure does not double-count. `hasExhaustedRetries` now keys on
+`attemptCount >= MAX_STAGE_RETRIES` (two *distinct* failed attempts), not
+`retryCount`. Every former `retryCount++` site in the failure paths routes
+through `recordAttemptFailure()` instead; the `createFailedPagePlaceholder`
+factory carries an `attemptCount` parameter mirroring `retryCount` so the
+fresh-placeholder and merge-with-existing paths both preserve the per-attempt
+count. `retryCount` is retained for diagnostics/back-compat only.
+
+**(b) The manual per-page translate button actually resets the bookkeeping.**
+`PageTranslation.kt` claimed the manual button "always retries" and is "NOT
+bound by `MAX_STAGE_RETRIES`". That was **false**: `ReaderViewModel.translateSinglePage`
+called `TranslationScheduler.translatePage(...)` with **no** `force` in all
+three branches (default `force = false`), and `prepareForcedRetry()` — the
+only code that resets `retryCount`/`attemptCount` and clears FAILED statuses —
+was gated behind `if (force)` in the pipeline and called nowhere else. So a
+manual retry re-ran with `force=false`, never cleared the bookkeeping, and
+the page stayed locked out.
+
+Now `translateSinglePage(page, force: Boolean? = null)` **resolves** `force`
+from the page's live state: `true` when any stage is FAILED (so
+`prepareForcedRetry()` runs and the page is re-admitted), `false` otherwise
+(preserving the resume optimization for healthy / partially-translated
+pages). The auto-prefetch path (`TranslationScheduler.requestAutoWindow`)
+does NOT go through this method and keeps resume semantics. So a user can
+always force another attempt on a page auto-translate has given up on, while
+a transient (heap-pressure) failure — expected to recover on the next attempt
+per memory contracts #4/#6/#10 — is no longer promoted to a permanent
+lock-out.
+
+**Diagnostics:** `recordAttemptFailure()` keeps `retryCount` as the raw
+per-failure count (visible in the page state), while `attemptCount` is the
+gating counter. The manual-translate log line now includes `force=…` so a
+retry that did or did not reset the bookkeeping is visible in logcat. Pinned
+by `PageTranslationStateTest` (`recordAttemptFailure charges the attempt
+exactly once per attempt`, `a single inpaint failure does not exhaust
+retries`, `prepareForcedRetry resets the attempt counter …`,
+`attemptCount is not serialized …`) and `TranslationBlockValidationTest`
+(`applyTo sets FAILED … attemptCount shouldBe 1`).
 
 ---
 
@@ -767,7 +852,7 @@ covered by `NumberedLineResponseParserTest`.
 | `ocr/MangaOcrDecoderGuardTest` | (REMOVED — the guard helpers it tested were reverted; see Memory contract #2. Do not reintroduce without an on-device regression test.) |
 | `ocr/OcrModelCatalogTest` | entries/coerce/defaultFor/isCompatible/labelsFor |
 | `recognition/BoxGeometryTest` | IoU/area/intersection, degenerate boxes, dedupe thresholds (iou/containment/center+size paths) |
-| `model/PageTranslationStateTest` | lifecycle, retry exhaustion, cancelled-page rescheduling, render-quality trust, forced retry reset, shouldSurfaceError (FAILED surfaces; PARTIAL/Cancelled/Textless/rendered suppress), hasRecognizedTranslation admits PARTIAL |
+| `model/PageTranslationStateTest` | lifecycle, retry exhaustion (attemptCount-based, not retryCount), cancelled-page rescheduling, render-quality trust, forced retry reset (attemptCount + retryCount), shouldSurfaceError (FAILED surfaces; PARTIAL/Cancelled/Textless/rendered suppress), hasRecognizedTranslation admits PARTIAL, recordAttemptFailure idempotency (inpaint→render cascade = one attempt), attemptCount not serialized |
 | `model/ChapterTranslatedPredicateTest` | `isChapterTranslated` content predicate: placeholder/pending/failed/running → not translated; rendered or recognized → translated; mixed/empty lists |
 | `model/TranslationProgressTest` | batch (done,total): rendered/textless/retry-exhausted count as done; pending/running don't; empty → (0,0) |
 | `model/TranslationSettingsSummaryTest` | confirm-popup snapshot: STANDARD (no model/tokens rows) vs AI_MODEL (engine+model+tokens); MLKIT/GOOGLE/Gemini/OpenRouter/DeepSeek/LM Studio labels; blank model/tokens → null; unknown source/target language fallback without mutating store; Japanese OCR coercion is read-only; inpainting raw passthrough |
@@ -778,10 +863,10 @@ covered by `NumberedLineResponseParserTest`.
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
 | `rendering/PageTextRendererDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
 | `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard); buildTightTextRegionMask solid tight region + per-box fallback + dilation |
-| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage/insideRoundedRect/bubbleInteriorMask/roundedAllowedMask + dilateMask compounding growth (iterations→px, diamond shape) + removeEdgeTouchingComponents 2px margin + featherAlpha |
+| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage/insideRoundedRect/bubbleInteriorMask/roundedAllowedMask + dilateMask compounding growth (iterations→px, diamond shape) + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) |
 | `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
 | `model/InpaintMaskSerializationTest` | inpaintMaskBoxes round-trips through JSON; InpaintMaskBox.toIntArray; hasCurrentInpaintMask (current / pre-fix-empty / textless) |
-| `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped) + reason |
+| `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped + attemptCount charged once via recordAttemptFailure) + reason |
 | `translator/StrictConfigFromPrefTest` | strict no-fallback config: TextRecognizerLanguage/TextTranslatorLanguage `fromPref` throw on unknown value (was → Chinese/English); StandardTranslatorKind.fromPref throw branch is unreachable (closed enum) and documented |
 | `scheduling/TranslationStreamRegistryTest` | per-page/chapter/all/window stream registry eviction semantics |
 | `scheduling/TranslationLifecyclePolicyTest` | shouldSchedule / classify / retry-exhaustion |

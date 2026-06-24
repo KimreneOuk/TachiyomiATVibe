@@ -3,6 +3,7 @@ package eu.kanade.translation.translator
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.recordAttemptFailure
 
 /**
  * TachiyomiAT: post-translate validation for a single page's blocks.
@@ -95,7 +96,11 @@ object TranslationBlockValidation {
             is TranslationValidationResult.Partial -> {
                 if (result.translatedCount == 0) {
                     pageTranslation.translationStatus = StageStatus.FAILED
-                    pageTranslation.retryCount++
+                    // TachiyomiAT: nothing translated — genuine adapter failure.
+                    // recordAttemptFailure charges the attempt exactly once
+                    // (idempotent within an attempt) so a cascade into render
+                    // doesn't double-count. Replaces bare retryCount++.
+                    pageTranslation.recordAttemptFailure()
                     pageTranslation.errorMessage =
                         "Translation incomplete: 0/${result.expectedCount} " +
                             "blocks translated (missing/blank/source-equal translations are not rendered)"

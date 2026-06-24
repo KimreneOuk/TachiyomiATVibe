@@ -78,8 +78,20 @@ class PaddleOcrV6DetEngine : Closeable {
      * (already back-projected from the model's 736x736 map space). Safe to call
      * concurrently with [close] only under the caller's native guard — see
      * [RoiPageRecognitionEngine].
+     *
+     * [thresh] / [boxThresh] are the DB postprocess thresholds forwarded to
+     * [DbPostProcess.detectLines]. They default to [DbPostProcess.Defaults]
+     * (matching `PP-OCRv6_small_det_onnx` `inference.yml`), which is the right
+     * setting for the **OCR-rec** path. The **inpaint-mask** path passes the
+     * prototype-validated lower thresholds (0.18 / 0.34) — see
+     * `tools/inpaint-debug-viewer/server.py` — so Paddle finds the same text
+     * lines for erasing that it finds for recognition.
      */
-    fun detectLines(crop: Bitmap): List<TextLine> {
+    fun detectLines(
+        crop: Bitmap,
+        thresh: Float = DbPostProcess.Defaults.THRESH,
+        boxThresh: Float = DbPostProcess.Defaults.BOX_THRESH,
+    ): List<TextLine> {
         val localSession = session ?: throw IllegalStateException("PaddleOCR v6 det not initialized")
         val w = crop.width
         val h = crop.height
@@ -116,6 +128,8 @@ class PaddleOcrV6DetEngine : Closeable {
                 probMap = active.pixels,
                 width = active.width,
                 height = active.height,
+                thresh = thresh,
+                boxThresh = boxThresh,
             )
             // Back-project each map-space bbox to crop pixel coords.
             val cropLines = ArrayList<TextLine>(mapLines.size)
@@ -207,10 +221,10 @@ class PaddleOcrV6DetEngine : Closeable {
                 rPlane[i] = normalizeR((px shr 16 and 0xFF))
             }
             val out = FloatArray(3 * total)
-            // Order B, G, R to match BGR input the model was trained on.
-            System.arraycopy(bPlane, 0, out, 0, total)
+            // Order R, G, B to match RGB input the model was trained on.
+            System.arraycopy(rPlane, 0, out, 0, total)
             System.arraycopy(gPlane, 0, out, total, total)
-            System.arraycopy(rPlane, 0, out, total * 2, total)
+            System.arraycopy(bPlane, 0, out, total * 2, total)
             return Preprocessed(
                 tensor = out,
                 cropToMapX = resizedW.toFloat() / w.toFloat(),

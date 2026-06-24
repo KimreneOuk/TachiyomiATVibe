@@ -30,8 +30,17 @@ data class PageTranslation(
     var sourceFileName: String? = null,
     // TachiyomiAT: counts how many times a stage on this page has been retried
     // after a failure. Persisted (serialized) so it survives a chapter reopen —
-    // auto-translate uses it to bound retries (see MAX_STAGE_RETRIES) instead of
-    // skipping a FAILED page forever or retrying it in an infinite loop.
+    // see [StageStatus.MAX_STAGE_RETRIES] and the retry-exhaustion contract in
+    // docs/TRANSLATION_MODULE.md. This is a raw, per-failure increment kept for
+    // diagnostics/back-compat; do NOT use it directly to gate auto-scheduling —
+    // [PageTranslation.hasExhaustedRetries] keys off [attemptCount] instead.
+    // The reason it must not gate exhaustion: a single reader-path attempt can
+    // touch multiple stages (OCR → inpaint → render) and an inpaint failure
+    // naturally cascades into a render failure, so per-failure increments could
+    // double-count within ONE attempt and trip exhaustion after a single
+    // transient failure — permanently blacklisting the page (the
+    // "cannot reprocess / retranslate" bug). [attemptCount] counts DISTINCT
+    // attempts, which is the correct granularity for exhaustion.
     var retryCount: Int = 0,
     // Incremented when the rendered file's bytes are rewritten. The file name is
     // stable (<page>.rendered.png for new renders), so UI dedup must not key on
@@ -60,6 +69,44 @@ data class PageTranslation(
 ) {
     @Transient
     var cleanedBitmap: Bitmap? = null
+
+    /**
+     * TachiyomiAT: number of DISTINCT page translation attempts that have ended
+     * in a terminal failure for this page. NOT serialized — it is an in-memory
+     * counter that resets to its default (0) on store reopen / process restart,
+     * so a page that failed in a prior process is not permanently treated as
+     * exhausted. This is the correct granularity for retry-exhaustion: an
+     * attempt is OCR → inpaint → translate → render for one page, and a single
+     * transient failure (the dominant case on the 6 GB / 20-30% heap target per
+     * AGENT.md, expected to recover on the next attempt per memory contracts
+     * #4/#6/#10) must count as ONE attempt, not one per failed stage.
+     *
+     * [PageTranslation.hasExhaustedRetries] keys off this, NOT [retryCount].
+     * [recordAttemptFailure] increments it exactly once per attempt (see its
+     * doc for the "first terminal stage owns the count" rule). Reset to 0 by
+     * [PageTranslation.prepareForcedRetry] and by the start-of-attempt gate in
+     * [TranslationPipeline], so the manual re-translate button always re-admits
+     * a failed page.
+     *
+     * Why @Transient and not persisted: persisting it would recreate the
+     * original "one transient failure → permanently blacklisted" bug after a
+     * reopen. The transient-heap-pressure failure model requires that a fresh
+     * process — with its native pools and heap reclaimed — gets a fresh attempt
+     * budget. Diagnostics still see raw per-failure counts via [retryCount].
+     */
+    @Transient
+    var attemptCount: Int = 0
+
+    /**
+     * TachiyomiAT: per-attempt idempotency flag for [recordAttemptFailure].
+     * Set true the first time an attempt's terminal failure charges
+     * [attemptCount]; reset by [prepareForcedRetry] / [resetAttemptCharge] at
+     * the start of a fresh attempt. NOT serialized. See
+     * [recordAttemptFailure] for why the guard cannot use [isStageFailed]
+     * (callers set the stage FAILED before calling the helper).
+     */
+    @Transient
+    var attemptCharged: Boolean = false
 
     /**
      * TachiyomiAT: all text detections from the recognition stage, carried
@@ -131,12 +178,26 @@ object StageStatus {
     const val PARTIAL = "PARTIAL"
 
     /**
-     * TachiyomiAT: maximum number of times auto-translate will re-attempt a page
-     * whose stage(s) failed. Bounds the retry loop so a genuinely broken page
-     * (corrupt image, persistent OOM) can't spin forever holding the singleton
-     * translator permit — while still recovering transient failures (e.g. an OOM
-     * right after a chapter switch). The manual per-page translate button is
-     * NOT bound by this (it always retries), so a user can force more attempts.
+     * TachiyomiAT: maximum number of DISTINCT page-translation attempts
+     * auto-translate will make for a page before treating it as exhausted
+     * ([PageTranslation.hasExhaustedRetries]). Counts attempts, not per-stage
+     * failures: a single reader-path attempt that cascades OCR→inpaint→render
+     * and fails at inpaint counts as ONE attempt (see
+     * [PageTranslation.attemptCount]). Bounds the retry loop so a genuinely
+     * broken page (corrupt image, persistent OOM) can't spin forever holding
+     * the singleton translator permit, while still recovering the dominant case
+     * — a transient heap-pressure failure that recovers on the next attempt
+     * after native pools are reclaimed (memory contracts #4/#6/#10).
+     *
+     * The manual per-page translate button is NOT bound by this: it routes
+     * through [TranslationPipeline.translateSinglePage] with `force = true`,
+     * which calls [PageTranslation.prepareForcedRetry] to reset the attempt
+     * counter and re-admit the page. So a user can always force another attempt
+     * on a page auto-translate has given up on.
+     *
+     * NOTE: this is NOT serialized through [PageTranslation.attemptCount]
+     * (which is `@Transient`), so exhaustion does NOT survive a process
+     * restart. That is intentional — see the attemptCount field doc.
      */
     const val MAX_STAGE_RETRIES = 2
 }

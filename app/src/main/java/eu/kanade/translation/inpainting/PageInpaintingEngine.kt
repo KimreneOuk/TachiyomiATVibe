@@ -3,6 +3,7 @@ package eu.kanade.translation.inpainting
 import android.graphics.Bitmap
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -66,7 +67,15 @@ class PageInpaintingEngine(
             cleaned
         } catch (e: Exception) {
             pageTranslation.inpaintStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: charge the attempt exactly once. This is the FIRST
+            // terminal stage in the inpaint→render cascade, so it owns the
+            // attemptCount increment; the downstream render-block path calls
+            // recordAttemptFailure() too but it no-ops once attemptCharged is
+            // set (idempotent within an attempt). Replaces the old bare
+            // `retryCount++`, which double-counted with the render-block
+            // increment and tripped exhaustion after one transient failure
+            // (see PageTranslationState.recordAttemptFailure / MAX_STAGE_RETRIES).
+            pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage = e.message
             pageTranslation.updatedAt = System.currentTimeMillis()
             logcat(LogPriority.WARN, e) { "Page inpainting failed" }

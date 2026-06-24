@@ -81,6 +81,11 @@ object SettingsTranslationScreen : SearchableSettings {
                     title = stringResource(ATMR.strings.pref_inpainting_mode),
                     entries = modes.toImmutableMap(),
                 ),
+                Preference.PreferenceItem.SwitchPreference(
+                    pref = translationPreferences.translationExperimentalPaddleMasking(),
+                    title = stringResource(ATMR.strings.pref_experimental_paddle_masking),
+                    subtitle = stringResource(ATMR.strings.pref_experimental_paddle_masking_summary),
+                ),
             ),
         )
     }

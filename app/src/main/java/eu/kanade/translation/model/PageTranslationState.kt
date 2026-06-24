@@ -100,6 +100,8 @@ fun PageTranslation.cancelInFlightStages() {
 
 fun PageTranslation.prepareForcedRetry() {
     retryCount = 0
+    attemptCount = 0
+    attemptCharged = false
     ocrStatus = StageStatus.RUNNING
     translationStatus = StageStatus.PENDING
     inpaintStatus = StageStatus.PENDING
@@ -110,6 +112,48 @@ fun PageTranslation.prepareForcedRetry() {
     renderQuality = RenderQuality.UNKNOWN
     renderedWidth = 0
     renderedHeight = 0
+}
+
+/**
+ * TachiyomiAT: record that this page-translation attempt ended in a terminal
+ * failure. Increments [PageTranslation.attemptCount] AT MOST ONCE per attempt —
+ * the FIRST terminal stage to call this owns the increment; subsequent stages
+ * in the same attempt (e.g. a render failure cascading from an inpaint failure)
+ * are no-ops. This is the fix for the "one transient inpaint failure
+ * permanently blacklists the page" bug: previously each failed stage bumped
+ * [PageTranslation.retryCount], and a single reader-path attempt could touch
+ * inpaint THEN render, double-counting and tripping [hasExhaustedRetries]
+ * (which used to key off retryCount) after a single transient failure.
+ *
+ * Idempotency is tracked via the [PageTranslation.attemptCharged] flag (set the
+ * first time this charges the attempt, reset by [prepareForcedRetry] and at the
+ * start of each fresh attempt in [TranslationPipeline]). Callers set their own
+ * stage status to FAILED before OR after calling this — the guard does NOT
+ * inspect stage status, because the stage is typically already FAILED by the
+ * time this runs (so an `isStageFailed` guard would always no-op, which was a
+ * bug in the first version of this helper). This helper owns ONLY the
+ * exhaustion counter + the diagnostic [PageTranslation.retryCount].
+ *
+ * Pure (no Android/ONNX/Bitmap dependency) — unit-tested in
+ * [PageTranslationStateTest].
+ */
+fun PageTranslation.recordAttemptFailure() {
+    if (attemptCharged) return
+    attemptCharged = true
+    attemptCount++
+    retryCount++
+}
+
+/**
+ * TachiyomiAT: clears the per-attempt "charged" flag so the next terminal
+ * failure in a NEW attempt is counted. Called by [TranslationPipeline] at the
+ * start of each fresh page-translation attempt (after [prepareForcedRetry] on
+ * the forced path, or implicitly on the resume path when stages are reset to
+ * RUNNING/PENDING). Without this reset, a second attempt that fails would be
+ * treated as already-charged and never increment [PageTranslation.attemptCount].
+ */
+fun PageTranslation.resetAttemptCharge() {
+    attemptCharged = false
 }
 
 val PageTranslation.isTextlessTerminal: Boolean
@@ -124,7 +168,7 @@ val PageTranslation.hasRecognizedTranslation: Boolean
         blocks.isNotEmpty()
 
 val PageTranslation.hasExhaustedRetries: Boolean
-    get() = isStageFailed && retryCount >= StageStatus.MAX_STAGE_RETRIES
+    get() = isStageFailed && attemptCount >= StageStatus.MAX_STAGE_RETRIES
 
 val PageTranslation.shouldSkipAutoScheduling: Boolean
     get() = hasRenderedResult ||

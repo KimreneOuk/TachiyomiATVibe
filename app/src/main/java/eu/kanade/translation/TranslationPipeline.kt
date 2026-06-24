@@ -20,6 +20,8 @@ import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.prepareForcedRetry
+import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.rendering.PageTextRenderer
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.ocr.OcrModelCatalog
@@ -460,6 +462,12 @@ class TranslationPipeline(
         originalImgHeight: Float = 0f,
         decodeSampleSize: Int = 1,
         retryCount: Int = 0,
+        // TachiyomiAT: mirrors retryCount for the per-attempt exhaustion counter.
+        // A freshly-built FAILED placeholder represents one failed attempt, so
+        // callers that merge with existing state pass (existing.attemptCount + 1)
+        // and standalone first-failure callers pass the default 1. See
+        // PageTranslation.attemptCount / recordAttemptFailure.
+        attemptCount: Int = 1,
     ): PageTranslation {
         return PageTranslation(
             sourceFileName = fileName,
@@ -475,7 +483,7 @@ class TranslationPipeline(
             errorMessage = errorMessage,
             updatedAt = System.currentTimeMillis(),
             retryCount = retryCount,
-        )
+        ).apply { this.attemptCount = attemptCount }
     }
 
     /**
@@ -528,6 +536,7 @@ class TranslationPipeline(
                     originalImgHeight = existing?.originalImgHeight ?: 0f,
                     decodeSampleSize = existing?.decodeSampleSize ?: 1,
                     retryCount = (existing?.retryCount ?: 0) + 1,
+                    attemptCount = (existing?.attemptCount ?: 0) + 1,
                 )
             }
         }
@@ -570,6 +579,7 @@ class TranslationPipeline(
                     originalImgHeight = existing?.originalImgHeight ?: 0f,
                     decodeSampleSize = existing?.decodeSampleSize ?: 1,
                     retryCount = (existing?.retryCount ?: 0) + 1,
+                    attemptCount = (existing?.attemptCount ?: 0) + 1,
                 )
             }
         }
@@ -784,6 +794,7 @@ class TranslationPipeline(
                             ocrStatus = StageStatus.FAILED
                             errorMessage = deferred.message
                             retryCount = (it?.retryCount ?: 0) + 1
+                            attemptCount = (it?.attemptCount ?: 0) + 1
                             updatedAt = System.currentTimeMillis()
                         }
                     }
@@ -795,6 +806,7 @@ class TranslationPipeline(
                             ocrStatus = StageStatus.FAILED
                             errorMessage = "Failed to decode page: null bitmap"
                             retryCount = (it?.retryCount ?: 0) + 1
+                            attemptCount = (it?.attemptCount ?: 0) + 1
                             updatedAt = System.currentTimeMillis()
                         }
                     }
@@ -1015,7 +1027,10 @@ class TranslationPipeline(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 pageTranslation.renderStatus = StageStatus.FAILED
-                pageTranslation.retryCount++
+                // TachiyomiAT: batch render failed on a cleaned bitmap (inpaint
+                // succeeded), so render is the first terminal stage. Replaces
+                // bare retryCount++ for the one-failure-one-attempt invariant.
+                pageTranslation.recordAttemptFailure()
                 pageTranslation.errorMessage = e.message
                 logcat(LogPriority.ERROR, e) { "TachiyomiAT batch render failed: $pageKey" }
             } finally {
@@ -1192,6 +1207,12 @@ class TranslationPipeline(
                     if (status == StageStatus.FAILED) {
                         errorMessage = pageTranslation.errorMessage
                         retryCount = pageTranslation.retryCount
+                        // TachiyomiAT: carry the per-attempt counter too so the
+                        // batch path's FAILED state is consistent with the
+                        // recordAttemptFailure bookkeeping. attemptCount is
+                        // @Transient so this only matters within the live
+                        // process; on reopen it resets to 0 (intentional).
+                        attemptCount = pageTranslation.attemptCount
                     }
                     updatedAt = System.currentTimeMillis()
                 }
@@ -1369,11 +1390,17 @@ class TranslationPipeline(
     ) {
         pageTranslation.translationStatus = StageStatus.FAILED
         pageTranslation.errorMessage = reason
-        pageTranslation.retryCount++
+        // TachiyomiAT: translation is typically the first terminal stage in the
+        // batch flow (OCR succeeded, translate failed), so it owns the attempt
+        // charge. recordAttemptFailure is idempotent if a prior stage already
+        // failed. Replaces bare retryCount++ for the one-failure-one-attempt
+        // invariant (see PageTranslationState.recordAttemptFailure).
+        pageTranslation.recordAttemptFailure()
         store.updatePage(pageKey) {
             (it ?: pageTranslation).apply {
                 translationStatus = StageStatus.FAILED
                 errorMessage = reason
+                attemptCount = pageTranslation.attemptCount
                 retryCount = pageTranslation.retryCount
                 updatedAt = System.currentTimeMillis()
             }
@@ -1535,6 +1562,7 @@ class TranslationPipeline(
                         ocrStatus = StageStatus.FAILED
                         errorMessage = "Page $pageKey not found in chapter files"
                         retryCount = (it?.retryCount ?: 0) + 1
+                        attemptCount = (it?.attemptCount ?: 0) + 1
                         updatedAt = System.currentTimeMillis()
                     }
                 }
@@ -1566,6 +1594,13 @@ class TranslationPipeline(
                     if (force) {
                         prepareForcedRetry()
                     }
+                    // TachiyomiAT: a fresh attempt starts uncharged so the first
+                    // terminal failure in this attempt is counted by
+                    // recordAttemptFailure. On the forced path prepareForcedRetry
+                    // already reset it; on the resume path this is the reset
+                    // point. Without it a second attempt that fails would be
+                    // treated as already-charged and never increment attemptCount.
+                    resetAttemptCharge()
                     errorMessage = null
                     updatedAt = System.currentTimeMillis()
                 }
@@ -1586,6 +1621,7 @@ class TranslationPipeline(
                         renderStatus = StageStatus.PENDING
                         errorMessage = deferred.message
                         retryCount = (it?.retryCount ?: 0) + 1
+                        attemptCount = (it?.attemptCount ?: 0) + 1
                         updatedAt = System.currentTimeMillis()
                     }
                 }
@@ -1598,6 +1634,7 @@ class TranslationPipeline(
                         ocrStatus = StageStatus.FAILED
                         errorMessage = "Failed to decode page: null bitmap"
                         retryCount = (it?.retryCount ?: 0) + 1
+                        attemptCount = (it?.attemptCount ?: 0) + 1
                         updatedAt = System.currentTimeMillis()
                     }
                 }
@@ -1798,7 +1835,11 @@ class TranslationPipeline(
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         pageTranslation.renderStatus = StageStatus.FAILED
-                        pageTranslation.retryCount++
+                        // TachiyomiAT: render failed on a real cleaned bitmap, so
+                        // inpaint SUCCEEDED — this render failure is the first
+                        // terminal stage and owns the attempt charge.
+                        // recordAttemptFailure is idempotent within an attempt.
+                        pageTranslation.recordAttemptFailure()
                         pageTranslation.errorMessage = e.message
                         logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
                     } finally {
@@ -1864,7 +1905,10 @@ class TranslationPipeline(
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             pageTranslation.renderStatus = StageStatus.FAILED
-                            pageTranslation.retryCount++
+                            // TachiyomiAT: render failed on the retry-path
+                            // cleaned bitmap (inpaint succeeded on retry), so
+                            // this render failure is the first terminal stage.
+                            pageTranslation.recordAttemptFailure()
                             pageTranslation.errorMessage = e.message
                             logcat(LogPriority.ERROR, e) { "Failed to render text for single page (retry path) $pageKey" }
                         } finally {
@@ -1877,7 +1921,18 @@ class TranslationPipeline(
                         // wasn't translated rather than being misled by a half-
                         // translated overlay.
                         pageTranslation.renderStatus = StageStatus.FAILED
-                        pageTranslation.retryCount++
+                        // TachiyomiAT: do NOT bump retryCount here. This render
+                        // failure is a DIRECT consequence of the inpaint failure
+                        // above (no cleaned bitmap) — that failure already charged
+                        // the attempt in PageInpaintingEngine.inpaint. The old bare
+                        // `retryCount++` double-counted with the inpaint increment
+                        // and tripped hasExhaustedRetries after ONE transient
+                        // failure, permanently blacklisting the page (the
+                        // "cannot reprocess / retranslate" bug). recordAttemptFailure
+                        // is idempotent within an attempt, so it no-ops here once
+                        // inpaint already FAILED — keeping the single failure = one
+                        // attempt charge invariant.
+                        pageTranslation.recordAttemptFailure()
                         val reason = pageTranslation.errorMessage ?: "inpaint unavailable"
                         pageTranslation.errorMessage =
                             "Inpainting unavailable ($reason) — original text would show through, so the " +
@@ -1954,7 +2009,11 @@ class TranslationPipeline(
             true
         } else {
             pageTranslation.inpaintStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: storage failure on the cleaned-image write — the
+            // inpaint itself succeeded (we have the bitmap) but could not be
+            // persisted, so this is the first terminal stage. recordAttemptFailure
+            // charges the attempt once (replaces bare retryCount++).
+            pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage =
                 "Could not save cleaned image — translation output folder is unavailable. " +
                     "Grant storage permission to the app and retry."
@@ -2015,7 +2074,9 @@ class TranslationPipeline(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             pageTranslation.renderStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: render failed on a cleaned bitmap (inpaint succeeded),
+            // so this is the first terminal stage — owns the attempt charge.
+            pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage = e.message
             logcat(LogPriority.ERROR, e) { "Failed to render resumed page $pageKey" }
         } finally {
@@ -2059,7 +2120,11 @@ class TranslationPipeline(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             pageTranslation.inpaintStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: first terminal stage in this attempt — owns the
+            // charge. recordAttemptFailure (replaces bare retryCount++) keeps
+            // one failure = one attempt, so a transient inpaint failure no
+            // longer double-counts with the render-block path below.
+            pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage = e.message
             logcat(LogPriority.ERROR, e) { "Failed to resume inpaint for $pageKey" }
             null
@@ -2067,7 +2132,10 @@ class TranslationPipeline(
 
         if (cleaned == null) {
             pageTranslation.renderStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: consequence of the inpaint failure above; the attempt
+            // was already charged. recordAttemptFailure no-ops once a stage is
+            // already FAILED, preserving one-failure-one-attempt.
+            pageTranslation.recordAttemptFailure()
             val reason = pageTranslation.errorMessage ?: "inpaint unavailable"
             pageTranslation.errorMessage =
                 "Inpainting unavailable ($reason) — translated text was not rendered."
@@ -2201,7 +2269,9 @@ class TranslationPipeline(
         }
         if (pageTranslation.decodeSampleSize > 1 && quality != RenderQuality.SIZE_LIMITED) {
             pageTranslation.renderStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: render-stage refusal on a heap-downsampled image —
+            // inpaint succeeded, so this is the first terminal stage.
+            pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage =
                 "Refused to save heap-downsampled translated image. Retry when memory recovers."
             logcat(LogPriority.ERROR) {
@@ -2234,7 +2304,10 @@ class TranslationPipeline(
             }
         } else {
             pageTranslation.renderStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: rendered-image storage failure — inpaint succeeded,
+            // so render is the first terminal stage. recordAttemptFailure
+            // replaces bare retryCount++.
+            pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage =
                 "Could not save translated image — translation output folder is unavailable. " +
                     "Grant storage permission to the app and retry."
@@ -2407,7 +2480,11 @@ class TranslationPipeline(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             pageTranslation.inpaintStatus = StageStatus.FAILED
-            pageTranslation.retryCount++
+            // TachiyomiAT: inpaint exception in the batch stage-2 path — first
+            // terminal stage, owns the attempt charge. Replaces bare retryCount++
+            // (one failure = one attempt; downstream render is gated out by the
+            // translation/READY/PARTIAL check so there is no double-count here).
+            pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage = e.message
             logcat(LogPriority.ERROR, e) { "Failed to inpaint page $fileName" }
             store.updatePage(fileName) {
@@ -2433,6 +2510,10 @@ class TranslationPipeline(
                 pageTranslation.inpaintStatus = StageStatus.READY
             } else {
                 pageTranslation.inpaintStatus = StageStatus.FAILED
+                // TachiyomiAT: batch inpaint produced a bitmap but the cleaned
+                // image could not be persisted — first terminal stage. Charges
+                // the attempt once (idempotent if a prior stage already failed).
+                pageTranslation.recordAttemptFailure()
                 pageTranslation.errorMessage =
                     "Could not save cleaned image — translation output folder is unavailable. " +
                         "Grant storage permission to the app and retry."

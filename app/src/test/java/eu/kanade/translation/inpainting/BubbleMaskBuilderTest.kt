@@ -1,5 +1,7 @@
 package eu.kanade.translation.inpainting
 
+import io.kotest.matchers.comparables.shouldBeGreaterThan
+import io.kotest.matchers.comparables.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
@@ -322,5 +324,239 @@ class BubbleMaskBuilderTest {
 
         out[3 * 6 + 3] shouldBe 1
         out[5 * 6 + 0] shouldBe 0
+    }
+
+    // ---- buildRectMask (paddle_boxes erase mask) ----
+    // Port of build_rect_mask in tools/inpaint-debug-viewer/server.py: every
+    // PaddleOCR-v6 line box → solid padded rectangle → disk dilate. This is the
+    // erase target for both the AOT/neural and FAST free-text paths.
+
+    @Test
+    fun `buildRectMask fills a solid padded rectangle for one box without dilation`() {
+        // 10x8 canvas, box [3,2,5,4] (a 2x2 box), pad 1, no dilation.
+        // Padded box = [2,1,6,5] → rows 1..4, cols 2..5 (4 rows x 4 cols = 16 px).
+        val mask = BubbleMaskBuilder.buildRectMask(
+            boxes = listOf(intArrayOf(3, 2, 5, 4)),
+            width = 10,
+            height = 8,
+            pad = 1,
+            dilateRadius = 0,
+        )
+
+        mask.count { it != 0.toByte() } shouldBe 16
+        // Interior of the padded box is solid.
+        mask[1 * 10 + 2] shouldBe 1
+        mask[4 * 10 + 5] shouldBe 1
+        // Just outside the padded box is empty.
+        mask[0 * 10 + 2] shouldBe 0
+        mask[1 * 10 + 6] shouldBe 0
+    }
+
+    @Test
+    fun `buildRectMask clamps the padded box to the canvas bounds`() {
+        // Box near the top-left corner; pad 3 would push x1/y1 negative.
+        val mask = BubbleMaskBuilder.buildRectMask(
+            boxes = listOf(intArrayOf(1, 1, 3, 3)),
+            width = 5,
+            height = 5,
+            pad = 3,
+            dilateRadius = 0,
+        )
+
+        // Padded+clamped box = [0,0,5,5] minus the (3,3) exclusive end gap
+        // produced by clamping x2 to width: x2 = min(5, 3+3)=5, so the filled
+        // region is [0,0,5,5) = the whole 5x5 canvas = 25 px.
+        mask.count { it != 0.toByte() } shouldBe 25
+    }
+
+    @Test
+    fun `buildRectMask unions overlapping boxes`() {
+        // Two boxes that overlap after padding; the union must not double-count.
+        val mask = BubbleMaskBuilder.buildRectMask(
+            boxes = listOf(
+                intArrayOf(2, 2, 4, 4),
+                intArrayOf(3, 3, 5, 5),
+            ),
+            width = 8,
+            height = 8,
+            pad = 0,
+            dilateRadius = 0,
+        )
+
+        // Box A = [2,2,4,4] = 2x2 = 4 px. Box B = [3,3,5,5] = 2x2 = 4 px.
+        // Overlap = [3,3,4,4] = 1 px. Union = 4 + 4 - 1 = 7 px.
+        mask.count { it != 0.toByte() } shouldBe 7
+    }
+
+    @Test
+    fun `buildRectMask returns an all-zero mask for no boxes`() {
+        val mask = BubbleMaskBuilder.buildRectMask(
+            boxes = emptyList(),
+            width = 4,
+            height = 4,
+            pad = 2,
+            dilateRadius = 2,
+        )
+
+        mask.count { it != 0.toByte() } shouldBe 0
+    }
+
+    @Test
+    fun `buildRectMask skips zero-area and undersized boxes`() {
+        // Zero-area box (x2<=x1) and a too-short box (y2<=y1) must be skipped,
+        // not crash. A valid box is included as a sanity check.
+        val mask = BubbleMaskBuilder.buildRectMask(
+            boxes = listOf(
+                intArrayOf(2, 2, 2, 5), // zero width
+                intArrayOf(2, 2, 5, 2), // zero height
+                intArrayOf(1, 1, 3, 3), // valid 2x2
+            ),
+            width = 6,
+            height = 6,
+            pad = 0,
+            dilateRadius = 0,
+        )
+
+        // Only the valid box contributes: [1,1,3,3] = 4 px.
+        mask.count { it != 0.toByte() } shouldBe 4
+    }
+
+    @Test
+    fun `buildRectMask dilates the solid rectangle when dilateRadius is set`() {
+        // 9x9 canvas, a 1x1 box at (4,4), pad 0, dilateRadius 2.
+        // Without dilation this is 1 px; with disk radius 2 the single pixel
+        // grows to a 13-px disk (centre + 4 axis-1 + 4 diagonal + 4 axis-2),
+        // matching dilateMaskDisk radius 2 from a single pixel.
+        val mask = BubbleMaskBuilder.buildRectMask(
+            boxes = listOf(intArrayOf(4, 4, 5, 5)),
+            width = 9,
+            height = 9,
+            pad = 0,
+            dilateRadius = 2,
+        )
+
+        mask.count { it != 0.toByte() } shouldBe 13
+        // Corners of the disk's bounding 5x5 are NOT reached (rounded).
+        mask[2 * 9 + 2] shouldBe 0 // (2,2)
+        mask[2 * 9 + 6] shouldBe 0 // (6,2)
+    }
+
+    // ---- navierStokesInpaint (pure-Kotlin NS, FAST free-text fill) ----
+    // The Bertalmio vorticity-stream solver. Its defining property is isophote
+    // (equal-intensity line) continuity across the hole: a gradient entering
+    // the hole on one side continues smoothly to the other. A flat fill cannot
+    // do this; NS must.
+
+    private fun grayPixel(v: Int): Int = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
+
+    private fun redOf(px: Int): Int = (px shr 16) and 0xFF
+
+    @Test
+    fun `navierStokesInpaint returns input unchanged when there is no hole`() {
+        val w = 16
+        val h = 8
+        val pixels = IntArray(w * h) { grayPixel(100 + (it % w) * 5) }
+        val mask = ByteArray(w * h) // all zero — no hole
+
+        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+
+        // No hole → byte-for-byte identical to input (early-return copy).
+        out.toList() shouldBe pixels.toList()
+    }
+
+    @Test
+    fun `navierStokesInpaint continues a horizontal gradient across the hole, not a flat fill`() {
+        // NS's defining property: isophote continuity. Build a horizontal
+        // gray gradient (left=40, right=215), punch a hole in the middle, and
+        // assert the reconstructed hole CONTINUES the gradient — the left edge
+        // of the hole is dark-ish and the right edge is light-ish, with the
+        // interior monotonically between them. A flat/median fill would make
+        // the whole hole one value (the white-block symptom).
+        val w = 40
+        val h = 24
+        val pixels = IntArray(w * h) { idx -> grayPixel(40 + (idx % w) * 5) } // 40..235 left→right
+        // Hole: columns 14..25, rows 8..15 (a centered block).
+        val mask = ByteArray(w * h)
+        for (y in 8..15) for (x in 14..25) mask[y * w + x] = 1
+
+        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+
+        // Non-hole pixels MUST be unchanged (Dirichlet BC honored + no round-trip drift).
+        for (i in pixels.indices) {
+            if (mask[i] == 0.toByte()) out[i] shouldBe pixels[i]
+        }
+        // Gradient continuation: the hole's left edge is darker than its right.
+        val midY = 12
+        val leftEdgeRed = redOf(out[midY * w + 15])   // first hole column
+        val rightEdgeRed = redOf(out[midY * w + 24])  // last hole column
+        // Left should be clearly below the page midpoint (grayPixel ~140 at x=20),
+        // right clearly above — NOT both clamped to one flat value.
+        leftEdgeRed shouldBeLessThan 130
+        rightEdgeRed shouldBeGreaterThan 150
+        // And the interior must be monotonic non-decreasing across the hole
+        // (isophote continuity → no oscillation). Tolerate a 1-px wiggle from
+        // the finite-difference stencil by checking the overall trend holds.
+        var monotonic = true
+        for (x in 15..23) {
+            if (redOf(out[midY * w + x + 1]) < redOf(out[midY * w + x]) - 2) {
+                monotonic = false
+                break
+            }
+        }
+        monotonic shouldBe true
+    }
+
+    @Test
+    fun `navierStokesInpaint leaves a flat-uniform page flat (no regression vs flat fill)`() {
+        // A genuinely uniform page: NS should reconstruct the hole as the same
+        // uniform value (gradient magnitude is zero everywhere → vorticity is
+        // zero → Poisson solves to the constant BC). This guards against the
+        // solver introducing noise on flat regions.
+        val w = 24
+        val h = 16
+        val pixels = IntArray(w * h) { grayPixel(180) }
+        val mask = ByteArray(w * h)
+        for (y in 5..10) for (x in 8..15) mask[y * w + x] = 1
+
+        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+
+        // Every reconstructed hole pixel should be ~180 (within a few gray
+        // levels of the uniform BC; the PDE steady state is exactly 180).
+        for (y in 5..10) {
+            for (x in 8..15) {
+                val v = redOf(out[y * w + x])
+                (v in 170..190) shouldBe true
+            }
+        }
+    }
+
+    @Test
+    fun `navierStokesInpaint honors the Dirichlet boundary - reconstruction stays within neighbor range`() {
+        // The discrete maximum principle for Poisson reconstruction: with a
+        // bounded source, the reconstructed value inside the hole cannot exceed
+        // the range of its boundary (∂Ω) neighbors. Place a hole in a SMOOTH
+        // dark field (value 30 everywhere) — every ∂Ω neighbor is 30, there is
+        // no nearby gradient, so the reconstruction must stay ~30. A solver
+        // that violated the BC (e.g. averaged over the whole crop, or blew up)
+        // would drift far from 30.
+        val w = 20
+        val h = 16
+        val pixels = IntArray(w * h) { grayPixel(30) }
+        val mask = ByteArray(w * h)
+        for (y in 6..9) for (x in 6..13) mask[y * w + x] = 1
+
+        val out = BubbleMaskBuilder.navierStokesInpaint(pixels, mask, w, h)
+
+        // Every reconstructed hole pixel must be within a small tolerance of the
+        // uniform BC (30). The NS steady state on a zero-gradient field is
+        // exactly the constant; allow a few gray levels for the finite-diff
+        // stencil + clamp rounding.
+        val midY = 8
+        for (x in 6..13) {
+            val v = redOf(out[midY * w + x])
+            (v in 20..45) shouldBe true
+        }
+        // Non-hole pixels unchanged (Dirichlet BC + no round-trip drift).
+        out[midY * w + 19] shouldBe pixels[midY * w + 19]
     }
 }

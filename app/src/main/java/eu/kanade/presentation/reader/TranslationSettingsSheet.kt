@@ -244,6 +244,15 @@ private fun ColumnScope.TogglesSection(prefs: TranslationPreferences) {
         if (auto) {
             PrefetchSlider(prefs)
         }
+
+        val paddleMaskingPref = prefs.translationExperimentalPaddleMasking()
+        val paddleMasking by paddleMaskingPref.collectAsState()
+        SwitchPreferenceWidget(
+            title = stringResource(ATMR.strings.pref_experimental_paddle_masking),
+            subtitle = stringResource(ATMR.strings.pref_experimental_paddle_masking_summary),
+            checked = paddleMasking,
+            onCheckedChanged = { paddleMaskingPref.set(it) },
+        )
     }
 }
 

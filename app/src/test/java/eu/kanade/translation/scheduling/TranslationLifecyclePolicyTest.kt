@@ -38,9 +38,8 @@ class TranslationLifecyclePolicyTest {
     fun `cancelled page is schedulable and does not count as retry exhaustion`() {
         val page = PageTranslation(
             ocrStatus = StageStatus.CANCELLED,
-            retryCount = StageStatus.MAX_STAGE_RETRIES,
             errorMessage = "Translation cancelled",
-        )
+        ).apply { attemptCount = StageStatus.MAX_STAGE_RETRIES }
 
         TranslationLifecyclePolicy.classify(page) shouldBe PageLifecycle.Cancelled
         TranslationLifecyclePolicy.reasons(page).exhausted shouldBe false
@@ -49,11 +48,14 @@ class TranslationLifecyclePolicyTest {
 
     @Test
     fun `retry exhaustion blocks auto scheduling for failed pages`() {
+        // TachiyomiAT: exhaustion keys on attemptCount (distinct attempts), not
+        // retryCount (per-stage increments). One failed attempt is NOT exhausted.
         val retryable = PageTranslation(
             ocrStatus = StageStatus.FAILED,
-            retryCount = StageStatus.MAX_STAGE_RETRIES - 1,
-        )
-        val exhausted = retryable.copy(retryCount = StageStatus.MAX_STAGE_RETRIES)
+        ).apply { attemptCount = StageStatus.MAX_STAGE_RETRIES - 1 }
+        val exhausted = PageTranslation(
+            ocrStatus = StageStatus.FAILED,
+        ).apply { attemptCount = StageStatus.MAX_STAGE_RETRIES }
 
         TranslationLifecyclePolicy.shouldSchedule(retryable) shouldBe true
         TranslationLifecyclePolicy.shouldSchedule(exhausted) shouldBe false

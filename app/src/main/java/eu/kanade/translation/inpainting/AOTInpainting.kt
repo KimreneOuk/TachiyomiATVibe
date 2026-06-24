@@ -24,6 +24,19 @@ class AOTInpainting {
     companion object {
         private const val MAX_INFERENCE_DIM = 512
         private const val MAX_TOTAL_PIXELS = MAX_INFERENCE_DIM * MAX_INFERENCE_DIM
+
+        // TachiyomiAT: PaddleOCR-v6 → solid-box erase-mask tunables. These drive
+        // the free-text erase mask directly from Paddle line boxes (the prototype
+        // `mask_mode = paddle_boxes`), replacing the pixel-heuristic masks built
+        // over detector-v4 rectangles. Defaults match the validated prototype
+        // (`tools/inpaint-debug-viewer/server.py`): paddle_crop_pad=12,
+        // paddle_thresh=0.18, paddle_box_thresh=0.34, mask_pad=8. Kept as internal
+        // constants first (no UI/settings surface) per the task's "tunables stay
+        // internal" requirement.
+        private const val PADDLE_CROP_PAD = 12
+        private const val PADDLE_THRESH = 0.18f
+        private const val PADDLE_BOX_THRESH = 0.34f
+        private const val MASK_PAD = 8
     }
 
     private val scratchLock = Any()
@@ -62,6 +75,8 @@ class AOTInpainting {
 
     private var session: OrtSession? = null
     private val bubbleCleaner = SmartBubbleTextCleaner()
+    var paddleDet: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null
+    var usePaddleMasking: Boolean = false
 
     // TachiyomiAT: cached value of the translation_diagnostics preference.
     // The graph-spec dump in [initialize] fires once per session creation and
@@ -210,13 +225,35 @@ class AOTInpainting {
         if (grouped.isNotEmpty()) {
             for ((_, groupBoxes) in grouped) {
                 val bubbleBbox = findParentBubble(groupBoxes.first(), bubbleBoxes) ?: continue
-                result = bubbleCleaner.cleanBubbleGroup(result, bubbleBbox, groupBoxes)
+                result = bubbleCleaner.cleanBubbleGroup(result, bubbleBbox, groupBoxes, paddleDet, usePaddleMasking)
             }
         }
 
         if (unparented.isNotEmpty()) {
             result = bubbleCleaner.cleanRegions(result, unparented)
         }
+
+        // TachiyomiAT: refine the free-text erase boxes through PaddleOCR-v6 DET.
+        // detector-v4 supplied the COARSE free-text regions above; now each one is
+        // re-detected at line granularity by Paddle and the resulting line boxes
+        // (back-projected to page coords) REPLACE the detector-v4 rectangles as
+        // the erase target — the prototype `mask_mode = paddle_boxes`. When Paddle
+        // returns 0 lines for a region, that region falls back to its detector-v4
+        // box (counted in paddleFallback for diagnostics). Only free text is
+        // refined here; parented bubbles keep cleanBubbleGroup (AOT stays free-
+        // text-only). Null paddleDet keeps the legacy detector-v4 boxes verbatim.
+        var paddleLinesTotal = 0
+        var paddleFallback = 0
+        val paddleRefined: List<IntArray>
+        if (paddleDet != null && freeBoxesForAot.isNotEmpty()) {
+            val refined = refineFreeTextBoxes(image, freeBoxesForAot)
+            paddleLinesTotal = refined.paddleLineCount
+            paddleFallback = refined.fallbackCount
+            paddleRefined = refined.boxes
+        } else {
+            paddleRefined = freeBoxesForAot
+        }
+        val paddleActive = paddleDet != null && freeBoxesForAot.isNotEmpty()
 
         val freeFlatBoxes = mutableListOf<IntArray>()
         val freeNeuralBoxes = mutableListOf<IntArray>()
@@ -234,7 +271,7 @@ class AOTInpainting {
         // (3) otherwise the box reaches the neural path for screentone-capable
         // reconstruction. The memory gate preserves the OOM-safety intent of
         // the original absolute-area bypass.
-        for (box in freeBoxesForAot) {
+        for (box in paddleRefined) {
             val boxArea = (box[2] - box[0]).toLong() * (box[3] - box[1]).toLong()
             when {
                 bubbleCleaner.isFlatBackgroundRegion(result, box) -> freeFlatBoxes.add(box)
@@ -254,13 +291,46 @@ class AOTInpainting {
                 "unparented=${unparented.size} freeFlat=${freeFlatBoxes.size} freeSmall=${freeSmallBoxes.size} freeNeural=${freeNeuralBoxes.size} " +
                 "model=${sess != null}"
         }
+        // TachiyomiAT: paddle_boxes diagnostics — surfaces the detector→Paddle
+        // refinement so a missed column or a fallback storm is diagnosable from
+        // logcat without the diagnostics pref. Mirrors the prototype's reported
+        // counts (detectorText / paddleLines / fallback / finalMaskBoxes).
+        if (paddleActive) {
+            logcat(LogPriority.INFO) {
+                "[inpaint] paddle_boxes detectorText=${freeBoxesForAot.size} paddleLines=$paddleLinesTotal " +
+                    "fallback=$paddleFallback finalMaskBoxes=${paddleRefined.size} " +
+                    "thresh=$PADDLE_THRESH boxThresh=$PADDLE_BOX_THRESH cropPad=$PADDLE_CROP_PAD maskPad=$MASK_PAD"
+            }
+        }
 
+        // TachiyomiAT: when Paddle refined the free-text boxes, the flat/small
+        // routes erase SOLID padded Paddle boxes (fillSolidBoxes) — not the
+        // pixel-heuristic cleanRegions, which would re-derive a mask from the
+        // box interior and re-introduce the sparse/over-processed artifact the
+        // Paddle path exists to avoid. cleanRegions is retained for the null-
+        // paddleDet legacy path (paddleActive == false).
         if (freeFlatBoxes.isNotEmpty()) {
-            result = bubbleCleaner.cleanRegions(result, freeFlatBoxes)
+            result = if (paddleActive) {
+                bubbleCleaner.fillSolidBoxes(result, freeFlatBoxes, MASK_PAD)
+            } else {
+                bubbleCleaner.cleanRegions(result, freeFlatBoxes)
+            }
         }
 
         if (freeSmallBoxes.isNotEmpty()) {
-            result = bubbleCleaner.cleanRegions(result, freeSmallBoxes)
+            result = if (paddleActive) {
+                bubbleCleaner.fillSolidBoxes(result, freeSmallBoxes, MASK_PAD)
+            } else {
+                bubbleCleaner.cleanRegions(result, freeSmallBoxes)
+            }
+        }
+
+        // TachiyomiAT: pick the non-neural cleaner for a box list. When Paddle
+        // refined the boxes, erase SOLID padded boxes (fillSolidBoxes); otherwise
+        // keep the legacy pixel-heuristic cleanRegions (null-paddleDet path).
+        val cleanFree: (Bitmap, List<IntArray>) -> Bitmap = { src, boxes ->
+            if (paddleActive) bubbleCleaner.fillSolidBoxes(src, boxes, MASK_PAD)
+            else bubbleCleaner.cleanRegions(src, boxes)
         }
 
         if (freeNeuralBoxes.isNotEmpty() && sess != null && mode == InpaintingMode.QUALITY) {
@@ -271,7 +341,7 @@ class AOTInpainting {
                     height = image.height,
                     extra = "boxes=${freeNeuralBoxes.size}",
                 )
-                result = bubbleCleaner.cleanRegions(result, freeNeuralBoxes)
+                result = cleanFree(result, freeNeuralBoxes)
             } else {
                 val clusters = clusterNearbyBoxes(freeNeuralBoxes, clusterDistance = 100)
                 logcat(LogPriority.INFO) {
@@ -290,16 +360,100 @@ class AOTInpainting {
                         logcat(LogPriority.WARN) {
                             "[inpaint] OOM on neural cluster (${cluster.size} boxes), falling back to smart clean"
                         }
-                        result = bubbleCleaner.cleanRegions(result, cluster)
+                        result = cleanFree(result, cluster)
                     }
                 }
             }
         } else if (freeNeuralBoxes.isNotEmpty()) {
-            result = bubbleCleaner.cleanRegions(result, freeNeuralBoxes)
+            result = cleanFree(result, freeNeuralBoxes)
         }
 
         return result
     }
+
+    /**
+     * TachiyomiAT: refine the free-text erase boxes through PaddleOCR-v6 DET.
+     *
+     * For every detector-v4 free-text box, crop the page with [PADDLE_CROP_PAD]
+     * of context, run Paddle DET at the inpaint thresholds ([PADDLE_THRESH] /
+     * [PADDLE_BOX_THRESH]), and back-project the returned line boxes to PAGE
+     * coords (crop origin + line bbox, clamped to the page). Those Paddle line
+     * boxes REPLACE the detector-v4 rectangle as the erase target — the
+     * prototype `mask_mode = paddle_boxes`. When Paddle returns 0 lines for a
+     * region, that region falls back to its detector-v4 box (counted in
+     * [RefinedFreeText.fallbackCount]) so a missed region is still erased.
+     *
+     * Boring and direct: Paddle box → pad (applied later in the mask builder).
+     * The back-projection is plain integer arithmetic matching the prototype's
+     * `clamp_box([x1 + lx1, y1 + ly1, x1 + lx2, y1 + ly2], width, height)`.
+     *
+     * Each crop is created + recycled in-place to bound heap (no cross-call
+     * retention). Paddle det failures are logged and treated as "0 lines" →
+     * fallback for that region (never abort the whole refine).
+     */
+    private fun refineFreeTextBoxes(
+        image: Bitmap,
+        detectorBoxes: List<IntArray>,
+    ): RefinedFreeText {
+        val w = image.width
+        val h = image.height
+        val paddleDet = this.paddleDet ?: return RefinedFreeText(detectorBoxes, 0, detectorBoxes.size)
+        val refined = ArrayList<IntArray>(detectorBoxes.size)
+        var paddleLineCount = 0
+        var fallbackCount = 0
+        for (det in detectorBoxes) {
+            val cx1 = (det[0] - PADDLE_CROP_PAD).coerceIn(0, w)
+            val cy1 = (det[1] - PADDLE_CROP_PAD).coerceIn(0, h)
+            val cx2 = (det[2] + PADDLE_CROP_PAD).coerceIn(0, w)
+            val cy2 = (det[3] + PADDLE_CROP_PAD).coerceIn(0, h)
+            if (cx2 <= cx1 || cy2 <= cy1) {
+                // Degenerate crop — fall back to the detector box verbatim.
+                refined.add(det.copyOf())
+                fallbackCount++
+                continue
+            }
+            val crop = Bitmap.createBitmap(image, cx1, cy1, cx2 - cx1, cy2 - cy1)
+            val lines = try {
+                paddleDet.detectLines(crop, thresh = PADDLE_THRESH, boxThresh = PADDLE_BOX_THRESH)
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) {
+                    "[inpaint] paddle DET failed on free-text crop; falling back to detector box"
+                }
+                emptyList()
+            } finally {
+                crop.recycle()
+            }
+            if (lines.isEmpty()) {
+                // Paddle found nothing for this region — conservative fallback
+                // to the detector-v4 box so the region is still erased.
+                refined.add(det.copyOf())
+                fallbackCount++
+                continue
+            }
+            for (line in lines) {
+                val b = line.bbox
+                if (b.size < 4) continue
+                // Back-project: crop-local → page coords. Clamp to the page and
+                // drop zero-area boxes (matches the prototype's clamp_box guard).
+                val px1 = (cx1 + b[0]).coerceIn(0, w)
+                val py1 = (cy1 + b[1]).coerceIn(0, h)
+                val px2 = (cx1 + b[2]).coerceIn(0, w)
+                val py2 = (cy1 + b[3]).coerceIn(0, h)
+                if (px2 > px1 && py2 > py1) {
+                    refined.add(intArrayOf(px1, py1, px2, py2))
+                    paddleLineCount++
+                }
+            }
+        }
+        return RefinedFreeText(refined, paddleLineCount, fallbackCount)
+    }
+
+    /** Result of [refineFreeTextBoxes] — refined boxes + counts for diagnostics. */
+    private data class RefinedFreeText(
+        val boxes: List<IntArray>,
+        val paddleLineCount: Int,
+        val fallbackCount: Int,
+    )
 
     private fun inpaintFreeRegions(
         sess: OrtSession,
@@ -367,31 +521,27 @@ class AOTInpainting {
         }
 
         val maskBitmap = BitmapPool.getALPHA8(cropW, cropH)
-        var dilatedMask: Bitmap? = null
         try {
             maskBitmap.eraseColor(0)
-            // TachiyomiAT: tight text-REGION mask instead of the detector's
-            // loose bounding boxes. The earlier code filled each box as a solid
-            // white rectangle and asked the generative model to reconstruct the
-            // whole hole — destructive on free text (SFX, narration), where the
-            // model hallucinated a whole-box fill over the original background.
-            // buildTightTextRegionMask runs the same detector chain the bubble
-            // cleaner uses to find WHERE text is, then fills a SOLID rectangle
-            // tightly fitted to the detected text (not the loose detector box,
-            // not sparse strokes) — matching production AOT-GAN manga-translation
-            // practice. Per-box solid fallback inside the helper guarantees a
-            // uniform box is still fully erased, so this never regresses
-            // whole-box coverage.
+            // TachiyomiAT: the neural (AOT) erase mask is now SOLID padded
+            // PaddleOCR-v6 line boxes — the prototype `mask_mode = paddle_boxes`.
+            // [boxes] arrive here already back-projected to page coords by
+            // refineFreeTextBoxes (Paddle line boxes, or a detector-v4 fallback
+            // box where Paddle found nothing). Localize them to the crop and
+            // build the mask with BubbleMaskBuilder.buildRectMask: pad each box
+            // by MASK_PAD and dilate with a disk SE. This is deliberately boring
+            // and direct (Paddle box → pad → mask → inpaint); the prior bug was
+            // caused by shrinking/over-processing masks after detection via the
+            // pixel-heuristic buildTightTextRegionMask.
             val localBoxes = normalizedBoxes.map { box ->
                 intArrayOf(box[0] - cropX1, box[1] - cropY1, box[2] - cropX1, box[3] - cropY1)
             }
-            val cropPixels = IntArray(cropW * cropH)
-            image.getPixels(cropPixels, 0, cropW, cropX1, cropY1, cropW, cropH)
-            val textRegionMask = bubbleCleaner.buildTightTextRegionMask(
-                pixels = cropPixels,
-                contextW = cropW,
-                contextH = cropH,
+            val textRegionMask = BubbleMaskBuilder.buildRectMask(
                 boxes = localBoxes,
+                width = cropW,
+                height = cropH,
+                pad = MASK_PAD,
+                dilateRadius = 2,
             )
             // Convert the byte mask to the ARGB mask bitmap the inpaint() path
             // expects: 1 byte → opaque white, 0 byte → transparent.
@@ -401,18 +551,18 @@ class AOTInpainting {
             }
             maskBitmap.setPixels(maskPixels, 0, cropW, 0, 0, cropW, cropH)
 
-            val dilated = dilateMask(maskBitmap, kernel = 5, iterations = 2)
-            dilatedMask = dilated
+            // TachiyomiAT: buildRectMask already dilates with a disk SE, so no
+            // second dilation pass here (the prior dilateMask call would double-
+            // grow the already-dilated mask).
             return inpaint(
                 sess = sess,
                 image = image,
-                maskBitmap = dilated,
+                maskBitmap = maskBitmap,
                 cropBounds = intArrayOf(cropX1, cropY1, cropX2, cropY2),
                 maskAlreadyCropped = true,
                 fallbackBoxes = normalizedBoxes,
             )
         } finally {
-            if (dilatedMask != null) BitmapPool.putARGB8888(dilatedMask)
             BitmapPool.putALPHA8(maskBitmap)
         }
     }
@@ -640,8 +790,18 @@ class AOTInpainting {
         val safeW = min(inpW, mskW)
         val safeH = min(inpH, mskH)
 
-        val inpaintedPixels = getResultPixels()
-        val maskPixels = getMaskPixels()
+        // TachiyomiAT: size the read buffers to the ACTUAL read region, NOT the
+        // pooled MAX_TOTAL_PIXELS (512×512). width/height here are the unbounded
+        // CROP dimensions (cropMargin can push them well past 512), so reading
+        // safeW*safeH into the 512² pooled buffer overflows →
+        // ArrayIndexOutOfBoundsException in Bitmap.getPixels, which crashed
+        // inpaint deterministically on large text regions (the page-24
+        // "cannot reprocess" reproduction). The pooled buffers are an
+        // optimization for the fixed 512² inference read; these post-model
+        // guard reads are on the crop-sized bitmap, so they must be transient.
+        val readSize = safeW * safeH
+        val inpaintedPixels = if (readSize <= MAX_TOTAL_PIXELS) getResultPixels() else IntArray(readSize)
+        val maskPixels = if (readSize <= MAX_TOTAL_PIXELS) getMaskPixels() else IntArray(readSize)
         inpainted.getPixels(inpaintedPixels, 0, safeW, 0, 0, safeW, safeH)
         if (maskAlreadyCropped) {
             mask.getPixels(maskPixels, 0, safeW, 0, 0, safeW, safeH)
@@ -662,9 +822,18 @@ class AOTInpainting {
         height: Int,
     ): Bitmap {
         val result = BitmapPool.getARGB8888(width, height)
-        val origPixels = getImgPixels()
-        val inpPixels = getResultPixels()
-        val maskPixels = getMaskPixels()
+        // TachiyomiAT: size the read buffers to the ACTUAL crop dimensions, NOT
+        // the pooled MAX_TOTAL_PIXELS (512×512). width/height are the unbounded
+        // CROP dims (cropMargin can push them past 512); reading them into the
+        // 512² pooled buffer overflowed → ArrayIndexOutOfBoundsException (the
+        // page-24 inpaint crash). The pooled buffers only fit the fixed 512²
+        // inference read; these post-model blend reads are on the crop-sized
+        // bitmap, so fall back to a transient allocation when the crop exceeds
+        // the pool cap.
+        val blendSize = width * height
+        val origPixels = if (blendSize <= MAX_TOTAL_PIXELS) getImgPixels() else IntArray(blendSize)
+        val inpPixels = if (blendSize <= MAX_TOTAL_PIXELS) getResultPixels() else IntArray(blendSize)
+        val maskPixels = if (blendSize <= MAX_TOTAL_PIXELS) getMaskPixels() else IntArray(blendSize)
 
         original.getPixels(origPixels, 0, width, xMin, yMin, width, height)
 
@@ -727,54 +896,6 @@ class AOTInpainting {
         val g = ((original shr 8 and 0xFF) * inv + (inpainted shr 8 and 0xFF) * alpha).roundToInt().coerceIn(0, 255)
         val b = ((original and 0xFF) * inv + (inpainted and 0xFF) * alpha).roundToInt().coerceIn(0, 255)
         return (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-    }
-
-    private fun dilateMask(mask: Bitmap, kernel: Int, iterations: Int): Bitmap {
-        val width = mask.width
-        val height = mask.height
-        val radius = max(1, kernel / 2)
-        var current = IntArray(width * height)
-        mask.getPixels(current, 0, width, 0, 0, width, height)
-
-        // TachiyomiAT: disk structuring element — restrict the (2·radius+1)²
-        // scan to offsets where dx²+dy² ≤ radius². A square SE preserves
-        // right-angle corners on the (already rectangular) tight text-region
-        // mask; a disk SE rounds them, which is the fix for the reported
-        // "corners too sharp" neural-inpaint artifact. Matches the FAST path's
-        // BubbleMaskBuilder.dilateMaskDisk.
-        val diskOffsets = mutableListOf<Pair<Int, Int>>()
-        for (dy in -radius..radius) {
-            for (dx in -radius..radius) {
-                if (dx * dx + dy * dy <= radius * radius) {
-                    diskOffsets += dx to dy
-                }
-            }
-        }
-
-        repeat(iterations) {
-            val next = current.copyOf()
-            for (y in 0 until height) {
-                for (x in 0 until width) {
-                    val idx = y * width + x
-                    if (maskValue(current[idx]) > 127) continue
-                    var found = false
-                    for ((dx, dy) in diskOffsets) {
-                        val yy = y + dy
-                        if (yy !in 0 until height) continue
-                        val xx = x + dx
-                        if (xx !in 0 until width) continue
-                        if (maskValue(current[yy * width + xx]) > 127) {
-                            found = true
-                            break
-                        }
-                    }
-                    if (found) next[idx] = 0xFFFFFFFF.toInt()
-                }
-            }
-            current = next
-        }
-
-        return Bitmap.createBitmap(current, width, height, Bitmap.Config.ARGB_8888)
     }
 
     private fun maskValue(pixel: Int): Int = max(pixel and 0xFF, pixel ushr 24)

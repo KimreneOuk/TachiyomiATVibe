@@ -31,12 +31,18 @@ object TranslationProgress {
      * A page counts toward "done" for the progress indicator when it has reached
      * a terminal state. Mirrors the reader's counting at
      * ReaderViewModel.kt:2011-2012 (rendered/textless + permanently-failed).
+     *
+     * TachiyomiAT: uses [hasExhaustedRetries] (keys on [PageTranslation.attemptCount],
+     * i.e. DISTINCT failed attempts) rather than [PageTranslation.retryCount], so a
+     * single transient inpaint failure that double-counted retryCount within one
+     * attempt no longer falsely marks the page as terminal-for-progress. This
+     * keeps the progress indicator consistent with the scheduler's skip gate.
      */
     private fun PageTranslation.isTerminalForProgress(): Boolean {
         if (hasRenderedResult) return true
         if (isTextlessTerminal) return true
-        // A page whose every relevant stage has failed and exhausted retries is
+        // A page whose stages have failed and exhausted retry attempts is
         // terminal for progress purposes (won't improve without user action).
-        return isStageFailed && retryCount >= StageStatus.MAX_STAGE_RETRIES
+        return hasExhaustedRetries
     }
 }

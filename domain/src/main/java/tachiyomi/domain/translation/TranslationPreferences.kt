@@ -90,6 +90,8 @@ class TranslationPreferences(
      */
     fun translationExperimentalQnn() = preferenceStore.getBoolean("translation_experimental_qnn", false)
 
+    fun translationExperimentalPaddleMasking() = preferenceStore.getBoolean("translation_experimental_paddle_masking", false)
+
     fun translationRecentLanguagesFrom() = preferenceStore.getString("translation_recent_languages_from", "")
     fun translationRecentLanguagesTo() = preferenceStore.getString("translation_recent_languages_to", "")
 

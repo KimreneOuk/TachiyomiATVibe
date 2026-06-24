@@ -101,4 +101,6 @@
     <string name="translation_confirm_open_settings">Translation settings</string>
     <string name="pref_confirm_pretranslate">Confirm before batch translation</string>
     <string name="pref_confirm_pretranslate_summary">Show a settings review popup before translating a chapter from the manga screen</string>
+    <string name="pref_experimental_paddle_masking">Experimental PaddleOCR masking</string>
+    <string name="pref_experimental_paddle_masking_summary">Directly uses PaddleOCR DET bounding boxes as erasure masks, skipping color heuristics</string>
 </resources>
