@@ -4,13 +4,12 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.core.content.res.ResourcesCompat
 import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.TranslationBlock
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.sqrt
 
 class PageTextRenderer(context: Context) {
 
@@ -31,10 +30,45 @@ class PageTextRenderer(context: Context) {
         isSubpixelText = true
         style = Paint.Style.STROKE
         typeface = boldTypeface
-        textAlign = Paint.Align.CENTER
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
     }
+
+    /**
+     * TachiyomiAT: [TextMeasurer] backed by a real [android.graphics.Paint]. Kept
+     * allocation-light — [measurePaint] is reused across all measurements in one
+     * render pass (the legacy `cjkWrap` allocated a throwaway Paint per wrap; this
+     * hoists one out instead). Created ONCE per renderer and reused by the planner
+     * and the draw helpers.
+     */
+    private inner class PaintTextMeasurer : TextMeasurer {
+        private val measurePaint = Paint().apply {
+            typeface = boldTypeface
+            isAntiAlias = true
+        }
+
+        override fun measureTextWidth(text: String, fontSizePx: Float): Float {
+            measurePaint.textSize = fontSizePx
+            return measurePaint.measureText(text)
+        }
+
+        override fun lineHeight(fontSizePx: Float): Float {
+            measurePaint.textSize = fontSizePx
+            val fm = measurePaint.fontMetrics
+            return fm.descent - fm.ascent
+        }
+    }
+
+    private val measurer = PaintTextMeasurer()
+
+    private val VERTICAL_PUNCTUATION_MAP = mapOf(
+        'ー' to '︱', '―' to '︱', '─' to '︱', '-' to '︱',
+        '「' to '﹁', '」' to '﹂', '『' to '﹃', '』' to '﹄',
+        '（' to '︵', '）' to '︶', '(' to '︵', ')' to '︶',
+        '【' to '︻', '】' to '︼', '〔' to '︹', '〕' to '︺',
+        '［' to '﹇', '］' to '﹈', '[' to '﹇', ']' to '﹈',
+        '{' to '︷', '}' to '︸', '｛' to '︷', '｝' to '︸',
+    )
 
     /**
      * Draws the translated [blocks] onto [bitmap] and returns the bitmap that
@@ -55,6 +89,11 @@ class PageTextRenderer(context: Context) {
      * symptom. Pass [renderSourceText] = true ONLY for an explicit draft/debug
      * mode that wants to overlay the source on top of the cleaned image; the
      * translate path never does.
+     *
+     * Layout is delegated to [TextLayoutPlanner] (pure, neighbour-aware); this
+     * method is now only responsible for DRAWING the resolved [BlockLayout] list
+     * onto the canvas. See the neighbour-aware layout contract in
+     * `docs/TRANSLATION_MODULE.md`.
      */
     fun render(
         bitmap: Bitmap,
@@ -72,71 +111,90 @@ class PageTextRenderer(context: Context) {
         // copy is skipped to avoid the extra allocation.
         val target = if (bitmap.isMutable) bitmap else bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(target)
-        for (block in blocks) {
-            val text = if (renderSourceText) {
-                block.translation.ifBlank { block.text }
+
+        val layouts = TextLayoutPlanner.plan(
+            blocks = blocks,
+            pageWidth = bitmap.width.toFloat(),
+            pageHeight = bitmap.height.toFloat(),
+            sampleSize = sampleSize,
+            renderSourceText = renderSourceText,
+            measurer = measurer,
+        )
+
+        for (layout in layouts) {
+            fillPaint.color = layout.block.textColor.toInt()
+            fillPaint.textSize = layout.fontSizePx
+            strokePaint.color = layout.block.strokeColor.toInt()
+            strokePaint.strokeWidth = layout.strokeWidth
+            strokePaint.textSize = layout.fontSizePx
+
+            // Clip only when the planner could not place this block without an
+            // overlap — the structural no-overlap guarantee. save()/restore() are
+            // scoped so the clip never leaks to sibling blocks.
+            val saved = if (layout.clipRect != null) {
+                val sc = canvas.save()
+                canvas.clipRect(layout.clipRect.toRectF())
+                sc
             } else {
-                block.translation
+                -1
             }
-            if (text.isBlank()) continue
-
-            val (baseX, baseY, baseW, baseH, safeW, safeH) = computeRects(block, sampleSize)
-            if (safeW < 1f || safeH < 1f) continue
-
-            val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
-            val fontSizePx = binarySearchFontSize(
-                text = text,
-                safeW = safeW,
-                safeH = safeH,
-                containerW = baseW,
-                isVertical = isVertical,
-                sampleSize = sampleSize,
-            )
-
-            val strokeWidth = computeStrokeWidth(block, fontSizePx, sampleSize)
-            val textColor = block.textColor.toInt()
-            val strokeColor = block.strokeColor.toInt()
-
-            fillPaint.color = textColor
-            fillPaint.textSize = fontSizePx
-
-            strokePaint.color = strokeColor
-            strokePaint.strokeWidth = strokeWidth
-            strokePaint.textSize = fontSizePx
-
-            val containerCX = baseX + baseW / 2f
-            val containerCY = baseY + baseH / 2f
-
-            if (isVertical) {
-                drawVertical(canvas, text, fontSizePx, containerCX, containerCY, safeH)
-            } else {
-                drawHorizontal(canvas, text, fontSizePx, safeW, containerCX, containerCY)
+            try {
+                if (layout.isVertical) {
+                    drawVertical(
+                        canvas,
+                        layout.text,
+                        layout.fontSizePx,
+                        layout.originX,
+                        layout.originY,
+                        layout.safeH,
+                    )
+                } else {
+                    drawHorizontal(
+                        canvas,
+                        layout.text,
+                        layout.fontSizePx,
+                        layout.safeW,
+                        layout.originX,
+                        layout.originY,
+                        layout.drawAlignLeft,
+                    )
+                }
+            } finally {
+                if (layout.clipRect != null) canvas.restoreToCount(saved)
             }
         }
         return target
     }
+
+    private fun FloatRect.toRectF(): RectF = RectF(left, top, right, bottom)
 
     private fun drawHorizontal(
         canvas: Canvas,
         text: String,
         fontSizePx: Float,
         safeW: Float,
-        containerCX: Float,
-        containerCY: Float,
+        originX: Float,
+        originY: Float,
+        drawAlignLeft: Boolean,
     ) {
-        val lines = cjkWrap(text, fontSizePx, safeW)
+        val lines = TextLayoutPlanner.cjkWrap(text, fontSizePx, safeW, measurer)
         if (lines.isEmpty()) return
 
         val fm = fillPaint.fontMetrics
         val lineHeight = fm.descent - fm.ascent
         val totalHeight = lines.size * lineHeight
 
-        var lineY = containerCY - totalHeight / 2f - fm.ascent
+        var lineY = originY - totalHeight / 2f - fm.ascent
+
+        // drawAlignLeft anchors each line at the clip's left edge; otherwise lines
+        // are centred on originX (the box centre). Paint.textAlign handles both.
+        fillPaint.textAlign = if (drawAlignLeft) Paint.Align.LEFT else Paint.Align.CENTER
+        strokePaint.textAlign = fillPaint.textAlign
 
         for (line in lines) {
             if (line.isNotEmpty()) {
-                canvas.drawText(line, containerCX, lineY, strokePaint)
-                canvas.drawText(line, containerCX, lineY, fillPaint)
+                canvas.drawText(line, originX, lineY, strokePaint)
+                canvas.drawText(line, originX, lineY, fillPaint)
             }
             lineY += lineHeight
         }
@@ -146,8 +204,8 @@ class PageTextRenderer(context: Context) {
         canvas: Canvas,
         text: String,
         fontSizePx: Float,
-        containerCX: Float,
-        containerCY: Float,
+        originX: Float,
+        originY: Float,
         safeH: Float,
     ) {
         val charStep = fontSizePx * 1.05f
@@ -169,15 +227,17 @@ class PageTextRenderer(context: Context) {
         if (current.isNotEmpty()) columns.add(current.toString())
         if (columns.isEmpty()) return
 
+        fillPaint.textAlign = Paint.Align.CENTER
+        strokePaint.textAlign = Paint.Align.CENTER
         val fm = fillPaint.fontMetrics
 
         val totalW = columns.size * colStep
-        val colsRight = containerCX + totalW / 2f
+        val colsRight = originX + totalW / 2f
 
         for ((colIdx, col) in columns.withIndex()) {
             val colCX = colsRight - colIdx * colStep - colStep / 2f
             val colH = col.length * charStep
-            val colYStart = containerCY - colH / 2f
+            val colYStart = originY - colH / 2f
 
             for ((charIdx, ch) in col.withIndex()) {
                 val charY = colYStart + charIdx * charStep
@@ -188,221 +248,22 @@ class PageTextRenderer(context: Context) {
         }
     }
 
-    private fun cjkWrap(text: String, fontSizePx: Float, maxWidthPx: Float): List<String> {
-        val measurePaint = Paint().apply {
-            typeface = boldTypeface
-            isAntiAlias = true
-            textSize = fontSizePx
-        }
-
-        val tokens = mutableListOf<String>()
-        var i = 0
-        while (i < text.length) {
-            val ch = text[i]
-            if (ch == '\n') {
-                tokens.add("\n")
-                i++
-            } else if (ch.isWhitespace()) {
-                tokens.add(" ")
-                i++
-            } else if (isCJK(ch)) {
-                tokens.add(ch.toString())
-                i++
-            } else {
-                val start = i
-                while (i < text.length && !isCJK(text[i]) && !text[i].isWhitespace() && text[i] != '\n') {
-                    i++
-                }
-                tokens.add(text.substring(start, i))
-            }
-        }
-
-        val lines = mutableListOf<String>()
-        var current = StringBuilder()
-        for (token in tokens) {
-            if (token == "\n") {
-                lines.add(current.toString())
-                current = StringBuilder()
-                continue
-            }
-            val candidate = current.toString() + token
-            val width = measurePaint.measureText(candidate)
-            if (width > maxWidthPx && current.isNotEmpty()) {
-                lines.add(current.toString().trimEnd())
-                current = StringBuilder(if (token == " ") "" else token)
-            } else {
-                current.append(token)
-            }
-        }
-        if (current.isNotEmpty()) {
-            lines.add(current.toString().trimEnd())
-        }
-        return if (lines.isEmpty()) listOf(text) else lines
-    }
-
-    private fun binarySearchFontSize(
-        text: String,
-        safeW: Float,
-        safeH: Float,
-        containerW: Float,
-        isVertical: Boolean,
-        sampleSize: Int = 1,
-    ): Float {
-        val scale = 1f / sampleSize
-        val startSize = max(containerW * 1.5f, 36f * scale).toInt()
-        var high = min(max(startSize, (36 * scale).toInt()), (72 * scale).toInt())
-        var low = max(2, (8 * scale).toInt())
-        var best = low.toFloat()
-
-        val testPaint = Paint().apply {
-            typeface = boldTypeface
-            isAntiAlias = true
-        }
-
-        while (low <= high) {
-            val mid = (low + high) / 2
-            testPaint.textSize = mid.toFloat()
-
-            if (isVertical) {
-                val charStep = mid * 1.05f
-                val colStep = mid * 1.25f
-                val chars = text.replace("\r", "").replace("\n", "").replace(" ", "")
-                val maxChars = max(1, (safeH / charStep).toInt())
-                val numCols = (chars.length + maxChars - 1) / maxChars.coerceAtLeast(1)
-                val totalW = numCols * colStep
-                val maxColH = maxChars * charStep
-                if (totalW <= safeW && maxColH <= safeH) {
-                    best = mid.toFloat()
-                    low = mid + 1
-                } else {
-                    high = mid - 1
-                }
-            } else {
-                val wrapped = cjkWrap(text, mid.toFloat(), safeW)
-                val fm = testPaint.fontMetrics
-                val lineHeight = fm.descent - fm.ascent
-                val totalHeight = wrapped.size * lineHeight
-                val maxLineWidth = wrapped.maxOfOrNull { testPaint.measureText(it) } ?: 0f
-                if (totalHeight <= safeH && maxLineWidth <= safeW) {
-                    best = mid.toFloat()
-                    low = mid + 1
-                } else {
-                    high = mid - 1
-                }
-            }
-        }
-
-        return best
-    }
-
-    private fun computeStrokeWidth(block: TranslationBlock, fontSizePx: Float, sampleSize: Int = 1): Float {
-        val scale = 1f / sampleSize
-        if (block.strokeWidth > 0f) {
-            val startSizeEstimate = max(block.width * 1.5f, 36f * scale)
-            val scaled = if (startSizeEstimate > 0f && fontSizePx < startSizeEstimate) {
-                (block.strokeWidth * scale) * (fontSizePx / startSizeEstimate)
-            } else {
-                block.strokeWidth * scale
-            }
-            return max(1.0f * scale, scaled)
-        }
-        return max(1.5f * scale, fontSizePx * 0.07f)
-    }
-
     companion object {
-        private val VERTICAL_PUNCTUATION_MAP = mapOf(
-            'ー' to '︱', '―' to '︱', '─' to '︱', '-' to '︱',
-            '「' to '﹁', '」' to '﹂', '『' to '﹃', '』' to '﹄',
-            '（' to '︵', '）' to '︶', '(' to '︵', ')' to '︶',
-            '【' to '︻', '】' to '︼', '〔' to '︹', '〕' to '︺',
-            '［' to '﹇', '］' to '﹈', '[' to '﹇', ']' to '﹈',
-            '{' to '︷', '}' to '︸', '｛' to '︷', '｝' to '︸',
-        )
-
-        private fun isCJK(ch: Char): Boolean {
-            val cp = ch.code
-            return (cp in 0x4E00..0x9FFF) ||
-                (cp in 0x3400..0x4DBF) ||
-                (cp in 0x20000..0x2A6DF) ||
-                (cp in 0x2A700..0x2B73F) ||
-                (cp in 0x2B740..0x2B81F) ||
-                (cp in 0xF900..0xFAFF) ||
-                (cp in 0x2F800..0x2FA1F) ||
-                (cp in 0x3000..0x303F) ||
-                (cp in 0x3040..0x309F) ||
-                (cp in 0x30A0..0x30FF) ||
-                (cp in 0x31F0..0x31FF) ||
-                (cp in 0xAC00..0xD7AF) ||
-                (cp in 0xFF00..0xFFEF) ||
-                (cp in 0xFE30..0xFE4F)
-        }
+        /**
+         * Fraction of non-whitespace characters that are CJK. Delegated to
+         * [TextLayoutPlanner.cjkRatio] so the planner and the renderer share one
+         * source of truth; retained here for the existing
+         * `PageTextRendererDirectionTest`.
+         */
+        @JvmStatic
+        internal fun cjkRatio(text: String): Float = TextLayoutPlanner.cjkRatio(text)
 
         /**
-         * TachiyomiAT: fraction of non-whitespace characters that are CJK, in
-         * `[0, 1]`. 0 when the text is blank/whitespace-only (caller decides).
-         *
-         * Used by [shouldRenderVertical] to decide layout direction. The old
-         * rule was `text.any(::isCJK)`, which flipped the WHOLE block vertical
-         * the moment a single CJK glyph appeared — so an English line that
-         * still contained one residual Japanese char (e.g. a leaked `(笑)` SFX)
-         * got its Latin letters stacked top-to-bottom. Majority rule fixes
-         * that: only CJK-dominant text stacks vertically.
+         * Vertical layout only when CJK chars make up the MAJORITY (>50%) of the
+         * non-whitespace text. Delegated to [TextLayoutPlanner.shouldRenderVertical].
          */
-        internal fun cjkRatio(text: String): Float {
-            val chars = text.asSequence().filter { !it.isWhitespace() }
-            val total = chars.count()
-            if (total == 0) return 0f
-            val cjk = text.count { !it.isWhitespace() && isCJK(it) }
-            return cjk.toFloat() / total.toFloat()
-        }
-
-        /**
-         * TachiyomiAT: vertical layout only when CJK chars make up the MAJORITY
-         * (>50%) of the non-whitespace text. Guards against one residual CJK
-         * glyph in an otherwise-Latin translation (a leaked `(笑)`, an
-         * untranslated name) forcing the whole English line to stack
-         * vertically. A 50/50 split defaults to horizontal — CJK-dominant
-         * phrases like `"こんにちは"` (5/5) or `"今日 is the day"` (2/3) still
-         * stack; `"(笑)"` (1/3) and `"What's up?"` (0) do not.
-         */
-        internal fun shouldRenderVertical(text: String): Boolean = cjkRatio(text) > 0.5f
-
-        internal fun computeRects(block: TranslationBlock, sampleSize: Int = 1): RectResult {
-            val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
-            val scale = 1f / sampleSize
-            val textPad = if (hasParent) {
-                max(12f * scale, 0.15f * min(block.parentWidth, block.parentHeight))
-            } else {
-                max(4f * scale, 0.03f * min(block.width, block.height))
-            }
-            var baseX = if (hasParent) block.parentX else block.x
-            var baseY = if (hasParent) block.parentY else block.y
-            var baseW = if (hasParent) block.parentWidth else block.width
-            var baseH = if (hasParent) block.parentHeight else block.height
-            if (!hasParent && baseH > 0f && baseW > 0f && baseH / baseW > 2.0f) {
-                val area = baseW * baseH
-                var newH = sqrt(area.toDouble()).toFloat()
-                var newW = newH
-                newW = newW.coerceIn(baseW * 1.5f, baseW * 3.5f)
-                newH = area / newW
-                baseX += (baseW - newW) / 2f
-                baseY += (baseH - newH) / 2f
-                baseW = newW
-                baseH = newH
-            }
-            val safePad = min(textPad, min(baseW, baseH) / 3f)
-            val safeW = max(1f, baseW - safePad * 2f)
-            val safeH = max(1f, baseH - safePad * 2f)
-            return RectResult(baseX, baseY, baseW, baseH, safeW, safeH)
-        }
+        @JvmStatic
+        internal fun shouldRenderVertical(text: String): Boolean =
+            TextLayoutPlanner.shouldRenderVertical(text)
     }
-
-    internal data class RectResult(
-        val baseX: Float,
-        val baseY: Float,
-        val baseW: Float,
-        val baseH: Float,
-        val safeW: Float,
-        val safeH: Float,
-    )
 }
