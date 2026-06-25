@@ -393,6 +393,13 @@ class ReaderViewModel @JvmOverloads constructor(
     private val translationDiagnosticsEnabled = translationPreferences.translationDiagnostics().get()
 
     init {
+        // TachiyomiAT: Auto-translate is a per-session convenience, not a
+        // persistent default. Force it off on reader entry so a chapter never
+        // starts translating the instant the reader opens — the user must opt in
+        // via the Translation settings sheet each session. It then stays on while
+        // navigating within this reader session.
+        translationPreferences.autoTranslate().set(false)
+
         // To save state
         state.map { it.viewerChapters?.currChapter }
             .distinctUntilChanged()

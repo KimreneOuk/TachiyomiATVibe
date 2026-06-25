@@ -93,6 +93,7 @@ fun TranslationSettingsSheet(
             )
             StopAllSection(onStopAllTranslation)
             LanguagesSection(prefs)
+            InpaintSection(prefs)
             EngineSection(prefs)
         }
     }
@@ -373,9 +374,33 @@ private fun SearchableLanguageRow(
     )
 }
 
+/**
+ * TachiyomiAT: reader-side inpaint-mode picker. Previously inpaint mode was
+ * only configurable in global Settings. FAST = non-neural Telea fill; QUALITY
+ * = neural AOT-GAN reconstruction. The preference is a raw stored string
+ * ("FAST"/"QUALITY"), mapped to localized labels here.
+ */
+@Composable
+private fun ColumnScope.InpaintSection(prefs: TranslationPreferences) {
+    val pref = prefs.translationInpaintingMode()
+    val value by pref.collectAsState()
+    val entries = mapOf(
+        "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
+        "FAST" to stringResource(ATMR.strings.pref_inpainting_mode_fast),
+    ).toImmutableMap()
+
+    EngineListRow(
+        title = stringResource(ATMR.strings.pref_inpainting_mode),
+        entries = entries,
+        value = value,
+        onValueChange = { pref.set(it) },
+    )
+}
+
 @Composable
 private fun ColumnScope.EngineSection(prefs: TranslationPreferences) {
-    val category by prefs.translationEngineCategory().collectAsState()
+    val categoryPref = prefs.translationEngineCategory()
+    val category by categoryPref.collectAsState()
     val typeEntries = TranslationEngineCategory.entries.associateWith { entry ->
         when (entry) {
             TranslationEngineCategory.STANDARD -> stringResource(ATMR.strings.pref_translation_type_standard)
@@ -383,15 +408,17 @@ private fun ColumnScope.EngineSection(prefs: TranslationPreferences) {
         }
     }.toImmutableMap()
 
-    TextPreferenceWidget(
+    // TachiyomiAT: the top-level translator type (Standard vs AI model) is now
+    // switchable from inside the reader, not only global Settings. Previously
+    // this was a read-only TextPreferenceWidget (no-op click). The sub-engine
+    // rows below still render the per-category picker (MLKit/Google or provider
+    // + model) and reactively swap when the category changes.
+    EngineListRow(
         title = stringResource(ATMR.strings.pref_translation_type),
-        subtitle = typeEntries[category],
-        onPreferenceClick = {},
+        entries = typeEntries,
+        value = category,
+        onValueChange = { categoryPref.set(it) },
     )
-    // Note: the engine category is selected via the standard picker below so
-    // the subtitle stays in sync; reuse the same ListPreference pattern as the
-    // global settings screen by rendering an inline radio dialog through the
-    // widget. The category switch is intentionally a small control here.
 
     when (category) {
         TranslationEngineCategory.STANDARD -> StandardEngineRows(prefs)

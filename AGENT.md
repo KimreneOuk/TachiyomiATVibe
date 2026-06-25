@@ -81,7 +81,24 @@ When modifying code:
 
 ---
 
-## Documentation & Tests
+## Test-Driven Change Policy
+
+For behavior changes, use a test-first workflow when practical:
+
+1. Inspect existing tests for the affected subsystem.
+2. If relevant tests already exist, run or review them before editing.
+3. If coverage is missing, design the smallest automatic test that proves the intended behavior.
+4. Make the code change.
+5. Run the smallest relevant test set.
+6. Report what was tested and what was not.
+
+Do not add tests for purely mechanical edits unless they protect against a real regression.
+
+Do not create broad, brittle, or unrelated tests just to satisfy process.
+
+---
+
+## Documentation
 
 Update documentation when:
 
@@ -90,9 +107,7 @@ Update documentation when:
 * User-visible behavior changes
 * Existing documentation becomes inaccurate
 
-Update or add tests when behavior changes.
-
-Do not create unrelated documentation or tests.
+Do not create unrelated documentation.
 
 ---
 
@@ -177,9 +192,22 @@ Keep responses concise and purposeful.
 
 ---
 
+## Completion Report
+
+At completion, report:
+
+* Files modified
+* Tests added or updated
+* Validation performed
+* Validation not performed
+* Any risks, assumptions, or follow-up work
+
+---
+
 ## Core Principles
 
 * Documentation-driven development
+* Test-driven behavior changes
 * Performance-first mindset
 * Memory-conscious design
 * Understand before changing

@@ -1423,12 +1423,20 @@ class TranslationPipeline(
         toLang: TextTranslatorLanguage,
     ) {
         val selectedOcrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
+        val desiredInpaintingMode = inpaintingModeFromPref()
         val rebuildClosedEngines = enginesClosed
-        if (rebuildClosedEngines || fromLang != currentFromLang || selectedOcrModel != currentOcrModel) {
+        // TachiyomiAT: include inpainting mode in the rebuild gate so switching
+        // FAST<->QUALITY from the reader sheet takes effect on the next translate
+        // without requiring a language/OCR model change or app restart.
+        if (rebuildClosedEngines ||
+            fromLang != currentFromLang ||
+            selectedOcrModel != currentOcrModel ||
+            desiredInpaintingMode != currentInpaintingMode
+        ) {
             recognitionEngine.close()
             currentFromLang = fromLang
             currentOcrModel = selectedOcrModel
-            currentInpaintingMode = inpaintingModeFromPref()
+            currentInpaintingMode = desiredInpaintingMode
             recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
         }
         // Rebuild the text translator whenever the full engine configuration
