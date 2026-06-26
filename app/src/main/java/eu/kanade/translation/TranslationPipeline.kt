@@ -1750,15 +1750,25 @@ class TranslationPipeline(
                     // bound here is a local loop counter only.
                     var singlePageRetry = 0
                     while (pageTranslation.translationStatus == StageStatus.PARTIAL &&
-                        singlePageRetry < SINGLE_PAGE_PARTIAL_MAX_RETRIES &&
-                        AiTranslationRetryPlanner.untranslatedBlocks(pageTranslation).isNotEmpty()
+                        singlePageRetry < SINGLE_PAGE_PARTIAL_MAX_RETRIES
                     ) {
+                        val missing = AiTranslationRetryPlanner.untranslatedBlocks(pageTranslation)
+                        if (missing.isEmpty()) break
                         singlePageRetry++
                         logcat(LogPriority.INFO) {
-                            "TachiyomiAT single-page PARTIAL retry $singlePageRetry/$SINGLE_PAGE_PARTIAL_MAX_RETRIES: pageKey=$pageKey"
+                            "TachiyomiAT single-page PARTIAL retry $singlePageRetry/$SINGLE_PAGE_PARTIAL_MAX_RETRIES: " +
+                                "pageKey=$pageKey missing=${missing.size}"
                         }
                         pageTranslation.translationStatus = StageStatus.RUNNING
-                        textTranslator.translatePage(pageKey, pageTranslation)
+                        // Targeted retry: re-request ONLY the still-untranslated
+                        // blocks (same object references, so the translator mutates
+                        // their `translation` in place). A model that deterministically
+                        // drops one line in a full N-block batch almost always recovers
+                        // it as a lone [0] entry when re-sent in isolation — the prior
+                        // code re-translated the WHOLE page, so the same line was dropped
+                        // every retry and the block stayed blank.
+                        val retryPage = PageTranslation(blocks = missing.toMutableList())
+                        textTranslator.translatePage(pageKey, retryPage)
                         TranslationBlockValidation.applyTo(pageTranslation)
                     }
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }

@@ -45,15 +45,15 @@ data class TextLine(
  *  3. For each component: compute the axis-aligned bbox + mean prob (score).
  *  4. Drop components below [boxThresh] mean score, below [minArea] pixels, or
  *     exceeding [maxCandidates].
- *  5. Unclip: expand each bbox outward by [unclipRatio] about its centroid,
- *     clamped to the map bounds — rec needs a little slack around the glyphs.
+ *  5. Output the raw axis-aligned bbox `[x1,y1,x2,y2]` (inclusive max) — no
+ *     expansion.
  *
  * The reference DB postprocess computes a rotated minimum-area rectangle per
  * component (`cv2.minAreaRect`). We use the axis-aligned bbox instead: manga
  * text lines are axis-aligned (horizontal rows or vertical columns), rec
  * resamples to a fixed 48 px height regardless, and avoiding the oriented-rect
- * math keeps this pure + simple. If on-device A/B shows axis-aligned clipping
- * of glyph edges, [unclipRatio] can be tuned (it already adds slack).
+ * math keeps this pure + simple. The raw axis-aligned bbox is sufficient;
+ * the rec head already has padding from its own resize to 48 px height.
  *
  * All inputs/outputs are in **map space** (the prob map's pixel dimensions). The
  * caller ([PaddleOcrV6DetEngine]) back-projects the resulting bboxes to crop
@@ -66,7 +66,6 @@ object DbPostProcess {
         const val THRESH = 0.2f
         const val BOX_THRESH = 0.45f
         const val MAX_CANDIDATES = 3000
-        const val UNCLIP_RATIO: Double = 1.4
     }
 
     /**
@@ -74,6 +73,7 @@ object DbPostProcess {
      * `max_candidates` and a min-area floor; tiny specks are noise. Sized in map
      * space so it is resolution-independent relative to the 736-px map.
      */
+    private const val MAX_COMPONENT_AREA_FRAC = 0.5f
     private const val MIN_AREA_PX = 16
 
     // TachiyomiAT: line-merge thresholds for [mergeLineFragments]. Tuned in the
@@ -98,7 +98,6 @@ object DbPostProcess {
         thresh: Float = Defaults.THRESH,
         boxThresh: Float = Defaults.BOX_THRESH,
         maxCandidates: Int = Defaults.MAX_CANDIDATES,
-        unclipRatio: Double = Defaults.UNCLIP_RATIO,
     ): List<TextLine> {
         if (width <= 0 || height <= 0 || probMap.size < width * height) return emptyList()
 
@@ -134,17 +133,16 @@ object DbPostProcess {
                     // Bound work: PaddleOCR's `max_candidates` caps the number of
                     // returned boxes; stop scanning once we have that many viable
                     // components to avoid pathological pages stalling the OCR loop.
-                    return finalize(components, boxThresh, unclipRatio, width, height)
+                    return finalize(components, boxThresh, width, height)
                 }
             }
         }
-        return finalize(components, boxThresh, unclipRatio, width, height)
+        return finalize(components, boxThresh, width, height)
     }
 
     private fun finalize(
         components: List<Component>,
         boxThresh: Float,
-        unclipRatio: Double,
         width: Int,
         height: Int,
     ): List<TextLine> {
@@ -153,8 +151,10 @@ object DbPostProcess {
             // DB's region score is the mean probability over the component's area.
             val meanScore = if (c.pixelCount > 0) c.probSum / c.pixelCount else 0f
             if (meanScore < boxThresh) continue
-            val unclipped = unclip(c, unclipRatio, width, height)
-            out.add(TextLine(bbox = unclipped, meanScore = meanScore))
+            val area = (c.maxX - c.minX + 1).toLong() * (c.maxY - c.minY + 1).toLong()
+            if (area > (MAX_COMPONENT_AREA_FRAC * width * height).toLong()) continue
+            val rawBox = intArrayOf(c.minX, c.minY, c.maxX, c.maxY)
+            out.add(TextLine(bbox = rawBox, meanScore = meanScore))
         }
         // Merge same-line / same-column fragments that the axis-aligned
         // connected-components step splits apart (normal inter-character spacing
@@ -325,29 +325,6 @@ object DbPostProcess {
         return Component(minX, minY, maxX, maxY, count, probSum)
     }
 
-    /**
-     * Expand the axis-aligned bbox outward about its centroid by [ratio],
-     * clamped to `[0, width] x [0, height]`. Equivalent to PaddleOCR's
-     * `unclip` for axis-aligned boxes (the offset length scales with the box
-     * half-extent, matching the polygon-offset intent of the reference).
-     *
-     * [ratio] is a Double (not Float) deliberately: passing `1.4f` through
-     * `halfW * ratio` promotes the Float to Double as 1.399999976158142,
-     * which truncates asymmetrically via `.toInt()` and shrinks the box by
-     * ~1 px on the far edge — a real precision bug caught by the unit test
-     * for the unclip expectation. The default [Defaults.UNCLIP_RATIO] is a
-     * Double literal to match.
-     */
-    private fun unclip(c: Component, ratio: Double, width: Int, height: Int): IntArray {
-        val w = (c.maxX - c.minX).toDouble()
-        val h = (c.maxY - c.minY).toDouble()
-        val distance = if (w + h <= 0.0) 0.0 else (w * h * ratio) / (2.0 * (w + h))
-        val x1 = kotlin.math.floor(c.minX - distance).toInt()
-        val y1 = kotlin.math.floor(c.minY - distance).toInt()
-        val x2 = kotlin.math.ceil(c.maxX + distance).toInt()
-        val y2 = kotlin.math.ceil(c.maxY + distance).toInt()
-        return intArrayOf(x1, y1, x2, y2)
-    }
 
     private data class Component(
         val minX: Int,

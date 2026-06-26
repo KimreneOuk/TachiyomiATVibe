@@ -6,6 +6,8 @@ import java.io.Closeable
 interface RoiOcrEngine : Closeable {
     suspend fun recognize(crop: Bitmap): String
 
+    suspend fun recognizeWithConf(crop: Bitmap): Pair<String, Float> = recognize(crop) to 1f
+
     /**
      * TachiyomiAT: release engine-owned off-heap/pooled memory that [close]
      * would free but that can otherwise persist across calls.

@@ -24,18 +24,22 @@
   <main class="layout">
     <aside class="sidebar">
       <section class="controls">
-        <h2>Boxes</h2>
+        <h2>Detection Settings</h2>
         <div class="button-row">
           <button id="addBoxBtn" type="button">Draw box</button>
-          <button id="autoBoxBtn" type="button">Run models</button>
           <button id="clearBoxesBtn" type="button">Clear</button>
+        </div>
+        <div class="button-row" style="margin-top: 8px;">
+          <button id="detectBtn" type="button">1. Detect</button>
+          <button id="ocrBtn" type="button">2. OCR</button>
+          <button id="inpaintBtn" type="button">3. Inpaint</button>
+          <button id="translateBtn" type="button">4. Translate</button>
+        </div>
+        <div class="button-row" style="margin-top: 8px;">
+          <button id="runAllBtn" type="button" style="width: 100%; background: var(--accent); color: var(--bg);">Run Entire Pipeline</button>
         </div>
         <p id="drawHint" class="hint">Click Draw box, then drag on the Bounding Box image.</p>
         <div id="boxList" class="box-list"></div>
-      </section>
-
-      <section class="controls">
-        <h2>Paddle DET</h2>
         <label>
           Crop pad
           <input id="paddleCropPadInput" type="range" min="0" max="48" value="12">
@@ -51,10 +55,15 @@
           <input id="paddleBoxThreshInput" type="range" min="15" max="55" value="34">
           <output id="paddleBoxThreshOut">0.34</output>
         </label>
+        <label>
+          Rec confidence
+          <input id="recConfidenceInput" type="range" min="0" max="95" value="50">
+          <output id="recConfidenceOut">0.50</output>
+        </label>
       </section>
 
       <section class="controls">
-        <h2>Inpaint Settings</h2>
+        <h2>Goal-Driven Crop Settings</h2>
         <label>
           Inpainting Mode
           <select id="modeSelect">
@@ -63,14 +72,20 @@
           </select>
         </label>
         <label>
-          Box pad
-          <input id="padInput" type="range" min="0" max="24" value="8">
-          <output id="padOut">8</output>
+          Algorithm
+          <select id="algoSelect">
+            <option value="legacy" selected>LEGACY</option>
+            <option value="coherent">COHERENT</option>
+          </select>
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px;">
+          <input id="tinyExpandInput" type="checkbox" checked>
+          <span>Tiny-box expand</span>
         </label>
         <label>
-          Feather
-          <input id="featherInput" type="range" min="0" max="24" value="8">
-          <output id="featherOut">8</output>
+          Poisson iters
+          <input id="poissonItersInput" type="range" min="50" max="800" step="50" value="300">
+          <output id="poissonItersOut">300</output>
         </label>
         <label>
           Low-res scale
@@ -82,30 +97,93 @@
           <input id="passesInput" type="range" min="4" max="80" value="36">
           <output id="passesOut">36</output>
         </label>
+        <label>
+          Gray-Fill Std Threshold
+          <input id="grayFillThreshInput" type="range" min="0" max="20" step="0.5" value="3.0">
+          <output id="grayFillThreshOut">3.0</output>
+        </label>
+      </section>
+
+      <section class="controls">
+        <h2>Native Blending Parameters</h2>
+        <label>
+          Box pad
+          <input id="padInput" type="range" min="0" max="24" value="8">
+          <output id="padOut">8</output>
+        </label>
+        <label>
+          Feather
+          <input id="featherInput" type="range" min="0" max="24" value="8">
+          <output id="featherOut">8</output>
+        </label>
         <button id="downloadBtn" type="button">Download inpainted</button>
+      </section>
+
+      <section class="controls">
+        <h2>Translation Settings</h2>
+        <label>
+          LM Studio Base URL
+          <div style="display: flex; gap: 8px;">
+            <input id="lmUrlInput" type="text" value="http://192.168.100.7:3456/v1" style="flex: 1;">
+            <button id="fetchModelsBtn" type="button" style="padding: 2px 8px;">Fetch</button>
+          </div>
+        </label>
+        <label>
+          Model Name
+          <select id="lmModelSelect">
+            <option value="local-model">local-model</option>
+          </select>
+        </label>
+        <label>
+          Max Output Tokens
+          <input id="maxTokensInput" type="number" value="8192" min="256" max="32768" step="256">
+        </label>
+      </section>
+        <div class="translation-results-wrapper" style="margin-top: 24px; border-top: 1px solid var(--panel-border); padding-top: 24px;">
+          <h2>OCR & Translation Results</h2>
+          <div id="translationResults" class="translation-results">
+            <p class="hint">No translation data yet.</p>
+          </div>
+        </div>
       </section>
     </aside>
 
-    <section class="viewer-grid">
-      <article class="pane">
-        <h2>Original</h2>
-        <canvas id="originalCanvas"></canvas>
-      </article>
-      <article class="pane">
-        <h2>Bounding Box</h2>
-        <canvas id="boxCanvas"></canvas>
-      </article>
-      <article class="pane">
-        <h2>Mask Only</h2>
-        <canvas id="maskCanvas"></canvas>
-      </article>
-      <article class="pane">
-        <h2>Inpainted</h2>
-        <canvas id="inpaintCanvas"></canvas>
-      </article>
+    <section class="viewer-stage">
+      <div class="canvas-toggles" id="canvasToggles">
+        <label>
+          <input type="radio" name="layer" value="original" checked>
+          <span>Original</span>
+        </label>
+        <label>
+          <input type="radio" name="layer" value="box">
+          <span>Bounding Box</span>
+        </label>
+        <label>
+          <input type="radio" name="layer" value="mask">
+          <span>Mask Only</span>
+        </label>
+        <label>
+          <input type="radio" name="layer" value="inpaint">
+          <span>Inpainted</span>
+        </label>
+        <label>
+          <input type="radio" name="layer" value="rendered">
+          <span>Translated</span>
+        </label>
+      </div>
+
+      <div class="canvas-container" id="canvasContainer">
+        <div class="canvas-stack" id="canvasStack">
+          <canvas id="originalCanvas" class="active"></canvas>
+          <canvas id="boxCanvas"></canvas>
+          <canvas id="maskCanvas"></canvas>
+          <canvas id="inpaintCanvas"></canvas>
+          <canvas id="renderedCanvas"></canvas>
+        </div>
+      </div>
     </section>
   </main>
 
-  <script src="./app.js"></script>
+  <script src="./app.js?v=3"></script>
 </body>
 </html>

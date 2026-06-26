@@ -20,7 +20,7 @@ object TranslationEngineBuilder {
     ): TextTranslator {
         return when (pref.translationEngineCategory().get()) {
             TranslationEngineCategory.STANDARD ->
-                StandardTranslatorKind.fromPref(pref.translationStandardEngine()).build(fromLang, toLang)
+                StandardTranslatorKind.fromPref(pref.translationStandardEngine()).build(pref, fromLang, toLang)
             TranslationEngineCategory.AI_MODEL ->
                 AiTranslatorKind.fromPref(pref.translationAiEngine()).build(pref, fromLang, toLang)
         }

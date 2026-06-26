@@ -7,32 +7,50 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
+try:
+    import cv2
+    OPENCV_AVAILABLE = True
+except ImportError:
+    OPENCV_AVAILABLE = False
+
 import numpy as np
 import onnxruntime as ort
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter, ImageOps, ImageChops, ImageFont
+import urllib.request
+import json
 
+import cci_inpaint
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "app" / "src" / "main" / "assets" / "models"
 DETECTOR_MODEL = ASSETS / "detection" / "detector-v4-s_int8.onnx"
 PADDLE_DET_MODEL = ASSETS / "ocr" / "paddle-v6-small" / "det" / "inference.onnx"
+PADDLE_REC_MODEL = ASSETS / "ocr" / "paddle-v6-small" / "inference.onnx"
+PADDLE_REC_DICT = ASSETS / "ocr" / "paddle-v6-small" / "PP-OCRv6_small_rec.txt"
 AOT_MODEL = ASSETS / "inpainting" / "aot.onnx"
 
 DETECTOR_THRESHOLD = 0.45
 PADDLE_THRESH = 0.2
-PADDLE_BOX_THRESH = 0.45
+PADDLE_BOX_THRESH = 0.34
+PADDLE_REC_CONFIDENCE = 0.5
 PADDLE_TARGET = 736
 MIN_DB_AREA = 16
+
+# Free-text (legacy) inpaint tuning. LOCAL color (ring around the text) replaces
+# the old global page median that kept free text "stuck on white".
+FREE_RING = 8           # annulus half-width (px) sampled for the local bg color
+FREE_TEXT_FEATHER = 3   # light bleed-free feather radius for free text
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=Path(__file__).parent), name="static")
 
 detector_session: ort.InferenceSession | None = None
 paddle_session: ort.InferenceSession | None = None
+paddle_rec_session: ort.InferenceSession | None = None
+paddle_rec_chars: list[str] = []
 aot_session: ort.InferenceSession | None = None
 
 
@@ -55,6 +73,251 @@ def get_paddle() -> ort.InferenceSession:
         paddle_session = ort.InferenceSession(str(PADDLE_DET_MODEL), providers=["CPUExecutionProvider"])
     return paddle_session
 
+def get_paddle_rec() -> ort.InferenceSession:
+    global paddle_rec_session, paddle_rec_chars
+    if paddle_rec_session is None:
+        paddle_rec_session = ort.InferenceSession(str(PADDLE_REC_MODEL), providers=["CPUExecutionProvider"])
+        with open(PADDLE_REC_DICT, "r", encoding="utf-8") as f:
+            paddle_rec_chars = [line.strip("\n") for line in f.readlines()]
+    return paddle_rec_session
+
+def paddle_align_width(width: int) -> int:
+    MAX_RECOGNITION_WIDTH = 960
+    MIN_TARGET_WIDTH = 320
+    WIDTH_ALIGNMENT = 16
+    floored = max(width, MIN_TARGET_WIDTH)
+    aligned = ((floored + WIDTH_ALIGNMENT - 1) // WIDTH_ALIGNMENT) * WIDTH_ALIGNMENT
+    return min(aligned, MAX_RECOGNITION_WIDTH)
+
+def ctc_decode_indices(preds_idx, dict_chars: list[str]) -> str:
+    """Pure decode: blank at index 0, chars at 1..len(dict), space at len(dict)+1.
+    Mirrors PaddleCtcDecoder.kt (BLANK_INDEX=0, spaceIndex=dictionary.size+1)."""
+    BLANK_IDX = 0
+    decoder_table = ["__BLANK__"] + dict_chars + [" "]
+    text = ""
+    prev = -1
+    for idx in preds_idx:
+        if idx != BLANK_IDX and idx != prev:
+            if idx < len(decoder_table):
+                text += decoder_table[idx]
+        prev = idx
+    return text
+
+def ctc_decode_with_conf(preds_idx, preds_prob, dict_chars: list[str]) -> tuple[str, float]:
+    """Decode CTC with recognition confidence.
+    Confidence = mean max-prob of non-blank, non-duplicate, non-space timesteps.
+    Mirrors PaddleOCR CTCLabelDecode (confidence excludes blank, dup, and space)."""
+    BLANK_IDX = 0
+    SPACE_IDX = len(dict_chars) + 1
+    decoder_table = ["__BLANK__"] + dict_chars + [" "]
+    text = ""
+    confs: list[float] = []
+    prev = -1
+    for i, idx in enumerate(preds_idx):
+        if idx != BLANK_IDX and idx != prev:
+            if idx < len(decoder_table):
+                text += decoder_table[idx]
+                if idx != SPACE_IDX:
+                    confs.append(float(preds_prob[i]))
+        prev = idx
+    confidence = float(np.mean(confs)) if confs else 0.0
+    return text, confidence
+
+def run_paddle_rec(crop_rgb: np.ndarray) -> tuple[str, float]:
+    session = get_paddle_rec()
+    h, w = crop_rgb.shape[:2]
+
+    # If it's a vertical text box (typical for manga), rotate it 90 degrees
+    # COUNTER-clockwise because PaddleOCR is trained on horizontal text lines.
+    if h > w * 1.5:
+        crop_rgb = np.rot90(crop_rgb, k=1)
+        h, w = crop_rgb.shape[:2]
+
+    RECOGNITION_HEIGHT = 48
+    scaled_w = max(1, min(960, math.ceil(w * RECOGNITION_HEIGHT / h)))
+    input_w = paddle_align_width(scaled_w)
+    # Resize to (scaled_w, 48)
+    img = Image.fromarray(crop_rgb).resize((scaled_w, RECOGNITION_HEIGHT), Image.Resampling.BILINEAR)
+    # Pad to (input_w, 48) with gray 128 (normalizes to 0.0, matching Android's PAD_GRAY)
+    padded = Image.new("RGB", (input_w, RECOGNITION_HEIGHT), (128, 128, 128))
+    padded.paste(img, (0, 0))
+    img_arr = np.array(padded).astype(np.float32) / 255.0
+    img_arr = (img_arr - 0.5) / 0.5
+    img_arr = np.transpose(img_arr, (2, 0, 1))
+    img_arr = np.expand_dims(img_arr, axis=0)
+    ort_inputs = {session.get_inputs()[0].name: img_arr}
+    preds = session.run(None, ort_inputs)[0]
+    preds_idx = preds.argmax(axis=2)[0]
+    preds_prob = preds.max(axis=2)[0]
+
+    return ctc_decode_with_conf(preds_idx, preds_prob, paddle_rec_chars)
+
+import re
+
+# CJK script code point ranges (mirrors NumberedLineResponseParser.kt)
+_CJK_RANGES = [
+    (0x4E00, 0x9FFF), (0x3400, 0x4DBF), (0x20000, 0x2A6DF),
+    (0x2A700, 0x2B73F), (0x2B740, 0x2B81F), (0xF900, 0xFAFF),
+    (0x2F800, 0x2FA1F), (0x3000, 0x303F), (0x3040, 0x309F),
+    (0x30A0, 0x30FF), (0x31F0, 0x31FF), (0xAC00, 0xD7AF),
+    (0xFF00, 0xFFEF), (0xFE30, 0xFE4F),
+]
+
+def _is_cjk(cp: int) -> bool:
+    return any(lo <= cp <= hi for lo, hi in _CJK_RANGES)
+
+def contains_cjk(text: str) -> bool:
+    return any(_is_cjk(ord(ch)) for ch in text)
+
+_NUMBERED_LINE_RE = re.compile(r'^\[(\d+)\][ \t]*(.+)$', re.MULTILINE)
+
+def parse_numbered_lines(raw: str, expected_count: int, allow_cjk: bool = True) -> list[str]:
+    result: dict[int, str] = {}
+    for match in _NUMBERED_LINE_RE.finditer(raw):
+        idx = int(match.group(1))
+        text = match.group(2).strip()
+        if idx < 0 or idx >= expected_count:
+            continue
+        if not text:
+            continue
+        if not allow_cjk and contains_cjk(text):
+            continue
+        if idx in result:
+            continue
+        result[idx] = text
+    return [result.get(i, "") for i in range(expected_count)]
+
+# OCR artifact patterns from OcrArtifactSanitizer.kt
+_OCR_ARTIFACT_RE = re.compile(r'N[0°º]|Ｎ０|№')
+
+def ocr_artifact_sanitize(text: str) -> str:
+    return _OCR_ARTIFACT_RE.sub('', text)
+
+def translate_batch(
+    texts: list[str],
+    lm_url: str,
+    lm_model: str,
+    max_tokens: int = 8192,
+    from_lang: str = "Japanese",
+    to_lang: str = "English",
+) -> list[str]:
+    if not texts:
+        return []
+
+    formatted_texts = "\n".join(f"[{i}] {t}" for i, t in enumerate(texts))
+
+    system_prompt = f"""You are an expert manga/comic translator and localization specialist. Translate the following list of sequential text blocks from {from_lang} to {to_lang}.
+
+CRITICAL GUIDELINES:
+1. READING ORDER: The sequential blocks are loosely ordered based on physical coordinates (Top-to-Bottom, then Right-to-Left for manga). However, complex comic panel layouts mean this numbering is just a nudge. Use your narrative judgment to connect dialogue logically across adjacent speech bubbles if the numbered sequence seems slightly out of order.
+2. HONORIFICS: Honorifics (-san, -kun, -chan, -sama, -senpai, etc.) are highly expressive of character relationships. Preserve them natively (e.g., 'Taro-kun') if the tone is character-driven/anime-style, or translate them to natural relational equivalents if a more conventional western localization is appropriate.
+3. BUBBLE SIZE & CONCISENESS: Manga speech bubbles have very limited space. Keep translations concise, natural, and close to the original length.
+4. STYLE & TONE: Adapt register, slang, and dialect to fit character personalities. For sound effects (SFX) / onomatopoeia, provide standard comic-styled localized equivalents.
+5. OCR ARTIFACTS: The source text comes from OCR and may contain misread glyphs such as "N0", "N°", "Nº", "№", or "Ｎ０". These are NOT meaningful — they are scanner misreads of Japanese characters like の. Do NOT preserve or translate them literally. Simply omit them and translate the intended meaning naturally.
+6. NO EXTRA TEXT: Output ONLY the translations in the exact numbered format below, one block per line. Do not include explanations, notes, or preambles.
+7. SCRIPT FIDELITY: If the target language uses Latin script, do NOT output Japanese/Chinese/Korean characters. Localize sound-effect parentheses like (笑) to "lol", "(laugh)", or an equivalent in the target language.
+
+Format:
+[index] translation"""
+
+    try:
+        url = f"{lm_url.rstrip('/')}/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        data = {
+            "model": lm_model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Translate these {from_lang} text blocks to {to_lang}:\n\n{formatted_texts}"}
+            ],
+            "temperature": 0.3,
+            "max_tokens": max_tokens,
+        }
+        req = urllib.request.Request(url, data=json.dumps(data).encode("utf-8"), headers=headers)
+        with urllib.request.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode())
+            content = result["choices"][0]["message"]["content"].strip()
+
+            allow_cjk = to_lang.lower() in ("japanese", "japanese", "korean", "chinese", "chinese simplified", "chinese traditional")
+            translations = parse_numbered_lines(content, len(texts), allow_cjk=allow_cjk)
+
+            # Apply OCR artifact sanitization to each translation (mirrors OcrArtifactSanitizer)
+            for i in range(len(translations)):
+                if translations[i]:
+                    translations[i] = ocr_artifact_sanitize(translations[i])
+
+            # Remove watermark blocks (mirrors TranslationBlockFilters.removeWatermarkBlocks)
+            TRANSLATED_PREFIX = "[Translated] "
+            for i in range(len(translations)):
+                t = translations[i].strip()
+                if not t:
+                    continue
+                # Strip any "[Translated] " prefix that some models emit
+                if t.startswith(TRANSLATED_PREFIX):
+                    t = t[len(TRANSLATED_PREFIX):]
+                # Check for RTMTH watermark
+                if t.upper() == "RTMTH" or t == "RTMTH":
+                    translations[i] = ""
+
+            return translations
+    except Exception as e:
+        print("Translation error:", e)
+        if "WinError 10061" in str(e) or "ConnectionRefused" in str(e):
+            return ["[LM Studio Connection Refused]"] * len(texts)
+        return ["[Translation Failed]"] * len(texts)
+
+def render_translated_text(rgb: np.ndarray, boxes_with_translations: list[dict]) -> np.ndarray:
+    img = Image.fromarray(rgb)
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("arial.ttf", 24)
+    except IOError:
+        font = ImageFont.load_default()
+    for item in boxes_with_translations:
+        translation = item.get("translation", "")
+        if not translation or translation == "[Translation Failed]":
+            continue
+        x1, y1, x2, y2 = item["bbox"]
+        
+        # Color Estimation
+        box_rgb = rgb[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
+        if box_rgb.size > 0:
+            gray = np.dot(box_rgb[..., :3], [0.299, 0.587, 0.114])
+            mean_lum = np.mean(gray)
+            is_light = mean_lum > 128
+        else:
+            is_light = True
+            
+        text_fill = (0, 0, 0) if is_light else (255, 255, 255)
+        stroke_fill = (255, 255, 255) if is_light else (0, 0, 0)
+
+        words = translation.split()
+        lines = []
+        current_line = ""
+        box_w = x2 - x1
+        for word in words:
+            test_line = current_line + word + " "
+            bbox = font.getbbox(test_line) if hasattr(font, "getbbox") else font.getmask(test_line).getbbox()
+            text_w = bbox[2] - bbox[0] if bbox else 0
+            if text_w <= box_w or not current_line:
+                current_line = test_line
+            else:
+                lines.append(current_line.strip())
+                current_line = word + " "
+        if current_line:
+            lines.append(current_line.strip())
+        total_h = len(lines) * 28
+        start_y = y1 + ((y2 - y1) - total_h) / 2
+        for line in lines:
+            bbox = font.getbbox(line) if hasattr(font, "getbbox") else font.getmask(line).getbbox()
+            text_w = bbox[2] - bbox[0] if bbox else 0
+            line_x = x1 + (box_w - text_w) / 2
+            for dx in [-1, 0, 1]:
+                for dy in [-1, 0, 1]:
+                    draw.text((line_x + dx, start_y + dy), line, font=font, fill=stroke_fill)
+            draw.text((line_x, start_y), line, font=font, fill=text_fill)
+            start_y += 28
+    return np.array(img)
+
 
 def get_aot() -> ort.InferenceSession:
     global aot_session
@@ -71,20 +334,36 @@ def index() -> FileResponse:
 @app.get("/{name}")
 def static_file(name: str) -> FileResponse:
     safe = Path(name).name
-    return FileResponse(Path(__file__).parent / safe)
+    filepath = Path(__file__).parent / safe
+    if not filepath.is_file():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(filepath)
 
 
-@app.post("/api/process")
-async def process_image(
+@app.get("/api/models")
+def get_models(baseUrl: str = "http://localhost:1234/v1") -> dict:
+    url = f"{baseUrl.rstrip('/')}/models"
+    try:
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            models = []
+            if "data" in data and isinstance(data["data"], list):
+                for item in data["data"]:
+                    if "id" in item:
+                        models.append(item["id"])
+            return {"models": models}
+    except Exception as e:
+        print("Failed to fetch models from", url, e)
+        return {"models": [], "error": str(e)}
+
+@app.post("/api/detect")
+async def api_detect(
     image: UploadFile = File(...),
     paddle_crop_pad: int = Form(12),
     paddle_thresh: float = Form(PADDLE_THRESH),
     paddle_box_thresh: float = Form(0.34),
-    mask_pad: int = Form(8),
-    feather: int = Form(8),
-    lowres_scale: int = Form(10),
-    smooth_passes: int = Form(36),
-    mode: str = Form("quality"),
 ) -> dict:
     t0 = time.perf_counter()
     raw = await image.read()
@@ -95,8 +374,8 @@ async def process_image(
     detections = detect_page(rgb)
     t1 = time.perf_counter()
     text_dets = [d for d in detections if d["label"] in (1, 2)]
-    paddle_boxes: list[dict] = []
-    fallback_boxes: list[dict] = []
+    paddle_boxes = []
+    fallback_boxes = []
     for det in text_dets:
         x1, y1, x2, y2 = clamp_box(
             [
@@ -147,7 +426,7 @@ async def process_image(
                     }
                 )
     t2 = time.perf_counter()
-
+    
     mask_items = paddle_boxes + fallback_boxes
     if not mask_items:
         mask_items = [
@@ -162,62 +441,293 @@ async def process_image(
             for d in text_dets
         ]
     mask_boxes = [item["bbox"] for item in mask_items]
-
-    bubble_items = [i for i in mask_items if i.get("parent_label", -1) in (0, 1)]
-    free_items = [i for i in mask_items if i.get("parent_label", -1) == 2]
-
-    # Both FAST and QUALITY modes use solid rectangular masks to avoid dotted noise/screentone artifacts
-    bubble_mask = build_rect_mask([b["bbox"] for b in bubble_items], width, height, mask_pad)
-    free_mask = build_rect_mask([b["bbox"] for b in free_items], width, height, mask_pad)
-
-    # 1. Cheap/fast inpaint for bubbles using OpenCV Telea FMM
-    inpaint = inpaint_image(rgb, bubble_mask, lowres_scale / 100.0, smooth_passes, feather, "telea")
     
-    # 2. Quality mode uses AOT model for free text, while FAST mode uses Telea FMM
-    free_method = "aot" if mode.lower() == "quality" else "telea"
-    inpaint = inpaint_image(inpaint, free_mask, lowres_scale / 100.0, smooth_passes, feather, free_method)
-    
-    # Combined mask for visualization
-    mask = cv2.bitwise_or(bubble_mask, free_mask)
-    t3 = time.perf_counter()
-
     return {
         "width": width,
         "height": height,
         "detections": detections,
         "paddle_boxes": paddle_boxes,
         "fallback_boxes": fallback_boxes,
-        "detector_backup_boxes": [],
+        "text_dets": text_dets,
         "mask_boxes": [{"bbox": b} for b in mask_boxes],
-        "mask_png": png_data_url(mask_to_rgb(mask)),
-        "inpaint_png": png_data_url(inpaint),
-        "overlay_png": png_data_url(draw_overlay(rgb, detections, paddle_boxes)),
         "timings_ms": {
             "detector_v4": round((t1 - t0) * 1000, 1),
             "paddle_v6_det": round((t2 - t1) * 1000, 1),
-            "fast_inpaint": round((t3 - t2) * 1000, 1),
-            "total": round((t3 - t0) * 1000, 1),
+            "total": round((t2 - t0) * 1000, 1),
+        }
+    }
+
+
+@app.post("/api/ocr")
+async def api_ocr(
+    image: UploadFile = File(...),
+    text_dets_json: str = Form("[]"),
+    paddle_boxes_json: str = Form("[]"),
+    rec_confidence: float = Form(PADDLE_REC_CONFIDENCE),
+) -> dict:
+    t0 = time.perf_counter()
+    raw = await image.read()
+    pil = Image.open(io.BytesIO(raw)).convert("RGB")
+    rgb = np.array(pil)
+    
+    text_dets = json.loads(text_dets_json)
+    paddle_boxes = json.loads(paddle_boxes_json)
+    
+    ocr_texts = []
+    det_list = []
+    
+    for det in text_dets:
+        det_lines = [b for b in paddle_boxes if b["parent"] == det["bbox"]]
+        if not det_lines:
+            continue
+        
+        # Classify lines as vertical or horizontal, apply size guards
+        classified = []
+        for lb in det_lines:
+            lx1, ly1, lx2, ly2 = lb["bbox"]
+            lw = lx2 - lx1
+            lh = ly2 - ly1
+            if lw < 12 or lh < 12 or lw > 400 or lh > 800:
+                continue
+            is_vert = lh > lw * 1.5
+            # Sort key: vertical by x-center DESC (RTL), horizontal by y ASC (TTB)
+            if is_vert:
+                sort_key = -((lx1 + lx2) / 2)
+            else:
+                sort_key = (ly1 + ly2) / 2
+            classified.append((lb, is_vert, sort_key))
+        
+        classified.sort(key=lambda x: x[2])
+        
+        full_ocr = ""
+        for line_box, is_vert, _ in classified:
+            lx1, ly1, lx2, ly2 = line_box["bbox"]
+            box_rgb = rgb[ly1:ly2, lx1:lx2]
+            if box_rgb.size > 0:
+                text, conf = run_paddle_rec(box_rgb)
+                line_box["rec_conf"] = round(conf, 3)
+                if conf >= rec_confidence:
+                    line_box["ocr_text"] = text
+                    full_ocr += text
+                else:
+                    line_box["ocr_text"] = ""
+        
+        if full_ocr:
+            ocr_texts.append(full_ocr)
+            det_list.append(det)
+            
+    t1 = time.perf_counter()
+    return {
+        "ocr_texts": ocr_texts,
+        "det_list": det_list,
+        "timings_ms": {
+            "ocr": round((t1 - t0) * 1000, 1)
+        }
+    }
+
+
+@app.post("/api/inpaint")
+async def api_inpaint(
+    image: UploadFile = File(...),
+    text_dets_json: str = Form("[]"),
+    paddle_boxes_json: str = Form("[]"),
+    fallback_boxes_json: str = Form("[]"),
+    mask_pad: int = Form(8),
+    feather: int = Form(8),
+    lowres_scale: int = Form(10),
+    smooth_passes: int = Form(36),
+    mode: str = Form("quality"),
+    gray_fill_thresh: float = Form(3.0),
+    algo: str = Form("coherent"),
+    tiny_expand: bool = Form(True),
+    poisson_iters: int = Form(300),
+) -> dict:
+    t0 = time.perf_counter()
+    raw = await image.read()
+    pil = Image.open(io.BytesIO(raw)).convert("RGB")
+    rgb = np.array(pil)
+    height, width = rgb.shape[:2]
+    
+    text_dets = json.loads(text_dets_json)
+    paddle_boxes = json.loads(paddle_boxes_json)
+    fallback_boxes = json.loads(fallback_boxes_json)
+    
+    mask_items = paddle_boxes + fallback_boxes
+    if not mask_items:
+        mask_items = [
+            {
+                "bbox": d["bbox"],
+                "score": d["score"],
+                "source": "safety_net_fallback",
+                "parent": d["bbox"],
+                "parent_label": d["label"],
+                "parent_class": d["className"],
+            }
+            for d in text_dets
+        ]
+
+    # ── Coherent branch ──────────────────────────────────────────
+    if algo == "coherent":
+        clusters = build_inpaint_clusters(mask_items, width, height)
+        opts = cci_inpaint.CCIOptions()
+        if not tiny_expand:
+            opts.free_min_side = 0
+            opts.free_long_floor = 0
+        opts.poisson_iters = poisson_iters
+        quality_path = (mode.lower() == "quality")
+        aot_fn = make_coherent_aot_fn(gray_fill_thresh) if quality_path else None
+
+        t_coh0 = time.perf_counter()
+        result, diag, union_mask = cci_inpaint.inpaint_coherent(
+            rgb, clusters, opts=opts, aot_fn=aot_fn, quality=quality_path,
+        )
+        t_coh1 = time.perf_counter()
+
+        # Display mask = the ACTUAL union of per-cluster erase masks, so the
+        # "Mask Only" layer matches the inpaint exactly (no bbox/mask/inpaint
+        # mismatch). mask_to_rgb expands the single-channel mask to 3 channels.
+        display_mask = union_mask
+
+        # Compact diagnostics summary
+        tier_counts = {}
+        method_counts = {}
+        uniform_rejected = 0
+        blend_counts = {}
+        for d in diag:
+            # Coerce the Tier enum to its plain string value so the JSON
+            # response keys are stable "FLAT"/"TEXTURED"/"COLOR" across
+            # Python versions (str-Enum key serialization differs by version).
+            t = d.get("tier")
+            if t is not None:
+                t = t.value if hasattr(t, "value") else str(t)
+                tier_counts[t] = tier_counts.get(t, 0) + 1
+            m = d.get("method")
+            if m:
+                method_counts[m] = method_counts.get(m, 0) + 1
+            if d.get("uniform_rejected"):
+                uniform_rejected += 1
+            b = d.get("blend")
+            if b:
+                blend_counts[b] = blend_counts.get(b, 0) + 1
+
+        return {
+            "mask_png": png_data_url(mask_to_rgb(display_mask)),
+            "inpaint_png": png_data_url(result),
+            "timings_ms": {
+                "inpaint": round((t_coh1 - t_coh0) * 1000, 1),
+            },
+            "algo": "coherent",
+            "diagnostics": {
+                "total_clusters": len(diag),
+                "tier_counts": tier_counts,
+                "method_counts": method_counts,
+                "uniform_rejected": uniform_rejected,
+                "blend_counts": blend_counts,
+            },
+        }
+
+    # ── Legacy branch ────────────────────────────────────────────
+    bubble_items = [i for i in mask_items if int(i.get("parent_label", -1)) in (0, 1)]
+    free_items = [i for i in mask_items if int(i.get("parent_label", -1)) == 2]
+
+    # If no items match, ensure we don't crash and at least return the original image
+    if not bubble_items and not free_items:
+        print("Warning: No mask items found for inpainting!")
+        
+    bubble_mask = build_rect_mask([b["bbox"] for b in bubble_items], width, height, mask_pad)
+    
+    # 1. Cheap/fast inpaint for bubbles using OpenCV Telea FMM or pil_inpaint_bubble
+    inpaint, _ = inpaint_image(rgb, bubble_mask, lowres_scale / 100.0, smooth_passes, feather, "bubble_fast", gray_fill_thresh)
+    
+    # 2. Quality mode uses AOT model for free text, while FAST mode uses stroke-level Telea
+    free_method = "aot" if mode.lower() == "quality" else "stroke_fast"
+    
+    free_mask_visual = np.zeros((height, width), dtype=np.uint8)
+    
+    if free_method == "aot":
+        for item in free_items:
+            single_mask = build_rect_mask([item["bbox"]], width, height, mask_pad)
+            inpaint, last_crop = inpaint_image(inpaint, single_mask, lowres_scale / 100.0, smooth_passes, feather, "aot", gray_fill_thresh)
+            free_mask_visual = np.maximum(free_mask_visual, single_mask)
+    else:
+        for item in free_items:
+            inpaint, single_mask = inpaint_free_text(
+                inpaint, item["bbox"], pad=mask_pad,
+                feather_radius=FREE_TEXT_FEATHER, tiny_expand=True,
+            )
+            free_mask_visual = np.maximum(free_mask_visual, single_mask)
+            
+    mask = np.maximum(bubble_mask, free_mask_visual)
+    t1 = time.perf_counter()
+    
+    return {
+        "mask_png": png_data_url(mask_to_rgb(mask)),
+        "inpaint_png": png_data_url(inpaint),
+        "timings_ms": {
+            "inpaint": round((t1 - t0) * 1000, 1)
+        }
+    }
+
+
+@app.post("/api/translate")
+async def api_translate(
+    inpaint_image: UploadFile = File(...),
+    ocr_texts_json: str = Form("[]"),
+    det_list_json: str = Form("[]"),
+    lm_url: str = Form("http://localhost:1234/v1"),
+    lm_model: str = Form("local-model"),
+    max_tokens: int = Form(8192),
+    from_lang: str = Form("Japanese"),
+    to_lang: str = Form("English"),
+) -> dict:
+    t0 = time.perf_counter()
+    
+    raw = await inpaint_image.read()
+    pil = Image.open(io.BytesIO(raw)).convert("RGB")
+    inpaint = np.array(pil)
+    
+    ocr_texts = json.loads(ocr_texts_json)
+    det_list = json.loads(det_list_json)
+    
+    translations_to_render = []
+    
+    if ocr_texts:
+        translated_texts = translate_batch(
+            ocr_texts, lm_url, lm_model,
+            max_tokens=max_tokens, from_lang=from_lang, to_lang=to_lang,
+        )
+        for i, det in enumerate(det_list):
+            translations_to_render.append({
+                "bbox": det["bbox"],
+                "ocr_text": ocr_texts[i],
+                "translation": translated_texts[i]
+            })
+            
+    t1 = time.perf_counter()
+    
+    rendered_image = render_translated_text(inpaint, translations_to_render)
+    t2 = time.perf_counter()
+    
+    return {
+        "translations": translations_to_render,
+        "rendered_png": png_data_url(rendered_image),
+        "debug": {
+            "ocr_count": len(ocr_texts),
+            "translated_count": len(translations_to_render),
+            "lm_url": lm_url
         },
-        "models": {
-            "detector": str(DETECTOR_MODEL.relative_to(ROOT)),
-            "paddle_det": str(PADDLE_DET_MODEL.relative_to(ROOT)),
-            "aot": str(AOT_MODEL.relative_to(ROOT)),
-        },
-        "settings": {
-            "mode": mode,
-            "paddle_crop_pad": paddle_crop_pad,
-            "paddle_thresh": paddle_thresh,
-            "paddle_box_thresh": paddle_box_thresh,
-            "mask_pad": mask_pad,
-            "feather": feather,
-        },
+        "timings_ms": {
+            "translation": round((t1 - t0) * 1000, 1),
+            "rendering": round((t2 - t1) * 1000, 1)
+        }
     }
 
 
 def detect_page(rgb: np.ndarray) -> list[dict]:
     session = get_detector()
     height, width = rgb.shape[:2]
-    resized = cv2.resize(rgb, (640, 640), interpolation=cv2.INTER_LINEAR)
+    resized_img = Image.fromarray(rgb).resize((640, 640), Image.Resampling.BILINEAR)
+    resized = np.array(resized_img)
     tensor = resized.astype(np.float32) / 255.0
     tensor = np.transpose(tensor, (2, 0, 1))[None, :, :, :]
     sizes = np.array([[width, height]], dtype=np.int64)
@@ -250,9 +760,10 @@ def detect_paddle_lines(crop_rgb: np.ndarray, thresh: float = PADDLE_THRESH, box
     scale = PADDLE_TARGET / max(crop_w, crop_h)
     resized_w = max(1, min(PADDLE_TARGET, round(crop_w * scale)))
     resized_h = max(1, min(PADDLE_TARGET, round(crop_h * scale)))
-    resized = cv2.resize(crop_rgb, (resized_w, resized_h), interpolation=cv2.INTER_LINEAR)
+    resized_crop_img = Image.fromarray(crop_rgb).resize((resized_w, resized_h), Image.Resampling.BILINEAR)
+    resized_crop = np.array(resized_crop_img)
     padded = np.zeros((PADDLE_TARGET, PADDLE_TARGET, 3), dtype=np.uint8)
-    padded[:resized_h, :resized_w, :] = resized
+    padded[:resized_h, :resized_w, :] = resized_crop
 
     arr = padded.astype(np.float32) / 255.0
     mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
@@ -279,22 +790,228 @@ def detect_paddle_lines(crop_rgb: np.ndarray, thresh: float = PADDLE_THRESH, box
     return lines
 
 
+def connected_components(binary: np.ndarray) -> tuple[int, np.ndarray, np.ndarray]:
+    height, width = binary.shape
+    visited = np.zeros_like(binary, dtype=bool)
+    labels = np.zeros_like(binary, dtype=int)
+    stats = [[0, 0, width, height, 0]]
+    label_idx = 1
+    
+    from collections import deque
+    for y in range(height):
+        for x in range(width):
+            if binary[y, x] and not visited[y, x]:
+                q = deque([(x, y)])
+                visited[y, x] = True
+                labels[y, x] = label_idx
+                
+                min_x, max_x = x, x
+                min_y, max_y = y, y
+                area = 0
+                
+                while q:
+                    cx, cy = q.popleft()
+                    area += 1
+                    if cx < min_x: min_x = cx
+                    if cx > max_x: max_x = cx
+                    if cy < min_y: min_y = cy
+                    if cy > max_y: max_y = cy
+                    
+                    for dy in (-1, 0, 1):
+                        for dx in (-1, 0, 1):
+                            if dx == 0 and dy == 0:
+                                continue
+                            nx, ny = cx + dx, cy + dy
+                            if 0 <= nx < width and 0 <= ny < height:
+                                if binary[ny, nx] and not visited[ny, nx]:
+                                    visited[ny, nx] = True
+                                    labels[ny, nx] = label_idx
+                                    q.append((nx, ny))
+                                    
+                stats.append([min_x, min_y, max_x - min_x + 1, max_y - min_y + 1, area])
+                label_idx += 1
+                
+    return label_idx, labels, np.array(stats)
+
+
+def pil_inpaint_bubble(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    h, w = rgb.shape[:2]
+    img = rgb.copy()
+    
+    binary = (mask > 0).astype(np.uint8)
+    num, labels, stats = connected_components(binary)
+    
+    for label in range(1, num):
+        mx = int(stats[label, 0])
+        my = int(stats[label, 1])
+        mw = int(stats[label, 2])
+        mh = int(stats[label, 3])
+        
+        # Inner bounding box
+        ix1, iy1 = mx, my
+        ix2, iy2 = mx + mw, my + mh
+        
+        # 2-pixel outer boundary perimeter
+        ox1 = max(0, ix1 - 2)
+        oy1 = max(0, iy1 - 2)
+        ox2 = min(w, ix2 + 2)
+        oy2 = min(h, iy2 + 2)
+        
+        # Create outer ring mask for sampling
+        ring_mask = np.ones((oy2 - oy1, ox2 - ox1), dtype=bool)
+        
+        in_x1 = ix1 - ox1
+        in_y1 = iy1 - oy1
+        in_x2 = in_x1 + mw
+        in_y2 = in_y1 + mh
+        
+        if in_x1 < in_x2 and in_y1 < in_y2:
+            ring_mask[in_y1:in_y2, in_x1:in_x2] = False
+            
+        crop_rgb = img[oy1:oy2, ox1:ox2].astype(np.float32)
+        ring_pixels = crop_rgb[ring_mask]
+        
+        if len(ring_pixels) > 0:
+            median_color = np.median(ring_pixels, axis=0)
+        else:
+            median_color = np.array([255, 255, 255], dtype=np.float32)
+            
+        # Component mask
+        comp_mask = (labels[oy1:oy2, ox1:ox2] == label).astype(np.float32)[..., None]
+        
+        # Paint the patch with clean outer median color
+        crop_rgb = crop_rgb * (1.0 - comp_mask) + median_color * comp_mask
+        
+        # Blend edges slightly
+        for _ in range(12):
+            smoothed = (
+                np.roll(crop_rgb, 1, axis=0) +
+                np.roll(crop_rgb, -1, axis=0) +
+                np.roll(crop_rgb, 1, axis=1) +
+                np.roll(crop_rgb, -1, axis=1)
+            ) * 0.25
+            crop_rgb = crop_rgb * (1.0 - comp_mask) + smoothed * comp_mask
+            
+        img[oy1:oy2, ox1:ox2] = np.clip(crop_rgb, 0, 255).astype(np.uint8)
+        
+    return img
+
+
+def _local_ring_median(rgb: np.ndarray, mask_bool: np.ndarray, ring: int = FREE_RING) -> np.ndarray:
+    """Median RGB of the local annulus around the mask bbox (the free-text
+    surroundings). Falls back to the global page median when the annulus is
+    empty (degenerate/edge case) — never pure white.
+
+    This is the LOCAL replacement for the old global ``np.median(valid_pixels)``
+    that kept free text "stuck on white" (pages are mostly white, so the global
+    median was white).
+    """
+    h, w = rgb.shape[:2]
+    ys, xs = np.where(mask_bool)
+    if len(ys) == 0:
+        # No mask: fall back to global median of the whole image.
+        return np.median(rgb.reshape(-1, 3), axis=0).astype(np.float32)
+    y1, y2 = int(ys.min()), int(ys.max())
+    x1, x2 = int(xs.min()), int(xs.max())
+    ry1, ry2 = max(0, y1 - ring), min(h, y2 + ring + 1)
+    rx1, rx2 = max(0, x1 - ring), min(w, x2 + ring + 1)
+    block = rgb[ry1:ry2, rx1:rx2]
+    ring_mask = np.ones(block.shape[:2], dtype=bool)
+    # Exclude the mask bbox interior so we sample only the surrounding background.
+    in_y1, in_x1 = y1 - ry1, x1 - rx1
+    in_y2, in_x2 = in_y1 + (y2 - y1 + 1), in_x1 + (x2 - x1 + 1)
+    ring_mask[in_y1:in_y2, in_x1:in_x2] = False
+    ring_pixels = block[ring_mask]
+    if len(ring_pixels) > 0:
+        return np.median(ring_pixels, axis=0).astype(np.float32)
+    # Degenerate ring (e.g. mask fills the whole crop): global fallback.
+    return np.median(rgb[~mask_bool].reshape(-1, 3), axis=0).astype(np.float32)
+
+
+def pil_inpaint_stroke(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    h, w = rgb.shape[:2]
+    out = rgb.copy().astype(np.float32)
+    mask_bool = mask > 0
+    
+    # CRITICAL: Erase the text ink BEFORE downscaling so it doesn't pollute the
+    # gradient. Use the LOCAL surrounding color (ring around the text), NOT the
+    # global page median — otherwise free text is "stuck on white".
+    if np.any(mask_bool):
+        safe_bg_color = _local_ring_median(rgb, mask_bool)
+        out[mask_bool] = safe_bg_color
+        
+    # Now generate the Push-Pull gradient on the clean image
+    pil_img = Image.fromarray(out.astype(np.uint8))
+    small_w, small_h = max(4, w // 20), max(4, h // 20)
+    small = pil_img.resize((small_w, small_h), Image.Resampling.BILINEAR)
+    gradient_map = np.array(small.resize((w, h), Image.Resampling.BICUBIC)).astype(np.float32)
+    
+    # Reset to original image, but fill holes with our clean gradient map
+    out = rgb.copy().astype(np.float32)
+    out[mask_bool] = gradient_map[mask_bool]
+    
+    # Vectorized boundary diffusion to stitch the edges
+    for _ in range(15):
+        up = np.roll(out, -1, axis=0)
+        down = np.roll(out, 1, axis=0)
+        left = np.roll(out, -1, axis=1)
+        right = np.roll(out, 1, axis=1)
+        avg = (up + down + left + right) * 0.25
+        out[mask_bool] = avg[mask_bool]
+        
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def inpaint_free_text(
+    rgb: np.ndarray,
+    box: list[int],
+    pad: int = 2,
+    feather_radius: int = FREE_TEXT_FEATHER,
+    tiny_expand: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Legacy free-text inpaint with LOCAL color + bleed-free light feather.
+
+    1. (optional) expand tiny free boxes to a size floor (free text only);
+    2. build a stroke mask dilated by ``feather_radius`` so the erase region
+       covers text + halo + feather margin (this is what makes the feather
+       bleed-free — the feather ring lands on pure background, not text);
+    3. reconstruct with ``pil_inpaint_stroke`` (now using the LOCAL ring color,
+       not the global page median that kept free text "stuck on white");
+    4. composite back with a light feather.
+
+    Returns ``(result_rgb, erase_mask)``.
+    """
+    h, w = rgb.shape[:2]
+    box_use = list(box)
+    if tiny_expand:
+        opts = cci_inpaint.CCIOptions()
+        box_use = cci_inpaint.expand_tiny_free_boxes([box_use], [True], w, h, opts)[0]
+
+    dilate_size = 5 + 2 * max(0, int(feather_radius))
+    erase = build_stroke_mask_local(rgb, box_use, pad=pad, dilate_size=dilate_size)
+    if not np.any(erase):
+        return rgb.copy(), erase
+    filled = pil_inpaint_stroke(rgb, erase)
+    out = feather_composite(rgb, filled, erase, max(0, int(feather_radius)))
+    return out, erase
+
+
 def db_postprocess(prob: np.ndarray, thresh: float = PADDLE_THRESH, box_thresh: float = PADDLE_BOX_THRESH) -> list[TextLine]:
     binary = (prob > thresh).astype(np.uint8)
-    num, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
+    num, labels, stats = connected_components(binary)
     lines: list[TextLine] = []
     for label in range(1, num):
-        area = int(stats[label, cv2.CC_STAT_AREA])
+        area = int(stats[label, 4])
         if area < MIN_DB_AREA:
             continue
         mask = labels == label
         score = float(prob[mask].mean()) if area else 0.0
         if score < box_thresh:
             continue
-        x = int(stats[label, cv2.CC_STAT_LEFT])
-        y = int(stats[label, cv2.CC_STAT_TOP])
-        w = int(stats[label, cv2.CC_STAT_WIDTH])
-        h = int(stats[label, cv2.CC_STAT_HEIGHT])
+        x = int(stats[label, 0])
+        y = int(stats[label, 1])
+        w = int(stats[label, 2])
+        h = int(stats[label, 3])
         lines.append(TextLine([x, y, x + w, y + h], score))
     return merge_line_fragments(lines)
 
@@ -343,13 +1060,41 @@ def merge_axis(lines: list[TextLine], horizontal: bool) -> list[TextLine]:
 
 
 def build_rect_mask(boxes: list[list[int]], width: int, height: int, pad: int) -> np.ndarray:
-    mask = np.zeros((height, width), dtype=np.uint8)
+    mask_img = Image.new("L", (width, height), 0)
+    draw = ImageDraw.Draw(mask_img)
     for box in boxes:
         x1, y1, x2, y2 = clamp_box([box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad], width, height)
         if x2 > x1 and y2 > y1:
-            mask[y1:y2, x1:x2] = 255
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    return cv2.dilate(mask, kernel, iterations=1)
+            r = max(4, pad)
+            draw.rounded_rectangle([x1, y1, x2, y2], radius=r, fill=255)
+    return np.array(mask_img)
+
+
+def build_stroke_mask_local(rgb_img: np.ndarray, box: list[int], pad: int = 2, dilate_size: int = 5) -> np.ndarray:
+    x1, y1, x2, y2 = clamp_box([box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad], rgb_img.shape[1], rgb_img.shape[0])
+    crop = rgb_img[y1:y2, x1:x2]
+    if crop.size == 0:
+        return np.zeros((rgb_img.shape[0], rgb_img.shape[1]), dtype=np.uint8)
+    
+    # 1. Pure NumPy Grayscale conversion
+    gray = 0.299 * crop[:, :, 0] + 0.587 * crop[:, :, 1] + 0.114 * crop[:, :, 2]
+    
+    # 2. Aggressive threshold (captures black ink and dark gray anti-aliasing)
+    stroke_binary = (gray < 160).astype(np.uint8) * 255
+    
+    # 3. Native Dilation using Pillow to swallow the halo. dilate_size controls
+    # the dilation radius (default 5 ≈ 2px halo). Free text passes a larger size
+    # so the erase region covers text + halo + feather margin → bleed-free feather.
+    if dilate_size < 3:
+        dilate_size = 3
+    mask_img = Image.fromarray(stroke_binary)
+    dilated_img = mask_img.filter(ImageFilter.MaxFilter(dilate_size))
+    dilated_stroke = np.array(dilated_img)
+    
+    # 4. Reconstruct full page mask
+    full_mask = np.zeros((rgb_img.shape[0], rgb_img.shape[1]), dtype=np.uint8)
+    full_mask[y1:y2, x1:x2] = dilated_stroke
+    return full_mask
 
 
 
@@ -363,32 +1108,96 @@ def inpaint_image(
     smooth_passes: int,
     feather: int,
     method: str,
-) -> np.ndarray:
+    gray_fill_thresh: float = 3.0,
+) -> tuple[np.ndarray, list[int] | None]:
     if not np.any(mask):
-        return rgb.copy()
+        return rgb.copy(), None
+        
+    if method == "bubble_fast":
+        if OPENCV_AVAILABLE:
+            filled = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_TELEA)
+        else:
+            filled = pil_inpaint_bubble(rgb, mask)
+        # Bubbles keep their feathering for soft edges
+        return feather_composite(rgb, filled, mask, feather), None
+        
+    if method == "stroke_fast":
+        if OPENCV_AVAILABLE:
+            filled = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_TELEA)
+        else:
+            filled = pil_inpaint_stroke(rgb, mask)
+        # STROKES MUST HAVE 0 FEATHER or the original text bleeds through!
+        return feather_composite(rgb, filled, mask, 0), None
+        
     if method == "telea":
-        filled = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_TELEA)
-        return feather_composite(rgb, filled, mask, feather)
+        if OPENCV_AVAILABLE:
+            filled = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_TELEA)
+        else:
+            filled = pil_inpaint_stroke(rgb, mask)
+        return feather_composite(rgb, filled, mask, feather), None
     if method == "ns":
-        filled = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_NS)
-        return feather_composite(rgb, filled, mask, feather)
-    return aot_inpaint(rgb, mask, feather)
+        if OPENCV_AVAILABLE:
+            filled = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_NS)
+        else:
+            filled = pil_inpaint_stroke(rgb, mask)
+        return feather_composite(rgb, filled, mask, feather), None
+    try:
+        return aot_inpaint(rgb, mask, feather, gray_fill_thresh)
+    except Exception as e:
+        print(f"[AOT rejection/failure] {e}, falling back to Telea FMM.")
+        if OPENCV_AVAILABLE:
+            filled = cv2.inpaint(rgb, mask, 3, cv2.INPAINT_TELEA)
+        else:
+            filled = pil_inpaint_bubble(rgb, mask)
+        return feather_composite(rgb, filled, mask, feather), None
 
 
-def aot_inpaint(rgb: np.ndarray, mask: np.ndarray, feather: int) -> np.ndarray:
+def aot_inpaint(rgb: np.ndarray, mask: np.ndarray, feather: int, gray_fill_thresh: float) -> tuple[np.ndarray, list[int] | None]:
     if not np.any(mask):
-        return rgb.copy()
+        return rgb.copy(), None
     session = get_aot()
     h, w = rgb.shape[:2]
     ys, xs = np.where(mask > 0)
-    x1 = max(0, int(xs.min()) - 96)
-    y1 = max(0, int(ys.min()) - 96)
-    x2 = min(w, int(xs.max()) + 97)
-    y2 = min(h, int(ys.max()) + 97)
+    x_min, x_max = int(xs.min()), int(xs.max())
+    y_min, y_max = int(ys.min()), int(ys.max())
+    
+    # Goal-driven crop sizing:
+    box_w = x_max - x_min
+    box_h = y_max - y_min
+    box_long_side = max(box_w, box_h)
+    
+    # Multiply long side by 3, keep it square, clamp to [384, 512]
+    target_crop_dim = int(np.clip(box_long_side * 3, 384, 512))
+    # Round to a multiple of 8 to prevent scaling past 512 when rounding up
+    target_crop_dim = (target_crop_dim // 8) * 8
+    
+    cx = (x_min + x_max) / 2
+    cy = (y_min + y_max) / 2
+    
+    x1 = int(cx - target_crop_dim / 2)
+    y1 = int(cy - target_crop_dim / 2)
+    x2 = x1 + target_crop_dim
+    y2 = y1 + target_crop_dim
+    
+    # Shift to keep it square and of target_crop_dim size within boundaries
+    if x1 < 0:
+        x2 = min(w, x2 - x1)
+        x1 = 0
+    if x2 > w:
+        x1 = max(0, x1 - (x2 - w))
+        x2 = w
+    if y1 < 0:
+        y2 = min(h, y2 - y1)
+        y1 = 0
+    if y2 > h:
+        y1 = max(0, y1 - (y2 - h))
+        y2 = h
+        
     crop = rgb[y1:y2, x1:x2]
     crop_mask = mask[y1:y2, x1:x2]
     ch, cw = crop.shape[:2]
 
+    # Calculate resized dimensions for neural inference
     max_dim = 512
     scale = min(1.0, max_dim / max(cw, ch))
     infer_w = max(8, int(round(cw * scale)))
@@ -396,33 +1205,87 @@ def aot_inpaint(rgb: np.ndarray, mask: np.ndarray, feather: int) -> np.ndarray:
     infer_w += (8 - infer_w % 8) % 8
     infer_h += (8 - infer_h % 8) % 8
 
-    resized = cv2.resize(crop, (infer_w, infer_h), interpolation=cv2.INTER_LINEAR)
-    resized_mask = cv2.resize(crop_mask, (infer_w, infer_h), interpolation=cv2.INTER_NEAREST)
+    # Absolutely forbid any tensor larger than 512x512 from entering aot_session.run
+    if infer_w > 512 or infer_h > 512:
+        raise ValueError(f"Calculated tensor size {infer_w}x{infer_h} exceeds 512x512 constraint")
+
+    # Resize using Pillow to prevent cv2.resize mismatch
+    crop_img = Image.fromarray(crop)
+    resized_crop_img = crop_img.resize((infer_w, infer_h), Image.Resampling.BILINEAR)
+    resized = np.array(resized_crop_img)
+
+    crop_mask_img = Image.fromarray(crop_mask)
+    resized_mask_img = crop_mask_img.resize((infer_w, infer_h), Image.Resampling.NEAREST)
+    resized_mask = np.array(resized_mask_img)
+
     m = (resized_mask > 127).astype(np.float32)
     img = resized.astype(np.float32) / 127.5 - 1.0
     img = img * (1.0 - m[..., None])
     img_tensor = np.transpose(img, (2, 0, 1))[None, :, :, :].astype(np.float32)
     mask_tensor = m[None, None, :, :].astype(np.float32)
+
+    # Double check assertions to strictly enforce tensor constraint
+    assert img_tensor.shape[2] <= 512 and img_tensor.shape[3] <= 512, "Tensor width/height exceeds 512"
+    assert mask_tensor.shape[2] <= 512 and mask_tensor.shape[3] <= 512, "Tensor width/height exceeds 512"
+
     out = session.run(None, {"image": img_tensor, "mask": mask_tensor})[0][0]
     out = np.transpose(out, (1, 2, 0))
     out = np.clip((out + 1.0) * 127.5, 0, 255).astype(np.uint8)
-    out_crop = cv2.resize(out, (cw, ch), interpolation=cv2.INTER_CUBIC)
+
+    # Gray-fill safety guard check (matching Android's AotOutputGuard.kt)
+    pixels_to_check = out[resized_mask > 127] if np.any(resized_mask > 127) else out.reshape(-1, 3)
+    if len(pixels_to_check) >= 16:
+        # Calculate luma (0.299*R + 0.587*G + 0.114*B)
+        luma = 0.299 * pixels_to_check[:, 0] + 0.587 * pixels_to_check[:, 1] + 0.114 * pixels_to_check[:, 2]
+        mean_luma = float(np.mean(luma))
+        variance = float(np.var(luma))
+        
+        # Calculate channel delta (mean of |R-G| + |G-B|)
+        rg_delta = np.abs(pixels_to_check[:, 0].astype(np.int32) - pixels_to_check[:, 1].astype(np.int32))
+        gb_delta = np.abs(pixels_to_check[:, 1].astype(np.int32) - pixels_to_check[:, 2].astype(np.int32))
+        channel_delta = float(np.mean(rg_delta + gb_delta))
+        
+        variance_limit = gray_fill_thresh * gray_fill_thresh  # Map UI std_val to variance
+        uniform = (variance < variance_limit) and (channel_delta < 8.0)
+        
+        # A genuinely reconstructed region is not a perfectly uniform block.
+        # Treat both uniform-gray and uniform-white fills as suspicious.
+        uniform_mid_gray = 96.0 <= mean_luma <= 160.0
+        uniform_near_white = mean_luma >= 238.0
+        
+        if uniform and (uniform_mid_gray or uniform_near_white):
+            print(f"[gray-fill guard] REJECTED. var = {variance:.2f}, mean = {mean_luma:.1f}")
+            raise ValueError(f"Suspicious uniform output (var = {variance:.2f}, mean = {mean_luma:.1f})")
+        else:
+            print(f"[gray-fill guard] ACCEPTED. var = {variance:.2f}, mean = {mean_luma:.1f}")
+
+    # Resize back using Pillow
+    out_img = Image.fromarray(out)
+    resized_out_img = out_img.resize((cw, ch), Image.Resampling.BICUBIC)
+    out_crop = np.array(resized_out_img)
+
     blended_crop = feather_composite(crop, out_crop, crop_mask, feather)
     result = rgb.copy()
     result[y1:y2, x1:x2] = blended_crop
-    return result
+    return result, [x1, y1, x2, y2]
 
 
 def feather_composite(rgb: np.ndarray, filled: np.ndarray, mask: np.ndarray, feather: int) -> np.ndarray:
-    if feather <= 0:
-        alpha = (mask > 0).astype(np.float32)
+    rgb_img = Image.fromarray(rgb).convert("RGB")
+    filled_img = Image.fromarray(filled).convert("RGB")
+    mask_img = Image.fromarray(mask).convert("L")
+
+    if feather > 0:
+        # Create an ALPHA_8 style Pillow mask, apply GaussianBlur
+        blurred_mask = mask_img.filter(ImageFilter.GaussianBlur(radius=feather))
+        # Emulate PorterDuff.Mode.DST_IN: blend by taking maximum of blurred mask and original mask
+        final_mask = ImageChops.lighter(blurred_mask, mask_img)
     else:
-        k = feather * 2 + 1
-        alpha = cv2.GaussianBlur((mask > 0).astype(np.float32), (k | 1, k | 1), 0)
-        alpha = np.maximum(alpha, (mask > 0).astype(np.float32))
-        alpha = np.clip(alpha, 0.0, 1.0)
-    out = rgb.astype(np.float32) * (1.0 - alpha[..., None]) + filled.astype(np.float32) * alpha[..., None]
-    return np.clip(out, 0, 255).astype(np.uint8)
+        final_mask = mask_img
+
+    # Blend using Image.composite
+    blended = Image.composite(filled_img, rgb_img, final_mask)
+    return np.array(blended)
 
 
 def draw_overlay(rgb: np.ndarray, detections: list[dict], paddle_boxes: list[dict]) -> np.ndarray:
@@ -465,6 +1328,95 @@ def clamp_box(box: list[int], width: int, height: int) -> list[int]:
     x2 = max(0, min(width, int(box[2])))
     y2 = max(0, min(height, int(box[3])))
     return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
+
+
+def build_inpaint_clusters(mask_items, page_w, page_h, cluster_distance=100):
+    """Group mask_items into clusters for coherent inpaint.
+
+    Bubble items (parent_label in (0,1)) are grouped by their shared `parent` box
+    so all text lines in one bubble share one crop + background model.
+    Free-text items (parent_label == 2) are clustered by spatial proximity
+    (center distance <= cluster_distance px), mirroring the Android
+    clusterNearbyBoxes(distance=100) behaviour.
+
+    Returns list of dicts: {"boxes":[...], "is_free":[bool,...], "parent_rect":box or None}.
+    Each box is [x1,y1,x2,y2] clamped to the page.
+    """
+    clusters = []
+
+    # 1. Bubble items grouped by shared parent
+    bubble_by_parent = {}
+    for item in mask_items:
+        pl = int(item.get("parent_label", -1))
+        if pl in (0, 1):
+            pkey = tuple(item["parent"])
+            bubble_by_parent.setdefault(pkey, []).append(item)
+
+    for pkey, items in bubble_by_parent.items():
+        boxes = [clamp_box(item["bbox"], page_w, page_h) for item in items]
+        clusters.append({
+            "boxes": boxes,
+            "is_free": [False] * len(boxes),
+            "parent_rect": list(pkey),
+        })
+
+    # 2. Free-text items clustered by spatial proximity
+    free_items = [item for item in mask_items if int(item.get("parent_label", -1)) == 2]
+    if not free_items:
+        return clusters
+
+    n = len(free_items)
+    adj = [[] for _ in range(n)]
+    centers = []
+    for item in free_items:
+        b = item["bbox"]
+        cx = (b[0] + b[2]) / 2.0
+        cy = (b[1] + b[3]) / 2.0
+        centers.append((cx, cy))
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            dx = centers[i][0] - centers[j][0]
+            dy = centers[i][1] - centers[j][1]
+            if math.sqrt(dx * dx + dy * dy) <= cluster_distance:
+                adj[i].append(j)
+                adj[j].append(i)
+
+    visited = [False] * n
+    for i in range(n):
+        if visited[i]:
+            continue
+        group = []
+        stack = [i]
+        visited[i] = True
+        while stack:
+            cur = stack.pop()
+            group.append(cur)
+            for nb in adj[cur]:
+                if not visited[nb]:
+                    visited[nb] = True
+                    stack.append(nb)
+        boxes = [clamp_box(free_items[idx]["bbox"], page_w, page_h) for idx in group]
+        clusters.append({
+            "boxes": boxes,
+            "is_free": [True] * len(boxes),
+            "parent_rect": None,
+        })
+
+    return clusters
+
+
+def make_coherent_aot_fn(gray_fill_thresh=3.0):
+    """Build AOT adapter for the coherent pipeline.
+
+    Calls aot_inpaint with feather=0 so the result is unblended
+    (original outside mask, raw neural inside mask) — exactly the
+    guidance image that the Poisson blend needs.
+    """
+    def aot_fn(crop_rgb, mask_uint8):
+        res, _cb = aot_inpaint(crop_rgb, mask_uint8, feather=0, gray_fill_thresh=gray_fill_thresh)
+        return res
+    return aot_fn
 
 
 def box_w(box: list[int]) -> int:

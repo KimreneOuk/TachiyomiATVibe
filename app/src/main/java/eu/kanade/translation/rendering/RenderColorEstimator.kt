@@ -2,6 +2,7 @@ package eu.kanade.translation.rendering
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.inpainting.BoundaryAwarePipeline
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
@@ -86,9 +87,6 @@ object RenderColorEstimator {
     ): Triple<Long, Long, Float> {
         val boxW = max(1, x2 - x1)
         val boxH = max(1, y2 - y1)
-        // TachiyomiAT: widen the sampling pad when the box is small or when a
-        // parent bubble is known, so the 2-means sees enough real background
-        // rather than only the text itself.
         val basePad = max(12, min(boxW, boxH) / 2)
         val pad = if (parentBbox != null) max(basePad, 16) else basePad
         val left = (x1 - pad).coerceIn(0, bitmap.width)
@@ -101,20 +99,46 @@ object RenderColorEstimator {
 
         val pixels = IntArray(cropW * cropH)
         bitmap.getPixels(pixels, 0, cropW, left, top, cropW, cropH)
-        val step = max(1, pixels.size / 1200)
 
-        val bgColor = dominantBackgroundCluster(pixels, step)
+        // TachiyomiAT: containment-aware 2-means. When a parent bubble is known,
+        // build the eroded bubble interior mask and sample only those pixels so
+        // the background estimate comes from inside the bubble — not from artwork
+        // outside the bubble that the sampling pad may have reached.
+        val sampleMask: ByteArray? = if (parentBbox != null) {
+            val bw = parentBbox[2] - parentBbox[0]
+            val bh = parentBbox[3] - parentBbox[1]
+            val erode = max(2, min(bw, bh) / 10)
+            val sx1 = max(0, parentBbox[0] + erode - left)
+            val sy1 = max(0, parentBbox[1] + erode - top)
+            val sx2 = min(cropW, parentBbox[2] - erode - left)
+            val sy2 = min(cropH, parentBbox[3] - erode - top)
+            if (sx2 > sx1 && sy2 > sy1) {
+                ByteArray(cropW * cropH).also { mask ->
+                    for (y in sy1 until sy2) {
+                        for (x in sx1 until sx2) {
+                            mask[y * cropW + x] = 1
+                        }
+                    }
+                }
+            } else null
+        } else null
+
+        val step = max(1, pixels.size / 1200)
+        val bgColor = dominantBackgroundCluster(pixels, step, sampleMask)
         val brightness = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
         return colorPolicy(brightness)
     }
 
     /**
      * 2-means (seeded black vs white, 5 iterations) to find the dominant
-     * background cluster of [pixels] sampled every [step]. Returns the RGB
-     * center of the more populous cluster. Identical to the legacy estimators
-     * so behavior is preserved on the non-inverted path.
+     * background cluster of [pixels] sampled every [step]. When [sampleMask]
+     * is non-null, only pixels where `sampleMask[i] != 0` are considered.
      */
-    private fun dominantBackgroundCluster(pixels: IntArray, step: Int): FloatArray {
+    private fun dominantBackgroundCluster(
+        pixels: IntArray,
+        step: Int,
+        sampleMask: ByteArray? = null,
+    ): FloatArray {
         var center0 = floatArrayOf(0f, 0f, 0f)
         var center1 = floatArrayOf(255f, 255f, 255f)
         var count0 = 0
@@ -126,6 +150,7 @@ object RenderColorEstimator {
             count0 = 0
             count1 = 0
             for (i in pixels.indices step step) {
+                if (sampleMask != null && sampleMask[i] == 0.toByte()) continue
                 val pixel = pixels[i]
                 val r = (pixel shr 16 and 0xFF).toFloat()
                 val g = (pixel shr 8 and 0xFF).toFloat()

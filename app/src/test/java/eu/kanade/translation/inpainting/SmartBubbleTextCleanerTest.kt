@@ -348,139 +348,6 @@ class SmartBubbleTextCleanerTest {
         b shouldBeGreaterThan 80.0
     }
 
-    // ---- buildTightTextRegionMask (AOT tight text-region masking) ----
-
-    @Test
-    fun `buildTightTextRegionMask fills a solid tight region around detected text`() {
-        // The core Fix 7 guarantee: a loose box with text concentrated in one
-        // corner produces a SOLID mask tightly fitted to where the text is —
-        // smaller than the whole box (less destructive) but solid (one clean
-        // hole for the model, not sparse strokes). White background; dark text
-        // block in the upper-left of a much larger loose box.
-        val w = 60
-        val h = 40
-        val pixels = IntArray(w * h) { gray(255) }
-        for (y in 12 until 20) {
-            for (x in 8 until 20) {
-                pixels[y * w + x] = gray(20)
-            }
-        }
-
-        val mask = cleaner.buildTightTextRegionMask(
-            pixels = pixels,
-            contextW = w,
-            contextH = h,
-            boxes = listOf(intArrayOf(2, 2, 56, 36)), // loose box, much bigger than text
-            dilateIterations = 0,
-        )
-
-        // The text region is fully covered (solid tight box).
-        for (y in 12 until 20) {
-            for (x in 8 until 20) {
-                mask[y * w + x] shouldBe 1
-            }
-        }
-        // The far corner of the loose box (no text) is NOT erased — proving
-        // the mask is tight, not the full loose box.
-        mask[30 * w + 50] shouldBe 0
-        mask[4 * w + 50] shouldBe 0
-        // Marked area is well under the full loose-box area (54*34=1836),
-        // confirming it shrank to the text region.
-        val markedCount = mask.count { it != 0.toByte() }
-        (markedCount < 1000) shouldBe true
-    }
-
-    @Test
-    fun `buildTightTextRegionMask fills a solid rectangle not sparse strokes`() {
-        // Verify the mask is SOLID inside the tight bounds: two dark text blocks
-        // with a white gap between them should produce a SOLID rectangle spanning
-        // both (the tight bbox), so the white gap between them is ALSO erased.
-        // This is the production AOT practice — one clean hole per text block.
-        val w = 60
-        val h = 40
-        val pixels = IntArray(w * h) { gray(255) }
-        for (y in 15 until 25) {
-            for (x in 8 until 16) {
-                pixels[y * w + x] = gray(20)
-            }
-            for (x in 44 until 52) {
-                pixels[y * w + x] = gray(20)
-            }
-        }
-
-        val mask = cleaner.buildTightTextRegionMask(
-            pixels = pixels,
-            contextW = w,
-            contextH = h,
-            boxes = listOf(intArrayOf(4, 10, 56, 30)),
-            dilateIterations = 0,
-        )
-
-        // The gap between the two text blocks (x=30) is INSIDE the tight bbox
-        // of detected text, so it is solid-filled (erased), proving the mask is
-        // a solid rectangle, not sparse per-stroke marks.
-        for (y in 15 until 25) {
-            mask[y * w + 30] shouldBe 1
-        }
-    }
-
-    @Test
-    fun `buildTightTextRegionMask falls back to solid full box for uniform input`() {
-        // Coverage safety net: a genuinely uniform box (no detectable text) must
-        // still be fully erased, so the tight path never regresses the old
-        // whole-box coverage when detection genuinely fails.
-        val w = 30
-        val h = 20
-        val pixels = IntArray(w * h) { gray(255) }
-
-        val mask = cleaner.buildTightTextRegionMask(
-            pixels = pixels,
-            contextW = w,
-            contextH = h,
-            boxes = listOf(intArrayOf(5, 5, 25, 15)),
-            dilateIterations = 0,
-        )
-
-        for (y in 5 until 15) {
-            for (x in 5 until 25) {
-                mask[y * w + x] shouldBe 1
-            }
-        }
-    }
-
-    @Test
-    fun `buildTightTextRegionMask dilates the solid region`() {
-        // dilateIterations > 0 grows the mask outward so the model fills the
-        // text region + anti-aliased fringe. Verify growth compounds (Fix 1).
-        val w = 40
-        val h = 30
-        val pixels = IntArray(w * h) { gray(255) }
-        for (y in 14 until 17) {
-            for (x in 18 until 23) {
-                pixels[y * w + x] = gray(20)
-            }
-        }
-
-        val undilated = cleaner.buildTightTextRegionMask(
-            pixels = pixels,
-            contextW = w,
-            contextH = h,
-            boxes = listOf(intArrayOf(10, 8, 30, 22)),
-            dilateIterations = 0,
-        )
-        val dilated = cleaner.buildTightTextRegionMask(
-            pixels = pixels,
-            contextW = w,
-            contextH = h,
-            boxes = listOf(intArrayOf(10, 8, 30, 22)),
-            dilateIterations = 3,
-        )
-
-        val undilatedCount = undilated.count { it != 0.toByte() }
-        val dilatedCount = dilated.count { it != 0.toByte() }
-        (dilatedCount > undilatedCount) shouldBe true
-    }
-
     // ---- buildLocalBackground bgSourceMask (color-bleed regression guard) ----
 
     @Test
@@ -684,6 +551,7 @@ class SmartBubbleTextCleanerTest {
             nearWhiteRatio = 1f,
             darkPixelRatio = 0f,
             edgeDensity = 0f,
+            sampleCount = 100,
         )
 
         val mask = cleaner.tightDifferenceMask(
@@ -717,6 +585,7 @@ class SmartBubbleTextCleanerTest {
             nearWhiteRatio = 1f,
             darkPixelRatio = 0f,
             edgeDensity = 0f,
+            sampleCount = 100,
         )
 
         val mask = cleaner.tightDifferenceMask(

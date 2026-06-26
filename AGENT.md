@@ -1,119 +1,38 @@
-# AGENTS.md
+# AGENT.md
 
-## Project Overview
+## Project
 
-This project is a Kotlin Android manga/manhwa/manhua reader with integrated translation features using ONNX models.
+Kotlin Android manga/manhwa/manhua reader with ONNX translation.
 
-Primary goals:
-
-1. Correctness
-2. Performance
-3. Memory efficiency
-4. Low-end device compatibility
-
-Target devices may have as little as 6 GB physical RAM and limited heap availability. All implementations must operate reliably within these constraints.
+**Goals:** Correctness, Performance, Memory efficiency, Low-end device support (6 GB RAM minimum)
 
 ---
 
-## Documentation First
+## Workflow
 
-Before making changes:
-
-1. Read relevant documentation in `docs/`.
-2. Understand the existing architecture and design decisions.
-3. Follow established patterns before introducing new ones.
-
-Only read documentation relevant to the subsystem being modified.
+1. **Planning & Investigation** → [`@file:planning.md`](docs/project_context/planning.md)
+2. **Implementation** → [`@file:implementing.md`](docs/project_context/implementing.md)
 
 ---
 
-## Investigation Rules
+## Principles
 
-Never guess.
-
-Before using or modifying any:
-
-* Function
-* Class
-* Interface
-* File path
-* Package
-* Resource
-
-Locate and read the actual implementation.
-
-Trace relevant callers, dependencies, data flow, and side effects.
-
-If evidence cannot be found, ask for clarification rather than inventing behavior.
+- **Documentation First** – Read relevant docs before changes
+- **Never Guess** – Read implementations; trace dependencies
+  - Use codebase search (index available) for faster exploration
+- **Smallest Safe Change** – Only change what's necessary
+- **Architecture Consistency** – Follow existing patterns; consider performance/memory
+- **Test-Driven** – Test before/alongside implementation changes
 
 ---
 
-## Scope Control
+## Rules
 
-Prefer the smallest safe change.
-
-Do not perform unrelated:
-
-* Refactors
-* Cleanups
-* Formatting changes
-* Architectural rewrites
-* Dependency updates
-
-Unless:
-
-* Explicitly requested
-* Required for correctness
-* Required to prevent breakage
-
-If the task specifies particular files, modify only those files.
+- Update docs when public behavior, architecture, or user-visible behavior changes
+- Prefer self-documenting code
+- Do not create unrelated documentation or comments
 
 ---
-
-## Code Changes
-
-When modifying code:
-
-* Maintain consistency with existing architecture.
-* Consider performance and memory impact before introducing allocations, caches, buffers, background work, or new dependencies.
-* Avoid unnecessary complexity.
-* Update any documentation, KDoc, or comments that become inaccurate.
-
----
-
-## Test-Driven Change Policy
-
-For behavior changes, use a test-first workflow when practical:
-
-1. Inspect existing tests for the affected subsystem.
-2. If relevant tests already exist, run or review them before editing.
-3. If coverage is missing, design the smallest automatic test that proves the intended behavior.
-4. Make the code change.
-5. Run the smallest relevant test set.
-6. Report what was tested and what was not.
-
-Do not add tests for purely mechanical edits unless they protect against a real regression.
-
-Do not create broad, brittle, or unrelated tests just to satisfy process.
-
----
-
-## Documentation
-
-Update documentation when:
-
-* Public behavior changes
-* Architecture changes
-* User-visible behavior changes
-* Existing documentation becomes inaccurate
-
-Do not create unrelated documentation.
-
----
-
-## Comments
-
-Prefer self-documenting code.
 
 Do not add comments that simply restate what the code does.
 

@@ -141,18 +141,90 @@ class TextLayoutPlannerTest {
     }
 
     @Test
-    fun `long text that would collapse below the legibility floor stays legible`() {
-        // Defect 3: a short narrow box with very long text used to shrink to ~8 px.
-        // The planner keeps the font at/above the legibility floor by growing into
-        // free space (here the box is near the centre of a large page, so free space
-        // is plentiful).
+    fun `long text that would collapse below the legibility floor is contained to its initial box`() {
+        // Defect 3 (legibility floor) + containment: a parentless non-reshape box
+        // must NOT grow onto the page. The 30×30 box at (400,400) contains its text
+        // by clipping; the layout's box is clamped to 30×30 and clipRect is set.
         val small = block(x = 400f, y = 400f, w = 30f, h = 30f, text = "A very long translation sentence", score = 0.8f)
 
         val plan = TextLayoutPlanner.plan(listOf(small), 1500f, 1500f, 1, false, FakeMeasurer())
         val l = plan.first()
 
-        val floor = TextLayoutPlanner.minLegibleFont(1500f, 1500f, 1f)
-        l.fontSizePx shouldBe floor
+        // Hard containment: clipRect is set and matches the initial box.
+        l.clipRect shouldBe FloatRect(400f, 400f, 430f, 430f)
+        // The box did NOT grow beyond its initial 30×30 dimensions.
+        (l.safeW <= 22f) shouldBe true
+        (l.safeH <= 22f) shouldBe true
+    }
+
+    @Test
+    fun `parented block never bleeds past its parent`() {
+        val parentX = 100f
+        val parentY = 200f
+        val parentW = 200f
+        val parentH = 80f
+        val parented = TranslationBlock(
+            text = "",
+            translation = "A somewhat longer text that may try to expand past the parent box boundary",
+            width = 30f,
+            height = 30f,
+            x = parentX,
+            y = parentY,
+            symHeight = 1f,
+            symWidth = 1f,
+            angle = 0f,
+            label = 1,
+            score = 0.8f,
+            parentX = parentX,
+            parentY = parentY,
+            parentWidth = parentW,
+            parentHeight = parentH,
+            direction = "LTR",
+        )
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(parented), 800f, 600f, 1, false, m)
+        val l = plan.first()
+        val e = extent(l, m)
+        val parent = FloatRect(parentX, parentY, parentX + parentW, parentY + parentH)
+        (e.left >= parent.left - 0.5f) shouldBe true
+        (e.top >= parent.top - 0.5f) shouldBe true
+        (e.right <= parent.right + 0.5f) shouldBe true
+        (e.bottom <= parent.bottom + 0.5f) shouldBe true
+    }
+
+    @Test
+    fun `parentless non-reshape block clamps to its initial box but a tall one still grows`() {
+        val m = FakeMeasurer()
+        val nonTall = block(x = 100f, y = 100f, w = 60f, h = 40f, text = "Long text that gets clamped to its initial box", score = 0.8f)
+        val tall = block(x = 300f, y = 200f, w = 50f, h = 300f, text = "Tall reshaping box grows toward page", score = 0.7f)
+
+        val plan = TextLayoutPlanner.plan(listOf(nonTall, tall), 800f, 600f, 1, false, m)
+        val nonTallLayout = plan.first { it.text == "Long text that gets clamped to its initial box" }
+        val tallLayout = plan.first { it.text == "Tall reshaping box grows toward page" }
+
+        // Non-tall (parentless, not reshaped): the box is clamped to its initial
+        // 60×40. Any overflow is contained by a clipRect INSIDE the initial box —
+        // the renderer clips drawn pixels to it. The raw text extent may exceed the
+        // box at the legibility floor, which is exactly why the clip is set, so the
+        // containment is asserted on the clipRect, not the text footprint.
+        val initialBox = FloatRect(100f, 100f, 160f, 140f)
+        val nonTallClip = nonTallLayout.clipRect
+        if (nonTallClip != null) {
+            (nonTallClip.left >= initialBox.left - 0.5f) shouldBe true
+            (nonTallClip.top >= initialBox.top - 0.5f) shouldBe true
+            (nonTallClip.right <= initialBox.right + 0.5f) shouldBe true
+            (nonTallClip.bottom <= initialBox.bottom + 0.5f) shouldBe true
+        } else {
+            // No clip ⇒ text fit inside the clamped box ⇒ extent stays within it.
+            val nonTallExtent = extent(nonTallLayout, m)
+            (nonTallExtent.right <= initialBox.right + 0.5f) shouldBe true
+        }
+
+        // Tall (parentless, reshaped): R = page, so growth is preserved.
+        // The reshaped box is wider than the initial 50 px; the tall extent
+        // exceeds the initial box width.
+        val tallExtent = extent(tallLayout, m)
+        (tallExtent.width() > 50f) shouldBe true
     }
 
     @Test

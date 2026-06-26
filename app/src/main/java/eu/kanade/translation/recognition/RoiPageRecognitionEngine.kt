@@ -312,22 +312,42 @@ class RoiPageRecognitionEngine(
             val splitVerticalColumns = isVerticalLanguage &&
                 engine.prefersHorizontalText &&
                 boxHeightPre > boxWidthPre * 1.5f
+            var rotatedForOcr = false
             val text = try {
                 if (splitVerticalColumns) {
                     // TachiyomiAT: capture the det engine into a local — close()
                     // can null the field mid-analyze. Pass it down so the split
                     // path uses the learned det model when available, and falls
                     // back to the ink-gap heuristic otherwise.
+                    rotatedForOcr = true
                     recognizeVerticalColumns(engine, crop, paddleDet)
                 } else {
-                    engine.recognize(crop)
+                    val (rawText, rawConf) = engine.recognizeWithConf(crop)
+                    // TachiyomiAT: a tall CJK box (h > w) is vertical text, but a
+                    // horizontal read can yield a confident-but-WRONG short decode
+                    // (a large vertical bubble collapsing to "1") that the
+                    // confidence gate alone misses. Retry via the column-split +
+                    // rotate path when the horizontal read is low-confidence OR
+                    // suspiciously short, and keep whichever produced more text.
+                    val shortDecode = rawText.count { !it.isWhitespace() } <= SHORT_DECODE_CHARS
+                    if (isVerticalLanguage && boxHeightPre > boxWidthPre &&
+                        (rawConf < PADDLE_REC_CONFIDENCE || shortDecode)
+                    ) {
+                        rotatedForOcr = true
+                        val vertical = recognizeVerticalColumns(engine, crop, paddleDet)
+                        if (vertical.length > rawText.length) vertical
+                        else if (rawConf >= PADDLE_REC_CONFIDENCE) rawText else ""
+                    } else if (rawConf >= PADDLE_REC_CONFIDENCE) {
+                        rawText
+                    } else {
+                        ""
+                    }
                 }
             } finally {
                 crop.recycle()
             }
-            // Kept for the diagnostics log tag below; mirrors the rotation the
-            // per-column path applies internally.
-            val rotatedForOcr = splitVerticalColumns
+            // Mirrors the rotation the per-column path applies internally; also
+            // set when the tall-CJK horizontal-failure fallback retries vertical.
             // TachiyomiAT: diagnostics — log each detected box and its OCR output so
             // recognition quality can be inspected from logcat. Gated by the opt-in
             // translation_diagnostics pref (same gate as the per-engine timing logs).
@@ -712,7 +732,7 @@ class RoiPageRecognitionEngine(
         // Try the learned det model first. Det runs on the whole crop in one pass.
         if (paddleDet != null) {
             try {
-                val lines = paddleDet.detectLines(crop)
+                val lines = paddleDet.detectLines(crop, boxThresh = 0.34f)
                 if (lines.isNotEmpty()) {
                     return recognizeDetColumns(engine, crop, lines)
                 }
@@ -762,7 +782,8 @@ class RoiPageRecognitionEngine(
         if (items.isEmpty()) {
             val rotated = rotateCcw(crop)
             return try {
-                engine.recognize(rotated)
+                val (part, conf) = engine.recognizeWithConf(rotated)
+                if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) part else ""
             } finally {
                 rotated.recycle()
             }
@@ -777,8 +798,8 @@ class RoiPageRecognitionEngine(
                 val feed = if (it.vertical) rotateCcw(columnCrop) else columnCrop
                 val feedOwned = if (it.vertical) feed else null
                 try {
-                    val part = engine.recognize(feed)
-                    if (part.isNotEmpty()) parts.add(part)
+                    val (part, conf) = engine.recognizeWithConf(feed)
+                    if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) parts.add(part)
                 } finally {
                     feedOwned?.recycle()
                 }
@@ -801,7 +822,8 @@ class RoiPageRecognitionEngine(
         if (columns.size <= 1) {
             val rotated = rotateCcw(crop)
             return try {
-                engine.recognize(rotated)
+                val (part, conf) = engine.recognizeWithConf(rotated)
+                if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) part else ""
             } finally {
                 rotated.recycle()
             }
@@ -816,8 +838,8 @@ class RoiPageRecognitionEngine(
             val rotated = rotateCcw(columnCrop)
             columnCrop.recycle()
             try {
-                val part = engine.recognize(rotated)
-                if (part.isNotEmpty()) parts.add(part)
+                val (part, conf) = engine.recognizeWithConf(rotated)
+                if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) parts.add(part)
             } finally {
                 rotated.recycle()
             }
@@ -977,6 +999,18 @@ class RoiPageRecognitionEngine(
         // (huge regions spanning multiple bubbles). Sized in crop pixel coords.
         private const val MAX_COLUMN_WIDTH_PX = 400
         private const val MAX_COLUMN_HEIGHT_PX = 800
+        // TachiyomiAT: keep recognition text at/above this mean-max-prob; below it
+        // the unit is blanked but left UN-ERASED by the render-aware inpaint mask
+        // (PageInpaintingPlanner), so an unread region keeps its original pixels
+        // instead of becoming an empty void. Lowered 0.5 -> 0.25 so real-but-
+        // imperfect PaddleOCR text is translated rather than dropped.
+        private const val PADDLE_REC_CONFIDENCE = 0.25f
+        // TachiyomiAT: a tall CJK box read horizontally can produce a confident-
+        // but-WRONG short decode (a large vertical bubble collapsing to "1").
+        // Such a short horizontal result triggers a vertical (rotated) retry so
+        // the real text is recovered. Tunable; 2 catches 1-2-char garbage while
+        // rarely firing on legitimate short lines in tall boxes.
+        private const val SHORT_DECODE_CHARS = 2
         // TachiyomiAT: text-color constants moved to RenderColorEstimator (and
         // fixed there — the legacy INVERTED_TEXT_COLORS was a copy-paste of the
         // default constant, both returning dark-gray text 0xFF1A1A1A, which made

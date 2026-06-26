@@ -124,13 +124,15 @@ data class PageTranslation(
 
     companion object {
         /**
-         * Bumped 8 → 9: [inpaintMaskBoxes] is a new persisted field. Pre-9
-         * chapters either have no mask or a mask computed by the old logic
-         * (detector-only regions from a transient field that was lost on
-         * serialize); force them through a fresh OCR + inpaint so the
-         * detector-only / watermark regions are erased correctly.
+         * Bumped 9 -> 10: the erase mask is now render-aware — a block whose OCR
+         * text is blank no longer contributes its box, so unread regions keep
+         * their original pixels instead of being erased to an empty void. Pre-10
+         * chapters carry a mask computed by the old logic that erases blank-text
+         * regions; force them through a fresh OCR + inpaint so the new mask
+         * semantics take effect. Earlier: 8 -> 9 added [inpaintMaskBoxes] +
+         * detector-only/watermark erase.
          */
-        const val CURRENT_INPAINT_REVISION = 9
+        const val CURRENT_INPAINT_REVISION = 10
         val EMPTY = PageTranslation()
     }
 }

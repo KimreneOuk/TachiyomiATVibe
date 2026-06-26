@@ -69,270 +69,6 @@ class SmartBubbleTextCleaner(
         }
     }
 
-    fun cleanBubbleGroup(
-        image: Bitmap,
-        bubbleBbox: IntArray,
-        textBoxes: List<IntArray>,
-        paddleDet: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null,
-        usePaddleMasking: Boolean = false,
-    ): Bitmap {
-        val w = image.width
-        val h = image.height
-
-        val bx1 = bubbleBbox[0].coerceIn(0, w)
-        val by1 = bubbleBbox[1].coerceIn(0, h)
-        val bx2 = bubbleBbox[2].coerceIn(bx1, w)
-        val by2 = bubbleBbox[3].coerceIn(by1, h)
-        if (bx2 <= bx1 || by2 <= by1) return image
-
-        val pad = contextPad
-        val cx1 = max(0, bx1 - pad)
-        val cy1 = max(0, by1 - pad)
-        val cx2 = min(w, bx2 + pad)
-        val cy2 = min(h, by2 + pad)
-
-        val contextW = cx2 - cx1
-        val contextH = cy2 - cy1
-        val contextSize = contextW * contextH
-
-        val (contextPixels, resultPixels) = getWorkingBuffers(contextSize)
-        image.getPixels(contextPixels, 0, contextW, cx1, cy1, contextW, contextH)
-        contextPixels.copyInto(resultPixels, endIndex = contextSize)
-
-        val localTextBoxes = textBoxes.map { box ->
-            val lx1 = max(0, box[0] - cx1)
-            val ly1 = max(0, box[1] - cy1)
-            val lx2 = min(contextW, box[2] - cx1)
-            val ly2 = min(contextH, box[3] - cy1)
-            intArrayOf(lx1, ly1, lx2, ly2)
-        }
-        val eraseBoxes = expandBoxes(localTextBoxes, textMaskPad, contextW, contextH)
-
-        val ringMask = ByteArray(contextW * contextH) { 1.toByte() }
-        val border = 2
-        for (x in 0 until border) {
-            for (y in 0 until contextH) {
-                ringMask[y * contextW + x] = 0
-                ringMask[y * contextW + (contextW - 1 - x)] = 0
-            }
-        }
-        for (y in 0 until border) {
-            for (x in 0 until contextW) {
-                ringMask[y * contextW + x] = 0
-                ringMask[(contextH - 1 - y) * contextW + x] = 0
-            }
-        }
-        for (box in localTextBoxes) {
-            val mp = textMaskPad + 6
-            val ex1 = max(0, box[0] - mp)
-            val ey1 = max(0, box[1] - mp)
-            val ex2 = min(contextW, box[2] + mp)
-            val ey2 = min(contextH, box[3] + mp)
-            for (y in ey1 until ey2) {
-                for (x in ex1 until ex2) {
-                    ringMask[y * contextW + x] = 0
-                }
-            }
-        }
-
-        val bubbleW = bx2 - bx1
-        val bubbleH = by2 - by1
-        val bubbleErode = min(4, max(2, min(bubbleW, bubbleH) / 10))
-        val intX1 = max(0, bx1 - cx1 + bubbleErode)
-        val intY1 = max(0, by1 - cy1 + bubbleErode)
-        val intX2 = min(contextW, bx2 - cx1 - bubbleErode)
-        val intY2 = min(contextH, by2 - cy1 - bubbleErode)
-        for (y in 0 until contextH) {
-            for (x in 0 until contextW) {
-                if (x < intX1 || x >= intX2 || y < intY1 || y >= intY2) {
-                    ringMask[y * contextW + x] = 0
-                }
-            }
-        }
-
-        val bgStats = sampleBackgroundStats(contextPixels, ringMask, contextW, contextH)
-        val bgType = classifyBackground(bgStats)
-
-        // TachiyomiAT: scale morphology by bubble size so small/tight bubbles
-        // get a proportional (not oversized) feather + dilation + text-mask pad.
-        val minBubbleDim = min(bubbleW, bubbleH)
-        val (scaledFeather, scaledDilation) = scaledMorphology(minBubbleDim)
-        val scaledMp = scaledTextMaskPad(minBubbleDim)
-
-        var combinedMask = ByteArray(contextW * contextH)
-        if (usePaddleMasking && paddleDet != null) {
-            val cropBmp = Bitmap.createBitmap(contextPixels, contextW, contextH, Bitmap.Config.ARGB_8888)
-            val lines = try {
-                paddleDet.detectLines(cropBmp)
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "PaddleOCR masking DET failed" }
-                emptyList()
-            } finally {
-                cropBmp.recycle()
-            }
-            for (line in lines) {
-                val b = line.bbox
-                val mp = scaledMp
-                val ex1 = max(0, b[0] - mp)
-                val ey1 = max(0, b[1] - mp)
-                val ex2 = min(contextW, b[2] + mp)
-                val ey2 = min(contextH, b[3] + mp)
-                for (y in ey1 until ey2) {
-                    for (x in ex1 until ex2) {
-                        combinedMask[y * contextW + x] = 1
-                    }
-                }
-            }
-        } else {
-            for (box in localTextBoxes) {
-                val mp = scaledMp
-                val ex1 = max(0, box[0] - mp)
-                val ey1 = max(0, box[1] - mp)
-                val ex2 = min(contextW, box[2] + mp)
-                val ey2 = min(contextH, box[3] + mp)
-                if (ex2 <= ex1 || ey2 <= ey1) continue
-
-                val boxMask = generateTextMask(
-                    contextPixels, bgStats, bgType,
-                    ex1, ey1, ex2, ey2, contextW, contextH,
-                )
-                for (y in ey1 until ey2) {
-                    for (x in ex1 until ex2) {
-                        if (boxMask[(y - ey1) * (ex2 - ex1) + (x - ex1)] != 0.toByte()) {
-                            combinedMask[y * contextW + x] = 1
-                        }
-                    }
-                }
-            }
-        }
-
-        val hasAnyMask = combinedMask.any { it != 0.toByte() }
-        if (!hasAnyMask && localTextBoxes.isNotEmpty()) {
-            // TachiyomiAT: generateTextMask found NOTHING to clean — faint/low-
-            // contrast text whose strokes all fell under threshold, or anti-aliased
-            // edges too thin to register. Previously this filled the ENTIRE box
-            // with the ring median, which on a grayscale panel or colored bubble
-            // produced the reported "gray rectangle over the whole bounding box."
-            // Now: try a RECOVERY pass first — a much lower threshold keyed off
-            // the ring-sampled background median alone (the most reliable bg
-            // reference), to catch the faint strokes the main pass missed. Only
-            // if that ALSO finds nothing do we fall back to the tight box of any
-            // pixel differing from the median (catches anti-aliased edges), and
-            // only as a last resort fill the box. Most of the time the recovery
-            // pass succeeds and the box is never blindly filled.
-            val recovered = recoverFaintTextMask(
-                contextPixels,
-                bgStats,
-                localTextBoxes,
-                contextW,
-                contextH,
-            )
-            if (recovered.any { it != 0.toByte() }) {
-                for (i in recovered.indices) {
-                    if (recovered[i] != 0.toByte()) combinedMask[i] = 1
-                }
-            } else {
-                val tightFallback = tightDifferenceMask(
-                    contextPixels,
-                    bgStats,
-                    localTextBoxes,
-                    contextW,
-                    contextH,
-                )
-                for (i in tightFallback.indices) {
-                    if (tightFallback[i] != 0.toByte()) combinedMask[i] = 1
-                }
-            }
-        }
-        combinedMask = unionMasks(
-            combinedMask,
-            buildLocalContrastTextMask(
-                pixels = contextPixels,
-                boxes = eraseBoxes,
-                width = contextW,
-                height = contextH,
-            ),
-        )
-
-        var finalMask = combinedMask
-        // TachiyomiAT: disk SE (radius 1) rounds mask corners instead of the
-        // 45° chamfer a 4-neighbourhood diamond produces. See dilateMaskDisk.
-        finalMask = BubbleMaskBuilder.dilateMaskDisk(finalMask, contextW, contextH, 1)
-        if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE && eraseBoxes.isNotEmpty()) {
-            val aggressiveContrast = buildLocalContrastTextMask(
-                pixels = contextPixels,
-                boxes = eraseBoxes,
-                width = contextW,
-                height = contextH,
-                aggressive = false,
-            )
-            finalMask = unionMasks(finalMask, aggressiveContrast)
-            if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE) {
-                logcat(LogPriority.INFO) {
-                    "[bubble_cleaner] low text-mask coverage; leaving OCR boxes unfilled groupBoxes=${textBoxes.size}"
-                }
-            }
-        }
-        val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, scaledFeather)
-
-        // TachiyomiAT: activate feathering. The fill region is the mask CORE
-        // plus the feather RING (every pixel where alpha > 0). The earlier code
-        // gated the fill on `finalMask[idx] != 0`, which skipped the entire
-        // feather ring — alpha was computed and then discarded, and inside the
-        // mask alpha was always 1.0, so the fill had a hard 1px edge at the mask
-        // boundary (the reported "box border" artifact on speech bubbles).
-        // Build an expanded fill mask so buildLocalBackground also interpolates
-        // a background estimate for the ring pixels (otherwise the ring blend
-        // would use the original pixel as its "background" and be a no-op).
-        val fillMask = ByteArray(contextW * contextH)
-        for (i in alpha.indices) {
-            if (alpha[i] > 0f) fillMask[i] = 1
-        }
-
-        // TachiyomiAT: constrain background sampling to the bubble INTERIOR so
-        // the fill matches the bubble's own background and does not bleed the
-        // surrounding artwork color (e.g. blue sky) into the cleaned bubble —
-        // the reported color-bleed artifact. intX1..intY2 are the eroded bubble
-        // interior bounds (computed above for the ring mask). When the interior
-        // is degenerate (too eroded to sample), bgSourceMask stays null and
-        // buildLocalBackground falls back to the whole-context behavior.
-        val bgSourceMask = if (intX2 > intX1 && intY2 > intY1) {
-            ByteArray(contextW * contextH).also { bsm ->
-                for (y in intY1 until intY2) {
-                    for (x in intX1 until intX2) {
-                        bsm[y * contextW + x] = 1
-                    }
-                }
-            }
-        } else {
-            null
-        }
-
-        // TachiyomiAT: local per-pixel background instead of one flat median —
-        // see buildLocalBackground. This is the fix for the gray-rectangle
-        // symptom: on grayscale/tinted backgrounds the ring median was gray
-        // (~128) and got painted over the whole masked region.
-        val localBg = buildLocalBackground(
-            contextPixels,
-            fillMask,
-            contextW,
-            contextH,
-            bgStats.medianColor,
-            preferFlatFill = shouldUseSolidFlatFill(bgType, bgStats),
-            bgSourceMask = bgSourceMask,
-        )
-
-        val filled = applyFeatheredFill(contextPixels, localBg, alpha)
-        System.arraycopy(filled, 0, resultPixels, 0, contextW * contextH)
-
-        image.setPixels(resultPixels, 0, contextW, cx1, cy1, contextW, contextH)
-        logcat(LogPriority.INFO) {
-            "[bubble_cleaner] group boxes=${textBoxes.size} bg=$bgType std=${bgStats.grayStd.format1()} " +
-                "mask=${BubbleMaskBuilder.maskCoverage(finalMask).format1()}% roi=${contextW}x$contextH"
-        }
-        return image
-    }
-
     fun cleanBubbleGroupFmm(
         image: Bitmap,
         bubbleBbox: IntArray,
@@ -355,12 +91,13 @@ class SmartBubbleTextCleaner(
         val contextH = cy2 - cy1
 
         val contextSize = contextW * contextH
-        if (currentBufferSize < contextSize) {
-            workingBuffer1 = IntArray(contextSize)
-            workingBuffer2 = IntArray(contextSize)
-            currentBufferSize = contextSize
-        }
-        val contextPixels = workingBuffer1!!
+        // TachiyomiAT: route through getWorkingBuffers so the MAX_CACHED_PIXELS
+        // cap (doc contract #8) applies here too — an oversized bubble crop must
+        // NOT pin a >4MB buffer in the long-lived instance fields. This path only
+        // needs one buffer (it writes back via image.setPixels in place), so take
+        // the first of the pair. The previous direct assignment bypassed the cap
+        // and also allocated workingBuffer2 it never used.
+        val contextPixels = getWorkingBuffers(contextSize).first
 
         image.getPixels(contextPixels, 0, contextW, cx1, cy1, contextW, contextH)
 
@@ -468,6 +205,170 @@ class SmartBubbleTextCleaner(
      * keeps using [cleanRegions] (detector-v4 boxes + pixel heuristics), which
      * remains the conservative fallback.
      */
+    /**
+     * TachiyomiAT: boundary-aware fill for one region using containment + tier.
+     *
+     * Computes the containment mask (bubble interior or connected flat region),
+     * classifies the tier (flat / textured / color), and fills accordingly:
+     *  - FLAT tier → solid flat fill constrained to containment.
+     *  - TEXTURED/COLOR tier → paint exterior to interior median, then
+     *    Telea FMM, then feathered blend.
+     *
+     * This is the primary FAST fill entry point for the tiered pipeline.
+     */
+    fun fillContained(
+        image: Bitmap,
+        x1: Int, y1: Int, x2: Int, y2: Int,
+        parentBubble: IntArray?,
+        textBoxes: List<IntArray>,
+        paddleDet: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null,
+    ): Bitmap {
+        val w = image.width
+        val h = image.height
+
+        val pad = contextPad
+        val cx1 = max(0, x1 - pad)
+        val cy1 = max(0, y1 - pad)
+        val cx2 = min(w, x2 + pad)
+        val cy2 = min(h, y2 + pad)
+        val contextW = cx2 - cx1
+        val contextH = cy2 - cy1
+        val contextSize = contextW * contextH
+
+        val (contextPixels, resultPixels) = getWorkingBuffers(contextSize)
+        image.getPixels(contextPixels, 0, contextW, cx1, cy1, contextW, contextH)
+        contextPixels.copyInto(resultPixels, endIndex = contextSize)
+
+        // Refine erase boxes through Paddle detection (mirrors cleanBubbleGroupFmm).
+        val paddleBoxes = mutableListOf<IntArray>()
+        if (paddleDet != null) {
+            val cropBmp = Bitmap.createBitmap(contextPixels, contextW, contextH, Bitmap.Config.ARGB_8888)
+            val lines = try {
+                paddleDet.detectLines(cropBmp)
+            } catch (e: Exception) {
+                emptyList()
+            } finally {
+                cropBmp.recycle()
+            }
+            for (line in lines) {
+                val b = line.bbox
+                paddleBoxes.add(intArrayOf(max(0, b[0]), max(0, b[1]), min(contextW, b[2]), min(contextH, b[3])))
+            }
+        }
+        val eraseBoxes = if (paddleBoxes.isNotEmpty()) paddleBoxes else {
+            textBoxes.mapNotNull { box ->
+                val lx1 = max(0, box[0] - cx1)
+                val ly1 = max(0, box[1] - cy1)
+                val lx2 = min(contextW, box[2] - cx1)
+                val ly2 = min(contextH, box[3] - cy1)
+                if (lx2 > lx1 && ly2 > ly1) intArrayOf(lx1, ly1, lx2, ly2) else null
+            }
+        }
+
+        if (eraseBoxes.isEmpty()) return image
+
+        val localBubble = parentBubble?.let {
+            val bx1 = max(0, it[0] - cx1)
+            val by1 = max(0, it[1] - cy1)
+            val bx2 = min(contextW, it[2] - cx1)
+            val by2 = min(contextH, it[3] - cy1)
+            if (bx2 > bx1 && by2 > by1) intArrayOf(bx1, by1, bx2, by2) else null
+        }
+
+        val containmentResult = BoundaryAwarePipeline.computeContainment(
+            pixels = contextPixels,
+            contextW = contextW,
+            contextH = contextH,
+            parentBubble = localBubble,
+            eraseBoxes = eraseBoxes,
+        )
+        val containment = containmentResult.mask
+        val interiorMedian = containmentResult.interiorMedian
+        val isFallbackContainment = containmentResult.isFallback
+
+        val stats = BoundaryAwarePipeline.collectStats(contextPixels, containment, contextW, contextH)
+        val tier = BoundaryAwarePipeline.classifyTier(stats)
+        // TachiyomiAT: never flat-fill with a SYNTHETIC white median. When the
+        // containment seed was empty, computeContainment returns a fallback
+        // (padded-union) mask with [interiorMedian] = 0xFFFFFFFF — a fabricated
+        // default, not a measured colour. Painting the erase mask with it emits
+        // the reported solid-white block. (Non-fallback containment always has
+        // a flooded area ≥ 0.8× the erase boxes, so its median is measured.)
+        // Route such cases to the textured Telea branch, which reconstructs
+        // from real neighbours and has no white-median path.
+        val interiorMedianUntrustworthy =
+            isFallbackContainment && interiorMedian == WHITE_ARGB
+        val useFlatFill = !interiorMedianUntrustworthy &&
+            tier == BoundaryAwarePipeline.Tier.FLAT &&
+            (stats.nearWhiteRatio > 0.7f ||
+                stats.darkPixelRatio > 0.5f ||
+                (stats.grayStd < 10f && stats.edgeDensity < 0.04f))
+
+        val solidPad = 6
+        val eraseMask = BubbleMaskBuilder.buildRectMask(
+            boxes = eraseBoxes,
+            width = contextW,
+            height = contextH,
+            pad = solidPad,
+            dilateRadius = 2,
+        )
+        // NOTE: do NOT clip the erase mask to the containment flood. The flood
+        // covers only the white background and EXCLUDES the dark text, so
+        // clipping would remove the text pixels → nothing gets erased. The
+        // containment is used only as bgSourceMask (flat fill background) and
+        // for exterior paintout (Telea neighbours) to prevent black bleed.
+        if (eraseMask.none { it != 0.toByte() }) return image
+
+        val regionDim = min(x2 - x1, y2 - y1).coerceAtLeast(1)
+        val (scaledFeather, _) = scaledMorphology(regionDim)
+
+        if (useFlatFill || (isFallbackContainment && !interiorMedianUntrustworthy)) {
+            val bgSource = if (localBubble != null && !isFallbackContainment) containment else null
+            val localBg = buildLocalBackground(
+                pixels = contextPixels,
+                mask = eraseMask,
+                width = contextW,
+                height = contextH,
+                medianColor = interiorMedian,
+                preferFlatFill = useFlatFill,
+                bgSourceMask = bgSource,
+            )
+            val alpha = BubbleMaskBuilder.featherAlpha(eraseMask, contextW, contextH, scaledFeather)
+            val filled = applyFeatheredFill(contextPixels, localBg, alpha)
+            System.arraycopy(filled, 0, resultPixels, 0, contextSize)
+            logcat(LogPriority.INFO) {
+                "[fillContained] flat tier=$tier fallback=$isFallbackContainment " +
+                    "mask=${BubbleMaskBuilder.maskCoverage(eraseMask).format1()}% " +
+                    "containment=${containmentResult.coverage.format1()}%"
+            }
+        } else {
+            // Textured/COLOR tier, OR a fallback containment whose interior
+            // median was the untrustworthy synthetic white. Telea reconstructs
+            // the hole from real neighbours. When the median is trusted we first
+            // paintExterior so only interior-coloured pixels can bleed in
+            // (prevents dark-artifact bleed across bubble borders); when the
+            // median is the synthetic white we must NOT paintExterior or every
+            // neighbour would become white and Telea would still emit white.
+            val painted = contextPixels.copyOf()
+            if (!interiorMedianUntrustworthy) {
+                BoundaryAwarePipeline.paintExterior(painted, containment, interiorMedian, contextW, contextH)
+            }
+            FastMarchingMethod.inpaintTelea(painted, eraseMask, contextW, contextH, radius = 3)
+            val alpha = BubbleMaskBuilder.featherAlpha(eraseMask, contextW, contextH, scaledFeather)
+            val filled = applyFeatheredFill(contextPixels, painted, alpha)
+            System.arraycopy(filled, 0, resultPixels, 0, contextSize)
+            logcat(LogPriority.INFO) {
+                "[fillContained] telea tier=$tier fallback=$isFallbackContainment " +
+                    "untrustedMedian=$interiorMedianUntrustworthy " +
+                    "mask=${BubbleMaskBuilder.maskCoverage(eraseMask).format1()}% " +
+                    "containment=${containmentResult.coverage.format1()}%"
+            }
+        }
+
+        image.setPixels(resultPixels, 0, contextW, cx1, cy1, contextW, contextH)
+        return image
+    }
+
     fun fillSolidBoxes(
         image: Bitmap,
         boxes: List<IntArray>,
@@ -782,186 +683,6 @@ class SmartBubbleTextCleaner(
     }
 
     /**
-     * TachiyomiAT: build a **tight text-region** mask (1 byte per pixel,
-     * contextW × contextH) over the supplied [boxes], for the AOT/neural
-     * inpainter to erase. The mask is a SOLID rectangle tightly fitted to
-     * where text actually is — not the detector's loose bounding box, and not
-     * individual strokes.
-     *
-     * This is the less-destructive masking path for QUALITY mode, matching
-     * production manga-translation practice for AOT-GAN inpainters: feed a
-     * solid hole tight to the text so the model reconstructs one clean region
-     * per text block, rather than redrawing the whole detector box (the old
-     * destructive behavior) or filling many sparse stroke pixels (noisy).
-     *
-     * The detector chain runs only to find WHERE text is (the tight bounds of
-     * detected pixels), then the final mask is solid within those bounds:
-     *  1. sampleBackgroundStats from a border ring around the box,
-     *  2. generateTextMask (in-box 2-cluster centroid + ring median),
-     *  3. recoverFaintTextMask (lowered threshold for faint strokes),
-     *  4. tightDifferenceMask (last-resort per-pixel differ from median),
-     *  5. buildLocalContrastTextMask (local-contrast integral-image detector).
-     * Steps 2–5 are UNIONed to find the detected-pixel set; the tight bbox of
-     * that set (clamped to the original box) is then filled SOLID.
-     *
-     * **Coverage safety net (per box):** if no pixels are detected (a genuinely
-     * uniform box), that box falls back to a SOLID fill of the FULL original
-     * box. This guarantees the tight-region path never regresses the "complete
-     * erasure" of the old whole-box approach when detection genuinely fails.
-     *
-     * Memory: each detector allocates O(box-area) working buffers; the
-     * local-contrast detector builds two integral LongArrays sized to the whole
-     * context. For the AOT model's 512×512 input that is ~2 MB per LongArray —
-     * acceptable for a single per-crop allocation (no cross-call retention).
-     *
-     * @param contextW x-extent of [pixels] / returned mask
-     * @param contextH y-extent of [pixels] / returned mask
-     * @param boxes erasure boxes in context-local coordinates
-     * @param tightPad extra px padded around the detected tight bounds before
-     *   filling solid, so anti-aliased stroke edges fall inside the hole
-     * @param dilateIterations dilation passes applied to the final solid mask
-     * @return a contextW × contextH mask; 1 = erase (solid tight region or fallback)
-     */
-    fun buildTightTextRegionMask(
-        pixels: IntArray,
-        contextW: Int,
-        contextH: Int,
-        boxes: List<IntArray>,
-        tightPad: Int = 3,
-        dilateIterations: Int = dilationIterations,
-    ): ByteArray {
-        val combined = ByteArray(contextW * contextH)
-        if (boxes.isEmpty()) return combined
-        val perBoxHasText = BooleanArray(boxes.size)
-        for ((boxIdx, box) in boxes.withIndex()) {
-            val bx1 = box[0].coerceIn(0, contextW)
-            val by1 = box[1].coerceIn(0, contextH)
-            val bx2 = box[2].coerceIn(bx1, contextW)
-            val by2 = box[3].coerceIn(by1, contextH)
-            if (bx2 <= bx1 || by2 <= by1) continue
-
-            // Border ring around the box for background stats (mirrors the
-            // cleanBubbleGroup ring construction, scaled to the box).
-            val ringMp = textMaskPad + 6
-            val ringEx1 = max(0, bx1 - ringMp)
-            val ringEy1 = max(0, by1 - ringMp)
-            val ringEx2 = min(contextW, bx2 + ringMp)
-            val ringEy2 = min(contextH, by2 + ringMp)
-            val ringMask = ByteArray(contextW * contextH) { 1 }
-            val border = 2
-            for (x in 0 until border) {
-                for (y in 0 until contextH) {
-                    ringMask[y * contextW + x] = 0
-                    ringMask[y * contextW + (contextW - 1 - x)] = 0
-                }
-            }
-            for (y in 0 until border) {
-                for (x in 0 until contextW) {
-                    ringMask[y * contextW + x] = 0
-                    ringMask[(contextH - 1 - y) * contextW + x] = 0
-                }
-            }
-            for (ry in ringEy1 until ringEy2) {
-                for (rx in ringEx1 until ringEx2) {
-                    ringMask[ry * contextW + rx] = 0
-                }
-            }
-            val stats = sampleBackgroundStats(pixels, ringMask, contextW, contextH)
-            val bgType = classifyBackground(stats)
-
-            val mp = max(textMaskPad, 8)
-            val ex1 = max(0, bx1 - mp)
-            val ey1 = max(0, by1 - mp)
-            val ex2 = min(contextW, bx2 + mp)
-            val ey2 = min(contextH, by2 + mp)
-            if (ex2 <= ex1 || ey2 <= ey1) continue
-
-            // Union all detector outputs to find the detected-pixel set, and
-            // track the tight bounding box of that set within the original box.
-            var minX = bx2
-            var minY = by2
-            var maxX = bx1
-            var maxY = by1
-            fun considerDetected(x: Int, y: Int) {
-                if (x < bx1 || x >= bx2 || y < by1 || y >= by2) return
-                if (x < minX) minX = x
-                if (y < minY) minY = y
-                if (x > maxX) maxX = x
-                if (y > maxY) maxY = y
-            }
-
-            // 1. in-box centroid + ring-median detector (zone-sized mask).
-            val zoneMask = generateTextMask(pixels, stats, bgType, ex1, ey1, ex2, ey2, contextW, contextH)
-            val zoneW = ex2 - ex1
-            for (zy in 0 until (ey2 - ey1)) {
-                for (zx in 0 until zoneW) {
-                    if (zoneMask[zy * zoneW + zx] != 0.toByte()) {
-                        considerDetected(ex1 + zx, ey1 + zy)
-                    }
-                }
-            }
-            // 2–3. faint recovery + last-resort per-pixel difference. Both
-            // return full-context-sized masks.
-            val recovered = recoverFaintTextMask(pixels, stats, listOf(intArrayOf(ex1, ey1, ex2, ey2)), contextW, contextH)
-            val tight = tightDifferenceMask(pixels, stats, listOf(intArrayOf(ex1, ey1, ex2, ey2)), contextW, contextH)
-            for (i in recovered.indices) {
-                if (recovered[i] != 0.toByte()) considerDetected(i % contextW, i / contextW)
-            }
-            for (i in tight.indices) {
-                if (tight[i] != 0.toByte()) considerDetected(i % contextW, i / contextW)
-            }
-            // 4. local-contrast integral-image detector.
-            val contrast = buildLocalContrastTextMask(
-                pixels = pixels,
-                boxes = listOf(intArrayOf(ex1, ey1, ex2, ey2)),
-                width = contextW,
-                height = contextH,
-            )
-            for (i in contrast.indices) {
-                if (contrast[i] != 0.toByte()) considerDetected(i % contextW, i / contextW)
-            }
-
-            val hasText = maxX >= minX && maxY >= minY
-            perBoxHasText[boxIdx] = hasText
-            if (hasText) {
-                // Fill the tight bounding box of detected text SOLID, padded
-                // slightly inward to cover anti-aliased edges, clamped to the
-                // original box (never grow beyond it).
-                val fx1 = max(bx1, minX - tightPad)
-                val fy1 = max(by1, minY - tightPad)
-                val fx2 = min(bx2, maxX + tightPad + 1)
-                val fy2 = min(by2, maxY + tightPad + 1)
-                for (y in fy1 until fy2) {
-                    for (x in fx1 until fx2) {
-                        combined[y * contextW + x] = 1
-                    }
-                }
-            }
-        }
-
-        // Per-box solid fallback: any box whose detectors found nothing gets a
-        // solid fill of the FULL original box, so a uniform/genuinely-textless
-        // box is still fully erased (no coverage regression vs the old mask).
-        for ((boxIdx, box) in boxes.withIndex()) {
-            if (perBoxHasText[boxIdx]) continue
-            val bx1 = box[0].coerceIn(0, contextW)
-            val by1 = box[1].coerceIn(0, contextH)
-            val bx2 = box[2].coerceIn(bx1, contextW)
-            val by2 = box[3].coerceIn(by1, contextH)
-            if (bx2 <= bx1 || by2 <= by1) continue
-            for (y in by1 until by2) {
-                for (x in bx1 until bx2) {
-                    combined[y * contextW + x] = 1
-                }
-            }
-        }
-
-        // TachiyomiAT: disk SE rounds the tight text region's corners so the
-        // neural inpaint mask doesn't produce sharp rectangular borders.
-        return BubbleMaskBuilder.dilateMaskDisk(combined, contextW, contextH, dilateIterations)
-    }
-
-    /**
      * TachiyomiAT: recovery pass for the whole-box fallback. When
      * generateTextMask returns an empty mask (all strokes fell under the normal
      * threshold), re-scan each box with a MUCH lower threshold keyed off the
@@ -1141,6 +862,7 @@ class SmartBubbleTextCleaner(
                 nearWhiteRatio = 1.0f,
                 darkPixelRatio = 0.0f,
                 edgeDensity = 0.0f,
+                sampleCount = 0,
             )
         }
 
@@ -1161,6 +883,7 @@ class SmartBubbleTextCleaner(
             nearWhiteRatio = nearWhiteCount.toFloat() / count,
             darkPixelRatio = darkCount.toFloat() / count,
             edgeDensity = edgeCount.toFloat() / count,
+            sampleCount = count,
         )
     }
 
@@ -1455,19 +1178,6 @@ class SmartBubbleTextCleaner(
             }
         }
         return bg
-    }
-
-    private fun expandBoxes(
-        boxes: List<IntArray>,
-        pad: Int,
-        width: Int,
-        height: Int,
-    ): List<IntArray> = boxes.mapNotNull { box ->
-        val x1 = max(0, box[0] - pad)
-        val y1 = max(0, box[1] - pad)
-        val x2 = min(width, box[2] + pad)
-        val y2 = min(height, box[3] + pad)
-        if (x2 <= x1 || y2 <= y1) null else intArrayOf(x1, y1, x2, y2)
     }
 
     private fun unionMasks(a: ByteArray, b: ByteArray): ByteArray {
@@ -1847,6 +1557,12 @@ class SmartBubbleTextCleaner(
         val nearWhiteRatio: Float,
         val darkPixelRatio: Float,
         val edgeDensity: Float,
+        /**
+         * `0` marks a degenerate result from an empty ring (median defaults to
+         * `Color.WHITE`); callers must not trust its [medianColor] for a flat
+         * fill. Mirrors `BoundaryAwarePipeline.RegionStats.sampleCount`.
+         */
+        val sampleCount: Int,
     )
 
     /**
@@ -1901,6 +1617,11 @@ class SmartBubbleTextCleaner(
     private companion object {
         private const val MIN_OCR_TEXT_MASK_COVERAGE = 3.0f
         private const val MAX_CACHED_PIXELS = 1_000_000
+
+        /** The fabricated default [BoundaryAwarePipeline] emits for an empty
+         *  containment seed (see computeContainment → buildSeedMask). Used to
+         *  detect an untrustworthy interior median so it is never painted. */
+        private const val WHITE_ARGB = 0xFFFFFFFF.toInt()
     }
 
     fun clearWorkingBuffers() {

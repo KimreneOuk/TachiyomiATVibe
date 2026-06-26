@@ -3,22 +3,35 @@ package eu.kanade.translation.translator
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import tachiyomi.core.common.preference.Preference
 import tachiyomi.domain.translation.StandardEngine
+import tachiyomi.domain.translation.TranslationPreferences
 
 /**
- * Built-in translators that do not use dynamic LLM model selection and require
- * neither API keys nor model ids (Google Translate, on-device ML Kit).
+ * Built-in translators that do not use dynamic LLM model selection. Most require
+ * neither API keys nor model ids (Google Translate, on-device ML Kit); DeepL is
+ * the exception and needs an API key (read from [TranslationPreferences]).
  */
 enum class StandardTranslatorKind(val label: String) {
     MLKIT("MlKit (On Device)"),
     GOOGLE("Google Translate"),
+    DEEPL("DeepL"),
     ;
 
     fun build(
+        pref: TranslationPreferences,
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
     ): TextTranslator = when (this) {
         MLKIT -> MLKitTranslator(fromLang, toLang)
         GOOGLE -> GoogleTranslator(fromLang, toLang)
+        DEEPL -> {
+            // TachiyomiAT: fail fast with a clear message when the key is
+            // missing, matching AiTranslatorKind's contract. Under the strict
+            // no-fallback policy this surfaces as a FAILED page so the user
+            // configures the key instead of getting a silent wrong engine.
+            val apiKey = pref.translationDeeplApiKey().get()
+            require(apiKey.isNotBlank()) { "DeepL API key is required" }
+            DeepLTranslator(fromLang, toLang, apiKey)
+        }
     }
 
     companion object {

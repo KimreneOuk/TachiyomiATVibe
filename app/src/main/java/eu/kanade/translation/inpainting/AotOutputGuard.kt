@@ -31,11 +31,20 @@ object AotOutputGuard {
 
         if (count < MIN_MASKED_PIXELS) return false
         val mean = sumLuma / count
-        if (mean < MID_GRAY_MIN || mean > MID_GRAY_MAX) return false
-
         val variance = (sumLumaSquared / count) - (mean * mean)
         val channelDelta = sumChannelDelta / count
-        return variance < MAX_LUMA_VARIANCE && channelDelta < MAX_CHANNEL_DELTA
+        val uniform = variance < MAX_LUMA_VARIANCE && channelDelta < MAX_CHANNEL_DELTA
+        if (!uniform) return false
+
+        // A genuinely reconstructed region is not a perfectly uniform block.
+        // The earlier check only flagged uniform MID-gray output (the model's
+        // typical failure mode), which let a uniform near-WHITE block — the
+        // other documented neural artefact (a flat white patch where text was)
+        // — pass straight to the page. Treat both uniform-gray and uniform-white
+        // fills as suspicious and let the caller fall back to the cleaner.
+        val uniformMidGray = mean in MID_GRAY_MIN..MID_GRAY_MAX
+        val uniformNearWhite = mean >= NEAR_WHITE_MIN
+        return uniformMidGray || uniformNearWhite
     }
 
     private fun maskValue(pixel: Int): Int = maxOf(pixel and 0xFF, pixel ushr 24)
@@ -44,6 +53,7 @@ object AotOutputGuard {
     private const val MIN_MASKED_PIXELS = 16
     private const val MID_GRAY_MIN = 96.0
     private const val MID_GRAY_MAX = 160.0
+    private const val NEAR_WHITE_MIN = 238.0
     private const val MAX_LUMA_VARIANCE = 36.0
     private const val MAX_CHANNEL_DELTA = 8.0
 }

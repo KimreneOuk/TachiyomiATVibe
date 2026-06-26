@@ -12,11 +12,12 @@ import tachiyomi.core.common.preference.getEnum
 enum class TranslationEngineCategory { STANDARD, AI_MODEL }
 
 /**
- * Standard translators. These do not use dynamic LLM model selection and
- * do not require API keys. Keeps the list scalable for future providers
+ * Standard translators. These do not use dynamic LLM model selection. Most
+ * require no credentials; DeepL is the exception (it needs an API key, stored
+ * via [translationDeeplApiKey]). Keeps the list scalable for future providers
  * such as Microsoft or Yandex.
  */
-enum class StandardEngine { MLKIT, GOOGLE }
+enum class StandardEngine { MLKIT, GOOGLE, DEEPL }
 
 /**
  * AI model translators. Each provider has its own API key and model
@@ -73,6 +74,14 @@ class TranslationPreferences(
     fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "FAST")
 
     /**
+     * Opt-in fallback: when QUALITY inpainting is selected but the neural AOT
+     * model is absent, fall back to FAST instead of failing. Default OFF — keeps
+     * the strict QUALITY behaviour unless the user explicitly accepts the
+     * quality trade-off.
+     */
+    fun translationInpaintQualityFallback() = preferenceStore.getBoolean("translation_inpaint_quality_fallback", false)
+
+    /**
      * Legacy ONNX execution-provider preference.
      *
      * Translation ONNX sessions are CPU-only now. This key remains for backward
@@ -104,6 +113,14 @@ class TranslationPreferences(
     fun translationEngineCategory() = preferenceStore.getEnum("translation_engine_category", TranslationEngineCategory.STANDARD)
     fun translationStandardEngine() = preferenceStore.getEnum("translation_standard_engine", StandardEngine.MLKIT)
     fun translationAiEngine() = preferenceStore.getEnum("translation_ai_engine", AiEngine.GEMINI)
+
+    /**
+     * DeepL (Standard engine) API key. DeepL is the only Standard engine that
+     * requires credentials. Stored private (excluded from backups / masked in
+     * the UI) via the same __PRIVATE_ convention as the AI keys.
+     */
+    fun translationDeeplApiKey() =
+        preferenceStore.getString("__PRIVATE_translation_deepl_api_key", "")
     //endregion
 
     //region AI-only preferences

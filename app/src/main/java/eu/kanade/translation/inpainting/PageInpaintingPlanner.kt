@@ -3,6 +3,7 @@ package eu.kanade.translation.inpainting
 import eu.kanade.translation.detection.Detection
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.recognition.BoxGeometry
 import kotlin.math.max
 
@@ -75,17 +76,23 @@ object PageInpaintingPlanner {
      * at inpaint time) is what makes the mask survive translation-stage block
      * removal and process death.
      *
-     * The returned mask includes, for every OCR'd block, BOTH its bubble box
-     * (label 0, when a parent bubble exists) and its text box (label = the
-     * block's own label, 1 or 2), plus every detector-only text region that
-     * was filtered out of OCR (label 2). It deliberately does NOT consult
-     * `block.translation` — translation has not run yet at OCR time, so this
-     * is naturally immune to the watermark-block-removal ordering.
+     * Render-aware erase (contract #14a preserved): the mask is built only from
+     * blocks whose OCR text was READ (non-blank). An unread region — low-conf-
+     * blanked or organically-empty OCR — contributes NEITHER its text box nor
+     * its bubble box, so its ORIGINAL pixels stay visible instead of being
+     * erased to an empty void. Watermark blocks still carry text here (they are
+     * removed from `blocks` only later, after translate), so they are erased as
+     * before; detector-only boxes (`allTextDetections`) are disjoint from any
+     * OCR block and are erased as before. It deliberately does NOT consult
+     * `block.translation` — translation has not run yet at OCR time, so this is
+     * naturally immune to the watermark-block-removal ordering.
      */
     fun computeMask(pageTranslation: PageTranslation): List<InpaintMaskBox> {
         val blocks = pageTranslation.blocks
+        // Only readable blocks contribute to the erase set.
+        val readable = blocks.filter { it.text.isNotBlank() }
 
-        val bubbleBoxes = blocks
+        val bubbleBoxes = readable
             .filter { it.parentWidth > 0f && it.parentHeight > 0f }
             .map { block ->
                 intArrayOf(
@@ -98,19 +105,15 @@ object PageInpaintingPlanner {
             .filterValid()
             .distinctBy { it.toList() }
 
-        val textBoxLabels = blocks
-            .mapNotNull { block ->
-                val box = intArrayOf(
-                    block.x.toInt(),
-                    block.y.toInt(),
-                    (block.x + block.width).toInt(),
-                    (block.y + block.height).toInt(),
-                )
-                if (box.isValid()) box to block.label else null
-            }
+        val textBoxLabels = readable
+            .mapNotNull { block -> blockTextBox(block)?.let { it to block.label } }
         val textBoxes = textBoxLabels.map { it.first }
 
-        val ocrBlockBoxes = textBoxes.map { it.copyOf() }
+        // Overlap reference = ALL OCR block boxes (readable AND blank). A
+        // detector box overlapping a blank-text block must NOT be re-added as an
+        // extra-detector entry, or it would re-erase exactly the region we are
+        // deliberately preserving above.
+        val allOcrBoxes = blocks.mapNotNull { blockTextBox(it) }
         val extraDetectorBoxes = pageTranslation.allTextDetections
             .map { it.bbox }
             .filterValid()
@@ -121,7 +124,7 @@ object PageInpaintingPlanner {
                     detBox[2] + DETECTOR_OVERLAP_PAD,
                     detBox[3] + DETECTOR_OVERLAP_PAD,
                 )
-                ocrBlockBoxes.none { ocrBox ->
+                allOcrBoxes.none { ocrBox ->
                     BoxGeometry.iou(expanded, ocrBox) > DETECTOR_OCR_IOU_THRESHOLD
                 }
             }
@@ -150,8 +153,10 @@ object PageInpaintingPlanner {
      */
     private fun recomputeFromLiveDetections(pageTranslation: PageTranslation): InpaintingInput {
         val blocks = pageTranslation.blocks
+        // Render-aware: mirror computeMask exactly (byte-equivalent semantics).
+        val readable = blocks.filter { it.text.isNotBlank() }
 
-        val bubbleBoxes = blocks
+        val bubbleBoxes = readable
             .filter { it.parentWidth > 0f && it.parentHeight > 0f }
             .map { block ->
                 intArrayOf(
@@ -164,19 +169,11 @@ object PageInpaintingPlanner {
             .filterValid()
             .distinctBy { it.toList() }
 
-        val textBoxLabels = blocks
-            .mapNotNull { block ->
-                val box = intArrayOf(
-                    block.x.toInt(),
-                    block.y.toInt(),
-                    (block.x + block.width).toInt(),
-                    (block.y + block.height).toInt(),
-                )
-                if (box.isValid()) box to block.label else null
-            }
+        val textBoxLabels = readable
+            .mapNotNull { block -> blockTextBox(block)?.let { it to block.label } }
         val textBoxes = textBoxLabels.map { it.first }
 
-        val ocrBlockBoxes = textBoxes.map { it.copyOf() }
+        val allOcrBoxes = blocks.mapNotNull { blockTextBox(it) }
         val extraDetectorBoxes = pageTranslation.allTextDetections
             .map { it.bbox }
             .filterValid()
@@ -187,7 +184,7 @@ object PageInpaintingPlanner {
                     detBox[2] + DETECTOR_OVERLAP_PAD,
                     detBox[3] + DETECTOR_OVERLAP_PAD,
                 )
-                ocrBlockBoxes.none { ocrBox ->
+                allOcrBoxes.none { ocrBox ->
                     BoxGeometry.iou(expanded, ocrBox) > DETECTOR_OCR_IOU_THRESHOLD
                 }
             }
@@ -204,6 +201,16 @@ object PageInpaintingPlanner {
             extraDetectorCount = extraDetectorBoxes.size,
             source = MaskSource.RECOMPUTED,
         )
+    }
+
+    private fun blockTextBox(block: TranslationBlock): IntArray? {
+        val box = intArrayOf(
+            block.x.toInt(),
+            block.y.toInt(),
+            (block.x + block.width).toInt(),
+            (block.y + block.height).toInt(),
+        )
+        return if (box.isValid()) box else null
     }
 
     private fun List<IntArray>.filterValid(): List<IntArray> =

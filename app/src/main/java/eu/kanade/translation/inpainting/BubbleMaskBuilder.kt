@@ -1,8 +1,6 @@
 package eu.kanade.translation.inpainting
 
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
 /**
  * Pure mask-construction and morphology helpers used by [SmartBubbleTextCleaner]
@@ -15,87 +13,6 @@ import kotlin.math.roundToInt
  * tuning constants the cleaner used to read as fields.
  */
 object BubbleMaskBuilder {
-
-    // TachiyomiAT: Laplace/harmonic inpaint defaults used by [laplaceInpaint].
-    // This is a harmonic (Laplace) solve, NOT a Navier-Stokes solve — a real
-    // Bertalmio NS solver (vorticity transport + isophote continuity) is a
-    // future follow-up. Internal constants (prototype-style defaults) — no
-    // settings surface, per the task's "tunables stay internal" requirement.
-    private const val LAPLACE_DOWNSAMPLE = 0.25f
-    private const val LAPLACE_ITERS = 120
-
-    /**
-     * Build a filled mask over the union of [boxes], each drawn as a rounded
-     * rectangle (corner radius derived from the box's shorter side). Pixels
-     * inside any rounded rect are set to 1; the rest stay 0.
-     */
-    fun roundedAllowedMask(
-        boxes: List<IntArray>,
-        width: Int,
-        height: Int,
-    ): ByteArray {
-        val mask = ByteArray(width * height)
-        for (box in boxes) {
-            val x1 = box[0].coerceIn(0, width)
-            val y1 = box[1].coerceIn(0, height)
-            val x2 = box[2].coerceIn(x1, width)
-            val y2 = box[3].coerceIn(y1, height)
-            val bw = x2 - x1
-            val bh = y2 - y1
-            if (bw <= 0 || bh <= 0) continue
-            val radius = (min(bw, bh) * 0.25f).roundToInt().coerceIn(8, 20).coerceAtMost(min(bw, bh) / 2)
-            for (y in y1 until y2) {
-                for (x in x1 until x2) {
-                    if (insideRoundedRect(x - x1, y - y1, bw, bh, radius)) {
-                        mask[y * width + x] = 1
-                    }
-                }
-            }
-        }
-        return mask
-    }
-
-    /**
-     * Build a filled rectangular mask for the interior of [bubble], eroded
-     * inward by [erodePx] on every side and clamped to the canvas bounds.
-     */
-    fun bubbleInteriorMask(
-        bubble: IntArray,
-        width: Int,
-        height: Int,
-        erodePx: Int,
-    ): ByteArray {
-        val x1 = (bubble[0] + erodePx).coerceIn(0, width)
-        val y1 = (bubble[1] + erodePx).coerceIn(0, height)
-        val x2 = (bubble[2] - erodePx).coerceIn(x1, width)
-        val y2 = (bubble[3] - erodePx).coerceIn(y1, height)
-        val mask = ByteArray(width * height)
-        for (y in y1 until y2) {
-            for (x in x1 until x2) {
-                mask[y * width + x] = 1
-            }
-        }
-        return mask
-    }
-
-    /**
-     * Pixel-in-rounded-rect test. Outside the corner zones every interior pixel
-     * counts; inside a corner zone the pixel must lie within `radius` of the
-     * corner center.
-     */
-    fun insideRoundedRect(x: Int, y: Int, width: Int, height: Int, radius: Int): Boolean {
-        if (radius <= 0) return true
-        val left = x < radius
-        val right = x >= width - radius
-        val top = y < radius
-        val bottom = y >= height - radius
-        if (!(left || right) || !(top || bottom)) return true
-        val cx = if (left) radius else width - radius - 1
-        val cy = if (top) radius else height - radius - 1
-        val dx = x - cx
-        val dy = y - cy
-        return dx * dx + dy * dy <= radius * radius
-    }
 
     /** Logical AND of two equal-length masks. Either-zero stays zero. */
     fun andMasks(a: ByteArray, b: ByteArray): ByteArray {
@@ -165,296 +82,6 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * TachiyomiAT: pure-Kotlin harmonic (Laplace) inpaint.
-     *
-     * PLACEHOLDER solver. This solves the Laplace/harmonic equation ∇²I = 0
-     * inside the hole Ω with Dirichlet boundary conditions taken from the known
-     * pixels on ∂Ω — i.e. each reconstructed pixel is driven to the average of
-     * its neighbours, which smoothly propagates the surrounding intensities/
-     * gradient into the hole. Per channel, on the downsampled grid, then
-     * bilinearly upsampled to full res.
-     *
-     * It is NOT a Navier-Stokes solve despite the historical name. A real
-     * Bertalmio/Bertozzi/Sapiro (CVPR 2001) vorticity-stream NS solver (vorticity
-     * transport + isophote continuity) is a future follow-up; the private
-     * [computeVorticity]/[diffuseVorticity]/[poissonSolve] helpers below are
-     * retained as scaffolding for that. With vorticity forced to zero they
-     * degenerate to exactly this Laplace solve.
-     *
-     * Pure (no Android, no OpenCV): `IntArray` ARGB in, `IntArray` ARGB out,
-     * so it is unit-tested on the JVM. The caller feather-composites the
-     * result via [featherAlpha] + [SmartBubbleTextCleaner.applyFeatheredFill].
-     *
-     * @param pixels ARGB image (same layout as Bitmap.getPixels).
-     * @param mask non-zero = hole pixel to reconstruct (Ω).
-     * @param width / height image dimensions.
-     * @param downsample small-grid scale (0..1). The PDE runs on
-     *   `(width*downsample) × (height*downsample)`; smaller = faster but less
-     *   detail.
-     * @param iters Poisson/Jacobi sweeps used to solve ∇²I = ω (=0) to steady
-     *   state.
-     * @return filled ARGB IntArray (full res); hole pixels reconstructed,
-     *   non-hole pixels unchanged.
-     */
-    fun laplaceInpaint(
-        pixels: IntArray,
-        mask: ByteArray,
-        width: Int,
-        height: Int,
-        downsample: Float = LAPLACE_DOWNSAMPLE,
-        iters: Int = LAPLACE_ITERS,
-    ): IntArray {
-        if (width <= 0 || height <= 0) return pixels.copyOf()
-        // No hole → nothing to do.
-        if (mask.none { it != 0.toByte() }) return pixels.copyOf()
-
-        val sw = max(4, (width * downsample).toInt())
-        val sh = max(4, (height * downsample).toInt())
-
-        // Downsample: image by box-average (keeps gradients smooth at small
-        // scale), mask by area-threshold (a small cell is a hole iff any source
-        // hole pixel maps into it).
-        val smallR = downsampleChannel(pixels, mask, width, height, sw, sh) { px -> (px shr 16 and 0xFF).toFloat() }
-        val smallG = downsampleChannel(pixels, mask, width, height, sw, sh) { px -> (px shr 8 and 0xFF).toFloat() }
-        val smallB = downsampleChannel(pixels, mask, width, height, sw, sh) { px -> (px and 0xFF).toFloat() }
-        val smallMask = downsampleMask(mask, width, height, sw, sh)
-
-        // Solve the harmonic equation per channel (intensity = channel value).
-        solveChannel(smallR, smallMask, sw, sh, iters)
-        solveChannel(smallG, smallMask, sw, sh, iters)
-        solveChannel(smallB, smallMask, sw, sh, iters)
-
-        // Bilinear upsample back to full res, recombining ARGB. Non-hole pixels
-        // keep their ORIGINAL value (Dirichlet BC already held them fixed in the
-        // solve; here we override them explicitly so floating-point drift from
-        // the downsample/upsample round-trip never touches known pixels).
-        val out = pixels.copyOf()
-        for (y in 0 until height) {
-            val fy = (y + 0.5f) * sh / height - 0.5f
-            val y0 = fy.toInt().coerceIn(0, sh - 1)
-            val y1 = (y0 + 1).coerceIn(0, sh - 1)
-            val ty = (fy - y0).coerceIn(0f, 1f)
-            for (x in 0 until width) {
-                val idx = y * width + x
-                if (mask[idx] == 0.toByte()) continue
-                val fx = (x + 0.5f) * sw / width - 0.5f
-                val x0 = fx.toInt().coerceIn(0, sw - 1)
-                val x1 = (x0 + 1).coerceIn(0, sw - 1)
-                val tx = (fx - x0).coerceIn(0f, 1f)
-                val r = bilerp(smallR, sw, x0, y0, x1, y1, tx, ty).roundToInt().coerceIn(0, 255)
-                val g = bilerp(smallG, sw, x0, y0, x1, y1, tx, ty).roundToInt().coerceIn(0, 255)
-                val b = bilerp(smallB, sw, x0, y0, x1, y1, tx, ty).roundToInt().coerceIn(0, 255)
-                out[idx] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-            }
-        }
-        return out
-    }
-
-    /**
-     * One Bertalmio vorticity-stream NS solve for a single intensity channel.
-     * Mutates [u] in place: hole pixels are reconstructed, non-hole pixels
-     * (Dirichlet BC) stay fixed. Central differences throughout.
-     */
-    private fun solveChannel(
-        u: FloatArray,
-        mask: ByteArray,
-        w: Int,
-        h: Int,
-        iters: Int,
-    ) {
-        val n = w * h
-        val omega = FloatArray(n)   // zero vorticity -> Laplace/harmonic solve
-        val scratch = FloatArray(n) // Poisson Jacobi scratch
-        poissonSolve(u, omega, mask, w, h, iters, scratch)
-    }
-
-    /**
-     * Vorticity ω = ∇⊥I · ∇²I = (∂I/∂y)(∂∇²? )... concretely the stream-
-     * function vorticity: ω = (∂I/∂y)(∂²I/∂x²) − ... — implemented as the dot
-     * product of the isophote tangent ∇⊥I = (∂I/∂y, −∂I/∂x) with the gradient
-     * of the Laplacian ∇(∇²I) = (∂∇²I/∂x, ∂∇²I/∂y). Computed everywhere
-     * (central differences) so the Poisson RHS inside Ω is defined.
-     */
-    private fun computeVorticity(
-        u: FloatArray,
-        omega: FloatArray,
-        mask: ByteArray,
-        w: Int,
-        h: Int,
-    ) {
-        for (y in 1 until h - 1) {
-            val row = y * w
-            for (x in 1 until w - 1) {
-                val idx = row + x
-                // Isophote tangent ∇⊥I = (∂I/∂y, −∂I/∂x) (rotated gradient).
-                val dIdx = (u[idx + 1] - u[idx - 1]) * 0.5f
-                val dIdy = (u[idx + w] - u[idx - w]) * 0.5f
-                // Laplacian ∇²I.
-                val lap = u[idx + 1] + u[idx - 1] + u[idx + w] + u[idx - w] - 4f * u[idx]
-                // Gradient of the Laplacian ∇(∇²I).
-                val dLapDx = (u[idx + w + 1] + u[idx - w + 1] - u[idx + w - 1] - u[idx - w - 1]) * 0.25f
-                val dLapDy = (u[idx + w + 1] + u[idx + w - 1] - u[idx - w + 1] - u[idx - w - 1]) * 0.25f
-                // ω = ∇⊥I · ∇(∇²I) = (∂I/∂y)(∂∇²I/∂x) − (∂I/∂x)(∂∇²I/∂y).
-                omega[idx] = dIdy * dLapDx - dIdx * dLapDy
-            }
-        }
-    }
-
-    /** One explicit vorticity-diffusion sweep ∂ω/∂t = ν∇²ω inside Ω. */
-    private fun diffuseVorticity(
-        omega: FloatArray,
-        mask: ByteArray,
-        w: Int,
-        h: Int,
-        nu: Float,
-    ) {
-        val next = omega.copyOf()
-        for (y in 1 until h - 1) {
-            val row = y * w
-            for (x in 1 until w - 1) {
-                val idx = row + x
-                if (mask[idx] == 0.toByte()) continue
-                val lap = omega[idx + 1] + omega[idx - 1] + omega[idx + w] + omega[idx - w] - 4f * omega[idx]
-                next[idx] = omega[idx] + nu * lap
-            }
-        }
-        System.arraycopy(next, 0, omega, 0, omega.size)
-    }
-
-    /**
-     * Poisson solve ∇²I = ω inside Ω with Dirichlet BC on ∂Ω (non-hole pixels
-     * held fixed). Jacobi iteration — simple and parallel-friendly; converges
-     * monotonically for the smooth manga-background case.
-     */
-    private fun poissonSolve(
-        u: FloatArray,
-        omega: FloatArray,
-        mask: ByteArray,
-        w: Int,
-        h: Int,
-        iters: Int,
-        scratch: FloatArray,
-    ) {
-        var current = u
-        var next = scratch
-        for (it in 0 until iters) {
-            for (y in 1 until h - 1) {
-                val row = y * w
-                for (x in 1 until w - 1) {
-                    val idx = row + x
-                    // Dirichlet BC: known pixels never move.
-                    if (mask[idx] == 0.toByte()) {
-                        next[idx] = current[idx]
-                        continue
-                    }
-                    // Jacobi update: I = (neighbors − ω) / 4 for ∇²I = ω.
-                    val nRight = current[idx + 1]
-                    val nLeft = current[idx - 1]
-                    val nDown = current[idx + w]
-                    val nUp = current[idx - w]
-                    val neighbors = nRight + nLeft + nDown + nUp
-                    var v = (neighbors - omega[idx]) * 0.25f
-                    // TachiyomiAT: stability guard. On a sharp edge (e.g. dark/light
-                    // step at a bubble boundary) the vorticity source ω can be large
-                    // and the Jacobi update overshoots, propagating NaN/Inf that
-                    // crashes the upsample roundToInt(). Two defenses:
-                    //  (1) clamp to the global intensity band [0,255] (the discrete
-                    //      maximum principle for bounded-source Poisson — a recon-
-                    //      structed intensity can never validly leave the 8-bit range);
-                    //  (2) reject non-finite values, falling back to the neighbor
-                    //      mean (a stable, in-range estimate). Without this a single
-                    //      step-edge hole blew up the whole solve.
-                    if (!v.isFinite()) {
-                        v = neighbors * 0.25f
-                    }
-                    next[idx] = v.coerceIn(0f, 255f)
-                }
-            }
-            // Boundary cells: copy through (Dirichlet).
-            for (x in 0 until w) {
-                next[x] = current[x]
-                next[(h - 1) * w + x] = current[(h - 1) * w + x]
-            }
-            for (y in 0 until h) {
-                next[y * w] = current[y * w]
-                next[y * w + w - 1] = current[y * w + w - 1]
-            }
-            val tmp = current
-            current = next
-            next = tmp
-        }
-        // Ensure the final state lands in [u] (the array the caller reads).
-        if (current !== u) {
-            System.arraycopy(current, 0, u, 0, u.size)
-        }
-    }
-
-    /** Box-average downsample of one ARGB channel to the small grid. */
-    private inline fun downsampleChannel(
-        pixels: IntArray,
-        mask: ByteArray,
-        w: Int,
-        h: Int,
-        sw: Int,
-        sh: Int,
-        extract: (Int) -> Float,
-    ): FloatArray {
-        val out = FloatArray(sw * sh)
-        // Per small cell: average the source pixels that fall in it.
-        // Accumulate counts to handle non-integer (w/sw) cell widths.
-        val counts = IntArray(sw * sh)
-        for (y in 0 until h) {
-            val sy = (y * sh / h).coerceIn(0, sh - 1)
-            for (x in 0 until w) {
-                val sx = (x * sw / w).coerceIn(0, sw - 1)
-                val si = sy * sw + sx
-                out[si] += extract(pixels[y * w + x])
-                counts[si]++
-            }
-        }
-        for (i in out.indices) {
-            if (counts[i] > 0) out[i] /= counts[i]
-        }
-        return out
-    }
-
-    /** Downsample the hole mask: a small cell is a hole iff any source hole
-     *  pixel maps into it (conservative — never shrink the hole region). */
-    private fun downsampleMask(
-        mask: ByteArray,
-        w: Int,
-        h: Int,
-        sw: Int,
-        sh: Int,
-    ): ByteArray {
-        val out = ByteArray(sw * sh)
-        for (y in 0 until h) {
-            val sy = (y * sh / h).coerceIn(0, sh - 1)
-            for (x in 0 until w) {
-                if (mask[y * w + x] != 0.toByte()) {
-                    val sx = (x * sw / w).coerceIn(0, sw - 1)
-                    out[sy * sw + sx] = 1
-                }
-            }
-        }
-        return out
-    }
-
-    private fun bilerp(
-        a: FloatArray, w: Int,
-        x0: Int, y0: Int, x1: Int, y1: Int,
-        tx: Float, ty: Float,
-    ): Float {
-        val i00 = y0 * w + x0
-        val i10 = y0 * w + x1
-        val i01 = y1 * w + x0
-        val i11 = y1 * w + x1
-        val top = a[i00] * (1f - tx) + a[i10] * tx
-        val bottom = a[i01] * (1f - tx) + a[i11] * tx
-        return top * (1f - ty) + bottom * ty
-    }
-
-    /**
      * Drop connected components of set pixels that touch the canvas border
      * (within a 2px margin), keeping only interior blobs. Used to reject
      * detector masks that bleed out of the page edge.
@@ -501,69 +128,17 @@ object BubbleMaskBuilder {
     }
 
     /**
-     * Dilate the set pixels of [mask] by one pixel (4-neighbourhood), repeated
-     * [iterations] times — a true multi-pass dilation that grows set pixels by
-     * [iterations] pixels outward along each axis.
-     *
-     * TachiyomiAT: each pass reads the *running* result (snapshotted into a
-     * separate read buffer) rather than the original [mask]. The earlier
-     * implementation read [mask] on every pass, which re-applied the same
-     * single-pixel dilation each time and capped growth at 1px no matter how
-     * large [iterations] was — callers setting `iterations = 3` to cover
-     * anti-aliased stroke edges (see [SmartBubbleTextCleaner]) only ever got
-     * 1px, leaving stroke fringes half-covered at the fill boundary. Reading
-     * the snapshot makes growth compound correctly.
-     *
-     * Growth shape: a 4-neighbourhood dilation reaches pixels by Manhattan
-     * distance, so after N iterations a single isolated pixel fills a diamond
-     * (L1 ball) of radius N — the axes grow N pixels (centre ± N), and the
-     * diagonal corner of an enclosing square fills only at iteration 2·N
-     * (corner Manhattan distance). Callers wanting a square block must use
-     * 8-neighbourhood (Chebyshev) dilation; this 4-neighbourhood variant is
-     * intentionally conservative so it does not bridge across thin gaps.
-     */
-    fun dilateMask(
-        mask: ByteArray,
-        width: Int,
-        height: Int,
-        iterations: Int,
-    ): ByteArray {
-        if (iterations <= 0) return mask.copyOf()
-        var result = mask.copyOf()
-        repeat(iterations) {
-            val source = result
-            val temp = result.copyOf()
-            for (y in 1 until height - 1) {
-                for (x in 1 until width - 1) {
-                    if (source[y * width + x] != 0.toByte()) {
-                        temp[y * width + x] = 1
-                        temp[(y - 1) * width + x] = 1
-                        temp[(y + 1) * width + x] = 1
-                        temp[y * width + (x - 1)] = 1
-                        temp[y * width + (x + 1)] = 1
-                    }
-                }
-            }
-            result = temp
-        }
-        return result
-    }
-
-    /**
      * TachiyomiAT: disk (circular) structuring-element dilation.
      *
-     * Unlike the 4-neighbourhood [dilateMask] (Manhattan-diamond growth, which
-     * produces 45° chamfered corners on rectangular masks), this grows set
-     * pixels isotropically — a disk of radius [radius] — so rectangle corners
-     * become genuinely rounded rather than chamfered. This directly addresses
-     * the reported "corners too sharp" inpainting artifact: the erase mask's
-     * corners are the corners the user sees on the cleaned bubble, and a disk
-     * SE rounds them while a diamond SE chamfers them.
+     * This grows set pixels isotropically — a disk of radius [radius] — so
+     * rectangle corners become genuinely rounded rather than chamfered. This
+     * directly addresses the reported "corners too sharp" inpainting artifact:
+     * the erase mask's corners are the corners the user sees on the cleaned
+     * bubble, and a disk SE rounds them.
      *
-     * The disk does NOT bridge thin gaps more than the diamond would at the
-     * same radius (a disk of radius N has the same diagonal reach as a diamond
-     * of radius N), so the "intentionally conservative" property cited on
-     * [dilateMask] is preserved.
+     * The disk does NOT bridge thin gaps more than a 4-neighbourhood grower
+     * would at the same radius (a disk of radius N has the same diagonal reach
+     * as a diamond of radius N).
      *
      * Implementation: precompute the disk kernel offsets once (dx,dy pairs
      * where dx²+dy² ≤ radius²), then for each set source pixel OR the kernel
@@ -603,48 +178,173 @@ object BubbleMaskBuilder {
     }
 
     /**
+     * TachiyomiAT: target the neural (AOT) crop so the text box occupies
+     * roughly one third of the model's ≤512 inference tensor, with the other
+     * two thirds filled by real surrounding-page context. This is a goal-driven
+     * rule that simultaneously guarantees:
+     *  - a resolution floor (the box is never sub-128 in the tensor view, since
+     *    ~1/3 of the [384,512] clamp is ≥128), and
+     *  - generous context (the model sees ~2× the box's own area of page).
+     *
+     * The earlier heuristic was `boxLongSide × 2.5` clamped to [64,256] — a
+     * margin, which made the box's *fraction* of the tensor vary with box size.
+     * Sizing to a fixed *fraction* keeps both resolution and context bounded
+     * regardless of how big the text is.
+     *
+     * The clamp bounds memory: a crop long side of 512 is today's worst case
+     * (the inference tensor is capped there anyway), so this never charges
+     * `canRunNeuralInpaint` a higher peak than the previous design → no new
+     * heap-pressure downgrades on the 6GB target.
+     *
+     * Pure (no Android, no ONNX) so it is unit-tested in isolation.
+     *
+     * @param boxLongSide the longer side of the text box union (px)
+     * @return the target longer side of the context crop (px)
+     */
+    fun computeNeuralCrop(boxLongSide: Int): Int {
+        if (boxLongSide <= 0) return NEURAL_CROP_MIN
+        val target = boxLongSide * NEURAL_BOX_FRACTION_DENOM / NEURAL_BOX_FRACTION_NUM
+        return target.coerceIn(NEURAL_CROP_MIN, NEURAL_CROP_MAX)
+    }
+
+    /**
+     * TachiyomiAT: two-pass chamfer distance transform of [mask]. Returns, for
+     * every pixel, the (approximate Euclidean) distance to the nearest non-zero
+     * mask pixel. Distance is 0 inside the mask and grows outward. Approximated
+     * with the (3,4) chamfer weights — accurate to within ~8% of true Euclidean
+     * distance, at O(n) cost with one transient `IntArray`.
+     *
+     * This replaces the O(n · featherRadius²) box-blur feather with a true
+     * distance field, so the blend transition is a smooth monotonic ramp away
+     * from the mask edge rather than a thin 2–6px cliff. Both the neural
+     * ([AOTInpainting.featherBlend]) and classical feather paths consume it,
+     * so bubbles and free text get an identical soft boundary.
+     *
+     * Pure (no Android, no ONNX) so it is unit-tested in isolation.
+     */
+    fun distanceToMask(
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+    ): FloatArray {
+        val n = minOf(mask.size, width * height)
+        // Sentinel must be large but leave headroom so INF + weight cannot
+        // overflow Int (adding to a still-unreached neighbour). 1e9 leaves
+        // ~1.3e9 of headroom, far more than any real chamfer sum.
+        val INF = 1_000_000_000
+        val dist = IntArray(n) { INF }
+        val H = 3 // horizontal/vertical step weight (chamfer 3,4)
+        val D = 4 // diagonal step weight
+
+        // Forward pass (top-left to bottom-right). Only relax from neighbours
+        // that have already been reached (< INF); unreached neighbours cannot
+        // contribute a distance yet.
+        for (y in 0 until height) {
+            val row = y * width
+            for (x in 0 until width) {
+                val i = row + x
+                if (mask[i] != 0.toByte()) { dist[i] = 0; continue }
+                var best = dist[i]
+                if (x > 0) {
+                    val v = dist[i - 1]; if (v < best - H) best = v + H
+                }
+                if (y > 0) {
+                    val v = dist[i - width]; if (v < best - H) best = v + H
+                }
+                if (x > 0 && y > 0) {
+                    val v = dist[i - width - 1]; if (v < best - D) best = v + D
+                }
+                if (x < width - 1 && y > 0) {
+                    val v = dist[i - width + 1]; if (v < best - D) best = v + D
+                }
+                dist[i] = best
+            }
+        }
+        // Backward pass (bottom-right to top-left).
+        for (y in height - 1 downTo 0) {
+            val row = y * width
+            for (x in width - 1 downTo 0) {
+                val i = row + x
+                var best = dist[i]
+                if (x < width - 1) {
+                    val v = dist[i + 1]; if (v < best - H) best = v + H
+                }
+                if (y < height - 1) {
+                    val v = dist[i + width]; if (v < best - H) best = v + H
+                }
+                if (x < width - 1 && y < height - 1) {
+                    val v = dist[i + width + 1]; if (v < best - D) best = v + D
+                }
+                if (x > 0 && y < height - 1) {
+                    val v = dist[i + width - 1]; if (v < best - D) best = v + D
+                }
+                dist[i] = best
+            }
+        }
+
+        val out = FloatArray(n)
+        val scale = 1f / H.toFloat() // normalize chamfer units → px (3-weight basis)
+        for (i in 0 until n) {
+            out[i] = if (dist[i] >= INF) Float.POSITIVE_INFINITY else dist[i] * scale
+        }
+        return out
+    }
+
+    /**
+     * TachiyomiAT: distance-field feathered alpha (0..1) for [mask]. Core
+     * (in-mask) pixels are fully opaque (1.0); outside, alpha ramps down
+     * linearly from 1.0 at the edge to 0.0 at [rampWidth] px from it. This is
+     * the smooth replacement for the box-blur [featherAlpha] and is the single
+     * soft-edge routine consumed by both the neural and classical inpaint paths.
+     */
+    fun featherAlphaField(
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        rampWidth: Int,
+    ): FloatArray {
+        val alpha = FloatArray(width * height)
+        val hasAny = mask.any { it != 0.toByte() }
+        if (!hasAny) return alpha
+        val dist = distanceToMask(mask, width, height)
+        // A ramp of at least 2 keeps the floor that callers relied on.
+        val ramp = max(2, rampWidth).toFloat()
+        for (i in alpha.indices) {
+            alpha[i] = if (mask[i] != 0.toByte()) {
+                1.0f
+            } else {
+                (1.0f - dist[i] / ramp).coerceIn(0.0f, 1.0f)
+            }
+        }
+        return alpha
+    }
+
+    /**
      * Build a feathered alpha map (0..1) for [mask]: core pixels are fully
-     * opaque (1.0); pixels just outside are a box-blurred average over a
-     * [featherRadius] kernel. Used to blend the inpaint smoothly with the
-     * surrounding artwork.
+     * opaque (1.0); pixels outside ramp down over [featherRadius] px. Used to
+     * blend the inpaint smoothly with the surrounding artwork.
+     *
+     * TachiyomiAT: this now delegates to the distance-field [featherAlphaField]
+     * so the classical inpaint paths (bubbles, unparented text, solid boxes)
+     * share the identical smooth monotonic ramp as the neural path. The earlier
+     * box-blurred average produced a thin 2–6px cliff that exposed the erase
+     * rectangle; the distance field removes that artefact uniformly.
      */
     fun featherAlpha(
         mask: ByteArray,
         width: Int,
         height: Int,
         featherRadius: Int,
-    ): FloatArray {
-        val alpha = FloatArray(width * height)
-        val coreBool = BooleanArray(width * height)
-        for (i in mask.indices) coreBool[i] = mask[i] != 0.toByte()
+    ): FloatArray = featherAlphaField(mask, width, height, featherRadius)
 
-        val hasAny = coreBool.any { it }
-        if (!hasAny) return alpha
+    // --- neural crop sizing constants (internal; no settings surface) ---
 
-        val fr = max(2, featherRadius)
+    /** Text box targets ~1/3 of the inference tensor (numerator/denominator). */
+    private const val NEURAL_BOX_FRACTION_NUM = 1
+    private const val NEURAL_BOX_FRACTION_DENOM = 3
 
-        val blurred = FloatArray(width * height)
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                var sum = 0f
-                var count = 0
-                for (ky in -fr..fr) {
-                    for (kx in -fr..fr) {
-                        val ny = y + ky
-                        val nx = x + kx
-                        if (ny in 0 until height && nx in 0 until width) {
-                            sum += if (coreBool[ny * width + nx]) 255f else 0f
-                            count++
-                        }
-                    }
-                }
-                blurred[y * width + x] = if (count > 0) sum / count / 255f else 0f
-            }
-        }
-
-        for (i in alpha.indices) {
-            alpha[i] = if (coreBool[i]) 1.0f else blurred[i]
-        }
-        return alpha
-    }
+    /** Crop long-side clamp [px]. Floor keeps context on tiny boxes; ceiling is
+     *  today's worst case (tensor cap), bounding heap (no new downgrades). */
+    private const val NEURAL_CROP_MIN = 384
+    private const val NEURAL_CROP_MAX = 512
 }

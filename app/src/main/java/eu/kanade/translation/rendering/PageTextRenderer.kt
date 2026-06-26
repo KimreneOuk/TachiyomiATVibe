@@ -122,10 +122,24 @@ class PageTextRenderer(context: Context) {
         )
 
         for (layout in layouts) {
-            fillPaint.color = layout.block.textColor.toInt()
+            val textColor = layout.block.textColor.toInt()
+            var strokeColor = layout.block.strokeColor.toInt()
+            var strokeWidth = layout.strokeWidth
+
+            // TachiyomiAT: hard outline invariant — every block MUST have a
+            // contrasting outline regardless of persisted/merged values.
+            val tr = (textColor shr 16 and 0xFF)
+            val tg = (textColor shr 8 and 0xFF)
+            val tb = (textColor and 0xFF)
+            val luma = (tr * 299 + tg * 587 + tb * 114) / 1000
+            val correctStroke = if (luma < 128) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+            if (strokeColor != correctStroke) strokeColor = correctStroke
+            if (strokeWidth <= 0f) strokeWidth = max(2f, layout.fontSizePx * 0.06f)
+
+            fillPaint.color = textColor
             fillPaint.textSize = layout.fontSizePx
-            strokePaint.color = layout.block.strokeColor.toInt()
-            strokePaint.strokeWidth = layout.strokeWidth
+            strokePaint.color = strokeColor
+            strokePaint.strokeWidth = strokeWidth
             strokePaint.textSize = layout.fontSizePx
 
             // Clip only when the planner could not place this block without an

@@ -32,19 +32,14 @@ class DbPostProcessTest {
     }
 
     @Test
-    fun `single high-prob rectangle yields one line, unclipped about centroid`() {
+    fun `single high-prob rectangle yields one line, raw bbox`() {
         // 6x3 rectangle in the middle, prob well above both thresholds.
         val map = probMapWith(intArrayOf(5, 4, 10, 6), boxProb = 0.9f)
         val lines = DbPostProcess.detectLines(map, width, height)
         lines shouldHaveSize 1
         val b = lines[0].bbox
-        // detectLines already applies unclip(ratio=1.4) using uniform distance:
-        //   w = 5.0, h = 2.0, area = 10.0, perimeter = 14.0
-        //   distance = 10.0 * 1.4 / 14.0 = 1.0
-        //   x1 = 5 - 1 = 4, y1 = 4 - 1 = 3
-        //   x2 = 10 + 1 = 11, y2 = 6 + 1 = 7
-        // all within map bounds [0,19]x[0,15], so no clamping changes them.
-        b.toList() shouldBe listOf(4, 3, 11, 7)
+        // No unclip; raw inclusive bbox from the component.
+        b.toList() shouldBe listOf(5, 4, 10, 6)
         // Score is the mean prob over the component (uniform 0.9). Use an
         // approximate comparison — summing 18 copies of 0.9f and dividing drifts
         // to 0.89999986f in IEEE-754 single precision; exact equality is brittle.
@@ -60,14 +55,19 @@ class DbPostProcessTest {
         for (y in 8..12) for (x in 12..16) map[y * width + x] = 0.8f
         val lines = DbPostProcess.detectLines(map, width, height)
         lines shouldHaveSize 2
-        // detectLines unclips each box (ratio 1.4) AND sorts by (y, x).
-        // The bottom rectangle has minX=12, maxX=16, minY=8, maxY=12.
-        // w = 4.0, h = 4.0, area = 16.0, perimeter = 16.0
-        // distance = 16.0 * 1.4 / 16.0 = 1.4
-        // y1 = 8 - 1.4 = 6.6 -> 6
-        // Assert on the SORT ORDER (top first), not exact pre-unclip coords.
-        lines[0].bbox[1] shouldBe 0
-        lines[1].bbox[1] shouldBe 6
+        // No unclip; raw y values: top rect minY=1, bottom rect minY=8.
+        lines[0].bbox[1] shouldBe 1
+        lines[1].bbox[1] shouldBe 8
+    }
+
+    @Test
+    fun `component larger than half the map is dropped`() {
+        // 15x12 = 180 > 0.5 * 320 = 160 → dropped.
+        val bigMap = probMapWith(intArrayOf(0, 0, 14, 11), boxProb = 0.9f)
+        DbPostProcess.detectLines(bigMap, width, height) shouldBe emptyList()
+        // Small component (6x3=18 < 160) survives.
+        val smallMap = probMapWith(intArrayOf(5, 4, 10, 6), boxProb = 0.9f)
+        DbPostProcess.detectLines(smallMap, width, height) shouldHaveSize 1
     }
 
     @Test
@@ -146,10 +146,13 @@ class DbPostProcessTest {
         // count. Place boxes far enough apart in y that rows stay distinct.
         val map = FloatArray(60 * 60)
         // 3 rows, 6 cols each — but each row merges to 1 line = 3 lines total.
-        // Use a tight cap to still prove the bound shapes the output.
+        // Use a tight cap to still prove the bound shapes the output. Columns are
+        // spaced so the inter-box gap (< box height) merges a row on the RAW
+        // (un-unclipped) boxes — the production merge threshold is tuned against
+        // raw boxes, matching the Python prototype (no unclip).
         for (row in 0 until 3) {
             for (col in 0 until 6) {
-                val x0 = col * 9 + 1
+                val x0 = col * 7 + 1
                 val y0 = row * 18 + 1
                 for (y in y0 until y0 + 5) for (x in x0 until x0 + 5) {
                     map[y * 60 + x] = 0.9f

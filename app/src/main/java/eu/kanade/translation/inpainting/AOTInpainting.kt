@@ -37,6 +37,13 @@ class AOTInpainting {
         private const val PADDLE_THRESH = 0.18f
         private const val PADDLE_BOX_THRESH = 0.34f
         private const val MASK_PAD = 8
+
+        // TachiyomiAT: width (px) of the distance-field feather ramp used to
+        // blend the neural output with the original page. A smooth ramp here
+        // replaces the earlier 2–6px box-blur cliff that exposed the erase-box
+        // rectangle. Conservative default; one tuning knob if a page ghosts or
+        // still shows a hard edge. See [BubbleMaskBuilder.featherAlphaField].
+        private const val FEATHER_RAMP_PX = 12
     }
 
     private val scratchLock = Any()
@@ -222,26 +229,13 @@ class AOTInpainting {
             }
         }
 
-        if (grouped.isNotEmpty()) {
-            for ((_, groupBoxes) in grouped) {
-                val bubbleBbox = findParentBubble(groupBoxes.first(), bubbleBoxes) ?: continue
-                result = bubbleCleaner.cleanBubbleGroupFmm(result, bubbleBbox, groupBoxes, paddleDet)
-            }
-        }
-
-        if (unparented.isNotEmpty()) {
-            result = bubbleCleaner.cleanRegions(result, unparented)
-        }
-
-        // TachiyomiAT: refine the free-text erase boxes through PaddleOCR-v6 DET.
-        // detector-v4 supplied the COARSE free-text regions above; now each one is
-        // re-detected at line granularity by Paddle and the resulting line boxes
-        // (back-projected to page coords) REPLACE the detector-v4 rectangles as
-        // the erase target — the prototype `mask_mode = paddle_boxes`. When Paddle
-        // returns 0 lines for a region, that region falls back to its detector-v4
-        // box (counted in paddleFallback for diagnostics). Only free text is
-        // refined here; parented bubbles keep cleanBubbleGroup (AOT stays free-
-        // text-only). Null paddleDet keeps the legacy detector-v4 boxes verbatim.
+        // TachiyomiAT: boundary-aware tiered pipeline — replaces cleanBubbleGroupFmm,
+        // cleanRegions, and fillSolidBoxes for both modes. Each cluster is processed
+        // through containment (flood of the true flat interior) → tier classification
+        // (FLAT / TEXTURED / COLOR) → tier-appropriate fill (flat fill for T0, Telea
+        // with exterior paintout for FAST T1/T2, AOT with containment clip for QUALITY
+        // T1/T2). The existing Paddle refinement is preserved for free-text boxes.
+        val regionPad = 10
         var paddleLinesTotal = 0
         var paddleFallback = 0
         val paddleRefined: List<IntArray>
@@ -255,22 +249,46 @@ class AOTInpainting {
         }
         val paddleActive = paddleDet != null && freeBoxesForAot.isNotEmpty()
 
+        // --- Parented bubble groups (detector-v4 bubble + Paddle line boxes) ---
+        if (grouped.isNotEmpty()) {
+            for ((_, groupBoxes) in grouped) {
+                val bubbleBbox = findParentBubble(groupBoxes.first(), bubbleBoxes) ?: continue
+                try {
+                    result = bubbleCleaner.fillContained(
+                        result,
+                        bubbleBbox[0], bubbleBbox[1], bubbleBbox[2], bubbleBbox[3],
+                        bubbleBbox, groupBoxes, paddleDet,
+                    )
+                } catch (e: Exception) {
+                    logcat(LogPriority.WARN, e) { "[inpaint] fillContained failed for bubble group; using Telea fallback" }
+                    result = bubbleCleaner.cleanBubbleGroupFmm(result, bubbleBbox, groupBoxes, paddleDet)
+                }
+            }
+        }
+
+        // --- Unparented text (label 1 with no bubble) ---
+        if (unparented.isNotEmpty()) {
+            val ux1 = unparented.minOf { it[0] }
+            val uy1 = unparented.minOf { it[1] }
+            val ux2 = unparented.maxOf { it[2] }
+            val uy2 = unparented.maxOf { it[3] }
+            try {
+                result = bubbleCleaner.fillContained(
+                    result, ux1, uy1, ux2, uy2,
+                    null, unparented,
+                )
+            } catch (e: Exception) {
+                logcat(LogPriority.WARN, e) { "[inpaint] fillContained failed for unparented; using cleanRegions fallback" }
+                result = bubbleCleaner.cleanRegions(result, unparented)
+            }
+        }
+
+        // --- Free text (label 2, Paddle-refined, no parent bubble) ---
         val freeFlatBoxes = mutableListOf<IntArray>()
         val freeNeuralBoxes = mutableListOf<IntArray>()
         val freeSmallBoxes = mutableListOf<IntArray>()
         val pageArea = image.width.toLong() * image.height.toLong()
         val smallBoxAreaThreshold = pageArea / 200
-        // TachiyomiAT: route order changed so small boxes can reach the neural
-        // path. Previously the small-box check ran FIRST and force-routed every
-        // sub-threshold box to flat-fill regardless of QUALITY mode — so a user
-        // in QUALITY mode expecting neural reconstruction on a small bubble
-        // silently got the flat color-average fill, which destroys screentone
-        // (averaging dots → flat gray). Now: (1) flat-background regions route
-        // to flat-fill (fast and correct for genuinely flat backgrounds);
-        // (2) small boxes route to flat-fill ONLY when memory is constrained;
-        // (3) otherwise the box reaches the neural path for screentone-capable
-        // reconstruction. The memory gate preserves the OOM-safety intent of
-        // the original absolute-area bypass.
         for (box in paddleRefined) {
             val boxArea = (box[2] - box[0]).toLong() * (box[3] - box[1]).toLong()
             when {
@@ -289,12 +307,8 @@ class AOTInpainting {
         logcat(LogPriority.INFO) {
             "[inpaint] route bubbles=${bubbleBoxes.size} grouped=${grouped.values.sumOf { it.size }} " +
                 "unparented=${unparented.size} freeFlat=${freeFlatBoxes.size} freeSmall=${freeSmallBoxes.size} freeNeural=${freeNeuralBoxes.size} " +
-                "model=${sess != null}"
+                "model=${sess != null} pipeline=tiered"
         }
-        // TachiyomiAT: paddle_boxes diagnostics — surfaces the detector→Paddle
-        // refinement so a missed column or a fallback storm is diagnosable from
-        // logcat without the diagnostics pref. Mirrors the prototype's reported
-        // counts (detectorText / paddleLines / fallback / finalMaskBoxes).
         if (paddleActive) {
             logcat(LogPriority.INFO) {
                 "[inpaint] paddle_boxes detectorText=${freeBoxesForAot.size} paddleLines=$paddleLinesTotal " +
@@ -303,53 +317,22 @@ class AOTInpainting {
             }
         }
 
-        // TachiyomiAT: when Paddle refined the free-text boxes, the flat/small
-        // routes erase SOLID padded Paddle boxes (fillSolidBoxes) — not the
-        // pixel-heuristic cleanRegions, which would re-derive a mask from the
-        // box interior and re-introduce the sparse/over-processed artifact the
-        // Paddle path exists to avoid. cleanRegions is retained for the null-
-        // paddleDet legacy path (paddleActive == false).
-        if (freeFlatBoxes.isNotEmpty()) {
-            result = if (paddleActive) {
-                bubbleCleaner.fillSolidBoxes(result, freeFlatBoxes, MASK_PAD)
-            } else {
-                bubbleCleaner.cleanRegions(result, freeFlatBoxes)
-            }
-        }
+        // Free-text FLAT + SMALL boxes → legacy push-pull + local color (per box).
+        // This is the validated "legacy" free-text path (local ring-median color
+        // + push-pull gradient + bleed-free feather), ported from the Python
+        // prototype. Replaces the prior fillContained/Telea route for these.
+        result = inpaintFreeTextLegacy(result, freeFlatBoxes + freeSmallBoxes)
 
-        if (freeSmallBoxes.isNotEmpty()) {
-            result = if (paddleActive) {
-                bubbleCleaner.fillSolidBoxes(result, freeSmallBoxes, MASK_PAD)
-            } else {
-                bubbleCleaner.cleanRegions(result, freeSmallBoxes)
-            }
-        }
-
-        // TachiyomiAT: pick the non-neural cleaner for a box list. When Paddle
-        // refined the boxes, erase SOLID padded boxes (fillSolidBoxes); otherwise
-        // keep the legacy pixel-heuristic cleanRegions (null-paddleDet path).
-        val cleanFree: (Bitmap, List<IntArray>) -> Bitmap = { src, boxes ->
-            if (paddleActive) bubbleCleaner.fillSolidBoxes(src, boxes, MASK_PAD)
-            else bubbleCleaner.cleanRegions(src, boxes)
-        }
-
-        if (freeNeuralBoxes.isNotEmpty() && sess != null && mode == InpaintingMode.QUALITY) {
-            if (TranslationMemoryBudget.isCriticalHeap()) {
-                TranslationMemoryBudget.logSnapshot(
-                    tag = "skip_neural_heap_pressure",
-                    width = image.width,
-                    height = image.height,
-                    extra = "boxes=${freeNeuralBoxes.size}",
-                )
-                result = cleanFree(result, freeNeuralBoxes)
-            } else {
+        // Free-text NEURAL boxes → QUALITY: containment-clipped AOT; FAST: fillContained
+        if (freeNeuralBoxes.isNotEmpty()) {
+            if (mode == InpaintingMode.QUALITY && sess != null) {
                 val clusters = clusterNearbyBoxes(freeNeuralBoxes, clusterDistance = 100)
                 logcat(LogPriority.INFO) {
                     "[inpaint] clustering ${freeNeuralBoxes.size} neural boxes into ${clusters.size} clusters"
                 }
                 for (cluster in clusters) {
                     try {
-                        val next = inpaintFreeRegions(sess, result, cluster, padding)
+                        val next = inpaintFreeRegions(sess, result, cluster, regionPad)
                         if (next !== result) {
                             if (result !== image) result.recycle()
                             result = next
@@ -358,14 +341,24 @@ class AOTInpainting {
                         BitmapPool.releaseAll()
                         System.gc()
                         logcat(LogPriority.WARN) {
-                            "[inpaint] OOM on neural cluster (${cluster.size} boxes), falling back to smart clean"
+                            "[inpaint] OOM on neural cluster (${cluster.size} boxes), falling back to fillContained"
                         }
-                        result = cleanFree(result, cluster)
+                        try {
+                            val bx1 = cluster.minOf { it[0] }
+                            val by1 = cluster.minOf { it[1] }
+                            val bx2 = cluster.maxOf { it[2] }
+                            val by2 = cluster.maxOf { it[3] }
+                            result = bubbleCleaner.fillContained(result, bx1, by1, bx2, by2, null, cluster)
+                        } catch (_: Exception) {
+                            result = bubbleCleaner.fillSolidBoxes(result, cluster, MASK_PAD)
+                        }
                     }
                 }
+            } else {
+                // FAST fallthrough for free neural boxes → legacy push-pull + local
+                // color (per box). Keeps QUALITY+AOT above untouched.
+                result = inpaintFreeTextLegacy(result, freeNeuralBoxes)
             }
-        } else if (freeNeuralBoxes.isNotEmpty()) {
-            result = cleanFree(result, freeNeuralBoxes)
         }
 
         return result
@@ -478,19 +471,22 @@ class AOTInpainting {
         val unionX2 = normalizedBoxes.maxOf { it[2] }
         val unionY2 = normalizedBoxes.maxOf { it[3] }
 
-        // TachiyomiAT: proportional crop margin. The earlier fixed 32px margin
-        // gave the generative model too little surrounding context for small
-        // text boxes — a known artifact source (the model needs to see nearby
-        // bubble borders, screentone, and line art to reconstruct naturally).
-        // Scale the margin to the text-region size (~2.5× the longer side, per
-        // production AOT-GAN manga-translation practice), clamped to [64, 256]:
-        //  - floor 64 ensures even tiny SFX gets meaningful context,
-        //  - ceiling 256 caps memory on the 6GB target (the crop feeds a fixed
-        //    512×512 model input regardless, so a larger crop is only a larger
-        //    transient IntArray; the ceiling keeps that bounded).
+        // TachiyomiAT: goal-driven crop sizing. Target the crop so the text
+        // box occupies ~1/3 of the ≤512 inference tensor (the other ~2/3 is
+        // real surrounding-page context). This replaces the earlier
+        // `boxLongSide × 2.5` margin heuristic with a fixed *fraction* of the
+        // tensor, which simultaneously guarantees a resolution floor (the box
+        // is never sub-128 in the model's view) and generous context — without
+        // two rules fighting. The crop is clamped to [384,512] long side, so
+        // the worst-case memory is unchanged from the prior design (the tensor
+        // is capped at 512 regardless) → no new heap-pressure downgrades.
         val textW = unionX2 - unionX1
         val textH = unionY2 - unionY1
-        val cropMargin = (max(textW, textH) * 2.5f).toInt().coerceIn(64, 256)
+        val boxLongSide = max(textW, textH)
+        val targetCropLong = BubbleMaskBuilder.computeNeuralCrop(boxLongSide)
+        // Margin = half the extra context on each side, computed so the longer
+        // axis of the union reaches targetCropLong.
+        val cropMargin = max(0, (targetCropLong - boxLongSide) / 2)
 
         val cropX1 = max(0, unionX1 - cropMargin)
         val cropY1 = max(0, unionY1 - cropMargin)
@@ -531,8 +527,9 @@ class AOTInpainting {
             // build the mask with BubbleMaskBuilder.buildRectMask: pad each box
             // by MASK_PAD and dilate with a disk SE. This is deliberately boring
             // and direct (Paddle box → pad → mask → inpaint); the prior bug was
-            // caused by shrinking/over-processing masks after detection via the
-            // pixel-heuristic buildTightTextRegionMask.
+            // caused by shrinking/over-processing masks after detection via a
+            // pixel-heuristic that produced sparse glyph-only pixels or whole
+            // detector rectangles.
             val localBoxes = normalizedBoxes.map { box ->
                 intArrayOf(box[0] - cropX1, box[1] - cropY1, box[2] - cropX1, box[3] - cropY1)
             }
@@ -862,28 +859,25 @@ class AOTInpainting {
             mask.getPixels(maskPixels, 0, width, xMin, yMin, width, height)
         }
 
-        val featherR = max(2, min(6, min(width, height) / 8))
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val idx = y * width + x
-                val alpha = if (maskValue(maskPixels[idx]) > 127) {
-                    1.0f
-                } else {
-                    var covered = 0
-                    var total = 0
-                    for (dy in -featherR..featherR) {
-                        val yy = y + dy
-                        if (yy !in 0 until height) continue
-                        for (dx in -featherR..featherR) {
-                            val xx = x + dx
-                            if (xx !in 0 until width) continue
-                            total++
-                            if (maskValue(maskPixels[yy * width + xx]) > 127) covered++
-                        }
-                    }
-                    if (total == 0) 0.0f else covered.toFloat() / total.toFloat()
-                }
-                origPixels[idx] = if (alpha <= 0.0f) origPixels[idx] else blendPixel(origPixels[idx], inpPixels[idx], alpha)
+        // TachiyomiAT: distance-field feather. The box-average alpha here was a
+        // thin 2–6px cliff that exposed the PaddleOCR box rectangle whenever the
+        // model's reconstruction didn't perfectly match the surroundings. Build
+        // the byte mask, then use the chamfer distance transform to produce a
+        // smooth monotonic alpha ramp over FEATHER_RAMP_PX from the mask edge.
+        val maskBytes = ByteArray(width * height)
+        for (i in maskBytes.indices) {
+            if (maskValue(maskPixels[i]) > 127) maskBytes[i] = 1
+        }
+        val alphaField = BubbleMaskBuilder.featherAlphaField(
+            mask = maskBytes,
+            width = width,
+            height = height,
+            rampWidth = FEATHER_RAMP_PX,
+        )
+        for (idx in origPixels.indices) {
+            val alpha = alphaField[idx]
+            if (alpha > 0.0f) {
+                origPixels[idx] = blendPixel(origPixels[idx], inpPixels[idx], alpha)
             }
         }
         result.setPixels(origPixels, 0, width, 0, 0, width, height)
@@ -957,6 +951,28 @@ class AOTInpainting {
         return clusters
     }
 
+    /**
+     * TachiyomiAT: apply the legacy free-text inpaint ([LegacyFreeTextInpainter])
+     * to each free-text box. Each box is processed independently on a per-box
+     * crop (memory-bounded for the 6 GB target). Mutates the result bitmap in
+     * place and returns it.
+     */
+    private fun inpaintFreeTextLegacy(result: Bitmap, boxes: List<IntArray>): Bitmap {
+        if (boxes.isEmpty()) return result
+        var img = result
+        for (box in boxes) {
+            try {
+                img = LegacyFreeTextInpainter.inpaint(img, box)
+            } catch (e: Exception) {
+                // Preserve the "always erase something" contract: fall back to a
+                // solid-box fill so a free-text box is never left with its ink.
+                logcat(LogPriority.WARN, e) { "[inpaint] legacy free-text failed; fillSolidBoxes fallback" }
+                img = bubbleCleaner.fillSolidBoxes(img, listOf(box), MASK_PAD)
+            }
+        }
+        return img
+    }
+
     fun close() {
         bubbleCleaner.clearWorkingBuffers()
         session?.close()
@@ -979,15 +995,5 @@ class AOTInpainting {
     fun forceReleaseNativeBuffers() {
         bubbleCleaner.clearWorkingBuffers()
         clearScratch()
-    }
-
-    private fun adaptiveInferenceDim(cropW: Int, cropH: Int): Int {
-        val maxSide = max(cropW, cropH)
-        return when {
-            maxSide <= 300 -> maxSide
-            maxSide <= 500 -> 384
-            maxSide <= 800 -> 512
-            else -> 640
-        }
     }
 }

@@ -27,7 +27,10 @@ translation/
 │
 ├─ inpainting/
 │  ├─ AOTInpainting.kt           AOT-based bubble inpainting
+│  ├─ AotOutputGuard.kt          ★ PURE neural-output sanity guard (mid-gray-fill detection)
+│  ├─ BoundaryAwarePipeline.kt   ★ PURE containment flood + tier classification (FLAT/TEXTURED/COLOR)
 │  ├─ BubbleMaskBuilder.kt       ★ PURE mask/morphology helpers (BubbleMaskBuilderTest)
+│  ├─ FastMarchingMethod.kt      ★ PURE Telea Fast Marching Method inpaint + adaptive threshold
 │  ├─ InpaintingMode.kt          QUALITY / FAST enum
 │  ├─ PageInpaintingEngine.kt    Inpaint entry; delegates box planning to PageInpaintingPlanner
 │  ├─ PageInpaintingPlanner.kt   ★ PURE erase-mask planner: computeMask (at OCR time) + build (persisted-aware)
@@ -62,7 +65,8 @@ translation/
 │
 ├─ rendering/
 │  ├─ PageTextRenderer.kt        Draws translated text onto cleaned pages (no source-text fallback)
-│  └─ RenderColorEstimator.kt    ★ PURE colorPolicy/snapGray + Bitmap-bound estimate()
+│  ├─ RenderColorEstimator.kt    ★ PURE colorPolicy/snapGray + Bitmap-bound estimate()
+│  └─ TextLayoutPlanner.kt       ★ PURE neighbour-aware text layout solver (TextLayoutPlannerTest)
 │
 ├─ runtime/onnx/
 │  ├─ DeviceCapability.kt        ONNX EP capability detection
@@ -81,13 +85,15 @@ translation/
 │  ├─ AiTranslatorKind.kt        AI translator enum (Gemini/DeepSeek/OpenRouter/LM Studio)
 │  ├─ DeepSeekTranslator.kt      DeepSeek adapter (delegates parsing to NumberedLineResponseParser)
 │  ├─ GeminiTranslator.kt        Gemini adapter
+│  ├─ DeepLApi.kt                DeepL endpoint/auth helper (Free vs Pro host from `:fx` key suffix)
+│  ├─ DeepLTranslator.kt         DeepL adapter
 │  ├─ GoogleTranslator.kt        Google Translate adapter
 │  ├─ LmStudioTranslator.kt      LM Studio adapter (delegates parsing to NumberedLineResponseParser)
 │  ├─ MLKitTranslator.kt         On-device ML Kit translator
 │  ├─ NumberedLineResponseParser.kt ★ PURE STRICT `[index] text` parser (DeepSeek/LM Studio); no positional fallback, rejects out-of-range/dup/blank/CJK-leak
 │  ├─ OcrArtifactSanitizer.kt    ★ PURE OCR misread (N°/№/Ｎ０) stripper
 │  ├─ OpenRouterTranslator.kt    OpenRouter adapter
-│  ├─ StandardTranslatorKind.kt  Standard translator enum (ML Kit/Google)
+│  ├─ StandardTranslatorKind.kt  Standard translator enum (ML Kit/Google/DeepL)
 │  ├─ TextTranslator.kt          Translator interface
 │  ├─ TextTranslatorLanguage.kt  Target-language enum
 │  ├─ TranslationBlockFilters.kt ★ PURE watermark (RTMTH) block removal
@@ -246,8 +252,8 @@ for a dramatically lower resident footprint — the correct trade-off for the
 the arena for speed, gate the setting on `DeviceCapability` rather than
 re-enabling it globally.
 
-### 12. MangaOcr encoder input MUST use a direct, pooled buffer (`MangaOcrEngine.recognize`)
-The encoder input tensor is built from the 224×224×3 normalized pixel array.
+### 12. ONNX input tensors MUST use direct, pooled buffers (`MangaOcrEngine`, `PaddleOcrV6*`)
+The MangaOcr encoder input tensor is built from the 224×224×3 normalized pixel array.
 The previous code used `FloatBuffer.wrap(pixels)` — a **heap-backed** buffer.
 ORT cannot use heap memory directly for native inference, so it allocates an
 internal native copy. Per ORT issue #16937 (maintainer reply: *"FloatBuffer.wrap
@@ -277,6 +283,13 @@ inside the `try` and released in the `finally`, mirroring the existing
 native copy is negligible. `forceReleaseNativeBuffers()` and `close()` clear
 `inputPixelPool` alongside the KV-cache pools so OOM recovery and engine
 teardown release it uniformly.
+
+The same rule applies to PaddleOCR v6. `PaddleOcrV6DetEngine` writes its fixed
+736×736 detector tensor directly into a pooled direct buffer, and
+`PaddleOcrV6SmallEngine` writes its variable-width recognizer tensor directly
+into a max-width pooled direct buffer while exposing only the active width via
+the buffer limit. Neither engine may use `FloatBuffer.wrap(...)` for ONNX inputs
+on the hot per-ROI/per-text-line path.
 
 Verify any new ONNX tensor creation against this contract — a heap-backed
 buffer on a hot per-ROI path will reintroduce this exact leak class. The
@@ -445,22 +458,20 @@ borders around bubbles, destructive over-erasure, duplicate/overlapping text).
 Each invariant closes a specific defect; together they make the cleaned image
 match the local artwork instead of producing visible rectangles.
 
-**(a) Dilation MUST compound across iterations.** `BubbleMaskBuilder.dilateMask`
-reads the *running* result each pass (snapshotted), not the original input
-mask. The earlier implementation re-applied a single-pixel dilation every
-pass, capping growth at 1px regardless of `iterations` — so callers setting
-`iterations = 3` (to cover anti-aliased stroke edges) only got 1px, leaving
-fringes half-covered at the fill boundary. Growth is a 4-neighbourhood
-(Manhattan-diamond) dilation: `iterations = N` grows set pixels by N px along
-each axis. Pinned by `BubbleMaskBuilderTest`.
+**(a) Mask dilation uses a disk structuring element.** `BubbleMaskBuilder.dilateMaskDisk`
+grows set pixels by a precomputed circular kernel (`dx²+dy² ≤ radius²`),
+rounding rectangle corners rather than chamfering them at 45° (the reported
+"corners too sharp" artifact). A disk of radius N has the same diagonal reach
+as a 4-neighbourhood grower of radius N, so it does not bridge thin gaps more.
+Pinned by `BubbleMaskBuilderTest`.
 
 **(b) Feathering at the mask boundary MUST be active.** `SmartBubbleTextCleaner`
 computes a `featherAlpha` map (core = 1.0, ring = box-blurred ramp 0→1) and
 the fill loop gates on `alpha > 0` (not `mask != 0`). The earlier code
 `continue`d on every non-mask pixel, discarding the entire feather ring; with
 `alpha` always 1.0 inside the mask the fill had a hard 1px edge — the reported
-"box border" artifact, worst on speech bubbles (which route exclusively through
-`cleanBubbleGroup`). The shared fill body is extracted as the pure, tested
+"box border" artifact, worst on speech bubbles (which route through the
+boundary-aware `fillContained`). The shared fill body is extracted as the pure, tested
 `applyFeatheredFill`, and `buildLocalBackground` interpolates a background for
 the feather ring too (otherwise the ring blend would be a no-op).
 
@@ -499,9 +510,9 @@ bubble grouping, but the actual erase target for free text is now:
    padded by `MASK_PAD` (8 px), filled SOLID, dilated with a disk SE (radius 2).
 
 This is deliberately boring and direct: Paddle box → pad → mask → inpaint. The
-prior bug was caused by shrinking/over-processing masks after detection (the
-pixel-heuristic `buildTightTextRegionMask` over detector-v4 rectangles produced
-sparse glyph-only pixels or whole detector rectangles). Per-region fallback:
+prior bug was caused by shrinking/over-processing masks after detection — a
+pixel-heuristic over detector-v4 rectangles produced sparse glyph-only pixels
+or whole detector rectangles. Per-region fallback:
 when Paddle returns 0 lines for a detector text region, that region falls back
 to its detector-v4 box (counted in the `[inpaint] paddle_boxes` diagnostics log
 alongside detectorText / paddleLines / fallback / finalMaskBoxes). The same
@@ -511,18 +522,13 @@ path (`inpaintFreeRegions` → `buildRectMask`) and the FAST path
 **`FastMarchingMethod.inpaintTelea`** (Telea Fast Marching Method, radius 3),
 matching the prototype's `free_method = "telea"` / `cv2.inpaint(INPAINT_TELEA)`).
 
-`BubbleMaskBuilder.navierStokesInpaint` was renamed to `laplaceInpaint`
-(Laplace/harmonic ∇²I=0); retained as a placeholder — a real Bertalmio
-Navier-Stokes solver is a future follow-up.
-
-`buildTightTextRegionMask` / `cleanRegions` are RETAINED as the null-`paddleDet`
-legacy fallback (detector-v4 boxes + pixel heuristics), so a device without the
-det asset still erases free text. `fillSolidBoxes` is the Paddle-active FAST
-equivalent. Only FREE text is Paddle-refined; parented bubbles keep
-`cleanBubbleGroup` (AOT stays free-text-only). The det engine loads for the
-inpainter whenever the asset is available, decoupled from the
-`translation_experimental_paddle_masking` pref (which now gates ONLY the
-parented-bubble path).
+`cleanRegions` is the null-`paddleDet` legacy fallback (detector-v4 boxes +
+pixel heuristics), so a device without the det asset still erases free text.
+`fillSolidBoxes` is the Paddle-active FAST equivalent. Only FREE text is
+Paddle-refined; parented bubbles use the boundary-aware `fillContained` (AOT
+stays free-text-only). The det engine loads for the inpainter whenever the
+asset is available, decoupled from the `translation_experimental_paddle_masking`
+pref (which now gates ONLY the parented-bubble path).
 
 **(f) Overlapping blocks MUST be geometrically deduped before render.**
 `PageTranslationHelper.dedupeGeometricOverlaps` drops the lower-score block of
@@ -536,6 +542,57 @@ reported "translated text rendered on top of itself". Wired into both
 `MlKitFullPageRecognitionEngine.convertToPageTranslation` (which previously did
 no dedupe at all). Drop, not merge: merging concatenates OCR text and changes
 the translation unit's semantics. Pinned by `PageTranslationHelperDedupeTest`.
+
+**(g) Feathering uses a distance field, not a box blur — both paths.**
+`BubbleMaskBuilder.distanceToMask` is a two-pass chamfer (3,4) distance
+transform (O(n), one transient `IntArray`) that yields, per pixel, its distance
+to the nearest mask pixel. `featherAlphaField` builds alpha = 1.0 inside the
+mask, ramping linearly to 0.0 over `rampWidth` px outside. This replaces the
+earlier O(n · r²) box-blurred `featherAlpha`, which produced a thin 2–6 px cliff
+that exposed the PaddleOCR box rectangle whenever the fill did not match the
+surroundings (the reported "sharp corners"). The neural path
+(`AOTInpainting.featherBlend`, ramp = `FEATHER_RAMP_PX` 12 px) and the classical
+path (`SmartBubbleTextCleaner`, which delegates `featherAlpha` →
+`featherAlphaField`) share the ONE transform, so bubbles and free text get an
+identical smooth monotonic edge. Pinned by `BubbleMaskBuilderTest`.
+
+**(h) The neural crop is sized so the text box is ~1/3 of the inference tensor.**
+`BubbleMaskBuilder.computeNeuralCrop(boxLongSide)` returns `clamp(boxLongSide×3,
+384, 512)`; `AOTInpainting.inpaintFreeRegions` derives the crop margin from it so
+the box occupies ~1/3 of the ≤512 tensor and ~2/3 is real page context. This
+replaces the earlier `boxLongSide×2.5` margin clamped [64,256], whose *fraction*
+of the tensor varied with box size. The clamp bounds memory (a 512 long side is
+the prior worst case, since the inference tensor is capped there regardless), so
+`canRunNeuralInpaint` sees no higher peak → no new heap-pressure downgrades on
+the 6 GB target. It also gives a coherent resolution floor (the box is never
+sub-128 in the tensor view). The erase mask is unchanged — still the padded
+PaddleOCR text box; only the VIEW widens. Pinned by `BubbleMaskBuilderTest`.
+
+**(i) Uniform near-white neural output is rejected, not just mid-gray.**
+`AotOutputGuard.isSuspiciousGrayFill` now treats a uniform block as suspicious
+when its mean luma is either in the mid-gray band (96–160) OR ≥ `NEAR_WHITE_MIN`
+(238), subject to the same low-variance / low-channel-delta uniformity test.
+Previously a pure-white (luma ~255) neural output — the documented "white block"
+artefact — sat above `MID_GRAY_MAX` and passed straight to the page
+(`AOTInpainting.inpaint` draws it; `featherBlend` softens only edges, not the
+core). Now it trips the guard and falls back to `SmartBubbleTextCleaner.cleanRegions`
+(unchanged caller). Genuine faint-screentone paper has real variance and stays
+accepted. Pinned by `AotOutputGuardTest`.
+
+**(j) The flat-fill never paints with a synthetic white median.** When the
+containment seed was empty, `computeContainment` returns a fallback (padded-union)
+mask with `interiorMedian = 0xFFFFFFFF` — a fabricated default, not a measured
+colour. `SmartBubbleTextCleaner.fillContained` now detects this
+(`interiorMedianUntrustworthy = isFallbackContainment && interiorMedian ==
+WHITE_ARGB`) and routes to the textured Telea branch instead, AND skips
+`paintExterior` in that branch (else every neighbour would become white and
+Telea would still emit white). Non-fallback containment always has a flooded
+area ≥ 0.8× the erase boxes, so its median is measured and trusted. This closes
+the FAST-mode white-block path (bubbles / unparented text), complementing (i)
+which closes the QUALITY-mode neural white block. `collectStats` /
+`sampleBackgroundStats` now carry a `sampleCount` field (`0` in the empty-mask
+branches) to make the degenerate case explicit and inspectable. Pinned by
+`BoundaryAwarePipelineTest`.
 
 **Diagnostics:** each recognition engine logs how many blocks the geometric
 dedupe dropped. `BoxGeometry.TEXT_DEDUP_THRESHOLDS` is the single source of
@@ -867,8 +924,8 @@ covered by `NumberedLineResponseParserTest`.
 | `model/PageTranslationHelperDedupeTest` | geometric dedupe: overlapping different-text/identical/cross-label/nested/touching-bubbles; preserves reading order; no mutation; degenerate-box kept |
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
 | `rendering/PageTextRendererDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
-| `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard); buildTightTextRegionMask solid tight region + per-box fallback + dilation |
-| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage/insideRoundedRect/bubbleInteriorMask/roundedAllowedMask + dilateMask compounding growth (iterations→px, diamond shape) + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + laplaceInpaint (gradient continuation, Dirichlet boundary, flat-page regression) + inpaintTelea (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
+| `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard) |
+| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + inpaintTelea (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
 | `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
 | `model/InpaintMaskSerializationTest` | inpaintMaskBoxes round-trips through JSON; InpaintMaskBox.toIntArray; hasCurrentInpaintMask (current / pre-fix-empty / textless) |
 | `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped + attemptCount charged once via recordAttemptFailure) + reason |

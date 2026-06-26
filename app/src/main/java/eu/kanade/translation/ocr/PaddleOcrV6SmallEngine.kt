@@ -11,6 +11,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
+import tachiyomi.domain.translation.pools.DirectBufferPool
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.BufferedReader
@@ -33,6 +34,22 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     private var session: OrtSession? = null
     private var dictionary: List<String> = emptyList()
     private var inputName: String = "x"
+
+    // TachiyomiAT: pooled DIRECT buffer for the rec input tensor. The rec input
+    // width varies per crop (up to MAX_RECOGNITION_WIDTH), so the pool is sized
+    // for the maximum shape; each call exposes only [width x height x 3] floats
+    // to the tensor via the buffer's limit. The previous
+    // FloatBuffer.wrap(preprocessed.pixels) was heap-backed, forcing ONNX Runtime
+    // to allocate an internal native copy on every recognize() call that
+    // accumulated across the per-text-line rec calls (ORT issue #16937) — the
+    // same leak class MangaOcrEngine.inputPixelPool fixes. A direct buffer is
+    // consumed in place, so nothing leaks. recognize() is serialized under the
+    // translator permit, so maxPoolSize = 2 (one live buffer) suffices.
+    // Capacity = 3 * 48 * 960 floats * 4 bytes ~= 540 KiB.
+    private val inputPixelPool = DirectBufferPool(
+        3 * RECOGNITION_HEIGHT * MAX_RECOGNITION_WIDTH * 4,
+        maxPoolSize = 2,
+    )
 
     fun initialize(modelFile: File, dictionaryFile: File) {
         logcat(LogPriority.INFO) {
@@ -57,17 +74,30 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         }
     }
 
-    override suspend fun recognize(crop: Bitmap): String {
+    override suspend fun recognize(crop: Bitmap): String = recognizeWithConf(crop).first
+
+    override suspend fun recognizeWithConf(crop: Bitmap): Pair<String, Float> {
         val localSession = session ?: throw IllegalStateException("PaddleOCR v6 small is not initialized")
-        val preprocessed = preprocess(crop)
+        var pixelBuffer: FloatBuffer? = null
         var inputTensor: OnnxTensor? = null
         var result: OrtSession.Result? = null
         val start = System.nanoTime()
         try {
+            // TachiyomiAT: preprocess writes the NCHW tensor straight into a
+            // pooled DIRECT buffer; only [width x height x 3] floats are exposed
+            // to the tensor via the buffer limit (the rec width varies per crop).
+            // The previous FloatBuffer.wrap(preprocessed.pixels) was heap-backed,
+            // forcing ORT to allocate a per-call native copy that leaked across
+            // the per-text-line recognize() calls (ORT issue #16937).
+            pixelBuffer = inputPixelPool.acquire()
+            pixelBuffer.clear()
+            val width = preprocess(crop, pixelBuffer)
+            pixelBuffer.limit(3 * RECOGNITION_HEIGHT * width)
+            pixelBuffer.position(0)
             inputTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
-                FloatBuffer.wrap(preprocessed.pixels),
-                longArrayOf(1, 3, RECOGNITION_HEIGHT.toLong(), preprocessed.width.toLong()),
+                pixelBuffer,
+                longArrayOf(1, 3, RECOGNITION_HEIGHT.toLong(), width.toLong()),
             )
             val inputTensorValue = inputTensor!!
             result = localSession.run(mapOf(inputName to inputTensorValue))
@@ -75,19 +105,20 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
             val shape = output.info.shape
             val timeSteps = shape[1].toInt()
             val classCount = shape[2].toInt()
-            val indices = PaddleCtcDecoder.argmaxIndices(output.floatBuffer, timeSteps, classCount)
-            val text = PaddleCtcDecoder.decode(indices, dictionary)
+            val (indices, maxProbs) = PaddleCtcDecoder.argmaxWithProbs(output.floatBuffer, timeSteps, classCount)
+            val (text, conf) = PaddleCtcDecoder.decodeWithConf(indices, maxProbs, dictionary)
             if (isDiagnosticsEnabled()) {
                 logcat(LogPriority.INFO) {
                     "[paddle_ocr] total=${(System.nanoTime() - start) / 1_000_000.0}ms " +
-                        "crop=${crop.width}x${crop.height} input=${preprocessed.width}x$RECOGNITION_HEIGHT " +
+                        "crop=${crop.width}x${crop.height} input=${width}x$RECOGNITION_HEIGHT " +
                         "chars=${text.length} text=\"$text\""
                 }
             }
-            return text
+            return text to conf
         } finally {
             inputTensor?.close()
             result?.close()
+            pixelBuffer?.let { inputPixelPool.release(it) }
         }
     }
 
@@ -95,9 +126,14 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         session?.close()
         session = null
         dictionary = emptyList()
+        inputPixelPool.clear()
     }
 
-    private fun preprocess(crop: Bitmap): PreprocessedInput {
+    override fun forceReleaseNativeBuffers() {
+        inputPixelPool.clear()
+    }
+
+    private fun preprocess(crop: Bitmap, out: FloatBuffer): Int {
         val safeWidth = crop.width.coerceAtLeast(1)
         val safeHeight = crop.height.coerceAtLeast(1)
         // TachiyomiAT: match the reference PP-OCR pipeline (e.g. comic-translate's
@@ -142,22 +178,21 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
             val pixels = IntArray(inputWidth * RECOGNITION_HEIGHT)
             padded.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, RECOGNITION_HEIGHT)
-            val result = FloatArray(3 * RECOGNITION_HEIGHT * inputWidth)
+            // NCHW, RGB plane order, written directly into the pooled direct
+            // buffer (no intermediate FloatArray). The rec input width varies per
+            // crop; recognizeWithConf exposes only the filled region via the
+            // buffer's limit. Absolute puts leave the buffer position untouched.
             val planeSize = RECOGNITION_HEIGHT * inputWidth
             for (y in 0 until RECOGNITION_HEIGHT) {
                 for (x in 0 until inputWidth) {
                     val pixel = pixels[y * inputWidth + x]
                     val offset = y * inputWidth + x
-                    // PaddleOCR's standard inference pipeline converts OpenCV
-                    // BGR images to RGB. Android bitmaps are ARGB, so write the
-                    // tensor planes as R, G, B to match the exported model's
-                    // training/inference pipeline.
-                    result[offset] = normalize(pixel shr 16 and 0xFF) // R
-                    result[planeSize + offset] = normalize(pixel shr 8 and 0xFF) // G
-                    result[planeSize * 2 + offset] = normalize(pixel and 0xFF) // B
+                    out.put(offset, normalize(pixel shr 16 and 0xFF)) // R
+                    out.put(planeSize + offset, normalize(pixel shr 8 and 0xFF)) // G
+                    out.put(planeSize * 2 + offset, normalize(pixel and 0xFF)) // B
                 }
             }
-            return PreprocessedInput(result, inputWidth)
+            return inputWidth
         } finally {
             if (padded != null) BitmapPool.putARGB8888(padded)
             if (resized != null) BitmapPool.putARGB8888(resized)
@@ -178,11 +213,6 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         val aligned = ((floored + WIDTH_ALIGNMENT - 1) / WIDTH_ALIGNMENT) * WIDTH_ALIGNMENT
         return aligned.coerceAtMost(MAX_RECOGNITION_WIDTH)
     }
-
-    private data class PreprocessedInput(
-        val pixels: FloatArray,
-        val width: Int,
-    )
 
     private companion object {
         private const val RECOGNITION_HEIGHT = 48

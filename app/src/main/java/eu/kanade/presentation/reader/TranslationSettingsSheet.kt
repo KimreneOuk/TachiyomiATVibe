@@ -440,6 +440,21 @@ private fun ColumnScope.StandardEngineRows(prefs: TranslationPreferences) {
         value = value,
         onValueChange = { pref.set(it) },
     )
+
+    // DeepL is the only Standard engine that needs credentials; show its key
+    // row only when DeepL is selected so the user can configure it from the
+    // reader without leaving for global Settings.
+    if (value == StandardEngine.DEEPL) {
+        val apiKeyPref = prefs.translationDeeplApiKey()
+        val apiKey by apiKeyPref.collectAsState()
+        ApiKeyPreferenceWidget(
+            title = stringResource(ATMR.strings.pref_deepl_api_key),
+            apiKey = apiKey,
+            keySetLabel = stringResource(ATMR.strings.pref_ai_key_set),
+            keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set),
+            onApiKeyChange = { apiKeyPref.set(it) },
+        )
+    }
 }
 
 @Composable

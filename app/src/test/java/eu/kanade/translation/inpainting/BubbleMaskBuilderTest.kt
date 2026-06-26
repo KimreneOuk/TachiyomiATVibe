@@ -44,155 +44,6 @@ class BubbleMaskBuilderTest {
         BubbleMaskBuilder.maskCoverage(ByteArray(0)) shouldBe 0f
     }
 
-    // ---- insideRoundedRect ----
-
-    @Test
-    fun `insideRoundedRect returns true everywhere when radius is zero`() {
-        for (y in 0 until 10) {
-            for (x in 0 until 10) {
-                BubbleMaskBuilder.insideRoundedRect(x, y, 10, 10, radius = 0) shouldBe true
-            }
-        }
-    }
-
-    @Test
-    fun `insideRoundedRect rejects the extreme corner outside the corner circle`() {
-        // 10x10 box, radius 4 → corner center at (4,4); the far corner (0,0) is
-        // distance ~5.66 > 4 → outside.
-        BubbleMaskBuilder.insideRoundedRect(0, 0, 10, 10, radius = 4) shouldBe false
-    }
-
-    @Test
-    fun `insideRoundedRect accepts a point just inside the corner circle`() {
-        // Corner center (4,4); (4,4) itself is distance 0 <= 4 → inside.
-        BubbleMaskBuilder.insideRoundedRect(4, 4, 10, 10, radius = 4) shouldBe true
-    }
-
-    @Test
-    fun `insideRoundedRect accepts any point outside the corner zones`() {
-        // Mid-edge and centre are never in a corner zone.
-        BubbleMaskBuilder.insideRoundedRect(5, 5, 10, 10, radius = 4) shouldBe true
-        BubbleMaskBuilder.insideRoundedRect(5, 0, 10, 10, radius = 4) shouldBe true
-    }
-
-    // ---- bubbleInteriorMask ----
-
-    @Test
-    fun `bubbleInteriorMask fills the eroded rectangle and clamps to canvas`() {
-        // Bubble (1,1)-(5,5) on a 6x6 canvas, erode 1 → interior (2,2)-(4,4).
-        val mask = BubbleMaskBuilder.bubbleInteriorMask(intArrayOf(1, 1, 5, 5), width = 6, height = 6, erodePx = 1)
-
-        mask[2 * 6 + 2] shouldBe 1 // interior
-        mask[1 * 6 + 1] shouldBe 0 // eroded border
-        mask.size shouldBe 36
-    }
-
-    @Test
-    fun `bubbleInteriorMask of an over-eroded bubble is empty`() {
-        val mask = BubbleMaskBuilder.bubbleInteriorMask(intArrayOf(0, 0, 2, 2), width = 4, height = 4, erodePx = 10)
-
-        mask.count { it != 0.toByte() } shouldBe 0
-    }
-
-    // ---- roundedAllowedMask ----
-
-    @Test
-    fun `roundedAllowedMask fills the box interior minus the corners`() {
-        val mask = BubbleMaskBuilder.roundedAllowedMask(
-            boxes = listOf(intArrayOf(0, 0, 10, 10)),
-            width = 10,
-            height = 10,
-        )
-        // Centre is always set.
-        mask[5 * 10 + 5] shouldBe 1
-        // Extreme corner is outside the corner circle (radius derived from the
-        // 10x10 box clamps to min(8, 20, 5) = 5; corner (0,0) is > 5 from (5,5)).
-        mask[0] shouldBe 0
-    }
-
-    @Test
-    fun `roundedAllowedMask skips degenerate boxes`() {
-        val mask = BubbleMaskBuilder.roundedAllowedMask(
-            boxes = listOf(intArrayOf(2, 2, 2, 2)), // zero area
-            width = 4,
-            height = 4,
-        )
-        mask.count { it != 0.toByte() } shouldBe 0
-    }
-
-    // ---- dilateMask (true multi-pass dilation) ----
-
-    @Test
-    fun `dilateMask with one iteration grows set pixels by a 4-neighbourhood`() {
-        // 3x3, single set pixel at centre.
-        val mask = ByteArray(9).also { it[4] = 1 }
-
-        val out = BubbleMaskBuilder.dilateMask(mask, width = 3, height = 3, iterations = 1)
-
-        // Centre + up/down/left/right set; corners untouched after a single pass.
-        out.toList() shouldBe listOf(0, 1, 0, 1, 1, 1, 0, 1, 0).map { it.toByte() }
-    }
-
-    @Test
-    fun `dilateMask compounds growth across iterations forming a diamond by pass 2`() {
-        // Regression guard for the dilation quirk: the implementation MUST read
-        // the running result each pass (not the original `mask`), so iterations
-        // compound. A 4-neighbourhood dilation reaches pixels by Manhattan
-        // distance, so 2 passes from a single centre pixel fill a diamond (L1
-        // ball) of radius 2: 1 + 4 + 8 = 13 cells. The old quirk-capped
-        // implementation only ever produced the 5-cell plus-shape of pass 1
-        // regardless of iteration count.
-        val mask = ByteArray(25).also { it[12] = 1 }
-
-        val twoPass = BubbleMaskBuilder.dilateMask(mask, width = 5, height = 5, iterations = 2)
-
-        twoPass.count { it != 0.toByte() } shouldBe 13
-        // Diamond corners (the 4 corners of the 5x5, Manhattan distance 4 from
-        // centre) are NOT reached at 2 iterations.
-        twoPass[0] shouldBe 0
-        twoPass[4] shouldBe 0
-        twoPass[20] shouldBe 0
-        twoPass[24] shouldBe 0
-    }
-
-    @Test
-    fun `dilateMask grows a single pixel by exactly iterations pixels along the axes`() {
-        // 9x9 grid, single centre pixel at (4,4), iterations = 3 → arms reach
-        // centre ± 3 along each axis (Manhattan distance ≤ 3), i.e. x in [1,7]
-        // on the centre row and y in [1,7] on the centre column. The far ends
-        // (x=0, x=8) are at Manhattan distance 4 and are NOT reached.
-        val mask = ByteArray(81).also { it[40] = 1 }
-
-        val threePass = BubbleMaskBuilder.dilateMask(mask, width = 9, height = 9, iterations = 3)
-
-        // Centre row: x in [1,7] set; x=0 and x=8 NOT set (distance 4).
-        for (x in 1..7) {
-            threePass[4 * 9 + x] shouldBe 1
-        }
-        threePass[4 * 9 + 0] shouldBe 0
-        threePass[4 * 9 + 8] shouldBe 0
-        // Centre column: y in [1,7] set; y=0 and y=8 NOT set.
-        for (y in 1..7) {
-            threePass[y * 9 + 4] shouldBe 1
-        }
-        threePass[0 * 9 + 4] shouldBe 0
-        threePass[8 * 9 + 4] shouldBe 0
-        // Canvas corners never reached.
-        threePass[0] shouldBe 0
-        threePass[8 * 9 + 8] shouldBe 0
-    }
-
-    @Test
-    fun `dilateMask with zero iterations returns a copy of the input`() {
-        val mask = ByteArray(9).also { it[4] = 1 }
-
-        val out = BubbleMaskBuilder.dilateMask(mask, width = 3, height = 3, iterations = 0)
-
-        out.toList() shouldBe mask.toList()
-        // Returned copy, not the same reference.
-        (out !== mask) shouldBe true
-    }
-
     // ---- dilateMaskDisk (circular structuring element) ----
 
     @Test
@@ -208,7 +59,7 @@ class BubbleMaskBuilderTest {
     @Test
     fun `dilateMaskDisk radius 1 from a single pixel fills the 4-neighbourhood plus the centre`() {
         // radius 1 disk = {dx²+dy² ≤ 1} = centre + up/down/left/right (the
-        // 4-neighbourhood). Same 5-cell plus-shape as dilateMask iterations=1.
+        // 4-neighbourhood).
         val mask = ByteArray(9).also { it[4] = 1 }
 
         val out = BubbleMaskBuilder.dilateMaskDisk(mask, width = 3, height = 3, radius = 1)
@@ -243,11 +94,11 @@ class BubbleMaskBuilderTest {
     }
 
     @Test
-    fun `dilateMaskDisk rounds rectangle corners unlike the diamond dilateMask`() {
-        // A 3x3 filled rectangle (the kind of mask buildTightTextRegionMask
-        // produces) dilated by radius 2: the disk grows the rectangle but
+    fun `dilateMaskDisk rounds rectangle corners`() {
+        // A 3x3 filled rectangle dilated by radius 2: the disk grows the
+        // rectangle but ROUNDS its corners (the corner cells beyond the disk
         // ROUNDS its corners (the corner cells beyond the disk are not set),
-        // whereas the 4-neighbourhood dilateMask chamfers them at 45°.
+        // are not set), keeping the corner rounded.
         // On a 7x7 canvas, rectangle at rows 2-4 cols 2-4.
         val rect = ByteArray(49)
         for (y in 2..4) for (x in 2..4) rect[y * 7 + x] = 1
@@ -272,22 +123,22 @@ class BubbleMaskBuilderTest {
     }
 
     @Test
-    fun `featherAlpha makes core pixels fully opaque and neighbours partially opaque`() {
-        // 5x5, single core pixel at centre, small radius.
+    fun `featherAlpha makes core pixels fully opaque and near neighbours partially opaque`() {
+        // 5x5, single core pixel at centre. featherAlpha now delegates to the
+        // distance-field alpha: alpha = 1 inside the mask, ramping to 0 over
+        // featherRadius px from the edge.
         val mask = ByteArray(25).also { it[12] = 1 }
         val alpha = BubbleMaskBuilder.featherAlpha(mask, width = 5, height = 5, featherRadius = 2)
 
         // Core is fully opaque.
         alpha[12] shouldBe 1.0f
-        // The corner (0,0) is reached by the radius-2 box blur (clipped kernel
-        // of 9 cells, one set) → partially opaque, not 0 and not 1.
-        val corner = alpha[0]
-        (corner > 0f) shouldBe true
-        (corner < 1f) shouldBe true
-        // A pixel within the kernel but not the core is also partially opaque.
+        // The orthogonal neighbour (7 = (2,1)) is 1 px from the mask → inside
+        // the ramp → partially opaque, not 0 and not 1.
         val neighbour = alpha[7]
         (neighbour > 0f) shouldBe true
         (neighbour < 1f) shouldBe true
+        // A far corner (0,0) is 4 px away → beyond the 2px ramp → fully clear.
+        alpha[0] shouldBe 0f
     }
 
     // ---- removeEdgeTouchingComponents ----
@@ -441,120 +292,11 @@ class BubbleMaskBuilderTest {
         mask[2 * 9 + 6] shouldBe 0 // (6,2)
     }
 
-    // ---- laplaceInpaint (harmonic/Laplace inpaint; the FAST free-text fill now uses inpaintTelea, this guards the retained Laplace path) ----
+    // Shared gray/red pixel helpers for the inpaint tests below.
 
     private fun grayPixel(v: Int): Int = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
 
     private fun redOf(px: Int): Int = (px shr 16) and 0xFF
-
-    @Test
-    fun `laplaceInpaint returns input unchanged when there is no hole`() {
-        val w = 16
-        val h = 8
-        val pixels = IntArray(w * h) { grayPixel(100 + (it % w) * 5) }
-        val mask = ByteArray(w * h) // all zero — no hole
-
-        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
-
-        // No hole → byte-for-byte identical to input (early-return copy).
-        out.toList() shouldBe pixels.toList()
-    }
-
-    @Test
-    fun `laplaceInpaint continues a horizontal gradient across the hole, not a flat fill`() {
-        // NS's defining property: isophote continuity. Build a horizontal
-        // gray gradient (left=40, right=215), punch a hole in the middle, and
-        // assert the reconstructed hole CONTINUES the gradient — the left edge
-        // of the hole is dark-ish and the right edge is light-ish, with the
-        // interior monotonically between them. A flat/median fill would make
-        // the whole hole one value (the white-block symptom).
-        val w = 40
-        val h = 24
-        val pixels = IntArray(w * h) { idx -> grayPixel(40 + (idx % w) * 5) } // 40..235 left→right
-        // Hole: columns 14..25, rows 8..15 (a centered block).
-        val mask = ByteArray(w * h)
-        for (y in 8..15) for (x in 14..25) mask[y * w + x] = 1
-
-        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
-
-        // Non-hole pixels MUST be unchanged (Dirichlet BC honored + no round-trip drift).
-        for (i in pixels.indices) {
-            if (mask[i] == 0.toByte()) out[i] shouldBe pixels[i]
-        }
-        // Gradient continuation: the hole's left edge is darker than its right.
-        val midY = 12
-        val leftEdgeRed = redOf(out[midY * w + 15])   // first hole column
-        val rightEdgeRed = redOf(out[midY * w + 24])  // last hole column
-        // Left should be clearly below the page midpoint (grayPixel ~140 at x=20),
-        // right clearly above — NOT both clamped to one flat value.
-        leftEdgeRed shouldBeLessThan 130
-        rightEdgeRed shouldBeGreaterThan 150
-        // And the interior must be monotonic non-decreasing across the hole
-        // (isophote continuity → no oscillation). Tolerate a 1-px wiggle from
-        // the finite-difference stencil by checking the overall trend holds.
-        var monotonic = true
-        for (x in 15..23) {
-            if (redOf(out[midY * w + x + 1]) < redOf(out[midY * w + x]) - 2) {
-                monotonic = false
-                break
-            }
-        }
-        monotonic shouldBe true
-    }
-
-    @Test
-    fun `laplaceInpaint leaves a flat-uniform page flat (no regression vs flat fill)`() {
-        // A genuinely uniform page: NS should reconstruct the hole as the same
-        // uniform value (gradient magnitude is zero everywhere → vorticity is
-        // zero → Poisson solves to the constant BC). This guards against the
-        // solver introducing noise on flat regions.
-        val w = 24
-        val h = 16
-        val pixels = IntArray(w * h) { grayPixel(180) }
-        val mask = ByteArray(w * h)
-        for (y in 5..10) for (x in 8..15) mask[y * w + x] = 1
-
-        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
-
-        // Every reconstructed hole pixel should be ~180 (within a few gray
-        // levels of the uniform BC; the PDE steady state is exactly 180).
-        for (y in 5..10) {
-            for (x in 8..15) {
-                val v = redOf(out[y * w + x])
-                (v in 170..190) shouldBe true
-            }
-        }
-    }
-
-    @Test
-    fun `laplaceInpaint honors the Dirichlet boundary - reconstruction stays within neighbor range`() {
-        // The discrete maximum principle for Poisson reconstruction: with a
-        // bounded source, the reconstructed value inside the hole cannot exceed
-        // the range of its boundary (∂Ω) neighbors. Place a hole in a SMOOTH
-        // dark field (value 30 everywhere) — every ∂Ω neighbor is 30, there is
-        // no nearby gradient, so the reconstruction must stay ~30. A solver
-        // that violated the BC (e.g. averaged over the whole crop, or blew up)
-        // would drift far from 30.
-        val w = 20
-        val h = 16
-        val pixels = IntArray(w * h) { grayPixel(30) }
-        val mask = ByteArray(w * h)
-        for (y in 6..9) for (x in 6..13) mask[y * w + x] = 1
-
-        val out = BubbleMaskBuilder.laplaceInpaint(pixels, mask, w, h)
-
-        // Every reconstructed hole pixel must be within a small tolerance of the
-        // uniform BC (30). The NS steady state on a zero-gradient field is
-        // exactly the constant; allow a few gray levels for the finite-diff
-        // stencil + clamp rounding.
-        val midY = 8
-        for (x in 6..13) {
-            val v = redOf(out[midY * w + x])
-            (v in 20..45) shouldBe true
-        }
-        // Non-hole pixels unchanged (Dirichlet BC + no round-trip drift).
-        out[midY * w + 19] shouldBe pixels[midY * w + 19]
-    }
 
     // ---- inpaintTelea (real Telea FMM; the actual FAST free-text fill) ----
 
@@ -612,5 +354,121 @@ class BubbleMaskBuilderTest {
                 (v in minVal..maxVal) shouldBe true
             }
         }
+    }
+
+    // ---- computeNeuralCrop (balanced ~1/3-box crop sizing) ----
+
+    @Test
+    fun `computeNeuralCrop never exceeds the 512 tensor cap`() {
+        // A huge SFX box still yields a crop at the max clamp.
+        BubbleMaskBuilder.computeNeuralCrop(2000) shouldBe 512
+        BubbleMaskBuilder.computeNeuralCrop(512) shouldBe 512
+    }
+
+    @Test
+    fun `computeNeuralCrop floors tiny boxes at the context minimum`() {
+        // Zero/degenerate or sub-floor boxes get the floor, guaranteeing a
+        // resolution floor (the box is never sub-128 in the ≤512 tensor view).
+        BubbleMaskBuilder.computeNeuralCrop(0) shouldBe 384
+        BubbleMaskBuilder.computeNeuralCrop(40) shouldBe 384
+        BubbleMaskBuilder.computeNeuralCrop(128) shouldBe 384
+    }
+
+    @Test
+    fun `computeNeuralCrop makes the box roughly one third of the crop`() {
+        // For a mid-range box the crop is ~3x the box, so the box occupies
+        // ~1/3 of the tensor and ~2/3 is real page context.
+        BubbleMaskBuilder.computeNeuralCrop(160) shouldBe 480
+        BubbleMaskBuilder.computeNeuralCrop(150) shouldBe 450
+        // 170*3 = 510 (still under the 512 clamp, so no clamping).
+        BubbleMaskBuilder.computeNeuralCrop(170) shouldBe 510
+    }
+
+    // ---- distanceToMask (chamfer distance transform) ----
+
+    @Test
+    fun `distanceToMask is zero inside the mask`() {
+        val w = 10
+        val h = 10
+        val mask = ByteArray(w * h)
+        for (y in 3..6) for (x in 3..6) mask[y * w + x] = 1
+
+        val dist = BubbleMaskBuilder.distanceToMask(mask, w, h)
+
+        for (y in 3..6) for (x in 3..6) {
+            dist[y * w + x] shouldBe 0f
+        }
+    }
+
+    @Test
+    fun `distanceToMask grows monotonically away from the mask edge`() {
+        val w = 11
+        val h = 1
+        // Mask in the middle column (x=5).
+        val mask = ByteArray(w * h)
+        mask[5] = 1
+
+        val dist = BubbleMaskBuilder.distanceToMask(mask, w, h)
+
+        // Distance at the adjacent pixel (x=4/6) must be > 0, and it must keep
+        // increasing as we move further out — a true distance field, not a cliff.
+        dist[4] shouldBeGreaterThan 0f
+        dist[6] shouldBeGreaterThan 0f
+        dist[3] shouldBeGreaterThan dist[4]
+        dist[2] shouldBeGreaterThan dist[3]
+        dist[1] shouldBeGreaterThan dist[2]
+        dist[0] shouldBeGreaterThan dist[1]
+    }
+
+    @Test
+    fun `distanceToMask is infinity when the mask is entirely empty`() {
+        val w = 5
+        val h = 5
+        val mask = ByteArray(w * h) // all zero
+
+        val dist = BubbleMaskBuilder.distanceToMask(mask, w, h)
+
+        dist.all { it.isInfinite() } shouldBe true
+    }
+
+    @Test
+    fun `distanceToMask horizontal step is approximately one pixel`() {
+        val w = 5
+        val h = 1
+        val mask = ByteArray(w * h)
+        mask[0] = 1
+
+        val dist = BubbleMaskBuilder.distanceToMask(mask, w, h)
+
+        // The pixel adjacent to the mask (x=1) is one orthogonal step away.
+        // Chamfer (3,4) weights: an H step = 3 units, normalized by /3 → 1px.
+        dist[1] shouldBe 1f
+    }
+
+    // ---- featherAlphaField (distance-field soft edge) ----
+
+    @Test
+    fun `featherAlphaField is 1 inside the mask and ramps down outside`() {
+        val w = 10
+        val h = 1
+        val mask = ByteArray(w * h)
+        mask[5] = 1
+
+        val alpha = BubbleMaskBuilder.featherAlphaField(mask, w, h, rampWidth = 3)
+
+        alpha[5] shouldBe 1f // inside mask → fully opaque
+        // Immediately outside, alpha must be < 1 but > 0 (the ramp), and
+        // strictly decreasing as we leave the edge — no hard cliff.
+        alpha[4] shouldBeLessThan 1f
+        alpha[4] shouldBeGreaterThan 0f
+        alpha[3] shouldBeLessThan alpha[4]
+        alpha[2] shouldBeLessThan alpha[3]
+    }
+
+    @Test
+    fun `featherAlphaField returns all-zero for an empty mask`() {
+        val mask = ByteArray(25)
+        val alpha = BubbleMaskBuilder.featherAlphaField(mask, 5, 5, rampWidth = 4)
+        alpha.all { it == 0f } shouldBe true
     }
 }

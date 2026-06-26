@@ -46,7 +46,7 @@ class PagerPageHolder(
     val viewer: PagerViewer,
     val page: ReaderPage,
     // TachiyomiAT
-    readerPreferences: ReaderPreferences = Injekt.get(),
+    private val readerPreferences: ReaderPreferences = Injekt.get(),
 ) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {
 
     // TachiyomiAT
@@ -75,7 +75,10 @@ class PagerPageHolder(
      */
     private var errorLayout: ReaderErrorBinding? = null
 
-    private val holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // TachiyomiAT: var so [onAttachedToWindow] can replace it with a fresh scope
+    // after [onDetachedFromWindow] cancels the previous one (see lifecycle note
+    // on the first-page translation animation fix).
+    private var holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /**
      * Job for loading the page and processing changes to the page's status.
@@ -103,7 +106,26 @@ class PagerPageHolder(
     private var lastShownRenderRevision: Long = -1L
 
     init {
-        loadJob = holderScope.launch { loadPageAndProcessStatus() }
+        // TachiyomiAT: init only seeds durable state + wires click handlers.
+        // The long-running collectors (status load, showTranslations /
+        // translationEnabled reactivity, observePageView) are (re)established in
+        // [onAttachedToWindow]: ViewPager detaches holder views during layout
+        // passes and on activity resume, [onDetachedFromWindow] cancels
+        // [holderScope] to avoid leaks, and there is no logic to revive the scope
+        // or its collectors on re-attach. Keeping the collectors here left them
+        // permanently dead after the first re-attach — the first page never
+        // received the observePageView emission that swaps in the translated
+        // image, so no replace animation fired.
+        showTranslations = readerPreferences.showTranslations().get()
+        // Per-page translate button
+        onTranslateClicked = {
+            viewer.activity.viewModel.translateSinglePage(page)
+        }
+        // TachiyomiAT: cancel affordance shown while a translation is running
+        // for this page (the button re-purposes itself via setTranslating).
+        onCancelTranslateClicked = {
+            viewer.activity.viewModel.cancelSinglePageTranslation(page)
+        }
         // TachiyomiAT: seed the processing overlay from the page's DURABLE
         // translation status at construction. A PagerPageHolder is freshly created
         // whenever the ViewPager rebuilds its offscreen holder set (scroll/navigate
@@ -116,8 +138,25 @@ class PagerPageHolder(
         // and shows the scrim/spinner immediately; it only touches the overlay +
         // button, never re-decodes, so it's safe to call before the image loads.
         syncTranslationStatus()
-        // TachiyomiAT
-        showTranslations = readerPreferences.showTranslations().get()
+    }
+
+    /**
+     * TachiyomiAT: (re)create the holder scope and re-establish its long-running
+     * collectors whenever the view attaches. [onDetachedFromWindow] cancels
+     * [holderScope]; ViewPager routinely detaches and re-attaches holder views
+     * during layout passes and on activity resume. Because init no longer
+     * subscribes (it only seeds state), this is the single place subscriptions
+     * are created — once on the first attach, and again after every re-attach
+     * that followed a scope-cancelling detach. This is what keeps the first
+     * page's observePageView collector (which drives the translated-image
+     * replace animation) alive instead of permanently cancelled.
+     */
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (!holderScope.isActive) {
+            holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        }
+        loadJob = holderScope.launch { loadPageAndProcessStatus() }
         readerPreferences.showTranslations().changes().onEach {
             showTranslations = it
             page.showTranslatedImage = it && page.translatedStream != null
@@ -143,15 +182,6 @@ class PagerPageHolder(
         viewer.activity.viewModel.observePageView(page)
             ?.onEach { refreshTranslation() }
             ?.launchIn(holderScope)
-        // Per-page translate button
-        onTranslateClicked = {
-            viewer.activity.viewModel.translateSinglePage(page)
-        }
-        // TachiyomiAT: cancel affordance shown while a translation is running
-        // for this page (the button re-purposes itself via setTranslating).
-        onCancelTranslateClicked = {
-            viewer.activity.viewModel.cancelSinglePageTranslation(page)
-        }
     }
 
     /**

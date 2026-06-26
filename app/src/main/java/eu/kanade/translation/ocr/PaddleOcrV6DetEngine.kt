@@ -10,6 +10,7 @@ import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
+import tachiyomi.domain.translation.pools.DirectBufferPool
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -30,15 +31,18 @@ import kotlin.math.roundToInt
  * heuristic (`detectVerticalColumns`) for the PaddleOCR rec path.
  *
  * Single responsibility: **Bitmap → List<TextLine>**. All DB postprocess math
- * (threshold → connected components → bbox → unclip) lives in the pure, unit-
- * tested [DbPostProcess] helper — this class owns only the ONNX I/O glue and the
- * preprocess (resize/normalize) + back-projection that are ONNX/Android-specific.
+ * (threshold → connected components → raw axis-aligned bbox) lives in the pure,
+ * unit-tested [DbPostProcess] helper — this class owns only the ONNX I/O glue
+ * and the preprocess (resize/normalize) + back-projection that are
+ * ONNX/Android-specific. The reference `unclip` expansion is intentionally NOT
+ * applied: it collapses glyphs vertically in the rec head's 48px resize, so the
+ * raw bbox is emitted directly.
  *
  * The preprocess/postprocess contract mirrors `inference.yml` of
  * `PaddlePaddle/PP-OCRv6_small_det_onnx`:
  *  - PreProcess: BGR, resize longer side to 736 keeping aspect ratio, pad to
  *    736x736, ImageNet mean/std normalize, CHW.
- *  - PostProcess: DBPostProcess (thresh=0.2, box_thresh=0.45, unclip=1.4).
+ *  - PostProcess: DBPostProcess (thresh=0.2, box_thresh=0.45, no unclip).
  *
  * Output shape (validated on-device via the Python prototype):
  * `[1, 1, 736, 736]` — a single probability (saliency) map. The Kotlin engine
@@ -52,6 +56,17 @@ class PaddleOcrV6DetEngine : Closeable {
     private var inputName: String = "x"
     @Volatile
     private var closed: Boolean = false
+
+    // TachiyomiAT: pooled DIRECT buffer for the det input tensor
+    // (1 x 3 x TARGET x TARGET floats). FloatBuffer.wrap(...) (the previous
+    // approach) is heap-backed, which forces ONNX Runtime to allocate an
+    // internal NATIVE copy on every run() that lingers on the session's
+    // internal heap and accumulates across the per-ROI det calls (ORT issue
+    // #16937). A direct buffer is consumed in place with no native copy, so
+    // nothing leaks. Mirrors MangaOcrEngine.inputPixelPool. det() is serialized
+    // under the recognizer permit, so maxPoolSize = 2 (one live buffer) is
+    // sufficient. Capacity = 3 * 736 * 736 floats * 4 bytes ~= 6.2 MiB.
+    private val inputPixelPool = DirectBufferPool(3 * TARGET * TARGET * 4, maxPoolSize = 2)
 
     fun initialize(modelFile: File) {
         logcat(LogPriority.INFO) {
@@ -98,14 +113,21 @@ class PaddleOcrV6DetEngine : Closeable {
         if (w <= 0 || h <= 0) return emptyList()
 
         val t0 = System.nanoTime()
-        // Preprocess: resize longer side to TARGET keeping aspect, pad to square.
-        val (tensor, cropToMapX, cropToMapY, resizedW, resizedH) = preprocess(crop)
+        var pixelBuffer: FloatBuffer? = null
         var inputTensor: OnnxTensor? = null
         var result: OrtSession.Result? = null
         try {
+            // TachiyomiAT: preprocess writes the NCHW tensor straight into a
+            // pooled DIRECT buffer. The previous FloatBuffer.wrap(tensor) was
+            // heap-backed, forcing ORT to allocate a per-call native copy that
+            // leaked across the per-ROI det calls (ORT issue #16937).
+            pixelBuffer = inputPixelPool.acquire()
+            pixelBuffer.clear()
+            val pre = preprocess(crop, pixelBuffer)
+            pixelBuffer.flip()
             inputTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
-                FloatBuffer.wrap(tensor),
+                pixelBuffer,
                 longArrayOf(1, 3, TARGET.toLong(), TARGET.toLong()),
             )
             result = localSession.run(mapOf(inputName to inputTensor))
@@ -120,10 +142,10 @@ class PaddleOcrV6DetEngine : Closeable {
             // Postprocess: only the [:resizedH, :resizedW] region holds real text
             // (the rest is zero-pad). Crop the active sub-map before DB postprocess
             // so padded zeros don't generate spurious low-score components.
-            val active = activeRegion(prob, mapW, mapH, resizedW, resizedH)
+            val active = activeRegion(prob, mapW, mapH, pre.resizedW, pre.resizedH)
             // Back-project scale: map-space -> crop-space = 1 / (crop->map scale).
-            val mapToCropX = if (cropToMapX > 0f) 1f / cropToMapX else 0f
-            val mapToCropY = if (cropToMapY > 0f) 1f / cropToMapY else 0f
+            val mapToCropX = if (pre.cropToMapX > 0f) 1f / pre.cropToMapX else 0f
+            val mapToCropY = if (pre.cropToMapY > 0f) 1f / pre.cropToMapY else 0f
             val mapLines = DbPostProcess.detectLines(
                 probMap = active.pixels,
                 width = active.width,
@@ -158,6 +180,7 @@ class PaddleOcrV6DetEngine : Closeable {
         } finally {
             result?.close()
             inputTensor?.close()
+            pixelBuffer?.let { inputPixelPool.release(it) }
         }
     }
 
@@ -165,24 +188,28 @@ class PaddleOcrV6DetEngine : Closeable {
         closed = true
         session?.close()
         session = null
+        inputPixelPool.clear()
     }
 
     /**
-     * No persistent off-heap state to reclaim (unlike MangaOcr's KV-cache pool).
-     * Implementing the contract anyway so [RoiPageRecognitionEngine] can forward
-     * uniformly to all sub-engines.
+     * No persistent off-heap state to reclaim by default (the input buffer is
+     * returned to [inputPixelPool] in the detectLines finally block). Implementing
+     * the contract anyway so [RoiPageRecognitionEngine] can forward uniformly to
+     * all sub-engines.
      */
     fun reclaimPooledMemory() {}
 
-    fun forceReleaseNativeBuffers() {}
+    fun forceReleaseNativeBuffers() {
+        inputPixelPool.clear()
+    }
 
     /**
-     * Preprocess the crop to a [TARGET]x[TARGET] NCHW float tensor.
-     *
-     * Returns the tensor + the crop->map scale factors and the resized (pre-pad)
-     * dimensions so [detectLines] can back-project and crop the active map region.
+     * Preprocess the crop to a [TARGET]x[TARGET] NCHW float tensor, written
+     * directly into [out] (a pooled direct buffer). Returns the crop->map scale
+     * factors and the resized (pre-pad) dimensions so [detectLines] can
+     * back-project and crop the active map region.
      */
-    private fun preprocess(crop: Bitmap): Preprocessed {
+    private fun preprocess(crop: Bitmap, out: FloatBuffer): Preprocessed {
         val w = crop.width
         val h = crop.height
         val scale = TARGET.toFloat() / max(w, h).toFloat()
@@ -208,25 +235,14 @@ class PaddleOcrV6DetEngine : Closeable {
 
             val pixels = IntArray(TARGET * TARGET)
             padded.getPixels(pixels, 0, TARGET, 0, 0, TARGET, TARGET)
-            // NCHW, BGR plane order (matches rec engine + the exported det model's
-            // training pipeline). Single-pass pixel scan, three contiguous planes.
+            // NCHW, RGB plane order (matches the exported det model's training
+            // pipeline). Written directly into the pooled direct buffer — no
+            // intermediate FloatArray allocations. One pixel scan per plane.
             val total = TARGET * TARGET
-            val bPlane = FloatArray(total)
-            val gPlane = FloatArray(total)
-            val rPlane = FloatArray(total)
-            for (i in 0 until total) {
-                val px = pixels[i]
-                bPlane[i] = normalizeB((px and 0xFF))
-                gPlane[i] = normalizeG((px shr 8 and 0xFF))
-                rPlane[i] = normalizeR((px shr 16 and 0xFF))
-            }
-            val out = FloatArray(3 * total)
-            // Order R, G, B to match RGB input the model was trained on.
-            System.arraycopy(rPlane, 0, out, 0, total)
-            System.arraycopy(gPlane, 0, out, total, total)
-            System.arraycopy(bPlane, 0, out, total * 2, total)
+            for (i in 0 until total) out.put(normalizeR(pixels[i] shr 16 and 0xFF))
+            for (i in 0 until total) out.put(normalizeG(pixels[i] shr 8 and 0xFF))
+            for (i in 0 until total) out.put(normalizeB(pixels[i] and 0xFF))
             return Preprocessed(
-                tensor = out,
                 cropToMapX = resizedW.toFloat() / w.toFloat(),
                 cropToMapY = resizedH.toFloat() / h.toFloat(),
                 resizedW = resizedW,
@@ -273,7 +289,6 @@ class PaddleOcrV6DetEngine : Closeable {
     }
 
     private data class Preprocessed(
-        val tensor: FloatArray,
         val cropToMapX: Float,
         val cropToMapY: Float,
         val resizedW: Int,

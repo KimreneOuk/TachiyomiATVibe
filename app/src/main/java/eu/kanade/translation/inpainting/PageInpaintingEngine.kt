@@ -7,11 +7,28 @@ import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.TranslationPreferences
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 
 class PageInpaintingEngine(
     private val mode: InpaintingMode,
     private val inpainter: AOTInpainting = AOTInpainting(),
 ) {
+    @Volatile
+    private var qualityFallbackEnabled: Boolean = false
+    @Volatile
+    private var qualityFallbackResolved: Boolean = false
+    private fun resolveQualityFallback(): Boolean {
+        if (qualityFallbackResolved) return qualityFallbackEnabled
+        qualityFallbackEnabled = try {
+            Injekt.get<TranslationPreferences>().translationInpaintQualityFallback().get()
+        } catch (_: Throwable) {
+            false
+        }
+        qualityFallbackResolved = true
+        return qualityFallbackEnabled
+    }
 
     fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         if (pageTranslation.blocks.isEmpty()) {
@@ -47,12 +64,18 @@ class PageInpaintingEngine(
             // sees "QUALITY inpainting unavailable" and can switch to FAST or
             // fix the model load — instead of a silent quality regression.
             if (mode == InpaintingMode.QUALITY && !inpainter.isInitialized()) {
-                throw IllegalStateException(
-                    "QUALITY inpainting unavailable (neural model not loaded); " +
-                        "set inpainting to FAST or load the AOT model",
-                )
+                if (resolveQualityFallback()) {
+                    logcat(LogPriority.WARN) {
+                        "QUALITY inpainting: neural AOT model not loaded; QUALITY→FAST fallback enabled by user setting"
+                    }
+                } else {
+                    throw IllegalStateException(
+                        "QUALITY inpainting unavailable (neural model not loaded); " +
+                            "set inpainting to FAST, load the AOT model, or enable the QUALITY→FAST fallback in Translation settings",
+                    )
+                }
             }
-            val effectiveMode = if (mode == InpaintingMode.QUALITY) {
+            val effectiveMode = if (mode == InpaintingMode.QUALITY && inpainter.isInitialized()) {
                 InpaintingMode.QUALITY
             } else {
                 InpaintingMode.FAST

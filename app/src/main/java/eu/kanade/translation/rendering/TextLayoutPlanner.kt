@@ -258,6 +258,15 @@ object TextLayoutPlanner {
         var baseH = rect.baseH
         val safePad = max(0f, (baseW - rect.safeW) / 2f)
 
+        val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
+        val region = if (hasParent) {
+            FloatRect(block.parentX, block.parentY, block.parentX + block.parentWidth, block.parentY + block.parentHeight)
+        } else if (rect.reshaped) {
+            FloatRect(0f, 0f, pageWidth, pageHeight)
+        } else {
+            FloatRect(block.x, block.y, block.x + block.width, block.y + block.height)
+        }
+
         // (1) Re-anchor a reshaped tall box by MINIMAL DISPLACEMENT subject to
         // staying on-page and not overlapping an obstacle. Start from the legacy
         // symmetric placement (box centred on the original bubble centre); if that
@@ -296,13 +305,13 @@ object TextLayoutPlanner {
             currentFont = fontSize,
             measurer = measurer,
         )
-        baseX = grown.baseX
-        baseY = grown.baseY
-        baseW = grown.baseW
-        baseH = grown.baseH
-        safeW = grown.safeW
-        safeH = grown.safeH
-        fontSize = grown.fontSize
+        baseW = min(grown.baseW, region.width())
+        baseH = min(grown.baseH, region.height())
+        baseX = grown.baseX.coerceIn(region.left, region.right - baseW)
+        baseY = grown.baseY.coerceIn(region.top, region.bottom - baseH)
+        safeW = max(1f, baseW - safePad * 2f)
+        safeH = max(1f, baseH - safePad * 2f)
+        fontSize = binarySearchFontSize(text, safeW, safeH, baseW, isVertical, scale, measurer)
 
         val strokeWidth = computeStrokeWidth(block, fontSize, scale)
         var originX = baseX + baseW / 2f
@@ -347,6 +356,17 @@ object TextLayoutPlanner {
             // Keep the legibility floor: never shrink below it even when clipping —
             // better to clip a long line at a legible size than to shrink it to dust.
             fontSize = max(fitFont, minLegible)
+        }
+
+        // (C) Containment clip: if rendered text overflows region R, clip to R.
+        if (overflows(text, fontSize, isVertical, region.width(), region.height(), measurer)) {
+            val r = if (clipRect != null) clipRect.intersection(region) else region
+            if (r.width() > MIN_GAP_PX && r.height() > MIN_GAP_PX) {
+                clipRect = r
+                originX = r.left
+                drawAlignLeft = true
+                fontSize = max(fontSize, minLegible)
+            }
         }
 
         return BlockLayout(

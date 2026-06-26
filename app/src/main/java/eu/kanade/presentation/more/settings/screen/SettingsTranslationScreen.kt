@@ -69,6 +69,7 @@ object SettingsTranslationScreen : SearchableSettings {
     private fun getInpaintingModeGroup(
         translationPreferences: TranslationPreferences,
     ): Preference.PreferenceGroup {
+        val inpaintMode by translationPreferences.translationInpaintingMode().collectAsState()
         val modes = mapOf(
             "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
             "FAST" to stringResource(ATMR.strings.pref_inpainting_mode_fast),
@@ -85,6 +86,12 @@ object SettingsTranslationScreen : SearchableSettings {
                     pref = translationPreferences.translationExperimentalPaddleMasking(),
                     title = stringResource(ATMR.strings.pref_experimental_paddle_masking),
                     subtitle = stringResource(ATMR.strings.pref_experimental_paddle_masking_summary),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    pref = translationPreferences.translationInpaintQualityFallback(),
+                    title = "QUALITY → FAST fallback",
+                    subtitle = "Use FAST inpainting when the QUALITY neural model is unavailable",
+                    enabled = inpaintMode == "QUALITY",
                 ),
             ),
         )
@@ -228,17 +235,46 @@ object SettingsTranslationScreen : SearchableSettings {
         translationPreferences: TranslationPreferences,
     ): List<Preference.PreferenceItem<out Any>> {
         val engines = StandardTranslatorKind.entries
-        return listOf(
-            Preference.PreferenceItem.ListPreference(
-                pref = translationPreferences.translationStandardEngine(),
-                title = stringResource(ATMR.strings.pref_standard_engine),
-                // The pref stores a StandardEngine; entries are keyed by the
-                // matching StandardEngine and labelled from StandardTranslatorKind.
-                entries = engines.associate { translator ->
-                    StandardEngine.valueOf(translator.name) to translator.label
-                }.toImmutableMap(),
-            ),
-        )
+        val enginePref = translationPreferences.translationStandardEngine()
+        val selectedEngine by enginePref.collectAsState()
+        // DeepL is the only Standard engine that needs credentials. Collect its
+        // key so the row stays reactive while DeepL is selected.
+        val apiKeyPref = translationPreferences.translationDeeplApiKey()
+        val apiKey by apiKeyPref.collectAsState()
+        val deeplKeyTitle = stringResource(ATMR.strings.pref_deepl_api_key)
+        val keySetLabel = stringResource(ATMR.strings.pref_ai_key_set)
+        val keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set)
+
+        return buildList {
+            add(
+                Preference.PreferenceItem.ListPreference(
+                    pref = enginePref,
+                    title = stringResource(ATMR.strings.pref_standard_engine),
+                    // The pref stores a StandardEngine; entries are keyed by the
+                    // matching StandardEngine and labelled from StandardTranslatorKind.
+                    entries = engines.associate { translator ->
+                        StandardEngine.valueOf(translator.name) to translator.label
+                    }.toImmutableMap(),
+                ),
+            )
+            // Show the DeepL key row only when DeepL is selected (it is the only
+            // Standard engine with credentials). Mirrors the AI-provider key row.
+            if (selectedEngine == StandardEngine.DEEPL) {
+                add(
+                    Preference.PreferenceItem.CustomPreference(
+                        title = deeplKeyTitle,
+                    ) {
+                        ApiKeyPreferenceWidget(
+                            title = deeplKeyTitle,
+                            apiKey = apiKey,
+                            keySetLabel = keySetLabel,
+                            keyNotSetLabel = keyNotSetLabel,
+                            onApiKeyChange = { newKey -> apiKeyPref.set(newKey) },
+                        )
+                    },
+                )
+            }
+        }
     }
 
     @Composable

@@ -17,8 +17,16 @@ const els = {
   boxCanvas: document.getElementById("boxCanvas"),
   maskCanvas: document.getElementById("maskCanvas"),
   inpaintCanvas: document.getElementById("inpaintCanvas"),
+  renderedCanvas: document.getElementById("renderedCanvas"),
+  translationResults: document.getElementById("translationResults"),
+  canvasToggles: document.getElementById("canvasToggles"),
+  canvasStack: document.getElementById("canvasStack"),
   addBoxBtn: document.getElementById("addBoxBtn"),
-  autoBoxBtn: document.getElementById("autoBoxBtn"),
+  detectBtn: document.getElementById("detectBtn"),
+  ocrBtn: document.getElementById("ocrBtn"),
+  inpaintBtn: document.getElementById("inpaintBtn"),
+  translateBtn: document.getElementById("translateBtn"),
+  runAllBtn: document.getElementById("runAllBtn"),
   clearBoxesBtn: document.getElementById("clearBoxesBtn"),
   boxList: document.getElementById("boxList"),
   downloadBtn: document.getElementById("downloadBtn"),
@@ -28,6 +36,8 @@ const els = {
   paddleThreshOut: document.getElementById("paddleThreshOut"),
   paddleBoxThreshInput: document.getElementById("paddleBoxThreshInput"),
   paddleBoxThreshOut: document.getElementById("paddleBoxThreshOut"),
+  recConfidenceInput: document.getElementById("recConfidenceInput"),
+  recConfidenceOut: document.getElementById("recConfidenceOut"),
   padInput: document.getElementById("padInput"),
   padOut: document.getElementById("padOut"),
   modeSelect: document.getElementById("modeSelect"),
@@ -37,6 +47,16 @@ const els = {
   scaleOut: document.getElementById("scaleOut"),
   passesInput: document.getElementById("passesInput"),
   passesOut: document.getElementById("passesOut"),
+  grayFillThreshInput: document.getElementById("grayFillThreshInput"),
+  grayFillThreshOut: document.getElementById("grayFillThreshOut"),
+  algoSelect: document.getElementById("algoSelect"),
+  tinyExpandInput: document.getElementById("tinyExpandInput"),
+  poissonItersInput: document.getElementById("poissonItersInput"),
+  poissonItersOut: document.getElementById("poissonItersOut"),
+  lmUrlInput: document.getElementById("lmUrlInput"),
+  fetchModelsBtn: document.getElementById("fetchModelsBtn"),
+  lmModelSelect: document.getElementById("lmModelSelect"),
+  maxTokensInput: document.getElementById("maxTokensInput"),
 };
 
 const linkedOutputs = [
@@ -44,9 +64,12 @@ const linkedOutputs = [
   ["paddleCropPadInput", "paddleCropPadOut", (v) => v],
   ["paddleThreshInput", "paddleThreshOut", (v) => (Number(v) / 100).toFixed(2)],
   ["paddleBoxThreshInput", "paddleBoxThreshOut", (v) => (Number(v) / 100).toFixed(2)],
+  ["recConfidenceInput", "recConfidenceOut", (v) => (Number(v) / 100).toFixed(2)],
   ["featherInput", "featherOut", (v) => v],
   ["scaleInput", "scaleOut", (v) => `${v}%`],
   ["passesInput", "passesOut", (v) => v],
+  ["grayFillThreshInput", "grayFillThreshOut", (v) => Number(v).toFixed(1)],
+  ["poissonItersInput", "poissonItersOut", (v) => v],
 ];
 
 linkedOutputs.forEach(([inputId, outputId, format]) => {
@@ -54,14 +77,6 @@ linkedOutputs.forEach(([inputId, outputId, format]) => {
     els[outputId].value = format(els[inputId].value);
     renderAll();
   });
-});
-
-els.modeSelect.addEventListener("change", runModels);
-["padInput", "featherInput", "scaleInput", "passesInput"].forEach((inputId) => {
-  els[inputId].addEventListener("change", runModels);
-});
-["paddleCropPadInput", "paddleThreshInput", "paddleBoxThreshInput"].forEach((inputId) => {
-  els[inputId].addEventListener("change", runModels);
 });
 
 els.fileInput.addEventListener("change", async (event) => {
@@ -76,10 +91,6 @@ els.addBoxBtn.addEventListener("click", () => {
   els.addBoxBtn.textContent = "Drag now";
 });
 
-els.autoBoxBtn.addEventListener("click", () => {
-  runModels();
-});
-
 els.clearBoxesBtn.addEventListener("click", () => {
   state.boxes = [];
   state.backend = null;
@@ -90,13 +101,60 @@ els.clearBoxesBtn.addEventListener("click", () => {
 });
 
 els.downloadBtn.addEventListener("click", () => {
-  if (!state.image) return;
+  if (!state.backend?.inpaint_png) return;
   const link = document.createElement("a");
-  link.download = `${stripExtension(state.imageName) || "inpainted"}-debug-inpaint.png`;
-  link.href = els.inpaintCanvas.toDataURL("image/png");
+  link.download = "inpainted.png";
+  link.href = state.backend.inpaint_png;
   link.click();
 });
 
+els.fetchModelsBtn.addEventListener("click", async () => {
+  els.fetchModelsBtn.textContent = "Fetching...";
+  try {
+    const res = await fetch(`/api/models?baseUrl=${encodeURIComponent(els.lmUrlInput.value)}`);
+    if (!res.ok) throw new Error("Failed");
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    const models = data.models || [];
+    els.lmModelSelect.innerHTML = "";
+    models.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m;
+      opt.textContent = m;
+      els.lmModelSelect.appendChild(opt);
+    });
+  } catch (err) {
+    alert(`Failed to fetch models: ${err.message}`);
+  } finally {
+    els.fetchModelsBtn.textContent = "Fetch";
+  }
+});
+
+// --- Canvas Toggling ---
+if (els.canvasToggles) {
+  els.canvasToggles.addEventListener("change", (e) => {
+    if (e.target.name === "layer") {
+      const selected = e.target.value;
+      const canvases = {
+        original: els.originalCanvas,
+        box: els.boxCanvas,
+        mask: els.maskCanvas,
+        inpaint: els.inpaintCanvas,
+        rendered: els.renderedCanvas
+      };
+      
+      // Remove active from all
+      Object.values(canvases).forEach(c => c.classList.remove("active"));
+      
+      // Add to selected
+      if (canvases[selected]) {
+        canvases[selected].classList.add("active");
+      }
+    }
+  });
+}
+
+// --- Draw Box Events ---
 els.boxCanvas.addEventListener("pointerdown", (event) => {
   if (!state.image || !state.drawing) return;
   const point = canvasPoint(els.boxCanvas, event);
@@ -146,58 +204,202 @@ async function loadImageFile(file) {
     setCanvasSize(els.boxCanvas, img.width, img.height);
     setCanvasSize(els.maskCanvas, img.width, img.height);
     setCanvasSize(els.inpaintCanvas, img.width, img.height);
+    setCanvasSize(els.renderedCanvas, img.width, img.height);
 
     const ctx = els.originalCanvas.getContext("2d", { willReadFrequently: true });
     ctx.drawImage(img, 0, 0);
     state.imageData = ctx.getImageData(0, 0, img.width, img.height);
     els.imageMeta.textContent = `${file.name} - ${img.width} x ${img.height}`;
     renderAll();
-    runModels();
-    URL.revokeObjectURL(url);
   };
   img.src = url;
 }
 
-async function runModels() {
+function switchCanvas(name) {
+  const radio = document.querySelector(`input[name="layer"][value="${name}"]`);
+  if (radio) {
+    radio.checked = true;
+    radio.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+
+async function runDetection() {
   if (!state.imageFile) return;
-  els.autoBoxBtn.disabled = true;
-  els.autoBoxBtn.textContent = "Running...";
-  els.imageMeta.textContent = `${state.imageName} - running detector-v4 + PaddleOCR-v6`;
+  els.detectBtn.disabled = true;
+  els.detectBtn.textContent = "Detecting...";
+  els.imageMeta.textContent = `${state.imageName} - detecting boxes`;
+  
   const form = new FormData();
   form.append("image", state.imageFile);
   form.append("paddle_crop_pad", els.paddleCropPadInput.value);
   form.append("paddle_thresh", (Number(els.paddleThreshInput.value) / 100).toString());
   form.append("paddle_box_thresh", (Number(els.paddleBoxThreshInput.value) / 100).toString());
+  
+  try {
+    const res = await fetch("/api/detect", { method: "POST", body: form });
+    if (!res.ok) throw new Error(`backend returned ${res.status}`);
+    const data = await res.json();
+    state.backend = state.backend || {};
+    Object.assign(state.backend, data);
+    
+    state.boxes = state.backend.mask_boxes.map((item) => {
+      const [x1, y1, x2, y2] = item.bbox;
+      return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
+    });
+    
+    els.imageMeta.textContent = `${state.imageName} - ${data.detections.length} boxes detected`;
+    switchCanvas("box");
+  } catch (error) {
+    console.error(error);
+    els.imageMeta.textContent = `Detection failed: ${error.message}`;
+  } finally {
+    els.detectBtn.disabled = false;
+    els.detectBtn.textContent = "1. Detect";
+    renderAll();
+  }
+}
+
+async function runOCR() {
+  if (!state.imageFile || !state.backend?.text_dets) return;
+  els.ocrBtn.disabled = true;
+  els.ocrBtn.textContent = "Extracting...";
+  els.imageMeta.textContent = `${state.imageName} - extracting text via OCR`;
+  
+  const form = new FormData();
+  form.append("image", state.imageFile);
+  form.append("text_dets_json", JSON.stringify(state.backend.text_dets));
+  form.append("paddle_boxes_json", JSON.stringify(state.backend.paddle_boxes));
+  form.append("rec_confidence", (Number(els.recConfidenceInput.value) / 100).toString());
+  
+  try {
+    const res = await fetch("/api/ocr", { method: "POST", body: form });
+    if (!res.ok) throw new Error(`backend returned ${res.status}`);
+    const data = await res.json();
+    state.backend = state.backend || {};
+    Object.assign(state.backend, data);
+    
+    if (data.ocr_texts.length === 0) {
+      els.imageMeta.textContent = `${state.imageName} - OCR found NO text!`;
+    } else {
+      els.imageMeta.textContent = `${state.imageName} - ${data.ocr_texts.length} text blocks extracted`;
+    }
+    
+    // Simulate translations array so sidebar renders OCR text
+    state.backend.translations = data.ocr_texts.map((t, i) => {
+      const b = data.det_list[i] ? data.det_list[i].bbox : [0,0,0,0];
+      return {
+        bbox: b,
+        ocr_text: t,
+        translation: "..."
+      };
+    });
+    
+  } catch (error) {
+    console.error("OCR API Error:", error);
+    els.imageMeta.textContent = `OCR failed: ${error.message}`;
+  } finally {
+    els.ocrBtn.disabled = false;
+    els.ocrBtn.textContent = "2. OCR";
+    renderAll();
+  }
+}
+
+async function runInpaint() {
+  if (!state.imageFile || !state.backend?.text_dets) return;
+  els.inpaintBtn.disabled = true;
+  els.inpaintBtn.textContent = "Inpainting...";
+  els.imageMeta.textContent = `${state.imageName} - generating background`;
+  
+  const form = new FormData();
+  form.append("image", state.imageFile);
+  form.append("text_dets_json", JSON.stringify(state.backend.text_dets));
+  form.append("paddle_boxes_json", JSON.stringify(state.backend.paddle_boxes));
+  form.append("fallback_boxes_json", JSON.stringify(state.backend.fallback_boxes));
   form.append("mask_pad", els.padInput.value);
   form.append("feather", els.featherInput.value);
   form.append("lowres_scale", els.scaleInput.value);
   form.append("smooth_passes", els.passesInput.value);
   form.append("mode", els.modeSelect.value);
+  form.append("gray_fill_thresh", els.grayFillThreshInput.value);
+  form.append("algo", els.algoSelect.value);
+  form.append("tiny_expand", els.tinyExpandInput.checked ? "true" : "false");
+  form.append("poisson_iters", els.poissonItersInput.value);
+  
   try {
-    const res = await fetch("/api/process", { method: "POST", body: form });
-    if (!res.ok) throw new Error(`backend returned ${res.status}`);
-    state.backend = await res.json();
-    state.boxes = state.backend.mask_boxes.map((item) => {
-      const [x1, y1, x2, y2] = item.bbox;
-      return { x: x1, y: y1, w: x2 - x1, h: y2 - y1 };
-    });
-    const t = state.backend.timings_ms;
-    els.imageMeta.textContent =
-      `${state.imageName} - ${state.backend.width} x ${state.backend.height} - ` +
-      `${state.backend.detections.length} detector boxes, ` +
-      `${state.backend.paddle_boxes.length} Paddle boxes, ` +
-      `${state.backend.fallback_boxes.length} fallbacks, ` +
-      `${state.backend.detector_backup_boxes.length} backups - ${t.total}ms`;
-  } catch (error) {
-    console.error(error);
-    state.backend = null;
-    els.imageMeta.textContent = `${state.imageName} - backend failed: ${error.message}`;
-  } finally {
-    els.autoBoxBtn.disabled = false;
-    els.autoBoxBtn.textContent = "Run models";
+      const res = await fetch("/api/inpaint", { method: "POST", body: form });
+      if (!res.ok) throw new Error(`backend returned ${res.status}`);
+      const data = await res.json();
+      state.backend = state.backend || {};
+      Object.assign(state.backend, data);
+      if (data.diagnostics) {
+        console.log("coherent diag", data.diagnostics);
+      }
+
+      els.imageMeta.textContent = `${state.imageName} - background generated`;
+      switchCanvas("inpaint");
+    } catch (error) {
+      console.error("Inpaint API Error:", error);
+      els.imageMeta.textContent = `Inpaint failed: ${error.message}`;
+    } finally {
+      els.inpaintBtn.disabled = false;
+      els.inpaintBtn.textContent = "3. Inpaint";
     renderAll();
   }
 }
+
+async function runTranslation() {
+  if (!state.backend?.inpaint_png || !state.backend?.ocr_texts) return;
+  els.translateBtn.disabled = true;
+  els.translateBtn.textContent = "Translating...";
+  els.imageMeta.textContent = `${state.imageName} - translating text with LLM`;
+  
+  const form = new FormData();
+  // Convert base64 data URL to blob
+  const inpaintBlob = await (await fetch(state.backend.inpaint_png)).blob();
+  form.append("inpaint_image", inpaintBlob, "inpaint.png");
+  form.append("ocr_texts_json", JSON.stringify(state.backend.ocr_texts));
+  form.append("det_list_json", JSON.stringify(state.backend.det_list));
+  form.append("lm_url", els.lmUrlInput.value);
+  form.append("lm_model", els.lmModelSelect.value);
+  form.append("max_tokens", els.maxTokensInput.value);
+  
+  try {
+    const res = await fetch("/api/translate", { method: "POST", body: form });
+    if (!res.ok) throw new Error(`backend returned ${res.status}`);
+    const data = await res.json();
+    state.backend = state.backend || {};
+    Object.assign(state.backend, data);
+    
+    els.imageMeta.textContent = `${state.imageName} - translation complete`;
+    switchCanvas("rendered");
+  } catch (error) {
+    console.error(error);
+    els.imageMeta.textContent = `Translation failed: ${error.message}`;
+  } finally {
+    els.translateBtn.disabled = false;
+    els.translateBtn.textContent = "4. Translate";
+    renderAll();
+  }
+}
+
+els.detectBtn.addEventListener("click", runDetection);
+els.ocrBtn.addEventListener("click", runOCR);
+els.inpaintBtn.addEventListener("click", runInpaint);
+els.translateBtn.addEventListener("click", runTranslation);
+
+els.runAllBtn.addEventListener("click", async () => {
+  els.runAllBtn.disabled = true;
+  els.runAllBtn.textContent = "Running Pipeline...";
+  try {
+    await runDetection();
+    await runOCR();
+    await runInpaint();
+    await runTranslation();
+  } finally {
+    els.runAllBtn.disabled = false;
+    els.runAllBtn.textContent = "Run Entire Pipeline";
+  }
+});
 
 function renderAll() {
   if (!state.image || !state.imageData) {
@@ -209,15 +411,18 @@ function renderAll() {
   const mask = buildMask();
   drawMask(mask);
   drawInpaint(mask);
+  drawRendered();
   renderBoxList();
+  renderTranslations();
 }
 
 function renderEmpty() {
-  [els.originalCanvas, els.boxCanvas, els.maskCanvas, els.inpaintCanvas].forEach((canvas) => {
+  [els.originalCanvas, els.boxCanvas, els.maskCanvas, els.inpaintCanvas, els.renderedCanvas].forEach((canvas) => {
     const ctx = canvas.getContext("2d");
     if (!canvas.width) setCanvasSize(canvas, 800, 520);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   });
+  els.translationResults.innerHTML = '<p class="hint">No translation data yet.</p>';
 }
 
 function drawOriginal() {
@@ -251,25 +456,41 @@ function drawBoxPane() {
       ctx.strokeRect(x1 + 0.5, y1 + 0.5, x2 - x1, y2 - y1);
       ctx.restore();
     });
-    state.backend.fallback_boxes.forEach((item) => {
-      const [x1, y1, x2, y2] = item.bbox;
+    if (state.backend.fallback_boxes) {
+      state.backend.fallback_boxes.forEach((item) => {
+        const [x1, y1, x2, y2] = item.bbox;
+        ctx.save();
+        ctx.lineWidth = Math.max(2, Math.round(state.image.width / 800));
+        ctx.strokeStyle = "#f59e0b";
+        ctx.fillStyle = "rgba(245,158,11,0.10)";
+        ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+        ctx.strokeRect(x1 + 0.5, y1 + 0.5, x2 - x1, y2 - y1);
+        ctx.restore();
+      });
+    }
+    if (state.backend.text_dets) {
+      state.backend.text_dets.forEach((item) => {
+        const [x1, y1, x2, y2] = item.bbox;
+        ctx.save();
+        ctx.lineWidth = Math.max(1, Math.round(state.image.width / 1000));
+        ctx.strokeStyle = "#8b5cf6";
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(x1 + 0.5, y1 + 0.5, x2 - x1, y2 - y1);
+        ctx.restore();
+      });
+    }
+    if (state.backend.aot_crop_box) {
+      const [cx1, cy1, cx2, cy2] = state.backend.aot_crop_box;
       ctx.save();
-      ctx.lineWidth = Math.max(2, Math.round(state.image.width / 800));
-      ctx.strokeStyle = "#f59e0b";
-      ctx.fillStyle = "rgba(245,158,11,0.10)";
-      ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
-      ctx.strokeRect(x1 + 0.5, y1 + 0.5, x2 - x1, y2 - y1);
+      ctx.lineWidth = Math.max(3, Math.round(state.image.width / 500));
+      ctx.strokeStyle = "#ef4444";
+      ctx.setLineDash([8, 4]);
+      ctx.strokeRect(cx1 + 0.5, cy1 + 0.5, cx2 - cx1, cy2 - cy1);
+      ctx.fillStyle = "#ef4444";
+      ctx.font = "bold 14px sans-serif";
+      ctx.fillText("AOT Neural Crop (~33% BBox)", cx1 + 6, cy1 + 20);
       ctx.restore();
-    });
-    state.backend.detector_backup_boxes.forEach((item) => {
-      const [x1, y1, x2, y2] = item.bbox;
-      ctx.save();
-      ctx.lineWidth = Math.max(1, Math.round(state.image.width / 1000));
-      ctx.strokeStyle = "#8b5cf6";
-      ctx.setLineDash([4, 4]);
-      ctx.strokeRect(x1 + 0.5, y1 + 0.5, x2 - x1, y2 - y1);
-      ctx.restore();
-    });
+    }
   }
   [...state.boxes, state.draftBox].filter(Boolean).forEach((box, index) => {
     ctx.save();
@@ -674,6 +895,85 @@ function drawInpaint(mask) {
     }
   }
   ctx.putImageData(out, 0, 0);
+}
+
+function drawRendered() {
+  if (state.backend?.rendered_png) {
+    drawDataUrlToCanvas(state.backend.rendered_png, els.renderedCanvas);
+  } else {
+    const ctx = els.renderedCanvas.getContext("2d");
+    ctx.clearRect(0, 0, els.renderedCanvas.width, els.renderedCanvas.height);
+    if (state.image) {
+      ctx.drawImage(state.image, 0, 0);
+    }
+  }
+}
+
+function renderTranslations() {
+  if (!state.backend?.translations || state.backend.translations.length === 0) {
+    els.translationResults.innerHTML = '<p class="hint">No translation data found.</p>';
+    return;
+  }
+  let html = "";
+  state.backend.translations.forEach((t, i) => {
+    html += `
+      <div class="translation-item" data-index="${i}">
+        <div class="ocr-text">${t.ocr_text || "No text detected"}</div>
+        <div class="trans-text">${t.translation || "Translation failed"}</div>
+      </div>
+    `;
+  });
+  els.translationResults.innerHTML = html;
+
+  // Add click to highlight
+  document.querySelectorAll(".translation-item").forEach(item => {
+    item.addEventListener("click", () => {
+      const idx = item.getAttribute("data-index");
+      const t = state.backend.translations[idx];
+      if (t && t.bbox) {
+        // Switch to the Rendered canvas to show where the translation is
+        const renderedRadio = document.querySelector('input[name="layer"][value="rendered"]');
+        if (renderedRadio) {
+           renderedRadio.checked = true;
+           renderedRadio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+
+        // Calculate position based on CSS scaling
+        const canvas = els.renderedCanvas;
+        const scale = canvas.getBoundingClientRect().width / canvas.width;
+        const x = t.bbox[0] * scale;
+        const y = t.bbox[1] * scale;
+        const w = (t.bbox[2] - t.bbox[0]) * scale;
+        const h = (t.bbox[3] - t.bbox[1]) * scale;
+
+        // Draw temporary highlight div
+        let highlight = document.getElementById("transHighlight");
+        if (!highlight) {
+          highlight = document.createElement("div");
+          highlight.id = "transHighlight";
+          highlight.style.position = "absolute";
+          highlight.style.border = "3px solid var(--accent)";
+          highlight.style.boxShadow = "var(--glow)";
+          highlight.style.borderRadius = "4px";
+          highlight.style.pointerEvents = "none";
+          highlight.style.transition = "all 0.3s";
+          highlight.style.zIndex = "50";
+          els.canvasStack.appendChild(highlight);
+        }
+        
+        highlight.style.left = `${x}px`;
+        highlight.style.top = `${y}px`;
+        highlight.style.width = `${w}px`;
+        highlight.style.height = `${h}px`;
+        highlight.style.opacity = "1";
+
+        // Fade out after 2 seconds
+        setTimeout(() => {
+          highlight.style.opacity = "0";
+        }, 2000);
+      }
+    });
+  });
 }
 
 function drawDataUrlToCanvas(url, canvas) {
