@@ -12,7 +12,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.lifecycle
+import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.model.shouldSkipAutoScheduling
 import eu.kanade.translation.model.toPageView
 import kotlinx.coroutines.CoroutineScope
@@ -118,6 +118,12 @@ class TranslationManager(
             }
         }
 
+        // TachiyomiAT: wire the batch tracker factory so the pipeline can create
+        // and register a tracker per active batch, observable via observeBatchProgress.
+        pipeline.batchTrackerFactory = { chapterId, store, orderedPageKeys ->
+            createBatchTracker(chapterId, store, orderedPageKeys)
+        }
+
         // TachiyomiAT: rehydrate any persisted batch queue so a crash mid-batch
         // no longer loses the queue. Runs on IO; restoreQueue does suspend DB
         // lookups (Translation.fromChapterId). Rehydrated entries get status
@@ -143,6 +149,9 @@ class TranslationManager(
     private val _activeStoreMap = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     private val _activeStoreState = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
     val activeStoreState: StateFlow<Map<String, PageTranslation>> = _activeStoreState.asStateFlow()
+
+    private val batchTrackers = mutableMapOf<Long, TranslationBatchProgressTracker>()
+    private val _batchTrackerMap = MutableStateFlow<Map<Long, TranslationBatchProgressTracker>>(emptyMap())
 
     /**
      * TachiyomiAT: scope owned by this manager purely for per-chapter store
@@ -389,8 +398,63 @@ class TranslationManager(
         return activeTranslationStores[chapterId]?.state
     }
 
+    fun createBatchTracker(
+        chapterId: Long,
+        store: ChapterTranslationStore,
+        orderedPageKeys: List<String>,
+    ): TranslationBatchProgressTracker {
+        disposeBatchTracker(chapterId)
+        val tracker = TranslationBatchProgressTracker(
+            chapterId = chapterId,
+            store = store,
+            orderedPageKeys = orderedPageKeys,
+            scope = storeScope,
+        )
+        batchTrackers[chapterId] = tracker
+        _batchTrackerMap.value = batchTrackers.toMap()
+        return tracker
+    }
+
+    fun disposeBatchTracker(chapterId: Long) {
+        val removed = batchTrackers.remove(chapterId)
+        if (removed != null) {
+            removed.close()
+            _batchTrackerMap.value = batchTrackers.toMap()
+        }
+    }
+
+    fun getBatchTracker(chapterId: Long): TranslationBatchProgressTracker? = batchTrackers[chapterId]
+
     /**
-     * TachiyomiAT: per-chapter batch translation progress (done/total), derived
+     * TachiyomiAT: observes the live batch progress snapshot. When a tracker is
+     * active for the chapter, it emits from the tracker's snapshot StateFlow
+     * (which includes the 500ms tick for elapsed/ETA). When no tracker exists,
+     * it falls back to store-derived progress. Switches reactively when a
+     * tracker is created or disposed.
+     */
+    fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
+        return _batchTrackerMap
+            .flatMapLatest { trackers ->
+                val tracker = trackers[chapterId]
+                if (tracker != null) {
+                    tracker.snapshot
+                } else {
+                    val state = getQueuedTranslationOrNull(chapterId)?.status
+                        ?: Translation.State.NOT_TRANSLATED
+                    flowOf(
+                        TranslationProgressSnapshot.compute(
+                            chapterId = chapterId,
+                            state = state,
+                            pageMap = activeTranslationStores[chapterId]?.state?.value,
+                        )
+                    )
+                }
+            }
+            .distinctUntilChanged()
+    }
+
+    /**
+     * Per-chapter batch translation progress (done/total), derived
      * from the active chapter store. Used by the manga-screen chapter-list
      * indicator so the user can watch pre-translation advance ("12/40") without
      * opening the reader. Emits the active store's page-count progress for
@@ -458,6 +522,7 @@ class TranslationManager(
             scheduler.cancelAutoTranslations(chapterId)
             cancelPageTranslations(chapterId)
             removeFromTranslationQueue(chapter)
+            disposeBatchTracker(chapterId)
             unregisterActiveTranslationStore(chapterId)
             val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
             file?.delete()
@@ -558,6 +623,7 @@ class TranslationManager(
         if (isBatchTranslationActive(chapterId)) {
             return
         }
+        disposeBatchTracker(chapterId)
         activeTranslationStores[chapterId]?.clearTransientQueuePages("Translation cancelled")
         // Evict the shared store for this chapter now that we've left it; the
         // reader re-opens the store via observeLiveTranslationStore on the next

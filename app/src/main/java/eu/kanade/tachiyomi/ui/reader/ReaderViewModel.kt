@@ -511,8 +511,10 @@ class ReaderViewModel @JvmOverloads constructor(
     /** Resolves the [ReaderPage] currently displayed, or null. */
     private fun currentPageReaderPage(s: State = state.value): ReaderPage? {
         val pages = getCurrentChapter()?.pages ?: return null
-        val idx = s.currentPage
-        return pages.getOrNull(idx) as? ReaderPage
+        // state.currentPage is 1-based for display ("N/M"); chapter.pages is 0-based.
+        val idx = s.currentPage - 1
+        if (idx !in pages.indices) return null
+        return pages[idx] as? ReaderPage
     }
 
     /**
@@ -529,6 +531,7 @@ class ReaderViewModel @JvmOverloads constructor(
         if (showTranslated && page.translatedStream == null) return
         if (page.showTranslatedImage == showTranslated) return
         page.showTranslatedImage = showTranslated
+        page.translationToggled = true
         eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
         // Bump a no-op state update so compareState (which derives from state)
         // re-emits and the handle highlight flips immediately. currentPage itself
@@ -550,8 +553,9 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val keepPageKeys = HashSet<String>()
         val changedPages = linkedSetOf<ReaderPage>()
+        val warmRadius = ReaderPageWarmWindow.radiusFor(ReadingMode.fromPreference(getMangaReadingMode()))
         for ((listIndex, page) in pages.withIndex()) {
-            val warm = ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex)
+            val warm = ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex, radius = warmRadius)
             if (warm) {
                 keepPageKeys += resolvePageKey(page)
                 val hadStream = page.translatedStream != null
@@ -663,7 +667,8 @@ class ReaderViewModel @JvmOverloads constructor(
         } else {
             page.chapter.requestedPage
         }
-        return ReaderPageWarmWindow.contains(pageIndex, currentIndex, pages.lastIndex)
+        return ReaderPageWarmWindow.contains(pageIndex, currentIndex, pages.lastIndex,
+            radius = ReaderPageWarmWindow.radiusFor(ReadingMode.fromPreference(getMangaReadingMode())))
     }
 
 
@@ -1671,8 +1676,15 @@ class ReaderViewModel @JvmOverloads constructor(
             page.translatedStream = null
             page.translation = null
             page.showTranslatedImage = false
+            (page as? ReaderPage)?.translationToggled = false
         }
         translationManager.deleteTranslation(chapter.toDomainChapter()!!, manga, source)
+
+        val readerPages = getCurrentChapter()?.pages?.filterIsInstance<ReaderPage>()?.toSet() ?: emptySet()
+        if (readerPages.isNotEmpty()) {
+            eventChannel.trySend(Event.RefreshTranslationPages(readerPages))
+            mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+        }
         // Re-subscribe to the (now fresh) store. deleteTranslation's store
         // eviction runs on a background coroutine; observeLiveTranslationStore
         // calls openOrCreateActiveChapterTranslationStore which will create a new
@@ -1892,6 +1904,31 @@ class ReaderViewModel @JvmOverloads constructor(
         // page bytes are freed while the reader sits in the background, instead
         // of pinning them in the process-lifetime map.
         streamRegistry.clearAll()
+    }
+
+    /**
+     * TachiyomiAT: counterpart to [cancelTranslationsOnBackground]. On resume,
+     * re-arm auto-translation only when the user still has it enabled: re-attach
+     * the translated-image streams background evicted ([streamRegistry.clearAll]),
+     * bounded to the warm window, then re-kick the current page through the
+     * existing auto dispatch path ([translateCurrentPageForAuto]).
+     *
+     * Manual-stop gating: there is NO separate "stopped" sentinel in this VM.
+     * The only reliable stop signal is autoTranslate()==false — the init block
+     * forces it off on reader entry, and the settings sheet flips it off when the
+     * user stops Auto (its .changes() collector then cancels). Backgrounding does
+     * NOT touch the pref, so a still-on Auto surviving a background trip is
+     * exactly the case to resume, while a user-stopped Auto stays false and is
+     * skipped. translationEnabled() is gated as well to match the live auto
+     * dispatch sites (onPageSelected / loadChapter), which all require both.
+     */
+    fun resumeTranslationsOnForeground() {
+        if (!translationPreferences.translationEnabled().get()) return
+        if (!translationPreferences.autoTranslate().get()) return
+        val chapter = getCurrentChapter() ?: return
+        if (chapterPageIndex < 0) return
+        updateTranslationWorkingSet(chapter, chapterPageIndex, dispatchRefresh = true)
+        translateCurrentPageForAuto()
     }
 
     fun onMemoryPressure(level: Int) {

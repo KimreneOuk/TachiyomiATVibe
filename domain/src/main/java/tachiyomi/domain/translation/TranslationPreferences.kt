@@ -66,7 +66,6 @@ class TranslationPreferences(
      */
     fun autoTranslatePrefetchCount() = preferenceStore.getInt("auto_translate_prefetch_count", 2)
 
-    fun autoTranslateAfterDownload() = preferenceStore.getBoolean("auto_translate_after_download", false)
     fun translateFromLanguage() = preferenceStore.getString("translate_language_from", "CHINESE")
     fun translateToLanguage() = preferenceStore.getString("translate_language_to", "ENGLISH")
     fun translationFont() = preferenceStore.getInt("translation_font", 0)
@@ -98,8 +97,6 @@ class TranslationPreferences(
      * ONNX runtime ignores it and always creates CPU sessions.
      */
     fun translationExperimentalQnn() = preferenceStore.getBoolean("translation_experimental_qnn", false)
-
-    fun translationExperimentalPaddleMasking() = preferenceStore.getBoolean("translation_experimental_paddle_masking", false)
 
     fun translationRecentLanguagesFrom() = preferenceStore.getString("translation_recent_languages_from", "")
     fun translationRecentLanguagesTo() = preferenceStore.getString("translation_recent_languages_to", "")

@@ -11,6 +11,7 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
+import tachiyomi.domain.translation.pools.DirectBufferPool
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
@@ -48,18 +49,24 @@ class AOTInpainting {
 
     private val scratchLock = Any()
 
-    private var sharedImgData: FloatArray? = null
-    private var sharedMaskData: FloatArray? = null
+    // TachiyomiAT: pooled DIRECT input buffers for the variable-shape inpaint
+    // tensors (contract #12). Sized to MAX_TOTAL_PIXELS (512x512); the active
+    // infer region (inferW*inferH <= MAX_TOTAL_PIXELS) is exposed via the buffer
+    // limit. maxPoolSize=2 bounds resident native memory. imgPool holds the
+    // 3-channel image, maskPool the 1-channel mask.
+    private val imgInputPool = DirectBufferPool(
+        bufferCapacityBytes = 3 * MAX_TOTAL_PIXELS * Float.SIZE_BYTES,
+        maxPoolSize = 2,
+    )
+    private val maskInputPool = DirectBufferPool(
+        bufferCapacityBytes = MAX_TOTAL_PIXELS * Float.SIZE_BYTES,
+        maxPoolSize = 2,
+    )
+
     private var sharedImgPixels: IntArray? = null
     private var sharedMaskPixels: IntArray? = null
     private var sharedResultPixels: IntArray? = null
 
-    private fun getImgData(): FloatArray {
-        return sharedImgData ?: FloatArray(3 * MAX_TOTAL_PIXELS).also { sharedImgData = it }
-    }
-    private fun getMaskData(): FloatArray {
-        return sharedMaskData ?: FloatArray(MAX_TOTAL_PIXELS).also { sharedMaskData = it }
-    }
     private fun getImgPixels(): IntArray {
         return sharedImgPixels ?: IntArray(MAX_TOTAL_PIXELS).also { sharedImgPixels = it }
     }
@@ -72,8 +79,6 @@ class AOTInpainting {
 
     fun clearScratch() {
         synchronized(scratchLock) {
-            sharedImgData = null
-            sharedMaskData = null
             sharedImgPixels = null
             sharedMaskPixels = null
             sharedResultPixels = null
@@ -83,7 +88,6 @@ class AOTInpainting {
     private var session: OrtSession? = null
     private val bubbleCleaner = SmartBubbleTextCleaner()
     var paddleDet: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null
-    var usePaddleMasking: Boolean = false
 
     // TachiyomiAT: cached value of the translation_diagnostics preference.
     // The graph-spec dump in [initialize] fires once per session creation and
@@ -609,6 +613,8 @@ class AOTInpainting {
         var maskInput: Bitmap? = null
         var imgTensor: OnnxTensor? = null
         var maskTensor: OnnxTensor? = null
+        var imgBuffer: FloatBuffer? = null
+        var maskBuffer: FloatBuffer? = null
         var results: OrtSession.Result? = null
         var resultBitmap: Bitmap? = null
         var scaled: Bitmap? = null
@@ -641,8 +647,18 @@ class AOTInpainting {
             }
 
             val totalPixels = inferW * inferH
-            val imgData = getImgData()
-            val maskData = getMaskData()
+            // TachiyomiAT: write the NCHW image ([1,3,inferH,inferW]) and mask
+            // ([1,1,inferH,inferW]) tensors straight into pooled DIRECT buffers
+            // (contract #12). The previous FloatBuffer.wrap(FloatArray) was
+            // heap-backed, so ORT made a per-call native copy that leaked across
+            // every inpaint call. inferW*inferH <= MAX_TOTAL_PIXELS (512x512), so
+            // only the active region is exposed to the tensor via the buffer limit
+            // (mirrors PaddleOcrV6SmallEngine). Every position within the limit is
+            // overwritten, so the pool's non-zeroed acquire is safe (#1).
+            imgBuffer = imgInputPool.acquire()
+            maskBuffer = maskInputPool.acquire()
+            imgBuffer.clear()
+            maskBuffer.clear()
             val imgPixels = getImgPixels()
             val maskPixels = getMaskPixels()
 
@@ -657,15 +673,17 @@ class AOTInpainting {
                     val g = (px shr 8 and 0xFF) / 127.5f - 1.0f
                     val b = (px and 0xFF) / 127.5f - 1.0f
                     val m = if (maskValue(maskPixels[idx]) > 127) 1.0f else 0.0f
-                    maskData[idx] = m
-                    imgData[0 * totalPixels + idx] = r * (1.0f - m)
-                    imgData[1 * totalPixels + idx] = g * (1.0f - m)
-                    imgData[2 * totalPixels + idx] = b * (1.0f - m)
+                    maskBuffer.put(idx, m)
+                    imgBuffer.put(idx, r * (1.0f - m))
+                    imgBuffer.put(totalPixels + idx, g * (1.0f - m))
+                    imgBuffer.put(2 * totalPixels + idx, b * (1.0f - m))
                 }
             }
 
-            val imgBuffer = FloatBuffer.wrap(imgData, 0, 3 * totalPixels)
-            val maskBuffer = FloatBuffer.wrap(maskData, 0, totalPixels)
+            imgBuffer.limit(3 * totalPixels)
+            imgBuffer.position(0)
+            maskBuffer.limit(totalPixels)
+            maskBuffer.position(0)
 
             imgTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
@@ -754,6 +772,8 @@ class AOTInpainting {
             results?.close()
             imgTensor?.close()
             maskTensor?.close()
+            imgBuffer?.let { imgInputPool.release(it) }
+            maskBuffer?.let { maskInputPool.release(it) }
             if (blended != null) BitmapPool.putARGB8888(blended)
             // TachiyomiAT: scaled is always a fresh bitmap (not an alias of
             // resultBitmap) after the unconditional normalization step above.
@@ -978,6 +998,8 @@ class AOTInpainting {
         session?.close()
         session = null
         clearScratch()
+        imgInputPool.clear()
+        maskInputPool.clear()
     }
 
     /**
@@ -990,10 +1012,14 @@ class AOTInpainting {
      */
     fun reclaimPooledMemory() {
         bubbleCleaner.clearWorkingBuffers()
+        imgInputPool.clear()
+        maskInputPool.clear()
     }
 
     fun forceReleaseNativeBuffers() {
         bubbleCleaner.clearWorkingBuffers()
         clearScratch()
+        imgInputPool.clear()
+        maskInputPool.clear()
     }
 }

@@ -120,10 +120,14 @@ class TextLayoutPlannerTest {
         val tallLayout = plan.first { it.text == "A reasonably long line" }
         val neighbourLayout = plan.first { it.text == "Neighbour bubble text" }
         val m = FakeMeasurer()
-        extent(tallLayout, m).overlaps(extent(neighbourLayout, m)) shouldBe false
-        // The tall box must have shifted LEFT (its centre moved off the original
-        // 195 toward a smaller x) to get out from under the neighbour.
-        (tallLayout.originX < 195f) shouldBe true
+        val tallExt = extent(tallLayout, m)
+        val neighbourExt = extent(neighbourLayout, m)
+        tallExt.overlaps(neighbourExt) shouldBe false
+        // The tall box must have moved LEFT off its original centre (195) to get
+        // out from under the neighbour — asserted on the extent centre so it is
+        // robust to LEFT/RIGHT edge-anchoring (originX is an edge, not the centre,
+        // once the box grows horizontally).
+        ((tallExt.left + tallExt.right) / 2f < 195f) shouldBe true
     }
 
     @Test
@@ -383,6 +387,96 @@ class TextLayoutPlannerTest {
         // At least some blocks survived (none silently dropped for being hard).
         (plan.size >= 1) shouldBe true
     }
+
+    @Test
+    fun `near-right-edge text never drifts toward the page centre`() {
+        // Defect: a parentless edge box that needs to grow used to re-centre on the
+        // grown box and slide toward the page centre. Full-width walls above/below
+        // block vertical headroom (they do NOT consume horizontal free space — see
+        // freeSpaceLeft/Right), forcing the long text to grow horizontally near the
+        // right edge. Whatever axis it grows on, it must stay on its own (right)
+        // side of the page and never drift to the centre.
+        val pageWidth = 1500f
+        val pageHeight = 600f
+        val wallTop = block(x = 0f, y = 0f, w = pageWidth, h = 242f, text = "W", score = 0.99f)
+        val wallBot = block(x = 0f, y = 358f, w = pageWidth, h = pageHeight - 358f, text = "W", score = 0.99f)
+        val sfx = block(
+            x = 1300f, y = 100f, w = 30f, h = 400f,
+            text = "A very long sound effect line that must grow wide not tall",
+            score = 0.5f,
+        )
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(wallTop, wallBot, sfx), pageWidth, pageHeight, 1, false, m)
+        val l = plan.first { it.text != "W" }
+        val e = extent(l, m)
+
+        // Stays in the right half (no slide toward the centre) and on-page.
+        ((e.left + e.right) / 2f > pageWidth / 2f) shouldBe true
+        (e.right <= pageWidth + 0.5f) shouldBe true
+        (e.left >= 0f) shouldBe true
+    }
+
+    @Test
+    fun `near-left-edge text never drifts toward the page centre`() {
+        val pageWidth = 1500f
+        val pageHeight = 600f
+        val wallTop = block(x = 0f, y = 0f, w = pageWidth, h = 242f, text = "W", score = 0.99f)
+        val wallBot = block(x = 0f, y = 358f, w = pageWidth, h = pageHeight - 358f, text = "W", score = 0.99f)
+        val sfx = block(
+            x = 170f, y = 100f, w = 30f, h = 400f,
+            text = "A very long sound effect line that must grow wide not tall",
+            score = 0.5f,
+        )
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(wallTop, wallBot, sfx), pageWidth, pageHeight, 1, false, m)
+        val l = plan.first { it.text != "W" }
+        val e = extent(l, m)
+
+        // Stays in the left half (no slide toward the centre) and on-page.
+        ((e.left + e.right) / 2f < pageWidth / 2f) shouldBe true
+        (e.left >= -0.5f) shouldBe true
+        (e.right <= pageWidth + 0.5f) shouldBe true
+    }
+
+    @Test
+    fun `horizontal growth alone does not force edge alignment without rendered overlap`() {
+        val edge = block(
+            x = 1410f,
+            y = 100f,
+            w = 30f,
+            h = 220f,
+            text = "SupercalifragilisticexpialidociousSoundEffectWord",
+            score = 0.8f,
+        )
+
+        val plan = TextLayoutPlanner.plan(listOf(edge), 1500f, 800f, 1, false, FakeMeasurer())
+        val layout = plan.first()
+
+        layout.drawAlign shouldBe TextAlign.CENTER
+    }
+
+    @Test
+    fun `long text in a box with vertical headroom wraps into more than one line`() {
+        // The relaxed height-growth cap lets long text grow TALLER and wrap into
+        // several lines rather than ballooning to a single wide line. With a tall
+        // reshaped box (region = page ⇒ free vertical headroom) and long text, the
+        // planned layout must wrap into >1 line at its fitted size.
+        val tall = block(
+            x = 200f, y = 100f, w = 40f, h = 400f,
+            text = "Quite a long translated sentence that should wrap onto multiple rendered lines",
+            score = 0.8f,
+        )
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(tall), 1500f, 1500f, 1, false, m)
+        val l = plan.first()
+        val lines = TextLayoutPlanner.cjkWrap(l.text, l.fontSizePx, l.safeW, m)
+        (lines.size > 1) shouldBe true
+        // And it never leaves the page / crosses an obstacle (none here): the
+        // extent stays within the page width.
+        val e = extent(l, m)
+        (e.right <= 1500f + 0.5f) shouldBe true
+        (e.left >= -0.5f) shouldBe true
+    }
 }
 
 /**
@@ -408,10 +502,10 @@ private fun extentOfPublic(layout: BlockLayout, measurer: TextMeasurer): FloatRe
         val totalH = lines.size * lineH
         val maxLineW = (lines.maxOfOrNull { measurer.measureTextWidth(it, layout.fontSizePx) } ?: 0f)
             .coerceAtLeast(0f)
-        if (layout.drawAlignLeft) {
-            FloatRect(cx, cy - totalH / 2f, cx + maxLineW, cy + totalH / 2f)
-        } else {
-            FloatRect(cx - maxLineW / 2f, cy - totalH / 2f, cx + maxLineW / 2f, cy + totalH / 2f)
+        when (layout.drawAlign) {
+            TextAlign.LEFT -> FloatRect(cx, cy - totalH / 2f, cx + maxLineW, cy + totalH / 2f)
+            TextAlign.RIGHT -> FloatRect(cx - maxLineW, cy - totalH / 2f, cx, cy + totalH / 2f)
+            TextAlign.CENTER -> FloatRect(cx - maxLineW / 2f, cy - totalH / 2f, cx + maxLineW / 2f, cy + totalH / 2f)
         }
     }
 }

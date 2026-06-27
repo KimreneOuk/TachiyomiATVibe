@@ -62,17 +62,29 @@ data class FloatRect(
 }
 
 /**
+ * TachiyomiAT: horizontal text anchoring for a [BlockLayout].
+ *  - [CENTER]: text centred on [BlockLayout.originX] (the box centre) — the
+ *    default for boxes that did not need to grow.
+ *  - [LEFT]: text left-aligned at [BlockLayout.originX] (a fixed left edge) —
+ *    used when a box grew RIGHT into free space (the original left edge is the
+ *    anchor) and by the clip safety-net (originX = clip left edge).
+ *  - [RIGHT]: text right-aligned at [BlockLayout.originX] (a fixed right edge) —
+ *    used when a box grew LEFT into free space (the original right edge is the
+ *    anchor), so parentless edge SFX do not slide toward the page centre.
+ */
+enum class TextAlign { CENTER, LEFT, RIGHT }
+
+/**
  * TachiyomiAT: the resolved placement for a single translated block, produced by
  * [TextLayoutPlanner.plan]. The renderer ([PageTextRenderer]) only DRAWS these —
  * it performs no further layout. See the "neighbor-aware layout" contract in
  * `docs/TRANSLATION_MODULE.md`.
  *
- * @property originX horizontal draw anchor. With [clipRect] == null this is the box
- *   center (CENTER-aligned text, matching legacy behaviour); when clipping is
- *   required it becomes the LEFT edge of the clip region so the canvas clips cleanly.
+ * @property originX horizontal draw anchor. Its meaning depends on [drawAlign]:
+ *   CENTER ⇒ box centre; LEFT ⇒ the (clip or growth) left edge; RIGHT ⇒ the
+ *   growth right edge.
  * @property originY vertical center the renderer stacks lines around.
- * @property drawAlignLeft false ⇒ CENTER text align (normal path); true ⇒ LEFT
- *   align (clipped path, anchored at [originX] = clip left edge).
+ * @property drawAlign how the text is anchored horizontally at [originX].
  * @property clipRect non-null ONLY when, after growing into free space and
  *   shrinking, the block still cannot avoid a neighbour. The renderer clips its
  *   canvas to this rect so rendered text extents can never overlap — the safety
@@ -88,7 +100,7 @@ data class BlockLayout(
     val safeH: Float,
     val fontSizePx: Float,
     val strokeWidth: Float,
-    val drawAlignLeft: Boolean,
+    val drawAlign: TextAlign,
     val clipRect: FloatRect?,
 )
 
@@ -282,6 +294,7 @@ object TextLayoutPlanner {
                 width = baseW,
                 pageWidth = pageWidth,
                 obstacles = obstacles,
+                origCenterX = origCenterX,
             )
         }
 
@@ -314,9 +327,38 @@ object TextLayoutPlanner {
         fontSize = binarySearchFontSize(text, safeW, safeH, baseW, isVertical, scale, measurer)
 
         val strokeWidth = computeStrokeWidth(block, fontSize, scale)
-        var originX = baseX + baseW / 2f
-        val originY = baseY + baseH / 2f
-        var drawAlignLeft = false
+        var originY = baseY + baseH / 2f
+        // Re-anchor at the ORIGINAL edge of a box that grew horizontally into free
+        // space, so parentless edge text (e.g. SFX) does not drift toward the page
+        // centre: grew-right ⇒ pin the (unchanged) left edge with LEFT align;
+        // grew-left ⇒ pin the (unchanged) right edge with RIGHT align. A genuinely
+        // required clip (below) overrides this to LEFT at its own left edge.
+        var originX: Float
+        var drawAlign: TextAlign
+        val centeredOriginX = baseX + baseW / 2f
+        val edgeAnchorWouldAvoidOverlap = !isVertical && centeredExtentOverlapsObstacle(
+            text = text,
+            fontSize = fontSize,
+            safeW = safeW,
+            originX = centeredOriginX,
+            originY = originY,
+            obstacles = obstacles,
+            measurer = measurer,
+        )
+        when {
+            grown.grewRight && edgeAnchorWouldAvoidOverlap -> {
+                originX = baseX
+                drawAlign = TextAlign.LEFT
+            }
+            grown.grewLeft && edgeAnchorWouldAvoidOverlap -> {
+                originX = baseX + baseW
+                drawAlign = TextAlign.RIGHT
+            }
+            else -> {
+                originX = centeredOriginX
+                drawAlign = TextAlign.CENTER
+            }
+        }
         var clipRect: FloatRect? = null
 
         // (3) Clip safety-net: if the final extent still overlaps an obstacle,
@@ -344,14 +386,20 @@ object TextLayoutPlanner {
         }
         if (neededClip && clip.width() > MIN_GAP_PX && clip.height() > MIN_GAP_PX) {
             clipRect = clip
-            // Switch to LEFT-aligned drawing anchored at the clip's left edge so
-            // the canvas clips the line cleanly instead of centring under it.
-            originX = clip.left
-            drawAlignLeft = true
+            if (isVertical) {
+                originX = clip.left + clip.width() / 2f
+            } else {
+                originX = clip.left
+                drawAlign = TextAlign.LEFT
+            }
+            originY = clip.top + clip.height() / 2f
+            safeW = clip.width()
+            safeH = clip.height()
+
             // Re-wrap into the (narrower) clip width and re-fit the font so the
             // text fills the clipped region rather than overflowing it.
             val fitFont = binarySearchFontSize(
-                text, clip.width(), clip.height(), clip.width(), isVertical, scale, measurer,
+                text, safeW, safeH, safeW, isVertical, scale, measurer,
             )
             // Keep the legibility floor: never shrink below it even when clipping —
             // better to clip a long line at a legible size than to shrink it to dust.
@@ -363,8 +411,15 @@ object TextLayoutPlanner {
             val r = if (clipRect != null) clipRect.intersection(region) else region
             if (r.width() > MIN_GAP_PX && r.height() > MIN_GAP_PX) {
                 clipRect = r
-                originX = r.left
-                drawAlignLeft = true
+                if (isVertical) {
+                    originX = r.left + r.width() / 2f
+                } else {
+                    originX = r.left
+                    drawAlign = TextAlign.LEFT
+                }
+                originY = r.top + r.height() / 2f
+                safeW = r.width()
+                safeH = r.height()
                 fontSize = max(fontSize, minLegible)
             }
         }
@@ -379,7 +434,7 @@ object TextLayoutPlanner {
             safeH = safeH,
             fontSizePx = fontSize,
             strokeWidth = strokeWidth,
-            drawAlignLeft = drawAlignLeft,
+            drawAlign = drawAlign,
             clipRect = clipRect,
         )
     }
@@ -405,9 +460,12 @@ object TextLayoutPlanner {
         width: Float,
         pageWidth: Float,
         obstacles: List<FloatRect>,
+        origCenterX: Float,
     ): Float {
+        val minXAllowed = origCenterX - width
+        val maxXAllowed = origCenterX
         val maxX = (pageWidth - width).coerceAtLeast(0f)
-        var x = preferredX.coerceIn(0f, maxX)
+        var x = preferredX.coerceIn(0f, maxX).coerceIn(minXAllowed, maxXAllowed)
         // Resolve collisions one at a time, up to a bounded number of passes
         // (each obstacle is shifted past at most once; obstacles do not move).
         var guard = 0
@@ -418,11 +476,14 @@ object TextLayoutPlanner {
             val centerX = x + width / 2f
             val obsCenterX = (colliding.left + colliding.right) / 2f
             // Push to the side of the obstacle nearer the preferred centre.
-            x = if (centerX < obsCenterX) {
+            val nextX = if (centerX < obsCenterX) {
                 colliding.left - width
             } else {
                 colliding.right
-            }.coerceIn(0f, maxX)
+            }.coerceIn(0f, maxX).coerceIn(minXAllowed, maxXAllowed)
+            
+            if (nextX == x) return x
+            x = nextX
             guard++
         }
         return x
@@ -488,29 +549,45 @@ object TextLayoutPlanner {
         var sw = max(1f, bw - safePad * 2f)
         var sh = max(1f, bh - safePad * 2f)
         var font = currentFont
+        var grewRight = false
+        var grewLeft = false
 
         val targetFont = max(minLegible, currentFont)
         val needsGrowth = font < minLegible || overflows(text, font, isVertical, sw, sh, measurer)
         if (!needsGrowth) {
-            return GrownBox(bx, by, bw, bh, sw, sh, font)
+            return GrownBox(bx, by, bw, bh, sw, sh, font, grewRight, grewLeft)
         }
 
         if (!isVertical) {
-            // Horizontal. Two independent growth axes, each into its larger free
-            // side so overflow is redirected into open space, never at a neighbour:
-            //  (a) HEIGHT — must fit at least one line at the floor font. Without
-            //      this, a box too short for even one line (e.g. a 30 px tall SFX
-            //      box) could never reach the legibility floor no matter how wide
-            //      it grew, so the fit collapsed to ~8 px (Defect 3).
-            //  (b) WIDTH — re-wrap into `maxLines` lines at the floor font.
+            // Horizontal. Grow HEIGHT first (taller ⇒ more wrap lines ⇒ narrower),
+            // then WIDTH only for whatever still won't fit — each into its larger
+            // free side so overflow is redirected into open space, never at a
+            // neighbour, and bounded by the available free space so a box never
+            // crosses an obstacle (contract #16f).
             val lineH = measurer.lineHeight(targetFont)
-            val heightGrowthNeeded = (lineH - sh).coerceAtLeast(0f)
+            val centerY = by + bh / 2f
+            val safeTop = by + safePad
+            val safeBottom = by + bh - safePad
+            val freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
+            val freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
+
+            // (a) HEIGHT — always reserve at least one line at the floor font (a box
+            // too short for even one line could never reach the legibility floor no
+            // matter how wide it grew, collapsing the fit to ~8 px — Defect 3). Then
+            // grow further so the text wraps into MORE lines (taller, narrower
+            // footprint) instead of ballooning width: pick the smallest line count
+            // within the vertical headroom whose wrapped width already fits the
+            // current safe width; if none fits, use all available headroom and let
+            // the width step below handle the residual.
+            val baseLines = max(1, (sh / lineH).toInt())
+            val maxLinesByHeight = max(baseLines, ((sh + max(freeUp, freeDown)) / lineH).toInt())
+            val swBeforeGrowth = sw
+            val fitLines = (baseLines..maxLinesByHeight).firstOrNull { n ->
+                minWidthForLines(text, targetFont, n, measurer) <= swBeforeGrowth
+            }
+            val targetLines = fitLines ?: maxLinesByHeight
+            val heightGrowthNeeded = (targetLines * lineH - sh).coerceAtLeast(0f)
             if (heightGrowthNeeded > 0f) {
-                val centerY = by + bh / 2f
-                val safeTop = by + safePad
-                val safeBottom = by + bh - safePad
-                val freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
-                val freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
                 if (freeDown >= freeUp) {
                     bh += min(freeDown, heightGrowthNeeded)
                 } else {
@@ -521,6 +598,9 @@ object TextLayoutPlanner {
                 sh = max(1f, bh - safePad * 2f)
             }
 
+            // (b) WIDTH — re-wrap into the lines that now fit and grow only for any
+            // residual overflow, into the larger free side (record which side so
+            // placeBlock can re-anchor at the original edge).
             val maxLines = max(1, (sh / lineH).toInt())
             val safeLeft = bx + safePad
             val safeRight = bx + bw - safePad
@@ -532,10 +612,12 @@ object TextLayoutPlanner {
             if (widthGrowthNeeded > 0f) {
                 if (freeRight >= freeLeft) {
                     bw += min(freeRight, widthGrowthNeeded)
+                    grewRight = true
                 } else {
                     val g = min(freeLeft, widthGrowthNeeded)
                     bx -= g
                     bw += g
+                    grewLeft = true
                 }
                 sw = max(1f, bw - safePad * 2f)
             }
@@ -579,7 +661,7 @@ object TextLayoutPlanner {
         if (font < minLegible && fitsAt(text, targetFont, isVertical, sw, sh, measurer)) {
             font = targetFont
         }
-        return GrownBox(bx, by, bw, bh, sw, sh, font)
+        return GrownBox(bx, by, bw, bh, sw, sh, font, grewRight, grewLeft)
     }
 
     private data class GrownBox(
@@ -590,6 +672,12 @@ object TextLayoutPlanner {
         val safeW: Float,
         val safeH: Float,
         val fontSize: Float,
+        // TachiyomiAT: which horizontal side the box grew into (false when it did
+        // not grow horizontally). Drives the re-anchor in placeBlock so a box that
+        // grew into free space stays pinned at its ORIGINAL edge instead of
+        // re-centering on the (now wider) box and drifting toward page centre.
+        val grewRight: Boolean,
+        val grewLeft: Boolean,
     )
 
     private fun freeSpaceVerticalUp(centerY: Float, origTop: Float, obstacles: List<FloatRect>): Float {
@@ -729,11 +817,38 @@ object TextLayoutPlanner {
             val totalH = lines.size * lineH
             val maxLineW = (lines.maxOfOrNull { measurer.measureTextWidth(it, layout.fontSizePx) } ?: 0f)
                 .coerceAtLeast(0f)
-            if (layout.drawAlignLeft) {
-                FloatRect(cx, cy - totalH / 2f, cx + maxLineW, cy + totalH / 2f)
-            } else {
-                FloatRect(cx - maxLineW / 2f, cy - totalH / 2f, cx + maxLineW / 2f, cy + totalH / 2f)
+            when (layout.drawAlign) {
+                TextAlign.LEFT -> FloatRect(cx, cy - totalH / 2f, cx + maxLineW, cy + totalH / 2f)
+                TextAlign.RIGHT -> FloatRect(cx - maxLineW, cy - totalH / 2f, cx, cy + totalH / 2f)
+                TextAlign.CENTER -> FloatRect(cx - maxLineW / 2f, cy - totalH / 2f, cx + maxLineW / 2f, cy + totalH / 2f)
             }
+        }
+    }
+
+    private fun centeredExtentOverlapsObstacle(
+        text: String,
+        fontSize: Float,
+        safeW: Float,
+        originX: Float,
+        originY: Float,
+        obstacles: List<FloatRect>,
+        measurer: TextMeasurer,
+    ): Boolean {
+        if (obstacles.isEmpty()) return false
+        val lines = cjkWrap(text, fontSize, safeW, measurer)
+        val lineH = measurer.lineHeight(fontSize)
+        val totalH = lines.size * lineH
+        val maxLineW = (lines.maxOfOrNull { measurer.measureTextWidth(it, fontSize) } ?: 0f)
+            .coerceAtLeast(0f)
+        val centered = FloatRect(
+            originX - maxLineW / 2f,
+            originY - totalH / 2f,
+            originX + maxLineW / 2f,
+            originY + totalH / 2f,
+        )
+        return obstacles.any { obs ->
+            val inter = centered.intersection(obs)
+            inter.width() > MIN_GAP_PX && inter.height() > MIN_GAP_PX
         }
     }
 

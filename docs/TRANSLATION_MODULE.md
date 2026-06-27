@@ -207,10 +207,11 @@ To prevent massive text bubbles from permanently hoarding heap memory, `SmartBub
 Uncaught errors (such as `java.lang.OutOfMemoryError`, which is a `java.lang.Error` rather than a `java.lang.Exception`) must never escape the page translation pipeline without updating the store status. Catching `Throwable` in `translateSinglePage` and `translateSinglePageFromStream` and recording a `FAILED` page state (along with the error type/message) to the store prevents pages from getting stuck in a permanent `RUNNING` status. In the reader UI, a `RUNNING` status disables the "translate" icon and shows a cancel button; marking the page `FAILED` immediately restores the "translate" button to allow user manual retry.
 
 ### 10. Memory relief after every page translation
-Calling `recognitionEngine.reclaimPooledMemory()` in the outer `finally` block of `translateSinglePageInternal` ensures that off-heap direct float buffers (KV-cache pools for MangaOcr) and working arrays (for SmartBubbleTextCleaner) are freed immediately after each page translation completes or fails. This maintains a flat memory footprint and prevents progressive memory pressure accumulation across large chapters (25+ pages).
+Calling `recognitionEngine.reclaimPooledMemory()` in the cleanup `finally` blocks of the single-page path ensures that off-heap direct float buffers (KV-cache pools for MangaOcr) and working arrays (for SmartBubbleTextCleaner) are freed immediately after each page translation completes or fails. The single-page path is split into an ONNX phase (`translateSinglePageOnnx`, under the permit) and a permit-free HTTP+render phase (`translateSinglePageHttpRender` — see contract #18); `reclaimPooledMemory()` runs in both so it fires on every exit regardless of which phase the page reached. This maintains a flat memory footprint and prevents progressive memory pressure accumulation across large chapters (25+ pages).
 
-Reader memory is bounded by `ReaderPageWarmWindow` (current page +/- 2). The
-reader keeps translation metadata for the whole chapter, but translated image
+Reader memory is bounded by `ReaderPageWarmWindow`, whose radius is mode-aware
+(`ReaderPageWarmWindow.radiusFor(mode)`): 2 for pager modes, 4 for the fast-scrolling
+webtoon/continuous-vertical modes. The reader keeps translation metadata for the whole chapter, but translated image
 streams are attached only inside that warm window and reopened from disk on
 demand. This keeps a 200-page chapter proportional to the visible working set,
 not to total chapter length.
@@ -693,6 +694,19 @@ can retry. This pairs with `TranslationBlockValidation` (contract #14), which
 turns an incomplete translation into a page-level `FAILED` — without it a
 half-translated page would still count as READY and slip past this gate.
 
+### 18. Reader single-page path releases the ONNX permit before HTTP translate (`TranslationPipeline.translateSinglePage`)
+The reader/single-page path is split into two phases so the ONNX engine (the bottleneck) stays busy instead of idling during the network call — the same ONNX‖HTTP overlap the batch path already had:
+1. **ONNX phase** (`translateSinglePageOnnx`, under `translatorPermit` + the `withLeakProofPermit` watchdog): stream resolution → decode → `processSinglePage` (detect+OCR+inpaint) → persist `.cleaned`. The decoded page bitmap is recycled **before** the permit is released (the existing `bitmap.recycle()` + `BitmapPool.releaseAll()` finally).
+2. **HTTP+render phase** (`translateSinglePageHttpRender`, **permit-free**): cooperative cancel → `textTranslator.translatePage` (+ PARTIAL retry) → Canvas render → persist. It captures a local `activeTranslator = textTranslator` reference so a concurrent engine rebuild/`closeEngines()` from a config change does not race the in-flight HTTP call (the old instance may be closed mid-flight → one page fails and retries with the new instance — an accepted trade-off, no drain logic).
+
+The `inFlightPageKeys` dedup + `onForceRelease` cover the ONNX phase only. The cleaned bitmap (`pageTranslation.cleanedBitmap`) crosses the boundary alive and is recycled in the HTTP+render phase after render. Resume/already-rendered short-circuits stay inside the ONNX phase and run unchanged. Peak held cleaned bitmaps is bounded by the warm window and the fact that ONNX (serial under the permit) is the bottleneck, so in practice 1–2 cleaned bitmaps are alive at once.
+
+### 19. OCR engine-capability routing: MangaOcr gets the ROI only (`RoiPageRecognitionEngine`, `OcrTextFilter`, `RoiOcrEngine.prefersHorizontalText`)
+Engines declare their vertical-handling capability via `RoiOcrEngine.prefersHorizontalText` (default `false` = reads vertical natively, e.g. MangaOcr; `true` = horizontal-line CTC head needing split/rotate, e.g. PaddleOCR). The orchestrator must honor it:
+- **Native-vertical engines (`false`)** get only the ROI crop from the page detector — a single `recognizeWithConf(crop)` read. They are **never** routed into `recognizeMultiLine`/`recognizeDetColumns`/`recognizeVerticalColumnPerChar` (the per-glyph decomposition). A blank/unusable read stays blank (the block drops) instead of being force-decomposed into garbage. Rationale: MangaOcr does its own preprocessing (`MangaOcrEngine.preprocess`) and reads vertical natively; the per-glyph path is a CTC workaround that degrades it and was the root cause of nonsense translations.
+- **Horizontal-line engines (`true`)** keep the full det-split + per-glyph/rotate pipeline.
+The decomposition functions retain a defensive `engine.prefersHorizontalText` gate so a native engine reaching them (it no longer can) still reads whole. `OcrTextFilter.isUsable(text, language)` additionally requires a CJK character for CJK sources (drops Latin/symbol OCR misreads like `N0`/`N°`), and `recognizeSingleLine` drops sub-`OCR_MIN_CONFIDENCE` PaddleOCR reads (MangaOcr's default conf 1.0 is exempt). No source-text fallback is ever introduced (contract #14/#15).
+
 ### Placeholder pages are not persisted (`ChapterTranslationStore.shouldPersistUpdate`)
 `updatePage` persists only durable progress: a rendered result, recognized
 blocks, a cleaned image, a stage failure (for retry-exhaustion bookkeeping),
@@ -732,12 +746,12 @@ uses non-suspending `tryLock` (never blocks the main thread it is called from);
 if the lock is ever held, it logs, skips the native free, and leaves the
 `closed` flag + rebuild gate as the backstop.
 
-### Note: `autoTranslateAfterDownload` preference is currently unwired
-The `auto_translate_after_download` preference (`TranslationPreferences.kt`)
-and its settings toggle (`SettingsTranslationScreen`) have **no consumer** —
-downloading a chapter does not trigger translation. It is dead surface; either
-wire it or remove it in a follow-up. It is unrelated to the false-translated
-bug above.
+### Note: `autoTranslateAfterDownload` preference has been removed
+The dead `auto_translate_after_download` preference (`TranslationPreferences`),
+its settings toggle (`SettingsTranslationScreen`), and its string resource were
+removed — it never had a consumer (downloading a chapter did not trigger
+translation). If auto-translate-on-download is later wanted, re-add it wired to
+the batch trigger (`TranslationManager.translateChapter`), not as dead surface.
 
 ---
 

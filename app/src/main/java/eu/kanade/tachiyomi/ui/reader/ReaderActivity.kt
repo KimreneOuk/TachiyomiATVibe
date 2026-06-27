@@ -286,6 +286,7 @@ class ReaderActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.restartReadTimer()
+        viewModel.resumeTranslationsOnForeground()
         setMenuVisibility(viewModel.state.value.menuVisible)
     }
 

@@ -33,8 +33,9 @@ object OnnxRuntimeProvider {
      *
      * The CPU memory arena and memory-pattern optimizer stay disabled to bound
      * resident native memory across the detector, OCR, and AOT sessions. Thread
-     * count stays conservative because higher values have caused device-specific
-     * crashes in this codebase.
+     * count is derived from available CPU cores (half, capped at 4) because
+     * higher values have caused device-specific crashes in this codebase — this
+     * heuristic needs on-device validation for new hardware.
      */
     fun createSessionOptions(
         forceCpu: Boolean = false,
@@ -44,8 +45,10 @@ object OnnxRuntimeProvider {
             logcat(LogPriority.INFO) { "ONNX session options using CPU execution provider" }
         }
         return OrtSession.SessionOptions().apply {
-            setInterOpNumThreads(2)
-            setIntraOpNumThreads(2)
+            val cpuCores = Runtime.getRuntime().availableProcessors()
+            val threads = (cpuCores / 2).coerceIn(2, 4)
+            setInterOpNumThreads(threads)
+            setIntraOpNumThreads(threads)
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
             runCatching { setCPUArenaAllocator(false) }
                 .onFailure { e ->

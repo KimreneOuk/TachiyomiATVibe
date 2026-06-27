@@ -8,6 +8,7 @@ import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
+import tachiyomi.domain.translation.pools.DirectBufferPool
 import java.io.File
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
@@ -15,6 +16,17 @@ import java.nio.LongBuffer
 class OnnxPageTextDetector {
 
     private var session: OrtSession? = null
+
+    // TachiyomiAT: pooled DIRECT input buffer for the fixed 1x3x640x640 detector
+    // tensor (contract #12). The previous FloatBuffer.allocate(3*total) was
+    // heap-backed, so ORT made a per-call native copy that accumulated across
+    // every page detection (the same leak class as MangaOcrEngine/Paddle). The
+    // pool tracks buffers by identity (#13) and maxPoolSize=2 bounds resident
+    // native memory to two ~4.8 MiB buffers regardless of chapter length.
+    private val inputBufferPool = DirectBufferPool(
+        bufferCapacityBytes = DETECTOR_INPUT_FLOATS * Float.SIZE_BYTES,
+        maxPoolSize = 2,
+    )
 
     private val classNames = mapOf(
         0 to "bubble",
@@ -55,9 +67,14 @@ class OnnxPageTextDetector {
         var inputTensor: OnnxTensor? = null
         var sizesTensor: OnnxTensor? = null
         var results: OrtSession.Result? = null
+        var inputBuffer: FloatBuffer? = null
 
         try {
-            inputTensor = preprocess(resized)
+            // TachiyomiAT: ORT consumes a direct buffer in place (no native
+            // copy), so the buffer MUST outlive the tensor — acquire here, keep
+            // it referenced until the tensor is closed in the finally (#12).
+            inputBuffer = inputBufferPool.acquire()
+            inputTensor = preprocess(resized, inputBuffer)
             sizesTensor = createOrigSizes(bitmap)
             val inputTensorValue = inputTensor!!
             val sizesTensorValue = sizesTensor!!
@@ -95,6 +112,7 @@ class OnnxPageTextDetector {
             results?.close()
             inputTensor?.close()
             sizesTensor?.close()
+            inputBuffer?.let { inputBufferPool.release(it) }
             BitmapPool.putARGB8888(resized)
         }
     }
@@ -102,35 +120,40 @@ class OnnxPageTextDetector {
     fun close() {
         session?.close()
         session = null
+        inputBufferPool.clear()
     }
 
-    // TachiyomiAT: rewritten from a triple-nested per-channel loop
-    // (for c in 0..2 { for y { for x { ... } } }) to a single-pass scan through
-    // the pixel array. The old code traversed every pixel three times (once per
-    // channel); this version reads each pixel once, extracts R/G/B, and writes
-    // to contiguous FloatBuffer regions via bulk-put where possible, reducing
-    // the per-page pixel-array traversal from ~3.6M to ~1.2M.
-    private fun preprocess(resized: Bitmap): OnnxTensor {
+    // TachiyomiAT: free the pooled direct buffer without tearing down the ONNX
+    // session. Wired into RoiPageRecognitionEngine.reclaimPooledMemory (per-page
+    // OOM relief, contract #4/#10) and forceReleaseNativeBuffers.
+    fun reclaimPooledMemory() {
+        inputBufferPool.clear()
+    }
+
+    fun forceReleaseNativeBuffers() {
+        inputBufferPool.clear()
+    }
+
+    // TachiyomiAT: writes the NCHW [1,3,640,640] tensor straight into a pooled
+    // DIRECT buffer (contract #12). Each pixel is read once and its R/G/B are
+    // written to the three channel-first regions [0,total)/[total,2total)/
+    // [2total,3total). The buffer is acquired/released in detect(); every
+    // position within the final limit is overwritten, so the pool's non-zeroed
+    // acquire is safe (contract #1).
+    private fun preprocess(resized: Bitmap, floatBuf: FloatBuffer): OnnxTensor {
         val pixels = IntArray(640 * 640)
         resized.getPixels(pixels, 0, 640, 0, 0, 640, 640)
 
         val total = 640 * 640
-        // Layout: [R_0...R_n, G_0...G_n, B_0...B_n] — contiguous float arrays
-        // so ONNX can read them directly without interleaving.
-        val rChannel = FloatArray(total)
-        val gChannel = FloatArray(total)
-        val bChannel = FloatArray(total)
+        floatBuf.clear()
         for (i in 0 until total) {
             val pixel = pixels[i]
-            rChannel[i] = (pixel shr 16 and 0xFF) / 255.0f
-            gChannel[i] = (pixel shr 8 and 0xFF) / 255.0f
-            bChannel[i] = (pixel and 0xFF) / 255.0f
+            floatBuf.put(i, (pixel shr 16 and 0xFF) / 255.0f)
+            floatBuf.put(total + i, (pixel shr 8 and 0xFF) / 255.0f)
+            floatBuf.put(2 * total + i, (pixel and 0xFF) / 255.0f)
         }
-        val floatBuf = FloatBuffer.allocate(3 * total)
-        floatBuf.put(rChannel)
-        floatBuf.put(gChannel)
-        floatBuf.put(bChannel)
-        floatBuf.rewind()
+        floatBuf.limit(3 * total)
+        floatBuf.position(0)
         return OnnxTensor.createTensor(
             OnnxRuntimeProvider.environment,
             floatBuf,
@@ -203,6 +226,8 @@ class OnnxPageTextDetector {
 
     companion object {
         private const val CONFIDENCE_THRESHOLD = 0.45f
+
+        private const val DETECTOR_INPUT_FLOATS = 3 * 640 * 640
 
         /**
          * Tuned thresholds for the detector-stage geometric dedupe. The

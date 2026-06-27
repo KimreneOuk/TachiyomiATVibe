@@ -4,13 +4,19 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -76,6 +82,7 @@ fun TranslationSettingsSheet(
     translationCurrentPage: Int = 0,
 ) {
     val prefs = remember { Injekt.get<TranslationPreferences>() }
+    var showAdvanced by remember { mutableStateOf(false) }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         Column(
@@ -93,8 +100,21 @@ fun TranslationSettingsSheet(
             )
             StopAllSection(onStopAllTranslation)
             LanguagesSection(prefs)
-            InpaintSection(prefs)
-            EngineSection(prefs)
+            TextButton(
+                onClick = { showAdvanced = !showAdvanced },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(ATMR.strings.pref_group_advanced))
+                Spacer(Modifier.weight(1f))
+                Icon(
+                    imageVector = if (showAdvanced) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                )
+            }
+            if (showAdvanced) {
+                InpaintSection(prefs)
+                EngineSection(prefs)
+            }
         }
     }
 }
@@ -245,15 +265,6 @@ private fun ColumnScope.TogglesSection(prefs: TranslationPreferences) {
         if (auto) {
             PrefetchSlider(prefs)
         }
-
-        val paddleMaskingPref = prefs.translationExperimentalPaddleMasking()
-        val paddleMasking by paddleMaskingPref.collectAsState()
-        SwitchPreferenceWidget(
-            title = stringResource(ATMR.strings.pref_experimental_paddle_masking),
-            subtitle = stringResource(ATMR.strings.pref_experimental_paddle_masking_summary),
-            checked = paddleMasking,
-            onCheckedChanged = { paddleMaskingPref.set(it) },
-        )
     }
 }
 

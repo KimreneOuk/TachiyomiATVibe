@@ -19,7 +19,7 @@ Kotlin Android manga/manhwa/manhua reader with ONNX translation.
 
 - **Documentation First** – Read relevant docs before changes
 - **Never Guess** – Read implementations; trace dependencies
-  - Use codebase search (index available) for faster exploration
+  - Use codebase search (index available) for faster exploration, this ensure you can get faster result and know where the code exist in which files.
 - **Smallest Safe Change** – Only change what's necessary
 - **Architecture Consistency** – Follow existing patterns; consider performance/memory
 - **Test-Driven** – Test before/alongside implementation changes

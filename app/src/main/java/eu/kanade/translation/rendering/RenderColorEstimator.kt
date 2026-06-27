@@ -60,9 +60,20 @@ object RenderColorEstimator {
      *  - light background → black text + white stroke (narrower)
      *  - then snap any low-saturation mid-gray text color to pure black.
      */
-    internal fun colorPolicy(bgLuma: Float): Triple<Long, Long, Float> {
-        val base = if (bgLuma < DARK_BG_LUMA) DARK_BG_COLORS else LIGHT_BG_COLORS
-        return snapGray(base)
+    internal fun colorPolicy(bgLuma: Float, fgColor: FloatArray? = null): Triple<Long, Long, Float> {
+        val strokeWidth = if (bgLuma < DARK_BG_LUMA) DARK_BG_COLORS.third else LIGHT_BG_COLORS.third
+        val strokeColor = if (bgLuma < DARK_BG_LUMA) 0xFF000000L else 0xFFFFFFFFL
+
+        val textArgb = if (fgColor != null) {
+            val r = fgColor[0].toInt().coerceIn(0, 255)
+            val g = fgColor[1].toInt().coerceIn(0, 255)
+            val b = fgColor[2].toInt().coerceIn(0, 255)
+            (0xFFL shl 24) or (r.toLong() shl 16) or (g.toLong() shl 8) or b.toLong()
+        } else {
+            if (bgLuma < DARK_BG_LUMA) 0xFFFFFFFFL else 0xFF000000L
+        }
+
+        return snapGray(Triple(textArgb, strokeColor, strokeWidth))
     }
 
     /**
@@ -124,21 +135,22 @@ object RenderColorEstimator {
         } else null
 
         val step = max(1, pixels.size / 1200)
-        val bgColor = dominantBackgroundCluster(pixels, step, sampleMask)
+        val (bgColor, fgColor) = extractClusters(pixels, step, sampleMask)
         val brightness = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
-        return colorPolicy(brightness)
+        return colorPolicy(brightness, fgColor)
     }
 
     /**
      * 2-means (seeded black vs white, 5 iterations) to find the dominant
-     * background cluster of [pixels] sampled every [step]. When [sampleMask]
+     * background and foreground clusters of [pixels] sampled every [step]. When [sampleMask]
      * is non-null, only pixels where `sampleMask[i] != 0` are considered.
+     * Returns Pair(backgroundColor, foregroundColor).
      */
-    private fun dominantBackgroundCluster(
+    private fun extractClusters(
         pixels: IntArray,
         step: Int,
         sampleMask: ByteArray? = null,
-    ): FloatArray {
+    ): Pair<FloatArray, FloatArray> {
         var center0 = floatArrayOf(0f, 0f, 0f)
         var center1 = floatArrayOf(255f, 255f, 255f)
         var count0 = 0
@@ -180,7 +192,7 @@ object RenderColorEstimator {
                 center1[2] = sum1[2] / count1
             }
         }
-        return if (count0 >= count1) center0 else center1
+        return if (count0 >= count1) Pair(center0, center1) else Pair(center1, center0)
     }
 
     /**

@@ -46,10 +46,6 @@ object SettingsTranslationScreen : SearchableSettings {
         val translationPreferences = remember { Injekt.get<TranslationPreferences>() }
         return listOf(
             Preference.PreferenceItem.SwitchPreference(
-                pref = translationPreferences.autoTranslateAfterDownload(),
-                title = stringResource(ATMR.strings.pref_translate_after_downloading),
-            ),
-            Preference.PreferenceItem.SwitchPreference(
                 pref = translationPreferences.translationConfirmPretranslate(),
                 title = stringResource(ATMR.strings.pref_confirm_pretranslate),
                 subtitle = stringResource(ATMR.strings.pref_confirm_pretranslate_summary),
@@ -81,11 +77,6 @@ object SettingsTranslationScreen : SearchableSettings {
                     pref = translationPreferences.translationInpaintingMode(),
                     title = stringResource(ATMR.strings.pref_inpainting_mode),
                     entries = modes.toImmutableMap(),
-                ),
-                Preference.PreferenceItem.SwitchPreference(
-                    pref = translationPreferences.translationExperimentalPaddleMasking(),
-                    title = stringResource(ATMR.strings.pref_experimental_paddle_masking),
-                    subtitle = stringResource(ATMR.strings.pref_experimental_paddle_masking_summary),
                 ),
                 Preference.PreferenceItem.SwitchPreference(
                     pref = translationPreferences.translationInpaintQualityFallback(),

@@ -134,7 +134,7 @@ class PageTextRenderer(context: Context) {
             val luma = (tr * 299 + tg * 587 + tb * 114) / 1000
             val correctStroke = if (luma < 128) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
             if (strokeColor != correctStroke) strokeColor = correctStroke
-            if (strokeWidth <= 0f) strokeWidth = max(2f, layout.fontSizePx * 0.06f)
+            if (strokeWidth <= 0f) strokeWidth = max(2f, layout.fontSizePx * 0.12f)
 
             fillPaint.color = textColor
             fillPaint.textSize = layout.fontSizePx
@@ -170,7 +170,7 @@ class PageTextRenderer(context: Context) {
                         layout.safeW,
                         layout.originX,
                         layout.originY,
-                        layout.drawAlignLeft,
+                        layout.drawAlign,
                     )
                 }
             } finally {
@@ -189,7 +189,7 @@ class PageTextRenderer(context: Context) {
         safeW: Float,
         originX: Float,
         originY: Float,
-        drawAlignLeft: Boolean,
+        drawAlign: TextAlign,
     ) {
         val lines = TextLayoutPlanner.cjkWrap(text, fontSizePx, safeW, measurer)
         if (lines.isEmpty()) return
@@ -200,9 +200,14 @@ class PageTextRenderer(context: Context) {
 
         var lineY = originY - totalHeight / 2f - fm.ascent
 
-        // drawAlignLeft anchors each line at the clip's left edge; otherwise lines
-        // are centred on originX (the box centre). Paint.textAlign handles both.
-        fillPaint.textAlign = if (drawAlignLeft) Paint.Align.LEFT else Paint.Align.CENTER
+        // drawAlign anchors each line at originX: LEFT at the (clip/growth) left
+        // edge, RIGHT at the growth right edge, otherwise centred on originX (the
+        // box centre). Paint.textAlign handles all three.
+        fillPaint.textAlign = when (drawAlign) {
+            TextAlign.LEFT -> Paint.Align.LEFT
+            TextAlign.RIGHT -> Paint.Align.RIGHT
+            TextAlign.CENTER -> Paint.Align.CENTER
+        }
         strokePaint.textAlign = fillPaint.textAlign
 
         for (line in lines) {

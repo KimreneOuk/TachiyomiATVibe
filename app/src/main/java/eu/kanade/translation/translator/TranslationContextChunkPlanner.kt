@@ -1,7 +1,6 @@
 package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
 
 /**
  * Conservative AI-request chunking for pre-translation.
@@ -9,6 +8,10 @@ import eu.kanade.translation.model.TranslationBlock
  * The setting named "max output tokens" is treated as an upper bound only. A
  * chunk's effective output cap is reduced so estimated input + context + output
  * remains below [MAX_CONTEXT_TOKENS].
+ *
+ * The greedy flush, token estimation, and chunk construction live in
+ * [StreamingChunkPlanner]; [plan] delegates to it so the batch and streaming
+ * entry points can never diverge.
  */
 object TranslationContextChunkPlanner {
     const val MAX_CONTEXT_TOKENS = 8_192
@@ -44,76 +47,11 @@ object TranslationContextChunkPlanner {
         maxBlocksPerChunk: Int? = null,
         maxPagesPerChunk: Int? = null,
     ): Result {
-        val constraints = constraintsFor(profile).let {
-            it.copy(
-                maxBlocksPerChunk = maxBlocksPerChunk ?: it.maxBlocksPerChunk,
-                maxPagesPerChunk = maxPagesPerChunk ?: it.maxPagesPerChunk,
-            )
-        }
-        val outputUpperBound = requestedOutputTokens.coerceAtLeast(constraints.minOutputTokens)
-        val maxPromptTokens = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
-        val chunks = mutableListOf<TranslationContextChunk>()
-        val rejected = linkedMapOf<String, String>()
-        var current = mutableListOf<BlockRef>()
-        var currentTokens = constraints.promptOverheadTokens
-
-        fun flush() {
-            if (current.isEmpty()) return
-            chunks += buildChunk(current, outputUpperBound, constraints)
-            current = mutableListOf()
-            currentTokens = constraints.promptOverheadTokens
-        }
-
-        pages.forEach pageLoop@ { (pageKey, page) ->
-            val pageRefs = mutableListOf<Pair<BlockRef, Int>>()
-            var rejectReason: String? = null
-            page.blocks.forEachIndexed { blockIndex, block ->
-                if (rejectReason != null) return@forEachIndexed
-                if (block.text.isBlank()) return@forEachIndexed
-                // TachiyomiAT: resume — skip blocks that already carry a real
-                // translation. On a resumed AI batch, blocks translated in a
-                // prior run would otherwise be re-sent to the LLM, wasting
-                // tokens + HTTP round-trips per finished block. A "real"
-                // translation is non-blank AND not source-equal (trim compare
-                // guards against adapters that echo the source verbatim or
-                // wrap it in stray whitespace). Mirrors the predicate in
-                // AiTranslationRetryPlanner.untranslatedBlocks.
-                if (block.translation.isNotBlank() && block.translation.trim() != block.text.trim()) {
-                    return@forEachIndexed
-                }
-                val ref = BlockRef(pageKey, blockIndex, block)
-                val refTokens = estimateBlockTokens(ref)
-                if (constraints.promptOverheadTokens + refTokens > maxPromptTokens) {
-                    rejectReason = "Text block exceeds the ${constraints.maxContextTokens / 1024}k AI context budget"
-                    return@forEachIndexed
-                }
-                pageRefs += ref to refTokens
-            }
-            rejectReason?.let { reason ->
-                flush()
-                rejected[pageKey] = reason
-                return@pageLoop
-            }
-            pageRefs.forEach { (ref, refTokens) ->
-                val prospectivePageCount = current.mapTo(linkedSetOf()) { it.pageKey }
-                    .also { it += ref.pageKey }
-                    .size
-                if (current.isNotEmpty() &&
-                    (
-                        currentTokens + refTokens > maxPromptTokens ||
-                            current.size >= constraints.maxBlocksPerChunk ||
-                            prospectivePageCount > constraints.maxPagesPerChunk
-                        )
-                ) {
-                    flush()
-                }
-                current += ref
-                currentTokens += refTokens
-            }
-        }
-        flush()
-
-        return Result(chunks = chunks, rejectedPages = rejected)
+        val planner = StreamingChunkPlanner(requestedOutputTokens, profile, maxBlocksPerChunk, maxPagesPerChunk)
+        pages.forEach { (k, v) -> planner.accept(k, v) }
+        val flush = planner.flushRemaining()
+        val allChunks = planner.emittedChunks() + listOfNotNull(flush.finalChunk)
+        return Result(chunks = allChunks, rejectedPages = flush.rejectedPages)
     }
 
     fun withRollingContext(
@@ -190,44 +128,11 @@ object TranslationContextChunkPlanner {
         return tokens.coerceAtLeast(1)
     }
 
-    private fun buildChunk(
-        refs: List<BlockRef>,
-        requestedOutputTokens: Int,
-        constraints: Constraints,
-    ): TranslationContextChunk {
-        val grouped = linkedMapOf<String, PageTranslation>()
-        refs.groupBy { it.pageKey }.forEach { (pageKey, blockRefs) ->
-            grouped[pageKey] = PageTranslation(
-                blocks = blockRefs.map { it.block }.toMutableList(),
-            )
-        }
-        val promptTokens = constraints.promptOverheadTokens + refs.sumOf(::estimateBlockTokens)
-        return TranslationContextChunk(
-            pages = grouped,
-            blockCount = refs.size,
-            rollingContext = "",
-            estimatedPromptTokens = promptTokens,
-            maxOutputTokens = effectiveOutputCap(promptTokens, requestedOutputTokens, constraints),
-        )
-    }
-
     private fun TranslationContextChunk.withOutputCap(
         requestedOutputTokens: Int,
         constraints: Constraints,
     ): TranslationContextChunk =
-        copy(maxOutputTokens = effectiveOutputCap(estimatedPromptTokens, requestedOutputTokens, constraints))
-
-    private fun effectiveOutputCap(
-        promptTokens: Int,
-        requestedOutputTokens: Int,
-        constraints: Constraints,
-    ): Int {
-        val available = constraints.maxContextTokens - constraints.safetyMargin - promptTokens
-        return requestedOutputTokens
-            .coerceAtLeast(constraints.minOutputTokens)
-            .coerceAtMost(available)
-            .coerceAtLeast(constraints.minOutputTokens)
-    }
+        copy(maxOutputTokens = StreamingChunkPlanner.effectiveOutputCap(estimatedPromptTokens, requestedOutputTokens, constraints))
 
     fun constraintsFor(profile: Profile): Constraints = when (profile) {
         Profile.DEFAULT -> Constraints(
@@ -250,11 +155,6 @@ object TranslationContextChunkPlanner {
         )
     }
 
-    private fun estimateBlockTokens(ref: BlockRef): Int {
-        val keyOverhead = estimateTokens(ref.pageKey) + 8
-        return keyOverhead + estimateTokens(ref.block.text)
-    }
-
     private fun Char.isCjk(): Boolean {
         val block = Character.UnicodeBlock.of(this)
         return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS ||
@@ -267,12 +167,6 @@ object TranslationContextChunkPlanner {
             block == Character.UnicodeBlock.HANGUL_JAMO ||
             block == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO
     }
-
-    private data class BlockRef(
-        val pageKey: String,
-        val blockIndex: Int,
-        val block: TranslationBlock,
-    )
 }
 
 data class TranslationContextChunk(

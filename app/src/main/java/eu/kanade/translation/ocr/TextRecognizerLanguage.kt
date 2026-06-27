@@ -10,6 +10,17 @@ enum class TextRecognizerLanguage(var code: String, val label: String) {
     ENGLISH(TranslateLanguage.ENGLISH, "English"),
     ;
 
+    /**
+     * TachiyomiAT: inter-line join used when a multi-line bubble is OCR'd line by
+     * line (PaddleOCR rec reads one strip at a time). CJK lines concatenate with
+     * no separator; word-based scripts (English/Korean) need a space, otherwise
+     * stacked lines fuse into an untranslatable run.
+     */
+    fun joinSeparator(): String = when (this) {
+        CHINESE, JAPANESE -> ""
+        KOREAN, ENGLISH -> " "
+    }
+
     companion object {
         /**
          * TachiyomiAT: STRICT no-fallback. The old code silently rewrote an

@@ -209,6 +209,20 @@ class DbPostProcessTest {
     }
 
     @Test
+    fun `merge vertical fragments with gap larger than width but smaller than height`() {
+        // Two tall boxes (w=20, h=50) in the same column. Gap between them is 25.
+        // gap(25) > width(20) → old code (width-based) would NOT merge.
+        // gap(25) < height(50) → new code (height-based) DOES merge.
+        val frags = listOf(
+            line(10, 10, 30, 60),
+            line(10, 85, 30, 135),
+        )
+        val merged = DbPostProcess.mergeLineFragments(frags)
+        merged shouldHaveSize 1
+        merged[0].bbox.toList() shouldBe listOf(10, 10, 30, 135)
+    }
+
+    @Test
     fun `merge takes the max score across merged fragments`() {
         val frags = listOf(
             line(10, 50, 50, 90, s = 0.7f),

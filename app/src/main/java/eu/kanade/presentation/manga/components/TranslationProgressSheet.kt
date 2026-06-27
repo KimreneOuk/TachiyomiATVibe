@@ -1,5 +1,6 @@
 package eu.kanade.presentation.manga.components
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,9 +15,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import eu.kanade.presentation.components.AdaptiveSheet
+import eu.kanade.translation.batch.BatchPhase
+import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import tachiyomi.i18n.MR
@@ -49,8 +54,21 @@ fun TranslationProgressSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            if (snapshot.aborted) {
+                Text(
+                    text = stringResource(ATMR.strings.manga_batch_aborted, snapshot.abortedReason ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+
+            val animatedFraction by animateFloatAsState(
+                targetValue = snapshot.fraction,
+                label = "overall_progress",
+            )
             LinearProgressIndicator(
-                progress = { snapshot.fraction },
+                progress = { animatedFraction },
                 modifier = Modifier.fillMaxWidth(),
             )
 
@@ -73,6 +91,7 @@ fun TranslationProgressSheet(
                         snapshot.activePage,
                         stageLabel(snapshot.activeStage),
                     )
+                snapshot.failedCount > 0 -> stringResource(ATMR.strings.reader_translation_stage_failed)
                 else -> stringResource(ATMR.strings.reader_translation_stage_done)
             }
             Text(
@@ -81,62 +100,39 @@ fun TranslationProgressSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            if (snapshot.totalPages > 0) {
-                val ocrCount = snapshot.pages.count { it.stage == TranslationProgressStage.OCR }
-                val inpaintCount = snapshot.pages.count { it.stage == TranslationProgressStage.INPAINT }
-                val translateCount = snapshot.pages.count { it.stage == TranslationProgressStage.TRANSLATE }
-                val renderCount = snapshot.pages.count { it.stage == TranslationProgressStage.RENDER }
-                val doneCount = snapshot.pages.count { it.stage == TranslationProgressStage.DONE }
-
+            if (snapshot.partialPages > 0) {
                 Text(
-                    text = "OCR: $ocrCount  |  Inpaint: $inpaintCount  |  Translate: $translateCount  |  Render: $renderCount  |  Done: $doneCount",
+                    text = stringResource(ATMR.strings.manga_batch_partial, snapshot.partialPages),
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.tertiary,
                 )
             }
 
-            val failures = snapshot.pages.filter { it.stage == TranslationProgressStage.FAILED }
-            if (failures.isNotEmpty()) {
+            if (snapshot.totalPages > 0) {
+                HorizontalDivider()
+                StageRow(stringResource(ATMR.strings.manga_batch_stage_ocr), snapshot.perStage[BatchPhase.OCR])
+                StageRow(stringResource(ATMR.strings.manga_batch_stage_inpaint), snapshot.perStage[BatchPhase.INPAINT])
+                StageRow(stringResource(ATMR.strings.manga_batch_stage_translate), snapshot.perStage[BatchPhase.TRANSLATE])
+                StageRow(stringResource(ATMR.strings.manga_batch_stage_render), snapshot.perStage[BatchPhase.RENDER])
+            }
+
+            if (snapshot.groupedFailures.isNotEmpty()) {
                 HorizontalDivider()
                 Text(
-                    text = stringResource(ATMR.strings.manga_translation_failed_reasons),
+                    text = stringResource(ATMR.strings.manga_batch_failures),
                     style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.error,
                 )
-                failures.take(8).forEach { page ->
+                snapshot.groupedFailures.entries.take(10).forEach { (reason, pageKeys) ->
                     Text(
-                        text = "${page.index}. ${page.errorMessage ?: stageLabel(page.stage)}",
+                        text = stringResource(
+                            ATMR.strings.manga_batch_failure_group,
+                            reason,
+                            pageKeys.take(8).joinToString(", "),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
-                }
-            }
-
-            if (snapshot.pages.isNotEmpty()) {
-                HorizontalDivider()
-                Text(
-                    text = stringResource(ATMR.strings.manga_translation_pages),
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                snapshot.pages.take(80).forEach { page ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = page.index.toString(),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        Text(
-                            text = stageLabel(page.stage),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (page.stage == TranslationProgressStage.FAILED) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                        )
-                    }
                 }
             }
 
@@ -153,6 +149,40 @@ fun TranslationProgressSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun StageRow(label: String, count: StageCount?) {
+    if (count == null || count.total == 0) return
+    val stageFraction = if (count.total > 0) {
+        count.done.toFloat() / count.total
+    } else 0f
+    val animatedFraction by animateFloatAsState(
+        targetValue = stageFraction.coerceIn(0f, 1f),
+        label = "stage_progress",
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
+        LinearProgressIndicator(
+            progress = { animatedFraction },
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = MaterialTheme.padding.small),
+        )
+        Text(
+            text = stringResource(ATMR.strings.manga_batch_stage_count, count.done, count.total),
+            style = MaterialTheme.typography.bodySmall,
+            color = if (count.failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

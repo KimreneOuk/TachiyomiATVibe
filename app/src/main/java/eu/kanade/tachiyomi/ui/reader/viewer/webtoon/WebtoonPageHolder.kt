@@ -285,28 +285,19 @@ class WebtoonPageHolder(
         // TachiyomiAT: capture the generation this setImage() was launched for.
         // If a newer bind() lands before we reach the UI update, bail —
         // cooperative cancellation only fires at suspension points, so without
-        // this check a refresh job past its withIOContext could still call
-        // frame.setImage() with the OLD page's bytes into a rebound holder.
         val myGeneration = bindGeneration
         val boundPage = page ?: return
 
-        // TachiyomiAT: eagerly resolve the translated stream before deciding
-        // which image to show. Same race as PagerPageHolder.setImage: the
-        // collector usually attaches synchronously via Main.immediate, but the
-        // warm-window / collector-bail paths leave translatedStream null here,
-        // decoding the ORIGINAL image then flashing to translated. Forcing
-        // attachment now makes the single decode pass go straight to the
-        // translated image. Main-thread safe (lazy stream factory).
+        // Eagerly resolve the translated stream to avoid original-then-translated flash on load.
         if (boundPage.translatedStream == null && showTranslations) {
             viewer.activity.viewModel.attachTranslatedStreamForPage(boundPage)
         }
-        boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
+        if (!boundPage.translationToggled) {
+            boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
+        }
         val streamFn = boundPage.stream ?: return
 
-        // TachiyomiAT: record the rendered/cleaned image file name we're about to
-        // display (rendered wins over cleaned, matching the ViewModel collector's
-        // precedence) so refreshTranslation() can skip a redundant re-decode when
-        // the same image is already on screen. See [lastShownImageName].
+        // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (boundPage.showTranslatedImage) {
             boundPage.translation?.renderedImageName ?: boundPage.translation?.cleanedImageName
         } else {
@@ -370,31 +361,28 @@ class WebtoonPageHolder(
         val currentPage = page ?: return
         val streamAvailable = currentPage.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
-        // TachiyomiAT: only relaunch setImage() when the translated image we'd
-        // render is DIFFERENT from the one already on screen. The dedup is keyed
-        // on the stable rendered/cleaned file NAME (rendered wins over cleaned,
-        // matching the ViewModel collector) rather than the stream lambda's
-        // referential identity, which was fragile because the stream factories
-        // return a fresh lambda on every call. A refresh for a status-only
-        // change (RUNNING→READY re-emitted, no new image) must NOT re-decode &
-        // re-set the image — that's the visible flash.
         val newName = currentPage.translation?.renderedImageName ?: currentPage.translation?.cleanedImageName
         val newRevision = currentPage.translation?.renderRevision ?: -1L
-        val alreadyShowingThisImage =
-            currentPage.showTranslatedImage &&
-                newName != null &&
-                newName == lastShownImageName &&
-                newRevision == lastShownRenderRevision
+
+        val wantTranslated = if (currentPage.translationToggled) {
+            currentPage.showTranslatedImage && streamAvailable
+        } else {
+            showTranslations && streamAvailable
+        }
+
+        val alreadyShowingCorrectImage = if (wantTranslated) {
+            newName != null && newName == lastShownImageName && newRevision == lastShownRenderRevision
+        } else {
+            lastShownImageName == null && lastShownRenderRevision == -1L
+        }
+
         when {
             isBeingTranslated -> {
                 frame.showProcessingOverlay(true)
-                // Cancel affordance while running, instead of hiding the button.
                 frame.setTranslating(true)
             }
-            showTranslations && streamAvailable -> {
-                if (alreadyShowingThisImage) {
-                    // Same translated image already on screen — sync overlays
-                    // only, do NOT re-decode & re-set the image.
+            wantTranslated -> {
+                if (alreadyShowingCorrectImage) {
                     frame.showProcessingOverlay(false)
                     frame.showTranslateButton(translationEnabled)
                     frame.setTranslating(false)
@@ -408,9 +396,18 @@ class WebtoonPageHolder(
                 }
             }
             else -> {
-                frame.showProcessingOverlay(false)
-                frame.showTranslateButton(translationEnabled)
-                frame.setTranslating(false)
+                if (alreadyShowingCorrectImage) {
+                    frame.showProcessingOverlay(false)
+                    frame.showTranslateButton(translationEnabled)
+                    frame.setTranslating(false)
+                } else {
+                    currentPage.showTranslatedImage = false
+                    frame.showProcessingOverlay(false)
+                    frame.showTranslateButton(translationEnabled)
+                    frame.setTranslating(false)
+                    loadJob?.cancel()
+                    loadJob = holderScope.launch { setImage() }
+                }
             }
         }
         // Record the image name we're now showing so the next refresh can

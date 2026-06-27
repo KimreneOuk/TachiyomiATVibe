@@ -26,6 +26,7 @@ open class ReaderPage(
     var translationStorageKey: String? = null
 
     var showTranslatedImage: Boolean = false
+    var translationToggled: Boolean = false
 
     val stream: (() -> InputStream)?
         get() = if (showTranslatedImage && translatedStream != null) translatedStream else originalStream

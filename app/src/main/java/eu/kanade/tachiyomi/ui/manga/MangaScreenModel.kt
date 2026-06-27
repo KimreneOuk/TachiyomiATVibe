@@ -537,7 +537,7 @@ class MangaScreenModel(
     private fun observeTranslationProgress(chapterId: Long) {
         if (translationProgressJobs[chapterId]?.isActive == true) return
         translationProgressJobs[chapterId] = screenModelScope.launchIO {
-            translationManager.observeTranslationProgress(chapterId)
+            translationManager.observeBatchProgress(chapterId)
                 .catch { error -> logcat(LogPriority.ERROR, error) }
                 .flowWithLifecycle(lifecycle)
                 .collect { progress ->

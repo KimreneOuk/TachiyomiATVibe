@@ -12,7 +12,6 @@
     <string name="manga_translation_pages">Pages</string>
     <string name="error_mlkit_language_unsupported">MLKit doesn't support this language</string>
     <string name="pref_show_translations">Show Translations</string>
-    <string name="pref_translate_after_downloading">Translate After Downloading</string>
     <string name="pref_reader_font">Reader Font</string>
     <string name="pref_group_setup">Translation Setup</string>
     <string name="pref_translate_from">Translate From</string>
@@ -102,6 +101,15 @@
     <string name="translation_confirm_open_settings">Translation settings</string>
     <string name="pref_confirm_pretranslate">Confirm before batch translation</string>
     <string name="pref_confirm_pretranslate_summary">Show a settings review popup before translating a chapter from the manga screen</string>
-    <string name="pref_experimental_paddle_masking">Experimental PaddleOCR masking</string>
-    <string name="pref_experimental_paddle_masking_summary">Directly uses PaddleOCR DET bounding boxes as erasure masks, skipping color heuristics</string>
+
+    <!-- TachiyomiAT: redesigned batch progress sheet (§12 layout) -->
+    <string name="manga_batch_stage_ocr">OCR/Detection</string>
+    <string name="manga_batch_stage_translate">Translation</string>
+    <string name="manga_batch_stage_inpaint">Cleaning</string>
+    <string name="manga_batch_stage_render">Canvas Render</string>
+    <string name="manga_batch_stage_count">%1$d/%2$d</string>
+    <string name="manga_batch_partial">Partial pages: %1$d</string>
+    <string name="manga_batch_aborted">Batch aborted: %1$s</string>
+    <string name="manga_batch_failures">Failures</string>
+    <string name="manga_batch_failure_group">• %1$s (pages: %2$s)</string>
 </resources>

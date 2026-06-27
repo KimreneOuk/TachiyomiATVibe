@@ -12,8 +12,10 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageTranslationHelper
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.ocr.DbPostProcess
 import eu.kanade.translation.ocr.MangaOcrEngine
 import eu.kanade.translation.ocr.MlKitRoiOcrEngine
+import eu.kanade.translation.ocr.OcrTextFilter
 import eu.kanade.translation.ocr.PaddleOcrV6DetEngine
 import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
@@ -151,19 +153,16 @@ class RoiPageRecognitionEngine(
                     }
                     OcrModel.MLKIT -> MlKitRoiOcrEngine(language)
                 }
-                val usePaddleMasking = Injekt.get<tachiyomi.domain.translation.TranslationPreferences>().translationExperimentalPaddleMasking().get()
                 // TachiyomiAT: load the PaddleOCR-v6 det engine for the INPAINTER
-                // whenever the det asset is available — independent of OCR model and
-                // of the experimental-paddle-masking pref. The det engine now drives
-                // the free-text erase mask directly (Paddle line boxes → solid mask;
-                // see AOTInpainting.refineFreeTextBoxes), which must run by default,
-                // not behind the experimental gate. Previously it only loaded under
-                // `ocrModel != PADDLEOCR_V6_SMALL && usePaddleMasking`, so the
-                // default Japanese path (MANGAOCR) — the common case — never got
-                // Paddle-driven masking. The PADDLEOCR_V6_SMALL branch above already
-                // built it for the rec path; this block is the no-op-if-already-loaded
-                // loader for every other model. usePaddleMasking still gates ONLY the
-                // parented-bubble path (cleanBubbleGroup), passed to the inpainter below.
+                // whenever the det asset is available — independent of OCR model.
+                // The det engine drives the free-text erase mask directly (Paddle
+                // line boxes → solid mask; see AOTInpainting.refineFreeTextBoxes),
+                // which must run by default. Previously it only loaded under the
+                // now-removed experimental-paddle-masking gate, so the default
+                // Japanese path (MANGAOCR) — the common case — never got
+                // Paddle-driven masking. The PADDLEOCR_V6_SMALL branch above
+                // already built it for the rec path; this block is the
+                // no-op-if-already-loaded loader for every other model.
                 if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL && paddleDet == null &&
                     (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable())
                 ) {
@@ -171,8 +170,7 @@ class RoiPageRecognitionEngine(
                         val detPaths = modelStore.ensurePaddleOcrV6Det()
                         paddleDet = PaddleOcrV6DetEngine().also { it.initialize(detPaths.detectionModel) }
                         logcat(LogPriority.INFO) {
-                            "ONNX init: PaddleOCR det OK (free-text erase mask" +
-                                if (usePaddleMasking) " + experimental bubble masking)" else ")"
+                            "ONNX init: PaddleOCR det OK (free-text erase mask)"
                         }
                     } catch (e: Exception) {
                         logcat(LogPriority.WARN, e) {
@@ -189,7 +187,6 @@ class RoiPageRecognitionEngine(
                 logcat(LogPriority.INFO) { "ONNX init: OCR OK (backend=${roiOcrEngine!!::class.simpleName}), preparing inpainting (mode=$inpaintingMode)" }
                 val localInpainting = AOTInpainting()
                 localInpainting.paddleDet = paddleDet
-                localInpainting.usePaddleMasking = usePaddleMasking
                 if (inpaintingMode == InpaintingMode.QUALITY) {
                     paths.inpaintModel?.let { model ->
                         localInpainting.initialize(model)
@@ -266,8 +263,11 @@ class RoiPageRecognitionEngine(
                 // if close() ran between iterations, before invoking the (native)
                 // OCR engine. Throwing keeps the page degradable instead of SIGSEGV.
                 if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
-                val bbox = detection.bbox
-                val crop = cropBitmap(bitmap, bbox[0], bbox[1], bbox[2], bbox[3])
+                // TachiyomiAT: PP-OCR needs padding to avoid edge-effect failures, but the ink-gap heuristic
+                // works best on tightly bounded crops. We keep both.
+                val pad = if (engine.prefersHorizontalText) 12 else 0
+                val unpaddedCrop = cropBitmap(bitmap, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3])
+                val crop = if (pad > 0) cropBitmap(bitmap, detection.bbox[0] - pad, detection.bbox[1] - pad, detection.bbox[2] + pad, detection.bbox[3] + pad) else unpaddedCrop
             // TachiyomiAT: PaddleOCR's rec model reads HORIZONTAL text lines (it is a
             // CNN+CTC trained on left-to-right lines — confirmed against the official
             // PaddleOCR text-recognition docs, which run a separate orientation
@@ -304,50 +304,66 @@ class RoiPageRecognitionEngine(
             // Gate on engine.prefersHorizontalText so this applies ONLY to horizontal-
             // line engines (PaddleOCR). ML Kit's CJK recognizers and MangaOcr read
             // vertical text NATIVELY (prefersHorizontalText=false) and get the crop as-is.
-            val boxWidthPre = crop.width.toFloat()
-            val boxHeightPre = crop.height.toFloat()
+            val bbox = detection.bbox
+            val boxWidthPre = (bbox[2] - bbox[0]).toFloat()
+            val boxHeightPre = (bbox[3] - bbox[1]).toFloat()
             val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
                 language == TextRecognizerLanguage.CHINESE ||
                 language == TextRecognizerLanguage.KOREAN
-            val splitVerticalColumns = isVerticalLanguage &&
-                engine.prefersHorizontalText &&
-                boxHeightPre > boxWidthPre * 1.5f
+            val tallVertical = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
+            // TachiyomiAT: PaddleOCR rec reads a single horizontal strip, so any
+            // multi-line bubble must be split into lines by the det model first.
+            // Run the det-based split on EVERY Paddle bubble when the det model is
+            // available — recognizeDetColumns already classifies each detected line
+            // as horizontal (sorted top-to-bottom, NOT rotated) or vertical (sorted
+            // right-to-left, rotated CCW) and joins with the language separator. This
+            // is what lets English multi-line paragraphs read correctly instead of
+            // being collapsed into one garbled line (previously the split was gated
+            // to tall CJK boxes only). ML Kit's CJK recognizers and MangaOcr read
+            // vertical text natively (prefersHorizontalText=false) and stay on the
+            // single-read path below.
+            val paddleMultiLine = engine.prefersHorizontalText && paddleDet != null
+            // CJK vertical bubble on a Paddle engine WITHOUT the det asset: a
+            // confident horizontal read of vertical text is reliably wrong, so go
+            // straight to the ink-gap heuristic column split (preserves prior
+            // behavior for that specific path).
+            val paddleVerticalHeuristic = isVerticalLanguage && engine.prefersHorizontalText &&
+                paddleDet == null && boxHeightPre > boxWidthPre * 1.5f
             var rotatedForOcr = false
             val text = try {
-                if (splitVerticalColumns) {
-                    // TachiyomiAT: capture the det engine into a local — close()
-                    // can null the field mid-analyze. Pass it down so the split
-                    // path uses the learned det model when available, and falls
-                    // back to the ink-gap heuristic otherwise.
-                    rotatedForOcr = true
-                    recognizeVerticalColumns(engine, crop, paddleDet)
-                } else {
-                    val (rawText, rawConf) = engine.recognizeWithConf(crop)
-                    // TachiyomiAT: a tall CJK box (h > w) is vertical text, but a
-                    // horizontal read can yield a confident-but-WRONG short decode
-                    // (a large vertical bubble collapsing to "1") that the
-                    // confidence gate alone misses. Retry via the column-split +
-                    // rotate path when the horizontal read is low-confidence OR
-                    // suspiciously short, and keep whichever produced more text.
-                    val shortDecode = rawText.count { !it.isWhitespace() } <= SHORT_DECODE_CHARS
-                    if (isVerticalLanguage && boxHeightPre > boxWidthPre &&
-                        (rawConf < PADDLE_REC_CONFIDENCE || shortDecode)
-                    ) {
-                        rotatedForOcr = true
-                        val vertical = recognizeVerticalColumns(engine, crop, paddleDet)
-                        if (vertical.length > rawText.length) vertical
-                        else if (rawConf >= PADDLE_REC_CONFIDENCE) rawText else ""
-                    } else if (rawConf >= PADDLE_REC_CONFIDENCE) {
+                when {
+                    paddleMultiLine -> {
+                        rotatedForOcr = tallVertical
+                        var rawText = recognizeMultiLine(engine, crop, paddleDet, tallVertical)
+                        if (rawText.isEmpty() && isVerticalLanguage && boxHeightPre > boxWidthPre) {
+                            rotatedForOcr = true
+                            val fallbackText = recognizeMultiLine(engine, unpaddedCrop, null, verticalFallback = true)
+                            if (fallbackText.isNotEmpty()) rawText = fallbackText
+                        }
                         rawText
-                    } else {
-                        ""
+                    }
+                    paddleVerticalHeuristic -> {
+                        rotatedForOcr = true
+                        recognizeMultiLine(engine, unpaddedCrop, paddleDet, verticalFallback = true)
+                    }
+                    else -> {
+                        val rawText = engine.recognizeWithConf(crop).first
+                        if (OcrTextFilter.isUsable(rawText, language)) rawText else ""
                     }
                 }
+            } catch (e: Exception) {
+                logcat(LogPriority.ERROR, e) { "Failed to recognize text in box" }
+                ""
             } finally {
-                crop.recycle()
+                if (crop !== unpaddedCrop) {
+                    crop.recycle()
+                }
+                unpaddedCrop.recycle()
             }
-            // Mirrors the rotation the per-column path applies internally; also
-            // set when the tall-CJK horizontal-failure fallback retries vertical.
+            // rotatedForOcr is set only in the Paddle branches (tallVertical +
+            // vertical-heuristic), where the crop is rotated CCW before a
+            // horizontal-line read. Native-vertical engines (MangaOcr/ML Kit)
+            // read the ROI as-is and never set it (see contract #19).
             // TachiyomiAT: diagnostics — log each detected box and its OCR output so
             // recognition quality can be inspected from logcat. Gated by the opt-in
             // translation_diagnostics pref (same gate as the per-engine timing logs).
@@ -362,16 +378,7 @@ class RoiPageRecognitionEngine(
             val boxHeight = (bbox[3] - bbox[1]).toFloat()
             val centerX = (bbox[0] + bbox[2]) / 2.0
             val centerY = (bbox[1] + bbox[3]) / 2.0
-            val rawParent = if (detection.label == 1 || detection.label == 2) {
-                bubbles
-                    .filter { b ->
-                        centerX >= b.bbox[0] && centerX <= b.bbox[2] &&
-                            centerY >= b.bbox[1] && centerY <= b.bbox[3]
-                    }
-                    .minByOrNull {
-                        (it.bbox[2] - it.bbox[0]) * (it.bbox[3] - it.bbox[1])
-                    }
-            } else null
+            val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
             val parentBbox = rawParent?.let { rp ->
                 val siblings = bubbles.filter { it !== rp }.map { it.bbox }
                 trimParentBbox(rp.bbox, bbox, siblings)
@@ -573,12 +580,14 @@ class RoiPageRecognitionEngine(
         // (MangaOcr); the inpainter's working buffers are heap arrays already
         // covered by GC, but reclaiming via the same hook keeps the contract
         // uniform. Guarded so a partial init (null sub-engines) is a no-op.
+        try { detector?.reclaimPooledMemory() } catch (_: Exception) {}
         try { roiOcrEngine?.reclaimPooledMemory() } catch (_: Exception) {}
         try { paddleDet?.reclaimPooledMemory() } catch (_: Exception) {}
         try { inpainting?.reclaimPooledMemory() } catch (_: Exception) {}
     }
 
     override fun forceReleaseNativeBuffers() {
+        try { detector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
         try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
         try { paddleDet?.forceReleaseNativeBuffers() } catch (_: Exception) {}
         try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
@@ -724,32 +733,57 @@ class RoiPageRecognitionEngine(
      * and recognizing the whole crop as one line, so this never does worse than the
      * old whole-box path.
      */
-    private suspend fun recognizeVerticalColumns(
+    /**
+     * TachiyomiAT: recognize a (possibly multi-line) bubble by first running the
+     * PaddleOCR det model over the whole crop to recover individual text lines,
+     * then OCR-ing each line with the correct orientation via [recognizeDetColumns].
+     * Handles both stacked horizontal lines (English/Korean paragraphs) and
+     * vertical columns (CJK), so it replaces the old vertical-only split.
+     *
+     * [verticalFallback] selects the empty/failed-det fallback: a tall CJK bubble
+     * uses the ink-gap column heuristic; anything else (e.g. an English bubble the
+     * det model missed) falls back to a single horizontal rec read instead of
+     * being force-rotated.
+     */
+    private suspend fun recognizeMultiLine(
         engine: RoiOcrEngine,
         crop: Bitmap,
         paddleDet: PaddleOcrV6DetEngine?,
+        verticalFallback: Boolean,
     ): String {
         // Try the learned det model first. Det runs on the whole crop in one pass.
         if (paddleDet != null) {
             try {
-                val lines = paddleDet.detectLines(crop, boxThresh = 0.34f)
+                // Use the standard DB BOX_THRESH (0.45f) for the rec path; 0.34 admitted noise.
+                val lines = paddleDet.detectLines(crop, thresh = 0.2f, boxThresh = DbPostProcess.Defaults.BOX_THRESH)
                 if (lines.isNotEmpty()) {
                     return recognizeDetColumns(engine, crop, lines)
                 }
-                // Det returned nothing -> fall through to the heuristic. A true
+                // Det returned nothing -> fall through to the fallback. A true
                 // negative on a real text region is preferable to empty output.
                 logcat(LogPriority.INFO) {
-                    "[paddle_det] returned 0 lines; falling back to ink-gap heuristic"
+                    "[paddle_det] returned 0 lines; falling back to " +
+                        if (verticalFallback) "ink-gap heuristic" else "single read"
                 }
             } catch (e: Exception) {
-                // Never let a det-model failure abort OCR — degrade to the heuristic
+                // Never let a det-model failure abort OCR — degrade to the fallback
                 // for this ROI and log loudly (AGENT.md: never suppress errors).
                 logcat(LogPriority.WARN, e) {
-                    "[paddle_det] failed; falling back to ink-gap heuristic for this ROI"
+                    "[paddle_det] failed; falling back to " +
+                        if (verticalFallback) "ink-gap heuristic" else "single read" + " for this ROI"
                 }
             }
         }
-        return recognizeHeuristicColumns(engine, crop)
+        return if (verticalFallback) recognizeHeuristicColumns(engine, crop) else recognizeSingleLine(engine, crop)
+    }
+
+    private suspend fun recognizeSingleLine(engine: RoiOcrEngine, crop: Bitmap): String {
+        val (text, conf) = engine.recognizeWithConf(crop)
+        // PaddleOCR's CTC decoder reports a meaningful confidence; MangaOcr returns
+        // default 1.0 (no real score). The conf < 1f guard keeps MangaOcr's default
+        // from being filtered here.
+        if (conf < OCR_MIN_CONFIDENCE && conf < 1f) return ""
+        return if (text.isNotEmpty() && OcrTextFilter.isUsable(text, language)) text else ""
     }
 
     /**
@@ -782,32 +816,39 @@ class RoiPageRecognitionEngine(
         if (items.isEmpty()) {
             val rotated = rotateCcw(crop)
             return try {
-                val (part, conf) = engine.recognizeWithConf(rotated)
-                if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) part else ""
+                val part = engine.recognizeWithConf(rotated).first
+                if (part.isNotEmpty() && OcrTextFilter.isUsable(part, language)) part else ""
             } finally {
                 rotated.recycle()
             }
         }
 
+        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
+            language == TextRecognizerLanguage.CHINESE ||
+            language == TextRecognizerLanguage.KOREAN
         val parts = ArrayList<String>(items.size)
         for (it in items) {
             if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
             val b = it.bbox
             val columnCrop = cropBitmap(crop, b[0], b[1], b[2], b[3])
             try {
-                val feed = if (it.vertical) rotateCcw(columnCrop) else columnCrop
-                val feedOwned = if (it.vertical) feed else null
-                try {
-                    val (part, conf) = engine.recognizeWithConf(feed)
-                    if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) parts.add(part)
-                } finally {
-                    feedOwned?.recycle()
+                // CJK vertical columns are split into individual glyphs before rec
+                // (the rec CTC head misreads a rotated whole column); other vertical
+                // boxes are rotated whole. Horizontal boxes are read as-is.
+                val part = when {
+                    it.vertical && verticalCjk && engine.prefersHorizontalText -> recognizeVerticalColumnPerChar(engine, columnCrop)
+                    it.vertical && engine.prefersHorizontalText -> {
+                        val rotated = rotateCcw(columnCrop)
+                        try { recognizeSingleLine(engine, rotated) } finally { rotated.recycle() }
+                    }
+                    else -> recognizeSingleLine(engine, columnCrop)
                 }
+                if (part.isNotEmpty()) parts.add(part)
             } finally {
                 columnCrop.recycle()
             }
         }
-        return parts.joinToString("")
+        return parts.joinToString(language.joinSeparator())
     }
 
     /**
@@ -822,12 +863,15 @@ class RoiPageRecognitionEngine(
         if (columns.size <= 1) {
             val rotated = rotateCcw(crop)
             return try {
-                val (part, conf) = engine.recognizeWithConf(rotated)
-                if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) part else ""
+                val part = engine.recognizeWithConf(rotated).first
+                if (part.isNotEmpty() && OcrTextFilter.isUsable(part, language)) part else ""
             } finally {
                 rotated.recycle()
             }
         }
+        val verticalCjk = language == TextRecognizerLanguage.JAPANESE ||
+            language == TextRecognizerLanguage.CHINESE ||
+            language == TextRecognizerLanguage.KOREAN
         val parts = ArrayList<String>(columns.size)
         // Manga vertical text reads right-to-left. [detectVerticalColumns] returns
         // columns in left-to-right pixel order, so iterate them in reverse.
@@ -835,22 +879,129 @@ class RoiPageRecognitionEngine(
             val (x0, x1) = columns[i]
             if (x1 - x0 < MIN_COLUMN_WIDTH_PX) continue
             val columnCrop = Bitmap.createBitmap(crop, x0, 0, x1 - x0, crop.height)
-            val rotated = rotateCcw(columnCrop)
-            columnCrop.recycle()
             try {
-                val (part, conf) = engine.recognizeWithConf(rotated)
-                if (part.isNotEmpty() && conf >= PADDLE_REC_CONFIDENCE) parts.add(part)
+                val part = if (verticalCjk && engine.prefersHorizontalText) {
+                    recognizeVerticalColumnPerChar(engine, columnCrop)
+                } else if (engine.prefersHorizontalText) {
+                    val rotated = rotateCcw(columnCrop)
+                    try { recognizeSingleLine(engine, rotated) } finally { rotated.recycle() }
+                } else {
+                    recognizeSingleLine(engine, columnCrop)
+                }
+                if (part.isNotEmpty()) parts.add(part)
             } finally {
-                rotated.recycle()
+                columnCrop.recycle()
             }
         }
-        return parts.joinToString("")
+        return parts.joinToString(language.joinSeparator())
     }
 
     private fun rotateCcw(bitmap: Bitmap): Bitmap {
         val matrix = android.graphics.Matrix()
         matrix.postRotate(-90f)
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+    }
+
+    /**
+     * TachiyomiAT: split a single vertical text column into individual glyph
+     * cells by row ink-gap analysis (the transpose of [detectVerticalColumns]),
+     * then recognize each glyph on its own after a 90° CCW rotation. The rec
+     * CTC head is trained on horizontal lines and misreads a rotated whole
+     * multi-glyph column; recognizing one glyph at a time is the maintainer-
+     * validated workaround for vertical CJK (see docs/ocr-engine-notes.md).
+     * Returns glyphs in top-to-bottom reading order joined with the language
+     * separator. A single-glyph (or un-splittable) column degrades to one
+     * rotated whole-column read, so this never does worse than the whole path.
+     */
+    private suspend fun recognizeVerticalColumnPerChar(
+        engine: RoiOcrEngine,
+        columnCrop: Bitmap,
+    ): String {
+        val rows = detectVerticalGlyphRows(columnCrop)
+        if (rows.size <= 1) {
+            val rotated = rotateCcw(columnCrop)
+            return try {
+                recognizeSingleLine(engine, rotated)
+            } finally {
+                rotated.recycle()
+            }
+        }
+        val parts = ArrayList<String>(rows.size)
+        for ((y0, y1) in rows) {
+            if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
+            if (y1 - y0 < MIN_COLUMN_WIDTH_PX) continue
+            val glyphCrop = Bitmap.createBitmap(columnCrop, 0, y0, columnCrop.width, y1 - y0)
+            try {
+                val rotated = rotateCcw(glyphCrop)
+                try {
+                    val part = recognizeSingleLine(engine, rotated)
+                    if (part.isNotEmpty()) parts.add(part)
+                } finally {
+                    rotated.recycle()
+                }
+            } finally {
+                glyphCrop.recycle()
+            }
+        }
+        return parts.joinToString(language.joinSeparator())
+    }
+
+    /**
+     * TachiyomiAT: detect horizontal glyph bands within a single vertical column
+     * by row ink-gap analysis. Returns glyph y-ranges [(y0,y1), ...] in
+     * top-to-bottom order. Mirror of [detectVerticalColumns] transposed to the
+     * row axis (ink fraction per row, ink-runs merged across narrow gaps). The
+     * same thresholds are reused since they are generic ink-band size floors.
+     */
+    private fun detectVerticalGlyphRows(crop: Bitmap): List<Pair<Int, Int>> {
+        val w = crop.width
+        val h = crop.height
+        if (w < 2 || h < 2) return listOf(0 to h)
+        val pixels = IntArray(w * h)
+        crop.getPixels(pixels, 0, w, 0, 0, w, h)
+        val inkFraction = FloatArray(h)
+        for (y in 0 until h) {
+            var dark = 0
+            for (x in 0 until w) {
+                val px = pixels[y * w + x]
+                val lum = (0.299f * ((px shr 16) and 0xFF) +
+                    0.587f * ((px shr 8) and 0xFF) +
+                    0.114f * (px and 0xFF)).toInt()
+                if (lum < INK_LUMINANCE_THRESHOLD) dark++
+            }
+            inkFraction[y] = dark.toFloat() / w.toFloat()
+        }
+        val rows = ArrayList<Pair<Int, Int>>()
+        var inRun = false
+        var runStart = 0
+        var gapSinceInk = 0
+        for (y in 0 until h) {
+            val hasInk = inkFraction[y] >= COLUMN_GAP_INK_FRACTION
+            if (hasInk) {
+                if (!inRun) {
+                    runStart = y
+                    inRun = true
+                }
+                gapSinceInk = 0
+            } else if (inRun) {
+                gapSinceInk++
+                if (gapSinceInk >= MIN_COLUMN_GAP_PX) {
+                    val end = y - gapSinceInk
+                    if (end - runStart >= MIN_COLUMN_WIDTH_PX) {
+                        rows.add(runStart to end)
+                    }
+                    inRun = false
+                    gapSinceInk = 0
+                }
+            }
+        }
+        if (inRun) {
+            val end = if (gapSinceInk > 0) h - gapSinceInk else h
+            if (end - runStart >= MIN_COLUMN_WIDTH_PX) {
+                rows.add(runStart to end)
+            }
+        }
+        return rows
     }
 
     /**
@@ -980,6 +1131,34 @@ class RoiPageRecognitionEngine(
         return intArrayOf(px1, py1, px2, py2)
     }
 
+    private fun selectParentBubble(
+        detection: Detection,
+        textBbox: IntArray,
+        bubbles: List<Detection>,
+        centerX: Double,
+        centerY: Double,
+    ): Detection? {
+        if (detection.label != 1 && detection.label != 2) return null
+        val containing = bubbles
+            .filter { b ->
+                centerX >= b.bbox[0] && centerX <= b.bbox[2] &&
+                    centerY >= b.bbox[1] && centerY <= b.bbox[3]
+            }
+            .minByOrNull {
+                (it.bbox[2] - it.bbox[0]) * (it.bbox[3] - it.bbox[1])
+            }
+        if (containing != null) return containing
+
+        val textArea = max(1, textBbox[2] - textBbox[0]) * max(1, textBbox[3] - textBbox[1])
+        return bubbles
+            .mapNotNull { bubble ->
+                val overlap = BoxGeometry.intersectionArea(textBbox, bubble.bbox)
+                if (overlap >= textArea * MIN_PARENT_TEXT_OVERLAP_FRACTION) bubble to overlap else null
+            }
+            .maxWithOrNull(compareBy<Pair<Detection, Int>> { it.second }.thenBy { it.first.score })
+            ?.first
+    }
+
     private companion object {
         // TachiyomiAT: vertical-column detection thresholds for splitting a
         // multi-column manga bubble before OCR. Tuned against the verified Python
@@ -994,23 +1173,17 @@ class RoiPageRecognitionEngine(
         private const val COLUMN_GAP_INK_FRACTION = 0.02f
         private const val MIN_COLUMN_GAP_PX = 10
         private const val MIN_COLUMN_WIDTH_PX = 12
+        private const val MIN_PARENT_TEXT_OVERLAP_FRACTION = 0.20f
         // TachiyomiAT: det-line size guard for [recognizeDetColumns]. Rejects
         // sub-glyph noise (det sometimes emits tiny fragments) and false merges
         // (huge regions spanning multiple bubbles). Sized in crop pixel coords.
         private const val MAX_COLUMN_WIDTH_PX = 400
         private const val MAX_COLUMN_HEIGHT_PX = 800
-        // TachiyomiAT: keep recognition text at/above this mean-max-prob; below it
-        // the unit is blanked but left UN-ERASED by the render-aware inpaint mask
-        // (PageInpaintingPlanner), so an unread region keeps its original pixels
-        // instead of becoming an empty void. Lowered 0.5 -> 0.25 so real-but-
-        // imperfect PaddleOCR text is translated rather than dropped.
-        private const val PADDLE_REC_CONFIDENCE = 0.25f
-        // TachiyomiAT: a tall CJK box read horizontally can produce a confident-
-        // but-WRONG short decode (a large vertical bubble collapsing to "1").
-        // Such a short horizontal result triggers a vertical (rotated) retry so
-        // the real text is recovered. Tunable; 2 catches 1-2-char garbage while
-        // rarely firing on legitimate short lines in tall boxes.
-        private const val SHORT_DECODE_CHARS = 2
+        // TachiyomiAT: minimum confidence for PaddleOCR CTC output. PaddleOCR
+        // reports meaningful confidence values; reads below this threshold are
+        // likely garbage and discarded before translation. MangaOcr returns
+        // default 1.0 (no real score) and is exempt via the conf < 1f guard.
+        private const val OCR_MIN_CONFIDENCE = 0.5f
         // TachiyomiAT: text-color constants moved to RenderColorEstimator (and
         // fixed there — the legacy INVERTED_TEXT_COLORS was a copy-paste of the
         // default constant, both returning dark-gray text 0xFF1A1A1A, which made

@@ -67,13 +67,46 @@ vertical text**, not a pipeline bug:
 > poor."* — PaddleOCR maintainer,
 > [discussion #15695](https://github.com/PaddlePaddle/PaddleOCR/discussions/15695)
 
-The maintainer-suggested workarounds (not implemented) are:
-- **Per-character segmentation** of vertical columns before recognition (a
-  Korean user confirmed this makes the mobile model work — each character is
-  recognized correctly when cropped individually).
+The maintainer-suggested workarounds:
+- **Per-character segmentation** of vertical columns before recognition — **NOW
+  IMPLEMENTED** (`RoiPageRecognitionEngine.recognizeVerticalColumnPerChar`): a
+  detected CJK vertical column is split into glyph cells by row ink-gap analysis
+  and each glyph is recognized on its own (rotated 90° CCW), then joined. This is
+  the Korean-user-confirmed approach (each character recognized correctly when
+  cropped individually). Non-CJK vertical boxes still rotate whole.
 - **Fine-tune** the model on vertical manga text.
 - **Use a different model**: MangaOcr for Japanese, or the **full** (non-small,
   34.5M-parameter) PP-OCRv6 rec model for stronger Chinese.
+
+### Pipeline hardening (June 2026) — fixes that affect ALL languages
+
+The vertical model limit above only explains Japanese underperformance. A set of
+**pipeline defects** was also corrupting recognition across every language
+(including horizontal Chinese, where the model is otherwise ~90%). All fixed:
+
+1. **Removed confidence blanking** (`PADDLE_REC_CONFIDENCE = 0.25` at 7 sites).
+   Low-confidence decodes are no longer blanked. A region is now kept whenever
+   its OCR text contains ≥1 letter (script-aware `OcrTextFilter.isUsable`);
+   pure number/punctuation output (the "random numbers" hallucination) is still
+   dropped. This fixes the "skipped region" symptom: blanked text used to fall
+   out of the render-aware erase mask AND get no translation.
+2. **`DbPostProcess.mergeAlongAxis` vertical fix**: the vertical gap check used
+   column width instead of glyph height, so loosely-stacked glyphs never merged
+   → rec read one glyph ("1 char despite a whole sentence"). Now bounds the
+   vertical gap by glyph height.
+3. **Det `box_thresh` restored to 0.45** (`DbPostProcess.Defaults.BOX_THRESH`)
+   for the OCR-rec path (was 0.34, which admitted noise components → spurious
+   garbage reads). The lower 0.34 is kept only for the inpaint-mask path.
+4. **Per-character vertical segmentation** for CJK (see above).
+5. **Rec width cap raised 960 → 1600** so long horizontal lines are not squished.
+6. **ONNX thread count is now dynamic** (`cores/2`, capped at 4) instead of a
+   hardcoded 2 — conservative, needs on-device validation for new hardware.
+
+Preprocessing verified correct (no change): the rec model **requires** the
+`(v/255-0.5)/0.5` normalization (raw [0,255] decodes to garbage) and its output
+is **post-softmax** (so `.max()` is a valid probability). The missing
+`NormalizeImage` in `inference.yml` is expected — PaddleOCR keeps normalization
+as an application-level transform. See `tools/inpaint-debug-viewer/paddle_rec_parity.py`.
 
 ### Bundled PaddleOCR v6 small source package
 

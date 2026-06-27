@@ -90,4 +90,72 @@ class TranslationProgressSnapshotTest {
         snapshot.totalStages shouldBe 24
         snapshot.fraction shouldBe (14f / 24f)
     }
+
+    @Test
+    fun `per-stage counts reflect individual stage readiness`() {
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATING,
+            pageMap = linkedMapOf(
+                "001.jpg" to PageTranslation(
+                    ocrStatus = StageStatus.READY,
+                    translationStatus = StageStatus.READY,
+                    inpaintStatus = StageStatus.READY,
+                    renderStatus = StageStatus.READY,
+                ),
+                "002.jpg" to PageTranslation(
+                    ocrStatus = StageStatus.READY,
+                    translationStatus = StageStatus.RUNNING,
+                    inpaintStatus = StageStatus.PENDING,
+                    renderStatus = StageStatus.PENDING,
+                ),
+            ),
+        )
+
+        val ocr = snapshot.perStage[eu.kanade.translation.batch.BatchPhase.OCR]
+        ocr?.done shouldBe 2
+        ocr?.total shouldBe 2
+
+        val translate = snapshot.perStage[eu.kanade.translation.batch.BatchPhase.TRANSLATE]
+        translate?.done shouldBe 1
+        translate?.total shouldBe 2
+
+        val inpaint = snapshot.perStage[eu.kanade.translation.batch.BatchPhase.INPAINT]
+        inpaint?.done shouldBe 1
+        inpaint?.total shouldBe 2
+
+        val render = snapshot.perStage[eu.kanade.translation.batch.BatchPhase.RENDER]
+        render?.done shouldBe 1
+        render?.total shouldBe 2
+    }
+
+    @Test
+    fun `partial pages are counted`() {
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATING,
+            pageMap = linkedMapOf(
+                "001.jpg" to PageTranslation(translationStatus = StageStatus.PARTIAL),
+                "002.jpg" to PageTranslation(translationStatus = StageStatus.READY),
+            ),
+        )
+
+        snapshot.partialPages shouldBe 1
+    }
+
+    @Test
+    fun `grouped failures collect error messages`() {
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATING,
+            pageMap = linkedMapOf(
+                "001.jpg" to PageTranslation(ocrStatus = StageStatus.FAILED, errorMessage = "OOM"),
+                "002.jpg" to PageTranslation(translationStatus = StageStatus.FAILED, errorMessage = "HTTP 429"),
+                "003.jpg" to PageTranslation(ocrStatus = StageStatus.FAILED, errorMessage = "OOM"),
+            ),
+        )
+
+        snapshot.groupedFailures["OOM"] shouldContainExactly listOf("001.jpg", "003.jpg")
+        snapshot.groupedFailures["HTTP 429"] shouldContainExactly listOf("002.jpg")
+    }
 }

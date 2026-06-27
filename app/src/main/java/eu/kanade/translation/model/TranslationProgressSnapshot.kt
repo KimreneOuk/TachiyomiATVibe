@@ -1,5 +1,16 @@
 package eu.kanade.translation.model
 
+import eu.kanade.translation.batch.BatchPhase
+
+/**
+ * TachiyomiAT: per-stage count for the redesigned progress sheet.
+ */
+data class StageCount(
+    val done: Int,
+    val failed: Int,
+    val total: Int,
+)
+
 /**
  * Rich per-chapter batch progress for pre-translation UI.
  *
@@ -20,6 +31,13 @@ data class TranslationProgressSnapshot(
     val pages: List<Page>,
     val doneStages: Int = 0,
     val totalStages: Int = 0,
+    // TachiyomiAT: extended fields for the redesigned §12 sheet
+    val perStage: Map<BatchPhase, StageCount> = emptyMap(),
+    val partialPages: Int = 0,
+    val groupedFailures: Map<String, List<String>> = emptyMap(),
+    val elapsedMs: Long = 0L,
+    val aborted: Boolean = false,
+    val abortedReason: String? = null,
 ) {
     val fraction: Float
         get() = if (totalStages > 0) (doneStages.toFloat() / totalStages).coerceIn(0f, 1f) else 0f
@@ -78,6 +96,24 @@ data class TranslationProgressSnapshot(
             val doneStages = pageMap.values.sumOf { it.completedStages() }
             val totalStages = pageMap.size * 4
 
+            val ocrDone = pageMap.values.count { it.ocrStatus == StageStatus.READY }
+            val translateDone = pageMap.values.count { it.translationStatus == StageStatus.READY }
+            val inpaintDone = pageMap.values.count { it.inpaintStatus == StageStatus.READY }
+            val renderDone = pageMap.values.count { it.renderStatus == StageStatus.READY }
+
+            val ocrFailed = pageMap.values.count { it.ocrStatus == StageStatus.FAILED }
+            val translateFailed = pageMap.values.count { it.translationStatus == StageStatus.FAILED }
+            val inpaintFailed = pageMap.values.count { it.inpaintStatus == StageStatus.FAILED }
+            val renderFailed = pageMap.values.count { it.renderStatus == StageStatus.FAILED }
+
+            val total = rows.size
+            val partial = pageMap.values.count { it.translationStatus == StageStatus.PARTIAL }
+
+            val groupedFailures = pageMap.entries
+                .filter { it.value.isStageFailed || it.value.errorMessage != null }
+                .groupBy { it.value.errorMessage ?: "Unknown error" }
+                .mapValues { (_, entries) -> entries.map { it.key } }
+
             return TranslationProgressSnapshot(
                 chapterId = chapterId,
                 state = state,
@@ -91,6 +127,15 @@ data class TranslationProgressSnapshot(
                 pages = rows,
                 doneStages = doneStages,
                 totalStages = totalStages,
+                perStage = mapOf(
+                    BatchPhase.OCR to StageCount(done = ocrDone, failed = ocrFailed, total = total),
+                    BatchPhase.TRANSLATE to StageCount(done = translateDone, failed = translateFailed, total = total),
+                    BatchPhase.INPAINT to StageCount(done = inpaintDone, failed = inpaintFailed, total = total),
+                    BatchPhase.RENDER to StageCount(done = renderDone, failed = renderFailed, total = total),
+                ),
+                partialPages = partial,
+                groupedFailures = groupedFailures,
+                elapsedMs = System.currentTimeMillis(),
             )
         }
 

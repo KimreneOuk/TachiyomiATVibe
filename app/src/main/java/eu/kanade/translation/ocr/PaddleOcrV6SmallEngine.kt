@@ -45,7 +45,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     // same leak class MangaOcrEngine.inputPixelPool fixes. A direct buffer is
     // consumed in place, so nothing leaks. recognize() is serialized under the
     // translator permit, so maxPoolSize = 2 (one live buffer) suffices.
-    // Capacity = 3 * 48 * 960 floats * 4 bytes ~= 540 KiB.
+    // Capacity = 3 * 48 * 1600 floats * 4 bytes ~= 0.9 MiB.
     private val inputPixelPool = DirectBufferPool(
         3 * RECOGNITION_HEIGHT * MAX_RECOGNITION_WIDTH * 4,
         maxPoolSize = 2,
@@ -221,7 +221,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         // model gets the per-character resolution it expects — padding to only
         // 16-32px starved it and caused empty/garbage output on vertical text.
         private const val MIN_TARGET_WIDTH = 320
-        private const val MAX_RECOGNITION_WIDTH = 960
+        private const val MAX_RECOGNITION_WIDTH = 1600
         private const val WIDTH_ALIGNMENT = 16
         // Gray that normalizes to 0.0 (the normalization mean) — used for the
         // right-side padding instead of white, matching the reference pipeline.

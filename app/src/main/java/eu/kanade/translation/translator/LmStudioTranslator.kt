@@ -183,7 +183,7 @@ class LmStudioTranslator(
             flatBlocks.forEachIndexed { index, (block, _) ->
                 val translated = parsedTranslations[index]
                 if (!translated.isNullOrBlank()) {
-                    block.translation = translated
+                    block.translation = OcrArtifactSanitizer.sanitize(translated)
                 }
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)

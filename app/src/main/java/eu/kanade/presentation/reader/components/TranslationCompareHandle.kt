@@ -26,9 +26,11 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Translate
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -42,6 +44,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
 
@@ -98,6 +101,7 @@ fun TranslationCompareHandle(
 ) {
     if (!visible) return
     var expanded by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
     // TachiyomiAT: idle auto-hide. After ~2.5s of no interaction with the menu
     // collapsed, dim + slide the handle off-edge so it stays non-intrusive
     // during idle reading. Any tap resets it.
@@ -148,7 +152,7 @@ fun TranslationCompareHandle(
                         isIdle = false
                     },
                     onDeleteTranslation = {
-                        onDeleteTranslation()
+                        showDeleteDialog = true
                         expanded = false
                         isIdle = false
                     },
@@ -170,6 +174,29 @@ fun TranslationCompareHandle(
         // row select (the chosen "collapse on select" behaviour), and a
         // full-screen scrim would defeat the "non-intrusive when idle" goal.
         // Tapping the handle again also collapses it.
+    }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text(text = stringResource(MR.strings.are_you_sure)) },
+            text = { Text(text = stringResource(ATMR.strings.reader_compare_delete_translation)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteDialog = false
+                        onDeleteTranslation()
+                    },
+                ) {
+                    Text(text = stringResource(MR.strings.action_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text(text = stringResource(MR.strings.action_cancel))
+                }
+            },
+        )
     }
 }
 

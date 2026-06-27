@@ -17,6 +17,7 @@ local.properties
 
 # Logs
 *.log
+logcat*.txt
 
 
 # Tool caches (not project artifacts)
@@ -28,4 +29,5 @@ local.properties
 
 # Inpaint debug viewer: generated outputs + Python bytecode only (source IS tracked)
 tools/inpaint-debug-viewer/debug-output/
-tools/inpaint-debug-viewer/__pycache__/
+__pycache__/
+*.pyc

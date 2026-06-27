@@ -1,7 +1,12 @@
 package eu.kanade.tachiyomi.ui.reader
 
+import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
+
 object ReaderPageWarmWindow {
     const val DEFAULT_RADIUS = 2
+
+    fun radiusFor(mode: ReadingMode): Int =
+        if (mode.type is ReadingMode.ViewerType.Webtoon) 4 else DEFAULT_RADIUS
 
     fun contains(
         pageIndex: Int,

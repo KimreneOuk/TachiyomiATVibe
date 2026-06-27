@@ -234,24 +234,26 @@ object DbPostProcess {
         val merged = ArrayList<MutableTextLine>()
         for (t in sorted) {
             val b = t.bbox
-            val (centerCross, sizeAlong, crossHalf) = when (axis) {
+            val (centerCross, crossSize, gapSize) = when (axis) {
                 Axis.HORIZONTAL -> Triple((b[1] + b[3]) / 2f, b[3] - b[1], b[3] - b[1])
-                Axis.VERTICAL -> Triple((b[0] + b[2]) / 2f, b[2] - b[0], b[2] - b[0])
+                // VERTICAL: gap is vertical spacing between stacked glyphs,
+                // proportional to glyph height not column width.
+                Axis.VERTICAL -> Triple((b[0] + b[2]) / 2f, b[2] - b[0], b[3] - b[1])
             }
             var placed = false
             for (m in merged) {
-                val (mCenterCross, mSizeAlong) = when (axis) {
-                    Axis.HORIZONTAL -> Pair((m.y1 + m.y2) / 2f, m.y2 - m.y1)
-                    Axis.VERTICAL -> Pair((m.x1 + m.x2) / 2f, m.x2 - m.x1)
+                val (mCenterCross, mCrossSize, mGapSize) = when (axis) {
+                    Axis.HORIZONTAL -> Triple((m.y1 + m.y2) / 2f, m.y2 - m.y1, m.y2 - m.y1)
+                    Axis.VERTICAL -> Triple((m.x1 + m.x2) / 2f, m.x2 - m.x1, m.y2 - m.y1)
                 }
-                val sameLine = abs(centerCross - mCenterCross) <= sameLineFrac * min(sizeAlong, mSizeAlong)
+                val sameLine = abs(centerCross - mCenterCross) <= sameLineFrac * min(crossSize, mCrossSize)
                 if (!sameLine) continue
                 // Along-axis gap between the two boxes.
                 val gap = when (axis) {
                     Axis.HORIZONTAL -> max(0, max(b[0], m.x1) - min(b[2], m.x2))
                     Axis.VERTICAL -> max(0, max(b[1], m.y1) - min(b[3], m.y2))
                 }
-                if (gap <= mergeGapFactor * max(sizeAlong, mSizeAlong)) {
+                if (gap <= mergeGapFactor * max(gapSize, mGapSize)) {
                     m.x1 = min(m.x1, b[0])
                     m.y1 = min(m.y1, b[1])
                     m.x2 = max(m.x2, b[2])

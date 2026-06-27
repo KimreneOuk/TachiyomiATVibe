@@ -428,17 +428,14 @@ class ChapterTranslator(
             }
 
             try {
-                // TachiyomiAT: run the chapter through the STAGED BATCH pipeline
-                // (DETECT+OCR batch → inpaint ‖ translate → render) instead of the
-                // old page-1-first sequential loop. Order pages so the user's
-                // resume position is translated first: forward from the last-read
-                // page to the end, then backfill the pages before it. This makes
-                // pre-translating a chapter you're mid-way through actually useful
-                // — the page you'll read next is ready first, not page 1.
                 val resumeIndex = translation.chapter.lastPageRead.toInt()
                 val orderedStreams = eu.kanade.translation.util.ResumeOrdering
                     .forwardFirstThenBackfill(streams, resumeIndex)
                 store.preRegisterPages(orderedStreams.map { it.first })
+                val chapterId = translation.chapter.id
+                val tracker = if (chapterId != null) {
+                    pipeline.batchTrackerFactory?.invoke(chapterId, store, orderedStreams.map { it.first })
+                } else null
                 if (translationJob?.isActive != true) {
                     logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
                 } else {
@@ -448,36 +445,21 @@ class ChapterTranslator(
                         translation.source,
                         store,
                         orderedStreams,
+                        tracker,
                     )
                 }
             } finally {
-                // TachiyomiAT: close the shared archive that was opened once for the
-                // entire batch (instead of per-page). The directory path doesn't
-                // open one, so sharedArchive is null there.
                 try {
                     sharedArchive?.close()
                 } catch (_: Exception) {}
             }
 
-            // TachiyomiAT: reflect per-page outcomes in the chapter status.
-            // translateBatch swallows per-page failures internally (marks the page
-            // FAILED, doesn't throw), so reaching here used to mean the chapter
-            // was unconditionally TRANSLATED — even when pages had failed OCR /
-            // translation / inpaint. That hid partial failures behind a green
-            // checkmark. Now: if any page that SHOULD have produced output is in
-            // a non-terminal or failed state, the chapter is ERROR so the user
-            // sees something went wrong and can retry. A page counts as "should
-            // have produced output" when it was registered for the batch (i.e. it
-            // is present in the store) and is neither textless-done nor rendered.
             val pageStates = store.state.value
-            val requiredPageFailed = pageStates.values.any { page ->
-                !page.hasRenderedResult && !page.isTextlessTerminal && page.isStageFailed
-            }
-            translation.status = if (requiredPageFailed) {
-                Translation.State.ERROR
-            } else {
-                Translation.State.TRANSLATED
-            }
+            val reconciliation = eu.kanade.translation.batch.BatchProgressReconciler.reconcile(
+                pageMap = pageStates,
+                orderedKeys = pageStates.keys.toList(),
+            )
+            translation.status = reconciliation.chapterStatus
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             BitmapPool.releaseAll()

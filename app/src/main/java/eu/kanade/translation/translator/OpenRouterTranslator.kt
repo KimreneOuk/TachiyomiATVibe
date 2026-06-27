@@ -140,7 +140,7 @@ class OpenRouterTranslator(
                 if (expected != actual) {
                     logcat {
                         "OpenRouter response length mismatch for '$k': expected=$expected actual=$actual " +
-                            "(mismatched blocks keep their original text)"
+                            "(mismatched blocks stay blank, retried by pipeline PARTIAL recovery)"
                     }
                 }
                 // TachiyomiAT: do NOT fall back to `b.text` when the model returns
@@ -150,7 +150,7 @@ class OpenRouterTranslator(
                 v.blocks.forEachIndexed { i, b ->
                     val res = resJson.optJSONArray(k)?.optString(i, "NULL")
                     if (res != null && res != "NULL" && res.isNotBlank()) {
-                        b.translation = res
+                        b.translation = OcrArtifactSanitizer.sanitize(res)
                     }
                 }
             }
