@@ -318,11 +318,6 @@ class ChapterTranslator(
 
     fun queueChapter(manga: Manga, chapter: Chapter) {
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
-        provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)?.let { existing ->
-            logcat(LogPriority.INFO) { "Replacing existing translation file for ${chapter.name}" }
-            existing.delete()
-        }
-        provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
         if (queueState.value.any { it.chapter.id == chapter.id }) return
         // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
         // (corrupted/migrated pref). This method is invoked from a UI action
@@ -365,11 +360,19 @@ class ChapterTranslator(
             // reader observes the same instance that the pipeline writes to.
             store = pipeline.activeStoreResolver?.invoke(translation)
             if (store == null) {
-                val translationMangaDir = provider.getMangaDir(translation.manga.title, translation.source)
-                val saveFile = provider.getTranslationFileName(translation.chapter.name, translation.chapter.scanlator)
-                // SAF createFile can return null on a missing/revoked storage
-                // location; treat that as a hard failure instead of NPE'ing.
-                val translationFile = translationMangaDir.createFile(saveFile)
+                val existingFile = provider.findTranslationFile(
+                    translation.chapter.name,
+                    translation.chapter.scanlator,
+                    translation.manga.title,
+                    translation.source,
+                )
+                val translationFile = if (existingFile != null && existingFile.exists()) {
+                    existingFile
+                } else {
+                    val translationMangaDir = provider.getMangaDir(translation.manga.title, translation.source)
+                    val saveFile = provider.getTranslationFileName(translation.chapter.name, translation.chapter.scanlator)
+                    translationMangaDir.createFile(saveFile)
+                }
                 if (translationFile == null) {
                     logcat(LogPriority.ERROR) {
                         "TachiyomiAT cannot create translation file for ${translation.chapter.name}"

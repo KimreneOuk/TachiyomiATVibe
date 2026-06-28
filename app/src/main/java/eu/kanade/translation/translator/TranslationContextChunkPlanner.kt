@@ -17,8 +17,14 @@ object TranslationContextChunkPlanner {
     const val MAX_CONTEXT_TOKENS = 8_192
     const val SAFETY_MARGIN = 512
     const val MIN_OUTPUT_TOKENS = 256
-    const val PROMPT_OVERHEAD_TOKENS = 900
-    const val MAX_ROLLING_CONTEXT_TOKENS = 768
+    // Accounts for the unified system prompt + few-shot examples (TranslationPrompts).
+    const val PROMPT_OVERHEAD_TOKENS = 1_100
+    // Token budget for the combined rolling-context + chapter glossary injected
+    // via TranslationPrompts.contextPrefix. Large enough for a small glossary
+    // (~400) plus ~32 recent pairs; drops cleanly when exceeded.
+    const val MAX_ROLLING_CONTEXT_TOKENS = 1_500
+    // Pair-count cap on the rolling recent-pairs window (token-capped separately).
+    const val MAX_ROLLING_PAIRS = 32
 
     enum class Profile {
         DEFAULT,
@@ -59,21 +65,42 @@ object TranslationContextChunkPlanner {
         rollingContext: String,
         requestedOutputTokens: Int,
         profile: Profile = Profile.DEFAULT,
+        glossary: String = "",
     ): TranslationContextChunk {
         val constraints = constraintsFor(profile)
-        val trimmedContext = rollingContext.trim()
-        if (trimmedContext.isEmpty()) {
+        val trimmedRolling = rollingContext.trim()
+        val trimmedGlossary = glossary.trim()
+        if (trimmedRolling.isEmpty() && trimmedGlossary.isEmpty()) {
             return chunk.withOutputCap(requestedOutputTokens, constraints)
         }
-        val contextTokens = estimateTokens(trimmedContext)
-        val candidateTokens = chunk.estimatedPromptTokens + contextTokens
         val maxContextPrompt = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
-        if (contextTokens > constraints.maxRollingContextTokens || candidateTokens > maxContextPrompt) {
-            return chunk.withOutputCap(requestedOutputTokens, constraints)
+        val rollingTokens = estimateTokens(trimmedRolling)
+        val glossaryTokens = estimateTokens(trimmedGlossary)
+
+        fun overCap(roll: Int, glos: Int): Boolean {
+            val context = roll + glos
+            val candidate = chunk.estimatedPromptTokens + context
+            return context > constraints.maxRollingContextTokens || candidate > maxContextPrompt
         }
+
+        var useGlossary = trimmedGlossary
+        var useRolling = trimmedRolling
+        if (overCap(rollingTokens, glossaryTokens)) {
+            // Drop the glossary first (recent pairs carry more speaker/pronoun
+            // continuity); if the pairs alone still blow the cap, drop them too
+            // (the original drop-all behaviour, so a runaway context can't shrink
+            // the output cap toward the min floor).
+            useGlossary = ""
+            if (overCap(rollingTokens, 0)) {
+                return chunk.copy(rollingContext = "", glossary = "")
+                    .withOutputCap(requestedOutputTokens, constraints)
+            }
+        }
+        val contextTokens = estimateTokens(useRolling) + estimateTokens(useGlossary)
         return chunk.copy(
-            rollingContext = trimmedContext,
-            estimatedPromptTokens = candidateTokens,
+            rollingContext = useRolling,
+            glossary = useGlossary,
+            estimatedPromptTokens = chunk.estimatedPromptTokens + contextTokens,
         ).withOutputCap(requestedOutputTokens, constraints)
     }
 
@@ -86,14 +113,22 @@ object TranslationContextChunkPlanner {
                     if (text.isBlank() || translation.isBlank() || translation == text) {
                         null
                     } else {
-                        "$text => $translation"
+                        // TachiyomiAT: tag the source side for in-bubble blocks so the
+                        // rolling context carries speaker (conversation) continuity
+                        // across chunk boundaries, not just the translation text.
+                        val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
+                            "[${TranslationPrompts.SPEECH_TAG}] "
+                        } else {
+                            ""
+                        }
+                        "$tag$text => $translation"
                     }
                 }
             }
         if (pairs.isEmpty()) return previous
         val lines = (previous.lineSequence().filter { it.isNotBlank() } + pairs.asSequence())
             .toList()
-            .takeLast(12)
+            .takeLast(MAX_ROLLING_PAIRS)
         return lines.joinToString("\n")
     }
 
@@ -149,7 +184,7 @@ object TranslationContextChunkPlanner {
             safetyMargin = SAFETY_MARGIN,
             minOutputTokens = MIN_OUTPUT_TOKENS,
             promptOverheadTokens = PROMPT_OVERHEAD_TOKENS,
-            maxRollingContextTokens = 384,
+            maxRollingContextTokens = 768,
             maxBlocksPerChunk = 32,
             maxPagesPerChunk = 4,
         )
@@ -173,6 +208,7 @@ data class TranslationContextChunk(
     val pages: LinkedHashMap<String, PageTranslation>,
     val blockCount: Int,
     val rollingContext: String,
+    val glossary: String = "",
     val estimatedPromptTokens: Int,
     val maxOutputTokens: Int,
 )

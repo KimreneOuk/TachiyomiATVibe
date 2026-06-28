@@ -71,4 +71,24 @@ class OcrArtifactSanitizerTest {
         // future "fix" is a deliberate decision, not an accident.
         OcrArtifactSanitizer.sanitize("HelloN0 world") shouldBe "HelloN0 world"
     }
+
+    @Test
+    fun `a leading SPEECH role-tag echoed by the model is stripped`() {
+        // The [SPEECH] tag is input-only metadata; if a model echoes it at the
+        // start of a translation, it must be removed before render.
+        OcrArtifactSanitizer.sanitize("[SPEECH] I'm going.") shouldBe "I'm going."
+    }
+
+    @Test
+    fun `paren and colon variants of the SPEECH tag are stripped`() {
+        OcrArtifactSanitizer.sanitize("(SPEECH) I'm going.") shouldBe "I'm going."
+        OcrArtifactSanitizer.sanitize("SPEECH: I'm going.") shouldBe "I'm going."
+    }
+
+    @Test
+    fun `a SPEECH tag is only stripped at the very start`() {
+        // A legitimate translation that happens to contain the word mid-line is
+        // left intact — the strip is a leading-prefix rule, not a global one.
+        OcrArtifactSanitizer.sanitize("He said SPEECH: now") shouldBe "He said SPEECH: now"
+    }
 }

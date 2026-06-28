@@ -271,6 +271,7 @@ object TextLayoutPlanner {
         val safePad = max(0f, (baseW - rect.safeW) / 2f)
 
         val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
+        val anchorToOcrCenter = block.label == 2 || (block.direction == "TTB" && !isVertical)
         val region = if (hasParent) {
             FloatRect(block.parentX, block.parentY, block.parentX + block.parentWidth, block.parentY + block.parentHeight)
         } else if (rect.reshaped) {
@@ -422,6 +423,16 @@ object TextLayoutPlanner {
                 safeH = r.height()
                 fontSize = max(fontSize, minLegible)
             }
+        }
+
+        // Free text / vertical-source Latin translations must remain visually
+        // attached to the OCR region. The solver may still grow/clip the safe
+        // box for legibility, but the actual draw anchor stays at the original
+        // OCR centre instead of drifting to a parent rect or reshaped footprint.
+        if (anchorToOcrCenter) {
+            originX = block.x + block.width / 2f
+            originY = block.y + block.height / 2f
+            drawAlign = TextAlign.CENTER
         }
 
         return BlockLayout(

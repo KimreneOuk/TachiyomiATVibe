@@ -369,7 +369,11 @@ async function runTranslation() {
     const data = await res.json();
     state.backend = state.backend || {};
     Object.assign(state.backend, data);
-    
+
+    // Phase 0 render parity: translate returns text only; /api/render draws it
+    // with the faithful Android layout stack onto the inpainted page.
+    await runRender();
+
     els.imageMeta.textContent = `${state.imageName} - translation complete`;
     switchCanvas("rendered");
   } catch (error) {
@@ -380,6 +384,21 @@ async function runTranslation() {
     els.translateBtn.textContent = "4. Translate";
     renderAll();
   }
+}
+
+async function runRender() {
+  if (!state.backend?.inpaint_png || !state.backend?.translations) return;
+  els.imageMeta.textContent = `${state.imageName} - rendering translated text`;
+  const form = new FormData();
+  const inpaintBlob = await (await fetch(state.backend.inpaint_png)).blob();
+  form.append("image", inpaintBlob, "inpaint.png");
+  form.append("detections_json", JSON.stringify(state.backend.detections || []));
+  form.append("det_list_json", JSON.stringify(state.backend.det_list || []));
+  form.append("translations_json", JSON.stringify(state.backend.translations || []));
+  const res = await fetch("/api/render", { method: "POST", body: form });
+  if (!res.ok) throw new Error(`render returned ${res.status}`);
+  const data = await res.json();
+  Object.assign(state.backend, data);
 }
 
 els.detectBtn.addEventListener("click", runDetection);

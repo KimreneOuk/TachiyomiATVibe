@@ -9,9 +9,16 @@ import eu.kanade.translation.model.isStageRunning
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
@@ -36,6 +43,20 @@ class ChapterTranslationStore(
 
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
 
+    // TachiyomiAT: chapter-level term→target glossary for AI-translator
+    // continuity (names/places rendered consistently across chunks and across
+    // batch resume). Persisted to a sibling JSON file (additive; a decode or
+    // write failure degrades to empty = today's behaviour). Advisory only.
+    @Volatile
+    private var glossary: Map<String, String> = emptyMap()
+
+    private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var dirty = false
+    private var persistJob: Job? = null
+
+    internal var persistCount = 0
+        private set
+
     init {
         pages = initialPages.toPersistentMap()
         _state.value = snapshotPages()
@@ -50,7 +71,7 @@ class ChapterTranslationStore(
             }
             pages = pages.put(pageKey, updated)
             if (shouldPersistUpdate(previous, updated)) {
-                persistLocked()
+                schedulePersist()
             }
             // Build a snapshot copy so MutableStateFlow always emits — even when
             // callers mutate a previously emitted PageTranslation in place.
@@ -61,6 +82,7 @@ class ChapterTranslationStore(
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) {
         mutex.withLock {
             pages = updatedPages.toPersistentMap()
+            dirty = false
             persistLocked()
             _state.value = snapshotPages()
         }
@@ -115,6 +137,7 @@ class ChapterTranslationStore(
                 }
             }.toPersistentMap()
             if (changed) {
+                dirty = false
                 persistLocked()
                 _state.value = snapshotPages()
             }
@@ -123,6 +146,72 @@ class ChapterTranslationStore(
 
     private fun snapshotPages(): Map<String, PageTranslation> =
         pages.entries.associate { (key, page) -> key to page.copy() }
+
+    // ── Glossary (chapter-level term continuity) ─────────────────────────────
+
+    fun glossarySnapshot(): Map<String, String> = glossary
+
+    /**
+     * All translated (source => target) pairs in the chapter so far — used to
+     * (re)build the glossary. Reads the in-memory pages map (no I/O).
+     */
+    fun translatedPairs(): List<Pair<String, String>> =
+        pages.values.flatMap { page ->
+            page.blocks.mapNotNull { block ->
+                val s = block.text.trim()
+                val t = block.translation.trim()
+                if (s.isBlank() || t.isBlank() || t == s) null else s to t
+            }
+        }
+
+    suspend fun updateGlossary(updated: Map<String, String>) {
+        mutex.withLock {
+            glossary = updated
+            persistGlossaryLocked()
+        }
+    }
+
+    private fun loadGlossary() {
+        val file = existingGlossaryFile() ?: return
+        runCatching {
+            file.openInputStream().use { input ->
+                glossary = Json.decodeFromStream<Map<String, String>>(input)
+            }
+        }.onFailure {
+            glossary = emptyMap()
+        }
+    }
+
+    private fun persistGlossaryLocked() {
+        val file = ensureGlossaryFile() ?: return
+        val snapshot = glossary
+        runCatching {
+            file.openOutputStream().use { output ->
+                Json.encodeToStream(snapshot, output)
+            }
+        }.onFailure { e ->
+            logcat(LogPriority.WARN, e) { "Failed to persist glossary; in-memory state retained" }
+        }
+    }
+
+    private fun glossaryName(tf: UniFile): String =
+        ((tf.name ?: "translation").substringBeforeLast('.')) + ".glossary.json"
+
+    private fun existingGlossaryFile(): UniFile? {
+        val tf = translationFile ?: return null
+        val parent = tf.parentFile ?: return null
+        return parent.findFile(glossaryName(tf))
+    }
+
+    private fun ensureGlossaryFile(): UniFile? {
+        if (translationFile == null) {
+            translationFile = fileCreator?.invoke()
+        }
+        val tf = translationFile ?: return null
+        val parent = tf.parentFile ?: return null
+        val name = glossaryName(tf)
+        return parent.findFile(name) ?: runCatching { parent.createFile(name) }.getOrNull()
+    }
 
     private fun PageTranslation.isQueueVisibleTransient(): Boolean {
         return ocrStatus.isQueueTransient() ||
@@ -182,6 +271,7 @@ class ChapterTranslationStore(
     }
 
     private fun persistLocked() {
+        persistCount++
         // Resolve the backing file lazily. When the store was opened for a
         // chapter with no existing translation file, translationFile is null and
         // fileCreator materializes it on the FIRST real write. This avoids
@@ -274,7 +364,37 @@ class ChapterTranslationStore(
         }
     }
 
+    suspend fun flush() {
+        mutex.withLock {
+            if (dirty) {
+                dirty = false
+                persistLocked()
+            }
+        }
+    }
+
+    fun close() {
+        persistScope.cancel()
+    }
+
+    private fun schedulePersist() {
+        if (dirty) return
+        dirty = true
+        persistJob = persistScope.launch {
+            delay(PERSIST_DEBOUNCE_MS)
+            mutex.withLock {
+                if (dirty) {
+                    dirty = false
+                    persistLocked()
+                }
+            }
+            persistJob = null
+        }
+    }
+
     companion object {
+        private const val PERSIST_DEBOUNCE_MS = 250L
+
         /**
          * Sibling temp file used by [persistLocked] for the write-temp-then-
          * rename atomicity pattern. It is created in the same directory as the
@@ -297,7 +417,9 @@ class ChapterTranslationStore(
             } else {
                 emptyMap()
             }
-            return ChapterTranslationStore(translationFile, fileCreator = null, existing)
+            return ChapterTranslationStore(translationFile, fileCreator = null, existing).also {
+                it.loadGlossary()
+            }
         }
 
         /**

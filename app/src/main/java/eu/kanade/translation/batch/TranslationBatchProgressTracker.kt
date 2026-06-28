@@ -176,8 +176,6 @@ class TranslationBatchProgressTracker(
     private suspend fun transition(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
         if (finished) return
         store.updatePage(pageKey, update)
-        val pageMap = store.state.value
-        _snapshot.value = computeSnapshot(pageMap, Translation.State.TRANSLATING)
     }
 
     private fun startTick() {

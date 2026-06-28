@@ -183,29 +183,6 @@ class SmartBubbleTextCleaner(
     }
 
     /**
-     * TachiyomiAT: FAST free-text erase driven by SOLID boxes (the prototype
-     * `mask_mode = paddle_boxes` behavior for the non-neural path).
-     *
-     * The boxes passed in are already the PaddleOCR-v6 line boxes back-projected
-     * to page coords by [AOTInpainting.refineFreeTextBoxes] (or a detector-v4
-     * fallback box when Paddle found no lines for a region). Each box is padded
-     * outward by [maskPad] and filled SOLID — NO `generateTextMask`, NO
-     * `buildLocalContrastTextMask`, NO faint-recovery. The prior bug was caused
-     * by shrinking/over-processing masks after detection; this is intentionally
-     * boring and direct: solid padded box → fill.
-     *
-     * The fill itself reuses the cleaner's established background-estimate +
-     * feathered-blend machinery ([sampleBackgroundStats] →
-     * [buildLocalBackground] → [applyFeatheredFill]) so the color/feather
-     * behavior is consistent with [cleanSingleRegion]; only the *erase mask*
-     * source changes (solid boxes instead of detected pixels).
-     *
-     * Used by the FAST free-text route in [AOTInpainting.inpaintRegions] when
-     * Paddle-refined boxes are available. When `paddleDet` is null the caller
-     * keeps using [cleanRegions] (detector-v4 boxes + pixel heuristics), which
-     * remains the conservative fallback.
-     */
-    /**
      * TachiyomiAT: boundary-aware fill for one region using containment + tier.
      *
      * Computes the containment mask (bubble interior or connected flat region),
@@ -369,6 +346,29 @@ class SmartBubbleTextCleaner(
         return image
     }
 
+    /**
+     * TachiyomiAT: FAST free-text erase driven by SOLID boxes (the prototype
+     * `mask_mode = paddle_boxes` behavior for the non-neural path).
+     *
+     * The boxes passed in are already the PaddleOCR-v6 line boxes back-projected
+     * to page coords by [AOTInpainting.refineFreeTextBoxes] (or a detector-v4
+     * fallback box when Paddle found no lines for a region). Each box is padded
+     * outward by [maskPad] and filled SOLID — NO `generateTextMask`, NO
+     * `buildLocalContrastTextMask`, NO faint-recovery. The prior bug was caused
+     * by shrinking/over-processing masks after detection; this is intentionally
+     * boring and direct: solid padded box → fill.
+     *
+     * The fill itself reuses the cleaner's established background-estimate +
+     * feathered-blend machinery ([sampleBackgroundStats] →
+     * [buildLocalBackground] → [applyFeatheredFill]) so the color/feather
+     * behavior is consistent with [cleanSingleRegion]; only the *erase mask*
+     * source changes (solid boxes instead of detected pixels).
+     *
+     * Used by the FAST free-text route in [AOTInpainting.inpaintRegions] when
+     * Paddle-refined boxes are available. When `paddleDet` is null the caller
+     * keeps using [cleanRegions] (detector-v4 boxes + pixel heuristics), which
+     * remains the conservative fallback.
+     */
     fun fillSolidBoxes(
         image: Bitmap,
         boxes: List<IntArray>,

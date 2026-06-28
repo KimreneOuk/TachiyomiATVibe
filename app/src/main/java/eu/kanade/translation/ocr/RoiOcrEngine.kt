@@ -9,16 +9,17 @@ interface RoiOcrEngine : Closeable {
     suspend fun recognizeWithConf(crop: Bitmap): Pair<String, Float> = recognize(crop) to 1f
 
     /**
-     * TachiyomiAT: release engine-owned off-heap/pooled memory that [close]
-     * would free but that can otherwise persist across calls.
+     * TachiyomiAT: cooperative hint to release engine-owned off-heap/pooled memory
+     * that [close] would free but that can otherwise persist across calls.
      *
      * Unlike [close], this leaves the engine usable: the next [recognize]
-     * re-acquires whatever it needs. The motivating consumer is OOM recovery —
-     * [MangaOcrEngine] holds direct (off-heap) KV-cache buffers in a pool that
-     * survives every ROI and every page; `BitmapPool.releaseAll()` + a Java GC
-     * cannot reclaim them, so chronic native pressure from a long session never
-     * relieves and the OOM recurs on the next page. Engines without pooled
-     * native memory do nothing.
+     * re-acquires whatever it needs. The motivating consumer is per-page memory
+     * relief — [MangaOcrEngine] holds direct (off-heap) KV-cache buffer pools
+     * that survive every ROI call; `BitmapPool.releaseAll()` + a Java GC cannot
+     * reclaim them. For MangaOcrEngine this is intentionally a no-op because each
+     * buffer is returned to its pool in the `recognize` `finally` block; the
+     * pools themselves are drained only by [forceReleaseNativeBuffers] (the OOM
+     * recovery path). Engines without pooled native memory do nothing.
      */
     fun reclaimPooledMemory() {}
 
@@ -32,7 +33,7 @@ interface RoiOcrEngine : Closeable {
      * MangaOcr — both trained on and tolerant of vertical text), while others
      * are strictly horizontal-line models (PaddleOCR's CTC recognition head).
      *
-     * [RoiPageRecognitionEngine] rotates a tall (vertical) crop 90° clockwise
+     * [RoiPageRecognitionEngine] rotates a tall (vertical) crop 90° counter-clockwise
      * BEFORE handing it to the engine ONLY when this property is true. Rotating
      * for a native-vertical engine (the previous behavior) actively degraded it:
      * ML Kit expects top-to-bottom text, so feeding it pre-rotated horizontal

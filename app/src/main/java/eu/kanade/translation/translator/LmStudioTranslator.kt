@@ -35,16 +35,17 @@ class LmStudioTranslator(
         .build()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-        translateInternal(pages, rollingContext = "", outputTokenLimit = maxOutputToken)
+        translateInternal(pages, rollingContext = "", glossary = "", outputTokenLimit = maxOutputToken)
     }
 
     override suspend fun translateContextual(chunk: TranslationContextChunk) {
-        translateInternal(chunk.pages, chunk.rollingContext, chunk.maxOutputTokens)
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.glossary, chunk.maxOutputTokens)
     }
 
     private suspend fun translateInternal(
         pages: MutableMap<String, PageTranslation>,
         rollingContext: String,
+        glossary: String,
         outputTokenLimit: Int,
     ) {
         if (normalizedBaseUrl.isBlank()) {
@@ -66,29 +67,12 @@ class LmStudioTranslator(
         if (flatBlocks.isEmpty()) return
 
         try {
-            val textBlocksStr = flatBlocks.mapIndexed { index, (_, text) ->
-                "[$index] $text"
+            val textBlocksStr = flatBlocks.mapIndexed { index, (block, _) ->
+                TranslationPrompts.numberedSourceLine(index, block)
             }.joinToString("\n")
-            val contextPrefix = if (rollingContext.isBlank()) {
-                ""
-            } else {
-                "Previous concise context/glossary/recent pairs:\n$rollingContext\n\n"
-            }
+            val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, glossary)
 
-            val systemPrompt = """
-                You are an expert manga/comic translator and localization specialist. Translate the following list of sequential text blocks from ${fromLang.label} to ${toLang.label}.
-
-                CRITICAL GUIDELINES:
-                1. READING ORDER: Manga panels and bubbles fundamentally follow a Right-to-Left (RTL) and Top-to-Bottom (TTB) flow. Interpret sequential blocks with this context in mind.
-                2. BUBBLE SIZE & CONCISENESS: Manga speech bubbles have very limited space. Keep translations concise, natural, and close to the original length.
-                3. STYLE & TONE: Adapt register, slang, dialect, and sound effects to fit the character and scene.
-                4. WATERMARKS: Replace watermark or site-link text with RTMTH.
-                5. NO EXTRA TEXT: Output only the translations in the exact numbered format below, one block per line. Do not include explanations, notes, or preambles.
-                6. SCRIPT FIDELITY: If the target language is English or any Latin-script language, do NOT output Japanese/Chinese/Korean characters. Localize sound-effect parentheses like (笑) to "lol", "(laugh)", or an equivalent in the target language.
-
-                Format:
-                [index] translation
-            """.trimIndent()
+            val systemPrompt = TranslationPrompts.numberedSystemPrompt(fromLang, toLang)
 
             val mediaType = "application/json; charset=utf-8".toMediaType()
             logcat(LogPriority.INFO) {

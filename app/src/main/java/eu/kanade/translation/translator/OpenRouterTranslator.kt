@@ -33,27 +33,24 @@ class OpenRouterTranslator(
         .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
         .build()
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-        translateInternal(pages, rollingContext = "", outputTokenLimit = maxOutputToken)
+        translateInternal(pages, rollingContext = "", glossary = "", outputTokenLimit = maxOutputToken)
     }
 
     override suspend fun translateContextual(chunk: TranslationContextChunk) {
-        translateInternal(chunk.pages, chunk.rollingContext, chunk.maxOutputTokens)
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.glossary, chunk.maxOutputTokens)
     }
 
     private suspend fun translateInternal(
         pages: MutableMap<String, PageTranslation>,
         rollingContext: String,
+        glossary: String,
         outputTokenLimit: Int,
     ) {
 
         try {
-            val data = pages.mapValues { (k, v) -> v.blocks.map { b -> b.text } }
+            val data = pages.mapValues { (k, v) -> v.blocks.map { b -> TranslationPrompts.jsonSourceValue(b) } }
             val json = JSONObject(data)
-            val contextPrefix = if (rollingContext.isBlank()) {
-                ""
-            } else {
-                "Previous concise context/glossary/recent pairs:\n$rollingContext\n\n"
-            }
+            val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, glossary)
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val jsonObject = buildJsonObject {
                 put("model", modelName)
@@ -65,42 +62,7 @@ class OpenRouterTranslator(
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "system")
-                        put(
-                            "content",
-                            "## System Prompt for Manhwa/Manga/Manhua Translation\n" +
-                                "\n" +
-                                "You are a highly skilled AI tasked with translating text from scanned images of comics (manhwa, manga, manhua) while preserving the original structure and removing any watermarks or site links. \n" +
-                                "\n" +
-                                "**Here's how you should operate:**\n" +
-                                "\n" +
-                                "1. **Input:** You'll receive a JSON object where keys are image filenames (e.g., \"001.jpg\") and values are lists of text strings extracted from those images.\n" +
-                                "\n" +
-                                "2. **Translation:** Translate all text strings to the target language `${toLang.label}`. Ensure the translation is natural and fluent, adapting idioms and expressions to fit the target language's cultural context.\n" +
-                                "\n" +
-                                "3. **Watermark/Site Link Removal:** Replace any watermarks or site links (e.g., \"colamanga.com\") with the placeholder \"RTMTH\".\n" +
-                                "\n" +
-                                "4. **Structure Preservation:** Maintain the exact same structure as the input JSON. The output JSON should have the same number of keys (image filenames) and the same number of text strings within each list.\n" +
-                                "\n" +
-                                "**Example:**\n" +
-                                "\n" +
-                                "**Input:**\n" +
-                                "\n" +
-                                "```json\n" +
-                                "{\"001.jpg\":[\"chinese1\",\"chinese2\"],\"002.jpg\":[\"chinese2\",\"colamanga.com\"]}\n" +
-                                "```\n" +
-                                "\n" +
-                                "**Output (for `${toLang.label}` = English):**\n" +
-                                "\n" +
-                                "```json\n" +
-                                "{\"001.jpg\":[\"eng1\",\"eng2\"],\"002.jpg\":[\"eng2\",\"RTMTH\"]}\n" +
-                                "```\n" +
-                                "\n" +
-                                "**Key Points:**\n" +
-                                "\n" +
-                                "* Prioritize accurate and natural-sounding translations.\n" +
-                                "* Be meticulous in removing all watermarks and site links.\n" +
-                                "* Ensure the output JSON structure perfectly mirrors the input structure.",
-                        )
+                        put("content", TranslationPrompts.jsonSystemPrompt(fromLang, toLang))
                     }
                     addJsonObject {
                         put("role", "user")

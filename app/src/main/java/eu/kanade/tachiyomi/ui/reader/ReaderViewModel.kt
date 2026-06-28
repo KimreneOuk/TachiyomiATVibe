@@ -687,8 +687,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // across reader sessions.
         translationStoreJob?.cancel()
         translationStateJob?.cancel()
-        translationManager.cancelAllPageTranslations()
-        translationManager.translatorStop("reader closed")
+        translationManager.stopReaderTranslations("reader closed")
     }
 
     /**
@@ -1898,8 +1897,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * and finish() in ReaderActivity.
      */
     fun cancelTranslationsOnBackground() {
-        translationManager.cancelAllPageTranslations()
-        translationManager.translatorStop("reader backgrounded")
+        translationManager.stopReaderTranslations("reader backgrounded")
         // TachiyomiAT: evict registered reader page streams so their captured
         // page bytes are freed while the reader sits in the background, instead
         // of pinning them in the process-lifetime map.

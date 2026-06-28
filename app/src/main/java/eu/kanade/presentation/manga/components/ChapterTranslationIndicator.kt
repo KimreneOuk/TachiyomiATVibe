@@ -195,6 +195,13 @@ private fun TranslatedIndicator(
         )
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
             DropdownMenuItem(
+                text = { Text(text = stringResource(ATMR.strings.manga_translate)) },
+                onClick = {
+                    onClick(ChapterTranslationAction.START)
+                    isMenuExpanded = false
+                },
+            )
+            DropdownMenuItem(
                 text = { Text(text = stringResource(MR.strings.action_delete)) },
                 onClick = {
                     onClick(ChapterTranslationAction.DELETE)

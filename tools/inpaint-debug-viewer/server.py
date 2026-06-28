@@ -23,6 +23,7 @@ import urllib.request
 import json
 
 import cci_inpaint
+import text_render
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "app" / "src" / "main" / "assets" / "models"
@@ -43,6 +44,21 @@ MIN_DB_AREA = 16
 # the old global page median that kept free text "stuck on white".
 FREE_RING = 8           # annulus half-width (px) sampled for the local bg color
 FREE_TEXT_FEATHER = 3   # light bleed-free feather radius for free text
+
+# Vertical-CJK source languages — direction is "TTB" for tall boxes in these
+# (mirrors RoiPageRecognitionEngine.kt:308-310,403 isVerticalLanguage rule).
+VERTICAL_LANGS = {"japanese", "chinese", "chinese simplified", "chinese traditional", "korean"}
+
+# Inpaint-stage Paddle refine constants — Android AOTInpainting.kt:37-40 re-runs
+# Paddle DET on free-text boxes during INPAINT (separate from the detect stage)
+# to recover the true line boxes for the erase mask. Detect-stage boxes used the
+# detect thresh above; the inpaint stage uses these (AOTInpainting.kt:38-40).
+PADDLE_INPAINT_THRESH = 0.18
+PADDLE_INPAINT_BOX_THRESH = 0.34
+PADDLE_INPAINT_CROP_PAD = 12
+FREE_TEXT_REFINE_PAD = 4
+# AOTInpainting.kt:47 — distance-field feather ramp (px) for the NEURAL blend.
+FEATHER_RAMP_PX = 12
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=Path(__file__).parent), name="static")
@@ -266,57 +282,12 @@ Format:
         return ["[Translation Failed]"] * len(texts)
 
 def render_translated_text(rgb: np.ndarray, boxes_with_translations: list[dict]) -> np.ndarray:
-    img = Image.fromarray(rgb)
-    draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.truetype("arial.ttf", 24)
-    except IOError:
-        font = ImageFont.load_default()
-    for item in boxes_with_translations:
-        translation = item.get("translation", "")
-        if not translation or translation == "[Translation Failed]":
-            continue
-        x1, y1, x2, y2 = item["bbox"]
-        
-        # Color Estimation
-        box_rgb = rgb[max(0, y1):max(0, y2), max(0, x1):max(0, x2)]
-        if box_rgb.size > 0:
-            gray = np.dot(box_rgb[..., :3], [0.299, 0.587, 0.114])
-            mean_lum = np.mean(gray)
-            is_light = mean_lum > 128
-        else:
-            is_light = True
-            
-        text_fill = (0, 0, 0) if is_light else (255, 255, 255)
-        stroke_fill = (255, 255, 255) if is_light else (0, 0, 0)
-
-        words = translation.split()
-        lines = []
-        current_line = ""
-        box_w = x2 - x1
-        for word in words:
-            test_line = current_line + word + " "
-            bbox = font.getbbox(test_line) if hasattr(font, "getbbox") else font.getmask(test_line).getbbox()
-            text_w = bbox[2] - bbox[0] if bbox else 0
-            if text_w <= box_w or not current_line:
-                current_line = test_line
-            else:
-                lines.append(current_line.strip())
-                current_line = word + " "
-        if current_line:
-            lines.append(current_line.strip())
-        total_h = len(lines) * 28
-        start_y = y1 + ((y2 - y1) - total_h) / 2
-        for line in lines:
-            bbox = font.getbbox(line) if hasattr(font, "getbbox") else font.getmask(line).getbbox()
-            text_w = bbox[2] - bbox[0] if bbox else 0
-            line_x = x1 + (box_w - text_w) / 2
-            for dx in [-1, 0, 1]:
-                for dy in [-1, 0, 1]:
-                    draw.text((line_x + dx, start_y + dy), line, font=font, fill=stroke_fill)
-            draw.text((line_x, start_y), line, font=font, fill=text_fill)
-            start_y += 28
-    return np.array(img)
+    # DEPRECATED stub retained only so older callers that imported it keep
+    # working. The faithful render now lives in text_render.render_page and is
+    # served by POST /api/render (Phase 0 render parity).
+    raise NotImplementedError(
+        "render_translated_text was replaced by text_render.render_page (/api/render)"
+    )
 
 
 def get_aot() -> ort.InferenceSession:
@@ -568,12 +539,42 @@ async def api_inpaint(
 
     # ── Coherent branch ──────────────────────────────────────────
     if algo == "coherent":
+        # Phase 0 inpaint parity: Android re-refines FREE-text (label 2) boxes
+        # through Paddle DET at the inpaint thresholds (AOTInpainting.kt:247-254,
+        # 392-447), separate from the detect stage. Parented (label 0/1) boxes
+        # keep their detect-stage paddle lines (Android fillContained consumes
+        # the OCR-stage group boxes). Rebuild the free-text mask items from the
+        # refined line boxes so the sandbox's erase mask matches the device.
+        parented_items = [it for it in mask_items if int(it.get("parent_label", -1)) != 2]
+        free_dets = [d for d in text_dets if int(d.get("label", -1)) == 2]
+        paddle_lines_total = 0
+        paddle_fallback = 0
+        if free_dets:
+            refined_free, paddle_lines_total, paddle_fallback = refine_free_text_boxes(
+                rgb, [d["bbox"] for d in free_dets],
+            )
+            free_items = [
+                {
+                    "bbox": b,
+                    "parent": b,
+                    "parent_label": 2,
+                    "parent_class": "text_free",
+                    "source": "inpaint_paddle_refine",
+                }
+                for b in refined_free
+            ]
+        else:
+            free_items = []
+        mask_items = parented_items + free_items
+
         clusters = build_inpaint_clusters(mask_items, width, height)
         opts = cci_inpaint.CCIOptions()
         if not tiny_expand:
             opts.free_min_side = 0
             opts.free_long_floor = 0
         opts.poisson_iters = poisson_iters
+        # Android neural blend feather ramp (AOTInpainting.kt:47 FEATHER_RAMP_PX).
+        opts.feather_ramp = FEATHER_RAMP_PX
         quality_path = (mode.lower() == "quality")
         aot_fn = make_coherent_aot_fn(gray_fill_thresh) if quality_path else None
 
@@ -623,10 +624,45 @@ async def api_inpaint(
                 "method_counts": method_counts,
                 "uniform_rejected": uniform_rejected,
                 "blend_counts": blend_counts,
+                "paddle_refine": {
+                    "free_dets": len(free_dets),
+                    "paddle_lines": paddle_lines_total,
+                    "fallback": paddle_fallback,
+                    "thresh": PADDLE_INPAINT_THRESH,
+                    "box_thresh": PADDLE_INPAINT_BOX_THRESH,
+                    "crop_pad": PADDLE_INPAINT_CROP_PAD,
+                    "refine_pad": FREE_TEXT_REFINE_PAD,
+                },
+                "feather_ramp_px": opts.feather_ramp,
             },
         }
 
     # ── Legacy branch ────────────────────────────────────────────
+    # Android FAST/legacy free-text also consumes Paddle-refined line boxes
+    # (AOTInpainting.kt:247-254, 325-365; LegacyFreeTextInpainter.kt). The
+    # sandbox LEGACY path is the visually closest path to Android in practice,
+    # so apply the same inpaint-stage refine here too instead of relying on the
+    # earlier detect-stage boxes.
+    parented_items = [it for it in mask_items if int(it.get("parent_label", -1)) != 2]
+    free_dets = [d for d in text_dets if int(d.get("label", -1)) == 2]
+    paddle_lines_total = 0
+    paddle_fallback = 0
+    if free_dets:
+        refined_free, paddle_lines_total, paddle_fallback = refine_free_text_boxes(
+            rgb, [d["bbox"] for d in free_dets],
+        )
+        refined_free_items = [
+            {
+                "bbox": b,
+                "parent": b,
+                "parent_label": 2,
+                "parent_class": "text_free",
+                "source": "inpaint_paddle_refine",
+            }
+            for b in refined_free
+        ]
+        mask_items = parented_items + refined_free_items
+
     bubble_items = [i for i in mask_items if int(i.get("parent_label", -1)) in (0, 1)]
     free_items = [i for i in mask_items if int(i.get("parent_label", -1)) == 2]
 
@@ -639,23 +675,17 @@ async def api_inpaint(
     # 1. Cheap/fast inpaint for bubbles using OpenCV Telea FMM or pil_inpaint_bubble
     inpaint, _ = inpaint_image(rgb, bubble_mask, lowres_scale / 100.0, smooth_passes, feather, "bubble_fast", gray_fill_thresh)
     
-    # 2. Quality mode uses AOT model for free text, while FAST mode uses stroke-level Telea
-    free_method = "aot" if mode.lower() == "quality" else "stroke_fast"
-    
+    # 2. LEGACY free text always uses the validated local-ring + push-pull path.
+    # Keep AOT experimentation in the coherent branch; the Android import now
+    # routes all label-2 free text through LegacyFreeTextInpainter.
     free_mask_visual = np.zeros((height, width), dtype=np.uint8)
-    
-    if free_method == "aot":
-        for item in free_items:
-            single_mask = build_rect_mask([item["bbox"]], width, height, mask_pad)
-            inpaint, last_crop = inpaint_image(inpaint, single_mask, lowres_scale / 100.0, smooth_passes, feather, "aot", gray_fill_thresh)
-            free_mask_visual = np.maximum(free_mask_visual, single_mask)
-    else:
-        for item in free_items:
-            inpaint, single_mask = inpaint_free_text(
-                inpaint, item["bbox"], pad=mask_pad,
-                feather_radius=FREE_TEXT_FEATHER, tiny_expand=True,
-            )
-            free_mask_visual = np.maximum(free_mask_visual, single_mask)
+
+    for item in free_items:
+        inpaint, single_mask = inpaint_free_text(
+            inpaint, item["bbox"], pad=mask_pad,
+            feather_radius=FREE_TEXT_FEATHER, tiny_expand=True,
+        )
+        free_mask_visual = np.maximum(free_mask_visual, single_mask)
             
     mask = np.maximum(bubble_mask, free_mask_visual)
     t1 = time.perf_counter()
@@ -665,7 +695,19 @@ async def api_inpaint(
         "inpaint_png": png_data_url(inpaint),
         "timings_ms": {
             "inpaint": round((t1 - t0) * 1000, 1)
-        }
+        },
+        "algo": "legacy",
+        "diagnostics": {
+            "paddle_refine": {
+                "free_dets": len(free_dets),
+                "paddle_lines": paddle_lines_total,
+                "fallback": paddle_fallback,
+                "thresh": PADDLE_INPAINT_THRESH,
+                "box_thresh": PADDLE_INPAINT_BOX_THRESH,
+                "crop_pad": PADDLE_INPAINT_CROP_PAD,
+                "refine_pad": FREE_TEXT_REFINE_PAD,
+            },
+        },
     }
 
 
@@ -681,16 +723,18 @@ async def api_translate(
     to_lang: str = Form("English"),
 ) -> dict:
     t0 = time.perf_counter()
-    
-    raw = await inpaint_image.read()
-    pil = Image.open(io.BytesIO(raw)).convert("RGB")
-    inpaint = np.array(pil)
-    
+
+    # inpaint_image is still accepted so the existing pipeline shape is
+    # unchanged, but Phase 0 moves the actual rendering to /api/render
+    # (faithful parity). The bytes are read + discarded here; translation is
+    # text-only.
+    await inpaint_image.read()
+
     ocr_texts = json.loads(ocr_texts_json)
     det_list = json.loads(det_list_json)
-    
+
     translations_to_render = []
-    
+
     if ocr_texts:
         translated_texts = translate_batch(
             ocr_texts, lm_url, lm_model,
@@ -700,26 +744,88 @@ async def api_translate(
             translations_to_render.append({
                 "bbox": det["bbox"],
                 "ocr_text": ocr_texts[i],
-                "translation": translated_texts[i]
+                "translation": translated_texts[i],
             })
-            
+
     t1 = time.perf_counter()
-    
-    rendered_image = render_translated_text(inpaint, translations_to_render)
-    t2 = time.perf_counter()
-    
+
     return {
         "translations": translations_to_render,
-        "rendered_png": png_data_url(rendered_image),
         "debug": {
             "ocr_count": len(ocr_texts),
             "translated_count": len(translations_to_render),
-            "lm_url": lm_url
+            "lm_url": lm_url,
         },
         "timings_ms": {
             "translation": round((t1 - t0) * 1000, 1),
-            "rendering": round((t2 - t1) * 1000, 1)
-        }
+        },
+    }
+
+
+@app.post("/api/render")
+async def api_render(
+    image: UploadFile = File(...),
+    detections_json: str = Form("[]"),
+    det_list_json: str = Form("[]"),
+    translations_json: str = Form("[]"),
+    sample_size: int = Form(1),
+    from_lang: str = Form("Japanese"),
+) -> dict:
+    """Faithful render (Phase 0): parent selection -> text_render.render_page.
+
+    Reproduces the Android render (positions, sizes, wrapping, direction) given
+    the same detections + translations. Returns the rendered PNG plus per-block
+    diagnostics (Task 0.4 contract).
+    """
+    t0 = time.perf_counter()
+    raw = await image.read()
+    pil = Image.open(io.BytesIO(raw)).convert("RGB")
+    rgb = np.array(pil)
+
+    detections = json.loads(detections_json)
+    det_list = json.loads(det_list_json)
+    translations = json.loads(translations_json)
+
+    bubbles = [d for d in detections if int(d.get("label", -1)) == 0]
+    is_vert_lang = from_lang.strip().lower() in VERTICAL_LANGS
+
+    blocks = []
+    for det, tr_item in zip(det_list, translations):
+        bbox = tr_item.get("bbox") or det.get("bbox")
+        if not bbox or len(bbox) < 4:
+            continue
+        translation = tr_item.get("translation", "")
+        if not translation:
+            continue
+        bw = float(bbox[2] - bbox[0])
+        bh = float(bbox[3] - bbox[1])
+        cx = (bbox[0] + bbox[2]) / 2.0
+        cy = (bbox[1] + bbox[3]) / 2.0
+        parent = text_render.select_parent_bubble(bbox, bubbles, cx, cy)
+        direction = "TTB" if (is_vert_lang and bh > bw * 1.2) else "LTR"
+        pbbox = parent["bbox"] if parent else None
+        blocks.append(text_render.Block(
+            translation=translation,
+            width=bw, height=bh, x=float(bbox[0]), y=float(bbox[1]),
+            label=int(det.get("label", 1)),
+            score=float(det.get("score", 1.0)),
+            direction=direction,
+            parent_x=float(pbbox[0]) if pbbox else 0.0,
+            parent_y=float(pbbox[1]) if pbbox else 0.0,
+            parent_width=float(pbbox[2] - pbbox[0]) if pbbox else 0.0,
+            parent_height=float(pbbox[3] - pbbox[1]) if pbbox else 0.0,
+        ))
+
+    opts = text_render.RenderOptions(sample_size=sample_size)
+    rendered, diagnostics = text_render.render_page(rgb, blocks, sample_size, opts)
+    t1 = time.perf_counter()
+
+    return {
+        "rendered_png": png_data_url(rendered),
+        "diagnostics": diagnostics,
+        "timings_ms": {
+            "render": round((t1 - t0) * 1000, 1),
+        },
     }
 
 
@@ -1328,6 +1434,57 @@ def clamp_box(box: list[int], width: int, height: int) -> list[int]:
     x2 = max(0, min(width, int(box[2])))
     y2 = max(0, min(height, int(box[3])))
     return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
+
+
+def refine_free_text_boxes(
+    rgb: np.ndarray,
+    detector_boxes: list[list[int]],
+    thresh: float = PADDLE_INPAINT_THRESH,
+    box_thresh: float = PADDLE_INPAINT_BOX_THRESH,
+    crop_pad: int = PADDLE_INPAINT_CROP_PAD,
+) -> tuple[list[list[int]], int, int]:
+    """Mirrors ``AOTInpainting.refineFreeTextBoxes`` (AOTInpainting.kt:392-447).
+
+    For every detector-v4 free-text box, crop the page with ``crop_pad`` of
+    context, run Paddle DET at the inpaint thresholds, and back-project the
+    returned line boxes to page coords (crop origin + line bbox, clamped). A
+    small free-text-only guard pad is applied after back-projection so tight
+    Paddle boxes erase glyph tails/diacritics. When Paddle returns 0 lines for a
+    region, that region falls back to its detector-v4 box (counted in the
+    fallback count) so a missed region is still erased. Returns
+    ``(refined_boxes, paddle_line_count, fallback_count)``.
+    """
+    h, w = rgb.shape[:2]
+    refined: list[list[int]] = []
+    paddle_line_count = 0
+    fallback_count = 0
+    for det in detector_boxes:
+        cx1 = max(0, det[0] - crop_pad)
+        cy1 = max(0, det[1] - crop_pad)
+        cx2 = min(w, det[2] + crop_pad)
+        cy2 = min(h, det[3] + crop_pad)
+        if cx2 <= cx1 or cy2 <= cy1:
+            refined.append(list(det))
+            fallback_count += 1
+            continue
+        crop = rgb[cy1:cy2, cx1:cx2]
+        lines = detect_paddle_lines(crop, thresh=thresh, box_thresh=box_thresh)
+        if not lines:
+            refined.append(list(det))
+            fallback_count += 1
+            continue
+        for line in lines:
+            lx1, ly1, lx2, ly2 = line.bbox
+            full = clamp_box([
+                cx1 + lx1 - FREE_TEXT_REFINE_PAD,
+                cy1 + ly1 - FREE_TEXT_REFINE_PAD,
+                cx1 + lx2 + FREE_TEXT_REFINE_PAD,
+                cy1 + ly2 + FREE_TEXT_REFINE_PAD,
+            ], w, h)
+            if full[2] > full[0] and full[3] > full[1]:
+                refined.append(full)
+                paddle_line_count += 1
+    return refined, paddle_line_count, fallback_count
 
 
 def build_inpaint_clusters(mask_items, page_w, page_h, cluster_distance=100):

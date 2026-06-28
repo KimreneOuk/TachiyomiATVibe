@@ -76,7 +76,7 @@ object PageInpaintingPlanner {
      * at inpaint time) is what makes the mask survive translation-stage block
      * removal and process death.
      *
-     * Render-aware erase (contract #14a preserved): the mask is built only from
+     * Render-aware erase (contract #14a variant): the mask is built only from
      * blocks whose OCR text was READ (non-blank). An unread region — low-conf-
      * blanked or organically-empty OCR — contributes NEITHER its text box nor
      * its bubble box, so its ORIGINAL pixels stay visible instead of being

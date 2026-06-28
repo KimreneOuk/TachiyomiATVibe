@@ -39,6 +39,12 @@ class AOTInpainting {
         private const val PADDLE_BOX_THRESH = 0.34f
         private const val MASK_PAD = 8
 
+        // Free-text-only guard band for tight Paddle DET line boxes. This catches
+        // hairline glyph tails/diacritics outside the DB box without dilating
+        // parented speech-bubble text, where extra mask growth can damage bubble
+        // borders and nearby art.
+        private const val FREE_TEXT_REFINE_PAD = 4
+
         // TachiyomiAT: width (px) of the distance-field feather ramp used to
         // blend the neural output with the original page. A smooth ramp here
         // replaces the earlier 2–6px box-blur cliff that exposed the erase-box
@@ -233,8 +239,9 @@ class AOTInpainting {
             }
         }
 
-        // TachiyomiAT: boundary-aware tiered pipeline — replaces cleanBubbleGroupFmm,
-        // cleanRegions, and fillSolidBoxes for both modes. Each cluster is processed
+        // TachiyomiAT: boundary-aware tiered pipeline — primary path, with retained
+        // fallbacks (cleanBubbleGroupFmm, cleanRegions, fillSolidBoxes) for each
+        // cluster on failure. Each cluster is processed
         // through containment (flood of the true flat interior) → tier classification
         // (FLAT / TEXTURED / COLOR) → tier-appropriate fill (flat fill for T0, Telea
         // with exterior paintout for FAST T1/T2, AOT with containment clip for QUALITY
@@ -321,49 +328,12 @@ class AOTInpainting {
             }
         }
 
-        // Free-text FLAT + SMALL boxes → legacy push-pull + local color (per box).
-        // This is the validated "legacy" free-text path (local ring-median color
-        // + push-pull gradient + bleed-free feather), ported from the Python
-        // prototype. Replaces the prior fillContained/Telea route for these.
-        result = inpaintFreeTextLegacy(result, freeFlatBoxes + freeSmallBoxes)
-
-        // Free-text NEURAL boxes → QUALITY: containment-clipped AOT; FAST: fillContained
-        if (freeNeuralBoxes.isNotEmpty()) {
-            if (mode == InpaintingMode.QUALITY && sess != null) {
-                val clusters = clusterNearbyBoxes(freeNeuralBoxes, clusterDistance = 100)
-                logcat(LogPriority.INFO) {
-                    "[inpaint] clustering ${freeNeuralBoxes.size} neural boxes into ${clusters.size} clusters"
-                }
-                for (cluster in clusters) {
-                    try {
-                        val next = inpaintFreeRegions(sess, result, cluster, regionPad)
-                        if (next !== result) {
-                            if (result !== image) result.recycle()
-                            result = next
-                        }
-                    } catch (oom: OutOfMemoryError) {
-                        BitmapPool.releaseAll()
-                        System.gc()
-                        logcat(LogPriority.WARN) {
-                            "[inpaint] OOM on neural cluster (${cluster.size} boxes), falling back to fillContained"
-                        }
-                        try {
-                            val bx1 = cluster.minOf { it[0] }
-                            val by1 = cluster.minOf { it[1] }
-                            val bx2 = cluster.maxOf { it[2] }
-                            val by2 = cluster.maxOf { it[3] }
-                            result = bubbleCleaner.fillContained(result, bx1, by1, bx2, by2, null, cluster)
-                        } catch (_: Exception) {
-                            result = bubbleCleaner.fillSolidBoxes(result, cluster, MASK_PAD)
-                        }
-                    }
-                }
-            } else {
-                // FAST fallthrough for free neural boxes → legacy push-pull + local
-                // color (per box). Keeps QUALITY+AOT above untouched.
-                result = inpaintFreeTextLegacy(result, freeNeuralBoxes)
-            }
-        }
+        // Free text (all label-2 boxes after Paddle refinement) → validated
+        // legacy push-pull + local ring color (per box). This matches the
+        // sandbox LEGACY path that preserves manga textures better than neural
+        // AOT on SFX / background text. Keep neural AOT for non-free-text paths;
+        // do not apply this policy to parented speech-bubble text.
+        result = inpaintFreeTextLegacy(result, freeFlatBoxes + freeSmallBoxes + freeNeuralBoxes)
 
         return result
     }
@@ -380,9 +350,10 @@ class AOTInpainting {
      * region, that region falls back to its detector-v4 box (counted in
      * [RefinedFreeText.fallbackCount]) so a missed region is still erased.
      *
-     * Boring and direct: Paddle box → pad (applied later in the mask builder).
-     * The back-projection is plain integer arithmetic matching the prototype's
-     * `clamp_box([x1 + lx1, y1 + ly1, x1 + lx2, y1 + ly2], width, height)`.
+     * Boring and direct: Paddle box → free-text-only guard pad → mask pad
+     * (applied later in the mask builder). The back-projection is plain integer
+     * arithmetic matching the prototype's clamp-box guard while allowing a small
+     * tail/diacritic margin for tight Paddle DB boxes.
      *
      * Each crop is created + recycled in-place to bound heap (no cross-call
      * retention). Paddle det failures are logged and treated as "0 lines" →
@@ -432,10 +403,10 @@ class AOTInpainting {
                 if (b.size < 4) continue
                 // Back-project: crop-local → page coords. Clamp to the page and
                 // drop zero-area boxes (matches the prototype's clamp_box guard).
-                val px1 = (cx1 + b[0]).coerceIn(0, w)
-                val py1 = (cy1 + b[1]).coerceIn(0, h)
-                val px2 = (cx1 + b[2]).coerceIn(0, w)
-                val py2 = (cy1 + b[3]).coerceIn(0, h)
+                val px1 = (cx1 + b[0] - FREE_TEXT_REFINE_PAD).coerceIn(0, w)
+                val py1 = (cy1 + b[1] - FREE_TEXT_REFINE_PAD).coerceIn(0, h)
+                val px2 = (cx1 + b[2] + FREE_TEXT_REFINE_PAD).coerceIn(0, w)
+                val py2 = (cy1 + b[3] + FREE_TEXT_REFINE_PAD).coerceIn(0, h)
                 if (px2 > px1 && py2 > py1) {
                     refined.add(intArrayOf(px1, py1, px2, py2))
                     paddleLineCount++

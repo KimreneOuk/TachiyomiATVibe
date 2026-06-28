@@ -169,6 +169,16 @@ class TranslationManager(
     val queueState
         get() = translator.queueState
 
+    val isAnyBatchTranslationActive: Boolean
+        get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
+
+    fun stopReaderTranslations(reason: String) {
+        cancelAllPageTranslations(cancelBatchQueue = false)
+        if (!isAnyBatchTranslationActive) {
+            translatorStop(reason, closeEngines = false)
+        }
+    }
+
     fun translatorStart() = translator.start()
     fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 

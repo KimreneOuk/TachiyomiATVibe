@@ -18,15 +18,21 @@ import eu.kanade.translation.model.shouldSkipAutoScheduling
  * are widely imported across the reader, page loaders, and stores. Moving them
  * would churn many files for little gain, so they stay where they are.
  *
- * This object instead provides a single named surface — consumed by
- * [TranslationScheduler] — that encodes the "should this page be scheduled vs.
- * skipped" decision in one place (the table described by the refactor plan):
+ * This object instead provides a single named surface that encodes the "should
+ * this page be scheduled vs. skipped" decision in one place (the table described
+ * by the refactor plan):
  *
  * ```
  * Done / Textless / Failed(exhausted)  -> skip
  * Running                              -> skip
  * Pending / Cancelled / NeedsRender    -> schedule
  * ```
+ *
+ * Currently test-only ([TranslationLifecyclePolicyTest]) and not directly wired
+ * into [TranslationScheduler]; the scheduler still uses the inline
+ * `shouldSkipAutoScheduling` checks in [TranslationManager]. This object exists
+ * so the decision table is unit-testable independently — wiring it into the
+ * scheduler is future work.
  *
  * Keeping it as a stateless object (no Android, no coroutines) means the
  * decision table is unit-testable in isolation — see

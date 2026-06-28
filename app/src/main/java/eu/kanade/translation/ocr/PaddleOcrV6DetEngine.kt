@@ -40,7 +40,7 @@ import kotlin.math.roundToInt
  *
  * The preprocess/postprocess contract mirrors `inference.yml` of
  * `PaddlePaddle/PP-OCRv6_small_det_onnx`:
- *  - PreProcess: BGR, resize longer side to 736 keeping aspect ratio, pad to
+ *  - PreProcess: RGB planes, resize longer side to 736 keeping aspect ratio, pad to
  *    736x736, ImageNet mean/std normalize, CHW.
  *  - PostProcess: DBPostProcess (thresh=0.2, box_thresh=0.45, no unclip).
  *
@@ -255,8 +255,11 @@ class PaddleOcrV6DetEngine : Closeable {
     }
 
     /**
-     * ImageNet normalize per channel — same constants as PP-OCRv6 det
-     * `inference.yml` NormalizeImage (mean/std), applied in BGR plane order.
+     * ImageNet normalize per channel. The constants follow `inference.yml`'s
+     * per-channel naming (B for blue, G for green, R for red; the doc convention
+     * in Paddle's BGR-loaded pipeline). Each is applied to the correct pixel
+     * component regardless of naming. The tensor plane order is RGB (see
+     * [preprocess]).
      */
     private fun normalizeB(v: Int) = (v / 255f - MEAN_B) / STD_B
     private fun normalizeG(v: Int) = (v / 255f - MEAN_G) / STD_G

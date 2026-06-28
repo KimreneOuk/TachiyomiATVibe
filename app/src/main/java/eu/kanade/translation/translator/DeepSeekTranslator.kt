@@ -34,16 +34,17 @@ class DeepSeekTranslator(
         .build()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-        translateInternal(pages, rollingContext = "", outputTokenLimit = maxOutputToken)
+        translateInternal(pages, rollingContext = "", glossary = "", outputTokenLimit = maxOutputToken)
     }
 
     override suspend fun translateContextual(chunk: TranslationContextChunk) {
-        translateInternal(chunk.pages, chunk.rollingContext, chunk.maxOutputTokens)
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.glossary, chunk.maxOutputTokens)
     }
 
     private suspend fun translateInternal(
         pages: MutableMap<String, PageTranslation>,
         rollingContext: String,
+        glossary: String,
         outputTokenLimit: Int,
     ) {
         if (apiKey.isBlank()) {
@@ -63,30 +64,12 @@ class DeepSeekTranslator(
         if (flatBlocks.isEmpty()) return
 
         try {
-            val textBlocksStr = flatBlocks.mapIndexed { index, (_, text) ->
-                "[$index] $text"
+            val textBlocksStr = flatBlocks.mapIndexed { index, (block, _) ->
+                TranslationPrompts.numberedSourceLine(index, block)
             }.joinToString("\n")
-            val contextPrefix = if (rollingContext.isBlank()) {
-                ""
-            } else {
-                "Previous concise context/glossary/recent pairs:\n$rollingContext\n\n"
-            }
+            val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, glossary)
 
-            val systemPrompt = """
-                You are an expert manga/comic translator and localization specialist. Translate the following list of sequential text blocks from ${fromLang.label} to ${toLang.label}.
-
-                CRITICAL GUIDELINES:
-                1. READING ORDER: The sequential blocks are loosely ordered based on physical coordinates (Top-to-Bottom, then Left-to-Right or Right-to-Left depending on the format). However, complex comic panel layouts mean this numbering is just a nudge. Use your narrative judgment to connect dialogue logically across adjacent speech bubbles if the numbered sequence seems slightly out of order.
-                2. HONORIFICS: Honorifics (-san, -kun, -chan, -sama, -senpai, etc.) are highly expressive of character relationships. Preserve them natively (e.g., 'Taro-kun') if the tone is character-driven/anime-style, or translate them to natural relational equivalents (like 'Mr.', 'Sir', or dropping them) if a more conventional western localization is appropriate for the dialogue.
-                3. BUBBLE SIZE & CONCISENESS: Manga speech bubbles have very limited space. Keep your translations highly concise, punchy, and natural. Avoid wordy phrasing. The length of the translated text should roughly match the original block size.
-                4. STYLE & TONE: Adapt register, slang, and dialect to fit character personalities. For sound effects (SFX) / onomatopoeia, provide standard comic-styled english/localized equivalents (e.g., 'Gasp', 'Thud', *rumble*).
-                5. NO EXTRA TEXT: Your output MUST contain only the translations in the exact numbered format below, one block per line. Do not include explanations, notes, or preambles.
-                6. OCR ARTIFACTS: The source text comes from OCR and may contain misread glyphs such as "N0", "N°", "Nº", "№", or "Ｎ０". These are NOT meaningful — they are scanner misreads of Japanese characters like の. Do NOT preserve or translate them literally. Simply omit them and translate the intended meaning naturally.
-                7. SCRIPT FIDELITY: If the target language is English or any Latin-script language, do NOT output Japanese/Chinese/Korean characters. Localize sound-effect parentheses like (笑) to "lol", "(laugh)", or an equivalent in the target language.
-
-                Format:
-                [index] translation
-            """.trimIndent()
+            val systemPrompt = TranslationPrompts.numberedSystemPrompt(fromLang, toLang)
 
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val jsonObject = buildJsonObject {

@@ -170,14 +170,17 @@ own (unreachable-while-stuck) `finally`, or the page is silently blacklisted
 for the rest of the process. `closeEngines()` also clears `inFlightPageKeys`.
 
 ### 4. OOM recovery frees native, not just Java, memory
-`recoverHeapAfterOnnxPressure` calls `recognitionEngine.reclaimPooledMemory()`
-in addition to `BitmapPool.releaseAll()` + `System.gc()`. The ONNX direct
-KV-cache buffers and the inpainter's retained working arrays are off-heap and
+`reclaimTranslationMemory` calls `recognitionEngine.forceReleaseNativeBuffers()`
+in addition to `BitmapPool.releaseAll()` + Coil memory-cache trim + `System.gc()`.
+The ONNX direct KV-cache buffers and the inpainter's retained working arrays are off-heap and
 survive a Java GC; without reclaiming them the pressure that OOM'd page N
 persists into page N+1 and the OOM recurs (the chronic-OOM feedback loop).
-Engines expose `reclaimPooledMemory()` on `PageRecognitionEngine` /
-`RoiOcrEngine` (no-op default); `MangaOcrEngine` overrides this to clear its
-off-heap `kCachePool` and `vCachePool` buffers.
+Engines expose `forceReleaseNativeBuffers()` on every sub-engine that holds
+pooled native state; `MangaOcrEngine` clears its off-heap `kCachePool`,
+`vCachePool`, and `inputPixelPool` buffers via `forceReleaseNativeBuffers()`.
+`reclaimPooledMemory()` (the per-page cooperative release) is intentionally a
+no-op for most engines because buffers are returned to pools in each `recognize`
+`finally` block; only engines with cross-call retained state override it.
 
 ### 5. Neural-inpaint downgrade is visible
 `AOTInpainting` logs the `canRunNeuralInpaint()` fallback to flat bubble-fill at
@@ -207,7 +210,7 @@ To prevent massive text bubbles from permanently hoarding heap memory, `SmartBub
 Uncaught errors (such as `java.lang.OutOfMemoryError`, which is a `java.lang.Error` rather than a `java.lang.Exception`) must never escape the page translation pipeline without updating the store status. Catching `Throwable` in `translateSinglePage` and `translateSinglePageFromStream` and recording a `FAILED` page state (along with the error type/message) to the store prevents pages from getting stuck in a permanent `RUNNING` status. In the reader UI, a `RUNNING` status disables the "translate" icon and shows a cancel button; marking the page `FAILED` immediately restores the "translate" button to allow user manual retry.
 
 ### 10. Memory relief after every page translation
-Calling `recognitionEngine.reclaimPooledMemory()` in the cleanup `finally` blocks of the single-page path ensures that off-heap direct float buffers (KV-cache pools for MangaOcr) and working arrays (for SmartBubbleTextCleaner) are freed immediately after each page translation completes or fails. The single-page path is split into an ONNX phase (`translateSinglePageOnnx`, under the permit) and a permit-free HTTP+render phase (`translateSinglePageHttpRender` — see contract #18); `reclaimPooledMemory()` runs in both so it fires on every exit regardless of which phase the page reached. This maintains a flat memory footprint and prevents progressive memory pressure accumulation across large chapters (25+ pages).
+Calling `recognitionEngine.reclaimPooledMemory()` in the cleanup `finally` blocks of the single-page path ensures that off-heap direct float buffers (KV-cache pools for MangaOcr) and working arrays (for SmartBubbleTextCleaner) are freed immediately after each page translation completes or fails. (`reclaimPooledMemory()` is a no-op for MangaOcrEngine — its KV-cache buffers are returned to the pool in each `recognize` `finally` block; the stronger `forceReleaseNativeBuffers()` is reserved for OOM recovery where the pools themselves must be drained.) The single-page path is split into an ONNX phase (`translateSinglePageOnnx`, under the permit) and a permit-free HTTP+render phase (`translateSinglePageHttpRender` — see contract #18); `reclaimPooledMemory()` runs in both so it fires on every exit regardless of which phase the page reached. This maintains a flat memory footprint and prevents progressive memory pressure accumulation across large chapters (25+ pages).
 
 Reader memory is bounded by `ReaderPageWarmWindow`, whose radius is mode-aware
 (`ReaderPageWarmWindow.radiusFor(mode)`): 2 for pager modes, 4 for the fast-scrolling
@@ -434,7 +437,9 @@ Chinese), `TextTranslatorLanguage.fromPref` (was → English),
 `StandardTranslatorKind.fromPref` (was → ML Kit). `MLKitTranslator.translate`
 throws `IllegalStateException` when closed/unavailable (was: silent skip leaving
 all blocks blank). `PageInpaintingEngine` throws when QUALITY mode is requested
-but the neural inpainter isn't initialized (was: silent downgrade to FAST). The
+but the neural inpainter isn't initialized (was: silent downgrade to FAST), unless
+the user has explicitly enabled the `translation_inpaint_quality_fallback`
+preference, which admits QUALITY→FAST with a WARN log. The
 pipeline's `init{}` builds engines defensively so a config error at startup
 defers to the first translate attempt instead of crashing app launch; the
 translate entry points' try/catch surfaces the error as a FAILED page with a
@@ -519,9 +524,8 @@ to its detector-v4 box (counted in the `[inpaint] paddle_boxes` diagnostics log
 alongside detectorText / paddleLines / fallback / finalMaskBoxes). The same
 Paddle-box mask is the erase target for BOTH paths: the neural (AOT/QUALITY)
 path (`inpaintFreeRegions` → `buildRectMask`) and the FAST path
-(`SmartBubbleTextCleaner.fillSolidBoxes` — for each box `fillSolidRegion` calls
-**`FastMarchingMethod.inpaintTelea`** (Telea Fast Marching Method, radius 3),
-matching the prototype's `free_method = "telea"` / `cv2.inpaint(INPAINT_TELEA)`).
+(`LegacyFreeTextInpainter` / `PushPullGradient`, with
+`fillSolidBoxes`/Telea as a fallback on error — see contract #16j).
 
 `cleanRegions` is the null-`paddleDet` legacy fallback (detector-v4 boxes +
 pixel heuristics), so a device without the det asset still erases free text.
@@ -939,7 +943,7 @@ covered by `NumberedLineResponseParserTest`.
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
 | `rendering/PageTextRendererDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
 | `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard) |
-| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + inpaintTelea (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
+| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + `FastMarchingMethod.inpaintTelea` (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
 | `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
 | `model/InpaintMaskSerializationTest` | inpaintMaskBoxes round-trips through JSON; InpaintMaskBox.toIntArray; hasCurrentInpaintMask (current / pre-fix-empty / textless) |
 | `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped + attemptCount charged once via recordAttemptFailure) + reason |

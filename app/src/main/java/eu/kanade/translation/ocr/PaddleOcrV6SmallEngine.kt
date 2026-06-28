@@ -138,22 +138,8 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         val safeHeight = crop.height.coerceAtLeast(1)
         // TachiyomiAT: match the reference PP-OCR pipeline (e.g. comic-translate's
         // ppocr module). Three corrections vs. the original implementation, all of
-        // which are needed for vertical manga text to be recognized:
-        //
-        // 1. PAD TO A MINIMUM WIDTH OF 320 (the model's training shape), not to a
-        //    tiny 16/32px alignment boundary. The reference uses rec_img_shape
-        //    (3, 48, 320) and pads every crop up to at least 320 wide. Padding to
-        //    only 16-32px starved the model of pixels per character, which is why
-        //    every narrow/rotated crop returned "" or single junk chars.
-        //
-        // 2. PAD WITH THE NORMALIZATION MEAN (gray 128 -> normalized 0.0), NOT
-        //    white. The reference fills the pad region with np.zeros AFTER
-        //    normalizing (i.e. the mean). White (255 -> normalized 1.0) biases
-        //    the CTC decoder.
-        //
-        // 3. Scale the resized width PROPORTIONALLY to the fixed 48px height
-        //    (aspect-ratio preserving) and let padding fill the rest — the
-        //    original `.coerceIn(48, MAX)` destroyed aspect ratio.
+        // which improved horizontal manga text and are prerequisites for vertical
+        // column splitting (handled by RoiPageRecognitionEngine):
         val scaledWidth = ceil(safeWidth * (RECOGNITION_HEIGHT.toFloat() / safeHeight)).toInt()
             .coerceIn(1, MAX_RECOGNITION_WIDTH)
         val inputWidth = alignWidth(scaledWidth)

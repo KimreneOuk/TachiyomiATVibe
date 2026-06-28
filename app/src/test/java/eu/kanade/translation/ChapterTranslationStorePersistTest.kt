@@ -1,11 +1,16 @@
 package eu.kanade.translation
 
+import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.RenderQuality
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.shouldBe
+import io.mockk.every
+import io.mockk.mockk
+import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import java.io.File
 
 /**
  * Guards the persist-decision used by [ChapterTranslationStore.updatePage].
@@ -69,8 +74,6 @@ class ChapterTranslationStorePersistTest {
 
     @Test
     fun `failed page IS persisted`() {
-        // Retry-exhaustion bookkeeping (hasExhaustedRetries) must survive a
-        // reopen so the scheduler can skip permanently-failing pages.
         store.shouldPersistUpdate(
             previous = null,
             updated = PageTranslation(
@@ -113,8 +116,6 @@ class ChapterTranslationStorePersistTest {
 
     @Test
     fun `transition from rendered result to cleared IS persisted`() {
-        // A forced retry clears the rendered image; the reader must stop showing
-        // the stale one, so this transition must hit disk.
         val previousRendered = PageTranslation(
             renderedImageName = "001.rendered.png",
             renderQuality = RenderQuality.FULL,
@@ -129,8 +130,6 @@ class ChapterTranslationStorePersistTest {
 
     @Test
     fun `failed placeholder carries its error message onto disk`() {
-        // Confirms error messages attached to real failures still persist now
-        // that the standalone errorMessage rule was removed.
         val failed = PageTranslation(
             renderStatus = StageStatus.FAILED,
             errorMessage = "Could not save rendered image",
@@ -138,10 +137,138 @@ class ChapterTranslationStorePersistTest {
         store.shouldPersistUpdate(previous = null, updated = failed) shouldBe true
     }
 
+    // ── Phase 1A: Coalesced/debounced persistence ────────────────────────
+
+    @Test
+    fun `coalescedDurableUpdates_writeOnceAfterFlush`() = runTest {
+        val store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            initialPages = emptyMap(),
+        )
+
+        store.updatePage("p1") { PageTranslation(blocks = mutableListOf(block())) }
+        store.updatePage("p2") { PageTranslation(blocks = mutableListOf(block())) }
+        store.updatePage("p3") { PageTranslation(blocks = mutableListOf(block())) }
+
+        store.flush()
+
+        store.persistCount shouldBe 1
+    }
+
+    @Test
+    fun `flush_persistsLatestPageState`() = runTest {
+        val store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            initialPages = emptyMap(),
+        )
+
+        val blockV1 = block()
+        val blockV2 = block(text = "改", translation = "modified")
+
+        store.updatePage("p1") { PageTranslation(blocks = mutableListOf(blockV1)) }
+        store.updatePage("p1") { PageTranslation(blocks = mutableListOf(blockV2)) }
+
+        store.flush()
+
+        store.persistCount shouldBe 1
+        store.state.value["p1"]?.blocks shouldBe listOf(blockV2)
+    }
+
+    @Test
+    fun `open_afterFlush_restoresLatestState`() = runTest {
+        val tempDir = createTempDir()
+
+        try {
+            val targetFile = File(tempDir, "translation.json")
+            val tmpFile = File(tempDir, "translation.tmp")
+
+            val mockTemp = mockk<UniFile>()
+            every { mockTemp.openOutputStream() } answers { tmpFile.outputStream() }
+            every { mockTemp.openInputStream() } answers { tmpFile.inputStream() }
+            every { mockTemp.delete() } answers { tmpFile.delete(); true }
+            every { mockTemp.renameTo(any()) } answers {
+                targetFile.writeBytes(tmpFile.readBytes())
+                tmpFile.delete()
+                true
+            }
+
+            val mockParent = mockk<UniFile>()
+            every { mockParent.createFile("translation.tmp") } returns mockTemp
+            every { mockParent.findFile(any()) } returns null
+
+            val mockTarget = mockk<UniFile>()
+            every { mockTarget.parentFile } returns mockParent
+            every { mockTarget.name } returns "translation.json"
+            every { mockTarget.exists() } answers { targetFile.exists() }
+            every { mockTarget.openInputStream() } answers { targetFile.inputStream() }
+            every { mockTarget.openOutputStream() } answers { targetFile.outputStream() }
+            every { mockTarget.delete() } answers { targetFile.delete(); true }
+
+            val store = ChapterTranslationStore(
+                translationFile = mockTarget,
+                fileCreator = null,
+                initialPages = emptyMap(),
+            )
+
+            store.updatePage("p1") { PageTranslation(blocks = mutableListOf(block())) }
+            store.flush()
+
+            val reopened = ChapterTranslationStore.open(mockTarget)
+            reopened.state.value["p1"]?.blocks shouldBe listOf(block())
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `preRegisterPages_doesNotPersistUntilDurableChange`() = runTest {
+        val store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            initialPages = emptyMap(),
+        )
+
+        store.preRegisterPages(listOf("p1", "p2", "p3"))
+
+        store.persistCount shouldBe 0
+        store.state.value.keys.size shouldBe 3
+
+        store.updatePage("p1") { PageTranslation(blocks = mutableListOf(block())) }
+        store.flush()
+
+        store.persistCount shouldBe 1
+    }
+
+    @Test
+    fun `clearTransientQueuePages_doesNotDropDurableBlocks`() = runTest {
+        val store = ChapterTranslationStore(
+            translationFile = null,
+            fileCreator = null,
+            initialPages = emptyMap(),
+        )
+
+        store.updatePage("p1") { PageTranslation(blocks = mutableListOf(block())) }
+        store.updatePage("p2") { PageTranslation(blocks = mutableListOf(block())) }
+        store.updatePage("p3") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+
+        store.clearTransientQueuePages("test cancel")
+
+        store.state.value["p1"]?.blocks shouldBe listOf(block())
+        store.state.value["p2"]?.blocks shouldBe listOf(block())
+        store.state.value["p3"]?.blocks shouldBe emptyList()
+        store.state.value["p3"]?.ocrStatus shouldBe StageStatus.CANCELLED
+        store.persistCount shouldBe 1
+    }
+
     /** Minimal block satisfying the non-default TranslationBlock geometry args. */
-    private fun block() = TranslationBlock(
-        text = "源",
-        translation = "source",
+    private fun block(
+        text: String = "源",
+        translation: String = "source",
+    ) = TranslationBlock(
+        text = text,
+        translation = translation,
         width = 10f,
         height = 10f,
         x = 0f,

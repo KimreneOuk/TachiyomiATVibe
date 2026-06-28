@@ -61,18 +61,15 @@ class RoiPageRecognitionEngine(
     private val initMutex = Mutex()
     /**
      * TachiyomiAT: serializes native ONNX inference (analyze/inpaint) against
-     * close(). Every close() call site is already guarded by the translator
-     * permit (closeEngines tryAcquires it; the rebuild path holds it), so in
-     * practice a native run and a close never overlap. This mutex is the
-     * defense-in-depth belt-and-suspenders: analyze()/inpaint() hold it across
-     * each native OrtSession.run(), and close() acquires it before freeing the
-     * sessions. If the permit guard were ever bypassed, this guarantees close()
-     * cannot free a session an in-flight run is using (the SIGSEGV acknowledged
-     * in the [closed] comment below). close() is non-suspend and called from the
-     * main thread, so it uses a BOUNDED tryLock on a background dispatcher
-     * rather than runBlocking — it never ANRs; on the (permit-guarded,
-     * unreachable-in-practice) timeout it logs and proceeds, leaving the
-     * [closed] flag + permit guard as the backstop.
+     * close(). Most close() call sites are also guarded by the translator permit,
+     * but the batch path can call ensureEnginesBuiltFor() → recognitionEngine.close()
+     * before acquiring the permit, so nativeGuard is the primary defense (not just
+     * belt-and-suspenders). analyze()/inpaint() hold it across each native
+     * OrtSession.run(), and close() acquires it before freeing the sessions. If
+     * the guard is held at close time, close() logs, skips native free, and leaves
+     * the [closed] flag + rebuild gate as the backstop — degrades to leak-instead-
+     * of-SIGSEGV. close() is non-suspend and called from the main thread, so it
+     * uses a BOUNDED tryLock on a background dispatcher rather than runBlocking.
      */
     private val nativeGuard = Mutex()
     // TachiyomiAT: cooperative close flag. closeEngines() in ChapterTranslator
@@ -263,8 +260,9 @@ class RoiPageRecognitionEngine(
                 // if close() ran between iterations, before invoking the (native)
                 // OCR engine. Throwing keeps the page degradable instead of SIGSEGV.
                 if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
-                // TachiyomiAT: PP-OCR needs padding to avoid edge-effect failures, but the ink-gap heuristic
-                // works best on tightly bounded crops. We keep both.
+                // TachiyomiAT: horizontal-line engines (PaddleOCR) need context padding
+                // to avoid edge-effect failures; native-vertical engines (MangaOcr/ML Kit)
+                // get tight unbounded crops.
                 val pad = if (engine.prefersHorizontalText) 12 else 0
                 val unpaddedCrop = cropBitmap(bitmap, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3])
                 val crop = if (pad > 0) cropBitmap(bitmap, detection.bbox[0] - pad, detection.bbox[1] - pad, detection.bbox[2] + pad, detection.bbox[3] + pad) else unpaddedCrop
@@ -714,25 +712,6 @@ class RoiPageRecognitionEngine(
         return Bitmap.createBitmap(source, clampedX1, clampedY1, clampedX2 - clampedX1, clampedY2 - clampedY1)
     }
 
-    /**
-     * TachiyomiAT: OCR a tall (vertical-text) manga bubble by splitting it into
-     * individual text columns first, then recognizing each column as a separate
-     * horizontal line. See the comment at the call site for why this is needed
-     * (a whole multi-column bubble, even after rotation, garbles in the CTC head).
-     *
-     * Two column-detection strategies, in priority order:
-     *   1. **PP-OCRv6 det model** ([paddleDet]) — a learned DB text-line detector
-     *      that finds each vertical column precisely. Preferred when available.
-     *   2. **Ink-gap heuristic** ([detectVerticalColumns]) — the original fallback.
-     *      Used when the det engine is null/uninitialized or returns no lines.
-     *
-     * Either way, each column is then rotated 90° CCW and OCR'd as one horizontal
-     * line, concatenated in manga reading order (right-to-left).
-     *
-     * A single-column bubble (or one where no split is found) degrades to rotating
-     * and recognizing the whole crop as one line, so this never does worse than the
-     * old whole-box path.
-     */
     /**
      * TachiyomiAT: recognize a (possibly multi-line) bubble by first running the
      * PaddleOCR det model over the whole crop to recover individual text lines,

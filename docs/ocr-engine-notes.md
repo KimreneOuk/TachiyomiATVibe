@@ -32,8 +32,8 @@ on-device diagnostic logging + the reference implementation at
 2. **No vertical-text rotation** (`RoiPageRecognitionEngine`): PaddleOCR's CNN+CTC
    rec model reads horizontal text lines, but Japanese/Chinese manga text is
    vertical. The code detected vertical text for *rendering* (`direction="TTB"`)
-   but never rotated the crop before OCR. Fixed: rotate tall CJK crops 90°
-   clockwise before recognition (matches the official PaddleOCR pipeline per
+    but never rotated the crop before OCR. Fixed: rotate tall CJK crops 90°
+    counter-clockwise before recognition (matches the official PaddleOCR pipeline per
    [discussion #15695](https://github.com/PaddlePaddle/PaddleOCR/discussions/15695)).
 
 3. **Width floor too small** (reference-matched): recognition input was padded to
@@ -84,12 +84,15 @@ The vertical model limit above only explains Japanese underperformance. A set of
 **pipeline defects** was also corrupting recognition across every language
 (including horizontal Chinese, where the model is otherwise ~90%). All fixed:
 
-1. **Removed confidence blanking** (`PADDLE_REC_CONFIDENCE = 0.25` at 7 sites).
-   Low-confidence decodes are no longer blanked. A region is now kept whenever
-   its OCR text contains ≥1 letter (script-aware `OcrTextFilter.isUsable`);
-   pure number/punctuation output (the "random numbers" hallucination) is still
-   dropped. This fixes the "skipped region" symptom: blanked text used to fall
-   out of the render-aware erase mask AND get no translation.
+1. **Removed per-engine confidence blanking** (`PADDLE_REC_CONFIDENCE = 0.25` at 7 sites).
+    Low-confidence decodes are no longer blanked at the engine level. A region is now kept whenever
+    its OCR text contains ≥1 letter (script-aware `OcrTextFilter.isUsable`);
+    pure number/punctuation output (the "random numbers" hallucination) is still
+    dropped. The general `OCR_MIN_CONFIDENCE` gate in
+    `RoiPageRecognitionEngine.recognizeSingleLine` still filters very-low-confidence
+    Paddle results (conf < threshold and conf < 1f, so MangaOcr's default 1.0 is
+    exempt). This preserves the "skipped region" fix while catching decoder
+    hallucination at the single-line level.
 2. **`DbPostProcess.mergeAlongAxis` vertical fix**: the vertical gap check used
    column width instead of glyph height, so loosely-stacked glyphs never merged
    → rec read one glyph ("1 char despite a whole sentence"). Now bounds the
@@ -130,14 +133,21 @@ to split a tall manga bubble into individual text columns. That heuristic is
 brittle: it merges multi-column bubbles, splits on inter-character gaps, and
 cannot see tilted/curved text.
 
-It is now replaced — for the PaddleOCR rec path only — by the **PP-OCRv6 small
-det** ONNX model (`PaddlePaddle/PP-OCRv6_small_det_onnx`, 2.48M params, ~10 MB),
+It is now replaced by the **PP-OCRv6 small det** ONNX model
+(`PaddlePaddle/PP-OCRv6_small_det_onnx`, 2.48M params, ~10 MB),
 checked in under `app/src/main/assets/models/ocr/paddle-v6-small/det/`. The det
-model is a DB (Differentiable Binarization) text-line detector that runs inside
-each Stage-1 ROI crop (the bubble boxes `detector-v4-s` already finds) and emits
-precise text-line boxes. Stage-1 detection, the `Detection` label semantics
-(0/1/2), and all inpaint/parent-bubble logic are unchanged — det is strictly a
-Stage-2 refinement of the column split.
+model is a DB (Differentiable Binarization) text-line detector used in two roles:
+
+  - **OCR column splitting**: runs inside each Stage-1 ROI crop (the bubble boxes
+    `detector-v4-s` already finds) and emits precise text-line boxes, replacing
+    the ink-gap heuristic for the PaddleOCR rec path. Stage-1 detection, the
+    `Detection` label semantics (0/1/2), and all bubble-grouping logic are
+    unchanged.
+  - **Inpaint free-text erase-mask refinement**: `AOTInpainting.refineFreeTextBoxes`
+    runs the det model over each free-text region with lower thresholds (0.18/0.34)
+    to produce the solid-box erase mask for both the neural (AOT) and classical
+    (LegacyFreeTextInpainter) inpaint paths. This is independent of the OCR engine
+    and loads whenever the det asset is available.
 
 Key components:
 - `DbPostProcess` — pure DB postprocess (threshold → connected components →
@@ -151,7 +161,7 @@ Key components:
   horizontal fragments (and symmetrically same-column vertical fragments) and is
   iterated to a fixed point. Validated on both a Japanese vertical crop and a
   Chinese horizontal bubble — merge fixes horizontal without breaking vertical.
-- `PaddleOcrV6DetEngine` — ONNX I/O glue + preprocess (BGR, resize-longer-to-736
+- `PaddleOcrV6DetEngine` — ONNX I/O glue + preprocess (RGB planes, resize-longer-to-736
   pad-square, ImageNet mean/std) + back-projection (map→crop coords).
 
 The det model is **optional and best-effort**: if the asset is missing or fails
@@ -168,7 +178,7 @@ gated behind the existing `translation_diagnostics` preference (off by default).
 When on, logcat shows, per text bubble:
 
 ```
-[ocr_block] box=[x1,y1,x2,y2] size=WxH rotated=90cw text="<recognized>"
+[ocr_block] box=[x1,y1,x2,y2] size=WxH rotated=90ccw text="<recognized>"
 [paddle_ocr] total=Nms crop=WxH input=Wx48 chars=N text="<recognized>"
 ```
 

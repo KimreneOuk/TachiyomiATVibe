@@ -5,6 +5,8 @@ import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import org.junit.jupiter.api.Test
 
 class TranslationContextChunkPlannerTest {
@@ -254,6 +256,80 @@ class TranslationContextChunkPlannerTest {
 
     private fun page(text: String): PageTranslation {
         return PageTranslation(blocks = mutableListOf(block(text)))
+    }
+
+    private fun blockInBubble(text: String, translation: String): TranslationBlock =
+        blockWith(text, translation).copy(parentWidth = 40f, parentHeight = 40f)
+
+    @Test
+    fun `updateRollingContext tags in-bubble blocks as SPEECH on the source side`() {
+        val page = PageTranslation(
+            blocks = mutableListOf(
+                blockInBubble("行く", "I'm going."),
+                blockWith("三年後、東京。", "Three years later, Tokyo."),
+            ),
+        )
+
+        val out = TranslationContextChunkPlanner.updateRollingContext("", mapOf("001.jpg" to page))
+
+        out shouldContain "[SPEECH] 行く => I'm going."
+        out shouldContain "三年後、東京。 => Three years later, Tokyo."
+        // Free text (no parent bubble) is NOT tagged.
+        out shouldNotContain "[SPEECH] 三年後"
+    }
+
+    @Test
+    fun `rolling window is bounded to MAX_ROLLING_PAIRS lines`() {
+        // Build a chapter with more translatable blocks than the pair cap; the
+        // rolling context must keep only the most recent MAX_ROLLING_PAIRS.
+        val pages = linkedMapOf(
+            "001.jpg" to PageTranslation(
+                blocks = MutableList(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 5) {
+                    blockWith("blk$it", "trans$it")
+                },
+            ),
+        )
+        val out = TranslationContextChunkPlanner.updateRollingContext("", pages)
+        val lineCount = out.lineSequence().filter { it.isNotBlank() }.count()
+        lineCount shouldBe TranslationContextChunkPlanner.MAX_ROLLING_PAIRS
+        // The newest pairs survive; the oldest are evicted.
+        out shouldContain "blk${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4} => trans${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4}"
+    }
+
+    @Test
+    fun `glossary is attached when it fits, dropped before pairs when over cap`() {
+        val pages = linkedMapOf("001.jpg" to page("hello"))
+        val chunk = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = 8192).chunks.single()
+
+        val withGlossary = TranslationContextChunkPlanner.withRollingContext(
+            chunk = chunk,
+            rollingContext = "源 => source",
+            requestedOutputTokens = 8192,
+            glossary = "太郎 => Taro",
+        )
+        withGlossary.glossary shouldBe "太郎 => Taro"
+        withGlossary.rollingContext shouldBe "源 => source"
+
+        // Combined over the rolling cap, but the pairs alone fit: glossary is
+        // dropped first so the (more recent) pairs survive.
+        val dropGlossary = TranslationContextChunkPlanner.withRollingContext(
+            chunk = chunk,
+            rollingContext = "x".repeat(2_000),
+            requestedOutputTokens = 8192,
+            glossary = "y".repeat(6_000),
+        )
+        dropGlossary.rollingContext shouldBe "x".repeat(2_000)
+        dropGlossary.glossary shouldBe ""
+
+        // A runaway pairs string drops both (no silent output-cap shrinkage).
+        val huge = TranslationContextChunkPlanner.withRollingContext(
+            chunk = chunk,
+            rollingContext = "x".repeat(50_000),
+            requestedOutputTokens = 8192,
+            glossary = "太郎 => Taro",
+        )
+        huge.glossary shouldBe ""
+        huge.rollingContext shouldBe ""
     }
 
     private fun block(text: String): TranslationBlock {

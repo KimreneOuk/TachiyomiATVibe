@@ -29,6 +29,7 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.recognition.RoiPageRecognitionEngine
 import eu.kanade.translation.translator.AiTranslationRetryPlanner
+import eu.kanade.translation.translator.ChapterGlossaryBuilder
 import eu.kanade.translation.translator.ContextualTextTranslator
 import eu.kanade.translation.translator.LmStudioTranslator
 import eu.kanade.translation.translator.TextTranslator
@@ -179,10 +180,11 @@ class TranslationPipeline(
     /**
      * pageKeys currently mid-flight in [translateSinglePage]. Guards against
      * the same page being queued behind itself (e.g. auto-mode re-enqueue on
-     * scroll, or a user double-tapping the per-page button). Access is
-     * serialized through [translatorPermit], so no extra lock is needed.
+     * scroll, or a user double-tapping the per-page button). Thread-safe
+     * because [withLeakProofPermit] watchdog and [closeEngines] touch this
+     * outside [translatorPermit].
      */
-    private val inFlightPageKeys = mutableSetOf<String>()
+    private val inFlightPageKeys = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * TachiyomiAT: independent scope for the permit watchdog. It uses a
@@ -842,6 +844,15 @@ class TranslationPipeline(
             TranslationContextChunkPlanner.Profile.DEFAULT
         }
 
+        // TachiyomiAT: chapter-level term glossary accumulator for cross-chunk
+        // name/pronoun continuity. Seeded from already-translated pairs (batch
+        // resume) so recurring terms established before a restart still feed the
+        // glossary. Built incrementally per chunk and persisted on the store.
+        val glossaryStats = ChapterGlossaryBuilder.Stats()
+        if (isAi) {
+            store.translatedPairs().forEach { (s, t) -> glossaryStats.add(s, t) }
+        }
+
         // Held-cleaned-bitmap registry: render reuses the in-memory cleaned bitmap
         // instead of reloading .cleaned.png from disk. Memory is bounded by BOTH a
         // byte ceiling (HELD_BITMAP_BYTE_CEILING) and a hard count cap
@@ -893,6 +904,12 @@ class TranslationPipeline(
             val mutex = renderMutexes.computeIfAbsent(pageKey) { Mutex() }
             mutex.withLock {
                 val page = translationRegistry[pageKey] ?: return@withLock
+                if (page.renderStatus == StageStatus.READY && page.renderedImageName != null) {
+                    recycleHeld(pageKey)
+                    translationRegistry.remove(pageKey)
+                    tracker?.markRenderDone(pageKey)
+                    return@withLock
+                }
                 val status = page.translationStatus
                 if (status != StageStatus.READY && status != StageStatus.PARTIAL) {
                     if (status == StageStatus.FAILED) {
@@ -957,11 +974,13 @@ class TranslationPipeline(
         ): String {
             coroutineContext.ensureActive()
             val ct = contextualTranslator ?: return rolling
+            val glossaryText = ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
             val contextualChunk = TranslationContextChunkPlanner.withRollingContext(
                 chunk = chunk,
                 rollingContext = rolling,
                 requestedOutputTokens = requestedOutputTokens,
                 profile = chunkProfile,
+                glossary = glossaryText,
             )
             chunk.pages.keys.forEach { pk ->
                 val p = translationRegistry[pk] ?: return@forEach
@@ -987,6 +1006,24 @@ class TranslationPipeline(
                 val newRolling = TranslationContextChunkPlanner.updateRollingContext(
                     rolling, contextualChunk.pages,
                 )
+                // TachiyomiAT: accumulate this chunk's freshly translated pairs
+                // into the chapter glossary and persist it. Also log [SPEECH]
+                // tag coverage so a regression to a non-parenting recognition
+                // engine (which would leave every block untagged) is visible.
+                var tagged = 0
+                var untagged = 0
+                contextualChunk.pages.values.forEach { page ->
+                    page.blocks.forEach { b ->
+                        glossaryStats.add(b.text, b.translation)
+                        if (b.parentWidth > 0f && b.parentHeight > 0f) tagged++ else untagged++
+                    }
+                }
+                val newGlossary = glossaryStats.build()
+                store.updateGlossary(newGlossary)
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT batch stage2-AI chunk: tag-coverage tagged=$tagged untagged=$untagged " +
+                        "glossaryEntries=${newGlossary.size}"
+                }
                 completedPages.forEach { pk ->
                     val p = translationRegistry[pk] ?: return@forEach
                     val status = TranslationBlockValidation.applyTo(p)
@@ -1074,6 +1111,15 @@ class TranslationPipeline(
                             onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                             onForceRelease = {},
                         ) {
+                            val latest = store.state.value[pageKey]
+                            val innerGate = resumeGate(latest)
+                            if (innerGate == BatchResumeGate.SKIP_ALL) {
+                                val p = latest!!
+                                translationRegistry[pageKey] = p
+                                send(pageKey to p)
+                                tryRender(pageKey)
+                                return@withLeakProofPermit
+                            }
                             try {
                                 val decoded = try {
                                     decodePageBitmapForTranslation(pageKey, streamFn)
@@ -1106,9 +1152,9 @@ class TranslationPipeline(
                                 }
                                 val bitmap = decoded.bitmap
                                 try {
-                                    if (gate == BatchResumeGate.INPAINT_ONLY) {
+                                    if (innerGate == BatchResumeGate.INPAINT_ONLY) {
                                         // Reuse the durable OCR result; carry it forward.
-                                        translationRegistry[pageKey] = existing ?: PageTranslation(sourceFileName = pageKey)
+                                        translationRegistry[pageKey] = latest ?: PageTranslation(sourceFileName = pageKey)
                                     } else {
                                         tracker?.markOcrRunning(pageKey)
                                         // analyzePage persists blocks + mask durable
@@ -1119,12 +1165,12 @@ class TranslationPipeline(
                                         translationRegistry[pageKey] = analyzed
                                     }
                                     val target = translationRegistry[pageKey]!!
-                                    val hasDurableCleaned = existing != null &&
-                                        existing.cleanedImageName != null &&
-                                        existing.inpaintStatus == StageStatus.READY &&
-                                        existing.hasCurrentInpaintResult
+                                    val hasDurableCleaned = latest != null &&
+                                        latest.cleanedImageName != null &&
+                                        latest.inpaintStatus == StageStatus.READY &&
+                                        latest.hasCurrentInpaintResult
                                     if (hasDurableCleaned) {
-                                        target.cleanedImageName = existing!!.cleanedImageName
+                                        target.cleanedImageName = latest!!.cleanedImageName
                                         target.inpaintStatus = StageStatus.READY
                                         target.cleanedBitmap = null
                                     } else {
@@ -1265,6 +1311,7 @@ class TranslationPipeline(
             logcat(LogPriority.WARN) {
                 "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
             }
+            store.flush()
             return
         }
         logcat(LogPriority.INFO) {
@@ -1290,6 +1337,7 @@ class TranslationPipeline(
                 }
             }
         }
+        store.flush()
     }
 
     private suspend fun translateAiChunkWithAdaptiveRetry(
@@ -1692,6 +1740,7 @@ class TranslationPipeline(
             )
         } finally {
             if (!needsHttpRender) {
+                store.flush()
                 chapter.id?.let { chapterId ->
                     streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
                 }
@@ -1730,6 +1779,44 @@ class TranslationPipeline(
 
         val activeTranslator = textTranslator
 
+        // TachiyomiAT: AI translators translate through translateContextual with
+        // the chapter glossary as context, so on-demand single-page translation
+        // reuses the chapter's established terms/pronouns (same continuity the
+        // batch path gets). Standard translators keep the plain translatePage.
+        val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
+            ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
+        val singlePageProfile = if (activeTranslator is LmStudioTranslator) {
+            TranslationContextChunkPlanner.Profile.LM_STUDIO
+        } else {
+            TranslationContextChunkPlanner.Profile.DEFAULT
+        }
+
+        suspend fun runTranslate(targetPage: PageTranslation) {
+            val ct = activeTranslator as? ContextualTextTranslator
+            if (ct != null) {
+                val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
+                val estPrompt = TranslationContextChunkPlanner.PROMPT_OVERHEAD_TOKENS +
+                    targetPage.blocks.sumOf { TranslationContextChunkPlanner.estimateTokens(it.text) }
+                val baseChunk = TranslationContextChunk(
+                    pages = linkedMapOf(pageKey to targetPage),
+                    blockCount = targetPage.blocks.count { it.text.isNotBlank() },
+                    rollingContext = "",
+                    estimatedPromptTokens = estPrompt,
+                    maxOutputTokens = requestedOutputTokens,
+                )
+                val chunk = TranslationContextChunkPlanner.withRollingContext(
+                    chunk = baseChunk,
+                    rollingContext = "",
+                    requestedOutputTokens = requestedOutputTokens,
+                    profile = singlePageProfile,
+                    glossary = glossaryText,
+                )
+                ct.translateContextual(chunk)
+            } else {
+                activeTranslator.translatePage(pageKey, targetPage)
+            }
+        }
+
         try {
             coroutineContext.ensureActive()
 
@@ -1754,7 +1841,7 @@ class TranslationPipeline(
                         fromLang
                     )
                     pageTranslation.translationStatus = StageStatus.RUNNING
-                    activeTranslator.translatePage(pageKey, pageTranslation)
+                    runTranslate(pageTranslation)
                     TranslationBlockValidation.applyTo(pageTranslation)
                     var singlePageRetry = 0
                     while (pageTranslation.translationStatus == StageStatus.PARTIAL &&
@@ -1769,8 +1856,18 @@ class TranslationPipeline(
                         }
                         pageTranslation.translationStatus = StageStatus.RUNNING
                         val retryPage = PageTranslation(blocks = missing.toMutableList())
-                        activeTranslator.translatePage(pageKey, retryPage)
+                        runTranslate(retryPage)
                         TranslationBlockValidation.applyTo(pageTranslation)
+                    }
+                    // TachiyomiAT: fold this page's freshly translated pairs into
+                    // the chapter glossary so later on-demand/batch translations
+                    // reuse its established terms.
+                    if (activeTranslator is ContextualTextTranslator) {
+                        val stats = ChapterGlossaryBuilder.Stats().also { s ->
+                            store.translatedPairs().forEach { (src, tgt) -> s.add(src, tgt) }
+                        }
+                        pageTranslation.blocks.forEach { b -> stats.add(b.text, b.translation) }
+                        store.updateGlossary(stats.build())
                     }
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
@@ -1897,6 +1994,7 @@ class TranslationPipeline(
             pageTranslation.updatedAt = System.currentTimeMillis()
             persistPageWithOomRecovery(store, pageKey, pageTranslation)
         } finally {
+            store.flush()
             // Defensive recycle: a cancel/timeout can unwind straight here from
             // before render, where cleanedBitmap (the inpainted full-page bitmap,
             // ~10–48 MB) was never recycled. On the normal path it is already

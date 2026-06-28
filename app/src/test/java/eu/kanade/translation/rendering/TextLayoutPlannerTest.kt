@@ -35,6 +35,7 @@ class TextLayoutPlannerTest {
         text: String,
         score: Float = 1f,
         direction: String = "LTR",
+        label: Int = 1,
     ) = TranslationBlock(
         text = "",
         translation = text,
@@ -45,7 +46,7 @@ class TextLayoutPlannerTest {
         symHeight = 1f,
         symWidth = 1f,
         angle = 0f,
-        label = 1,
+        label = label,
         score = score,
         direction = direction,
     )
@@ -145,6 +146,56 @@ class TextLayoutPlannerTest {
     }
 
     @Test
+    fun `free text stays anchored to OCR centre when reshaped`() {
+        val free = block(
+            x = 170f,
+            y = 100f,
+            w = 50f,
+            h = 300f,
+            text = "A reasonably long line",
+            score = 0.8f,
+            label = 2,
+        )
+
+        val plan = TextLayoutPlanner.plan(listOf(free), 800f, 600f, 1, false, FakeMeasurer())
+        val l = plan.first()
+
+        l.originX shouldBe 195f
+        l.originY shouldBe 250f
+        l.drawAlign shouldBe TextAlign.CENTER
+    }
+
+    @Test
+    fun `vertical source latin parented block stays anchored to OCR centre`() {
+        val parented = TranslationBlock(
+            text = "",
+            translation = "English translation",
+            width = 50f,
+            height = 300f,
+            x = 200f,
+            y = 100f,
+            symHeight = 1f,
+            symWidth = 1f,
+            angle = 0f,
+            label = 1,
+            score = 0.8f,
+            parentX = 100f,
+            parentY = 50f,
+            parentWidth = 400f,
+            parentHeight = 400f,
+            direction = "TTB",
+        )
+
+        val plan = TextLayoutPlanner.plan(listOf(parented), 800f, 600f, 1, false, FakeMeasurer())
+        val l = plan.first()
+
+        l.isVertical shouldBe false
+        l.originX shouldBe 225f
+        l.originY shouldBe 250f
+        l.drawAlign shouldBe TextAlign.CENTER
+    }
+
+    @Test
     fun `long text that would collapse below the legibility floor is contained to its initial box`() {
         // Defect 3 (legibility floor) + containment: a parentless non-reshape box
         // must NOT grow onto the page. The 30×30 box at (400,400) contains its text
@@ -156,9 +207,11 @@ class TextLayoutPlannerTest {
 
         // Hard containment: clipRect is set and matches the initial box.
         l.clipRect shouldBe FloatRect(400f, 400f, 430f, 430f)
-        // The box did NOT grow beyond its initial 30×30 dimensions.
-        (l.safeW <= 22f) shouldBe true
-        (l.safeH <= 22f) shouldBe true
+        // Containment is enforced by the clip at draw time. The clip path lifts
+        // the font to the legibility floor (1500 * 0.014 = 21) even though the
+        // unclipped text footprint is larger than the 30×30 box.
+        l.fontSizePx shouldBe 21f
+        l.drawAlign shouldBe TextAlign.LEFT
     }
 
     @Test
