@@ -15,6 +15,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.model.shouldSkipAutoScheduling
 import eu.kanade.translation.model.toPageView
+import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -61,6 +62,12 @@ class TranslationManager(
 ) {
     private val pipeline = TranslationPipeline(context, provider)
     private val translator = ChapterTranslator(context, provider, pipeline = pipeline);
+
+    // TachiyomiAT: shared reader page-stream registry (DI singleton). Held here
+    // so deleteTranslation can evict stale stream closures pointing at the
+    // deleted rendered/cleaned PNGs, the same instance the reader registers
+    // against and the translator peeks.
+    private val streamRegistry: TranslationStreamRegistry = Injekt.get()
 
     /**
      * TachiyomiAT: application-lifetime scope for one-off init work (queue
@@ -334,7 +341,13 @@ class TranslationManager(
 
     fun unregisterActiveTranslationStore(chapterId: Long) {
         activeStoreJobs.remove(chapterId)?.cancel()
-        activeTranslationStores.remove(chapterId)
+        // TachiyomiAT: mark the evicted store defunct BEFORE removing it from the
+        // registry. Any worker (e.g. a batch job that was mid-uncancellable ONNX
+        // when cancel() was requested) still holding a reference to this exact
+        // store instance will have its late updatePage/replaceAll/etc. rejected
+        // by the defunct guard instead of recreating the deleted translation file
+        // or stranding a page at RUNNING on a store the reader no longer observes.
+        activeTranslationStores.remove(chapterId)?.markDefunct()
         _activeStoreMap.value = activeTranslationStores.toMap()
         if (activeTranslationStores.isEmpty()) {
             _activeStoreState.value = emptyMap()
@@ -497,47 +510,55 @@ class TranslationManager(
             ?.distinctUntilChanged()
     }
 
-    fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
+    suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
         val chapterId = chapter.id ?: return
-        launchIO {
-            // TachiyomiAT: tear down ALL in-flight translation work for this
-            // chapter BEFORE deleting any on-disk artifacts. The previous version
-            // only removed the chapter from the batch queue and deleted files,
-            // which left single-page / auto-prefetch jobs running. An auto job
-            // can be mid-native-call inside OrtSession.run() at the instant the
-            // user taps delete; the subsequent translate then rebuilds/closes the
-            // recognition engine (recognitionEngine.close() frees the native
-            // session), freeing a session out from under the still-running
-            // inference. That is a native use-after-free (SIGSEGV) that kills the
-            // process — exactly the "app exits/crashes on delete-then-translate"
-            // symptom. The close()/run() race is also acknowledged in
-            // RoiPageRecognitionEngine's comments.
-            //
-            // Ordering is load-bearing:
-            //   1. cancelAutoTranslations bumps the chapter's auto generation so
-            //      any in-flight auto window stops dispatching NEW pages at its
-            //      next iteration (without this, a window between pages could
-            //      re-launch work against the about-to-be-deleted store/file).
-            //   2. cancelPageTranslations cancels + JOINs every auto and
-            //      single-page job for the chapter (bounded by JOIN_TIMEOUT_MS),
-            //      so the in-flight native work unwinds to its next suspension
-            //      point before we proceed. It ALSO evicts the shared
-            //      ChapterTranslationStore (unregisterActiveTranslationStore),
-            //      so a subsequent translate resolves a fresh lazy store instead
-            //      of reusing one bound to the file we're about to delete.
-            //   3. removeFromTranslationQueue drops the batch-queue entry and
-            //      stops the batch engine if the queue is now empty.
-            //   4. Only once all work is wound down is it safe to delete the
-            //      on-disk translation file + companion images.
-            scheduler.cancelAutoTranslations(chapterId)
-            cancelPageTranslations(chapterId)
-            removeFromTranslationQueue(chapter)
-            disposeBatchTracker(chapterId)
-            unregisterActiveTranslationStore(chapterId)
-            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
-            file?.delete()
-            provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
-        }
+        // TachiyomiAT: SYNCHRONOUS teardown. This used to run fire-and-forget on
+        // launchIO, which let callers re-subscribe / re-submit translation BEFORE
+        // the teardown completed. On a delete-then-retranslate the reader would
+        // re-bind to the old (about-to-be-evicted) store via the cache-first
+        // openOrCreateActiveChapterTranslationStore, while the translator wrote
+        // to a different instance — the reader never saw RUNNING->READY, so it
+        // showed the ORIGINAL images with a stuck global spinner. Worse, the
+        // batch job was cancelled but NOT joined, so a worker mid-uncancellable
+        // ONNX kept writing RUNNING/rendered results into the old store AFTER
+        // the on-disk file + companion PNGs were deleted, recreating the JSON
+        // or stranding pages at RUNNING. Making this suspend guarantees every
+        // caller lands on clean state once it returns.
+        //
+        // Ordering is load-bearing and now strictly sequenced (not best-effort):
+        //   1. cancelAutoTranslations bumps the chapter's auto generation so any
+        //      in-flight auto window stops dispatching NEW pages at its next
+        //      iteration (without this, a window between pages could re-launch
+        //      work against the about-to-be-deleted store/file).
+        //   2. cancelPageTranslations cancels + JOINs every auto and single-page
+        //      job for the chapter (bounded by JOIN_TIMEOUT_MS), so the in-flight
+        //      native work unwinds to its next suspension point before we proceed.
+        //   3. removeFromTranslationQueue drops the batch-queue entry (preventing
+        //      the batch driver from relaunching the chapter), then
+        //      cancelTranslatorJobAndJoin cancels + JOINs the batch worker itself
+        //      (bounded by BATCH_JOIN_TIMEOUT_MS). Plain removeFromTranslationQueue
+        //      only cancel()s the job; joining here ensures the batch worker
+        //      reaches a suspension point and releases the translator permit
+        //      BEFORE we delete files. If the join times out (stuck native code),
+        //      the defunct-store guard below rejects any late write.
+        //   4. unregisterActiveTranslationStore evicts the shared store and marks
+        //      it defunct, so a still-unwinding worker's late writes no-op.
+        //   5. streamRegistry.clearChapter drops stale reader page-stream closures
+        //      that point at the about-to-be-deleted rendered/cleaned PNGs
+        //      (otherwise they would throw FileNotFoundException on next decode,
+        //      leaving the page on its original image).
+        //   6. Only once all work is wound down is it safe to delete the on-disk
+        //      translation file + companion images.
+        scheduler.cancelAutoTranslations(chapterId)
+        cancelPageTranslations(chapterId)
+        removeFromTranslationQueue(chapter)
+        translator.cancelTranslatorJobAndJoin()
+        disposeBatchTracker(chapterId)
+        unregisterActiveTranslationStore(chapterId)
+        streamRegistry.clearChapter(source.id, manga.id, chapterId)
+        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
+        file?.delete()
+        provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
     }
 
     fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {

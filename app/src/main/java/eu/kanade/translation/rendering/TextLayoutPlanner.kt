@@ -163,6 +163,11 @@ object TextLayoutPlanner {
     private const val FIT_MIN_FONT_PX = 8f
     private const val FIT_START_WIDTH_FACTOR = 1.5f
 
+    // ---- Outline width — one source of truth (see [computeStrokeWidth]). ----
+    // Fraction of the fitted font size; floor keeps it visible at small sizes.
+    private const val STROKE_WIDTH_FRACTION = 0.12f
+    private const val MIN_STROKE_PX = 2f
+
     /**
      * Legibility floor. The legacy fit could collapse to [FIT_MIN_FONT_PX] (~8 px),
      * which is unreadable. The floor is the larger of an absolute minimum and a
@@ -327,7 +332,7 @@ object TextLayoutPlanner {
         safeH = max(1f, baseH - safePad * 2f)
         fontSize = binarySearchFontSize(text, safeW, safeH, baseW, isVertical, scale, measurer)
 
-        val strokeWidth = computeStrokeWidth(block, fontSize, scale)
+        val strokeWidth = computeStrokeWidth(fontSize, scale)
         var originY = baseY + baseH / 2f
         // Re-anchor at the ORIGINAL edge of a box that grew horizontally into free
         // space, so parentless edge text (e.g. SFX) does not drift toward the page
@@ -1053,16 +1058,13 @@ object TextLayoutPlanner {
         return best
     }
 
-    internal fun computeStrokeWidth(block: TranslationBlock, fontSizePx: Float, scale: Float): Float {
-        if (block.strokeWidth > 0f) {
-            val startSizeEstimate = max(block.width * FIT_START_WIDTH_FACTOR, FIT_MIN_FONT_PX * scale * 4.5f)
-            val scaled = if (startSizeEstimate > 0f && fontSizePx < startSizeEstimate) {
-                (block.strokeWidth * scale) * (fontSizePx / startSizeEstimate)
-            } else {
-                block.strokeWidth * scale
-            }
-            return max(1.0f * scale, scaled)
-        }
-        return max(1.5f * scale, fontSizePx * 0.07f)
+    internal fun computeStrokeWidth(fontSizePx: Float, scale: Float): Float {
+        // One source of truth for outline width: a fixed fraction of the fitted
+        // font size, floored so it never collapses below a visible pixel. This
+        // matches PageTextRenderer's own fallback and replaces three divergent
+        // formulas (the old estimator 4.5/3.0 scaled by a font-fit ratio that
+        // shrank it to ~1px, the renderer's 0.12× floor 2, and the planner's
+        // 0.07× floor 1.5). Block.strokeWidth is no longer an input.
+        return max(MIN_STROKE_PX * scale, fontSizePx * STROKE_WIDTH_FRACTION)
     }
 }

@@ -67,7 +67,7 @@ class MangaOcrEngine : RoiOcrEngine {
         }
         // TachiyomiAT: manga-ocr runs an autoregressive decoder loop on many
         // tiny per-step graphlets. Keep it on the shared CPU-only ONNX runtime.
-        val encoderOpts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
+        val encoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
         try {
             encoderSession = OnnxRuntimeProvider.environment.createSession(encoderFile.absolutePath, encoderOpts)
             logcat(LogPriority.INFO) { "OCR init: encoder session created OK, inputs=${encoderSession?.inputNames}" }
@@ -78,7 +78,7 @@ class MangaOcrEngine : RoiOcrEngine {
             encoderOpts.close()
         }
 
-        val decoderOpts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true) { opts ->
+        val decoderOpts = OnnxRuntimeProvider.createSessionOptions() { opts ->
             opts.setIntraOpNumThreads(decoderThreadCount)
         }
         try {
@@ -159,10 +159,13 @@ class MangaOcrEngine : RoiOcrEngine {
 
             val t2 = System.nanoTime()
 
-            val startIds = LongBuffer.wrap(longArrayOf(START_TOKEN.toLong()))
+            val startIdsBuf = java.nio.ByteBuffer.allocateDirect(8)
+                .order(java.nio.ByteOrder.nativeOrder())
+                .asLongBuffer()
+            startIdsBuf.put(0, START_TOKEN.toLong())
             startIdsTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
-                startIds,
+                startIdsBuf,
                 longArrayOf(1, 1),
             )
 

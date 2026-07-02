@@ -41,7 +41,7 @@ class OnnxPageTextDetector {
         // TachiyomiAT: detector stays on CPU. It is one cheap 640x640 pass per
         // page and runs in the same init sequence as OCR. All translation ONNX
         // sessions are CPU-only in this runtime.
-        val opts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
+        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
         } catch (e: Exception) {
@@ -162,10 +162,14 @@ class OnnxPageTextDetector {
     }
 
     private fun createOrigSizes(bitmap: Bitmap): OnnxTensor {
-        val origSizes = longArrayOf(bitmap.width.toLong(), bitmap.height.toLong())
+        val origSizes = java.nio.ByteBuffer.allocateDirect(16)
+            .order(java.nio.ByteOrder.nativeOrder())
+            .asLongBuffer()
+        origSizes.put(0, bitmap.width.toLong())
+        origSizes.put(1, bitmap.height.toLong())
         return OnnxTensor.createTensor(
             OnnxRuntimeProvider.environment,
-            LongBuffer.wrap(origSizes),
+            origSizes,
             longArrayOf(1, 2),
         )
     }

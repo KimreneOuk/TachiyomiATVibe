@@ -29,7 +29,7 @@ object OnnxRuntimeProvider {
     }
 
     /**
-     * Build low-footprint CPU ONNX session options.
+     * Build low-footprint ONNX session options with optional QNN support.
      *
      * The CPU memory arena and memory-pattern optimizer stay disabled to bound
      * resident native memory across the detector, OCR, and AOT sessions. Thread
@@ -38,10 +38,15 @@ object OnnxRuntimeProvider {
      * heuristic needs on-device validation for new hardware.
      */
     fun createSessionOptions(
-        forceCpu: Boolean = false,
+        useAccelerator: Boolean = false,
+        useXnnpack: Boolean = false,
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): OrtSession.SessionOptions {
-        if (forceCpu) {
+        if (useAccelerator) {
+            logcat(LogPriority.INFO) { "ONNX session options using Hardware Accelerator (NNAPI)" }
+        } else if (useXnnpack) {
+            logcat(LogPriority.INFO) { "ONNX session options using XNNPACK CPU provider" }
+        } else {
             logcat(LogPriority.INFO) { "ONNX session options using CPU execution provider" }
         }
         return OrtSession.SessionOptions().apply {
@@ -62,6 +67,21 @@ object OnnxRuntimeProvider {
                         "setMemoryPatternOptimization(false) rejected; mem-pattern will stay on"
                     }
                 }
+            if (useAccelerator) {
+                runCatching {
+                    addNnapi()
+                    logcat(LogPriority.INFO) { "Successfully added NNAPI EP" }
+                }.onFailure { e ->
+                    logcat(LogPriority.ERROR, e) { "Failed to add NNAPI EP, falling back to CPU!" }
+                }
+            } else if (useXnnpack) {
+                runCatching {
+                    addXnnpack(java.util.HashMap<String, String>())
+                    logcat(LogPriority.INFO) { "Successfully added XNNPACK EP" }
+                }.onFailure { e ->
+                    logcat(LogPriority.ERROR, e) { "Failed to add XNNPACK EP, falling back to CPU!" }
+                }
+            }
             configure(this)
         }
     }

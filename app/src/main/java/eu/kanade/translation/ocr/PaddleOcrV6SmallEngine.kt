@@ -59,7 +59,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         dictionary = BufferedReader(InputStreamReader(dictionaryFile.inputStream(), Charsets.UTF_8)).use { reader ->
             reader.lineSequence().map { it.trimEnd() }.toList()
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
+        val opts = OnnxRuntimeProvider.createSessionOptions()
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
             inputName = session?.inputNames?.firstOrNull() ?: "x"

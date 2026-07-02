@@ -54,6 +54,30 @@ class ChapterTranslationStore(
     private var dirty = false
     private var persistJob: Job? = null
 
+    /**
+     * TachiyomiAT: lifecycle flag set by [markDefunct] when the store is evicted
+     * by [TranslationManager.unregisterActiveTranslationStore] (on delete /
+     * chapter change). Once defunct, every mutator (updatePage / replaceAll /
+     * preRegisterPages / clearTransientQueuePages) becomes a no-op and logs at
+     * WARN. This is the belt-and-suspenders for the delete-then-retranslate race:
+     * a batch worker that was mid-uncancellable ONNX when cancel() was requested
+     * may still reach a suspension point AFTER its store was evicted and the
+     * on-disk file + companion images were deleted. Without this guard it would
+     * recreate the deleted file or strand a page at RUNNING on a store the reader
+     * no longer observes — exactly the "original image + stuck spinner" symptom.
+     * Volatile because it is written under mutex by markDefunct but read by
+     * mutators without re-entering the lock.
+     */
+    @Volatile
+    private var defunct = false
+
+    fun markDefunct() {
+        defunct = true
+    }
+
+    val isDefunct: Boolean
+        get() = defunct
+
     internal var persistCount = 0
         private set
 
@@ -63,6 +87,12 @@ class ChapterTranslationStore(
     }
 
     suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
+        if (defunct) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT store updatePage rejected: store is defunct pageKey=$pageKey"
+            }
+            return
+        }
         mutex.withLock {
             val previous = pages[pageKey]
             val updated = update(pages[pageKey]).apply {
@@ -80,6 +110,12 @@ class ChapterTranslationStore(
     }
 
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) {
+        if (defunct) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT store replaceAll rejected: store is defunct"
+            }
+            return
+        }
         mutex.withLock {
             pages = updatedPages.toPersistentMap()
             dirty = false
@@ -97,6 +133,12 @@ class ChapterTranslationStore(
      */
     suspend fun preRegisterPages(pageKeys: List<String>) {
         if (pageKeys.isEmpty()) return
+        if (defunct) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT store preRegisterPages rejected: store is defunct"
+            }
+            return
+        }
         mutex.withLock {
             var changed = false
             pageKeys.forEach { pageKey ->
@@ -118,6 +160,12 @@ class ChapterTranslationStore(
      * reflects only the next active window.
      */
     suspend fun clearTransientQueuePages(reason: String? = null) {
+        if (defunct) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT store clearTransientQueuePages rejected: store is defunct"
+            }
+            return
+        }
         mutex.withLock {
             var changed = false
             val now = System.currentTimeMillis()
@@ -165,6 +213,12 @@ class ChapterTranslationStore(
         }
 
     suspend fun updateGlossary(updated: Map<String, String>) {
+        if (defunct) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT store updateGlossary rejected: store is defunct"
+            }
+            return
+        }
         mutex.withLock {
             glossary = updated
             persistGlossaryLocked()

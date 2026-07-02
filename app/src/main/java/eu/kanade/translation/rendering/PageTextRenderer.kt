@@ -126,14 +126,18 @@ class PageTextRenderer(context: Context) {
             var strokeColor = layout.block.strokeColor.toInt()
             var strokeWidth = layout.strokeWidth
 
-            // TachiyomiAT: hard outline invariant — every block MUST have a
-            // contrasting outline regardless of persisted/merged values.
+            // TachiyomiAT: outline invariant — the stroke is always the
+            // luma-inverse of the text fill, owned HERE. RenderColorEstimator
+            // no longer selects a stroke color, so this re-derivation is the
+            // single source of truth (it overrides any persisted/merged value).
             val tr = (textColor shr 16 and 0xFF)
             val tg = (textColor shr 8 and 0xFF)
             val tb = (textColor and 0xFF)
             val luma = (tr * 299 + tg * 587 + tb * 114) / 1000
             val correctStroke = if (luma < 128) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
-            if (strokeColor != correctStroke) strokeColor = correctStroke
+            strokeColor = correctStroke
+            // TextLayoutPlanner always supplies a positive width; this floor is
+            // a safety net for any block that bypassed the planner.
             if (strokeWidth <= 0f) strokeWidth = max(2f, layout.fontSizePx * 0.12f)
 
             fillPaint.color = textColor

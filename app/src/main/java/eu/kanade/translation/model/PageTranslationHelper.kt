@@ -63,7 +63,9 @@ class PageTranslationHelper {
                 parentHeight = 0f,
                 textColor = first.textColor,
                 strokeColor = first.strokeColor,
-                strokeWidth = ordered.maxOf { it.strokeWidth },
+                // strokeWidth is owned by TextLayoutPlanner (font-derived) and not
+                // read at render time; leave default here rather than max a dead field.
+                strokeWidth = 0f,
                 direction = dominantDirection(ordered),
             )
         }

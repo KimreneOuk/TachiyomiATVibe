@@ -227,13 +227,13 @@ data class TranslationBlock(
     val parentY: Float = 0f,
     val parentWidth: Float = 0f,
     val parentHeight: Float = 0f,
-    // TachiyomiAT: textColor/strokeColor/strokeWidth are `var` (not `val`) so they
-    // can be RE-DERIVED after inpainting against the cleaned bitmap (see
-    // RenderColorEstimator + ChapterTranslator). Colors sampled against the
-    // original bitmap at recognition time can be wrong once inpainting replaces
-    // the background with a different median color — so the renderer needs the
-    // post-inpaint colors to keep "dark inpaint → light text" legible.
-    // Serialization is field-name based, so val→var is backward compatible.
+    // TachiyomiAT: textColor is re-derived after inpainting against the cleaned
+    // bitmap (RenderColorEstimator.recomputeFor) so "dark inpaint → light text"
+    // holds. strokeColor is re-derived by PageTextRenderer (luma-inverse of the
+    // text) and strokeWidth is owned by TextLayoutPlanner (font-derived); those
+    // two fields are retained on the model for serialization backward-compat
+    // but are NO LONGER read at render time. `var` so they can be re-derived;
+    // serialization is field-name based, so this is backward compatible.
     var textColor: Long = 0xFF000000,
     var strokeColor: Long = 0xFFFFFFFF,
     var strokeWidth: Float = 0f,

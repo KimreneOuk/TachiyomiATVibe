@@ -6,74 +6,121 @@ import eu.kanade.translation.inpainting.BoundaryAwarePipeline
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 
 /**
- * TachiyomiAT: shared text-color / stroke-color / stroke-width estimator.
+ * TachiyomiAT: shared text-color estimator.
  *
  * Background
  * ----------
- * Previously two near-duplicate copies of this logic existed:
- *   - RoiPageRecognitionEngine.computeRenderColors  (ONNX path)
- *   - MlKitFullPageRecognitionEngine.computeContrastColors  (ML Kit path)
- * and they had diverged in a critical way: the ROI path's INVERTED_TEXT_COLORS
- * constant was a copy-paste of PYTHON_DEFAULT_TEXT_COLORS (both returned the
- * SAME dark-gray text color 0xFF1A1A1A), so dark-inpainted bubbles got dark-gray
- * text on top → illegible. The ML Kit copy had the correct inverted value but
- * was only reachable in fallback mode (where inpaint always returns FAILED).
+ * Color is sampled against the ORIGINAL decoded bitmap at recognition time
+ * (first pass), then re-derived against the CLEANED bitmap post-inpaint via
+ * [recomputeFor] (the authoritative pass). The inpainter may replace the box
+ * background with a different color (e.g. filling a grayscale panel with
+ * mid-gray, or — in AOT quality mode — reconstructing heterogeneous artwork),
+ * so the color chosen against the original no longer matches what the user
+ * actually sees behind the rendered text. [recomputeFor] re-samples against
+ * the cleaned bitmap right before render() so the decision reflects reality.
  *
- * Worse, color was sampled against the ORIGINAL decoded bitmap at recognition
- * time, BEFORE inpainting. The inpainter may replace the box background with a
- * different median color (e.g. filling a grayscale panel with mid-gray), so the
- * text color chosen against the original background no longer matches what the
- * user actually sees behind the rendered text. The fix is to re-derive colors
- * against the CLEANED bitmap post-inpaint — this object exposes [recomputeFor]
- * for exactly that, called from ChapterTranslator right before render().
+ * Behavior (adaptive contrast fill)
+ * ---------------------------------
+ * A seeded 2-means on a padded crop splits the sample into a dominant
+ * background cluster and a foreground (ink) cluster. The text FILL defaults to
+ * the detected ink color; if its WCAG contrast against the background falls
+ * below [CONTRAST_AA] it is forced to pure black/white so the text is always
+ * legible regardless of what inpainting produced. This is the fix for "dark
+ * background swallows the text": the old gray-snap heuristic forced gray ink
+ * to black unconditionally (black-on-dark) and could not reach saturated-dark
+ * ink; a WCAG check catches every low-contrast case.
  *
- * Behavior
- * --------
- * - 2-means cluster on a padded crop around the box to find the dominant
- *   background cluster, then luma-based contrast selection:
- *     dark background  → white text (0xFFFFFFFF) + black stroke (0xFF000000)
- *     light background → black text (0xFF000000) + white stroke (0xFFFFFFFF)
- * - Gray snap: any chosen text color that lands in the low-saturation mid-luma
- *   "gray band" snaps to pure black (0xFF000000). Mid-gray text (e.g. the old
- *   0xFF1A1A1A) on a mid-gray inpaint is the worst legibility case; snapping to
- *   black removes the ambiguity. Saturated colors (e.g. blue on a colored
- *   bubble) are preserved as-is.
+ * NOTE: this object owns only the text FILL color. The stroke color is owned
+ * by [PageTextRenderer] (luma-inverse of the text) and the stroke width by
+ * [TextLayoutPlanner] (a fraction of font size). The Triple returned from
+ * [estimate] still carries stroke/width for caller compatibility, but those
+ * fields are vestigial and overridden downstream.
  */
 object RenderColorEstimator {
 
-    // (textColor, strokeColor, strokeWidth)
-    private val DARK_BG_COLORS = Triple(0xFFFFFFFF, 0xFF000000, 4.5f) // white text on dark
-    private val LIGHT_BG_COLORS = Triple(0xFF000000, 0xFFFFFFFF, 3.0f) // black text on light
+    // WCAG 2.1 contrast ratio a text fill must meet against its background to be
+    // kept as-is; below this the fill is forced to pure black/white. 4.5 is the
+    // AA threshold for normal text; conservative for the "readable without
+    // zoom" requirement. The one tuning knob — see Phase 2 measurement.
+    private const val CONTRAST_AA = 4.5f
 
-    // Luma thresholds for background classification (Rec.601 weights).
+    // Rec.601 background-luma threshold (0..255) used to pick black-vs-white
+    // when the ink color is forced. Below this the background is "dark" → white.
     private const val DARK_BG_LUMA = 85f
 
     /**
-     * Pure, Bitmap-free color decision: given the dominant background luma
-     * (Rec.601, 0..255), pick (textColor, strokeColor, strokeWidth) and apply
-     * the gray-snap. Extracted from [estimate] so the policy is unit-testable
-     * without an `android.graphics.Bitmap`.
+     * Pure, Bitmap-free text-color decision, extracted from [estimate] so the
+     * policy is unit-testable without an `android.graphics.Bitmap`.
      *
-     *  - dark background  → white text + black stroke (wide)
-     *  - light background → black text + white stroke (narrower)
-     *  - then snap any low-saturation mid-gray text color to pure black.
+     * Takes the dominant background and foreground (ink) cluster colors (RGB in
+     * 0..255). The fill defaults to the detected ink color; if its WCAG contrast
+     * against the background is below [CONTRAST_AA] it is forced to pure black
+     * or white (whichever contrasts more with the background) so the text is
+     * always legible.
+     *
+     * Returns the text ARGB. Stroke color and width are NOT decided here — they
+     * are owned by [PageTextRenderer] and [TextLayoutPlanner] respectively.
      */
-    internal fun colorPolicy(bgLuma: Float, fgColor: FloatArray? = null): Triple<Long, Long, Float> {
-        val strokeWidth = if (bgLuma < DARK_BG_LUMA) DARK_BG_COLORS.third else LIGHT_BG_COLORS.third
-        val strokeColor = if (bgLuma < DARK_BG_LUMA) 0xFF000000L else 0xFFFFFFFFL
+    internal fun colorPolicy(bgColor: FloatArray, fgColor: FloatArray): Long {
+        val textArgb = packArgb(fgColor)
+        val ratio = contrastRatio(bgColor, fgColor)
+        if (ratio >= CONTRAST_AA) return textArgb
 
-        val textArgb = if (fgColor != null) {
-            val r = fgColor[0].toInt().coerceIn(0, 255)
-            val g = fgColor[1].toInt().coerceIn(0, 255)
-            val b = fgColor[2].toInt().coerceIn(0, 255)
-            (0xFFL shl 24) or (r.toLong() shl 16) or (g.toLong() shl 8) or b.toLong()
-        } else {
-            if (bgLuma < DARK_BG_LUMA) 0xFFFFFFFFL else 0xFF000000L
+        // Ink is too close to the background to read. Force the high-contrast
+        // pole. bgLuma picks the pole that contrasts MORE with the background:
+        // a dark background gets white text, a light background gets black text.
+        val bgLuma = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
+        val forced = if (bgLuma < DARK_BG_LUMA) 0xFFFFFFFFL else 0xFF000000L
+        // Observability: log every legibility override so the AA threshold can be
+        // tuned from real data. ratio<AA is exactly the "text was unreadable" case.
+        logcat(LogPriority.DEBUG) {
+            "[color] contrast override: ratio=%.2f < %.1f; ink=rgb(%d,%d,%d) bg=rgb(%d,%d,%d) -> %s".format(
+                ratio, CONTRAST_AA,
+                fgColor[0].toInt(), fgColor[1].toInt(), fgColor[2].toInt(),
+                bgColor[0].toInt(), bgColor[1].toInt(), bgColor[2].toInt(),
+                if (forced == 0xFFFFFFFFL) "white" else "black",
+            )
         }
+        return forced
+    }
 
-        return snapGray(Triple(textArgb, strokeColor, strokeWidth))
+    private fun packArgb(rgb: FloatArray): Long {
+        val r = rgb[0].toInt().coerceIn(0, 255)
+        val g = rgb[1].toInt().coerceIn(0, 255)
+        val b = rgb[2].toInt().coerceIn(0, 255)
+        return (0xFFL shl 24) or (r.toLong() shl 16) or (g.toLong() shl 8) or b.toLong()
+    }
+
+    /**
+     * WCAG 2.1 contrast ratio (1.0..21.0) between two colors. Uses the proper
+     * sRGB-relative luminance: linearize each channel via the sRGB gamma, then
+     * weighted sum, then `(Lmax+0.05)/(Lmin+0.05)`. Inputs are sRGB in 0..255.
+     */
+    private fun contrastRatio(a: FloatArray, b: FloatArray): Float {
+        val la = relativeLuminance(a)
+        val lb = relativeLuminance(b)
+        val (hi, lo) = if (la >= lb) la to lb else lb to la
+        return (hi + 0.05f) / (lo + 0.05f)
+    }
+
+    private fun relativeLuminance(rgb: FloatArray): Float {
+        var lr = 0f
+        var lg = 0f
+        var lb = 0f
+        for (i in 0..2) {
+            val c = rgb[i] / 255f
+            val linear = if (c <= 0.03928f) c / 12.92f else Math.pow(((c + 0.055) / 1.055), 2.4).toFloat()
+            when (i) {
+                0 -> lr = linear
+                1 -> lg = linear
+                2 -> lb = linear
+            }
+        }
+        return 0.2126f * lr + 0.7152f * lg + 0.0722f * lb
     }
 
     /**
@@ -82,11 +129,16 @@ object RenderColorEstimator {
      * first pass) or the cleaned/inpainted page (post-inpaint recompute).
      *
      * [parentBbox] is the enclosing speech-bubble box if this text lives inside
-     * a bubble, else null. It is no longer used to SHORT-CIRCUIT the contrast
-     * check (the old behavior always returned dark-gray text for bubble text,
-     * which is exactly wrong for dark-filled bubbles) — it is kept on the
-     * signature for caller compatibility and may be used to widen the sampling
-     * pad when the text box is tiny.
+     * a bubble, else null. When set, the sample is restricted to the eroded
+     * bubble interior (so artwork outside the bubble does not contaminate the
+     * background estimate) and the pad is widened so a tiny box still captures
+     * enough of that interior. When null (SFX / free-floating text) the pad is
+     * kept tight to the box so the 2-means background reflects the LOCAL region
+     * rather than reaching into adjacent artwork.
+     *
+     * Only the text color is genuinely decided here; the returned stroke color
+     * and width are vestigial (synthesized for caller compatibility) and are
+     * overridden by [PageTextRenderer] / [TextLayoutPlanner].
      */
     fun estimate(
         bitmap: Bitmap,
@@ -98,7 +150,13 @@ object RenderColorEstimator {
     ): Triple<Long, Long, Float> {
         val boxW = max(1, x2 - x1)
         val boxH = max(1, y2 - y1)
-        val basePad = max(12, min(boxW, boxH) / 2)
+        // F4: unparented text (SFX / free text) has no bubble interior to lean
+        // on, so a wide pad reaches into adjacent artwork and contaminates the
+        // background cluster → wrong polarity → illegible text. Keep the
+        // unparented pad tight (1/8 of the shorter side) so the sample stays in
+        // the local region. Parented text widens as before to capture the
+        // (masked) bubble interior.
+        val basePad = if (parentBbox != null) max(12, min(boxW, boxH) / 2) else max(2, min(boxW, boxH) / 8)
         val pad = if (parentBbox != null) max(basePad, 16) else basePad
         val left = (x1 - pad).coerceIn(0, bitmap.width)
         val top = (y1 - pad).coerceIn(0, bitmap.height)
@@ -106,38 +164,87 @@ object RenderColorEstimator {
         val bottom = (y2 + pad).coerceIn(top, bitmap.height)
         val cropW = right - left
         val cropH = bottom - top
-        if (cropW <= 0 || cropH <= 0) return LIGHT_BG_COLORS
+        if (cropW <= 0 || cropH <= 0) return Triple(0xFF000000L, 0xFFFFFFFFL, 0f)
 
         val pixels = IntArray(cropW * cropH)
         bitmap.getPixels(pixels, 0, cropW, left, top, cropW, cropH)
 
-        // TachiyomiAT: containment-aware 2-means. When a parent bubble is known,
-        // build the eroded bubble interior mask and sample only those pixels so
-        // the background estimate comes from inside the bubble — not from artwork
-        // outside the bubble that the sampling pad may have reached.
-        val sampleMask: ByteArray? = if (parentBbox != null) {
-            val bw = parentBbox[2] - parentBbox[0]
-            val bh = parentBbox[3] - parentBbox[1]
-            val erode = max(2, min(bw, bh) / 10)
-            val sx1 = max(0, parentBbox[0] + erode - left)
-            val sy1 = max(0, parentBbox[1] + erode - top)
-            val sx2 = min(cropW, parentBbox[2] - erode - left)
-            val sy2 = min(cropH, parentBbox[3] - erode - top)
-            if (sx2 > sx1 && sy2 > sy1) {
-                ByteArray(cropW * cropH).also { mask ->
-                    for (y in sy1 until sy2) {
-                        for (x in sx1 until sx2) {
-                            mask[y * cropW + x] = 1
-                        }
-                    }
-                }
-            } else null
-        } else null
+        val textArgb = decideTextFill(pixels, cropW, cropH, left, top, parentBbox)
+        // Stroke color mirrors the renderer's luma-inverse invariant so the
+        // persisted value is correct if ever read directly; width is vestigial
+        // (TextLayoutPlanner derives it from font size).
+        val bgLuma = sampleBackgroundLuma(pixels, cropW, cropH, left, top, parentBbox)
+        val strokeArgb = if (bgLuma < DARK_BG_LUMA) 0xFF000000L else 0xFFFFFFFFL
+        return Triple(textArgb, strokeArgb, 0f)
+    }
 
+    /**
+     * The pure post-sampling decision: 2-means bg/fg split of [pixels] (optionally
+     * masked to the eroded parent-bubble interior) → [colorPolicy] adaptive fill.
+     * Extracted from [estimate] so the full buggy code path (the part that
+     * actually decides the text color, including the contrast override) is
+     * unit-testable without an `android.graphics.Bitmap`. [pixels] is the
+     * crop's ARGB data; [cropLeft]/[cropTop] are its offset in page coordinates
+     * so the eroded bubble interior mask can be built.
+     */
+    internal fun decideTextFill(
+        pixels: IntArray,
+        cropW: Int,
+        cropH: Int,
+        cropLeft: Int,
+        cropTop: Int,
+        parentBbox: IntArray? = null,
+    ): Long {
+        val sampleMask = bubbleInteriorMask(parentBbox, cropW, cropH, cropLeft, cropTop)
         val step = max(1, pixels.size / 1200)
         val (bgColor, fgColor) = extractClusters(pixels, step, sampleMask)
-        val brightness = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
-        return colorPolicy(brightness, fgColor)
+        return colorPolicy(bgColor, fgColor)
+    }
+
+    /**
+     * Rec.601 luma (0..255) of the dominant background cluster. Used to derive
+     * the (vestigial) persisted stroke color. Pure: takes the sampled pixels.
+     */
+    internal fun sampleBackgroundLuma(
+        pixels: IntArray,
+        cropW: Int,
+        cropH: Int,
+        cropLeft: Int,
+        cropTop: Int,
+        parentBbox: IntArray? = null,
+    ): Float {
+        val sampleMask = bubbleInteriorMask(parentBbox, cropW, cropH, cropLeft, cropTop)
+        val step = max(1, pixels.size / 1200)
+        val (bgColor, _) = extractClusters(pixels, step, sampleMask)
+        return 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
+    }
+
+    private fun bubbleInteriorMask(
+        parentBbox: IntArray?,
+        cropW: Int,
+        cropH: Int,
+        cropLeft: Int,
+        cropTop: Int,
+    ): ByteArray? {
+        if (parentBbox == null) return null
+        // Containment-aware 2-means: restrict the sample to the eroded bubble
+        // interior so the background estimate comes from inside the bubble, not
+        // from artwork outside it that the padded crop may have reached.
+        val bw = parentBbox[2] - parentBbox[0]
+        val bh = parentBbox[3] - parentBbox[1]
+        val erode = max(2, min(bw, bh) / 10)
+        val sx1 = max(0, parentBbox[0] + erode - cropLeft)
+        val sy1 = max(0, parentBbox[1] + erode - cropTop)
+        val sx2 = min(cropW, parentBbox[2] - erode - cropLeft)
+        val sy2 = min(cropH, parentBbox[3] - erode - cropTop)
+        if (sx2 <= sx1 || sy2 <= sy1) return null
+        return ByteArray(cropW * cropH).also { mask ->
+            for (y in sy1 until sy2) {
+                for (x in sx1 until sx2) {
+                    mask[y * cropW + x] = 1
+                }
+            }
+        }
     }
 
     /**
@@ -220,7 +327,7 @@ object RenderColorEstimator {
             } else {
                 null
             }
-            val (text, stroke, width) = estimate(
+            val (text, stroke, _) = estimate(
                 cleanedBitmap,
                 block.x.toInt(),
                 block.y.toInt(),
@@ -230,45 +337,8 @@ object RenderColorEstimator {
             )
             block.textColor = text
             block.strokeColor = stroke
-            // Keep the estimator's stroke width if the block had none, else
-            // preserve any explicit per-block override.
-            if (block.strokeWidth <= 0f) block.strokeWidth = width
+            // Stroke width is owned by TextLayoutPlanner (font-derived); do not
+            // write the estimator's vestigial width onto the block.
         }
     }
-
-    /**
-     * Snap a (text, stroke, width) triple's TEXT color to pure black when it
-     * falls in the low-saturation gray band. The intent: mid-gray text (e.g.
-     * the legacy 0xFF1A1A1A) on a mid-gray inpaint is illegible, and there is
-     * no good reason to render gray text — snap to black. Saturated colors
-     * (e.g. a deliberately colored translation) are preserved.
-     *
-     * Gray-snap band: a chosen text color with luma in
-     * [GRAY_MIN_LUMA, GRAY_MAX_LUMA] AND channel spread ≤ GRAY_MAX_SAT snaps
-     * to pure black. `internal` so the policy is unit-testable.
-     */
-    internal fun snapGray(triple: Triple<Long, Long, Float>): Triple<Long, Long, Float> {
-        val textArgb = triple.first
-        val a = (textArgb shr 24 and 0xFF).toInt()
-        val r = (textArgb shr 16 and 0xFF).toInt()
-        val g = (textArgb shr 8 and 0xFF).toInt()
-        val b = (textArgb and 0xFF).toInt()
-        val luma = 0.299f * r + 0.587f * g + 0.114f * b
-        val maxC = max(max(r, g), b)
-        val minC = min(min(r, g), b)
-        val sat = (maxC - minC).toFloat()
-        if (luma in GRAY_MIN_LUMA..GRAY_MAX_LUMA && sat <= GRAY_MAX_SAT) {
-            // Snap text to pure black, keep stroke unchanged.
-            val blackText = (a.toLong() shl 24) or 0x000000L
-            return Triple(blackText, triple.second, triple.third)
-        }
-        return triple
-    }
-
-    // Gray-snap band. A chosen text color in [GRAY_MIN_LUMA, GRAY_MAX_LUMA] AND
-    // with low saturation is snapped to pure black — mid-gray text on a
-    // mid-gray inpaint is illegible and there is no reason to keep it gray.
-    private const val GRAY_MIN_LUMA = 40f
-    private const val GRAY_MAX_LUMA = 200f
-    private const val GRAY_MAX_SAT = 25f // max channel spread for "gray"
 }

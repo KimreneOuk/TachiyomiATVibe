@@ -73,7 +73,7 @@ class PaddleOcrV6DetEngine : Closeable {
             "PaddleOCR v6 det init: model=${modelFile.absolutePath} " +
                 "(${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
+        val opts = OnnxRuntimeProvider.createSessionOptions()
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
             inputName = session?.inputNames?.firstOrNull() ?: "x"

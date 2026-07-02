@@ -20,6 +20,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -66,6 +68,17 @@ class ChapterTranslator(
 ) {
 
     companion object {
+        // TachiyomiAT: bounded join for the batch translator job during delete.
+        // The batch worker can be mid-uncancellable native ONNX (OrtSession.run)
+        // when cancel() is requested; coroutine cancellation only lands at the
+        // next suspension point. Bounding the join prevents a delete from hanging
+        // the caller on a job that won't unwind promptly. Matches the single-page
+        // join bound in TranslationScheduler.JOIN_TIMEOUT_MS. If the join times
+        // out, the file delete proceeds and the defunct-store guard
+        // (ChapterTranslationStore.markDefunct) neutralizes any late write from
+        // the still-unwinding job.
+        const val BATCH_JOIN_TIMEOUT_MS = 2_000L
+
         // TachiyomiAT: reader page streams now live in [TranslationStreamRegistry]
         // (a dedicated, testable singleton). These companion functions are kept
         // as thin delegates to the DI singleton so existing static call sites
@@ -314,6 +327,35 @@ class ChapterTranslator(
     private fun cancelTranslatorJob() {
         translationJob?.cancel()
         translationJob = null
+    }
+
+    /**
+     * Cancels the batch translator job AND waits for it to unwind, bounded by
+     * [BATCH_JOIN_TIMEOUT_MS]. Used only by the delete path: a chapter's on-disk
+     * translation file + companion images must not be deleted while the batch
+     * coroutine still holds the old [ChapterTranslationStore] reference and may
+     * write RUNNING/rendered results into it. Joining here guarantees the job
+     * reaches a suspension point (so its finally blocks run and release the
+     * translator permit) before [TranslationManager.deleteTranslation] deletes
+     * files. Plain [cancelTranslatorJob] is unchanged so pause/stop/clearQueue
+     * keep their non-blocking behaviour.
+     *
+     * If the join times out (job stuck in uncancellable native code), this
+     * returns anyway; the defunct-store guard rejects any subsequent write, and
+     * the permit watchdog force-releases the native buffer. The timeout keeps a
+     * delete responsive instead of hanging the caller.
+     */
+    suspend fun cancelTranslatorJobAndJoin() {
+        val job = translationJob ?: return
+        translationJob = null
+        val joined = withTimeoutOrNull(BATCH_JOIN_TIMEOUT_MS) { job.cancelAndJoin() }
+        if (joined == null) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT batch translator job did not unwind within " +
+                    "$BATCH_JOIN_TIMEOUT_MS ms on delete; proceeding (defunct guard + " +
+                    "permit watchdog will neutralize any late write)"
+            }
+        }
     }
 
     fun queueChapter(manga: Manga, chapter: Chapter) {

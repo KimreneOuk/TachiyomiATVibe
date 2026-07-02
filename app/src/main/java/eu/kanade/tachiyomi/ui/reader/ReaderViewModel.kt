@@ -1659,44 +1659,46 @@ class ReaderViewModel @JvmOverloads constructor(
         val manga = manga ?: return
         val chapter = getCurrentChapter()?.chapter ?: return
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
-        // deleteTranslation now cancels all in-flight single-page/auto jobs,
-        // evicts the shared store, and deletes the on-disk file + companion
-        // images asynchronously. Mirror cancelTranslationForChapter's per-page
-        // + observer cleanup so the reader reflects the delete immediately and
-        // is ready to re-translate against a fresh store:
-        //   - clear the per-page translated fields so a holder still pointing at
-        //     these pages falls back to the original image (and releases the
-        //     captured translated stream bitmaps) instead of showing the
-        //     about-to-be-deleted rendered image;
-        //   - re-observe the live store AFTER delete so the reader binds to the
-        //     fresh lazy store deleteTranslation's eviction created, and live
-        //     updates flow again on the next translate.
+        // TachiyomiAT: delete is now SUSPEND and fully tears down (cancels +
+        // joins single/auto AND batch jobs, evicts + defuncts the shared store,
+        // clears the reader stream registry, then deletes the on-disk file +
+        // companion images) before returning. Split into two phases:
+        //   - SYNCHRONOUS: clear the per-page translated fields + emit a refresh
+        //     so holders fall back to the original image immediately and release
+        //     captured translated-stream bitmaps instead of showing the
+        //     about-to-be-deleted rendered image. This must reflect on the UI now.
+        //   - ASYNC: run deleteTranslation, then re-subscribe + reset state ONLY
+        //     after teardown completes. The previous code re-subscribed
+        //     synchronously while delete's eviction still ran on a background
+        //     coroutine, so the cache-first openOrCreateActiveChapterTranslationStore
+        //     could re-bind the reader to the about-to-be-evicted store while the
+        //     translator wrote to a different instance — leaving the reader on
+        //     ORIGINAL images with a stuck global spinner on delete-then-retranslate.
         getCurrentChapter()?.pages?.forEach { page ->
             page.translatedStream = null
             page.translation = null
             page.showTranslatedImage = false
             (page as? ReaderPage)?.translationToggled = false
         }
-        translationManager.deleteTranslation(chapter.toDomainChapter()!!, manga, source)
 
         val readerPages = getCurrentChapter()?.pages?.filterIsInstance<ReaderPage>()?.toSet() ?: emptySet()
         if (readerPages.isNotEmpty()) {
             eventChannel.trySend(Event.RefreshTranslationPages(readerPages))
             mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
         }
-        // Re-subscribe to the (now fresh) store. deleteTranslation's store
-        // eviction runs on a background coroutine; observeLiveTranslationStore
-        // calls openOrCreateActiveChapterTranslationStore which will create a new
-        // lazy store if the old one was already evicted, or reuse it if not yet —
-        // either way the reader observes a store that is not bound to the deleted
-        // file. This is best-effort on ordering; the manager's resolver also
-        // re-resolves a fresh store on the next translate, so a translate after
-        // delete always lands on a valid store.
-        observeLiveTranslationStore()
-        batchTranslationState = Translation.State.NOT_TRANSLATED
-        liveTranslationState = Translation.State.NOT_TRANSLATED
-        mutableState.update { it.copy(translationState = Translation.State.NOT_TRANSLATED) }
-        recomputeTranslationState()
+
+        viewModelScope.launchIO {
+            translationManager.deleteTranslation(chapter.toDomainChapter()!!, manga, source)
+            // Re-subscribe to the (now fresh) store AFTER teardown. deleteTranslation
+            // has already evicted the old store, so openOrCreate... resolves a new
+            // lazy store that the next translate also resolves — reader and
+            // translator share the same instance and live updates flow again.
+            observeLiveTranslationStore()
+            batchTranslationState = Translation.State.NOT_TRANSLATED
+            liveTranslationState = Translation.State.NOT_TRANSLATED
+            mutableState.update { it.copy(translationState = Translation.State.NOT_TRANSLATED) }
+            recomputeTranslationState()
+        }
     }
 
     fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {

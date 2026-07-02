@@ -1,0 +1,28 @@
+# Defaults point at the model files bundled with the Android app.
+# You may instead copy app/src/main/assets/models into companion_server/models
+# and change these paths to models/...
+detector: { path: ../app/src/main/assets/models/detection/detector-v4-s_int8.onnx }
+ocr:
+  engine: manga_ocr
+  encoder: ../app/src/main/assets/models/ocr/encoder.onnx
+  decoder_init: ../app/src/main/assets/models/ocr/decoder_init.onnx
+  decoder_step: ../app/src/main/assets/models/ocr/decoder_step.onnx
+  vocab: ../app/src/main/assets/models/ocr/vocab.txt
+# Paddle DB det — loaded independently of the recognition engine. The Android
+# app always keeps it available to refine free-text erase boxes into tight
+# text-line boxes during inpainting (AOTInpainting.refineFreeTextBoxes).
+paddle_det:
+  path: ../app/src/main/assets/models/ocr/paddle-v6-small/det/inference.onnx
+inpaint: { path: ../app/src/main/assets/models/inpainting/aot.onnx }
+translator:
+  # "engine" is the canonical key (the UI writes "engine"); "provider" is also
+  # accepted for backwards compatibility. openai_compatible hits any
+  # OpenAI-style /chat/completions endpoint (LM Studio, vLLM, Ollama /v1).
+  engine: openai_compatible
+  base_url: http://localhost:1234/v1
+  api_key_env: TRANSLATOR_KEY
+  model: qwen2.5-72b
+  temperature: 0.3
+server:
+  max_concurrency: 4
+  device: cpu

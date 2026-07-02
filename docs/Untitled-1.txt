@@ -1,0 +1,32 @@
+#< CLIXML
+w: file:///C:/Users/ADMIN/Documents/Coding%20Related/manga_translation_optimized/manga_translation_optimized/android_app/TachiyomiAT-1.16.8-dev/TachiyomiAT-1.16.8-dev/app/src/main/java/eu/kanade/tachiyomi/data/notification/NotificationReceiver.kt:226:9 This is a delicate API and its use requires care. Make sure you fully read and understand documentation of the declaration that is marked as a delicate API.
+
+> Task :app:compileStandardDebugJavaWithJavac
+> Task :app:processStandardDebugJavaRes UP-TO-DATE
+> Task :app:bundleStandardDebugClassesToCompileJar
+> Task :app:bundleStandardDebugClassesToRuntimeJar
+> Task :app:compileStandardDebugUnitTestKotlin
+> Task :app:compileStandardDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processStandardDebugUnitTestJavaRes UP-TO-DATE
+
+> Task :app:testStandardDebugUnitTest
+
+PushPullGradientTest > pushPullFill on an empty mask is a no-op() PASSED
+
+PushPullGradientTest > pushPullFill fills the hole with the local color, not white() PASSED
+
+PushPullGradientTest > pushPullFill changes masked pixels and leaves others untouched() PASSED
+
+PushPullGradientTest > localRingMedian returns the surrounding panel color, not white() PASSED
+
+[Incubating] Problems report is available at: file:///C:/Users/ADMIN/Documents/Coding%20Related/manga_translation_optimized/manga_translation_optimized/android_app/TachiyomiAT-1.16.8-dev/TachiyomiAT-1.16.8-dev/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 9.0.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/8.12/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 48s
+203 actionable tasks: 7 executed, 196 up-to-date
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>
