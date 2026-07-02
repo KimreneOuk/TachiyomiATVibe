@@ -177,6 +177,40 @@ class LmStudioTranslator(
         }
     }
 
+    override suspend fun promptText(prompt: String): String {
+        return try {
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val jsonObject = buildJsonObject {
+                put("model", modelName)
+                put("temperature", temp)
+                put("max_tokens", maxOutputToken)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", prompt)
+                    }
+                }
+            }.toString()
+
+            val body = jsonObject.toRequestBody(mediaType)
+            val request = Request.Builder()
+                .url("$normalizedBaseUrl/chat/completions")
+                .header("Content-Type", "application/json")
+                .post(body)
+                .build()
+
+            val response = okHttpClient.newCall(request).await()
+            val responseBody = response.body ?: return ""
+            val responseStr = responseBody.string()
+            val responseJson = JSONObject(responseStr)
+            val choicesArr = responseJson.optJSONArray("choices")
+            choicesArr?.optJSONObject(0)?.optJSONObject("message")?.optString("content") ?: ""
+        } catch (e: Exception) {
+            logcat { "LM Studio promptText Error : ${e.stackTraceToString()}" }
+            ""
+        }
+    }
+
     override fun close() {
         okHttpClient.connectionPool.evictAll()
         okHttpClient.dispatcher.executorService.shutdown()

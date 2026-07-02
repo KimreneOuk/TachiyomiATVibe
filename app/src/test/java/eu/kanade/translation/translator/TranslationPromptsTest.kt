@@ -4,6 +4,7 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
+import io.kotest.matchers.string.shouldNotContain
 import org.junit.jupiter.api.Test
 
 class TranslationPromptsTest {
@@ -43,6 +44,43 @@ class TranslationPromptsTest {
             "left-to-right, top-to-bottom"
         TranslationPrompts.readingDirectionHint(TextRecognizerLanguage.CHINESE) shouldBe
             "left-to-right, top-to-bottom"
+    }
+
+    @Test
+    fun `isProDrop is true for CJK and Romance pro-drop languages, false otherwise`() {
+        // CJK sources habitually drop subjects.
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.JAPANESE) shouldBe true
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.CHINESE) shouldBe true
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.KOREAN) shouldBe true
+        // Romance pro-drop languages.
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.SPANISH) shouldBe true
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.PORTUGUESE) shouldBe true
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.ITALIAN) shouldBe true
+        // Non-pro-drop: subject inference guidance should NOT be emitted for these.
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.ENGLISH) shouldBe false
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.FRENCH) shouldBe false
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.GERMAN) shouldBe false
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.INDONESIAN) shouldBe false
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.VIETNAMESE) shouldBe false
+        TranslationPrompts.isProDrop(TextRecognizerLanguage.RUSSIAN) shouldBe false
+    }
+
+    @Test
+    fun `pro-drop guidance is emitted only for pro-drop source languages`() {
+        // Japanese (pro-drop) -> guidance present.
+        val jaPrompt = TranslationPrompts.numberedSystemPrompt(
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.ENGLISH,
+        )
+        jaPrompt shouldContain "pro-drop"
+
+        // German (non-pro-drop) -> guidance absent, so the model doesn't invent
+        // omitted subjects that aren't there in the source.
+        val dePrompt = TranslationPrompts.numberedSystemPrompt(
+            TextRecognizerLanguage.GERMAN,
+            TextTranslatorLanguage.ENGLISH,
+        )
+        dePrompt shouldNotContain "pro-drop"
     }
 
     @Test

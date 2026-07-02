@@ -15,6 +15,7 @@ spotless = "7.0.0.BETA4"
 ktlint-core = "1.5.0"
 firebase-bom = "33.7.0"
 onnxruntime-android-version = "1.21.0"
+jtokkit_version = "1.1.0"
 
 [libraries]
 desugar = "com.android.tools:desugar_jdk_libs:2.1.4"
@@ -41,6 +42,7 @@ mlkit-text-recognition-korean = { module = "com.google.mlkit:text-recognition-ko
 mlkit-text-translate = { module = "com.google.mlkit:translate", version.ref = "mlkit-text-translate-version" }
 google-generativeai = { module = "com.google.ai.client.generativeai:generativeai", version.ref = "google-generativeai-version" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android-qnn", version.ref = "onnxruntime-android-version" }
+jtokkit = { module = "com.knuddels:jtokkit", version.ref = "jtokkit_version" }
 
 disklrucache = "com.jakewharton:disklrucache:2.0.2"
 unifile = "com.github.tachiyomiorg:unifile:e0def6b3dc"

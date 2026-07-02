@@ -125,6 +125,42 @@ class OpenRouterTranslator(
         }
     }
 
+    override suspend fun promptText(prompt: String): String {
+        return try {
+            val mediaType = "application/json; charset=utf-8".toMediaType()
+            val jsonObject = buildJsonObject {
+                put("model", modelName)
+                put("top_p", 0.5f)
+                put("top_k", 30)
+                put("temperature", temp)
+                put("max_tokens", maxOutputToken)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", prompt)
+                    }
+                }
+            }.toString()
+
+            val body = jsonObject.toRequestBody(mediaType)
+            val build: Request = Request.Builder()
+                .url("https://openrouter.ai/api/v1/chat/completions")
+                .header("Authorization", "Bearer $apiKey")
+                .header("Content-Type", "application/json")
+                .post(body)
+                .build()
+
+            val response = okHttpClient.newCall(build).await()
+            val rBody = response.body ?: return ""
+            val responseJson = JSONObject(rBody.string())
+            responseJson.optJSONArray("choices")?.optJSONObject(0)
+                ?.optJSONObject("message")?.optString("content") ?: ""
+        } catch (e: Exception) {
+            logcat { "OpenRouter promptText Error : ${e.stackTraceToString()}" }
+            ""
+        }
+    }
+
     override fun close() {
         // TachiyomiAT: release this translator's connection pool + dispatcher
         // threads. TranslationEngineBuilder rebuilds translators on every language

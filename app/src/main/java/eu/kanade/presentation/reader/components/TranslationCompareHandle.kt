@@ -96,7 +96,8 @@ fun TranslationCompareHandle(
     onSelectOriginal: () -> Unit,
     onSelectTranslated: () -> Unit,
     onOpenSettings: () -> Unit,
-    onDeleteTranslation: () -> Unit,
+    onDeletePageTranslation: () -> Unit,
+    onDeleteChapterTranslation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (!visible) return
@@ -179,16 +180,26 @@ fun TranslationCompareHandle(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text(text = stringResource(MR.strings.are_you_sure)) },
-            text = { Text(text = stringResource(ATMR.strings.reader_compare_delete_translation)) },
+            title = { Text(text = "Delete Translation") },
+            text = { Text(text = "Do you want to delete the translation for the current page only, or the entire chapter?") },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDeleteDialog = false
-                        onDeleteTranslation()
-                    },
-                ) {
-                    Text(text = stringResource(MR.strings.action_delete))
+                Column(horizontalAlignment = Alignment.End) {
+                    TextButton(
+                        onClick = {
+                            showDeleteDialog = false
+                            onDeletePageTranslation()
+                        },
+                    ) {
+                        Text(text = "Current Page")
+                    }
+                    TextButton(
+                        onClick = {
+                            showDeleteDialog = false
+                            onDeleteChapterTranslation()
+                        },
+                    ) {
+                        Text(text = "Entire Chapter")
+                    }
                 }
             },
             dismissButton = {

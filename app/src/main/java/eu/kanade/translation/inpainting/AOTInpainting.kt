@@ -493,8 +493,12 @@ class AOTInpainting {
         val boxLongSide = max(textW, textH)
         val targetCropLong = BubbleMaskBuilder.computeNeuralCrop(boxLongSide)
         // Margin = half the extra context on each side, computed so the longer
-        // axis of the union reaches targetCropLong.
-        val cropMargin = max(0, (targetCropLong - boxLongSide) / 2)
+        // axis of the union reaches targetCropLong. We enforce a minimum context
+        // margin of 64px to ensure the neural model always sees surrounding artwork.
+        // Without this, large free-text boxes would collapse to 0 margin, receive 
+        // a crop that is 100% masked out, and hallucinate uniform gray (caught by 
+        // AotOutputGuard and downgraded to Telea).
+        val cropMargin = max(64, (targetCropLong - boxLongSide) / 2)
 
         val cropX1 = max(0, unionX1 - cropMargin)
         val cropY1 = max(0, unionY1 - cropMargin)

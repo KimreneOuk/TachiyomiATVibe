@@ -290,6 +290,7 @@ dependencies {
     implementation(libs.mlkit.text.translate)
     implementation(libs.google.generativeai)
     implementation(libs.onnxruntime.android)
+    implementation(libs.jtokkit)
 }
 
 androidComponents {

@@ -132,35 +132,12 @@ object TranslationContextChunkPlanner {
         return lines.joinToString("\n")
     }
 
+    private val encodingRegistry = com.knuddels.jtokkit.Encodings.newDefaultEncodingRegistry()
+    private val encoding = encodingRegistry.getEncoding(com.knuddels.jtokkit.api.EncodingType.CL100K_BASE)
+
     fun estimateTokens(text: String): Int {
-        var tokens = 0
-        var latinRun = 0
-        fun flushLatin() {
-            if (latinRun > 0) {
-                tokens += (latinRun + 3) / 4
-                latinRun = 0
-            }
-        }
-        text.forEach { ch ->
-            when {
-                ch.isCjk() -> {
-                    flushLatin()
-                    tokens += 1
-                }
-                ch.isWhitespace() -> {
-                    flushLatin()
-                }
-                ch.isLetterOrDigit() -> {
-                    latinRun += 1
-                }
-                else -> {
-                    flushLatin()
-                    tokens += 1
-                }
-            }
-        }
-        flushLatin()
-        return tokens.coerceAtLeast(1)
+        if (text.isEmpty()) return 1
+        return encoding.countTokens(text).coerceAtLeast(1)
     }
 
     private fun TranslationContextChunk.withOutputCap(
@@ -180,7 +157,7 @@ object TranslationContextChunkPlanner {
             maxPagesPerChunk = Int.MAX_VALUE,
         )
         Profile.LM_STUDIO -> Constraints(
-            maxContextTokens = 4_096,
+            maxContextTokens = 10_000,
             safetyMargin = SAFETY_MARGIN,
             minOutputTokens = MIN_OUTPUT_TOKENS,
             promptOverheadTokens = PROMPT_OVERHEAD_TOKENS,
@@ -215,4 +192,7 @@ data class TranslationContextChunk(
 
 interface ContextualTextTranslator : TextTranslator {
     suspend fun translateContextual(chunk: TranslationContextChunk)
+    
+    /** Prompts the underlying model directly (used for glossary generation and summarization). */
+    suspend fun promptText(prompt: String): String
 }

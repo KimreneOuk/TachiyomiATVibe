@@ -109,6 +109,17 @@ class ChapterTranslationStore(
         }
     }
 
+    suspend fun deletePage(pageKey: String) {
+        if (defunct) return
+        mutex.withLock {
+            if (pages.containsKey(pageKey)) {
+                pages = pages.remove(pageKey)
+                schedulePersist()
+                _state.value = snapshotPages()
+            }
+        }
+    }
+
     suspend fun replaceAll(updatedPages: Map<String, PageTranslation>) {
         if (defunct) {
             logcat(LogPriority.WARN) {

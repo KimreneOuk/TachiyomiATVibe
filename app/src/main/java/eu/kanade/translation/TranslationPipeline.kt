@@ -966,6 +966,8 @@ class TranslationPipeline(
         }
 
         val chunkCounter = AtomicLong(0L)
+        var dynamicGlossary = ""
+        var dynamicGlossaryExtracted = false
 
         suspend fun translateChunkAi(
             chunk: TranslationContextChunk,
@@ -974,7 +976,13 @@ class TranslationPipeline(
         ): String {
             coroutineContext.ensureActive()
             val ct = contextualTranslator ?: return rolling
-            val glossaryText = ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
+            
+            if (!dynamicGlossaryExtracted) {
+                dynamicGlossaryExtracted = true
+                dynamicGlossary = eu.kanade.translation.translator.GlossaryExtractor.extractGlossary(ct, chunk.pages.values.toList())
+            }
+            
+            val glossaryText = dynamicGlossary + "\n" + ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
             val contextualChunk = TranslationContextChunkPlanner.withRollingContext(
                 chunk = chunk,
                 rollingContext = rolling,
@@ -1003,9 +1011,19 @@ class TranslationPipeline(
                     label = "stream-${chunkCounter.incrementAndGet()}",
                     retryDepth = 0,
                 )
-                val newRolling = TranslationContextChunkPlanner.updateRollingContext(
+                var newRolling = TranslationContextChunkPlanner.updateRollingContext(
                     rolling, contextualChunk.pages,
                 )
+                val estimatedRollingTokens = TranslationContextChunkPlanner.estimateTokens(newRolling)
+                val maxTokens = TranslationContextChunkPlanner.constraintsFor(chunkProfile).maxRollingContextTokens
+                if (estimatedRollingTokens > maxTokens) {
+                    val summaryPrompt = "Summarize the following manga dialogue context into a dense 2-3 sentence paragraph focusing on current plot and speakers:\n\n$newRolling"
+                    val summary = ct.promptText(summaryPrompt)
+                    if (summary.isNotBlank()) {
+                        logcat(LogPriority.INFO) { "Summarized rolling context ($estimatedRollingTokens tokens -> ${TranslationContextChunkPlanner.estimateTokens(summary)} tokens)" }
+                        newRolling = "[SUMMARY] $summary"
+                    }
+                }
                 // TachiyomiAT: accumulate this chunk's freshly translated pairs
                 // into the chapter glossary and persist it. Also log [SPEECH]
                 // tag coverage so a regression to a non-parenting recognition

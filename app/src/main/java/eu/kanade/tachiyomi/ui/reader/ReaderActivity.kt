@@ -510,7 +510,8 @@ class ReaderActivity : BaseActivity() {
                     onSelectOriginal = { viewModel.setCurrentPageShowTranslated(false) },
                     onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
                     onOpenSettings = { viewModel.openTranslationSettingsDialog() },
-                    onDeleteTranslation = { viewModel.deleteCurrentChapterTranslation() },
+                    onDeletePageTranslation = { viewModel.deleteCurrentPageTranslation() },
+                    onDeleteChapterTranslation = { viewModel.deleteCurrentChapterTranslation() },
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }

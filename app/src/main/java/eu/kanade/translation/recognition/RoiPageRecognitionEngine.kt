@@ -226,7 +226,8 @@ class RoiPageRecognitionEngine(
         // OrtSession.run(). See [nativeGuard]. The whole detect+OCR region is one
         // critical section: detect is one native pass and each recognize() is a
         // native pass, and close() must wait for whichever is in flight.
-        val analyzed = nativeGuard.withLock {
+        val analyzed = try {
+            nativeGuard.withLock {
             if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
             val detections = localDetector.detect(bitmap)
             val bubbles = detections.filter { it.label == 0 }
@@ -432,6 +433,17 @@ class RoiPageRecognitionEngine(
             // the post-lock dedupe/assembly below runs outside nativeGuard.
             RecognizedAnalyzeResult(lockedPageTranslation, lockedRecognizedBlocks)
         }
+        } finally {
+            if (closed && initialized) {
+                if (nativeGuard.tryLock()) {
+                    try {
+                        freeNativeSessions()
+                    } finally {
+                        nativeGuard.unlock()
+                    }
+                }
+            }
+        }
         val pageTranslation = analyzed.pageTranslation
         val recognizedBlocks = analyzed.recognizedBlocks
         val finalRecognizedBlocks = removePostOcrDuplicateBlocks(recognizedBlocks)
@@ -491,7 +503,8 @@ class RoiPageRecognitionEngine(
         // NOT duplicate it here — an earlier copy of that logic was unreachable
         // (this method returned inside the withLock above) and silently masked
         // the real planner path, which is exactly how the resume-mask bug hid.
-        return nativeGuard.withLock {
+        return try {
+            nativeGuard.withLock {
             if (closed) {
                 pageTranslation.inpaintStatus = StageStatus.FAILED
                 pageTranslation.errorMessage = "ONNX recognition engine closed before inpaint"
@@ -500,6 +513,17 @@ class RoiPageRecognitionEngine(
             } else {
                 (pageInpainter ?: PageInpaintingEngine(inpaintingMode, inpainting ?: AOTInpainting()))
                     .inpaint(bitmap, pageTranslation)
+            }
+        }
+        } finally {
+            if (closed && initialized) {
+                if (nativeGuard.tryLock()) {
+                    try {
+                        freeNativeSessions()
+                    } finally {
+                        nativeGuard.unlock()
+                    }
+                }
             }
         }
     }
@@ -519,6 +543,25 @@ class RoiPageRecognitionEngine(
         val pageTranslation: PageTranslation,
         val recognizedBlocks: MutableList<RecognizedBlock>,
     )
+
+    private fun freeNativeSessions() {
+        if (!initialized) return
+        try {
+            detector?.close()
+            roiOcrEngine?.close()
+            paddleDet?.close()
+            inpainting?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error freeing native sessions" }
+        } finally {
+            detector = null
+            roiOcrEngine = null
+            paddleDet = null
+            inpainting = null
+            pageInpainter = null
+            initialized = false
+        }
+    }
 
     override fun close() {
         // TachiyomiAT: set the cooperative close flag FIRST, before freeing the
@@ -542,27 +585,13 @@ class RoiPageRecognitionEngine(
         if (!nativeDrained) {
             logcat(LogPriority.WARN) {
                 "RoiPageRecognitionEngine.close: nativeGuard held (unexpected — permit guard " +
-                    "should prevent an in-flight native run at close time); skipping native " +
-                    "session free to avoid use-after-free. Engine will be rebuilt on next use."
+                    "should prevent an in-flight native run at close time); deferring native " +
+                    "session free to the lock holder to avoid use-after-free or leak."
             }
-            // Leave detector/roiOcrEngine/inpainting references in place; the
-            // [closed] flag + enginesClosed rebuild gate ensure a fresh engine is
-            // built on the next translate. The leaked sessions are bounded (one
-            // engine lifetime) and preferable to a native crash.
-            initialized = false
             return
         }
         try {
-            detector?.close()
-            roiOcrEngine?.close()
-            paddleDet?.close()
-            inpainting?.close()
-            detector = null
-            roiOcrEngine = null
-            paddleDet = null
-            inpainting = null
-            pageInpainter = null
-            initialized = false
+            freeNativeSessions()
         } finally {
             // Release the nativeGuard acquired above so a rebuilt engine's
             // analyze()/inpaint() can proceed. (Mutex.unlock is non-suspend.)
@@ -784,7 +813,16 @@ class RoiPageRecognitionEngine(
             if (b.size < 4 || b[2] <= b[0] || b[3] <= b[1]) return@mapNotNull null
             val w = b[2] - b[0]
             val h = b[3] - b[1]
-            if (w < MIN_COLUMN_WIDTH_PX || h < MIN_COLUMN_WIDTH_PX) return@mapNotNull null
+            // TachiyomiAT: the det model is a LEARNED text-line detector — its
+            // boxes are already real text, not raw pixel runs, so the minimum is
+            // far smaller than the ink-gap heuristic's MIN_COLUMN_WIDTH_PX (12).
+            // Back-projected det lines in small stage-1 ROIs are legitimately
+            // 6-10px tall; the old MIN_COLUMN_WIDTH_PX guard dropped every such
+            // line, emptied `items`, and fell through to a single whole-crop read
+            // that squashed a tall multi-line bubble into a 320x48 strip and
+            // returned empty/garbage ("regions skipped" symptom). 4px keeps only
+            // sub-glyph fragments out, which is the right floor for det boxes.
+            if (w < MIN_DET_LINE_PX || h < MIN_DET_LINE_PX) return@mapNotNull null
             if (w > MAX_COLUMN_WIDTH_PX || h > MAX_COLUMN_HEIGHT_PX) return@mapNotNull null
             val vertical = h > w * 1.5f
             // Vertical: sort by x-center DESC (right-to-left). Horizontal: by y ASC.
@@ -1152,6 +1190,12 @@ class RoiPageRecognitionEngine(
         private const val COLUMN_GAP_INK_FRACTION = 0.02f
         private const val MIN_COLUMN_GAP_PX = 10
         private const val MIN_COLUMN_WIDTH_PX = 12
+        // TachiyomiAT: minimum dimension for a PP-OCRv6 det-detected line box to be
+        // OCR'd in [recognizeDetColumns]. Distinct from MIN_COLUMN_WIDTH_PX (which
+        // guards the ink-gap heuristic's raw pixel runs): the det model already
+        // filtered noise, so a 4px floor only rejects sub-glyph fragments, while
+        // 12px wrongly discarded legitimate 6-10px-tall text lines in small ROIs.
+        private const val MIN_DET_LINE_PX = 4
         private const val MIN_PARENT_TEXT_OVERLAP_FRACTION = 0.20f
         // TachiyomiAT: det-line size guard for [recognizeDetColumns]. Rejects
         // sub-glyph noise (det sometimes emits tiny fragments) and false merges

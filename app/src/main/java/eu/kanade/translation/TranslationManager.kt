@@ -561,6 +561,31 @@ class TranslationManager(
         provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
     }
 
+    suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
+        val chapterId = chapter.id ?: return
+        
+        cancelPageTranslation(chapterId, pageKey)
+        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
+        
+        val activeStore = activeTranslationStores[chapterId]
+        if (activeStore != null) {
+            activeStore.deletePage(pageKey)
+        } else {
+            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+            if (file?.exists() == true) {
+                val store = ChapterTranslationStore.open(file)
+                store.deletePage(pageKey)
+                store.flush()
+            }
+        }
+        
+        val companionDir = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
+        if (companionDir != null) {
+            companionDir.findFile("$pageKey.cleaned.png")?.delete()
+            companionDir.findFile("$pageKey.rendered.png")?.delete()
+        }
+    }
+
     fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {
         launchIO {
             if (removeQueued) {

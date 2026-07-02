@@ -21,6 +21,14 @@ class OcrModelCatalogTest {
             TextRecognizerLanguage.CHINESE,
             TextRecognizerLanguage.KOREAN,
             TextRecognizerLanguage.ENGLISH,
+            TextRecognizerLanguage.SPANISH,
+            TextRecognizerLanguage.PORTUGUESE,
+            TextRecognizerLanguage.INDONESIAN,
+            TextRecognizerLanguage.FRENCH,
+            TextRecognizerLanguage.GERMAN,
+            TextRecognizerLanguage.ITALIAN,
+            TextRecognizerLanguage.VIETNAMESE,
+            TextRecognizerLanguage.RUSSIAN,
         ).forEach { language ->
             OcrModelCatalog.entriesFor(language).map { it.model } shouldBe listOf(
                 OcrModel.MLKIT,
@@ -45,6 +53,11 @@ class OcrModelCatalogTest {
         OcrModelCatalog.defaultFor(TextRecognizerLanguage.CHINESE) shouldBe OcrModel.MLKIT
         OcrModelCatalog.defaultFor(TextRecognizerLanguage.KOREAN) shouldBe OcrModel.MLKIT
         OcrModelCatalog.defaultFor(TextRecognizerLanguage.ENGLISH) shouldBe OcrModel.MLKIT
+        // New Latin-script languages default to ML Kit too.
+        OcrModelCatalog.defaultFor(TextRecognizerLanguage.SPANISH) shouldBe OcrModel.MLKIT
+        OcrModelCatalog.defaultFor(TextRecognizerLanguage.PORTUGUESE) shouldBe OcrModel.MLKIT
+        OcrModelCatalog.defaultFor(TextRecognizerLanguage.INDONESIAN) shouldBe OcrModel.MLKIT
+        OcrModelCatalog.defaultFor(TextRecognizerLanguage.RUSSIAN) shouldBe OcrModel.MLKIT
     }
 
     @Test

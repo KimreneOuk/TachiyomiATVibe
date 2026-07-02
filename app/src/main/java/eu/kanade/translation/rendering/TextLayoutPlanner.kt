@@ -407,9 +407,9 @@ object TextLayoutPlanner {
             val fitFont = binarySearchFontSize(
                 text, safeW, safeH, safeW, isVertical, scale, measurer,
             )
-            // Keep the legibility floor: never shrink below it even when clipping —
-            // better to clip a long line at a legible size than to shrink it to dust.
-            fontSize = max(fitFont, minLegible)
+            // Allow the font to shrink to fit the clipped bounds instead of enforcing the legibility floor,
+            // preventing the text from being cut off.
+            fontSize = fitFont
         }
 
         // (C) Containment clip: if rendered text overflows region R, clip to R.
@@ -426,7 +426,11 @@ object TextLayoutPlanner {
                 originY = r.top + r.height() / 2f
                 safeW = r.width()
                 safeH = r.height()
-                fontSize = max(fontSize, minLegible)
+                
+                val fitFont = binarySearchFontSize(
+                    text, safeW, safeH, safeW, isVertical, scale, measurer,
+                )
+                fontSize = fitFont
             }
         }
 

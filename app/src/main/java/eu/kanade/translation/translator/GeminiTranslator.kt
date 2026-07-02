@@ -142,6 +142,33 @@ class GeminiTranslator(
         }
     }
 
+    private val textModel: GenerativeModel = GenerativeModel(
+        modelName = modelName,
+        apiKey = apiKey,
+        generationConfig = generationConfig {
+            topK = 30
+            topP = 0.5f
+            temperature = temp
+            maxOutputTokens = maxOutputToken
+        },
+        safetySettings = listOf(
+            SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, BlockThreshold.NONE),
+            SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.NONE),
+        ),
+    )
+
+    override suspend fun promptText(prompt: String): String {
+        return try {
+            val response = textModel.generateContent(prompt)
+            response.text ?: ""
+        } catch (e: Exception) {
+            logcat { "Gemini promptText Error : ${e.stackTraceToString()}" }
+            ""
+        }
+    }
+
     override fun close() {
     }
 }

@@ -70,6 +70,22 @@ object TranslationPrompts {
         else -> "left-to-right, top-to-bottom"
     }
 
+    /** True for source languages that habitually drop the subject pronoun
+     *  (Japanese, Chinese, Korean, plus the Romance pro-drop languages Spanish,
+     *  Portuguese, Italian). English, German, French, Indonesian, Vietnamese and
+     *  Russian are non-pro-drop, so the subject-inference guidance does not apply
+     *  to them and would mislead the model if always emitted. */
+    fun isProDrop(from: TextRecognizerLanguage): Boolean = when (from) {
+        TextRecognizerLanguage.JAPANESE,
+        TextRecognizerLanguage.CHINESE,
+        TextRecognizerLanguage.KOREAN,
+        TextRecognizerLanguage.SPANISH,
+        TextRecognizerLanguage.PORTUGUESE,
+        TextRecognizerLanguage.ITALIAN,
+        -> true
+        else -> false
+    }
+
     fun numberedSystemPrompt(from: TextRecognizerLanguage, to: TextTranslatorLanguage): String =
         baseGuidance(from, to, numbered = true)
 
@@ -87,10 +103,21 @@ object TranslationPrompts {
         } else {
             "Return ONLY a JSON object with the same keys and array lengths as the input; each element is ONLY the translation string (no explanations)."
         }
+        // TachiyomiAT: the subject-inference guidance only helps for pro-drop
+        // source languages (Japanese/Chinese/Korean, plus the Romance pro-drop
+        // languages Spanish/Portuguese/Italian). For non-pro-drop sources it
+        // misleads the model into inventing omitted subjects that aren't there.
+        val sourceLanguageContext = if (isProDrop(from)) {
+            """
+            SOURCE-LANGUAGE CONTEXT: ${from.label} frequently omits subjects and pronouns (it is a pro-drop language). English requires an explicit subject. Infer the implied subject from the line itself, the surrounding blocks, and the provided "previous pairs" context, then choose ONE consistent pronoun and keep it. Never leave a subject ambiguous and never switch person mid-utterance.
+            """.trimIndent()
+        } else {
+            ""
+        }
         return """
             You are an expert manga/manhwa/manhua translator and localization specialist. Translate the source text blocks from ${from.label} to ${to.label}.
 
-            SOURCE-LANGUAGE CONTEXT: ${from.label} frequently omits subjects and pronouns (it is a pro-drop language). English requires an explicit subject. Infer the implied subject from the line itself, the surrounding blocks, and the provided "previous pairs" context, then choose ONE consistent pronoun and keep it. Never leave a subject ambiguous and never switch person mid-utterance.
+            $sourceLanguageContext
 
             POINT OF VIEW / PERSON (critical):
             - Lines prefixed [$SPEECH_TAG] are CONVERSATION inside a speech bubble: a character speaking aloud to an addressee. The speaker = "I/we", the addressee = "you", anyone else mentioned = "he/she/they". When the subject is omitted and cannot be resolved, a [$SPEECH_TAG] line defaults to the speaker ("I/we") — UNLESS the line is an imperative (often subjectless in English), an offer/question directed at the addressee ("you"), or quoted/reported speech (keep the quoted clause in its original person).

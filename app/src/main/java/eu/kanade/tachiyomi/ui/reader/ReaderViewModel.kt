@@ -1701,6 +1701,29 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
+    fun deleteCurrentPageTranslation() {
+        val manga = manga ?: return
+        val page = state.value.currentPage as? ReaderPage ?: return
+        val chapter = page.chapter.chapter
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        
+        page.translatedStream = null
+        page.translation = null
+        page.showTranslatedImage = false
+        page.translationToggled = false
+        
+        val readerPages = setOf(page)
+        eventChannel.trySend(Event.RefreshTranslationPages(readerPages))
+        mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+        
+        viewModelScope.launchIO {
+            val pageKey = resolvePageKey(page)
+            translationManager.deletePageTranslation(chapter.toDomainChapter()!!, manga, source, pageKey)
+            
+            recomputeTranslationState()
+        }
+    }
+
     fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
         val manga = manga ?: run {
             logcat(LogPriority.WARN) { "translateSinglePage: manga is null, cannot translate" }
@@ -2220,8 +2243,13 @@ class ReaderViewModel @JvmOverloads constructor(
                     }
                     return@onEach
                 }
+                val newlyFinished = updated.renderedImageName != null && page.translatedStream == null
                 page.translation = updated
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
+                if (newlyFinished && translationPreferences.translationEnabled().get()) {
+                    page.showTranslatedImage = true
+                    eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
+                }
             }
             .map { it.toPageView() }
             .distinctUntilChanged()
