@@ -18,7 +18,10 @@ local.properties
 # Logs
 *.log
 logcat*.txt
-
+log.txt
+recent_log.txt
+*.logcat
+logs/
 
 # Tool caches (not project artifacts)
 .codex-remote-attachments/
@@ -27,7 +30,7 @@ logcat*.txt
 # Local agent state (Kilo) — contains its own node_modules, not project code
 .kilo/
 
-# Inpaint debug viewer: generated outputs + Python bytecode only (source IS tracked)
-tools/inpaint-debug-viewer/debug-output/
+# Inpaint debug viewer: local-only dev tool, not a build dependency
+tools/inpaint-debug-viewer/
 __pycache__/
 *.pyc
