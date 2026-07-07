@@ -4,6 +4,8 @@ import android.content.Context
 import android.graphics.Bitmap
 import eu.kanade.translation.detection.Detection
 import eu.kanade.translation.detection.OnnxPageTextDetector
+import eu.kanade.translation.detection.OnnxPanelDetector
+import eu.kanade.translation.detection.PanelAssignment
 import eu.kanade.translation.inpainting.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
@@ -43,6 +45,13 @@ class RoiPageRecognitionEngine(
 
     private val modelStore = OnnxModelStore(context)
     private var detector: OnnxPageTextDetector? = null
+    /**
+     * TachiyomiAT: optional YOLO26-nano manga panel detector. Best-effort
+     * init (mirrors paddleDet): when the asset is missing or fails to load,
+     * this stays null and panel assignment is skipped — translation proceeds
+     * panel-less exactly as before. Never blocks OCR/inpaint.
+     */
+    private var panelDetector: OnnxPanelDetector? = null
     private var roiOcrEngine: RoiOcrEngine? = null
     /**
      * TachiyomiAT: PP-OCRv6 small **det** engine, used to split a vertical-text
@@ -104,6 +113,33 @@ class RoiPageRecognitionEngine(
         return translationDiagnosticsEnabled
     }
 
+    // TachiyomiAT: cached reading-order preference (AUTO/RTL_MANGA/LTR_COMIC).
+    // AUTO derives from source language (Japanese -> RTL, else LTR). The override
+    // affects panel reading-order labels emitted to the translator. Resolved
+    // lazily to avoid an Injekt cycle during init; cached after first read.
+    @Volatile
+    private var readingOrderRtl: Boolean = true
+    @Volatile
+    private var readingOrderResolved: Boolean = false
+    private fun resolveReadingOrderRtl(): Boolean {
+        if (readingOrderResolved) return readingOrderRtl
+        val prefs = try {
+            Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+        } catch (_: Throwable) {
+            null
+        }
+        val pref = prefs?.translationReadingOrder()?.get()
+            ?: tachiyomi.domain.translation.TranslationReadingOrder.AUTO
+        readingOrderRtl = when (pref) {
+            tachiyomi.domain.translation.TranslationReadingOrder.AUTO ->
+                language == TextRecognizerLanguage.JAPANESE
+            tachiyomi.domain.translation.TranslationReadingOrder.RTL_MANGA -> true
+            tachiyomi.domain.translation.TranslationReadingOrder.LTR_COMIC -> false
+        }
+        readingOrderResolved = true
+        return readingOrderRtl
+    }
+
     val isAvailable: Boolean
         get() = !initFailed && (initialized || modelStore.modelsAvailable() || modelStore.assetsAvailable())
 
@@ -119,6 +155,21 @@ class RoiPageRecognitionEngine(
                 logcat(LogPriority.INFO) { "ONNX init: starting detector initialization" }
                 detector = OnnxPageTextDetector().also { it.initialize(paths.detectorModel) }
                 logcat(LogPriority.INFO) { "ONNX init: detector OK, starting OCR initialization (language=$language, model=$ocrModel)" }
+                // TachiyomiAT: panel detector is optional context. Best-effort
+                // init (mirrors paddleDet): a missing asset or failed session
+                // leaves panelDetector null and panel assignment is skipped —
+                // translation proceeds panel-less exactly as before. Never
+                // blocks OCR/inpaint.
+                paths.panelDetectorModel?.let { panelModelFile ->
+                    try {
+                        panelDetector = OnnxPanelDetector().also { it.initialize(panelModelFile) }
+                        logcat(LogPriority.INFO) { "ONNX init: panel detector OK" }
+                    } catch (e: Exception) {
+                        logcat(LogPriority.WARN, e) {
+                            "ONNX init: panel detector failed; panel-aware translation context disabled"
+                        }
+                    }
+                }
                 roiOcrEngine = when (ocrModel) {
                     OcrModel.MANGAOCR -> MangaOcrEngine().also {
                         it.initialize(paths.ocrEncoder, paths.ocrDecoderInit, paths.ocrDecoderStep, paths.ocrVocab)
@@ -466,6 +517,12 @@ class RoiPageRecognitionEngine(
         pageTranslation.ocrBlockCount = pageTranslation.blocks.size
         pageTranslation.ocrStatus = StageStatus.READY
         pageTranslation.updatedAt = System.currentTimeMillis()
+        // TachiyomiAT: assign final OCR blocks to panels now that dedupe is done
+        // and the block list is frozen. Conservative policy (no fallback, every
+        // uncertain case logged): owned -> panelIndex set; spanning/free/orphan
+        // -> panelIndex null, surfaced as page-level context downstream. The
+        // bitmap is the analyze() parameter and still in scope here.
+        assignPanels(bitmap, pageTranslation)
         // TachiyomiAT: capture the durable inpaint mask NOW, at OCR time, from
         // the full recognition result (OCR blocks + detector-only detections).
         // This must happen before translation/watermark filtering removes blocks
@@ -544,6 +601,166 @@ class RoiPageRecognitionEngine(
         val recognizedBlocks: MutableList<RecognizedBlock>,
     )
 
+    /**
+     * TachiyomiAT: run panel detection on the page bitmap and assign each final
+     * OCR block to a panel via [PanelAssignment]. Mutates the block list in
+     * place: sets [TranslationBlock.panelIndex], [TranslationBlock.panelAssignment],
+     * [TranslationBlock.panelContainment]. No-op when the panel detector is not
+     * loaded (panel-less translation, the prior behaviour).
+     *
+     * Conservative policy enforced here, NOT silent fallback:
+     *  - owned blocks get a real panelIndex (reading-order).
+     *  - spanning / free_floating / orphan / invalid blocks keep panelIndex=null
+     *    and are surfaced to the translator as page-level context. They are
+     *    NEVER attached to the nearest panel — that would poison speaker and
+     *    pronoun inference, the exact failure mode panel context exists to fix.
+     *  - every non-OWNED block is logged so a flaky panel model is visible.
+     *
+     * Panel boxes are sorted into reading order (XY-cut, RTL-aware for manga)
+     * BEFORE assignment so panelIndex is the reading-order index the translator
+     * will see in the prompt, not the raw detector order.
+     */
+    private fun assignPanels(bitmap: Bitmap, pageTranslation: PageTranslation) {
+        val pd = panelDetector ?: return
+        if (pageTranslation.blocks.isEmpty()) return
+        // TachiyomiAT: derive a stable per-page bubble index from parent-bubble
+        // geometry BEFORE panel assignment. The recognition engine already
+        // populated parentX/Y/Width/Height per block (RoiPageRecognitionEngine
+        // native path); blocks sharing identical parent geometry belong to the
+        // same bubble and get the same index. Free-text blocks (no parent
+        // bubble) get null. Indices are assigned in reading order of the
+        // bubbles' top-left corner so they're stable and meaningful.
+        assignBubbleIndices(pageTranslation)
+        val panels: List<FloatArray> = try {
+            pd.detect(bitmap)
+        } catch (e: Exception) {
+            // Detection threw (closed session, native error). Fail this page's
+            // panel context loudly but do NOT crash OCR/translation: blocks keep
+            // the default panelAssignment="none" and the prompt layer treats
+            // missing panel context as panel-less (the prior behaviour).
+            logcat(LogPriority.ERROR, e) {
+                "Panel detection failed; page will be translated without panel context"
+            }
+            return
+        }
+        if (panels.isEmpty()) {
+            // Page has text but the panel detector found 0 panels. This is the
+            // broken/full-bleed page case. Mark every block ORPHAN so the
+            // translator sees explicit page-level context rather than nothing.
+            pageTranslation.blocks.forEach { block ->
+                val res = PanelAssignment.noPanels(boxValid = PanelAssignment.isValidBox(block.x, block.y, block.x + block.width, block.y + block.height))
+                applyAssignment(pageTranslation, block, res)
+            }
+            logcat(LogPriority.INFO) {
+                "Panel detection: 0 panels for page with ${pageTranslation.blocks.size} block(s) — marked orphan (broken/full-bleed page)"
+            }
+            return
+        }
+
+        val orderedPanels = ReadingOrderSorter.readingOrderPanels(panels, resolveReadingOrderRtl())
+        val counts = HashMap<String, Int>()
+        for (block in pageTranslation.blocks) {
+            val res = PanelAssignment.assign(
+                block.x, block.y, block.x + block.width, block.y + block.height,
+                orderedPanels,
+            )
+            applyAssignment(pageTranslation, block, res)
+            counts.merge(res.category.asString(), 1) { a, b -> a + b }
+        }
+        // Log the assignment breakdown. Non-owned categories are surfaced so a
+        // degraded panel model is visible without enabling full diagnostics.
+        val owned = counts["owned"] ?: 0
+        val nonOwned = pageTranslation.blocks.size - owned
+        if (nonOwned > 0) {
+            logcat(LogPriority.INFO) {
+                "Panel assignment: ${pageTranslation.blocks.size} blocks, ${orderedPanels.size} panels — " +
+                    "owned=$owned, non-owned=$nonOwned ($counts)"
+            }
+        }
+    }
+
+    /**
+     * TachiyomiAT: assign a stable per-page bubble index to each block based on
+     * its parent-bubble geometry. Blocks inside the same speech bubble share the
+     * same parentX/Y/Width/Height (set by the recognition path); they get the
+     * same index so the translator can treat them as one utterance. Free-text
+     * blocks (no parent bubble, parentWidth/Height == 0) keep index null.
+     *
+     * Indices are assigned in top-left reading order of the distinct bubbles so
+     * they're stable across re-runs on the same page state. Mutates blocks in
+     * place via copy()+replace (data class val fields).
+     */
+    private fun assignBubbleIndices(pageTranslation: PageTranslation) {
+        // Collect distinct bubble geometries (rounded to 1dp to treat near-
+        // identical floats as the same bubble), sorted in reading order.
+        data class BubbleKey(val x: Int, val y: Int, val w: Int, val h: Int)
+        val distinctBubbles = LinkedHashMap<BubbleKey, Int>()
+        for (block in pageTranslation.blocks) {
+            if (block.parentWidth <= 0f || block.parentHeight <= 0f) continue
+            val key = BubbleKey(
+                block.parentX.toInt(),
+                block.parentY.toInt(),
+                block.parentWidth.toInt(),
+                block.parentHeight.toInt(),
+            )
+            if (key !in distinctBubbles) distinctBubbles[key] = 0
+        }
+        if (distinctBubbles.isEmpty()) return
+        // Sort bubble keys by (y, x) for a stable top-to-bottom, left-to-right
+        // index assignment. RTL-aware ordering is irrelevant here — the index is
+        // just a stable grouping ID, and the prompt layer never orders by it.
+        val sortedKeys = distinctBubbles.keys.sortedWith(
+            compareBy<BubbleKey>({ it.y }, { it.x }),
+        )
+        val keyToIndex = HashMap<BubbleKey, Int>(sortedKeys.size)
+        sortedKeys.forEachIndexed { i, k -> keyToIndex[k] = i }
+
+        // Apply: replace each block with a copy carrying its bubbleIndex.
+        for (i in pageTranslation.blocks.indices) {
+            val block = pageTranslation.blocks[i]
+            if (block.parentWidth <= 0f || block.parentHeight <= 0f) continue
+            val key = BubbleKey(
+                block.parentX.toInt(),
+                block.parentY.toInt(),
+                block.parentWidth.toInt(),
+                block.parentHeight.toInt(),
+            )
+            val bidx = keyToIndex[key]
+            if (bidx != null && bidx != block.bubbleIndex) {
+                pageTranslation.blocks[i] = block.copy(bubbleIndex = bidx)
+            }
+        }
+    }
+
+    private fun applyAssignment(
+        pageTranslation: PageTranslation,
+        block: TranslationBlock,
+        res: PanelAssignment.Result,
+    ) {
+        // panelIndex is the reading-order index; only set for OWNED. For every
+        // other category we keep it null so the translator renders page-level /
+        // unassigned context instead of a confidently wrong panel.
+        // TranslationBlock is a data class; copy() preserves all other fields
+        // (text, translation, geometry, colours) and overrides only the 4
+        // panel fields. We replace the list entry by identity so downstream
+        // code (render/inpaint/translate) sees the assigned copy.
+        val idx = pageTranslation.blocks.indexOfFirst { it === block }
+        if (idx < 0) {
+            logcat(LogPriority.WARN) {
+                "Panel assignment: could not locate block for category=${res.category.asString()}; assignment dropped"
+            }
+            return
+        }
+        pageTranslation.blocks[idx] = block.copy(
+            panelIndex = res.panelIndex,
+            panelAssignment = res.category.asString(),
+            panelContainment = res.bestContainment,
+            // bubbleIndex is assigned later by a parent-bubble grouping pass;
+            // left as-is here (default null) intentionally.
+            bubbleIndex = block.bubbleIndex,
+        )
+    }
+
     private fun freeNativeSessions() {
         if (!initialized) return
         try {
@@ -551,6 +768,7 @@ class RoiPageRecognitionEngine(
             roiOcrEngine?.close()
             paddleDet?.close()
             inpainting?.close()
+            panelDetector?.close()
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Error freeing native sessions" }
         } finally {
@@ -558,6 +776,7 @@ class RoiPageRecognitionEngine(
             roiOcrEngine = null
             paddleDet = null
             inpainting = null
+            panelDetector = null
             pageInpainter = null
             initialized = false
         }
@@ -611,6 +830,7 @@ class RoiPageRecognitionEngine(
         try { roiOcrEngine?.reclaimPooledMemory() } catch (_: Exception) {}
         try { paddleDet?.reclaimPooledMemory() } catch (_: Exception) {}
         try { inpainting?.reclaimPooledMemory() } catch (_: Exception) {}
+        try { panelDetector?.reclaimPooledMemory() } catch (_: Exception) {}
     }
 
     override fun forceReleaseNativeBuffers() {
@@ -618,6 +838,7 @@ class RoiPageRecognitionEngine(
         try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
         try { paddleDet?.forceReleaseNativeBuffers() } catch (_: Exception) {}
         try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        try { panelDetector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
     }
 
     private fun suppressCrossLabelDuplicates(

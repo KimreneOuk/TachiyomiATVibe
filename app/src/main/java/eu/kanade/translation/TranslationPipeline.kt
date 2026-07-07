@@ -95,6 +95,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.BatchOomPolicy
+import eu.kanade.translation.batch.BatchResumeGateDecider
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.TranslationExecutor
@@ -304,6 +305,11 @@ class TranslationPipeline(
 
     private var currentFromLang: TextRecognizerLanguage
     private var currentOcrModel: OcrModel
+    // TachiyomiAT: reading-order dimension tracked for the recognition-engine
+    // rebuild gate. RoiPageRecognitionEngine caches the resolved RTL/LTR once
+    // per instance, so flipping translationReadingOrder at runtime requires a
+    // recognition rebuild to take effect — same logic as fromLang / ocrModel.
+    private var currentReadingOrder: tachiyomi.domain.translation.TranslationReadingOrder
     // TachiyomiAT: these engine references are reassigned from a translation
     // coroutine (on language change) and read/closed from closeEngines() which
     // runs WITHOUT the permit (called from stop() on the main thread). Mark them
@@ -319,12 +325,17 @@ class TranslationPipeline(
     // TachiyomiAT: snapshot of EVERY config dimension used to build the current
     // textTranslator, captured at every build site. The rebuild gates below
     // compare a freshly-computed signature against this one so that changing the
-    // engine category, provider, API key, model, temperature, max-tokens, or
-    // languages at runtime forces a rebuild — not just language changes. Without
-    // this, the cached AI translator instance (which captures key/model/temp as
-    // constructor fields and never re-reads prefs) survived a stop+reconfigure+restart
-    // cycle, leaving the run pinned to the original config. apiKeyHash is a short
-    // non-reversible digest so secrets are never stored in this struct or logged.
+    // engine category, provider, API key, model, temperature, max-tokens,
+    // analytical-mode, reading-order, or languages at runtime forces a rebuild —
+    // not just language changes. Without this, the cached AI translator instance
+    // (which captures key/model/temp/analyticalMode as constructor fields and
+    // never re-reads prefs) survived a stop+reconfigure+restart cycle, leaving
+    // the run pinned to the original config. analyticalMode and readingOrder
+    // MUST be in the signature because the AI translators and the recognition
+    // engine cache them at construction — omitting either meant flipping the
+    // toggle in Settings had no effect until a language/OCR/inpaint change
+    // happened to force a rebuild. apiKeyHash is a short non-reversible digest
+    // so secrets are never stored in this struct or logged.
     @Volatile
     private var currentTranslatorSignature: EngineSignature
 
@@ -342,6 +353,8 @@ class TranslationPipeline(
         val modelName: String,
         val temperature: String,
         val maxTokens: String,
+        val analyticalMode: Boolean,
+        val readingOrder: tachiyomi.domain.translation.TranslationReadingOrder,
         val fromLang: TextRecognizerLanguage,
         val toLang: TextTranslatorLanguage,
     )
@@ -366,13 +379,12 @@ class TranslationPipeline(
             modelName = translationPreferences.translationAiModel(aiEngine).get(),
             temperature = translationPreferences.translationAiTemperature().get(),
             maxTokens = translationPreferences.translationAiOutputTokens().get(),
+            analyticalMode = translationPreferences.translationAnalyticalMode().get(),
+            readingOrder = translationPreferences.translationReadingOrder().get(),
             fromLang = fromLang,
             toLang = toLang,
         )
     }
-
-    /** Stable, non-reversible short digest for secret comparison (API keys). */
-    private fun shortHash(value: String): String = ShortHash.hash(value)
 
     init {
         // TachiyomiAT: STRICT no-fallback. fromPref/build now THROW on invalid
@@ -394,6 +406,7 @@ class TranslationPipeline(
             currentFromLang = fromLang
             currentOcrModel = ocrModel
             currentInpaintingMode = inpaintingModeFromPref()
+            currentReadingOrder = translationPreferences.translationReadingOrder().get()
             recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
             textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
             currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
@@ -404,6 +417,7 @@ class TranslationPipeline(
             currentFromLang = TextRecognizerLanguage.JAPANESE
             currentOcrModel = OcrModel.MLKIT
             currentInpaintingMode = InpaintingMode.FAST
+            currentReadingOrder = tachiyomi.domain.translation.TranslationReadingOrder.AUTO
             recognitionEngine = createRecognitionEngine(
                 TextRecognizerLanguage.JAPANESE,
                 OcrModel.MLKIT,
@@ -866,19 +880,12 @@ class TranslationPipeline(
         val renderMutexes = ConcurrentHashMap<String, Mutex>()
         val aborted = AtomicBoolean(false)
 
-        fun resumeGate(page: PageTranslation?): BatchResumeGate {
-            if (page == null) return BatchResumeGate.FULL
-            val ocrReady = page.ocrStatus == StageStatus.READY
-            val hasMask = page.hasCurrentInpaintMask
-            val durableCleaned = page.cleanedImageName != null &&
-                page.inpaintStatus == StageStatus.READY &&
-                page.hasCurrentInpaintResult
-            return when {
-                ocrReady && hasMask && durableCleaned -> BatchResumeGate.SKIP_ALL
-                ocrReady && hasMask -> BatchResumeGate.INPAINT_ONLY
-                else -> BatchResumeGate.FULL
+        fun resumeGate(page: PageTranslation?): BatchResumeGate =
+            when (BatchResumeGateDecider.decide(page)) {
+                BatchResumeGateDecider.Decision.SKIP_ALL -> BatchResumeGate.SKIP_ALL
+                BatchResumeGateDecider.Decision.INPAINT_ONLY -> BatchResumeGate.INPAINT_ONLY
+                BatchResumeGateDecider.Decision.FULL -> BatchResumeGate.FULL
             }
-        }
 
         fun holdCleaned(pageKey: String, cleaned: Bitmap?) {
             if (cleaned == null) return
@@ -973,23 +980,48 @@ class TranslationPipeline(
             chunk: TranslationContextChunk,
             completedPages: Set<String>,
             rolling: String,
-        ): String {
+            pastTranslations: String = "",
+            analyticalMode: Boolean = false,
+        ): Pair<String, String> {
             coroutineContext.ensureActive()
-            val ct = contextualTranslator ?: return rolling
-            
+            val ct = contextualTranslator ?: return rolling to pastTranslations
+
             if (!dynamicGlossaryExtracted) {
                 dynamicGlossaryExtracted = true
                 dynamicGlossary = eu.kanade.translation.translator.GlossaryExtractor.extractGlossary(ct, chunk.pages.values.toList())
             }
-            
+
             val glossaryText = dynamicGlossary + "\n" + ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
-            val contextualChunk = TranslationContextChunkPlanner.withRollingContext(
+            // Build future OCR context from pages already OCR'd but not yet
+            // translated (in the registry, no translation yet). Empty when
+            // Analytical Mode is off or no upcoming pages exist.
+            val futureContext = if (analyticalMode) {
+                val upcoming = translationRegistry.values
+                    .filter { pg ->
+                        pg.blocks.any { it.translation.isBlank() && it.text.isNotBlank() }
+                    }
+                TranslationContextChunkPlanner.buildFutureContext(upcoming)
+            } else {
+                ""
+            }
+            val withRolling = TranslationContextChunkPlanner.withRollingContext(
                 chunk = chunk,
                 rollingContext = rolling,
                 requestedOutputTokens = requestedOutputTokens,
                 profile = chunkProfile,
                 glossary = glossaryText,
             )
+            val contextualChunk = if (analyticalMode) {
+                TranslationContextChunkPlanner.withSlidingContext(
+                    chunk = withRolling,
+                    pastTranslations = pastTranslations,
+                    futureContext = futureContext,
+                    requestedOutputTokens = requestedOutputTokens,
+                    profile = chunkProfile,
+                )
+            } else {
+                withRolling
+            }
             chunk.pages.keys.forEach { pk ->
                 val p = translationRegistry[pk] ?: return@forEach
                 store.updatePage(pk) {
@@ -1014,6 +1046,24 @@ class TranslationPipeline(
                 var newRolling = TranslationContextChunkPlanner.updateRollingContext(
                     rolling, contextualChunk.pages,
                 )
+                // TachiyomiAT: accumulate target-side past translations for the
+                // Analytical-Mode sliding window. Skipped (left as-is) when
+                // Analytical Mode is off so the non-analytical path is unchanged.
+                var newPast = if (analyticalMode) {
+                    val combined = if (pastTranslations.isBlank()) {
+                        TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
+                    } else {
+                        pastTranslations + "\n" +
+                            TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
+                    }
+                    // Bound to the last N lines (MAX_PAST_TRANSLATION_PAIRS) by
+                    // taking the tail after splitting on newlines.
+                    val lines = combined.lineSequence().filter { it.isNotBlank() }.toList()
+                    lines.takeLast(TranslationContextChunkPlanner.MAX_PAST_TRANSLATION_PAIRS)
+                        .joinToString("\n")
+                } else {
+                    pastTranslations
+                }
                 val estimatedRollingTokens = TranslationContextChunkPlanner.estimateTokens(newRolling)
                 val maxTokens = TranslationContextChunkPlanner.constraintsFor(chunkProfile).maxRollingContextTokens
                 if (estimatedRollingTokens > maxTokens) {
@@ -1063,7 +1113,7 @@ class TranslationPipeline(
                     }
                     tryRender(pk)
                 }
-                return newRolling
+                return newRolling to newPast
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 val reason = e.message ?: e.javaClass.simpleName
@@ -1076,7 +1126,7 @@ class TranslationPipeline(
                 logcat(LogPriority.ERROR, e) {
                     "TachiyomiAT contextual batch translate failed: chunk pages=${chunk.pages.keys}"
                 }
-                return rolling
+                return rolling to pastTranslations
             }
         }
 
@@ -1231,6 +1281,17 @@ class TranslationPipeline(
                 if (isAi) {
                     val planner = StreamingChunkPlanner(requestedOutputTokens, chunkProfile)
                     var rollingContext = ""
+                    // TachiyomiAT: Analytical-Mode sliding window. Past translations
+                    // accumulate across chunks (target-side only, cheaper than the
+                    // source+target rollingContext). Future context is built per-chunk
+                    // from pages already OCR'd but not yet translated (in the registry
+                    // with no translation). Both default to "" when Analytical Mode is
+                    // off, so the non-analytical path is byte-identical to before.
+                    val analyticalMode = runCatching {
+                        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+                            .translationAnalyticalMode().get()
+                    }.getOrDefault(false)
+                    var pastTranslations = ""
                     for ((pageKey, page) in ocrChannel) {
                         ensureActive()
                         if (aborted.get()) break
@@ -1244,7 +1305,12 @@ class TranslationPipeline(
                         }
                         val emission = planner.accept(pageKey, page)
                         if (emission != null && emission.chunk != null) {
-                            rollingContext = translateChunkAi(emission.chunk!!, emission.completedPages, rollingContext)
+                            val (newRolling, newPast) = translateChunkAi(
+                                emission.chunk!!, emission.completedPages,
+                                rollingContext, pastTranslations, analyticalMode,
+                            )
+                            rollingContext = newRolling
+                            pastTranslations = newPast
                         } else if (emission != null) {
                             emission.completedPages.forEach { pk -> completeChunklessPage(pk) }
                         }
@@ -1252,7 +1318,12 @@ class TranslationPipeline(
                     }
                     val flush = planner.flushRemaining()
                     if (flush.finalChunk != null) {
-                        rollingContext = translateChunkAi(flush.finalChunk, flush.completedPages, rollingContext)
+                        val (newRolling, newPast) = translateChunkAi(
+                            flush.finalChunk, flush.completedPages,
+                            rollingContext, pastTranslations, analyticalMode,
+                        )
+                        rollingContext = newRolling
+                        pastTranslations = newPast
                     } else {
                         flush.completedPages.forEach { pk -> completeChunklessPage(pk) }
                     }
@@ -1493,19 +1564,24 @@ class TranslationPipeline(
     ) {
         val selectedOcrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
         val desiredInpaintingMode = inpaintingModeFromPref()
+        val desiredReadingOrder = translationPreferences.translationReadingOrder().get()
         val rebuildClosedEngines = enginesClosed
-        // TachiyomiAT: include inpainting mode in the rebuild gate so switching
-        // FAST<->QUALITY from the reader sheet takes effect on the next translate
-        // without requiring a language/OCR model change or app restart.
+        // TachiyomiAT: include inpainting mode AND reading order in the rebuild
+        // gate so switching FAST<->QUALITY or AUTO/RTL/LTR from the reader sheet
+        // takes effect on the next translate without requiring a language/OCR
+        // model change or app restart. RoiPageRecognitionEngine caches the
+        // resolved reading order per instance, so a change here must rebuild it.
         if (rebuildClosedEngines ||
             fromLang != currentFromLang ||
             selectedOcrModel != currentOcrModel ||
-            desiredInpaintingMode != currentInpaintingMode
+            desiredInpaintingMode != currentInpaintingMode ||
+            desiredReadingOrder != currentReadingOrder
         ) {
             recognitionEngine.close()
             currentFromLang = fromLang
             currentOcrModel = selectedOcrModel
             currentInpaintingMode = desiredInpaintingMode
+            currentReadingOrder = desiredReadingOrder
             recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
         }
         // Rebuild the text translator whenever the full engine configuration
@@ -1822,13 +1898,39 @@ class TranslationPipeline(
                     estimatedPromptTokens = estPrompt,
                     maxOutputTokens = requestedOutputTokens,
                 )
-                val chunk = TranslationContextChunkPlanner.withRollingContext(
+                val withRolling = TranslationContextChunkPlanner.withRollingContext(
                     chunk = baseChunk,
                     rollingContext = "",
                     requestedOutputTokens = requestedOutputTokens,
                     profile = singlePageProfile,
                     glossary = glossaryText,
                 )
+                // TachiyomiAT: Analytical Mode on the single-page path. Pull past
+                // translations from the chapter store (already-translated pairs in
+                // this chapter) so on-demand translation still gets voice/speaker
+                // continuity. Future context is empty (single page has no queue).
+                // Skipped entirely when Analytical Mode is off.
+                val analyticalMode = translationPreferences.translationAnalyticalMode().get()
+                val chunk = if (analyticalMode) {
+                    val pastPairs = store.translatedPairs()
+                        .let { pairs ->
+                            val mapped = pairs.mapNotNull { (src, tgt) ->
+                                val t = tgt.trim()
+                                if (t.isBlank() || t == src.trim()) null else t
+                            }
+                            mapped.takeLast(TranslationContextChunkPlanner.MAX_PAST_TRANSLATION_PAIRS)
+                                .joinToString("\n")
+                        }
+                    TranslationContextChunkPlanner.withSlidingContext(
+                        chunk = withRolling,
+                        pastTranslations = pastPairs,
+                        futureContext = "",
+                        requestedOutputTokens = requestedOutputTokens,
+                        profile = singlePageProfile,
+                    )
+                } else {
+                    withRolling
+                }
                 ct.translateContextual(chunk)
             } else {
                 activeTranslator.translatePage(pageKey, targetPage)
@@ -2783,17 +2885,6 @@ class TranslationPipeline(
         }
     }
 
-    private fun recoverHeapAfterOnnxPressure(fileName: String) {
-        BitmapPool.releaseAll()
-        try { recognitionEngine.forceReleaseNativeBuffers() } catch (e: Throwable) {
-            logcat(LogPriority.WARN, e) { "forceReleaseNativeBuffers threw during ONNX heap recovery for $fileName" }
-        }
-        System.gc()
-        logcat(LogPriority.WARN) {
-            "Released bitmap pools + engine native buffers after ONNX memory pressure for $fileName"
-        }
-    }
-
     private fun reclaimTranslationMemory(reason: String, trimImageCache: Boolean) {
         val before = TranslationMemoryBudget.snapshot()
         BitmapPool.releaseAll()
@@ -2951,50 +3042,6 @@ class TranslationPipeline(
             originalWidth = bounds.outWidth,
             originalHeight = bounds.outHeight,
             decodeDecision = decision,
-            sourceBytesSize = buffered.size.toLong(),
-        )
-    }
-
-    private fun decodePageBitmap(fileName: String, streamFn: () -> InputStream): DecodedPage? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        val buffered: ByteArray = try {
-            streamFn().use { it.readBytes() }
-        } catch (oom: OutOfMemoryError) {
-            BitmapPool.releaseAll()
-            forceReleaseNativeBuffers()
-            System.gc()
-            logcat(LogPriority.ERROR, oom) { "Out of memory buffering page bytes for $fileName" }
-            return null
-        }
-        java.io.ByteArrayInputStream(buffered).use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-        val sampleSize = TranslationMemoryBudget.chooseDecodeSampleSize(buffered.size.toLong(), bounds.outWidth, bounds.outHeight)
-        TranslationMemoryBudget.logSnapshot(
-            tag = "decode",
-            width = bounds.outWidth,
-            height = bounds.outHeight,
-            extra = "sample=$sampleSize file=$fileName",
-        )
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-            inSampleSize = sampleSize
-        }
-        val bitmap = try {
-            java.io.ByteArrayInputStream(buffered).use { BitmapFactory.decodeStream(it, null, options) }
-        } catch (oom: OutOfMemoryError) {
-            BitmapPool.releaseAll()
-            forceReleaseNativeBuffers()
-            System.gc()
-            logcat(LogPriority.ERROR, oom) { "Out of memory decoding bitmap for $fileName" }
-            return null
-        } ?: return null
-        return DecodedPage(
-            bitmap = bitmap,
-            sampleSize = sampleSize,
-            originalWidth = bounds.outWidth,
-            originalHeight = bounds.outHeight,
-            decodeDecision = TranslationMemoryBudget.chooseDecodeDecision(bounds.outWidth, bounds.outHeight, buffered.size.toLong()),
             sourceBytesSize = buffered.size.toLong(),
         )
     }
