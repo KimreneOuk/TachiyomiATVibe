@@ -15,6 +15,7 @@ object OnnxRuntimeProvider {
     fun createSessionOptions(
         useAccelerator: Boolean = false,
         useXnnpack: Boolean = false,
+        disableIntraOpSpinning: Boolean = false,
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): OrtSession.SessionOptions {
         if (useAccelerator) {
@@ -42,6 +43,16 @@ object OnnxRuntimeProvider {
                         "setMemoryPatternOptimization(false) rejected; mem-pattern will stay on"
                     }
                 }
+            if (disableIntraOpSpinning) {
+                runCatching {
+                    // Must be set before the execution provider is registered.
+                    addConfigEntry("session.intra_op.allow_spinning", "0")
+                }.onFailure { e ->
+                    logcat(LogPriority.WARN, e) {
+                        "Could not disable ORT intra-op spinning for this session"
+                    }
+                }
+            }
             if (useAccelerator) {
                 runCatching {
                     addNnapi()

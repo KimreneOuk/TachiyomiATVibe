@@ -108,7 +108,11 @@ class AOTInpainting {
             logcat(LogPriority.WARN) { "Inpainting model not found at ${modelFile.absolutePath}, skipping" }
             return
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = false, useXnnpack = true)
+        val opts = OnnxRuntimeProvider.createSessionOptions(
+            useAccelerator = false,
+            useXnnpack = true,
+            disableIntraOpSpinning = true,
+        )
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
         } finally {
