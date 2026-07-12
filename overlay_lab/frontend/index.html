@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Manga Render Lab</title>
+<link rel="stylesheet" href="/static/style.css?v=2">
+</head>
+<body>
+<div id="app">
+  <!-- ── Control sidebar ───────────────────────────────────── -->
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h1>Manga Render Lab</h1>
+    </div>
+
+    <!-- Page select -->
+    <div class="sb-section">
+      <label class="sb-label">Page</label>
+      <select id="sampleSelect"><option value="">— choose a page —</option></select>
+    </div>
+
+    <!-- Primary actions: sequential workflow -->
+    <div class="sb-section">
+      <button id="btnProcess" class="btn-step">
+        <span class="step-num">1</span>
+        <span class="step-text">RUN PIPELINE MODELS<br><small>Bubble · Text · Panel</small></span>
+      </button>
+      <button id="btnBake" class="btn-step" disabled>
+        <span class="step-num">2</span>
+        <span class="step-text">GENERATE FINAL TRANSLATION<br><small>Inpaint &amp; Overlay Text</small></span>
+      </button>
+    </div>
+
+    <!-- View toggle: Original / Detected / Translated -->
+    <div class="sb-section">
+      <div class="view-toggle">
+        <button id="viewOriginal" class="view-btn active">Original</button>
+        <button id="viewDetected" class="view-btn">Detected</button>
+        <button id="viewTranslated" class="view-btn">Translated</button>
+      </div>
+    </div>
+
+    <!-- OVERLAYS panel -->
+    <div class="sb-section" id="layersPanel">
+      <label class="sb-label">Overlays</label>
+
+      <div class="layer-group">
+        <label class="layer-toggle">
+          <input type="checkbox" id="lyrDetector" checked>
+          <span class="layer-swatch sw-blue"></span>Detector
+        </label>
+        <div class="layer-sub">
+          <label><input type="checkbox" id="lyrBubbles" checked> <span class="dot dot-blue"></span>Bubbles</label>
+          <label><input type="checkbox" id="lyrBubbleText" checked> <span class="dot dot-blue"></span>Bubble Text</label>
+          <label><input type="checkbox" id="lyrFreeText" checked> <span class="dot dot-blue"></span>Free Text</label>
+          <label><input type="checkbox" id="lyrFreeTextLines" checked> <span class="dot dot-orange"></span>Free Text Lines</label>
+        </div>
+      </div>
+
+      <div class="layer-group">
+        <label class="layer-toggle">
+          <input type="checkbox" id="lyrSegmentation" checked>
+          <span class="layer-swatch sw-green"></span>Segmentation
+        </label>
+        <div class="layer-sub">
+          <span class="hint-inline">filled semi-transparent masks</span>
+        </div>
+      </div>
+
+      <div class="layer-group">
+        <label class="layer-toggle">
+          <input type="checkbox" id="lyrPanel" checked>
+          <span class="layer-swatch sw-purple"></span>Panel
+        </label>
+        <div class="layer-sub">
+          <label><input type="checkbox" id="lyrFrames" checked> <span class="dot dot-purple"></span>frames</label>
+        </div>
+      </div>
+    </div>
+
+    <!-- MASK OPTIONS -->
+    <div class="sb-section">
+      <label class="sb-label">Mask Options</label>
+      <div class="slider-row">
+        <span class="slider-label">skip_px</span>
+        <input type="range" id="mpSkipPx" min="0" max="12" value="3">
+        <span class="slider-val" id="mpSkipPxVal">3</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">ring_w</span>
+        <input type="range" id="mpRingW" min="1" max="12" value="4">
+        <span class="slider-val" id="mpRingWVal">4</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">luma_floor</span>
+        <input type="range" id="mpLumaFloor" min="0" max="255" value="128">
+        <span class="slider-val" id="mpLumaFloorVal">128</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">feather</span>
+        <input type="range" id="mpFeather" min="0" max="6" value="0">
+        <span class="slider-val" id="mpFeatherVal">0</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">dilate</span>
+        <input type="range" id="mpDilate" min="0" max="8" value="0">
+        <span class="slider-val" id="mpDilateVal">0</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">inset_px</span>
+        <input type="range" id="mpInsetPx" min="0" max="8" value="5">
+        <span class="slider-val" id="mpInsetPxVal">5</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">bubble</span>
+        <select id="mpStrategy">
+          <option value="median">median (solid fill)</option>
+          <option value="hybrid">hybrid (auto)</option>
+          <option value="telea">telea</option>
+          <option value="pushpull">pushpull</option>
+          <option value="ns">ns</option>
+        </select>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">free-text</span>
+        <select id="mpFreeStrategy">
+          <option value="median">median (solid fill)</option>
+          <option value="hybrid">hybrid (auto)</option>
+          <option value="telea">telea</option>
+          <option value="pushpull">pushpull</option>
+          <option value="ns">ns</option>
+          <option value="aot">aot (neural)</option>
+        </select>
+      </div>
+      <p class="hint-inline" style="margin:4px 0 0;">⚡median=flat · ⚡telea=structure · ⚡pushpull=gradient · ⚡ns=smooth · 🐢aot=neural</p>
+      <button id="btnReBake" class="btn-secondary" disabled>Re-bake with mask</button>
+    </div>
+
+    <!-- TRANSLATION (LM Studio / OpenAI-compatible) -->
+    <div class="sb-section">
+      <label class="sb-label">Translation (LLM)</label>
+      <div class="slider-row">
+        <span class="slider-label">engine</span>
+        <select id="llmEngine">
+          <option value="lmstudio">lmstudio</option>
+          <option value="openai_compatible">openai_compatible</option>
+        </select>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">base_url</span>
+        <input type="text" id="llmBaseUrl" value="http://localhost:3456/v1" placeholder="http://host:port/v1" class="text-input">
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">model</span>
+        <select id="llmModel"><option value="">— fetch models —</option></select>
+        <button id="btnFetchModels" class="btn-mini">Fetch</button>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">lang</span>
+        <select id="llmFromLang">
+          <option value="ja">ja</option>
+          <option value="zh">zh</option>
+          <option value="ko">ko</option>
+          <option value="en">en</option>
+        </select>
+        <span class="lang-arrow">→</span>
+        <select id="llmToLang">
+          <option value="en">en</option>
+          <option value="ja">ja</option>
+          <option value="zh">zh</option>
+          <option value="ko">ko</option>
+        </select>
+      </div>
+      <button id="btnTranslate" class="btn-secondary" disabled>Translate</button>
+      <p id="llmStatus" class="hint-inline"></p>
+    </div>
+
+    <!-- OVERLAY TEXT -->
+    <div class="sb-section">
+      <label class="sb-label">Overlay Text</label>
+      <div class="slider-row">
+        <span class="slider-label">fontScale</span>
+        <input type="range" id="textFontScale" min="50" max="200" value="100">
+        <span class="slider-val" id="textFontScaleVal">1.00</span>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">strokeScale</span>
+        <input type="range" id="textStrokeScale" min="50" max="200" value="100">
+        <span class="slider-val" id="textStrokeScaleVal">1.00</span>
+      </div>
+    </div>
+
+    <!-- Zoom -->
+    <div class="sb-section">
+      <label class="sb-label">Zoom</label>
+      <div class="zoom-buttons">
+        <button class="zoom-btn active" data-zoom="1">1x</button>
+        <button class="zoom-btn" data-zoom="2">2x</button>
+        <button class="zoom-btn" data-zoom="4">4x</button>
+        <button class="zoom-btn" data-zoom="8">8x</button>
+        <span id="zoomDisplay" class="zoom-display">1.0x</span>
+      </div>
+      <p class="hint">Scroll to zoom, drag to pan</p>
+    </div>
+
+    <button id="exportBtn" class="btn-secondary">Export Report</button>
+  </aside>
+
+  <!-- ── Workspace ─────────────────────────────────────────── -->
+  <main id="workspace">
+    <div id="workspaceToolbar">
+      <span id="statusDisplay" class="status-msg">Load a page to begin.</span>
+    </div>
+
+    <div id="canvasContainer">
+      <!-- All three views (Original / Detected / Translated) paint here -->
+      <canvas id="mainCanvas"></canvas>
+      <div id="textOverlayLayer"></div>
+
+      <!-- Loading overlay -->
+      <div id="loadingOverlay" class="hidden">
+        <div class="spinner"></div>
+        <p id="loadingText">Working...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- ── Info panel ────────────────────────────────────────── -->
+  <aside id="infoPanel">
+    <div id="metricsBox" class="panel-box hidden">
+      <h3>Metrics</h3>
+      <div id="metricsContent"></div>
+    </div>
+
+    <div id="warningsBox" class="panel-box hidden">
+      <h3 class="warn-header">⚠ Warnings</h3>
+      <div id="warningsContent"></div>
+    </div>
+
+    <div id="ocrBox" class="panel-box hidden">
+      <h3>OCR (<span id="ocrCount">0</span>)</h3>
+      <div id="ocrList" class="ocr-list"></div>
+    </div>
+  </aside>
+</div>
+
+<!-- OCR translation editor modal -->
+<div id="ocrModal" class="modal hidden">
+  <div class="modal-content">
+    <h3>Edit Translation</h3>
+    <div class="modal-raw"><span class="modal-label">Raw:</span><span id="ocrModalRaw"></span></div>
+    <textarea id="ocrModalEdit" rows="3" placeholder="Translated text..."></textarea>
+    <div class="modal-buttons">
+      <button id="ocrModalSave" class="btn-primary">Save</button>
+      <button id="ocrModalClose" class="btn-secondary">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js?v=2"></script>
+</body>
+</html>

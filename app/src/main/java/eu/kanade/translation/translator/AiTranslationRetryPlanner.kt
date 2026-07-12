@@ -13,13 +13,9 @@ import eu.kanade.translation.model.TranslationBlock
 object AiTranslationRetryPlanner {
 
     /**
-     * Blocks on a single page that still need translation: non-blank source
-     * text whose [TranslationBlock.translation] is blank or source-equal.
-     *
-     * Single-page analog of [untranslatedPages]. Pure predicate so the
-     * single-page retry loop in `TranslationPipeline.translateSinglePageInternal`
-     * can decide which blocks to re-request without re-running the chunk
-     * planner (which is multi-page token-budget oriented).
+     * Blocks on a single page that still need translation: non-blank source whose translation is
+     * blank or source-equal. Pure predicate so the single-page retry loop can decide which blocks
+     * to re-request without re-running the (multi-page token-budget-oriented) chunk planner.
      */
     fun untranslatedBlocks(page: PageTranslation): List<TranslationBlock> =
         page.blocks.filter { block ->

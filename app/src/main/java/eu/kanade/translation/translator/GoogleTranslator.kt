@@ -20,13 +20,9 @@ class GoogleTranslator(
     val okHttpClient = OkHttpClient()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-        // TachiyomiAT: pass the CONFIGURED source language to Google instead of
-        // the hardcoded "auto". The old `sl=auto` made Google guess the source
-        // language per request — which sounds helpful but is a silent fallback:
-        // it hid misconfigured source-language settings (user picked the wrong
-        // OCR language) by auto-detecting around them, and produced
-        // inconsistent results across blocks. Pinning sl=fromLang.code makes
-        // the configured language actually authoritative.
+        // Pin sl=fromLang.code (not the old hardcoded "auto"). "auto" made Google guess the source
+        // per request, a silent fallback that hid misconfigured OCR language settings and produced
+        // inconsistent results across blocks. Pinning makes the configured language authoritative.
         pages.mapValues { (_, v) ->
             v.blocks.map { b ->
                 b.translation = translateText(toLang.code, fromLang.code, b.text)
@@ -52,12 +48,9 @@ class GoogleTranslator(
             val jSONArray = JSONArray(string).getJSONArray(0).getJSONArray(0)
             return jSONArray.getString(0)
         } catch (e: Exception) {
-            // TachiyomiAT: the old logcat here printed only the exception, never
-            // the HTTP code or the response body. Google's free endpoint returns
-            // 429/HTML (not JSON) on rate-limiting or bot-detection, which this
-            // catch then silently turned into "" — so the whole page rendered
-            // with blank translations and no visible error. Log the code + a
-            // snippet of the body so the real cause is diagnosable.
+            // Google's free endpoint returns 429/HTML (not JSON) on rate-limiting or bot-detection,
+            // which this catch previously turned into "" with no visible error — blank pages with
+            // no cause. Log the code + a body snippet so the real cause is diagnosable.
             val snippet = if (string.length > 200) string.substring(0, 200) else string
             logcat(LogPriority.WARN, e) {
                 "GoogleTranslator: parse failed for lang=$lang text=\"$text\" " +

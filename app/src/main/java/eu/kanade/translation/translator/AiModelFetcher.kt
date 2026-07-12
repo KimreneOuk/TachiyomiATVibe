@@ -44,8 +44,7 @@ object AiModelFetcher {
     }
 
     suspend fun fetch(engine: AiEngine, apiKey: String, baseUrl: String = ""): Result = withContext(Dispatchers.IO) {
-        // Guard at the boundary so the UI can show a missing-key message
-        // without ever issuing a request.
+        // Guard at the boundary so the UI shows a missing-key message without issuing a request.
         if (engine == AiEngine.LMSTUDIO) {
             if (baseUrl.isBlank()) return@withContext Result.Error("Base URL is required")
         } else if (apiKey.isBlank()) {

@@ -22,15 +22,13 @@ class StreamingChunkPlanner(
     maxBlocksPerChunk: Int? = null,
     maxPagesPerChunk: Int? = null,
 ) {
-    /** One chunk flushed by the greedy buffer, plus the page keys that became
-     *  fully consumed by the planner as a result of this emission. A page may
-     *  span multiple chunks; it completes on the chunk holding its LAST source
-     *  block. `chunk` is null ONLY for a "chunkless completion" — a page whose
-     *  non-blank source blocks are ALL already translated (resume case) so it
-     *  needs no chunk but must still be reported downstream to be marked READY.
-     *  A page with zero non-blank source blocks (textless) is NEVER completed.
-     *  When a single [accept] flushes several chunks, [chunk] holds the last
-     *  one; every flushed chunk is still available via [emittedChunks]. */
+    /** One chunk flushed by the greedy buffer, plus page keys fully consumed by it.
+     *  A page may span multiple chunks; it completes on the chunk holding its LAST
+     *  source block. `chunk` is null ONLY for a "chunkless completion" — a page whose
+     *  non-blank source blocks are ALL already translated (resume case), needing no
+     *  chunk but still reported downstream to be marked READY. A textless page (zero
+     *  non-blank blocks) is NEVER completed. When a single [accept] flushes several
+     *  chunks, [chunk] holds the last; all are available via [emittedChunks]. */
     data class Emission(
         val chunk: TranslationContextChunk?,
         val completedPages: Set<String>,
@@ -58,10 +56,9 @@ class StreamingChunkPlanner(
     private var current = mutableListOf<BlockRef>()
     private var currentTokens = constraints.promptOverheadTokens
 
-    // A page completes once emittedRefs == totalRefs, i.e. once EVERY chunkable
-    // ref has been flushed into an emitted chunk (refs still sitting in the
-    // un-flushed buffer do not count). This is what lets a downstream pipeline
-    // mark a page READY exactly when its last source block has been handed off.
+    // A page completes once emittedRefs == totalRefs: every chunkable ref must be flushed
+    // into an emitted chunk (refs still in the un-flushed buffer don't count). This lets a
+    // downstream pipeline mark a page READY exactly when its last source block is handed off.
     private val totalRefs = linkedMapOf<String, Int>()
     private val emittedRefs = linkedMapOf<String, Int>()
 
@@ -81,8 +78,7 @@ class StreamingChunkPlanner(
             if (rejectReason != null) return@forEachIndexed
             if (block.text.isBlank()) return@forEachIndexed
             nonBlankSourceBlocks += 1
-            // Resume: a block carrying a real translation (non-blank and not
-            // source-equal) is already done and must not be re-sent to the LLM.
+            // Resume: a block with a real translation (non-blank, not source-equal) is done; don't re-send it.
             if (block.translation.isNotBlank() && block.translation.trim() != block.text.trim()) {
                 return@forEachIndexed
             }
@@ -121,10 +117,8 @@ class StreamingChunkPlanner(
                 current += ref
                 currentTokens += refTokens
             }
-            // Chunkless (resume) completion: the page carries only non-blank
-            // source blocks that are already translated, so it needs no chunk
-            // but must still be surfaced downstream to be marked READY. A page
-            // with zero non-blank source blocks (textless) never completes.
+            // Chunkless (resume) completion: only non-blank already-translated blocks, so no
+            // chunk is needed but the page must still surface downstream to be marked READY.
             if (pageRefs.isEmpty() && nonBlankSourceBlocks > 0) {
                 completed += pageKey
             }
@@ -140,9 +134,8 @@ class StreamingChunkPlanner(
             return FlushResult(finalChunk = null, completedPages = emptySet(), rejectedPages = rejected)
         }
         val built = buildAndAccount()
-        // The tail is returned ONLY via finalChunk; it is not appended to
-        // `emitted` so [emittedChunks] keeps excluding the un-flushed tail and
-        // plan() can concatenate them exactly once.
+        // The tail is returned ONLY via finalChunk, not appended to `emitted`, so
+        // [emittedChunks] keeps excluding it and plan() concatenates them exactly once.
         return FlushResult(finalChunk = built.chunk, completedPages = built.completed, rejectedPages = rejected)
     }
 
@@ -209,11 +202,8 @@ class StreamingChunkPlanner(
 
     companion object {
         /**
-         * Output cap shared with
-         * [TranslationContextChunkPlanner.withRollingContext] so the runtime
-         * rolling-context path and the plan/build path coerce the cap
-         * identically. Module-internal rather than duplicated so the formula
-         * stays in one place.
+         * Output cap shared with [TranslationContextChunkPlanner.withRollingContext] so the runtime
+         * rolling-context path and the plan/build path coerce identically. Module-internal to avoid duplication.
          */
         internal fun effectiveOutputCap(
             promptTokens: Int,

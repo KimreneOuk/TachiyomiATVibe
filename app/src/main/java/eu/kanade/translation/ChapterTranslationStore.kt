@@ -28,11 +28,9 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
 class ChapterTranslationStore(
-    // TachiyomiAT: mutable so persistLocked() can cache the file materialized
-    // by fileCreator on the first lazy write. Previously this was `val`, which
-    // meant the lazy store re-invoked fileCreator (creating a NEW translation
-    // file) on every single persist — leaking orphaned files and splitting the
-    // translation across multiple documents.
+    // Mutable so persistLocked() caches the file materialized by fileCreator on
+    // first write; as `val` it re-invoked fileCreator on every persist, leaking
+    // orphaned files and splitting one translation across multiple documents.
     private var translationFile: UniFile?,
     private val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
@@ -43,10 +41,8 @@ class ChapterTranslationStore(
 
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
 
-    // TachiyomiAT: chapter-level term→target glossary for AI-translator
-    // continuity (names/places rendered consistently across chunks and across
-    // batch resume). Persisted to a sibling JSON file (additive; a decode or
-    // write failure degrades to empty = today's behaviour). Advisory only.
+    // TachiyomiAT: chapter-level term→target glossary for cross-chunk translator
+    // continuity. Persisted to sibling JSON (additive; failure degrades to empty).
     @Volatile
     private var glossary: Map<String, String> = emptyMap()
 
@@ -55,18 +51,14 @@ class ChapterTranslationStore(
     private var persistJob: Job? = null
 
     /**
-     * TachiyomiAT: lifecycle flag set by [markDefunct] when the store is evicted
-     * by [TranslationManager.unregisterActiveTranslationStore] (on delete /
-     * chapter change). Once defunct, every mutator (updatePage / replaceAll /
-     * preRegisterPages / clearTransientQueuePages) becomes a no-op and logs at
-     * WARN. This is the belt-and-suspenders for the delete-then-retranslate race:
-     * a batch worker that was mid-uncancellable ONNX when cancel() was requested
-     * may still reach a suspension point AFTER its store was evicted and the
-     * on-disk file + companion images were deleted. Without this guard it would
-     * recreate the deleted file or strand a page at RUNNING on a store the reader
-     * no longer observes — exactly the "original image + stuck spinner" symptom.
-     * Volatile because it is written under mutex by markDefunct but read by
-     * mutators without re-entering the lock.
+     * TachiyomiAT: set by [markDefunct] when the store is evicted
+     * ([TranslationManager.unregisterActiveTranslationStore], on delete / chapter
+     * change). Once defunct, every mutator becomes a no-op and logs at WARN. This
+     * guards the delete-then-retranslate race: a batch worker mid-uncancellable
+     * ONNX when cancel() was requested can still reach a suspension point AFTER
+     * its store was evicted and the on-disk file + images deleted; without this
+     * guard it would recreate the deleted file or strand a page at RUNNING.
+     * Volatile: written under mutex by markDefunct, read by mutators lock-free.
      */
     @Volatile
     private var defunct = false
@@ -103,8 +95,8 @@ class ChapterTranslationStore(
             if (shouldPersistUpdate(previous, updated)) {
                 schedulePersist()
             }
-            // Build a snapshot copy so MutableStateFlow always emits — even when
-            // callers mutate a previously emitted PageTranslation in place.
+            // Snapshot copy so MutableStateFlow always emits — even when callers
+            // mutate a previously emitted PageTranslation in place.
             _state.value = snapshotPages()
         }
     }
@@ -206,8 +198,6 @@ class ChapterTranslationStore(
     private fun snapshotPages(): Map<String, PageTranslation> =
         pages.entries.associate { (key, page) -> key to page.copy() }
 
-    // ── Glossary (chapter-level term continuity) ─────────────────────────────
-
     fun glossarySnapshot(): Map<String, String> = glossary
 
     /**
@@ -297,89 +287,63 @@ class ChapterTranslationStore(
     }
 
     internal fun shouldPersistUpdate(previous: PageTranslation?, updated: PageTranslation): Boolean {
-        // Persist only states that represent DURABLE progress worth surviving a
-        // chapter reopen — not transient placeholders. Each rule below maps to
-        // real work the pipeline performed; anything else (RUNNING/PENDING/
-        // CANCELLED with no blocks, no image, no failure) is a transient
-        // bookkeeping update that only needs to live in the in-memory StateFlow
-        // (which the reader observes live) and must NOT hit disk.
-        //
-        // Why this matters: the stranded-page sweep
-        // (ReaderViewModel.sweepStrandedPageStatus) runs on every chapter open
-        // and writes exactly the placeholder shape — CANCELLED stages plus an
-        // explanatory errorMessage, with no blocks and no rendered image — via
-        // updatePage. The previous logic (`errorMessage != null` -> persist, and
-        // `return !isStageRunning` -> persist any non-running state) saved those
-        // placeholders to the translation JSON, where — under the old
-        // `pages.isNotEmpty()` translated-state check — a single such entry made
-        // the chapter falsely read as fully TRANSLATED forever after. Note that
-        // the explicit cancel snapshot path clearTransientQueuePages() writes
-        // via persistLocked() directly and bypasses this gate, so legitimate
-        // user cancels are still recorded on disk.
-        // 1. A final rendered/displayable image (the actual translation output).
+        // Persist only DURABLE progress worth surviving a chapter reopen, not
+        // transient placeholders; transient bookkeeping stays in-memory (the
+        // reader observes the live StateFlow). Critical because the stranded-page
+        // sweep (ReaderViewModel.sweepStrandedPageStatus) writes exactly the
+        // placeholder shape — CANCELLED stages + errorMessage, no blocks, no
+        // image — via updatePage. The old logic (errorMessage != null -> persist,
+        // and `!isStageRunning` -> persist) saved those placeholders to JSON,
+        // where under the old pages.isNotEmpty() check a single such entry made
+        // the chapter falsely read TRANSLATED forever. clearTransientQueuePages()
+        // bypasses this gate via persistLocked(), so legitimate cancels still hit disk.
+        // 1. A final rendered image (actual translation output).
         if (updated.hasRenderedResult) return true
-        // 2. Recognized text blocks (real OCR work done).
+        // 2. Recognized text blocks (real OCR work).
         if (updated.blocks.isNotEmpty()) return true
-        // 3. An inpainted cleaned image (real inpaint work; lets a later render
-        //    resume without redoing the neural pass).
+        // 3. Cleaned image; lets a later render resume without redoing the neural pass.
         if (updated.cleanedImageName != null) return true
-        // 4. Stage failures — persisted so retry-exhaustion bookkeeping
-        //    (hasExhaustedRetries) survives a reopen and the scheduler can skip
-        //    permanently-failing pages instead of re-attempting them forever.
+        // 4. Stage failures so retry-exhaustion (hasExhaustedRetries) survives
+        //    reopen and the scheduler can skip permanently-failing pages.
         if (updated.isStageFailed) return true
-        // 5. Transition away from a previously-rendered result (e.g. a forced
-        //    retry cleared the image) so the reader stops showing the stale one.
+        // 5. Transition away from a previously-rendered result (e.g. forced retry
+        //    cleared the image) so the reader stops showing the stale one.
         if (previous?.hasRenderedResult == true && !updated.hasRenderedResult) return true
-        // Transient placeholder (RUNNING/PENDING/CANCELLED with no content and
-        // no failure): keep it in memory only.
+        // Transient placeholder (RUNNING/PENDING/CANCELLED with no content and no
+        // failure): keep it in memory only.
         return false
     }
 
     private fun persistLocked() {
         persistCount++
-        // Resolve the backing file lazily. When the store was opened for a
-        // chapter with no existing translation file, translationFile is null and
-        // fileCreator materializes it on the FIRST real write. This avoids
-        // leaving empty translation files on disk for chapters that were merely
-        // opened (which previously caused isChapterTranslated to report a false
-        // TRANSLATED state on reopen). Cache the resolved file so subsequent
-        // writes reuse it instead of creating a new one each time.
+        // Resolve the backing file lazily on first write. Opening a chapter with
+        // no existing file leaves translationFile null; materializing it on first
+        // real write avoids leaving empty files on disk (which previously made
+        // isChapterTranslated report false TRANSLATED on reopen).
         if (translationFile == null) {
             translationFile = fileCreator?.invoke()
         }
         val target = translationFile ?: return
-        // The translation store is SAF-backed (UniFile). A stale/revoked tree
-        // URI or moved folder can make openOutputStream() throw IOException.
-        // The in-memory state is still correct and the reader gets live updates
-        // via the StateFlow below, so a write failure must NOT kill the whole
-        // translation: log it and continue. The read path already degrades the
-        // same way (see open()).
+        // SAF-backed (UniFile): a stale/revoked tree URI or moved folder can make
+        // openOutputStream() throw IOException. In-memory state is still correct
+        // and the reader gets live StateFlow updates, so a write failure must NOT
+        // kill the translation — log and continue (read path degrades the same way).
         //
-        // TachiyomiAT: write atomically. openOutputStream(false) truncates the
-        // target BEFORE encoding, so if Json.encodeToStream throws or the
-        // process is killed mid-write (OOM, ANR, low-memory kill), the file is
-        // left with a valid JSON prefix followed by NOTHING — a truncated,
-        // unreadable store that on next open() silently wipes every page we
-        // had already translated. Instead, encode into a sibling temp file and
-        // rename it over the target only once the bytes are fully flushed; a
-        // crash mid-write then leaves the previous good file untouched. This is
-        // the same write-temp-then-rename pattern the Downloader already uses.
+        // Write atomically: openOutputStream(false) truncates BEFORE encoding, so
+        // a throw or low-memory kill mid-write leaves a truncated, unreadable store
+        // that on next open() wipes every page. Encode into a sibling temp and
+        // rename over the target only once bytes are fully flushed; a crash then
+        // leaves the previous good file untouched (same pattern as the Downloader).
         try {
-            // TachiyomiAT: snapshot the persistent map into a plain Map<String,
-            // PageTranslation> before encoding. `pages` is a kotlinx.collections
-            // `PersistentMap`; serializing it directly makes kotlinx.serialization
-            // treat PersistentMap polymorphically and then fail at runtime with
-            // "Serializer for subclass 'PersistentOrderedMap' is not found in the
-            // polymorphic scope of 'PersistentMap'" — which broke EVERY persist
-            // (and the matching open() decode below) so no translation.json was
-            // ever written and every reopen started empty. The persistent map is
-            // an in-memory structure; only its plain contents belong on disk.
+            // Snapshot PersistentMap into a plain Map before encoding. Serializing
+            // it directly makes kotlinx.serialization treat PersistentMap
+            // polymorphically and fail at runtime ("subclass 'PersistentOrderedMap'
+            // not found"), breaking every persist and reopen.
             val snapshot: Map<String, PageTranslation> = pages.toMap()
             val parent = target.parentFile
             if (parent == null) {
-                // No parent (e.g. a single-document URI): fall back to a direct
-                // truncating write. Atomicity isn't achievable without a sibling
-                // location, so prefer liveness over corruption-risk here.
+                // Single-document URI (no sibling location): fall back to a direct
+                // truncating write — prefer liveness over corruption-risk.
                 target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
                 return
             }
@@ -396,15 +360,12 @@ class ChapterTranslationStore(
                 } catch (_: Exception) {}
                 throw e
             }
-            // Replace the target with the completed temp file. SAF's
-            // DocumentsContract.renameDocument refuses to overwrite an existing
-            // name on most providers (no FLAG_SUPPORTS_RENAME_AND_OVERWRITE), so
-            // we delete the target first, then rename the temp onto it. The
-            // delete-then-rename window is sub-millisecond; if a crash lands in
-            // it, open() already degrades a missing/corrupt file to empty, so the
-            // reader keeps working — it just re-translates on the next run. If
-            // the rename still fails (provider quirk), fall back to a truncating
-            // copy of the already-encoded bytes so the in-memory state isn't lost.
+            // SAF DocumentsContract.renameDocument won't overwrite an existing name
+            // on most providers, so delete target first then rename. The
+            // delete-then-rename window is sub-millisecond; open() degrades a
+            // missing/corrupt file to empty, so the reader keeps working. If the
+            // rename still fails, fall back to a truncating copy of the already-
+            // encoded bytes so in-memory state isn't lost.
             val targetName = target.name ?: DEFAULT_FILE_NAME
             val renamed = try {
                 target.delete()

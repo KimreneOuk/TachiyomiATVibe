@@ -200,11 +200,9 @@ enum class TextTranslatorLanguage(val code: String, val label: String) {
         }
 
         /**
-         * TachiyomiAT: STRICT no-fallback. The old code silently rewrote an
-         * unknown stored value to ENGLISH — a corrupted/migrated pref quietly
-         * picked English as the target language with no signal. Under the
-         * strict policy an invalid value throws; the pipeline's try/catch
-         * surfaces it as a FAILED page so the user fixes the setting.
+         * TachiyomiAT: STRICT no-fallback. The old code silently rewrote an unknown stored value to ENGLISH
+         * — a corrupted/migrated pref quietly picked English as the target with no signal. Now an invalid
+         * value throws and the pipeline surfaces it as a FAILED page so the user fixes the setting.
          */
         fun fromPref(pref: Preference<String>): TextTranslatorLanguage {
             val name = pref.get()

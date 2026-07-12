@@ -1,6 +1,7 @@
 package eu.kanade.translation.rendering
 
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.segmentation.BubbleMaskRle
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -9,36 +10,29 @@ import kotlin.math.sqrt
 /**
  * TachiyomiAT: pure text-measurement abstraction.
  *
- * The layout math in [TextLayoutPlanner] needs to ask "how wide is this string at
- * this font size?" and "what is the line height?". Those answers come from a real
- * [android.graphics.Paint] bound to the render typeface — which is Android-bound
- * and therefore NOT unit-testable (the project deliberately avoids Robolectric;
- * see `docs/TRANSLATION_MODULE.md` test-coverage note). Injecting the measurement
- * behind this interface keeps [TextLayoutPlanner] a ★ pure, JVM-testable object:
- * tests pass a deterministic fake measurer, the renderer passes [PaintTextMeasurer].
- *
- * This is the same split already used in the rendering package
- * ([RenderColorEstimator.colorPolicy] pure vs [RenderColorEstimator.estimate]
- * Bitmap-bound): keep the *decision* pure, push only the *I/O* to the Android side.
+ * Layout math needs font metrics that only a real [android.graphics.Paint] can
+ * provide, which is Android-bound and not unit-testable (the project avoids
+ * Robolectric). Injecting measurement behind this interface keeps
+ * [TextLayoutPlanner] JVM-testable: tests pass a deterministic fake, the renderer
+ * passes [PaintTextMeasurer]. Same pure-decision / Android-I/O split as
+ * [RenderColorEstimator].
  */
 interface TextMeasurer {
     /** Visual width of [text] rendered at [fontSizePx], in the planner's pixel units. */
     fun measureTextWidth(text: String, fontSizePx: Float): Float
 
     /**
-     * Full line height (`fontMetrics.descent - fontMetrics.ascent`) at [fontSizePx].
-     * The value used for line stacking, matching [PageTextRenderer]'s legacy
-     * `fm.descent - fm.ascent`.
+     * Full line height (`fontMetrics.descent - fontMetrics.ascent`) at [fontSizePx],
+     * matching the renderer's legacy stacking height.
      */
     fun lineHeight(fontSizePx: Float): Float
 }
 
 /**
- * TachiyomiAT: a pure axis-aligned float rectangle.
+ * TachiyomiAT: pure axis-aligned float rectangle.
  *
- * Deliberately NOT `android.graphics.RectF` — the planner must stay JVM-testable
- * (no `android.graphics` dependency). The renderer converts this to a `RectF` when
- * it actually needs to clip a [android.graphics.Canvas].
+ * Deliberately NOT `android.graphics.RectF` — keeps the planner JVM-testable with
+ * no `android.graphics` dependency. The renderer converts to `RectF` for clipping.
  */
 data class FloatRect(
     val left: Float,
@@ -63,32 +57,25 @@ data class FloatRect(
 
 /**
  * TachiyomiAT: horizontal text anchoring for a [BlockLayout].
- *  - [CENTER]: text centred on [BlockLayout.originX] (the box centre) — the
- *    default for boxes that did not need to grow.
- *  - [LEFT]: text left-aligned at [BlockLayout.originX] (a fixed left edge) —
- *    used when a box grew RIGHT into free space (the original left edge is the
- *    anchor) and by the clip safety-net (originX = clip left edge).
- *  - [RIGHT]: text right-aligned at [BlockLayout.originX] (a fixed right edge) —
- *    used when a box grew LEFT into free space (the original right edge is the
- *    anchor), so parentless edge SFX do not slide toward the page centre.
+ *  - [CENTER]: centred on [BlockLayout.originX] — default for non-grown boxes.
+ *  - [LEFT]: left-aligned at [BlockLayout.originX] — used when a box grew RIGHT
+ *    into free space (original left edge stays the anchor) and by the clip net.
+ *  - [RIGHT]: right-aligned at [BlockLayout.originX] — used when a box grew LEFT,
+ *    so parentless edge SFX do not slide toward the page centre.
  */
 enum class TextAlign { CENTER, LEFT, RIGHT }
 
 /**
  * TachiyomiAT: the resolved placement for a single translated block, produced by
- * [TextLayoutPlanner.plan]. The renderer ([PageTextRenderer]) only DRAWS these —
- * it performs no further layout. See the "neighbor-aware layout" contract in
- * `docs/TRANSLATION_MODULE.md`.
+ * [TextLayoutPlanner.plan]. The renderer only DRAWS these — it does no further layout.
  *
- * @property originX horizontal draw anchor. Its meaning depends on [drawAlign]:
- *   CENTER ⇒ box centre; LEFT ⇒ the (clip or growth) left edge; RIGHT ⇒ the
- *   growth right edge.
+ * @property originX horizontal draw anchor whose meaning depends on [drawAlign]:
+ *   CENTER ⇒ box centre; LEFT ⇒ (clip or growth) left edge; RIGHT ⇒ growth right edge.
  * @property originY vertical center the renderer stacks lines around.
  * @property drawAlign how the text is anchored horizontally at [originX].
- * @property clipRect non-null ONLY when, after growing into free space and
- *   shrinking, the block still cannot avoid a neighbour. The renderer clips its
- *   canvas to this rect so rendered text extents can never overlap — the safety
- *   net that makes the non-overlap guarantee structural rather than best-effort.
+ * @property clipRect non-null ONLY when, after growing + shrinking, the block still
+ *   cannot avoid a neighbour. The renderer clips to this rect so extents can never
+ *   overlap — the safety net making non-overlap structural, not best-effort.
  */
 data class BlockLayout(
     val block: TranslationBlock,
@@ -102,79 +89,58 @@ data class BlockLayout(
     val strokeWidth: Float,
     val drawAlign: TextAlign,
     val clipRect: FloatRect?,
+    val lines: List<String>,
 )
 
 /**
  * TachiyomiAT: pure, neighbour-aware text-layout solver for the render stage.
  *
- * **Why this exists.** [PageTextRenderer] used to lay each block out independently,
- * centred on its own rect, with zero knowledge of the other blocks on the page.
- * That produced three reported defects, all the same root cause — no global view:
- *  1. **Collision:** two adjacent bubbles' rendered text extents overlap (e.g. one
- *     bottom-left, one bottom-right). Pre-render dedupe only collapses
- *     *near-duplicate same-region* boxes; two genuinely-distinct but close boxes
- *     both survive and overlap at draw time. Text that did not fit was drawn
- *     anyway, overflowing straight into the neighbour.
- *  2. **Forced horizontal-long:** a tall parentless box was widened up to 3.5× and
- *     *re-centred* symmetrically, ignoring the translated text length and whether
- *     the wider footprint reached a neighbour.
- *  3. **Too small:** the font-fit binary search bottomed out at ~8 px with no
- *     legibility floor and no grow/clip fallback, producing illegible text.
+ * **Why this exists.** [PageTextRenderer] used to lay each block out independently
+ * with no global view, causing three defects: (1) collision — close boxes' extents
+ * overlapped; (2) forced horizontal-long — a tall parentless box was widened up to
+ * 3.5× and symmetrically re-centred, ignoring text length and neighbours; (3) too
+ * small — the font-fit bottomed at ~8 px with no legibility floor.
  *
- * This object fixes all three by planning the WHOLE page at once:
- *  - It reuses the existing, tuned per-block math ([computeRects],
- *    [binarySearchFontSize], [cjkWrap]) unchanged as the initial fit.
- *  - A free-space-aware pass then re-anchors reshaped (tall) boxes AWAY from their
- *    nearest neighbour and grows overflowing/undersized boxes into whichever side
- *    has the most free space (toward the page edge), so overflow never points at a
- *    neighbour.
- *  - A legibility floor ([minLegibleFont]) prevents the collapse to ~8 px by
- *    preferring growth into free space over shrinking past readability.
- *  - A clip safety-net guarantees the structural invariant: after planning, no two
- *    rendered extents overlap. Anything that genuinely cannot be placed is clipped
- *    (the only path that can lose content) — it is never silently drawn over a
- *    neighbour.
+ * This object plans the WHOLE page at once: it reuses the tuned per-block math
+ * ([computeRects], [binarySearchFontSize], [cjkWrap]) as the initial fit, then a
+ * free-space-aware pass re-anchors reshaped boxes away from their nearest neighbour
+ * and grows overflowing/undersized boxes toward the page edge so overflow never
+ * points at a neighbour. A legibility floor ([minLegibleFont]) prevents the ~8 px
+ * collapse, and a clip safety-net guarantees the structural invariant that no two
+ * rendered extents overlap.
  *
- * Pure & side-effect-free: no `Bitmap`/`Canvas`/ONNX dependency. All font-dependent
- * measurement goes through the injected [TextMeasurer], so the solver is unit-testable
- * with a deterministic fake (★ — see `TextLayoutPlannerTest`). The renderer is now
- * only responsible for drawing a [BlockLayout] list onto a canvas.
+ * Pure & side-effect-free (no `Bitmap`/`Canvas`/ONNX); all font-dependent
+ * measurement goes through the injected [TextMeasurer], so it is unit-testable
+ * with a deterministic fake.
  *
  * **Ordering.** Blocks are placed highest-[TranslationBlock.score] first: the most
  * confident box takes its preferred placement and lower-confidence boxes treat it
- * as a fixed obstacle. This mirrors the dedupe stage's "keep the higher-score box"
- * rule and makes the single placement pass deterministic — no relaxation loop, no
- * oscillation. Ties keep reading order (stable sort).
+ * as a fixed obstacle. Ties keep reading order (stable sort).
  */
 object TextLayoutPlanner {
 
-    // ---- Reshape (tall parentless box → wider) — mirrors the legacy tuned math. ----
+    // Reshape (tall parentless box → wider) — mirrors the legacy tuned math.
     /** A parentless box taller than this × its width is reshaped to a wider rect. */
     private const val RESHAPE_TALL_RATIO = 2.0f
     private const val RESHAPE_MIN_WIDTH_FACTOR = 1.5f
     private const val RESHAPE_MAX_WIDTH_FACTOR = 3.5f
 
-    // ---- Vertical layout geometry — identical to the legacy renderer constants. ----
     private const val VERTICAL_CHAR_STEP = 1.05f
     private const val VERTICAL_COL_STEP = 1.25f
 
-    // ---- Font-fit bounds — identical to the legacy renderer (preserved on purpose). ----
     private const val FIT_MAX_FONT_PX = 72f
     private const val FIT_MIN_FONT_PX = 8f
     private const val FIT_START_WIDTH_FACTOR = 1.5f
 
-    // ---- Outline width — one source of truth (see [computeStrokeWidth]). ----
-    // Fraction of the fitted font size; floor keeps it visible at small sizes.
+    // Outline width — single source of truth (see [computeStrokeWidth]).
     private const val STROKE_WIDTH_FRACTION = 0.12f
     private const val MIN_STROKE_PX = 2f
 
     /**
-     * Legibility floor. The legacy fit could collapse to [FIT_MIN_FONT_PX] (~8 px),
-     * which is unreadable. The floor is the larger of an absolute minimum and a
-     * fraction of the smaller page dimension, so it scales with page resolution
-     * (a 1500 px page ⇒ ~21 px floor) while never going below the absolute value.
-     * Normal text fits at 36–72 px, far above this, so the floor is invisible for
-     * the common case and only rescues the genuinely-oversized-text bubbles.
+     * Legibility floor. The legacy fit could collapse to ~8 px (unreadable). The
+     * floor is the larger of an absolute minimum and a fraction of the smaller
+     * page dimension, so it scales with resolution. Invisible for normal text
+     * (fits at 36–72 px); only rescues genuinely-oversized-text bubbles.
      */
     private const val LEGIBLE_FONT_FRACTION = 0.014f
     private const val LEGIBLE_FONT_ABS_PX = 14f
@@ -184,9 +150,8 @@ object TextLayoutPlanner {
 
     /**
      * Resolve a render plan for every block on the page. Blocks whose chosen text
-     * (translation, or source when [renderSourceText]) is blank are dropped — the
-     * renderer would skip them anyway, and excluding them here keeps them out of
-     * the obstacle set so they do not needlessly constrain neighbours.
+     * is blank are dropped here so they do not needlessly constrain neighbours as
+     * obstacles (the renderer would skip them anyway).
      */
     fun plan(
         blocks: List<TranslationBlock>,
@@ -200,20 +165,22 @@ object TextLayoutPlanner {
         val scale = 1f / sampleSize
         val minLegible = minLegibleFont(pageWidth, pageHeight, scale)
 
-        // Stable order: highest score first (most confident box places first and
-        // becomes a fixed obstacle for lower-score boxes); ties keep reading order.
+        // Highest score first: most confident box places first and becomes a fixed
+        // obstacle for lower-score boxes; ties keep reading order for determinism.
         val ordered = blocks.withIndex().sortedWith(
             compareByDescending<IndexedValue<TranslationBlock>> { it.value.score }
                 .thenBy { it.index },
         )
 
+        val maskRegions = buildMaskRegions(blocks)
         val placed = ArrayList<BlockLayout>(blocks.size)
         for (indexed in ordered) {
             val block = indexed.value
             val text = chosenText(block, renderSourceText)
             if (text.isBlank()) continue
 
-            val rect = computeRects(block, sampleSize)
+            val maskRegion = maskRegions[indexed.index]
+            val rect = computeRects(block, sampleSize, maskRegion)
             if (rect.safeW < 1f || rect.safeH < 1f) continue
 
             val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
@@ -230,10 +197,11 @@ object TextLayoutPlanner {
                 minLegible = minLegible,
                 scale = scale,
                 measurer = measurer,
+                regionOverride = maskRegion,
             )
             placed.add(resolved)
         }
-        return placed
+        return equalizeSharedMaskFonts(placed, measurer, scale)
     }
 
     /** Legibility floor for a page of [pageWidth]×[pageHeight] at decode [scale]. */
@@ -244,18 +212,12 @@ object TextLayoutPlanner {
         if (renderSourceText) block.translation.ifBlank { block.text } else block.translation
 
     /**
-     * Place one block, treating [obstacles] (already-finalised higher-score extents)
-     * as fixed. Steps, in priority order:
-     *  1. If the box was reshaped tall (Defect 2), re-anchor the wider footprint
-     *     AWAY from the nearest obstacle / toward the larger free side instead of
-     *     the legacy symmetric re-centre.
-     *  2. Fit the font; if it lands below the legibility floor or the text
-     *     overflows the box (Defects 1 & 3), grow the box into the larger free
-     *     side (never toward an obstacle) and re-fit, so overflow points into open
-     *     space, not at a neighbour.
-     *  3. If a residual overlap with an obstacle remains, clip this block to the
-     *     half-space on its own side of the obstacle — the structural guarantee
-     *     that rendered extents never overlap.
+     * Place one block, treating already-finalised higher-score [obstacles] as fixed.
+     * Steps: (1) re-anchor a reshaped tall box away from the nearest obstacle /
+     * toward the larger free side (Defect 2); (2) fit font, then if undersized or
+     * overflowing (Defects 1 & 3) grow the box into the larger free side (never
+     * toward an obstacle) and re-fit; (3) if a residual overlap remains, clip this
+     * block to its own side of the obstacle boundary (the no-overlap guarantee).
      */
     private fun placeBlock(
         block: TranslationBlock,
@@ -268,6 +230,7 @@ object TextLayoutPlanner {
         minLegible: Float,
         scale: Float,
         measurer: TextMeasurer,
+        regionOverride: FloatRect?,
     ): BlockLayout {
         var baseX = rect.baseX
         var baseY = rect.baseY
@@ -275,9 +238,12 @@ object TextLayoutPlanner {
         var baseH = rect.baseH
         val safePad = max(0f, (baseW - rect.safeW) / 2f)
 
-        val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
-        val anchorToOcrCenter = block.label == 2 || (block.direction == "TTB" && !isVertical)
-        val region = if (hasParent) {
+        val hasParent = regionOverride == null && block.parentWidth > 0f && block.parentHeight > 0f
+        val anchorToOcrCenter = regionOverride != null || hasParent || block.label == 2 ||
+            (block.direction == "TTB" && !isVertical)
+        val region = if (regionOverride != null) {
+            regionOverride
+        } else if (hasParent) {
             FloatRect(block.parentX, block.parentY, block.parentX + block.parentWidth, block.parentY + block.parentHeight)
         } else if (rect.reshaped) {
             FloatRect(0f, 0f, pageWidth, pageHeight)
@@ -285,14 +251,10 @@ object TextLayoutPlanner {
             FloatRect(block.x, block.y, block.x + block.width, block.y + block.height)
         }
 
-        // (1) Re-anchor a reshaped tall box by MINIMAL DISPLACEMENT subject to
-        // staying on-page and not overlapping an obstacle. Start from the legacy
-        // symmetric placement (box centred on the original bubble centre); if that
-        // candidate collides with an obstacle or the page edge, shift it the
-        // smallest distance that resolves the collision — toward whichever side has
-        // room. This keeps isolated boxes exactly where the legacy renderer put
-        // them (no regression) and only nudges when a real collision would occur,
-        // instead of always anchoring on an edge whenever free space is imbalanced.
+        // (1) Re-anchor a reshaped tall box by MINIMAL DISPLACEMENT: start from the
+        // legacy symmetric placement; if it collides with an obstacle or page edge,
+        // shift the smallest distance that resolves it. Isolated boxes keep the
+        // legacy position (no regression); only nudges on a real collision.
         if (rect.reshaped) {
             val origCenterX = rect.origLeft + (rect.origRight - rect.origLeft) / 2f
             baseX = resolveMinimalDisplacementX(
@@ -304,7 +266,6 @@ object TextLayoutPlanner {
             )
         }
 
-        // (2) Fit, then grow into free space if undersized or overflowing.
         var safeW = max(1f, baseW - safePad * 2f)
         var safeH = max(1f, baseH - safePad * 2f)
         var fontSize = binarySearchFontSize(text, safeW, safeH, baseW, isVertical, scale, measurer)
@@ -332,13 +293,12 @@ object TextLayoutPlanner {
         safeH = max(1f, baseH - safePad * 2f)
         fontSize = binarySearchFontSize(text, safeW, safeH, baseW, isVertical, scale, measurer)
 
-        val strokeWidth = computeStrokeWidth(fontSize, scale)
+        var strokeWidth = computeStrokeWidth(fontSize, scale)
         var originY = baseY + baseH / 2f
-        // Re-anchor at the ORIGINAL edge of a box that grew horizontally into free
-        // space, so parentless edge text (e.g. SFX) does not drift toward the page
-        // centre: grew-right ⇒ pin the (unchanged) left edge with LEFT align;
-        // grew-left ⇒ pin the (unchanged) right edge with RIGHT align. A genuinely
-        // required clip (below) overrides this to LEFT at its own left edge.
+        // Pin the original edge of a box that grew horizontally so parentless edge
+        // text (e.g. SFX) does not drift toward the page centre: grew-right ⇒ LEFT
+        // at the left edge; grew-left ⇒ RIGHT at the right edge. A required clip
+        // (below) overrides this to LEFT at its own left edge.
         var originX: Float
         var drawAlign: TextAlign
         val centeredOriginX = baseX + baseW / 2f
@@ -367,9 +327,9 @@ object TextLayoutPlanner {
         }
         var clipRect: FloatRect? = null
 
-        // (3) Clip safety-net: if the final extent still overlaps an obstacle,
-        // clip to this block's own side of the obstacle boundary. Guarantees the
-        // no-overlap invariant. Reached only when free space was exhausted.
+        // (3) Clip safety-net: if the final extent still overlaps an obstacle, clip
+        // to this block's own side of the obstacle. Reached only when free space is
+        // exhausted; guarantees the no-overlap invariant.
         val safeLeft = baseX + safePad
         val safeTop = baseY + safePad
         val safeRight = baseX + baseW - safePad
@@ -379,18 +339,18 @@ object TextLayoutPlanner {
         for (obs in obstacles) {
             if (!clip.overlaps(obs)) continue
             val inter = clip.intersection(obs)
-            // Keep the half of `clip` that lies on this block's centre side of the
-            // obstacle, so the clip removes exactly the overlapping sliver.
+            // Keep the half of `clip` on this block's centre side, removing exactly
+            // the overlapping sliver.
             val centerX = baseX + baseW / 2f
             clip = if (centerX < (obs.left + obs.right) / 2f) {
-                // Block is to the LEFT of the obstacle → drop the right sliver.
+                // Block is LEFT of the obstacle → drop the right sliver.
                 FloatRect(clip.left, clip.top, min(clip.right, inter.left), clip.bottom)
             } else {
                 FloatRect(max(clip.left, inter.right), clip.top, clip.right, clip.bottom)
             }
             neededClip = true
         }
-        if (neededClip && clip.width() > MIN_GAP_PX && clip.height() > MIN_GAP_PX) {
+        if (regionOverride == null && neededClip && clip.width() > MIN_GAP_PX && clip.height() > MIN_GAP_PX) {
             clipRect = clip
             if (isVertical) {
                 originX = clip.left + clip.width() / 2f
@@ -402,17 +362,16 @@ object TextLayoutPlanner {
             safeW = clip.width()
             safeH = clip.height()
 
-            // Re-wrap into the (narrower) clip width and re-fit the font so the
-            // text fills the clipped region rather than overflowing it.
             val fitFont = binarySearchFontSize(
                 text, safeW, safeH, safeW, isVertical, scale, measurer,
             )
-            // Allow the font to shrink to fit the clipped bounds instead of enforcing the legibility floor,
-            // preventing the text from being cut off.
+            // Skip the legibility floor so text fits the clipped bounds instead of
+            // being cut off.
             fontSize = fitFont
         }
 
-        // (C) Containment clip: if rendered text overflows region R, clip to R.
+        // (C) Containment clip: fall back to clipping at the region boundary when
+        // text still overflows it.
         if (overflows(text, fontSize, isVertical, region.width(), region.height(), measurer)) {
             val r = if (clipRect != null) clipRect.intersection(region) else region
             if (r.width() > MIN_GAP_PX && r.height() > MIN_GAP_PX) {
@@ -434,10 +393,40 @@ object TextLayoutPlanner {
             }
         }
 
-        // Free text / vertical-source Latin translations must remain visually
-        // attached to the OCR region. The solver may still grow/clip the safe
-        // box for legibility, but the actual draw anchor stays at the original
-        // OCR centre instead of drifting to a parent rect or reshaped footprint.
+        if (regionOverride != null) {
+            val centerX = block.x + block.width / 2f
+            val centerY = block.y + block.height / 2f
+            originX = centerX
+            originY = centerY
+            drawAlign = TextAlign.CENTER
+
+            // The OCR centre may be off-centre inside a fused mask slice. Fit to
+            // the smaller side so centred text cannot be clipped on either edge.
+            var maskClip = FloatRect(
+                region.left + strokeWidth / 2f,
+                region.top + strokeWidth / 2f,
+                region.right - strokeWidth / 2f,
+                region.bottom - strokeWidth / 2f,
+            )
+            repeat(2) {
+                safeW = max(1f, 2f * min(centerX - maskClip.left, maskClip.right - centerX))
+                safeH = max(1f, 2f * min(centerY - maskClip.top, maskClip.bottom - centerY))
+                fontSize = binarySearchFontSize(
+                    text, safeW, safeH, safeW, isVertical, scale, measurer,
+                )
+                strokeWidth = computeStrokeWidth(fontSize, scale)
+                maskClip = FloatRect(
+                    region.left + strokeWidth / 2f,
+                    region.top + strokeWidth / 2f,
+                    region.right - strokeWidth / 2f,
+                    region.bottom - strokeWidth / 2f,
+                )
+            }
+            clipRect = maskClip
+        }
+
+        // Free text / parented translations remain visually attached to the OCR
+        // region even when the fitted container is larger than that source box.
         if (anchorToOcrCenter) {
             originX = block.x + block.width / 2f
             originY = block.y + block.height / 2f
@@ -456,24 +445,19 @@ object TextLayoutPlanner {
             strokeWidth = strokeWidth,
             drawAlign = drawAlign,
             clipRect = clipRect,
+            lines = if (isVertical) emptyList() else cjkWrap(text, fontSize, safeW, measurer),
         )
     }
 
     /**
-     * Place a box of [width] horizontally by minimal displacement.
+     * Place a box of [width] horizontally by minimal displacement from [preferredX].
+     * On-page bounds are clamped first; an overlapping obstacle is resolved by
+     * pushing the box to the side of the obstacle nearer its preferred centre. When
+     * a shift would go off-page or into another obstacle, the move is clamped and
+     * the residual overlap is left for the clip safety-net (placeBlock step 3).
      *
-     * The ideal left edge is [preferredX]; if a box placed there overlaps any
-     * [obstacles] or leaves the page, it is shifted the smallest distance that
-     * resolves ALL collisions. On-page bounds are clamped first, then obstacle
-     * collisions are resolved by pushing out of the overlapping obstacle toward
-     * whichever side keeps the box nearer its preferred centre. When shifting
-     * would push it off-page or into another obstacle, the move is clamped and the
-     * residual overlap is left for the clip safety-net (step 3 of [placeBlock]).
-     *
-     * This is what makes the reshaped-box placement (Defect 2) correct: an isolated
-     * box is placed exactly at its preferred (centred) position — the legacy
-     * behaviour — and only moves when a real collision forces it, rather than
-     * always anchoring on an edge whenever left/right free space differs.
+     * This is the Defect 2 fix: an isolated box keeps its preferred (centred)
+     * position — no regression — and only moves when a real collision forces it.
      */
     private fun resolveMinimalDisplacementX(
         preferredX: Float,
@@ -486,8 +470,7 @@ object TextLayoutPlanner {
         val maxXAllowed = origCenterX
         val maxX = (pageWidth - width).coerceAtLeast(0f)
         var x = preferredX.coerceIn(0f, maxX).coerceIn(minXAllowed, maxXAllowed)
-        // Resolve collisions one at a time, up to a bounded number of passes
-        // (each obstacle is shifted past at most once; obstacles do not move).
+        // Bounded passes: each obstacle is shifted past at most once; obstacles do not move.
         var guard = 0
         while (guard < obstacles.size + 1) {
             val candidate = FloatRect(x, 0f, x + width, Float.MAX_VALUE)
@@ -495,7 +478,7 @@ object TextLayoutPlanner {
             if (colliding == null) return x
             val centerX = x + width / 2f
             val obsCenterX = (colliding.left + colliding.right) / 2f
-            // Push to the side of the obstacle nearer the preferred centre.
+            // Push toward the side of the obstacle nearer the preferred centre.
             val nextX = if (centerX < obsCenterX) {
                 colliding.left - width
             } else {
@@ -509,10 +492,7 @@ object TextLayoutPlanner {
         return x
     }
 
-    /**
-     * Free horizontal space to the LEFT of [origLeft], bounded by the page left
-     * edge (0) and the nearest obstacle whose right edge is left of [centerX].
-     */
+    /** Free horizontal space to the LEFT of [origLeft], bounded by the page left edge and the nearest obstacle. */
     private fun freeSpaceLeft(
         centerX: Float,
         origLeft: Float,
@@ -541,11 +521,11 @@ object TextLayoutPlanner {
     }
 
     /**
-     * Grow the box into free space when the current fit is undersized (below the
-     * legibility floor) or the text overflows the safe rect. Growth is only ever
-     * into the larger-free side, clamped so it never crosses an obstacle or the
-     * page edge — i.e. overflow is redirected into open space, never at a neighbour.
-     * Returns the (possibly unchanged) box + a refit font.
+     * Grow the box into free space when the fit is undersized (below the legibility
+     * floor) or the text overflows. Growth is only into the larger-free side,
+     * clamped so it never crosses an obstacle or the page edge — overflow is
+     * redirected into open space, never at a neighbour. Returns the possibly
+     * unchanged box + a refit font.
      */
     private fun growIntoFreeSpaceIfNeeded(
         text: String,
@@ -579,11 +559,9 @@ object TextLayoutPlanner {
         }
 
         if (!isVertical) {
-            // Horizontal. Grow HEIGHT first (taller ⇒ more wrap lines ⇒ narrower),
-            // then WIDTH only for whatever still won't fit — each into its larger
-            // free side so overflow is redirected into open space, never at a
-            // neighbour, and bounded by the available free space so a box never
-            // crosses an obstacle (contract #16f).
+            // Grow HEIGHT first (taller ⇒ more wrap lines ⇒ narrower), then WIDTH
+            // for any residual, each into its larger free side so a box never
+            // crosses an obstacle.
             val lineH = measurer.lineHeight(targetFont)
             val centerY = by + bh / 2f
             val safeTop = by + safePad
@@ -591,14 +569,12 @@ object TextLayoutPlanner {
             val freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
             val freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
 
-            // (a) HEIGHT — always reserve at least one line at the floor font (a box
-            // too short for even one line could never reach the legibility floor no
-            // matter how wide it grew, collapsing the fit to ~8 px — Defect 3). Then
-            // grow further so the text wraps into MORE lines (taller, narrower
-            // footprint) instead of ballooning width: pick the smallest line count
-            // within the vertical headroom whose wrapped width already fits the
-            // current safe width; if none fits, use all available headroom and let
-            // the width step below handle the residual.
+            // (a) HEIGHT — reserve at least one line at the floor font (a box too
+            // short for one line could never reach the legibility floor no matter
+            // how wide, collapsing the fit to ~8 px — Defect 3). Then grow so text
+            // wraps into more lines (taller, narrower) instead of widening: pick
+            // the smallest line count within headroom whose wrapped width fits; if
+            // none fits, use all headroom and let the WIDTH step handle the residual.
             val baseLines = max(1, (sh / lineH).toInt())
             val maxLinesByHeight = max(baseLines, ((sh + max(freeUp, freeDown)) / lineH).toInt())
             val swBeforeGrowth = sw
@@ -618,9 +594,8 @@ object TextLayoutPlanner {
                 sh = max(1f, bh - safePad * 2f)
             }
 
-            // (b) WIDTH — re-wrap into the lines that now fit and grow only for any
-            // residual overflow, into the larger free side (record which side so
-            // placeBlock can re-anchor at the original edge).
+            // (b) WIDTH — grow only for residual overflow into the larger free
+            // side; record which side so placeBlock can re-anchor at the original edge.
             val maxLines = max(1, (sh / lineH).toInt())
             val safeLeft = bx + safePad
             val safeRight = bx + bw - safePad
@@ -642,8 +617,8 @@ object TextLayoutPlanner {
                 sw = max(1f, bw - safePad * 2f)
             }
         } else {
-            // Vertical: growing HEIGHT lets more glyphs fit per column ⇒ fewer
-            // columns ⇒ narrower footprint, relieving horizontal neighbour pressure.
+            // Vertical: growing HEIGHT fits more glyphs per column ⇒ fewer columns
+            // ⇒ narrower footprint, relieving horizontal neighbour pressure.
             val safeTop = by + safePad
             val safeBottom = by + bh - safePad
             val centerY = by + bh / 2f
@@ -676,8 +651,8 @@ object TextLayoutPlanner {
         }
 
         font = binarySearchFontSize(text, sw, sh, bw, isVertical, scale = 1f, measurer = measurer)
-        // Honour the floor: prefer the target (legible) size over the fit result
-        // when the grown box can finally accommodate it.
+        // Honour the floor: prefer the legible size over the fit result when the
+        // grown box can finally accommodate it.
         if (font < minLegible && fitsAt(text, targetFont, isVertical, sw, sh, measurer)) {
             font = targetFont
         }
@@ -692,10 +667,9 @@ object TextLayoutPlanner {
         val safeW: Float,
         val safeH: Float,
         val fontSize: Float,
-        // TachiyomiAT: which horizontal side the box grew into (false when it did
-        // not grow horizontally). Drives the re-anchor in placeBlock so a box that
-        // grew into free space stays pinned at its ORIGINAL edge instead of
-        // re-centering on the (now wider) box and drifting toward page centre.
+        // Which horizontal side the box grew into (false when it did not grow
+        // horizontally). Drives the placeBlock re-anchor so a grown box stays
+        // pinned at its original edge instead of drifting toward page centre.
         val grewRight: Boolean,
         val grewLeft: Boolean,
     )
@@ -845,6 +819,89 @@ object TextLayoutPlanner {
         }
     }
 
+    /**
+     * Build strict layout regions from persisted segmentation masks. A fused mask
+     * may contain multiple OCR children; partition its bounds at the midpoints of
+     * the child centers so one child cannot consume the other's space.
+     */
+    private fun buildMaskRegions(blocks: List<TranslationBlock>): Map<Int, FloatRect> {
+        val regions = HashMap<Int, FloatRect>()
+        val groups = blocks.withIndex()
+            .filter { it.value.segmentationMask != null }
+            .groupBy { it.value.segmentationMask!! }
+
+        for ((mask, indexedBlocks) in groups) {
+            val bounds = mask.bounds
+            val maskRect = FloatRect(
+                bounds[0].toFloat(), bounds[1].toFloat(),
+                bounds[2].toFloat(), bounds[3].toFloat(),
+            )
+            if (indexedBlocks.size == 1) {
+                regions[indexedBlocks.single().index] = maskRect
+                continue
+            }
+
+            val centers = indexedBlocks.associate { item ->
+                item.index to Pair(
+                    item.value.x + item.value.width / 2f,
+                    item.value.y + item.value.height / 2f,
+                )
+            }
+            val spanX = centers.values.maxOf { it.first } - centers.values.minOf { it.first }
+            val spanY = centers.values.maxOf { it.second } - centers.values.minOf { it.second }
+            val splitX = spanX >= spanY
+            val ordered = indexedBlocks.sortedBy { centers[it.index]!!.let { c -> if (splitX) c.first else c.second } }
+            val cuts = ordered.zipWithNext().map { (left, right) ->
+                val a = centers[left.index]!!
+                val b = centers[right.index]!!
+                if (splitX) (a.first + b.first) / 2f else (a.second + b.second) / 2f
+            }
+
+            ordered.forEachIndexed { position, item ->
+                val region = if (splitX) {
+                    FloatRect(
+                        if (position == 0) maskRect.left else cuts[position - 1],
+                        maskRect.top,
+                        if (position == ordered.lastIndex) maskRect.right else cuts[position],
+                        maskRect.bottom,
+                    )
+                } else {
+                    FloatRect(
+                        maskRect.left,
+                        if (position == 0) maskRect.top else cuts[position - 1],
+                        maskRect.right,
+                        if (position == ordered.lastIndex) maskRect.bottom else cuts[position],
+                    )
+                }
+                regions[item.index] = region
+            }
+        }
+        return regions
+    }
+
+    /** Give children of one fused mask the same safe fitted font size. */
+    private fun equalizeSharedMaskFonts(
+        layouts: List<BlockLayout>,
+        measurer: TextMeasurer,
+        scale: Float,
+    ): List<BlockLayout> {
+        val groups = layouts.filter { it.block.segmentationMask != null }
+            .groupBy { it.block.segmentationMask!! }
+        if (groups.values.none { it.size > 1 }) return layouts
+        return layouts.map { layout ->
+            val group = groups[layout.block.segmentationMask]
+            if (group == null || group.size < 2) return@map layout
+            val commonFont = group.minOf { it.fontSizePx }
+            layout.copy(
+                fontSizePx = commonFont,
+                strokeWidth = computeStrokeWidth(commonFont, scale),
+                lines = if (layout.isVertical) emptyList() else cjkWrap(
+                    layout.text, commonFont, layout.safeW, measurer,
+                ),
+            )
+        }
+    }
+
     private fun centeredExtentOverlapsObstacle(
         text: String,
         fontSize: Float,
@@ -872,7 +929,7 @@ object TextLayoutPlanner {
         }
     }
 
-    // ---- Pure per-block math (ported unchanged from the legacy renderer). ----
+    // Pure per-block math ported unchanged from the legacy renderer.
 
     internal fun isCJK(ch: Char): Boolean {
         val cp = ch.code
@@ -916,36 +973,56 @@ object TextLayoutPlanner {
     )
 
     /**
-     * Compute the base + safe rect for a block, mirroring the legacy renderer:
-     * parented blocks use the parent bubble rect; parentless TALL boxes are
-     * reshaped wider (area-preserving, clamped width). The reshape keeps the
-     * legacy symmetric placement here; placement/anchoring AWAY from neighbours is
-     * the planner's job ([placeBlock] step 1). [reshaped]/[origLeft]/[origRight]
-     * carry the original bubble edges so the planner can re-anchor against them.
+     * Compute base + safe rect for a block, mirroring the legacy renderer: parented
+     * blocks use the parent bubble rect; parentless TALL boxes are reshaped wider
+     * (area-preserving, clamped width). The reshape keeps the legacy symmetric
+     * placement here; neighbour-aware re-anchoring is the planner's job (placeBlock
+     * step 1). [reshaped]/[origLeft]/[origRight] carry the original edges so the
+     * planner can re-anchor against them.
      */
-    internal fun computeRects(block: TranslationBlock, sampleSize: Int = 1): RectResult {
+    internal fun computeRects(
+        block: TranslationBlock,
+        sampleSize: Int = 1,
+        regionOverride: FloatRect? = null,
+    ): RectResult {
         val scale = 1f / sampleSize
-        val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
+        val hasParent = regionOverride == null && block.parentWidth > 0f && block.parentHeight > 0f
         val textPad = if (hasParent) {
             max(12f * scale, 0.15f * min(block.parentWidth, block.parentHeight))
         } else {
             max(4f * scale, 0.03f * min(block.width, block.height))
         }
-        var baseX = if (hasParent) block.parentX else block.x
-        var baseY = if (hasParent) block.parentY else block.y
-        var baseW = if (hasParent) block.parentWidth else block.width
-        var baseH = if (hasParent) block.parentHeight else block.height
+        var baseX = when {
+            regionOverride != null -> regionOverride.left
+            hasParent -> block.parentX
+            else -> block.x
+        }
+        var baseY = when {
+            regionOverride != null -> regionOverride.top
+            hasParent -> block.parentY
+            else -> block.y
+        }
+        var baseW = when {
+            regionOverride != null -> regionOverride.width()
+            hasParent -> block.parentWidth
+            else -> block.width
+        }
+        var baseH = when {
+            regionOverride != null -> regionOverride.height()
+            hasParent -> block.parentHeight
+            else -> block.height
+        }
         val origLeft = baseX
         val origRight = baseX + baseW
         var reshaped = false
-        if (!hasParent && baseH > 0f && baseW > 0f && baseH / baseW > RESHAPE_TALL_RATIO) {
+        if (regionOverride == null && !hasParent && baseH > 0f && baseW > 0f && baseH / baseW > RESHAPE_TALL_RATIO) {
             val area = baseW * baseH
             var newH = sqrt(area.toDouble()).toFloat()
             var newW = newH
             newW = newW.coerceIn(baseW * RESHAPE_MIN_WIDTH_FACTOR, baseW * RESHAPE_MAX_WIDTH_FACTOR)
             newH = area / newW
             // Symmetric re-centre on the original bubble centre (legacy behaviour);
-            // [placeBlock] re-anchors away from a neighbour when one is present.
+            // placeBlock re-anchors away from a neighbour when one is present.
             baseX = (origLeft + origRight) / 2f - newW / 2f
             baseY += (baseH - newH) / 2f
             baseW = newW
@@ -959,10 +1036,10 @@ object TextLayoutPlanner {
     }
 
     /**
-     * Greedy line wrap. Faithful port of the legacy renderer: newline forces a
-     * break; each CJK glyph is its own token (breaks anywhere); a maximal Latin
-     * run is ONE atomic token (Latin words are never hyphenated). Width queries go
-     * through [measurer] so this stays pure-JVM-testable.
+     * Greedy line wrap (legacy port): newline forces a break; each CJK glyph is its
+     * own token (breaks anywhere); a maximal Latin run is ONE atomic token (Latin
+     * words are never hyphenated). Width queries go through [measurer] so this stays
+     * pure-JVM-testable.
      */
     internal fun cjkWrap(text: String, fontSizePx: Float, maxWidthPx: Float, measurer: TextMeasurer): List<String> {
         val tokens = mutableListOf<String>()
@@ -1011,10 +1088,9 @@ object TextLayoutPlanner {
 
     /**
      * Largest font size in `[FIT_MIN_FONT_PX*scale, FIT_MAX_FONT_PX*scale]` whose
-     * rendered text fits the safe rect, by binary search. Faithful to the legacy
-     * fit except that width/line queries go through [measurer]. Returns the floor
-     * when nothing fits — the planner's growth + clip stages handle that case
-     * rather than letting the caller draw an overflow.
+     * rendered text fits the safe rect, by binary search. Returns the floor when
+     * nothing fits — the planner's growth + clip stages handle that case rather
+     * than letting the caller draw an overflow.
      */
     internal fun binarySearchFontSize(
         text: String,
@@ -1063,12 +1139,9 @@ object TextLayoutPlanner {
     }
 
     internal fun computeStrokeWidth(fontSizePx: Float, scale: Float): Float {
-        // One source of truth for outline width: a fixed fraction of the fitted
-        // font size, floored so it never collapses below a visible pixel. This
-        // matches PageTextRenderer's own fallback and replaces three divergent
-        // formulas (the old estimator 4.5/3.0 scaled by a font-fit ratio that
-        // shrank it to ~1px, the renderer's 0.12× floor 2, and the planner's
-        // 0.07× floor 1.5). Block.strokeWidth is no longer an input.
+        // Single source of truth for outline width: a fixed fraction of the fitted
+        // font size, floored so it never collapses below a visible pixel. Replaces
+        // three divergent legacy formulas; Block.strokeWidth is no longer an input.
         return max(MIN_STROKE_PX * scale, fontSizePx * STROKE_WIDTH_FRACTION)
     }
 }

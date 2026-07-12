@@ -13,10 +13,8 @@ object TranslationBlockSorter {
     fun sort(blocks: List<TranslationBlock>, fromLang: TextRecognizerLanguage): MutableList<TranslationBlock> {
         if (blocks.isEmpty()) return mutableListOf()
 
-        // 1. Initial sort top-to-bottom
         val topToBottom = blocks.sortedBy { it.y }
 
-        // 2. Group into rough rows
         val rows = mutableListOf<MutableList<TranslationBlock>>()
         var currentRow = mutableListOf<TranslationBlock>()
 
@@ -24,11 +22,10 @@ object TranslationBlockSorter {
             if (currentRow.isEmpty()) {
                 currentRow.add(block)
             } else {
-                // Determine if this block belongs in the same row as the previous block
                 val lastBlock = currentRow.last()
                 val avgY = currentRow.map { it.y }.average()
 
-                // If it vertically overlaps the last block, or its Y is close to the row's average Y
+                // Same row if blocks vertically overlap, or Y is near the row's average Y.
                 val overlap = maxOf(0f, minOf(lastBlock.y + lastBlock.height, block.y + block.height) - maxOf(lastBlock.y, block.y))
                 if (overlap > 0 || abs(block.y - avgY) < block.height / 2) {
                     currentRow.add(block)

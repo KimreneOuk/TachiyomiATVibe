@@ -31,6 +31,19 @@ enum class AiEngine { GEMINI, OPENROUTER, DEEPSEEK, LMSTUDIO }
  */
 enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
 
+/**
+ * TachiyomiAT: source reading order for a manga/comic page. Determines how the
+ * recognition engine orders detected blocks and which direction the inpainter
+ * assumes for text flow.
+ *
+ * - [AUTO]: derive from the source language (CJK languages -> RTL manga flow,
+ *   everything else -> LTR comic flow). The historical default.
+ * - [RTL_MANGA]: force right-to-left manga ordering regardless of language.
+ * - [LTR_COMIC]: force left-to-right western-comic ordering regardless of
+ *   language.
+ */
+enum class TranslationReadingOrder { AUTO, RTL_MANGA, LTR_COMIC }
+
 class TranslationPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
@@ -189,6 +202,24 @@ class TranslationPreferences(
      * translation run without rebuilding.
      */
     fun translationDiagnostics() = preferenceStore.getBoolean("translation_diagnostics", false)
+
+    /**
+     * TachiyomiAT: opt-in "Analytical Mode" for AI translation. When enabled,
+     * the translation pipeline assembles extra context for each chunk — past
+     * translated pairs from earlier pages (speaker/voice continuity) and future
+     * OCR'd-but-not-yet-translated source text (so the model can see what comes
+     * next) — and injects it via the sliding-window context planner. Off by
+     * default to keep the non-analytical path (and its token budget) unchanged.
+     */
+    fun translationAnalyticalMode() = preferenceStore.getBoolean("translation_analytical_mode", false)
+
+    /**
+     * TachiyomiAT: source-page reading order (RTL manga / LTR comic / auto from
+     * language). The recognition engine caches its resolved RTL/LTR decision
+     * once per instance, so changing this at runtime forces a recognition
+     * rebuild (see the engine-rebuild gate in TranslationPipeline).
+     */
+    fun translationReadingOrder() = preferenceStore.getEnum("translation_reading_order", TranslationReadingOrder.AUTO)
 
     //endregion
 

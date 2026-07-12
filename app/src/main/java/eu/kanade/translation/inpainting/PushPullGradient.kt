@@ -7,21 +7,18 @@ import kotlin.math.min
 /**
  * TachiyomiAT: push-pull gradient inpainting for free text.
  *
- * Pure-JVM port of the validated "legacy" free-text path from the Python
- * prototype (`tools/inpaint-debug-viewer/server.py`):
+ * Pure-JVM port of the validated free-text path from the Python prototype:
  *  - [localRingMedian] — median of the annulus around the text (the LOCAL
- *    surrounding color), porting `_local_ring_median`. This replaces the old
- *    global page median that kept free text "stuck on white" (pages are mostly
- *    white, so the global median was always white).
- *  - [pushPullFill] — erase the ink with the local color, then a push-pull
- *    gradient (box downscale → bilinear upscale) filled into the hole, then
- *    boundary diffusion inside the mask — porting `pil_inpaint_stroke`. The
- *    gradient gives the smooth spatial blend that matches the surrounding
- *    artwork; the diffusion stitches the hole's edge to its neighbours.
+ *    surrounding color), replacing the old global page median that kept free
+ *    text "stuck on white" (pages are mostly white, so the global median was
+ *    always white).
+ *  - [pushPullFill] — erase ink with the local color, push-pull gradient
+ *    (box downscale → bilinear upscale) into the hole, then boundary diffusion
+ *    inside the mask.
  *
- * Operates only on `IntArray` (packed ARGB) and `ByteArray` masks — no
- * `android.graphics.Bitmap` — so it is unit-testable in plain JVM (mirrors
- * [BubbleMaskBuilder]). The bitmap-level caller crops the page first (memory).
+ * Operates only on `IntArray`/`ByteArray` (no `android.graphics.Bitmap`) so it
+ * is unit-testable in plain JVM. The bitmap-level caller crops the page first
+ * (memory).
  */
 object PushPullGradient {
 
@@ -29,9 +26,8 @@ object PushPullGradient {
     const val DEFAULT_RING = 8
 
     /**
-     * Push-pull downsample target divisor (small dimension = w / 20).
-     * Downscale floor is max(2, …) — affects only sub-80px crops.
-     * Local-crop smoothing improvement, not full-page global gradient parity with Python.
+     * Push-pull downsample divisor (small dim = w / 20). Floor is max(2, …),
+     * affecting only sub-80px crops.
      */
     private const val DOWN_SAMPLE_DIV = 20
 
@@ -173,8 +169,6 @@ object PushPullGradient {
             }
         }
     }
-
-    // --- internal helpers -------------------------------------------------
 
     private fun histogramMedian(hist: IntArray, count: Int): Int {
         val half = count / 2

@@ -27,9 +27,7 @@ enum class AiTranslatorKind(val engine: AiEngine, val label: String, val provide
         val maxOutputTokens = pref.translationAiOutputTokens().get().toIntOrNull() ?: 8192
         val temperature = pref.translationAiTemperature().get().toFloatOrNull() ?: 0.3f
 
-        // Fail fast with a clear provider-specific message when the key is
-        // missing. DeepSeek already checks this internally; the check here
-        // makes the contract uniform across all AI engines.
+        // Fail fast with a provider-specific message on a missing key/base URL.
         if (engine == AiEngine.LMSTUDIO) {
             require(pref.translationAiBaseUrlLmStudio().get().isNotBlank()) { "$providerName base URL is required" }
         } else {
@@ -46,7 +44,7 @@ enum class AiTranslatorKind(val engine: AiEngine, val label: String, val provide
                 baseUrl = pref.translationAiBaseUrlLmStudio().get(),
                 modelName = modelName,
                 maxOutputToken = maxOutputTokens,
-                temp = temperature,
+                temperature = temperature,
             )
         }
     }

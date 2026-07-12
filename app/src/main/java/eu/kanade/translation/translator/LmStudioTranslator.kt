@@ -14,7 +14,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
 import logcat.LogPriority
 
 class LmStudioTranslator(
@@ -23,16 +22,10 @@ class LmStudioTranslator(
     baseUrl: String,
     val modelName: String,
     val maxOutputToken: Int,
-    val temp: Float,
-) : ContextualTextTranslator {
+    val temperature: Float,
+) : OpenAiCompatibleTranslator() {
 
     private val normalizedBaseUrl = AiModelFetcher.normalizeBaseUrl(baseUrl)
-
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         translateInternal(pages, rollingContext = "", glossary = "", outputTokenLimit = maxOutputToken)
@@ -83,7 +76,7 @@ class LmStudioTranslator(
             }
             val jsonObject = buildJsonObject {
                 put("model", modelName)
-                put("temperature", temp)
+                put("temperature", temperature)
                 put("max_tokens", outputTokenLimit)
                 putJsonArray("messages") {
                     addJsonObject {
@@ -101,51 +94,19 @@ class LmStudioTranslator(
                 }
             }.toString()
 
-            val body = jsonObject.toRequestBody(mediaType)
-            val request = Request.Builder()
-                .url("$normalizedBaseUrl/chat/completions")
-                .header("Content-Type", "application/json")
-                .post(body)
-                .build()
-
-            val response = okHttpClient.newCall(request).await()
-            val responseBody = response.body
-                ?: throw IllegalStateException("Empty response body from LM Studio API")
-            val responseStr = responseBody.string()
-            val responseJson = JSONObject(responseStr)
-            // TachiyomiAT: surface the raw LM Studio response so a blank/partial
-            // translation is diagnosable. The HTTP code, the presence of choices,
-            // the content length, and a snippet of the content are logged
-            // unconditionally — this path was previously a black box (no logs on
-            // success), which hid the root cause of whole-chapter blank output.
-            val choicesArr = responseJson.optJSONArray("choices")
-            val rawOutput = choicesArr?.optJSONObject(0)
-                ?.optJSONObject("message")?.optString("content")
-            logcat(LogPriority.INFO) {
-                "LM Studio response: http=${response.code} hasChoices=${choicesArr != null} " +
-                    "choicesLen=${choicesArr?.length() ?: -1} contentLen=${rawOutput?.length ?: -1} " +
-                    "finishReason=${choicesArr?.optJSONObject(0)?.optString("finish_reason")}"
-            }
-            if (rawOutput.isNullOrBlank()) {
-                val snippet = if (responseStr.length > 300) responseStr.substring(0, 300) else responseStr
-                logcat(LogPriority.WARN) {
-                    "LM Studio returned no usable content. Raw response snippet: $snippet"
-                }
-                throw IllegalStateException(
-                    "LM Studio returned no content (choices missing or empty): " +
-                        responseJson.optString("error", responseJson.toString()),
-                )
-            }
+            val rawOutput = postChatCompletion(
+                url = "$normalizedBaseUrl/chat/completions",
+                headers = emptyMap(),
+                payloadJson = jsonObject,
+            )
 
             val parsedTranslations = NumberedLineResponseParser.parse(
                 raw = rawOutput,
                 expectedCount = flatBlocks.size,
                 targetLang = toLang,
             )
-            // TachiyomiAT: log the parse yield. A common failure mode is the
-            // model ignoring the [index] text format AND the positional fallback
-            // (e.g. it returns a single prose paragraph) — parse then yields 0
-            // entries and every block stays blank. Surface that here.
+            // Log parse yield: a common failure mode is the model ignoring the [index] format AND
+            // the positional fallback (e.g. returning one prose paragraph), so parse yields 0 entries.
             val parsedCount = parsedTranslations.count { (_, v) -> v.isNotBlank() }
             logcat(LogPriority.INFO) {
                 "LM Studio parse: requested=${flatBlocks.size} parsed=$parsedCount " +
@@ -159,11 +120,8 @@ class LmStudioTranslator(
                         "with smaller requests when possible."
                 }
             }
-            // TachiyomiAT: do NOT fall back to the source text when the model
-            // returns a blank/missing line. See DeepSeekTranslator for the full
-            // rationale (leaving translation blank lets the batch validation
-            // gate mark the block/page PARTIAL/FAILED instead of rendering OCR
-            // text as a translation).
+            // Never fall back to source text on a blank/missing line: a blank translation lets the
+            // validation gate mark the block/page PARTIAL/FAILED instead of rendering OCR as a translation.
             flatBlocks.forEachIndexed { index, (block, _) ->
                 val translated = parsedTranslations[index]
                 if (!translated.isNullOrBlank()) {
@@ -179,10 +137,9 @@ class LmStudioTranslator(
 
     override suspend fun promptText(prompt: String): String {
         return try {
-            val mediaType = "application/json; charset=utf-8".toMediaType()
             val jsonObject = buildJsonObject {
                 put("model", modelName)
-                put("temperature", temp)
+                put("temperature", temperature)
                 put("max_tokens", maxOutputToken)
                 putJsonArray("messages") {
                     addJsonObject {
@@ -192,27 +149,14 @@ class LmStudioTranslator(
                 }
             }.toString()
 
-            val body = jsonObject.toRequestBody(mediaType)
-            val request = Request.Builder()
-                .url("$normalizedBaseUrl/chat/completions")
-                .header("Content-Type", "application/json")
-                .post(body)
-                .build()
-
-            val response = okHttpClient.newCall(request).await()
-            val responseBody = response.body ?: return ""
-            val responseStr = responseBody.string()
-            val responseJson = JSONObject(responseStr)
-            val choicesArr = responseJson.optJSONArray("choices")
-            choicesArr?.optJSONObject(0)?.optJSONObject("message")?.optString("content") ?: ""
+            postChatCompletion(
+                url = "$normalizedBaseUrl/chat/completions",
+                headers = emptyMap(),
+                payloadJson = jsonObject,
+            )
         } catch (e: Exception) {
             logcat { "LM Studio promptText Error : ${e.stackTraceToString()}" }
             ""
         }
-    }
-
-    override fun close() {
-        okHttpClient.connectionPool.evictAll()
-        okHttpClient.dispatcher.executorService.shutdown()
     }
 }

@@ -30,7 +30,6 @@ class PageTranslationHelper {
             return mergeGroup(listOf(r1, r2))
         }
 
-        // Checks if two block overlap each other and are in same orientation
         private fun shouldMerge(r1: TranslationBlock, r2: TranslationBlock): Boolean {
             return abs(r1.angle - r2.angle) < 10 && r1.x < (r2.x + r2.width) && (r1.x + r1.width) > r2.x &&
                 r1.y < (r2.y + r2.height) && (r1.y + r1.height) > r2.y
@@ -63,8 +62,7 @@ class PageTranslationHelper {
                 parentHeight = 0f,
                 textColor = first.textColor,
                 strokeColor = first.strokeColor,
-                // strokeWidth is owned by TextLayoutPlanner (font-derived) and not
-                // read at render time; leave default here rather than max a dead field.
+                // strokeWidth is owned by TextLayoutPlanner and not read at render; leave default.
                 strokeWidth = 0f,
                 direction = dominantDirection(ordered),
             )
@@ -132,16 +130,13 @@ class PageTranslationHelper {
          */
         fun dedupeGeometricOverlaps(blocks: List<TranslationBlock>): List<TranslationBlock> {
             if (blocks.size < 2) return blocks.toList()
-            // Sort by score descending so the highest-score block in any overlap
-            // pair is seen first and wins; ties keep the original order (stable
-            // sort) so equal-score blocks retain reading order.
+            // Highest score first wins overlaps; stable sort keeps reading order on ties.
             val ordered = blocks.sortedByDescending { it.score }
             val kept = ArrayList<TranslationBlock>(blocks.size)
             for (candidate in ordered) {
                 val candidateBox = candidate.toIntBox()
                 if (candidateBox == null || !candidateBox.isValid()) {
-                    // Degenerate box — keep the block rather than drop it on a
-                    // geometry check we can't evaluate.
+                    // Degenerate box — keep rather than drop on a check we can't evaluate.
                     kept.add(candidate)
                     continue
                 }
@@ -153,9 +148,7 @@ class PageTranslationHelper {
                 }
                 if (!isDuplicateOfKept) kept.add(candidate)
             }
-            // Re-sort into the original reading order (by y then x) so the
-            // caller sees the surviving blocks in the same order the detector
-            // emitted them, just with the duplicates removed.
+            // Re-filter by the original order so survivors keep detector reading order.
             return blocks.filter { it in kept }
         }
 

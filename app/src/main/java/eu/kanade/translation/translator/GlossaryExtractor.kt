@@ -10,7 +10,6 @@ object GlossaryExtractor {
         translator: ContextualTextTranslator,
         pages: List<PageTranslation>
     ): String {
-        // Collect text from all blocks in the first few pages
         val textBuilder = StringBuilder()
         pages.forEach { page ->
             page.blocks.forEach { block ->
@@ -38,7 +37,6 @@ object GlossaryExtractor {
             val response = translator.promptText(prompt)
             if (response.isNotBlank()) {
                 logcat(LogPriority.INFO) { "Extracted glossary:\n$response" }
-                // Prepend a header so the model knows what it is
                 "[GLOSSARY]\n$response\n[END GLOSSARY]\n"
             } else {
                 ""

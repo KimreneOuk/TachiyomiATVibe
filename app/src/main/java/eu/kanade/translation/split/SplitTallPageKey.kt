@@ -5,18 +5,14 @@ import eu.kanade.translation.model.TranslationBlock
 /**
  * TachiyomiAT: pure helpers for the split-tall-image translation merge.
  *
- * A tall page downloaded with `split_tall_images` enabled is stored by
- * `ImageUtil.splitTallImage` as `NNN__001.jpg`, `NNN__002.jpg`, … — consecutive
- * vertical JPEG slices of one original page (`NNN` = zero-padded page number,
- * `MMM` = 1-based slice index). Translating each slice independently breaks text
- * that spans a slice boundary and re-translates the duplicated overlap band, so
- * the slices must be merged into one image for detect→OCR→inpaint→render and the
- * result back-mapped to each slice.
+ * A tall page downloaded with `split_tall_images` enabled is stored as
+ * `NNN__001.jpg`, `NNN__002.jpg`, … — consecutive vertical JPEG slices of one
+ * original page. Translating each slice independently breaks text that spans a
+ * slice boundary and re-translates the overlap band, so slices are merged for
+ * detect→OCR→inpaint→render and the result back-mapped to each slice.
  *
- * This object holds ONLY the coordinate bookkeeping — kept pure (no Bitmap /
- * Canvas / ONNX) so it is unit-testable. That bookkeeping (slice grouping + the
- * y-offset / boundary-clip back-map) is the highest-risk part of the feature, so
- * it is verified independently of the (device-bound) pipeline integration.
+ * This object holds ONLY the coordinate bookkeeping (slice grouping + y-offset /
+ * boundary-clip back-map), kept pure (no Bitmap/Canvas/ONNX) for unit testing.
  */
 object SplitTallPageKey {
 
@@ -55,8 +51,8 @@ object SplitTallPageKey {
      * only care about real splits filter [Group.isSplit].
      */
     fun group(orderedPageKeys: List<String>): List<Group> {
-        // LinkedHashMap preserves first-seen group order. Non-split pages use a
-        // sentinel prefix so two unrelated pages never collapse into one group.
+        // LinkedHashMap preserves first-seen order; non-split pages use a sentinel
+        // prefix so two unrelated pages never collapse into one group.
         val byPrefix = LinkedHashMap<String, MutableList<Part>>()
         for (key in orderedPageKeys) {
             val part = parse(key)
@@ -67,7 +63,7 @@ object SplitTallPageKey {
             }
         }
         return byPrefix.values.map { parts ->
-            // Sort genuine split groups by slice index; singleton sentinels stay as-is.
+            // Sort genuine split groups by slice index; sentinels stay as-is.
             val sorted = if (parts.first().prefix == parts.first().pageKey) parts else parts.sortedBy { it.index }
             Group(sorted)
         }
@@ -89,9 +85,8 @@ object SplitTallPageKey {
         val interBottom = minOf(block.y + block.height, sliceBottom)
         if (interTop >= interBottom) return null
 
-        // The parent rect (bubble group) follows the same transform + clip so the
-        // renderer's neighbour-aware layout stays within the slice. parentY/
-        // parentHeight are val on the model, so the result is built via copy().
+        // Parent rect (bubble group) follows the same transform + clip so
+        // neighbour-aware layout stays in-slice. parentY/parentHeight are val, so copy().
         var parentY = block.parentY
         var parentHeight = block.parentHeight
         if (block.parentHeight > 0f) {

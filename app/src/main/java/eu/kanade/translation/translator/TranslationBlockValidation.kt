@@ -8,25 +8,18 @@ import eu.kanade.translation.model.recordAttemptFailure
 /**
  * TachiyomiAT: post-translate validation for a single page's blocks.
  *
- * Catches the root cause of pages that mixed real translations with untouched
- * source text: an adapter (AI or standard) that returned blank / null / fewer
- * translations than blocks, then silently left `block.translation` empty — which
- * the old renderer papered over with `block.translation.ifBlank { block.text }`,
- * so the source text was drawn as if it were a translation and the page still
- * counted as READY.
+ * Catches pages that mixed real translations with untouched source text: an adapter returning
+ * blank/null/fewer translations left `block.translation` empty, which the old renderer papered over
+ * with `block.translation.ifBlank { block.text }` — drawing source as if it were a translation and
+ * still counting the page as READY. The renderer no longer falls back to `block.text`.
  *
- * The renderer no longer falls back to `block.text`, so a blank translation now
- * renders as nothing. This helper classifies the page into one of three
- * outcomes so the pipeline can render the good translations instead of skipping
- * the whole page when a single block failed:
- *  - every source block translated  -> READY  (render normally)
- *  - some translated, some not      -> PARTIAL (still render; missing regions
- *    stay blank on the cleaned image; the page is NOT a retryable failure)
+ * Classifies the page so the pipeline can render good translations instead of skipping the whole page
+ * when a single block failed:
+ *  - every source block translated  -> READY
+ *  - some translated, some not      -> PARTIAL (render; missing regions stay blank; NOT retryable)
  *  - none translated                -> FAILED (bump retryCount; render skipped)
  *
  * Pure + side-effect-free so it is unit-testable without Android/Bitmap/ONNX.
- * Callers ([TranslationPipeline]) apply the resulting status to the
- * [PageTranslation] and the store.
  */
 object TranslationBlockValidation {
 
@@ -69,19 +62,15 @@ object TranslationBlockValidation {
     }
 
     /**
-     * Convenience: applies the validation result to [pageTranslation] in place,
-     * setting [PageTranslation.translationStatus] + [PageTranslation.errorMessage]
-     * and bumping retryCount only when NOTHING was translated. Returns the
-     * status it set (READY / PARTIAL / FAILED) so the caller can persist it.
+     * Convenience: applies the validation result to [pageTranslation] in place, setting
+     * [PageTranslation.translationStatus] + [PageTranslation.errorMessage] and bumping retryCount
+     * only when NOTHING was translated. Returns the status it set (READY / PARTIAL / FAILED).
      *
      * Outcome map:
-     *  - [TranslationValidationResult.AllTranslated] -> READY, error cleared
-     *  - [TranslationValidationResult.Partial] with translatedCount > 0 ->
-     *    PARTIAL (rendered, NOT a retryable failure; retryCount untouched so
-     *    auto-translate doesn't burn the page's retry budget on a partial),
-     *    with a message naming how many blocks were translated
-     *  - [TranslationValidationResult.Partial] with translatedCount == 0 ->
-     *    FAILED, retryCount bumped, message set (genuine adapter failure).
+     *  - AllTranslated -> READY, error cleared
+     *  - Partial with translatedCount > 0 -> PARTIAL (rendered, NOT retryable; retryCount untouched
+     *    so auto-translate doesn't burn the page's retry budget on a partial)
+     *  - Partial with translatedCount == 0 -> FAILED, retryCount bumped (genuine adapter failure)
      */
     fun applyTo(
         pageTranslation: PageTranslation,
@@ -96,10 +85,8 @@ object TranslationBlockValidation {
             is TranslationValidationResult.Partial -> {
                 if (result.translatedCount == 0) {
                     pageTranslation.translationStatus = StageStatus.FAILED
-                    // TachiyomiAT: nothing translated — genuine adapter failure.
-                    // recordAttemptFailure charges the attempt exactly once
-                    // (idempotent within an attempt) so a cascade into render
-                    // doesn't double-count. Replaces bare retryCount++.
+                    // Nothing translated — genuine adapter failure. recordAttemptFailure charges the
+                    // attempt exactly once (idempotent within an attempt) so a render cascade can't double-count.
                     pageTranslation.recordAttemptFailure()
                     pageTranslation.errorMessage =
                         "Translation incomplete: 0/${result.expectedCount} " +

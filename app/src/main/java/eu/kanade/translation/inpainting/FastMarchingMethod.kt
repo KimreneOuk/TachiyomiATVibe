@@ -23,7 +23,6 @@ object FastMarchingMethod {
         val h = endY - startY
         if (w <= 0 || h <= 0) return ByteArray(0)
 
-        // 1. Grayscale extraction
         val gray = FloatArray(w * h)
         for (y in 0 until h) {
             for (x in 0 until w) {
@@ -33,7 +32,6 @@ object FastMarchingMethod {
             }
         }
 
-        // 2. Generate 1D Gaussian kernel
         val sigma = 0.3 * ((blockSize - 1) * 0.5 - 1.0) + 0.8
         val kernel = FloatArray(blockSize)
         val half = blockSize / 2
@@ -46,7 +44,7 @@ object FastMarchingMethod {
         }
         for (i in 0 until blockSize) kernel[i] /= sum
 
-        // 3. Separable Gaussian Blur
+        // Separable Gaussian blur (horizontal then vertical).
         val blurredH = FloatArray(w * h)
         for (y in 0 until h) {
             for (x in 0 until w) {
@@ -71,7 +69,7 @@ object FastMarchingMethod {
             }
         }
 
-        // 4. Thresholding (THRESH_BINARY_INV)
+        // Threshold (THRESH_BINARY_INV).
         val mask = ByteArray(w * h)
         for (i in 0 until w * h) {
             val thresholdValue = blurred[i] - C
@@ -88,8 +86,7 @@ object FastMarchingMethod {
         if (radius <= 0) return mask.clone()
         val out = ByteArray(width * height)
         val r2 = radius * radius
-        
-        // Precompute offsets for circular kernel
+
         val offsets = mutableListOf<Int>()
         for (dy in -radius..radius) {
             for (dx in -radius..radius) {
@@ -178,7 +175,6 @@ object FastMarchingMethod {
         val dist = FloatArray(width * height) { 1e6f }
         val pq = PriorityQueue<PixelNode>()
 
-        // 1. Initialize flags
         for (i in 0 until width * height) {
             if (mask[i] != 0.toByte()) {
                 flag[i] = INSIDE
@@ -188,7 +184,6 @@ object FastMarchingMethod {
             }
         }
 
-        // 2. Initialize narrow band
         val dx = intArrayOf(-1, 1, 0, 0)
         val dy = intArrayOf(0, 0, -1, 1)
 
@@ -209,7 +204,6 @@ object FastMarchingMethod {
                     }
                     if (isBand) {
                         flag[idx] = BAND
-                        // Approximate distance from boundary
                         dist[idx] = 1f
                         pq.add(PixelNode(x, y, 1f))
                     }
@@ -217,7 +211,6 @@ object FastMarchingMethod {
             }
         }
 
-        // Channels for fast math
         val r = FloatArray(width * height)
         val g = FloatArray(width * height)
         val b = FloatArray(width * height)
@@ -228,19 +221,16 @@ object FastMarchingMethod {
             b[i] = (p and 0xFF).toFloat()
         }
 
-        // 3. Fast Marching loop
         while (pq.isNotEmpty()) {
             val node = pq.poll()
             val x = node.x
             val y = node.y
             val idx = y * width + x
 
-            if (flag[idx] == KNOWN) continue // Already processed
+            if (flag[idx] == KNOWN) continue
 
-            // Mark as known
             flag[idx] = KNOWN
 
-            // Inpaint current pixel
             var sumR = 0f
             var sumG = 0f
             var sumB = 0f
@@ -255,7 +245,7 @@ object FastMarchingMethod {
                         if (nx in 0 until width && ny in 0 until height) {
                             val nidx = ny * width + nx
                             if (flag[nidx] == KNOWN) {
-                                // Simple distance weight approximation (1 / d^2)
+                                // Inverse-square distance weight.
                                 val distSq = (dxk * dxk + dyk * dyk).toFloat()
                                 if (distSq > 0) {
                                     val w = 1f / distSq
@@ -276,7 +266,6 @@ object FastMarchingMethod {
                 b[idx] = sumB / sumW
             }
 
-            // Propagate distance to neighbors
             for (i in 0..3) {
                 val nx = x + dx[i]
                 val ny = y + dy[i]
@@ -315,7 +304,6 @@ object FastMarchingMethod {
             }
         }
 
-        // Write back inpainted pixels
         for (i in 0 until width * height) {
             if (mask[i] != 0.toByte()) {
                 val pR = r[i].toInt().coerceIn(0, 255)

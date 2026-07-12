@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import androidx.core.view.isVisible
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.translation.model.shouldSurfaceError
+import eu.kanade.translation.model.displayImageName
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -103,7 +104,6 @@ class PagerPageHolder(
      * Null means "we have not yet rendered a translated image for this holder".
      */
     private var lastShownImageName: String? = null
-    private var lastShownRenderRevision: Long = -1L
 
     init {
         // TachiyomiAT: init only seeds durable state + wires click handlers.
@@ -341,14 +341,9 @@ class PagerPageHolder(
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (page.showTranslatedImage) {
-            page.translation?.renderedImageName ?: page.translation?.cleanedImageName
+            page.translation?.displayImageName
         } else {
             null
-        }
-        lastShownRenderRevision = if (page.showTranslatedImage) {
-            page.translation?.renderRevision ?: -1L
-        } else {
-            -1L
         }
 
         val isBeingTranslated = isPageBeingTranslated()
@@ -410,8 +405,7 @@ class PagerPageHolder(
     fun refreshTranslation() {
         val streamAvailable = page.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
-        val newName = page.translation?.renderedImageName ?: page.translation?.cleanedImageName
-        val newRevision = page.translation?.renderRevision ?: -1L
+        val newName = page.translation?.displayImageName
 
         val wantTranslated = if (page.translationToggled) {
             page.showTranslatedImage && streamAvailable
@@ -420,9 +414,9 @@ class PagerPageHolder(
         }
 
         val alreadyShowingCorrectImage = if (wantTranslated) {
-            newName != null && newName == lastShownImageName && newRevision == lastShownRenderRevision
+            newName != null && newName == lastShownImageName
         } else {
-            lastShownImageName == null && lastShownRenderRevision == -1L
+            lastShownImageName == null
         }
 
         when {
@@ -463,7 +457,6 @@ class PagerPageHolder(
         // refreshTranslation() can short-circuit if nothing changed. When showing
         // the original (not a translated stream) there's no name to track.
         lastShownImageName = if (page.showTranslatedImage) newName else null
-        lastShownRenderRevision = if (page.showTranslatedImage) newRevision else -1L
         // TachiyomiAT: surface translation errors to the user — but only for a
         // genuine terminal failure. Cancellation, the stranded-page sweep, and
         // PARTIAL all write an explanatory errorMessage that is NOT a failure;
@@ -477,6 +470,14 @@ class PagerPageHolder(
             null
         }
         showTranslationError(errorMsg)
+
+        val wantOverlay = page.showTranslatedImage && translation != null
+        val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
+        val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0
+        val h = if (wantOverlay) translation!!.imgHeight.toInt() else 0
+        viewer.activity.runOnUiThread {
+            setTranslationBlocks(blocksToDraw, w, h)
+        }
     }
 
     private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {

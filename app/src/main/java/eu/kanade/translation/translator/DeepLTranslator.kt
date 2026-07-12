@@ -36,9 +36,6 @@ class DeepLTranslator(
             throw IllegalArgumentException("DeepL API key is required")
         }
 
-        // Flatten non-empty blocks across all pages. DeepL accepts repeated
-        // `text` params and returns translations in the same order, so a single
-        // request batch-translates the whole page set.
         val flatBlocks = ArrayList<TranslationBlock>()
         for ((_, page) in pages) {
             for (block in page.blocks) {
@@ -63,11 +60,8 @@ class DeepLTranslator(
             ?: throw IllegalStateException("Empty response body from DeepL API (code=${response.code})")
         val responseString = body.string()
 
-        // TachiyomiAT: shape-check the response. A DeepL API error (bad key,
-        // quota exhausted, unsupported lang, rate limit) returns a body with no
-        // "translations" array (or plain text); reading it unconditionally would
-        // throw an opaque JSONException. Log the code + a body snippet so the
-        // real cause is diagnosable, matching GoogleTranslator's diagnostics.
+        // Shape-check: an API error (bad key, quota, unsupported lang, rate limit) returns a
+        // body with no "translations" array (or plain text); log code + body snippet for diagnosis.
         val translations = try {
             JSONObject(responseString).optJSONArray("translations")
         } catch (e: Exception) {
@@ -88,10 +82,8 @@ class DeepLTranslator(
             )
         }
 
-        // TachiyomiAT: do NOT fall back to source text on a blank line. Leaving
-        // block.translation empty lets the batch validation gate mark the block/
-        // page PARTIAL/FAILED instead of silently passing OCR text off as a
-        // successful translation (the source-mixed-into-output symptom).
+        // Never fall back to source text on a blank line: an empty translation lets the
+        // validation gate mark the block/page PARTIAL/FAILED instead of passing OCR as a translation.
         flatBlocks.forEachIndexed { index, block ->
             val translated = translations.optJSONObject(index)?.optString("text").orEmpty()
             if (translated.isNotBlank()) block.translation = translated
@@ -99,10 +91,8 @@ class DeepLTranslator(
     }
 
     override fun close() {
-        // TachiyomiAT: release this translator's connection pool + dispatcher
-        // threads. TranslationEngineBuilder rebuilds translators on every
-        // language change; a no-op close() would leave each retired client's
-        // pool (and its idle threads) alive for the process lifetime.
+        // Release this client's pool + dispatcher threads; translators are rebuilt on
+        // every language change, so a no-op close() leaks each retired pool.
         okHttpClient.connectionPool.evictAll()
         okHttpClient.dispatcher.executorService.shutdown()
     }

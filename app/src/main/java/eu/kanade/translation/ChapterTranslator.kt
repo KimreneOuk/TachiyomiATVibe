@@ -72,19 +72,14 @@ class ChapterTranslator(
         // The batch worker can be mid-uncancellable native ONNX (OrtSession.run)
         // when cancel() is requested; coroutine cancellation only lands at the
         // next suspension point. Bounding the join prevents a delete from hanging
-        // the caller on a job that won't unwind promptly. Matches the single-page
-        // join bound in TranslationScheduler.JOIN_TIMEOUT_MS. If the join times
-        // out, the file delete proceeds and the defunct-store guard
-        // (ChapterTranslationStore.markDefunct) neutralizes any late write from
-        // the still-unwinding job.
+        // on a job that won't unwind promptly (matches TranslationScheduler.JOIN_TIMEOUT_MS).
+        // On timeout the file delete proceeds and the defunct-store guard
+        // (ChapterTranslationStore.markDefunct) neutralizes any late write.
         const val BATCH_JOIN_TIMEOUT_MS = 2_000L
 
         // TachiyomiAT: reader page streams now live in [TranslationStreamRegistry]
-        // (a dedicated, testable singleton). These companion functions are kept
-        // as thin delegates to the DI singleton so existing static call sites
-        // (ReaderViewModel, ChapterTranslator.onMemoryPressure) keep compiling
-        // during the incremental migration; they will be replaced by direct
-        // registry calls in the Tier 5 call-site migration.
+        // (a dedicated DI singleton). These companions are thin delegates kept so
+        // existing static call sites compile during the incremental migration.
         private val streamRegistry: TranslationStreamRegistry
             get() = Injekt.get()
 
@@ -99,14 +94,12 @@ class ChapterTranslator(
         }
 
         /**
-         * Returns the registered reader stream for this page WITHOUT removing
-         * it. The stream is a `() -> InputStream` factory, so it can be invoked
-         * multiple times (once per retry); evicting it on first use (the old
-         * `readerPageStreams.remove(...)` behaviour) meant a failed translation
-         * could never be retried — the second attempt found no stream, fell
-         * through to findChapterDir()==null for streamed chapters, and silently
-         * wrote a FAILED placeholder. The stream is dropped only on chapter
-         * cleanup via [clearReaderPageStreams] (chapter change / reader exit).
+         * Returns the registered reader stream for this page WITHOUT removing it.
+         * The stream is a `() -> InputStream` factory (one invocation per retry),
+         * so evicting on first use (the old `readerPageStreams.remove(...)` path)
+         * meant a failed translation could never be retried — it silently wrote a
+         * FAILED placeholder. The stream is dropped only on chapter cleanup via
+         * [clearReaderPageStreams].
          */
         private fun peekReaderPageStream(
             manga: Manga,
@@ -117,25 +110,23 @@ class ChapterTranslator(
 
         /**
          * Evicts every reader page stream registered for [mangaId]/[sourceId] in
-         * [chapterId]. Each registered entry holds a `() -> InputStream` closure
-         * over a [eu.kanade.tachiyomi.ui.reader.model.ReaderPage], which can keep
-         * page bitmaps/sources alive — so this must run on chapter change to
-         * avoid leaking memory and stale streams across chapters.
+         * [chapterId]. Each entry holds a `() -> InputStream` closure over a
+         * [eu.kanade.tachiyomi.ui.reader.model.ReaderPage] that can keep page
+         * bitmaps/sources alive, so this must run on chapter change to avoid
+         * leaking memory and stale streams across chapters.
          */
         fun clearReaderPageStreams(sourceId: Long, mangaId: Long, chapterId: Long) {
             streamRegistry.clearChapter(sourceId, mangaId, chapterId)
         }
 
         /**
-         * TachiyomiAT: evicts EVERY registered reader page stream, regardless of
-         * chapter. Each entry holds a `() -> InputStream` closure over a
-         * [eu.kanade.tachiyomi.ui.reader.model.ReaderPage] (and for the new eager
-         * prefetch path, a captured downloaded [ByteArray]), so leaving them in
-         * the process-lifetime map on reader background / "stop all translation"
-         * keeps those bytes/pages alive until the process dies. Call this from
-         * [ReaderViewModel.cancelTranslationsOnBackground] and [stopAllTranslation]
-         * so backgrounding the reader releases the streams instead of pinning
-         * page bitmaps in memory.
+         * TachiyomiAT: evicts EVERY registered reader page stream. Each entry
+         * holds a `() -> InputStream` closure over a
+         * [eu.kanade.tachiyomi.ui.reader.model.ReaderPage] (and, on the eager
+         * prefetch path, a captured downloaded [ByteArray]); leaving them in the
+         * process-lifetime map on reader background / "stop all translation"
+         * pins those bytes/pages until the process dies. Call on reader
+         * background / stop-all so memory is released.
          */
         fun clearAllReaderPageStreams() {
             streamRegistry.clearAll()
@@ -146,26 +137,20 @@ class ChapterTranslator(
     val queueState = _queueState.asStateFlow()
 
     /**
-     * TachiyomiAT: persists the current queue (ordered chapter ids) to disk so
-     * a crash mid-batch no longer loses the queue. Called after every queue
-     * mutation (add/remove/clear). Cheap: one SharedPreferences editor batch.
-     * Idempotent — safe to call when the queue is unchanged.
+     * TachiyomiAT: persists the queue (ordered chapter ids) to disk after every
+     * mutation so a crash mid-batch no longer loses it. One SharedPreferences
+     * editor batch; idempotent.
      */
     private fun persistQueue() {
         queueStore.save(_queueState.value.map { it.chapter.id ?: return })
     }
 
     /**
-     * TachiyomiAT: rehydrates the queue from disk on launch. Each persisted
-     * chapter id is rebuilt into a full [Translation] via
-     * [Translation.fromChapterId] (a suspend lookup). Deleted chapters
-     * self-heal — `fromChapterId` returns null for a gone chapter, so stale
-     * ids are silently dropped. Rehydrated entries get status QUEUE (per the
-     * owner decision: rehydrate but require Start — never auto-start
-     * background OCR/LLM work on launch).
-     *
-     * Must be called from a coroutine (suspend lookups). Called once from
-     * [TranslationManager]'s init via [TranslationManager.restoreQueuedTranslations].
+     * TachiyomiAT: rehydrates the queue from disk on launch via
+     * [Translation.fromChapterId]. Deleted chapters self-heal (fromChapterId
+     * returns null, so stale ids drop). Rehydrated entries get status QUEUE:
+     * rehydrate but require Start — never auto-start background OCR/LLM work on
+     * launch. Must run in a coroutine (suspend lookups).
      */
     suspend fun restoreQueue() {
         val ids = queueStore.load()
@@ -194,6 +179,7 @@ class ChapterTranslator(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    @Volatile
     private var translationJob: Job? = null
 
     val isRunning: Boolean
@@ -226,15 +212,11 @@ class ChapterTranslator(
         // TachiyomiAT: the historical `if (reason != null) return` skipped
         // closeEngines() for EVERY non-null-reason stop — including the user's
         // explicit "Stop all translation". That left the cached textTranslator /
-        // recognitionEngine alive (enginesClosed stayed false), so any config
-        // change made after stopping (engine, provider, API key, model, language,
-        // OCR model) was ignored on the next run: the rebuild gate never fired.
-        //
-        // closeEngines now tears down + rearms (sets enginesClosed = true) when a
-        // caller explicitly asks for it. User-initiated stops pass closeEngines =
-        // true so the next translate rebuilds unconditionally from live prefs.
-        // Background / memory-pressure stops leave closeEngines = false to stay
-        // lightweight (the engines may be reused shortly).
+        // recognitionEngine alive (enginesClosed stayed false), so a later config
+        // change (engine, provider, API key, model, language, OCR model) was
+        // ignored on the next run: the rebuild gate never fired.
+        // closeEngines now tears down + rearms when a caller explicitly asks for
+        // it; background/memory-pressure stops leave it false to stay lightweight.
         if (reason != null && !closeEngines) return
         isPaused = false
         pipeline.closeEngines()
@@ -332,18 +314,14 @@ class ChapterTranslator(
     /**
      * Cancels the batch translator job AND waits for it to unwind, bounded by
      * [BATCH_JOIN_TIMEOUT_MS]. Used only by the delete path: a chapter's on-disk
-     * translation file + companion images must not be deleted while the batch
-     * coroutine still holds the old [ChapterTranslationStore] reference and may
-     * write RUNNING/rendered results into it. Joining here guarantees the job
-     * reaches a suspension point (so its finally blocks run and release the
-     * translator permit) before [TranslationManager.deleteTranslation] deletes
-     * files. Plain [cancelTranslatorJob] is unchanged so pause/stop/clearQueue
-     * keep their non-blocking behaviour.
-     *
-     * If the join times out (job stuck in uncancellable native code), this
-     * returns anyway; the defunct-store guard rejects any subsequent write, and
-     * the permit watchdog force-releases the native buffer. The timeout keeps a
-     * delete responsive instead of hanging the caller.
+     * translation file + images must not be deleted while the batch coroutine
+     * still holds the old [ChapterTranslationStore] reference and may write
+     * RUNNING/rendered results into it. Joining guarantees the job reaches a
+     * suspension point (finally blocks run, permit released) before
+     * [TranslationManager.deleteTranslation] deletes files. Plain
+     * [cancelTranslatorJob] stays non-blocking so pause/stop/clearQueue keep
+     * their behaviour. On timeout this returns anyway; the defunct-store guard
+     * rejects subsequent writes and the permit watchdog force-releases the native buffer.
      */
     suspend fun cancelTranslatorJobAndJoin() {
         val job = translationJob ?: return
@@ -362,11 +340,9 @@ class ChapterTranslator(
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         if (queueState.value.any { it.chapter.id == chapter.id }) return
         // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
-        // (corrupted/migrated pref). This method is invoked from a UI action
-        // (TranslationManager.translateChapter), so a thrown exception would
-        // crash the UI thread. Catch the config error and surface it as a toast
-        // (matching the ML Kit unsupported pattern below) instead of queuing a
-        // translation that will fail every page with the same message.
+        // (corrupted/migrated pref). This runs on a UI action, so a thrown
+        // exception would crash the UI thread; catch it and surface as a toast
+        // instead of queuing a translation that fails every page with the same error.
         val fromLang: TextRecognizerLanguage
         val toLang: TextTranslatorLanguage
         try {
@@ -398,8 +374,8 @@ class ChapterTranslator(
     private suspend fun translateChapterInternal(translation: Translation) {
         var store: ChapterTranslationStore? = null
         try {
-            // Prefer the shared active store from TranslationManager so the
-            // reader observes the same instance that the pipeline writes to.
+            // Prefer the shared active store from TranslationManager so the reader
+            // observes the same instance the pipeline writes to.
             store = pipeline.activeStoreResolver?.invoke(translation)
             if (store == null) {
                 val existingFile = provider.findTranslationFile(
@@ -444,17 +420,16 @@ class ChapterTranslator(
             translation.status = Translation.State.TRANSLATING
 
             // TachiyomiAT: for archive chapters, share one ArchiveReader across
-            // the entire batch instead of reopening + full decompression per page
-            // (the old getChapterPages closures called archiveReader().use {}
-            // on every streamFn() invocation, O(pages) re-decompressions).
-            // Directory chapters use direct file opens, which is already cheap.
+            // the whole batch instead of reopening + full decompression per page
+            // (the old getChapterPages closures did archiveReader().use {} on every
+            // streamFn() — O(pages) re-decompressions). Directory chapters use
+            // cheap direct file opens.
             val streams: List<Pair<String, () -> InputStream>>
             val sharedArchive: mihon.core.archive.ArchiveReader?
             if (chapterPath.isFile) {
                 sharedArchive = chapterPath.archiveReader(context)
-                // Build the list eagerly; each closure reads from the shared
-                // reader. The reader is mmap'd so reads are seek-based, not
-                // re-decompressing.
+                // Each closure reads from the shared reader; it's mmap'd so
+                // reads are seek-based, not re-decompressing.
                 streams = sharedArchive.useEntries { entries ->
                     entries.filter { it.isFile && ImageUtil.isImage(it.name) }
                         .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
@@ -519,9 +494,8 @@ class ChapterTranslator(
                 return reader.useEntries { entries ->
                     entries.filter { entry ->
                         // Null-safe: a corrupt/revoked archive can make
-                        // getInputStream return null; ImageUtil.isImage itself
-                        // handles a null name. Skip unreadable entries instead
-                        // of NPE'ing on the `!!` that used to be here.
+                        // getInputStream return null; ImageUtil.isImage handles
+                        // a null name. Skip unreadable entries instead of NPE'ing.
                         entry.isFile &&
                             ImageUtil.isImage(entry.name) {
                                 reader.getInputStream(entry.name)
@@ -531,10 +505,10 @@ class ChapterTranslator(
                         .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }.map { entry ->
                             Pair(entry.name) {
                                 chapterPath.archiveReader(context).use { archive ->
-                                    // Null-safe stream: if the entry vanished or
-                                    // the archive is corrupt, throw an explicit,
-                                    // loggable IOException instead of an NPE so
-                                    // the caller's try/catch reports the real cause.
+                                    // Null-safe stream: throw an explicit, loggable
+                                    // IOException instead of an NPE if the entry
+                                    // vanished or the archive is corrupt, so the
+                                    // caller's try/catch reports the real cause.
                                     val stream = archive.getInputStream(entry.name)
                                         ?: throw java.io.IOException(
                                             "Archive entry '${entry.name}' could not be opened",
@@ -547,8 +521,8 @@ class ChapterTranslator(
             }
         } else {
             // listFiles() returns null on I/O error or a revoked SAF tree URI;
-            // return an empty list (the caller treats "no pages" as a clean
-            // no-op) instead of NPE'ing.
+            // return empty (the caller treats "no pages" as a clean no-op) instead
+            // of NPE'ing.
             val files = chapterPath.listFiles() ?: run {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT getChapterPages: listFiles() returned null for ${chapterPath.filePath}"
@@ -557,7 +531,7 @@ class ChapterTranslator(
             }
             return files.mapNotNull { entry ->
                 // entry.name is nullable on some SAF providers; skip nameless
-                // entries instead of NPE'ing on entry.name!!.
+                // entries instead of NPE'ing.
                 val name = entry.name ?: return@mapNotNull null
                 if (!ImageUtil.isImage(name)) return@mapNotNull null
                 Pair(name) { entry.openInputStream() }

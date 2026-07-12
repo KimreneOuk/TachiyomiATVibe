@@ -16,6 +16,7 @@ import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.shouldSkipAutoScheduling
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -34,77 +35,48 @@ import java.util.concurrent.atomic.AtomicLong
  * TachiyomiAT: owns single-page (and auto) translation jobs so they can be
  * cancelled on chapter change, reader exit, or translation disable.
  *
- * Extracted from [eu.kanade.translation.TranslationManager] to give the job-
- * scheduling + dedup + cancel surface its own type. Behavior is byte-for-byte
- * identical to the previous inline implementation on TranslationManager:
- *
- *  - current-page-first auto window with generation-bounded staleness,
- *  - dedup via [queuedPageKeys] (queued/running inside a batch) and
- *    [activePageJobs] (independently-launched single-page jobs),
- *  - cancel paths that reset a stranded RUNNING status on a NonCancellable
- *    child so cancellation never leaves a page stuck RUNNING forever,
- *  - soft-skip (no store write, no retryCount bump) when a stream is
- *    unavailable for an online page.
- *
- * The actual per-page work (decode/OCR/translate/inpaint/render) is delegated
- * to [TranslationExecutor]; the store the scheduler reads/writes is resolved
- * through [TranslationStoreResolver] (still owned by TranslationManager, which
- * also owns store lifecycle).
+ * Job-scheduling + dedup + cancel surface extracted from
+ * [eu.kanade.translation.TranslationManager]. Per-page work is delegated to
+ * [TranslationExecutor]; the store is resolved through
+ * [TranslationStoreResolver] (still owned by TranslationManager).
  */
 class TranslationScheduler(
     private val executor: TranslationExecutor,
     private val storeResolver: TranslationStoreResolver,
-) {
+) : java.io.Closeable {
+
+    override fun close() {
+        scope.cancel()
+    }
 
     companion object {
         /**
-         * Maximum time [cancelPageTranslations] will wait for a chapter's
-         * cancelled jobs to finish unwinding (their finally blocks reset a
-         * stranded page's RUNNING status on a NonCancellable child). Bounded so
-         * chapter navigation stays responsive even if a job is slow to tear down.
+         * Max wait for cancelled jobs to unwind (their finally blocks reset a
+         * stranded RUNNING status on a NonCancellable child). Bounded so chapter
+         * navigation stays responsive.
          */
         private const val JOIN_TIMEOUT_MS = 2_000L
     }
 
-    /**
-     * TachiyomiAT: the previous implementation launched single-page jobs on
-     * `GlobalScope` and discarded the returned [Job], which meant orphaned jobs
-     * from a previous chapter kept running (and kept holding the translator's
-     * single permit), starving all later work — appearing as "translate does
-     * nothing". Keeping the scope here makes auto off, chapter switch, memory
-     * pressure, and reader close able to cancel the work that is actually
-     * running.
-     */
+    // TachiyomiAT: the prior implementation launched jobs on GlobalScope and
+    // discarded the Job, so orphaned jobs from a previous chapter kept holding
+    // the translator's single permit, starving all later work. Keeping the scope
+    // lets auto off / chapter switch / reader close cancel actually-running work.
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /**
-     * Tracks independently-launched single-page jobs by `"$chapterId:$pageKey"`.
-     * Sequential auto-prefetch does not create one coroutine per page, so it is
-     * deduped separately by [queuedPageKeys] below.
-     */
+    // Tracks independently-launched single-page jobs by "$chapterId:$pageKey".
+    // Sequential auto-prefetch is deduped separately via [queuedPageKeys]
+    // (it uses no per-page coroutine).
     private val activePageJobs = ConcurrentHashMap<String, Job>()
 
-    /**
-     * Tracks pages that are queued or currently executing inside an ordered
-     * auto-prefetch batch. This closes the gap where page selection events
-     * enqueue overlapping windows:
-     *
-     * page 4 -> [4,5,6]
-     * page 5 -> [5,6,7]
-     * page 4 again -> [4,5,6]
-     *
-     * Before this set, only the actively executing page was protected, so page
-     * 6 could sit in multiple pending batches and run two to four times before
-     * any persisted "done" state was visible to later batches.
-     */
+    // Pages queued/executing inside an ordered auto-prefetch batch. Closes the
+    // gap where overlapping selection windows enqueue the same page (e.g. page 6
+    // in [4,5,6], [5,6,7], and again [4,5,6]); without this, a page could run 2-4
+    // times before any persisted "done" state is visible to later batches.
     private val queuedPageKeys = ConcurrentHashMap.newKeySet<String>()
 
-    /**
-     * Manager-owned auto-prefetch windows. These are the jobs the reader used to
-     * launch on its own ViewModel scope; keeping them here makes auto off,
-     * chapter switch, memory pressure, and reader close able to cancel the work
-     * that is actually running.
-     */
+    // Manager-owned auto-prefetch windows; kept here (not on the reader's
+    // ViewModel scope) so they can be cancelled on chapter switch / reader close.
     private val activeAutoJobs = ConcurrentHashMap<String, Job>()
     private val autoWindowIds = AtomicLong(0L)
     private val autoGenerations = ConcurrentHashMap<Long, AtomicLong>()
@@ -116,21 +88,13 @@ class TranslationScheduler(
         if (requests.isEmpty()) return
         val chapterId = session.chapter.id ?: return
         // TachiyomiAT: do NOT eagerly cancel prior auto jobs for this chapter.
-        // The previous implementation called `cancelAutoJobsForChapter(chapterId)`
-        // here, which tore down the in-flight translation job on EVERY page-change
-        // event. Because each translation (OCR + translate + inpaint + render) is
-        // serialized behind a single permit and takes seconds, eagerly cancelling
-        // meant the window could never get ahead of the reader: scrolling from
-        // page n to n+1 cancelled the job mid-OCR on page n, the next window
-        // started n+1, scrolling to n+2 cancelled that, and so on — translation
-        // appeared to stall and never prefetched past the current page.
-        //
-        // Instead, rely on the generation mechanism (unchanged from the original
-        // TranslationManager design): bumping the generation below marks every
-        // already-running job stale; each such job finishes the page it already
-        // started (the work is not wasted), then detects the stale generation at
-        // the top of its loop and bails before starting the next page. The new
-        // window's pages are reserved fresh because queuedPageKeys is cleared.
+        // The prior cancelAutoJobsForChapter(chapterId) here tore down the
+        // in-flight job on EVERY page-change. Because each translation is
+        // serialized behind a single permit and takes seconds, eager cancel meant
+        // scrolling n->n+1->n+2 cancelled each job mid-OCR, so the window could
+        // never get ahead of the reader. Instead bump the generation below: that
+        // marks already-running jobs stale, they finish the page they started
+        // (work not wasted), then bail before the next page.
         val generation = autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
         queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
 
@@ -169,19 +133,13 @@ class TranslationScheduler(
         val job = scope.launch {
             val completedReservations = mutableSetOf<String>()
             try {
-                // TachiyomiAT: do NOT clear transient queue pages here. The
-                // previous implementation called `clearTransientQueuePages(...)`
-                // as the first step of every auto-window job, which flipped any
-                // PENDING/RUNNING/CANCELLED/FAILED page (without a rendered
-                // result) to CANCELLED — including pages a sibling job from the
-                // prior generation was still actively translating. Combined with
-                // the now-removed eager cancel, this churned every page's status
-                // on every scroll event. Staleness here is already handled
-                // correctly by (a) the generation guard below and (b) the
-                // per-page `shouldSkipAutoScheduling` check, so an explicit
-                // store-wide clear is both redundant and disruptive. Explicit
-                // user cancels (cancelPageTranslations / cancelAllPageTranslations)
-                // still call clearTransientQueuePages where a full reset is wanted.
+                // TachiyomiAT: do NOT clearTransientQueuePages here. The prior
+                // call flipped every non-rendered PENDING/RUNNING/CANCELLED/FAILED
+                // page to CANCELLED on every scroll — including pages a sibling
+                // job from the prior generation was still translating. Staleness
+                // is already handled by the generation guard below + the per-page
+                // shouldSkipAutoScheduling check, so a store-wide clear is
+                // redundant. Explicit cancels still do it where a full reset is wanted.
                 for ((reservationKey, request) in accepted) {
                     coroutineContext.ensureActive()
                     if (autoGenerations[chapterId]?.get() != generation) {
@@ -211,7 +169,7 @@ class TranslationScheduler(
 
                     if (current != null &&
                         current.hasRecognizedTranslation &&
-                        current.renderedImageName == null &&
+                        current.renderStatus != StageStatus.READY &&
                         current.cleanedImageName != null &&
                         current.hasCurrentInpaintResult
                     ) {
@@ -352,7 +310,7 @@ class TranslationScheduler(
         if (current != null && current.shouldSkipAutoScheduling) return
         store.updatePage(pageKey) { existing ->
             val page = existing ?: PageTranslation(sourceFileName = pageKey)
-            if (page.renderedImageName != null && page.hasCurrentInpaintResult) return@updatePage page
+            if (page.renderStatus == StageStatus.READY && page.hasCurrentInpaintResult) return@updatePage page
             page.apply {
                 sourceFileName = pageKey
                 errorMessage = null
@@ -390,7 +348,7 @@ class TranslationScheduler(
                 errorMessage = null,
                 updatedAt = System.currentTimeMillis(),
             )
-            if (page.renderedImageName != null) return@updatePage page
+            if (page.renderStatus == StageStatus.READY) return@updatePage page
             page.apply {
                 cancelInFlightStages()
                 errorMessage = null
@@ -410,89 +368,84 @@ class TranslationScheduler(
             "TachiyomiAT auto page $decision: id=${request.id} index=${request.id.pageIndex} " +
                 "storageKey=${request.storageKey} lifecycle=${page?.lifecycle ?: PageLifecycle.Pending} " +
                 "retry=${page?.retryCount ?: 0} streamAvailable=${streamAvailable ?: "unknown"} " +
-                "rendered=${page?.renderedImageName != null} cleaned=${page?.cleanedImageName != null}" +
+                "cleaned=${page?.cleanedImageName != null}" +
                 (reason?.let { " reason=$it" } ?: "")
         }
     }
 
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String, force: Boolean = false) {
         val jobKey = "${chapter.id}:$pageKey"
-        // TachiyomiAT: do NOT cancel an in-flight job for this same page on a
-        // duplicate request. The previous `activePageJobs[jobKey]?.cancel()`
-        // here meant every repeated page-selection event (auto-mode firing on
-        // scroll, a page-holder re-binding, or a rapid double-tap) tore down and
-        // restarted the same translation — oscillating between cancel/restart,
-        // visibly blinking the processing overlay, and re-decoding the bitmap
-        // each time. The translator already dedups via inFlightPageKeys once the
-        // permit is acquired, so a second launch for the same page is a no-op
-        // for the expensive work. We only clear/replace a prior entry when it is
-        // no longer active (completed or already cancelled), keeping the
-        // map free of dead jobs while leaving a genuine in-flight job alone.
-        val existing = activePageJobs[jobKey]
-        if (existing != null && existing.isActive) {
-            logcat(LogPriority.DEBUG) { "translatePage: skipping $jobKey (already active)" }
-            return
-        }
-        if (existing != null) {
-            activePageJobs.remove(jobKey)
-        }
-        logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
-        val job = scope.launch {
-            var cancelledMidFlight = false
-            try {
-                executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // The job was cancelled (chapter switch, reader exit, Stop all).
-                // If this happened after the executor wrote ocrStatus=RUNNING
-                // but before it reached a terminal state, the page is stranded
-                // RUNNING — the store never gets updated because the coroutine
-                // is torn down. Flag it so the finally can reset the status,
-                // matching the single-page timeout handling in the executor.
-                cancelledMidFlight = true
-                throw e
-            } catch (e: Throwable) {
-                logcat(LogPriority.ERROR, e) {
-                    "TachiyomiAT single-page translation failed: pageKey=$pageKey " +
-                        "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
-                }
-            } finally {
+        // TachiyomiAT: do NOT cancel an in-flight job for this page on a
+        // duplicate request. The prior activePageJobs[jobKey]?.cancel() made
+        // every repeated page-selection event (scroll, re-bind, double-tap) tear
+        // down and restart the same translation, blinking the overlay and
+        // re-decoding the bitmap each time. The translator dedups via
+        // inFlightPageKeys once the permit is acquired, so a second launch is a
+        // no-op for the expensive work.
+        synchronized(activePageJobs) {
+            val existing = activePageJobs[jobKey]
+            if (existing != null && existing.isActive) {
+                logcat(LogPriority.DEBUG) { "translatePage: skipping $jobKey (already active)" }
+                return
+            }
+            if (existing != null) {
                 activePageJobs.remove(jobKey)
-                if (cancelledMidFlight) {
-                    // Best-effort: clear a stranded RUNNING status so the reader's
-                    // overlay/spinner and disabled translate icon recover. Runs on
-                    // a non-cancellable child launch so the reset itself can't be
-                    // torn down by the cancellation that triggered it. Guarded so
-                    // a reset failure never masks the original CancellationException.
-                    try {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                            markPageCancelled(chapter, pageKey)
-                        }
-                    } catch (resetError: Throwable) {
-                        logcat(LogPriority.WARN, resetError) {
-                            "TachiyomiAT reset of stranded page status failed: pageKey=$pageKey"
+            }
+            logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
+            val job = scope.launch {
+                var cancelledMidFlight = false
+                try {
+                    executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // Cancelled (chapter switch / reader exit / Stop all) after the
+                    // executor set ocrStatus=RUNNING but before a terminal state: the
+                    // page is stranded RUNNING because the store is never updated as
+                    // the coroutine tears down. Flag for the finally to reset it.
+                    cancelledMidFlight = true
+                    throw e
+                } catch (e: Throwable) {
+                    logcat(LogPriority.ERROR, e) {
+                        "TachiyomiAT single-page translation failed: pageKey=$pageKey " +
+                            "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
+                    }
+                } finally {
+                    synchronized(activePageJobs) {
+                        activePageJobs.remove(jobKey)
+                    }
+                    if (cancelledMidFlight) {
+                        // Reset stranded RUNNING on a NonCancellable child so the
+                        // reset can't be torn down by the cancellation that triggered
+                        // it. Guarded so a reset failure never masks the original CancellationException.
+                        try {
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                                markPageCancelled(chapter, pageKey)
+                            }
+                        } catch (resetError: Throwable) {
+                            logcat(LogPriority.WARN, resetError) {
+                                "TachiyomiAT reset of stranded page status failed: pageKey=$pageKey"
+                            }
                         }
                     }
                 }
             }
+            activePageJobs[jobKey] = job
         }
-        activePageJobs[jobKey] = job
     }
 
     /**
-     * Clears a non-terminal RUNNING/PENDING status for [pageKey] left behind
-     * when translation was cancelled mid-flight. Normal cancellation is not a
-     * stage failure and must not increment retryCount.
+     * Clears a non-terminal RUNNING/PENDING status for [pageKey] left by a
+     * mid-flight cancellation. Cancellation is not a stage failure and must not
+     * increment retryCount.
      */
     private suspend fun markPageCancelled(chapter: Chapter, pageKey: String) {
         val chapterId = chapter.id ?: return
         val store = storeResolver.resolve(chapterId) ?: return
-        // Peek the live state first. If the page has no entry (it was never
-        // tracked) or is already terminal, there is nothing stranded to reset —
-        // skip the write entirely rather than creating a spurious FAILED entry.
+        // Peek first: if no entry or already terminal, nothing is stranded — skip
+        // the write rather than creating a spurious FAILED entry.
         val existing = store.state.value[pageKey] ?: return
         if (existing.hasRenderedResult || existing.isStageFailed) return
-        // Stranded RUNNING/PENDING: flip the active stage(s) to CANCELLED so the
-        // reader clears the overlay and auto can schedule the page again later.
+        // Flip in-flight stages to CANCELLED so the reader clears the overlay and
+        // auto can reschedule the page later.
         store.updatePage(pageKey) { current ->
             // Re-check inside the lock in case it changed between peek and write.
             val cur = current ?: return@updatePage PageTranslation(
@@ -511,16 +464,15 @@ class TranslationScheduler(
     }
 
     /**
-     * TachiyomiAT: evicts a single-page translation job that its worker has
-     * abandoned (stuck in uncancellable native code past its deadline). The
-     * coroutine itself can't be interrupted, but its [activePageJobs] entry is
-     * stale: it reads as "active" so [translatePage]'s dedup keeps rejecting
-     * retries for this page. Remove it (best-effort cancel first) so the page
-     * becomes eligible for translation again. Idempotent.
+     * TachiyomiAT: evicts a single-page job its worker abandoned (stuck in
+     * uncancellable native code past its deadline). The coroutine can't be
+     * interrupted, but its [activePageJobs] entry reads "active" and so blocks
+     * retries via dedup. Remove it (best-effort cancel first) so the page becomes
+     * eligible again. Idempotent.
      */
     fun markPageJobStuck(chapterId: Long, pageKey: String) {
         val jobKey = "$chapterId:$pageKey"
-        val job = activePageJobs.remove(jobKey)
+        val job = synchronized(activePageJobs) { activePageJobs.remove(jobKey) }
         try { job?.cancel() } catch (_: Throwable) {}
         queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") && it.endsWith(":${pageKey.replace(':', '_')}") }
         logcat(LogPriority.WARN) {
@@ -529,45 +481,37 @@ class TranslationScheduler(
     }
 
     /**
-     * TachiyomiAT: cancels the in-flight single-page translation job for one
-     * specific [pageKey] within [chapterId], if any. This is the per-page
-     * granularity that [cancelPageTranslations] (chapter-scoped) is too coarse
-     * for: it backs the per-page button's cancel affordance, so a user can stop
-     * a single slow/stuck page without abandoning the whole chapter.
+     * TachiyomiAT: cancels the in-flight single-page job for one [pageKey] in
+     * [chapterId], if any. This is the per-page granularity [cancelPageTranslations]
+     * (chapter-scoped) is too coarse for; it backs the per-page cancel button.
      *
      * Returns true if a job was actually cancelled, false if none was running
-     * for that page (e.g. it already finished or the translator deduped it).
+     * (already finished or deduped).
      */
     fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean {
         val jobKey = "$chapterId:$pageKey"
         queuedPageKeys.remove(jobKey)
         queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") && it.endsWith(":${pageKey.replace(':', '_')}") }
-        val job = activePageJobs.remove(jobKey)
+        val job = synchronized(activePageJobs) { activePageJobs.remove(jobKey) }
         job?.cancel()
         val autoCancelled = cancelAutoTranslations(chapterId)
         return job != null || autoCancelled
     }
 
     /**
-     * Cancels all in-flight single-page translation jobs for [chapterId] and
-     * evicts the reader page streams registered for that chapter. Also drops the
-     * shared [ChapterTranslationStore] for this chapter so it doesn't leak
-     * across chapter navigations. Call this when the reader navigates away from
-     * a chapter so the previous chapter's work can no longer hold the
-     * executor's single permit.
+     * Cancels all in-flight single-page jobs for [chapterId] and evicts the
+     * reader page streams for that chapter. Call on reader navigating away so the
+     * previous chapter can't keep holding the executor's single permit.
      *
-     * TachiyomiAT: suspend + bounded join. After cancelling, it waits (up to
-     * [JOIN_TIMEOUT_MS]) for those jobs to actually finish their finally blocks.
-     * translatePage's finally resets a stranded page's RUNNING status on a
-     * NonCancellable child, which itself needs the coroutine to unwind. Without
-     * waiting, the previous chapter's reset could land AFTER the reader
-     * subscribed to the new chapter's store — briefly surfacing chapter 1's
-     * state (or its RUNNING overlay) while chapter 2 is on screen. The timeout
-     * keeps chapter navigation responsive even if a job is slow to unwind.
+     * TachiyomiAT: suspend + bounded join. After cancelling, waits (up to
+     * [JOIN_TIMEOUT_MS]) for the jobs' finally blocks. translatePage's finally
+     * resets a stranded RUNNING status on a NonCancellable child, which needs the
+     * coroutine to unwind. Without waiting, the previous chapter's reset could
+     * land AFTER the reader subscribed to the new chapter's store — briefly
+     * surfacing chapter 1's RUNNING overlay while chapter 2 is on screen.
      *
-     * NOTE: store eviction is NOT done here — the store lifecycle is still owned
-     * by TranslationManager (it also unregisters stores on chapter close). The
-     * caller is responsible for evicting the store if needed.
+     * NOTE: store eviction is NOT done here; the store lifecycle is owned by
+     * TranslationManager. The caller evicts the store if needed.
      */
     suspend fun cancelPageTranslations(chapterId: Long) {
         val prefix = "$chapterId:"
@@ -583,19 +527,17 @@ class TranslationScheduler(
                 autoIterator.remove()
             }
         }
-        val iterator = activePageJobs.entries.iterator()
-        while (iterator.hasNext()) {
-            val (key, job) = iterator.next()
-            if (key.startsWith(prefix)) {
-                job.cancel()
-                toJoin.add(job)
-                iterator.remove()
+        synchronized(activePageJobs) {
+            val iterator = activePageJobs.entries.iterator()
+            while (iterator.hasNext()) {
+                val (key, job) = iterator.next()
+                if (key.startsWith(prefix)) {
+                    job.cancel()
+                    toJoin.add(job)
+                    iterator.remove()
+                }
             }
         }
-        // Wait for the cancelled jobs to finish their finally blocks (including
-        // the stranded-status reset) so the previous chapter is fully wound down
-        // before the caller subscribes to the next chapter's store. Bounded so a
-        // stuck unwind can't hang chapter navigation.
         if (toJoin.isNotEmpty()) {
             withTimeoutOrNull(JOIN_TIMEOUT_MS) {
                 toJoin.joinAll()
@@ -604,10 +546,9 @@ class TranslationScheduler(
     }
 
     /**
-     * Cancels every in-flight single-page translation job and every auto-prefetch
-     * window. Call this when the reader is destroyed or the master translation
-     * toggle is switched off, so no orphaned work keeps running in the
-     * background.
+     * Cancels every in-flight single-page job and every auto-prefetch window.
+     * Call on reader destroy or master translation toggle off so no orphaned work
+     * keeps running.
      */
     fun cancelAllPageTranslations() {
         queuedPageKeys.clear()
@@ -617,11 +558,13 @@ class TranslationScheduler(
             job.cancel()
             autoIterator.remove()
         }
-        val iterator = activePageJobs.entries.iterator()
-        while (iterator.hasNext()) {
-            val (_, job) = iterator.next()
-            job.cancel()
-            iterator.remove()
+        synchronized(activePageJobs) {
+            val iterator = activePageJobs.entries.iterator()
+            while (iterator.hasNext()) {
+                val (_, job) = iterator.next()
+                job.cancel()
+                iterator.remove()
+            }
         }
     }
 }

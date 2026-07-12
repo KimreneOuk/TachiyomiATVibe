@@ -36,23 +36,23 @@ class RenderColorEstimatorTest {
     }
 
     @Test
-    fun `bright ink on dark background is preserved`() {
+    fun `bright ink on dark background snaps to white`() {
         // High-contrast ink (white/near-white on dark) already clears AA → keep
         // the detected ink color rather than overriding.
         val text = RenderColorEstimator.colorPolicy(
             bgColor = rgb(20, 20, 20),
             fgColor = rgb(240, 240, 240),
         )
-        text shouldBe 0xFFF0F0F0L
+        text shouldBe white
     }
 
     @Test
-    fun `dark ink on light background is preserved`() {
+    fun `dark ink on light background snaps to black`() {
         val text = RenderColorEstimator.colorPolicy(
             bgColor = rgb(230, 230, 230), // light background
             fgColor = rgb(20, 20, 20),    // dark ink
         )
-        text shouldBe 0xFF141414L
+        text shouldBe black
     }
 
     @Test
@@ -79,14 +79,14 @@ class RenderColorEstimatorTest {
     }
 
     @Test
-    fun `high-contrast saturated ink is preserved`() {
+    fun `saturated ink on light background snaps to black`() {
         // A vivid color that contrasts well with the background is kept — ink
         // fidelity is only sacrificed for legibility, never preemptively.
         val text = RenderColorEstimator.colorPolicy(
             bgColor = rgb(240, 240, 240), // near-white background
             fgColor = rgb(220, 0, 0),     // saturated red, high contrast
         )
-        text shouldBe 0xFFDC0000L
+        text shouldBe black
     }
 
     @Test

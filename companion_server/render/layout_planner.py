@@ -230,14 +230,14 @@ class RectResult:
     orig_right: float
 
 
-def compute_rects(block: dict[str, Any]) -> RectResult:
+def compute_rects(block: dict[str, Any], region_override: FloatRect | None = None) -> RectResult:
     bbox = block["bbox"]
     x1, y1 = float(bbox["x1"]), float(bbox["y1"])
     x2, y2 = float(bbox["x2"]), float(bbox["y2"])
     bw = x2 - x1
     bh = y2 - y1
 
-    has_parent = block.get("parentW", 0) > 0 and block.get("parentH", 0) > 0
+    has_parent = region_override is None and block.get("parentW", 0) > 0 and block.get("parentH", 0) > 0
     if has_parent:
         parent = block.get("parentBbox", {})
         base_x = float(parent.get("x1", x1))
@@ -245,6 +245,12 @@ def compute_rects(block: dict[str, Any]) -> RectResult:
         base_w = float(block.get("parentW", bw))
         base_h = float(block.get("parentH", bh))
         text_pad = max(12.0, 0.15 * min(base_w, base_h))
+    elif region_override is not None:
+        base_x = region_override.left
+        base_y = region_override.top
+        base_w = region_override.width()
+        base_h = region_override.height()
+        text_pad = max(4.0, 0.03 * min(base_w, base_h))
     else:
         base_x = x1
         base_y = y1
@@ -256,7 +262,7 @@ def compute_rects(block: dict[str, Any]) -> RectResult:
     orig_right = base_x + base_w
     reshaped = False
 
-    if not has_parent and base_h > 0 and base_w > 0 and base_h / base_w > RESHAPE_TALL_RATIO:
+    if region_override is None and not has_parent and base_h > 0 and base_w > 0 and base_h / base_w > RESHAPE_TALL_RATIO:
         area = base_w * base_h
         new_h = math.sqrt(area)
         new_w = new_h
@@ -273,6 +279,101 @@ def compute_rects(block: dict[str, Any]) -> RectResult:
     safe_w = max(1.0, base_w - safe_pad * 2)
     safe_h = max(1.0, base_h - safe_pad * 2)
     return RectResult(base_x, base_y, base_w, base_h, safe_w, safe_h, reshaped, orig_left, orig_right)
+
+
+def _dict_to_rect(value: dict[str, Any]) -> FloatRect:
+    """Convert a persisted split-region dictionary to planner geometry."""
+    if "left" in value:
+        return FloatRect(
+            float(value["left"]), float(value["top"]),
+            float(value["right"]), float(value["bottom"]),
+        )
+    return FloatRect(
+        float(value["x1"]), float(value["y1"]),
+        float(value["x2"]), float(value["y2"]),
+    )
+
+
+def _rect_to_dict(rect: FloatRect) -> dict[str, float]:
+    return {"x1": rect.left, "y1": rect.top, "x2": rect.right, "y2": rect.bottom}
+
+
+def _mask_bbox_rect(block: dict[str, Any]) -> FloatRect | None:
+    mask = block.get("segmentation_mask")
+    if not isinstance(mask, (list, tuple)) or len(mask) < 3:
+        return None
+    points = [point for point in mask if isinstance(point, (list, tuple)) and len(point) >= 2]
+    if len(points) < 3:
+        return None
+    xs = [float(point[0]) for point in points]
+    ys = [float(point[1]) for point in points]
+    return FloatRect(min(xs), min(ys), max(xs), max(ys))
+
+
+def _block_center(block: dict[str, Any]) -> tuple[float, float]:
+    bbox = block["bbox"]
+    return (
+        (float(bbox["x1"]) + float(bbox["x2"])) / 2.0,
+        (float(bbox["y1"]) + float(bbox["y2"])) / 2.0,
+    )
+
+
+def _mask_key(mask: Any) -> tuple[tuple[float, float], ...] | None:
+    if not isinstance(mask, (list, tuple)):
+        return None
+    points = tuple(
+        (float(point[0]), float(point[1]))
+        for point in mask
+        if isinstance(point, (list, tuple)) and len(point) >= 2
+    )
+    return points if len(points) >= 3 else None
+
+
+def _layout_regions(blocks: list[dict[str, Any]]) -> list[FloatRect | None]:
+    """Return one strict mask region per block, splitting fused masks by centers.
+
+    A segmentation polygon can contain two very close bubbles. Letting both OCR
+    children use the whole polygon makes the neighbour clip cut one translation.
+    Midpoint slices preserve each child's source center and give the font fitter a
+    disjoint region for every child.
+    """
+    regions: list[FloatRect | None] = [None] * len(blocks)
+    groups: dict[tuple[tuple[float, float], ...], list[int]] = {}
+    for index, block in enumerate(blocks):
+        key = _mask_key(block.get("segmentation_mask"))
+        if key is not None:
+            groups.setdefault(key, []).append(index)
+
+    for indices in groups.values():
+        mask_rect = _mask_bbox_rect(blocks[indices[0]])
+        if mask_rect is None:
+            continue
+        if len(indices) == 1:
+            regions[indices[0]] = mask_rect
+            continue
+
+        centers = {index: _block_center(blocks[index]) for index in indices}
+        span_x = max(centers[index][0] for index in indices) - min(centers[index][0] for index in indices)
+        span_y = max(centers[index][1] for index in indices) - min(centers[index][1] for index in indices)
+        horizontal_slices = span_x >= span_y
+        ordered = sorted(indices, key=lambda index: centers[index][0 if horizontal_slices else 1])
+        cuts: list[float] = []
+        for left_index, right_index in zip(ordered, ordered[1:]):
+            axis = 0 if horizontal_slices else 1
+            cuts.append((centers[left_index][axis] + centers[right_index][axis]) / 2.0)
+
+        for position, index in enumerate(ordered):
+            if horizontal_slices:
+                left = mask_rect.left if position == 0 else cuts[position - 1]
+                right = mask_rect.right if position == len(ordered) - 1 else cuts[position]
+                region = FloatRect(left, mask_rect.top, right, mask_rect.bottom)
+            else:
+                top = mask_rect.top if position == 0 else cuts[position - 1]
+                bottom = mask_rect.bottom if position == len(ordered) - 1 else cuts[position]
+                region = FloatRect(mask_rect.left, top, mask_rect.right, bottom)
+            regions[index] = region
+            blocks[index]["splitMask"] = _rect_to_dict(region)
+    return regions
 
 
 # ── Extent / overflow helpers ─────────────────────────────────────────
@@ -364,13 +465,15 @@ def plan(
     # Sort by score descending (most confident first), ties keep order
     ordered = sorted(enumerate(blocks), key=lambda pair: (-pair[1].get("score", 0), pair[0]))
 
+    regions = _layout_regions(blocks)
     placed: list[BlockLayout] = []
-    for _, block in ordered:
+    for block_index, block in ordered:
         translation = block.get("translation", "")
         if not translation or not translation.strip():
             continue
 
-        rect = compute_rects(block)
+        region_override = regions[block_index]
+        rect = compute_rects(block, region_override)
         if rect.safe_w < 1 or rect.safe_h < 1:
             continue
 
@@ -378,8 +481,10 @@ def plan(
         obstacles = [extent_of(it, font_path, draw) for it in placed]
 
         layout = _place_block(block, translation, is_vertical, rect, obstacles,
-                              page_width, page_height, min_legible, font_path, draw)
+                              page_width, page_height, min_legible, font_path, draw,
+                              region_override)
         placed.append(layout)
+    _equalize_shared_mask_fonts(placed)
     return placed
 
 
@@ -394,6 +499,7 @@ def _place_block(
     min_legible: float,
     font_path: str | None,
     draw: ImageDraw.ImageDraw,
+    region_override: FloatRect | None = None,
 ) -> BlockLayout:
     base_x = rect.base_x
     base_y = rect.base_y
@@ -401,11 +507,16 @@ def _place_block(
     base_h = rect.base_h
     safe_pad = max(0.0, (base_w - rect.safe_w) / 2)
 
-    has_parent = block.get("parentW", 0) > 0 and block.get("parentH", 0) > 0
-    anchor_to_ocr_center = block.get("label") == 2 or (block.get("direction") == "TTB" and not is_vertical)
+    has_parent = region_override is None and block.get("parentW", 0) > 0 and block.get("parentH", 0) > 0
+    anchor_to_ocr_center = (
+        region_override is not None or has_parent or block.get("label") == 2 or
+        (block.get("direction") == "TTB" and not is_vertical)
+    )
 
     # Region for containment clip
-    if has_parent:
+    if region_override is not None:
+        region = region_override
+    elif has_parent:
         parent = block.get("parentBbox", {})
         region = FloatRect(float(parent.get("x1", 0)), float(parent.get("y1", 0)),
                            float(parent.get("x2", 0)), float(parent.get("y2", 0)))
@@ -452,8 +563,25 @@ def _place_block(
 
     clip_rect = None
 
+    # A segmentation region is a strict fence even when the text fits. Insetting
+    # it by half the outline keeps the stroke inside the bubble boundary.
+    if region_override is not None:
+        bbox = block["bbox"]
+        origin_x = (float(bbox["x1"]) + float(bbox["x2"])) / 2.0
+        origin_y = (float(bbox["y1"]) + float(bbox["y2"])) / 2.0
+        for _ in range(2):
+            stroke_w = compute_stroke_width(block, font_size)
+            clip_rect = FloatRect(
+                region.left + stroke_w / 2.0,
+                region.top + stroke_w / 2.0,
+                region.right - stroke_w / 2.0,
+                region.bottom - stroke_w / 2.0,
+            )
+            safe_w = max(1.0, 2.0 * min(origin_x - clip_rect.left, clip_rect.right - origin_x))
+            safe_h = max(1.0, 2.0 * min(origin_y - clip_rect.top, clip_rect.bottom - origin_y))
+            font_size = binary_search_font_size(text, safe_w, safe_h, safe_w, is_vertical, draw, font_path)
     # Containment clip: if text overflows region, clip
-    if overflows(text, font_size, is_vertical, region.width(), region.height(), font_path, draw):
+    elif overflows(text, font_size, is_vertical, region.width(), region.height(), font_path, draw):
         clip = FloatRect(base_x + safe_pad, base_y + safe_pad,
                          base_x + base_w - safe_pad, base_y + base_h - safe_pad)
         clip = FloatRect(
@@ -487,6 +615,22 @@ def _place_block(
         font_size_px=font_size, stroke_width=stroke_w,
         draw_align=draw_align, clip_rect=clip_rect,
     )
+
+
+def _equalize_shared_mask_fonts(layouts: list[BlockLayout]) -> None:
+    """Give children of one fused mask a common, safe font size."""
+    groups: dict[tuple[tuple[float, float], ...], list[BlockLayout]] = {}
+    for layout in layouts:
+        key = _mask_key(layout.block.get("segmentation_mask"))
+        if key is not None:
+            groups.setdefault(key, []).append(layout)
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        common_font = min(layout.font_size_px for layout in group)
+        for layout in group:
+            layout.font_size_px = common_font
+            layout.stroke_width = compute_stroke_width(layout.block, common_font)
 
 
 def _resolve_minimal_displacement_x(

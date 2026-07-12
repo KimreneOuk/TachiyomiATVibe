@@ -163,10 +163,7 @@ class TranslationProvider(
         return dir.findFile(pageImageName)
     }
 
-    fun findPageRenderedImage(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?, pageImageName: String): UniFile? {
-        val dir = findCompanionImageDir(mangaTitle, source, chapterName, chapterScanlator) ?: return null
-        return dir.findFile(pageImageName)
-    }
+
 
     fun deleteCompanionImages(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?) {
         findCompanionImageDir(mangaTitle, source, chapterName, chapterScanlator)?.delete()

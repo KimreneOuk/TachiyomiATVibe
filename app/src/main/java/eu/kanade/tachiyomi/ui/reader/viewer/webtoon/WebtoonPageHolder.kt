@@ -12,6 +12,7 @@ import androidx.core.view.updateMargins
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.translation.model.shouldSurfaceError
+import eu.kanade.translation.model.displayImageName
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
@@ -89,7 +90,6 @@ class WebtoonPageHolder(
      * dedup content-based and robust to any path that re-resolves the stream.
      */
     private var lastShownImageName: String? = null
-    private var lastShownRenderRevision: Long = -1L
 
     /**
      * TachiyomiAT: a generation counter bumped on every [bind]. In-flight
@@ -299,14 +299,9 @@ class WebtoonPageHolder(
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (boundPage.showTranslatedImage) {
-            boundPage.translation?.renderedImageName ?: boundPage.translation?.cleanedImageName
+            boundPage.translation?.displayImageName
         } else {
             null
-        }
-        lastShownRenderRevision = if (boundPage.showTranslatedImage) {
-            boundPage.translation?.renderRevision ?: -1L
-        } else {
-            -1L
         }
 
         val isBeingTranslated = isPageBeingTranslated()
@@ -361,8 +356,7 @@ class WebtoonPageHolder(
         val currentPage = page ?: return
         val streamAvailable = currentPage.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
-        val newName = currentPage.translation?.renderedImageName ?: currentPage.translation?.cleanedImageName
-        val newRevision = currentPage.translation?.renderRevision ?: -1L
+        val newName = currentPage.translation?.displayImageName
 
         val wantTranslated = if (currentPage.translationToggled) {
             currentPage.showTranslatedImage && streamAvailable
@@ -371,9 +365,9 @@ class WebtoonPageHolder(
         }
 
         val alreadyShowingCorrectImage = if (wantTranslated) {
-            newName != null && newName == lastShownImageName && newRevision == lastShownRenderRevision
+            newName != null && newName == lastShownImageName
         } else {
-            lastShownImageName == null && lastShownRenderRevision == -1L
+            lastShownImageName == null
         }
 
         when {
@@ -414,7 +408,6 @@ class WebtoonPageHolder(
         // short-circuit if nothing changed. When showing the original (not a
         // translated stream) there's no name to track.
         lastShownImageName = if (currentPage.showTranslatedImage) newName else null
-        lastShownRenderRevision = if (currentPage.showTranslatedImage) newRevision else -1L
         // TachiyomiAT: surface translation errors — but only for a genuine
         // terminal failure. Cancellation, the stranded-page sweep, and PARTIAL
         // all write an explanatory errorMessage that is NOT a failure;
@@ -426,6 +419,12 @@ class WebtoonPageHolder(
             null
         }
         frame.showTranslationError(errorMsg)
+
+        val wantOverlay = currentPage.showTranslatedImage && translation != null
+        val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
+        val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0
+        val h = if (wantOverlay) translation!!.imgHeight.toInt() else 0
+        frame.setTranslationBlocks(blocksToDraw, w, h)
     }
 
     private fun process(imageSource: BufferedSource): BufferedSource {

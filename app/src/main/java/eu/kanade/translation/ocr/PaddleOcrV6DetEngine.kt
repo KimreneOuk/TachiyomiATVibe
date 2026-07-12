@@ -57,15 +57,9 @@ class PaddleOcrV6DetEngine : Closeable {
     @Volatile
     private var closed: Boolean = false
 
-    // TachiyomiAT: pooled DIRECT buffer for the det input tensor
-    // (1 x 3 x TARGET x TARGET floats). FloatBuffer.wrap(...) (the previous
-    // approach) is heap-backed, which forces ONNX Runtime to allocate an
-    // internal NATIVE copy on every run() that lingers on the session's
-    // internal heap and accumulates across the per-ROI det calls (ORT issue
-    // #16937). A direct buffer is consumed in place with no native copy, so
-    // nothing leaks. Mirrors MangaOcrEngine.inputPixelPool. det() is serialized
-    // under the recognizer permit, so maxPoolSize = 2 (one live buffer) is
-    // sufficient. Capacity = 3 * 736 * 736 floats * 4 bytes ~= 6.2 MiB.
+    // TachiyomiAT: pooled DIRECT buffer for the det input. A heap-backed wrap()
+    // forces ORT to allocate a per-call native copy that leaks across det calls
+    // (ORT #16937). Mirrors MangaOcrEngine.inputPixelPool.
     private val inputPixelPool = DirectBufferPool(3 * TARGET * TARGET * 4, maxPoolSize = 2)
 
     fun initialize(modelFile: File) {
@@ -73,7 +67,7 @@ class PaddleOcrV6DetEngine : Closeable {
             "PaddleOCR v6 det init: model=${modelFile.absolutePath} " +
                 "(${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions()
+        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
             inputName = session?.inputNames?.firstOrNull() ?: "x"
@@ -117,10 +111,8 @@ class PaddleOcrV6DetEngine : Closeable {
         var inputTensor: OnnxTensor? = null
         var result: OrtSession.Result? = null
         try {
-            // TachiyomiAT: preprocess writes the NCHW tensor straight into a
-            // pooled DIRECT buffer. The previous FloatBuffer.wrap(tensor) was
-            // heap-backed, forcing ORT to allocate a per-call native copy that
-            // leaked across the per-ROI det calls (ORT issue #16937).
+            // TachiyomiAT: preprocess writes NCHW straight into the pooled direct
+            // buffer. See inputPixelPool for the leak rationale.
             pixelBuffer = inputPixelPool.acquire()
             pixelBuffer.clear()
             val pre = preprocess(crop, pixelBuffer)
@@ -134,34 +126,32 @@ class PaddleOcrV6DetEngine : Closeable {
             // Output is [1, 1, TARGET, TARGET]; read as a flat TARGET*TARGET prob map.
             val out = result[0] as OnnxTensor
             val shape = out.info.shape
-            val mapW = shape[shape.size - 1].toInt().coerceAtLeast(1)
-            val mapH = shape[shape.size - 2].toInt().coerceAtLeast(1)
-            val prob = FloatArray(mapW * mapH)
-            out.floatBuffer.get(prob)
+            val mapWidth = shape[shape.size - 1].toInt().coerceAtLeast(1)
+            val mapHeight = shape[shape.size - 2].toInt().coerceAtLeast(1)
+            val probabilityArray = FloatArray(mapWidth * mapHeight)
+            out.floatBuffer.get(probabilityArray)
             val t1 = System.nanoTime()
             // Postprocess: only the [:resizedH, :resizedW] region holds real text
-            // (the rest is zero-pad). Crop the active sub-map before DB postprocess
-            // so padded zeros don't generate spurious low-score components.
-            val active = activeRegion(prob, mapW, mapH, pre.resizedW, pre.resizedH)
-            // Back-project scale: map-space -> crop-space = 1 / (crop->map scale).
+            // (the rest is zero-pad). Crop the active sub-map so padded zeros don't
+            // generate spurious low-score components.
+            val active = activeRegion(probabilityArray, mapWidth, mapHeight, pre.resizedW, pre.resizedH)
             val mapToCropX = if (pre.cropToMapX > 0f) 1f / pre.cropToMapX else 0f
             val mapToCropY = if (pre.cropToMapY > 0f) 1f / pre.cropToMapY else 0f
             val mapLines = DbPostProcess.detectLines(
-                probMap = active.pixels,
+                probabilityMap = active.pixels,
                 width = active.width,
                 height = active.height,
-                thresh = thresh,
-                boxThresh = boxThresh,
+                threshold = thresh,
+                boxThreshold = boxThresh,
             )
-            // Back-project each map-space bbox to crop pixel coords.
             val cropLines = ArrayList<TextLine>(mapLines.size)
             for (ml in mapLines) {
                 val cb = DbPostProcess.backProject(
                     bbox = ml.bbox,
                     scaleX = mapToCropX,
                     scaleY = mapToCropY,
-                    cropW = w,
-                    cropH = h,
+                    cropWidth = w,
+                    cropHeight = h,
                 )
                 if (cb[2] > cb[0] && cb[3] > cb[1]) {
                     cropLines.add(TextLine(bbox = cb, meanScore = ml.meanScore))
@@ -172,7 +162,7 @@ class PaddleOcrV6DetEngine : Closeable {
                 logcat(LogPriority.INFO) {
                     "[paddle_det] total=${(t2 - t0) / 1_000_000.0}ms " +
                         "infer=${(t1 - t0) / 1_000_000.0}ms " +
-                        "crop=${w}x${h} map=${mapW}x${mapH} active=${active.width}x${active.height} " +
+                        "crop=${w}x${h} map=${mapWidth}x${mapHeight} active=${active.width}x${active.height} " +
                         "lines=${cropLines.size}"
                 }
             }
@@ -235,9 +225,8 @@ class PaddleOcrV6DetEngine : Closeable {
 
             val pixels = IntArray(TARGET * TARGET)
             padded.getPixels(pixels, 0, TARGET, 0, 0, TARGET, TARGET)
-            // NCHW, RGB plane order (matches the exported det model's training
-            // pipeline). Written directly into the pooled direct buffer — no
-            // intermediate FloatArray allocations. One pixel scan per plane.
+            // NCHW RGB plane order. Written via absolute puts into the direct
+            // buffer with one pixel scan per plane (no intermediate FloatArray).
             val total = TARGET * TARGET
             for (i in 0 until total) out.put(normalizeR(pixels[i] shr 16 and 0xFF))
             for (i in 0 until total) out.put(normalizeG(pixels[i] shr 8 and 0xFF))
@@ -301,11 +290,10 @@ class PaddleOcrV6DetEngine : Closeable {
     private data class ActiveRegion(val pixels: FloatArray, val width: Int, val height: Int)
 
     private companion object {
-        // Det model operates on a TARGET x TARGET map (validated via the Python
-        // prototype: output shape [1,1,736,736] for a 736 input).
+        // Det model output is [1,1,TARGET,TARGET] (validated via the Python prototype).
         private const val TARGET = 736
 
-        // ImageNet normalization (BGR) — from PP-OCRv6 det inference.yml.
+        // ImageNet normalize (BGR) from PP-OCRv6 det inference.yml.
         private const val MEAN_B = 0.406f
         private const val MEAN_G = 0.456f
         private const val MEAN_R = 0.485f

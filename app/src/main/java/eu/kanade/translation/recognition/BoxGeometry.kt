@@ -88,20 +88,12 @@ object BoxGeometry {
     )
 
     /**
-     * TachiyomiAT: the single source of truth for text-box dedup thresholds.
+     * TachiyomiAT: single source of truth for text-box dedup thresholds, shared
+     * by every stage that collapses overlapping text regions (notably
+     * PageTranslationHelper.dedupeGeometricOverlaps). Hoisting it here means a
+     * threshold fix reaches all callers.
      *
-     * These were previously a private constant on `RoiPageRecognitionEngine`
-     * (`TEXT_DEDUP_THRESHOLDS`), which made them invisible to any other caller
-     * that needed to detect overlapping text regions — notably the post-OCR
-     * geometric dedupe that now runs in both recognition engines via
-     * `PageTranslationHelper.dedupeGeometricOverlaps`. Hoisting the tuned set
-     * here means every stage that collapses overlapping text regions uses the
-     * same definition of "same region", so a fix to the threshold reaches all
-     * callers (the same rationale that motivated centralizing the geometry math
-     * in this object in the first place).
-     *
-     * Values match the previously private constant: iou 0.62, containment 0.86,
-     * center 0.12, size 0.20. See `RoiPageRecognitionEngine` history for tuning.
+     * Values: iou 0.62, containment 0.86, center 0.12, size 0.20.
      */
     val TEXT_DEDUP_THRESHOLDS: DedupThresholds = DedupThresholds(
         iou = 0.62f,

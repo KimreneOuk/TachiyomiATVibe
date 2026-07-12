@@ -8,24 +8,21 @@ import eu.kanade.translation.recognition.BoxGeometry
 import kotlin.math.max
 
 /**
- * TachiyomiAT: builds the list of regions the inpainter must erase for one page.
+ * TachiyomiAT: builds the regions the inpainter must erase for one page.
  *
  * Two entry points, one source of truth:
- *  - [computeMask] is called ONCE at the end of [PageRecognitionEngine.analyze]
- *    (i.e. at OCR time, BEFORE translation/watermark filtering) to capture a
- *    durable mask. It is persisted on [PageTranslation.inpaintMaskBoxes].
+ *  - [computeMask] is called ONCE at OCR time (before translation/watermark
+ *    filtering) to capture a durable mask, persisted on
+ *    [PageTranslation.inpaintMaskBoxes].
  *  - [build] is called at inpaint time. It returns the persisted mask when
- *    present (the resume / reopened-store path, where the transient
- *    `allTextDetections` has been lost) and otherwise recomputes from the live
- *    `blocks` + `allTextDetections` (the fresh single-page path).
+ *    present (the resume path, where transient `allTextDetections` is lost) and
+ *    otherwise recomputes from live `blocks` + `allTextDetections`.
  *
- * Why a durable mask matters: the inpainter must erase detector-only regions
- * (filtered out of OCR by dedupe/suppression) and watermark regions (removed
- * from `blocks` by [TranslationBlockFilters] after translate). Both classes of
- * region vanish from `blocks` before inpaint on the resume path, so deriving
- * the mask from `blocks` alone at inpaint time leaves source text / watermarks
- * visible. Capturing the full erase set at OCR time and persisting it closes
- * that hole.
+ * Why a durable mask matters: detector-only regions (filtered out of OCR) and
+ * watermark regions (removed from `blocks` after translate) both vanish from
+ * `blocks` before inpaint on the resume path, so deriving the mask from
+ * `blocks` alone then would leave source text/watermarks visible. Capturing the
+ * full erase set at OCR time and persisting it closes that hole.
  */
 object PageInpaintingPlanner {
 
@@ -70,26 +67,22 @@ object PageInpaintingPlanner {
     }
 
     /**
-     * Captures the durable erase mask from the recognition result. Call this
-     * exactly once, at the end of [PageRecognitionEngine.analyze], and persist
-     * the result onto [PageTranslation.inpaintMaskBoxes]. Computing here (not
-     * at inpaint time) is what makes the mask survive translation-stage block
-     * removal and process death.
+     * Captures the durable erase mask from the recognition result. Call once, at
+     * the end of [PageRecognitionEngine.analyze], and persist onto
+     * [PageTranslation.inpaintMaskBoxes]. Computing here (not at inpaint time)
+     * is what makes the mask survive translation-stage block removal and process death.
      *
-     * Render-aware erase (contract #14a variant): the mask is built only from
-     * blocks whose OCR text was READ (non-blank). An unread region — low-conf-
-     * blanked or organically-empty OCR — contributes NEITHER its text box nor
-     * its bubble box, so its ORIGINAL pixels stay visible instead of being
-     * erased to an empty void. Watermark blocks still carry text here (they are
-     * removed from `blocks` only later, after translate), so they are erased as
-     * before; detector-only boxes (`allTextDetections`) are disjoint from any
-     * OCR block and are erased as before. It deliberately does NOT consult
-     * `block.translation` — translation has not run yet at OCR time, so this is
-     * naturally immune to the watermark-block-removal ordering.
+     * Render-aware erase: the mask is built only from blocks whose OCR text was
+     * READ (non-blank). An unread region (low-conf-blanked or organically-empty
+     * OCR) contributes NEITHER its text box nor its bubble box, so its ORIGINAL
+     * pixels stay visible instead of being erased to an empty void. Watermark
+     * blocks still carry text here (removed later) and detector-only boxes are
+     * disjoint from any OCR block, so both are erased as before. Does NOT
+     * consult `block.translation` (translation hasn't run at OCR time), so it is
+     * immune to the watermark-block-removal ordering.
      */
     fun computeMask(pageTranslation: PageTranslation): List<InpaintMaskBox> {
         val blocks = pageTranslation.blocks
-        // Only readable blocks contribute to the erase set.
         val readable = blocks.filter { it.text.isNotBlank() }
 
         val bubbleBoxes = readable
@@ -109,10 +102,9 @@ object PageInpaintingPlanner {
             .mapNotNull { block -> blockTextBox(block)?.let { it to block.label } }
         val textBoxes = textBoxLabels.map { it.first }
 
-        // Overlap reference = ALL OCR block boxes (readable AND blank). A
-        // detector box overlapping a blank-text block must NOT be re-added as an
-        // extra-detector entry, or it would re-erase exactly the region we are
-        // deliberately preserving above.
+        // Overlap reference = ALL OCR block boxes (readable AND blank): a detector
+        // box overlapping a blank-text block must NOT be re-added, or it would
+        // re-erase exactly the region deliberately preserved above.
         val allOcrBoxes = blocks.mapNotNull { blockTextBox(it) }
         val extraDetectorBoxes = pageTranslation.allTextDetections
             .map { it.bbox }

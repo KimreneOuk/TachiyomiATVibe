@@ -55,15 +55,9 @@ class PageInpaintingEngine(
                 bitmap.height,
                 "boxes=${input.boxes.size}",
             )
-            // TachiyomiAT: strict no-fallback by default. The old code silently
-            // downgraded QUALITY → FAST when the neural inpainter wasn't initialized,
-            // producing a visibly worse clean (median-fill instead of AOT
-            // reconstruction) with no signal to the user. Now QUALITY throws when
-            // the neural model is unavailable, unless the user has explicitly opted
-            // into the QUALITY→FAST fallback via the `translation_inpaint_quality_fallback`
-            // preference (checked below). Throwing lets the stage's try/catch mark
-            // the page FAILED with a clear message, so the user sees "QUALITY
-            // inpainting unavailable" and can switch to FAST or fix the model load.
+            // Strict no-fallback by default: QUALITY throws when the neural model
+            // is unloaded (was silently downgraded to median-fill FAST). User must
+            // opt into QUALITY→FAST fallback via translation_inpaint_quality_fallback.
             if (mode == InpaintingMode.QUALITY && !inpainter.isInitialized()) {
                 if (resolveQualityFallback()) {
                     logcat(LogPriority.WARN) {
@@ -86,19 +80,14 @@ class PageInpaintingEngine(
                 boxes = input.boxes,
                 labels = input.labels,
                 mode = effectiveMode,
+                blocks = pageTranslation.blocks,
             )
             markReady(pageTranslation)
             cleaned
         } catch (e: Exception) {
             pageTranslation.inpaintStatus = StageStatus.FAILED
-            // TachiyomiAT: charge the attempt exactly once. This is the FIRST
-            // terminal stage in the inpaint→render cascade, so it owns the
-            // attemptCount increment; the downstream render-block path calls
-            // recordAttemptFailure() too but it no-ops once attemptCharged is
-            // set (idempotent within an attempt). Replaces the old bare
-            // `retryCount++`, which double-counted with the render-block
-            // increment and tripped exhaustion after one transient failure
-            // (see PageTranslationState.recordAttemptFailure / MAX_STAGE_RETRIES).
+            // First terminal stage in the inpaint→render cascade owns the attempt
+            // charge; downstream render path no-ops via attemptCharged (idempotent).
             pageTranslation.recordAttemptFailure()
             pageTranslation.errorMessage = e.message
             pageTranslation.updatedAt = System.currentTimeMillis()

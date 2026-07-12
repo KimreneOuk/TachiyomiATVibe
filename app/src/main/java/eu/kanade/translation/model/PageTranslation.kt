@@ -11,10 +11,6 @@ data class PageTranslation(
     var imgWidth: Float = 0f,
     var imgHeight: Float = 0f,
     var cleanedImageName: String? = null,
-    var renderedImageName: String? = null,
-    var renderQuality: String = RenderQuality.UNKNOWN,
-    var renderedWidth: Int = 0,
-    var renderedHeight: Int = 0,
     var recognitionEngine: String? = null,
     var detectionCount: Int = 0,
     var ocrBlockCount: Int = 0,
@@ -28,25 +24,13 @@ data class PageTranslation(
     var errorMessage: String? = null,
     var updatedAt: Long = 0L,
     var sourceFileName: String? = null,
-    // TachiyomiAT: counts how many times a stage on this page has been retried
-    // after a failure. Persisted (serialized) so it survives a chapter reopen —
-    // see [StageStatus.MAX_STAGE_RETRIES] and the retry-exhaustion contract in
-    // docs/TRANSLATION_MODULE.md. This is a raw, per-failure increment kept for
-    // diagnostics/back-compat; do NOT use it directly to gate auto-scheduling —
-    // [PageTranslation.hasExhaustedRetries] keys off [attemptCount] instead.
-    // The reason it must not gate exhaustion: a single reader-path attempt can
-    // touch multiple stages (OCR → inpaint → render) and an inpaint failure
-    // naturally cascades into a render failure, so per-failure increments could
-    // double-count within ONE attempt and trip exhaustion after a single
-    // transient failure — permanently blacklisting the page (the
-    // "cannot reprocess / retranslate" bug). [attemptCount] counts DISTINCT
-    // attempts, which is the correct granularity for exhaustion.
+    // Persisted raw per-failure count for diagnostics/back-compat. Do NOT gate
+    // exhaustion on this: a single attempt can fail multiple cascading stages
+    // (inpaint→render) and double-count. hasExhaustedRetries keys off attemptCount.
     var retryCount: Int = 0,
     // Incremented when the rendered file's bytes are rewritten. The file name is
-    // stable (<page>.rendered.png for new renders), so UI dedup must not key on
-    // the name alone.
+    // stable, so UI dedup must not key on the name alone.
     var inpaintRevision: Int = 0,
-    var renderRevision: Long = 0L,
     /**
      * TachiyomiAT: SERIALIZABLE inpaint mask captured at OCR time.
      *
@@ -227,15 +211,51 @@ data class TranslationBlock(
     val parentY: Float = 0f,
     val parentWidth: Float = 0f,
     val parentHeight: Float = 0f,
-    // TachiyomiAT: textColor is re-derived after inpainting against the cleaned
-    // bitmap (RenderColorEstimator.recomputeFor) so "dark inpaint → light text"
-    // holds. strokeColor is re-derived by PageTextRenderer (luma-inverse of the
-    // text) and strokeWidth is owned by TextLayoutPlanner (font-derived); those
-    // two fields are retained on the model for serialization backward-compat
-    // but are NO LONGER read at render time. `var` so they can be re-derived;
-    // serialization is field-name based, so this is backward compatible.
+    // textColor is re-derived after inpainting; strokeColor/strokeWidth are
+    // retained only for serialization backward-compat and are NOT read at render.
     var textColor: Long = 0xFF000000,
     var strokeColor: Long = 0xFFFFFFFF,
     var strokeWidth: Float = 0f,
     val direction: String = "LTR",
+    /**
+     * TachiyomiAT: reading-order index of the panel (comic frame) this block
+     * was assigned to, or null when the block is spanning / free-floating /
+     * orphan / invalid (see PanelAssignment.Category). Only OWNED blocks get a
+     * real index. The prompt layer renders page-level context for null, so a
+     * confidently-wrong panel index is never produced. Nullable with default
+     * null so serialized blocks from older chapters (pre-panel-detector)
+     * deserialize cleanly as page-level.
+     */
+    val panelIndex: Int? = null,
+    /**
+     * TachiyomiAT: human-readable panel-assignment category
+     * (PanelAssignment.Category.asString(): "owned" / "spanning" /
+     * "free_floating" / "orphan" / "invalid" / "none"). Default "none" matches
+     * the pre-panel-detector behaviour where the prompt layer treats every
+     * block as page-level.
+     */
+    val panelAssignment: String = "none",
+    /**
+     * TachiyomiAT: containment fraction (0..1) of this block's box within its
+     * best-matching panel — how much of the block lives inside that panel.
+     * Surfaced so the translator can down-weight context for ambiguous
+     * (low-containment) assignments. Default 0f for serialized blocks without
+     * panel context.
+     */
+    val panelContainment: Float = 0f,
+    /**
+     * TachiyomiAT: stable index of the parent speech bubble this block belongs
+     * to, assigned by a parent-bubble grouping pass after panel assignment.
+     * Blocks sharing the same (parentX, parentY, parentWidth, parentHeight)
+     * get the same index, letting the translator group lines within a bubble
+     * for speaker/voice continuity. Null until assigned (default null for
+     * serialized blocks from older chapters).
+     */
+    val bubbleIndex: Int? = null,
+    /**
+     * TachiyomiAT: precise YOLO11 segmentation mask for this block.
+     * Encoded as RLE for compact persistence. Used by the inpainter
+     * (Interior Median Solid Fill) and the layout planner (Symmetrical Growth).
+     */
+    val segmentationMask: eu.kanade.translation.segmentation.BubbleMaskRle? = null,
 )

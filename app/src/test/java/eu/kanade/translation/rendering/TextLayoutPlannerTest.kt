@@ -550,7 +550,7 @@ private fun extentOfPublic(layout: BlockLayout, measurer: TextMeasurer): FloatRe
         val colH = minOf(layout.safeH, chars * charStep)
         FloatRect(cx - totalW / 2f, cy - colH / 2f, cx + totalW / 2f, cy + colH / 2f)
     } else {
-        val lines = TextLayoutPlanner.cjkWrap(layout.text, layout.fontSizePx, layout.safeW, measurer)
+        val lines = layout.lines
         val lineH = measurer.lineHeight(layout.fontSizePx)
         val totalH = lines.size * lineH
         val maxLineW = (lines.maxOfOrNull { measurer.measureTextWidth(it, layout.fontSizePx) } ?: 0f)

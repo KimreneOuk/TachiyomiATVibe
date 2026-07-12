@@ -14,6 +14,19 @@ data class ModelPaths(
     val ocrDecoderStep: File,
     val ocrVocab: File,
     val inpaintModel: File?,
+    /**
+     * TachiyomiAT: optional YOLO26-nano manga panel detector model
+     * (`manga_panel_detector_int8.onnx`). Nullable because the panel detector
+     * is best-effort context — when absent or corrupt, panel assignment is
+     * skipped and translation proceeds panel-less. Copied from
+     * `models/detection/manga_panel_detector_int8.onnx` alongside the text
+     * detector; a failed copy leaves this null rather than throwing.
+     */
+    val panelDetectorModel: File?,
+    /**
+     * TachiyomiAT: YOLO11-seg manga bubble segmenter model (`manga_bubble_segmenter_int8.onnx`).
+     */
+    val bubbleSegmenterModel: File?,
 )
 
 data class PaddleOcrV6SmallPaths(
@@ -78,6 +91,22 @@ class OnnxModelStore(private val context: Context) {
             null
         }
 
+        // Panel detector is best-effort context (mirrors inpaint copy): a missing
+        // asset or failed copy leaves it null so panel assignment is skipped, not crashed.
+        val panelDetectorFile = try {
+            copyIfNeeded(dir, "panel_detector.onnx", "models/detection/manga_panel_detector_int8.onnx")
+        } catch (_: Exception) {
+            logcat(LogPriority.WARN) { "Panel detector model not found in assets, skipping" }
+            null
+        }
+        
+        val bubbleSegmenterFile = try {
+            copyIfNeeded(dir, "bubble_segmenter.onnx", "models/segmentation/manga109_bubble_int8.onnx")
+        } catch (_: Exception) {
+            logcat(LogPriority.WARN) { "Bubble segmenter model not found in assets, skipping" }
+            null
+        }
+
         return ModelPaths(
             detectorModel = detectorFile,
             ocrEncoder = encoderFile,
@@ -85,6 +114,8 @@ class OnnxModelStore(private val context: Context) {
             ocrDecoderStep = decoderStepFile,
             ocrVocab = vocabFile,
             inpaintModel = inpaintFile,
+            panelDetectorModel = panelDetectorFile,
+            bubbleSegmenterModel = bubbleSegmenterFile,
         )
     }
 
@@ -158,12 +189,9 @@ class OnnxModelStore(private val context: Context) {
         if (dest.exists() && dest.length() > 0) {
             if (name.endsWith(".onnx")) {
                 if (looksLikeValidOnnx(dest)) return dest
-                // TachiyomiAT: the cached copy is structurally invalid (truncated
-                // copy, partial write, or a corrupt asset). A near-zero-byte or
-                // wrongly-headed .onnx previously passed the single-byte 0x08
-                // check and then produced garbage / all-gray inpaint output, or
-                // a confusing OrtException deep in session creation. Delete it so
-                // we re-copy from assets below rather than trusting a bad file.
+                // Cached copy is structurally invalid (truncated/corrupt). A bad
+                // .onnx previously passed the old 0x08 check and produced garbage
+                // all-gray inpaint or an opaque OrtException; delete to re-copy.
                 logcat(LogPriority.WARN) {
                     "Cached $name failed ONNX integrity check (size=${dest.length()}); re-copying from assets"
                 }
@@ -242,9 +270,7 @@ class OnnxModelStore(private val context: Context) {
     }
 
     private companion object {
-        // TachiyomiAT: real models in this app are multi-MB (AOT ~23MB, OCR
-        // encoder/decoder smaller but still well above this floor). Anything
-        // below 64 KiB is certainly truncated.
+        // Real models are multi-MB (AOT ~23MB); below 64 KiB is certainly truncated.
         const val MIN_VALID_ONNX_BYTES = 64L * 1024L
     }
 }

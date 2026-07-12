@@ -55,8 +55,7 @@ fun TranslationPreferences.snapshotTranslationSummary(): TranslationSettingsSumm
     val fromLanguage = resolveRecognizerLanguage(translateFromLanguage().get())
     val toLanguage = resolveTranslatorLanguage(translateToLanguage().get())
 
-    // coerce() is read-only (only selectedModel() persists corrections), so a
-    // read for display never rewrites the user's stored OCR model preference.
+    // coerce() is read-only, so display never rewrites the stored OCR preference.
     val coercedOcr = OcrModelCatalog.coerce(
         translationOcrModel(fromLanguage.name).get(),
         fromLanguage,

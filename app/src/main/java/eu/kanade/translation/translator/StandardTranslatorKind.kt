@@ -24,10 +24,8 @@ enum class StandardTranslatorKind(val label: String) {
         MLKIT -> MLKitTranslator(fromLang, toLang)
         GOOGLE -> GoogleTranslator(fromLang, toLang)
         DEEPL -> {
-            // TachiyomiAT: fail fast with a clear message when the key is
-            // missing, matching AiTranslatorKind's contract. Under the strict
-            // no-fallback policy this surfaces as a FAILED page so the user
-            // configures the key instead of getting a silent wrong engine.
+            // Fail fast on a missing key. Under the strict no-fallback policy this surfaces as a
+            // FAILED page so the user configures the key instead of silently getting the wrong engine.
             val apiKey = pref.translationDeeplApiKey().get()
             require(apiKey.isNotBlank()) { "DeepL API key is required" }
             DeepLTranslator(fromLang, toLang, apiKey)
@@ -36,11 +34,9 @@ enum class StandardTranslatorKind(val label: String) {
 
     companion object {
         /**
-         * TachiyomiAT: STRICT no-fallback. The old code silently returned MLKIT
-         * for an unknown stored engine — a corrupted/migrated pref quietly ran
-         * on-device ML Kit instead of the configured Google/AI engine. Under
-         * the strict policy an invalid value throws; the pipeline's try/catch
-         * surfaces it as a FAILED page so the user fixes the setting.
+         * TachiyomiAT: STRICT no-fallback. The old code silently returned MLKIT for an unknown stored
+         * engine — a corrupted/migrated pref quietly ran on-device ML Kit instead of the configured engine.
+         * Now an invalid value throws and the pipeline surfaces it as a FAILED page so the user fixes the setting.
          */
         fun fromPref(pref: Preference<StandardEngine>): StandardTranslatorKind {
             val engine = pref.get()

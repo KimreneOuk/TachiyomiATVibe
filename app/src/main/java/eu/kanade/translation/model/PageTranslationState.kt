@@ -19,21 +19,10 @@ sealed interface PageLifecycle {
 
 val PageTranslation.displayImageName: String?
     get() = when {
-        blocks.isEmpty() -> when {
-            renderedImageName != null && hasTrustedRenderScale -> renderedImageName
-            cleanedImageName != null && decodeSampleSize <= 1 -> cleanedImageName
-            else -> null
-        }
-        hasCurrentInpaintResult && hasTrustedRenderScale -> renderedImageName
+        blocks.isEmpty() -> cleanedImageName?.takeIf { decodeSampleSize <= 1 }
+        hasCurrentInpaintResult -> cleanedImageName
         else -> null
     }
-
-val PageTranslation.hasTrustedRenderScale: Boolean
-    get() = renderedImageName != null && (
-        renderQuality == RenderQuality.FULL ||
-            renderQuality == RenderQuality.SIZE_LIMITED ||
-            (renderQuality == RenderQuality.UNKNOWN && decodeSampleSize <= 1)
-        )
 
 val PageTranslation.hasCurrentInpaintResult: Boolean
     get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
@@ -107,11 +96,7 @@ fun PageTranslation.prepareForcedRetry() {
     inpaintStatus = StageStatus.PENDING
     renderStatus = StageStatus.PENDING
     errorMessage = null
-    renderedImageName = null
     cleanedImageName = null
-    renderQuality = RenderQuality.UNKNOWN
-    renderedWidth = 0
-    renderedHeight = 0
 }
 
 /**

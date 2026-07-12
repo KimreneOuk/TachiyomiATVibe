@@ -35,22 +35,9 @@ class MangaOcrEngine : RoiOcrEngine {
     private val decoderThreadCount = maxOf(1, minOf(Runtime.getRuntime().availableProcessors() / 2, 2))
     private val kCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
     private val vCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
-    // TachiyomiAT: pooled DIRECT buffer for the encoder input tensor
-    // (1 x 3 x 224 x 224 floats). The previous code used FloatBuffer.wrap(pixels)
-    // — a HEAP-backed buffer — which forced ORT to allocate an internal NATIVE
-    // copy of the input on every recognize() call (ORT issue #16937:
-    // "FloatBuffer.wrap will copy it into the float buffer, but it's not a
-    // direct one so we need to copy it again in ORT"). ORT's close() releases
-    // the Java tensor wrapper but the native copy it made lingers on the
-    // session's internal heap, accumulating across thousands of recognize()
-    // calls (one per text ROI per page). A heap dump of the 200-page pre-
-    // translation OOM (June 2026) showed MangaOcrEngine retaining 445 MiB
-    // across 562 byte[] instances — exactly this native-copy accumulation.
-    // Using a direct buffer lets ORT use the buffer in place with NO internal
-    // copy, so there is nothing to leak. The buffer is pooled (maxPoolSize=2)
-    // so it is allocated once and reused for every ROI; recognize() is
-    // serialized under the translator permit, so one live buffer at a time
-    // is sufficient. Capacity = 3*224*224 floats * 4 bytes = 600 KiB.
+    // TachiyomiAT: pooled DIRECT buffer for the encoder input. FloatBuffer.wrap
+    // is heap-backed, forcing ORT to allocate a native copy per call that leaks
+    // across recognize() calls (ORT #16937); a direct buffer is used in place.
     private val inputPixelPool = DirectBufferPool(3 * 224 * 224 * 4, maxPoolSize = 2)
 
     fun initialize(
@@ -67,7 +54,7 @@ class MangaOcrEngine : RoiOcrEngine {
         }
         // TachiyomiAT: manga-ocr runs an autoregressive decoder loop on many
         // tiny per-step graphlets. Keep it on the shared CPU-only ONNX runtime.
-        val encoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
+        val encoderOpts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = false)
         try {
             encoderSession = OnnxRuntimeProvider.environment.createSession(encoderFile.absolutePath, encoderOpts)
             logcat(LogPriority.INFO) { "OCR init: encoder session created OK, inputs=${encoderSession?.inputNames}" }
@@ -128,21 +115,14 @@ class MangaOcrEngine : RoiOcrEngine {
         var stepPositionIdsTensor: OnnxTensor? = null
         var selfKCacheBuf: java.nio.FloatBuffer? = null
         var selfVCacheBuf: java.nio.FloatBuffer? = null
-        // TachiyomiAT: declared nullable outside the try (so the finally can
-        // release it) and assigned inside, matching selfKCacheBuf/VCacheBuf.
-        // This guarantees the pool acquire/release pair is balanced even if a
-        // later line in the try throws — there is no window between acquire
-        // and try where an exception could leak the buffer from the pool.
+        // TachiyomiAT: declared nullable outside try and assigned inside, so the
+        // pool acquire/release stays balanced even if a later line throws.
         var pixelBuffer: java.nio.FloatBuffer? = null
 
         try {
-            // TachiyomiAT: use a POOLED DIRECT FloatBuffer for the encoder input.
-            // FloatBuffer.wrap(pixels) is heap-backed, forcing ORT to allocate an
-            // internal native copy that leaks across recognize() calls (see the
-            // inputPixelPool doc comment + ORT issue #16937). Copying `pixels`
-            // into a direct buffer is a one-time 600 KiB memcpy; the payoff is
-            // that ORT uses this buffer in place with no internal copy, so there
-            // is nothing for the session to retain after the tensor is closed.
+            // TachiyomiAT: pooled DIRECT buffer avoids the per-call native copy
+            // (see inputPixelPool). The one-time 600 KiB memcpy is far cheaper
+            // than the leak.
             pixelBuffer = inputPixelPool.acquire().apply {
                 clear()
                 put(pixels)
@@ -244,11 +224,9 @@ class MangaOcrEngine : RoiOcrEngine {
             )
 
             for (stepIdx in 0 until MAX_GENERATION_LENGTH) {
-                // TachiyomiAT: bound pos by the POSITION-EMBEDDING size (128),
-                // not MAX_LEN (256, the larger KV-cache dimension). pos==128
-                // overflows node_embedding_1 -> native Gather throws -> chapter
-                // ERROR. On long bubbles the decoder generates 128+ tokens, so
-                // MAX_LEN is not a safe ceiling. See DECODER_POSITION_COUNT.
+                // TachiyomiAT: bound pos by the 128-entry position-embedding
+                // table, NOT MAX_LEN (256, the KV-cache dim). pos==128 overflows
+                // node_embedding_1 -> native Gather throws -> chapter ERROR.
                 if (pos >= DECODER_POSITION_COUNT) break
 
                 stepInputIdsBuf.put(0, currentInputId)
@@ -298,10 +276,7 @@ class MangaOcrEngine : RoiOcrEngine {
             val result = postprocess(text)
             val t5 = System.nanoTime()
 
-            // TachiyomiAT: this timing log fires once per ROI crop (30+ on a
-            // text-heavy page) and does a 6-field string interpolation each time.
-            // Gate it behind the opt-in diagnostics pref so the hot path stays
-            // quiet unless the user is actively debugging OCR latency.
+            // Gate the per-ROI (30+/page) timing log behind the opt-in pref.
             if (isDiagnosticsEnabled()) {
                 logcat(LogPriority.INFO) {
                     "[ocr] total=${(t5 - t0) / 1_000_000.0}ms " +
@@ -473,16 +448,9 @@ class MangaOcrEngine : RoiOcrEngine {
         private const val START_TOKEN = 2
         private const val END_TOKEN = 3
         private const val MAX_LEN = 256
-        // TachiyomiAT: ceiling for the decode loop's position id. The decoder
-        // (model_type=gpt2) position-embedding Gather (ONNX node node_embedding_1)
-        // has exactly 128 entries (indices 0..127). A position_id of 128 overflows
-        // it: onnxruntime throws "indices element ... not in the exclusive range
-        // [-128,127]" and the whole chapter is marked ERROR. This is SEPARATE from
-        // MAX_LEN (256), which is only the KV-cache sequence dimension — the cache
-        // is larger than the position table, so bounding by MAX_LEN alone lets pos
-        // reach 128 and crash on long bubbles (128+ generated tokens). 128 here is
-        // the real ceiling on generation length. See docs/ocr-engine-notes.md
-        // "MangaOcr ONNX decoder contract" before changing this.
+        // TachiyomiAT: real decode ceiling. The gpt2 position-embedding Gather
+        // (node_embedding_1) has 128 entries; pos==128 overflows it and crashes
+        // the chapter. MAX_LEN (256) is only the KV-cache dim, not a safe bound.
         private const val DECODER_POSITION_COUNT = 128
 
         /**

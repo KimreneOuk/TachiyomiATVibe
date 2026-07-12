@@ -92,22 +92,20 @@ object DbPostProcess {
      * @param height map height H.
      */
     fun detectLines(
-        probMap: FloatArray,
+        probabilityMap: FloatArray,
         width: Int,
         height: Int,
-        thresh: Float = Defaults.THRESH,
-        boxThresh: Float = Defaults.BOX_THRESH,
+        threshold: Float = Defaults.THRESH,
+        boxThreshold: Float = Defaults.BOX_THRESH,
         maxCandidates: Int = Defaults.MAX_CANDIDATES,
     ): List<TextLine> {
-        if (width <= 0 || height <= 0 || probMap.size < width * height) return emptyList()
+        if (width <= 0 || height <= 0 || probabilityMap.size < width * height) return emptyList()
 
-        // 1. Binarize the prob map.
         val binary = BooleanArray(width * height)
-        for (i in probMap.indices) {
-            binary[i] = probMap[i] > thresh
+        for (i in probabilityMap.indices) {
+            binary[i] = probabilityMap[i] > threshold
         }
 
-        // 2-4. Connected components with on-the-fly bbox + score accumulation.
         val labels = IntArray(width * height)
         val components = ArrayList<Component>(maxCandidates.coerceAtMost(64))
         var nextLabel = 1
@@ -115,56 +113,50 @@ object DbPostProcess {
             for (x in 0 until width) {
                 val idx = y * width + x
                 if (!binary[idx] || labels[idx] != 0) continue
-                val comp = floodLabel(
+                val component = floodLabel(
                     binary = binary,
                     labels = labels,
-                    probMap = probMap,
+                    probabilityMap = probabilityMap,
                     width = width,
                     height = height,
                     startX = x,
                     startY = y,
                     label = nextLabel,
                 )
-                if (comp.pixelCount >= MIN_AREA_PX) {
-                    components.add(comp)
+                if (component.pixelCount >= MIN_AREA_PX) {
+                    components.add(component)
                 }
                 nextLabel++
                 if (components.size >= maxCandidates) {
-                    // Bound work: PaddleOCR's `max_candidates` caps the number of
-                    // returned boxes; stop scanning once we have that many viable
-                    // components to avoid pathological pages stalling the OCR loop.
-                    return finalize(components, boxThresh, width, height)
+                    // PaddleOCR's max_candidates cap; stop early so pathological
+                    // pages don't stall the OCR loop.
+                    return finalize(components, boxThreshold, width, height)
                 }
             }
         }
-        return finalize(components, boxThresh, width, height)
+        return finalize(components, boxThreshold, width, height)
     }
 
     private fun finalize(
         components: List<Component>,
-        boxThresh: Float,
+        boxThreshold: Float,
         width: Int,
         height: Int,
     ): List<TextLine> {
         val out = ArrayList<TextLine>(components.size)
-        for (c in components) {
+        for (component in components) {
             // DB's region score is the mean probability over the component's area.
-            val meanScore = if (c.pixelCount > 0) c.probSum / c.pixelCount else 0f
-            if (meanScore < boxThresh) continue
-            val area = (c.maxX - c.minX + 1).toLong() * (c.maxY - c.minY + 1).toLong()
+            val meanScore = if (component.pixelCount > 0) component.probSum / component.pixelCount else 0f
+            if (meanScore < boxThreshold) continue
+            val area = (component.maxX - component.minX + 1).toLong() * (component.maxY - component.minY + 1).toLong()
             if (area > (MAX_COMPONENT_AREA_FRAC * width * height).toLong()) continue
-            val rawBox = intArrayOf(c.minX, c.minY, c.maxX, c.maxY)
+            val rawBox = intArrayOf(component.minX, component.minY, component.maxX, component.maxY)
             out.add(TextLine(bbox = rawBox, meanScore = meanScore))
         }
-        // Merge same-line / same-column fragments that the axis-aligned
-        // connected-components step splits apart (normal inter-character spacing
-        // becomes a component boundary, so a horizontal line of CJK glyphs comes
-        // back as one box per character). Without this, the rec head sees one
-        // glyph at a time and the assembled text is fragmented. Validated in the
-        // Python prototype: a Chinese bubble reading 所因誤 came back as 5
-        // fragments before merge and 2 clean lines after.
+        // Merge fragments the axis-aligned CC step splits apart: normal inter-
+        // character spacing becomes a component boundary, so a horizontal CJK line
+        // comes back one-box-per-character and the rec head sees single glyphs.
         val merged = mergeLineFragments(out).toMutableList()
-        // Clamp to image bounds
         for (i in merged.indices) {
             val b = merged[i].bbox
             b[0] = b[0].coerceIn(0, width - 1)
@@ -172,9 +164,8 @@ object DbPostProcess {
             b[2] = b[2].coerceIn(0, width - 1)
             b[3] = b[3].coerceIn(0, height - 1)
         }
-        // Stable, deterministic order (top-to-bottom, left-to-right) so the caller
-        // can apply its own reading-order policy (e.g. manga right-to-left) on a
-        // predictable input.
+        // Deterministic top-to-bottom, left-to-right order so the caller can
+        // apply its reading-order policy (e.g. manga right-to-left) predictably.
         merged.sortWith(compareBy<TextLine>({ it.bbox[1] }, { it.bbox[0] }))
         return merged
     }
@@ -248,7 +239,6 @@ object DbPostProcess {
                 }
                 val sameLine = abs(centerCross - mCenterCross) <= sameLineFrac * min(crossSize, mCrossSize)
                 if (!sameLine) continue
-                // Along-axis gap between the two boxes.
                 val gap = when (axis) {
                     Axis.HORIZONTAL -> max(0, max(b[0], m.x1) - min(b[2], m.x2))
                     Axis.VERTICAL -> max(0, max(b[1], m.y1) - min(b[3], m.y2))
@@ -282,7 +272,7 @@ object DbPostProcess {
     private fun floodLabel(
         binary: BooleanArray,
         labels: IntArray,
-        probMap: FloatArray,
+        probabilityMap: FloatArray,
         width: Int,
         height: Int,
         startX: Int,
@@ -296,15 +286,15 @@ object DbPostProcess {
         var count = 0
         var probSum = 0f
         val stack = IntArray(width * height)
-        var sp = 0
-        stack[sp++] = startY * width + startX
+        var stackPointer = 0
+        stack[stackPointer++] = startY * width + startX
         labels[startY * width + startX] = label
-        while (sp > 0) {
-            val idx = stack[--sp]
+        while (stackPointer > 0) {
+            val idx = stack[--stackPointer]
             val x = idx % width
             val y = idx / width
             count++
-            probSum += probMap[idx]
+            probSum += probabilityMap[idx]
             if (x < minX) minX = x
             if (x > maxX) maxX = x
             if (y < minY) minY = y
@@ -319,7 +309,7 @@ object DbPostProcess {
                     val nIdx = ny * width + nx
                     if (binary[nIdx] && labels[nIdx] == 0) {
                         labels[nIdx] = label
-                        stack[sp++] = nIdx
+                        stack[stackPointer++] = nIdx
                     }
                 }
             }
@@ -342,11 +332,11 @@ object DbPostProcess {
      * per-axis scale factors from the det model's resize step. Exposed so the
      * engine can keep the back-projection alongside the pure postprocess.
      */
-    fun backProject(bbox: IntArray, scaleX: Float, scaleY: Float, cropW: Int, cropH: Int): IntArray {
-        val x1 = (bbox[0] * scaleX).toInt().coerceIn(0, cropW - 1)
-        val y1 = (bbox[1] * scaleY).toInt().coerceIn(0, cropH - 1)
-        val x2 = (bbox[2] * scaleX).toInt().coerceIn(0, cropW - 1)
-        val y2 = (bbox[3] * scaleY).toInt().coerceIn(0, cropH - 1)
+    fun backProject(bbox: IntArray, scaleX: Float, scaleY: Float, cropWidth: Int, cropHeight: Int): IntArray {
+        val x1 = (bbox[0] * scaleX).toInt().coerceIn(0, cropWidth - 1)
+        val y1 = (bbox[1] * scaleY).toInt().coerceIn(0, cropHeight - 1)
+        val x2 = (bbox[2] * scaleX).toInt().coerceIn(0, cropWidth - 1)
+        val y2 = (bbox[3] * scaleY).toInt().coerceIn(0, cropHeight - 1)
         return intArrayOf(min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
     }
 

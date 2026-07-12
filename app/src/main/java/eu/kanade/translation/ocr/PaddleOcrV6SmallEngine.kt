@@ -24,28 +24,20 @@ import kotlin.math.min
 
 class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
-    // TachiyomiAT: PP-OCRv6's recognition model is a CNN+CTC head trained on
-    // horizontal text lines (left-to-right). It cannot read vertical columns
-    // directly, so RoiPageRecognitionEngine rotates tall (vertical) crops 90°
-    // for THIS engine only — native-vertical engines (ML Kit, MangaOcr) opt out
-    // via prefersHorizontalText=false and get the crop unrotated.
+    // TachiyomiAT: PP-OCRv6 rec is a CNN+CTC head trained on horizontal text
+    // lines, so RoiPageRecognitionEngine rotates tall crops 90° for this engine
+    // only. Native-vertical engines (ML Kit, MangaOcr) set this false.
     override val prefersHorizontalText: Boolean = true
 
     private var session: OrtSession? = null
     private var dictionary: List<String> = emptyList()
     private var inputName: String = "x"
 
-    // TachiyomiAT: pooled DIRECT buffer for the rec input tensor. The rec input
-    // width varies per crop (up to MAX_RECOGNITION_WIDTH), so the pool is sized
-    // for the maximum shape; each call exposes only [width x height x 3] floats
-    // to the tensor via the buffer's limit. The previous
-    // FloatBuffer.wrap(preprocessed.pixels) was heap-backed, forcing ONNX Runtime
-    // to allocate an internal native copy on every recognize() call that
-    // accumulated across the per-text-line rec calls (ORT issue #16937) — the
-    // same leak class MangaOcrEngine.inputPixelPool fixes. A direct buffer is
-    // consumed in place, so nothing leaks. recognize() is serialized under the
-    // translator permit, so maxPoolSize = 2 (one live buffer) suffices.
-    // Capacity = 3 * 48 * 1600 floats * 4 bytes ~= 0.9 MiB.
+    // TachiyomiAT: pooled DIRECT buffer for the rec input. The rec width varies
+    // per crop, so the pool is sized for the max shape; each call exposes only
+    // [width x height x 3] floats via the buffer limit. A heap-backed wrap()
+    // forces ORT to allocate a per-call native copy that leaks (ORT #16937) —
+    // the same class as MangaOcrEngine.inputPixelPool.
     private val inputPixelPool = DirectBufferPool(
         3 * RECOGNITION_HEIGHT * MAX_RECOGNITION_WIDTH * 4,
         maxPoolSize = 2,
@@ -83,12 +75,9 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         var result: OrtSession.Result? = null
         val start = System.nanoTime()
         try {
-            // TachiyomiAT: preprocess writes the NCHW tensor straight into a
-            // pooled DIRECT buffer; only [width x height x 3] floats are exposed
-            // to the tensor via the buffer limit (the rec width varies per crop).
-            // The previous FloatBuffer.wrap(preprocessed.pixels) was heap-backed,
-            // forcing ORT to allocate a per-call native copy that leaked across
-            // the per-text-line recognize() calls (ORT issue #16937).
+            // TachiyomiAT: preprocess writes NCHW straight into the pooled direct
+            // buffer; only the filled [width x height x 3] region is exposed via
+            // the limit. See inputPixelPool for the leak rationale.
             pixelBuffer = inputPixelPool.acquire()
             pixelBuffer.clear()
             val width = preprocess(crop, pixelBuffer)
@@ -136,10 +125,9 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     private fun preprocess(crop: Bitmap, out: FloatBuffer): Int {
         val safeWidth = crop.width.coerceAtLeast(1)
         val safeHeight = crop.height.coerceAtLeast(1)
-        // TachiyomiAT: match the reference PP-OCR pipeline (e.g. comic-translate's
-        // ppocr module). Three corrections vs. the original implementation, all of
-        // which improved horizontal manga text and are prerequisites for vertical
-        // column splitting (handled by RoiPageRecognitionEngine):
+        // TachiyomiAT: match the reference PP-OCR pipeline (comic-translate's
+        // ppocr module). Correcting the width/alignment here is a prerequisite
+        // for vertical-column splitting (handled by RoiPageRecognitionEngine).
         val scaledWidth = ceil(safeWidth * (RECOGNITION_HEIGHT.toFloat() / safeHeight)).toInt()
             .coerceIn(1, MAX_RECOGNITION_WIDTH)
         val inputWidth = alignWidth(scaledWidth)
@@ -164,10 +152,8 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
             val pixels = IntArray(inputWidth * RECOGNITION_HEIGHT)
             padded.getPixels(pixels, 0, inputWidth, 0, 0, inputWidth, RECOGNITION_HEIGHT)
-            // NCHW, RGB plane order, written directly into the pooled direct
-            // buffer (no intermediate FloatArray). The rec input width varies per
-            // crop; recognizeWithConf exposes only the filled region via the
-            // buffer's limit. Absolute puts leave the buffer position untouched.
+            // NCHW RGB, written via absolute puts into the direct buffer (no
+            // intermediate FloatArray; leaves the buffer position untouched).
             val planeSize = RECOGNITION_HEIGHT * inputWidth
             for (y in 0 until RECOGNITION_HEIGHT) {
                 for (x in 0 until inputWidth) {
@@ -190,11 +176,9 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     }
 
     private fun alignWidth(width: Int): Int {
-        // Match the reference PP-OCR pipeline: pad every crop to AT LEAST the
-        // model's native recognition width (320), rounded up to WIDTH_ALIGNMENT.
-        // This is the key fix for vertical/rotated text — the original aligned to
-        // only 16-32px, starving the model of per-character resolution. Cap at
-        // MAX_RECOGNITION_WIDTH.
+        // Match the reference pipeline: pad to AT LEAST the native width (320),
+        // aligned to WIDTH_ALIGNMENT. Key fix for vertical/rotated text — the
+        // original 16-32px alignment starved per-character resolution.
         val floored = maxOf(width, MIN_TARGET_WIDTH)
         val aligned = ((floored + WIDTH_ALIGNMENT - 1) / WIDTH_ALIGNMENT) * WIDTH_ALIGNMENT
         return aligned.coerceAtMost(MAX_RECOGNITION_WIDTH)
@@ -202,10 +186,8 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
     private companion object {
         private const val RECOGNITION_HEIGHT = 48
-        // TachiyomiAT: PP-OCR's recognition model is trained on a (3, 48, 320)
-        // input shape. Every crop is padded up to at least this width so the
-        // model gets the per-character resolution it expects — padding to only
-        // 16-32px starved it and caused empty/garbage output on vertical text.
+        // PP-OCR rec is trained on (3, 48, 320); padding below this starves the
+        // model of per-character resolution and yields garbage on vertical text.
         private const val MIN_TARGET_WIDTH = 320
         private const val MAX_RECOGNITION_WIDTH = 1600
         private const val WIDTH_ALIGNMENT = 16

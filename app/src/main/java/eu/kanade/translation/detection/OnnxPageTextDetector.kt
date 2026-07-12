@@ -17,12 +17,9 @@ class OnnxPageTextDetector {
 
     private var session: OrtSession? = null
 
-    // TachiyomiAT: pooled DIRECT input buffer for the fixed 1x3x640x640 detector
-    // tensor (contract #12). The previous FloatBuffer.allocate(3*total) was
-    // heap-backed, so ORT made a per-call native copy that accumulated across
-    // every page detection (the same leak class as MangaOcrEngine/Paddle). The
-    // pool tracks buffers by identity (#13) and maxPoolSize=2 bounds resident
-    // native memory to two ~4.8 MiB buffers regardless of chapter length.
+    // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor (contract
+    // #12). Heap-backed buffers caused a per-call native-copy leak; maxPoolSize=2
+    // bounds resident memory to two ~4.8 MiB buffers regardless of chapter length.
     private val inputBufferPool = DirectBufferPool(
         bufferCapacityBytes = DETECTOR_INPUT_FLOATS * Float.SIZE_BYTES,
         maxPoolSize = 2,
@@ -38,9 +35,6 @@ class OnnxPageTextDetector {
         logcat(LogPriority.INFO) {
             "Detector init: ${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        // TachiyomiAT: detector stays on CPU. It is one cheap 640x640 pass per
-        // page and runs in the same init sequence as OCR. All translation ONNX
-        // sessions are CPU-only in this runtime.
         val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
@@ -57,7 +51,7 @@ class OnnxPageTextDetector {
     }
 
     fun detect(bitmap: Bitmap): List<Detection> {
-        val sess = session ?: throw IllegalStateException("Detector not initialized")
+        val localSession = session ?: throw IllegalStateException("Detector not initialized")
 
         val t0 = System.nanoTime()
         val resized = BitmapPool.getARGB8888(640, 640)
@@ -70,17 +64,16 @@ class OnnxPageTextDetector {
         var inputBuffer: FloatBuffer? = null
 
         try {
-            // TachiyomiAT: ORT consumes a direct buffer in place (no native
-            // copy), so the buffer MUST outlive the tensor — acquire here, keep
-            // it referenced until the tensor is closed in the finally (#12).
+            // TachiyomiAT: ORT consumes the direct buffer in place (no native copy),
+            // so it MUST outlive the tensor — keep referenced until the finally (#12).
             inputBuffer = inputBufferPool.acquire()
             inputTensor = preprocess(resized, inputBuffer)
-            sizesTensor = createOrigSizes(bitmap)
+            sizesTensor = createOriginalSizes(bitmap)
             val inputTensorValue = inputTensor!!
             val sizesTensorValue = sizesTensor!!
             val t1 = System.nanoTime()
 
-            results = sess.run(
+            results = localSession.run(
                 mapOf(
                     "images" to inputTensorValue,
                     "orig_target_sizes" to sizesTensorValue,
@@ -123,9 +116,8 @@ class OnnxPageTextDetector {
         inputBufferPool.clear()
     }
 
-    // TachiyomiAT: free the pooled direct buffer without tearing down the ONNX
-    // session. Wired into RoiPageRecognitionEngine.reclaimPooledMemory (per-page
-    // OOM relief, contract #4/#10) and forceReleaseNativeBuffers.
+    // TachiyomiAT: frees the pooled direct buffer without tearing down the ONNX
+    // session; wired into per-page OOM relief (contracts #4/#10).
     fun reclaimPooledMemory() {
         inputBufferPool.clear()
     }
@@ -134,12 +126,9 @@ class OnnxPageTextDetector {
         inputBufferPool.clear()
     }
 
-    // TachiyomiAT: writes the NCHW [1,3,640,640] tensor straight into a pooled
-    // DIRECT buffer (contract #12). Each pixel is read once and its R/G/B are
-    // written to the three channel-first regions [0,total)/[total,2total)/
-    // [2total,3total). The buffer is acquired/released in detect(); every
-    // position within the final limit is overwritten, so the pool's non-zeroed
-    // acquire is safe (contract #1).
+    // TachiyomiAT: NCHW [1,3,640,640] written channel-first into a pooled DIRECT
+    // buffer (contract #12). Every position is overwritten each call, so the
+    // pool's non-zeroed acquire is safe (contract #1).
     private fun preprocess(resized: Bitmap, floatBuf: FloatBuffer): OnnxTensor {
         val pixels = IntArray(640 * 640)
         resized.getPixels(pixels, 0, 640, 0, 0, 640, 640)
@@ -161,15 +150,15 @@ class OnnxPageTextDetector {
         )
     }
 
-    private fun createOrigSizes(bitmap: Bitmap): OnnxTensor {
-        val origSizes = java.nio.ByteBuffer.allocateDirect(16)
+    private fun createOriginalSizes(bitmap: Bitmap): OnnxTensor {
+        val originalSizes = java.nio.ByteBuffer.allocateDirect(16)
             .order(java.nio.ByteOrder.nativeOrder())
             .asLongBuffer()
-        origSizes.put(0, bitmap.width.toLong())
-        origSizes.put(1, bitmap.height.toLong())
+        originalSizes.put(0, bitmap.width.toLong())
+        originalSizes.put(1, bitmap.height.toLong())
         return OnnxTensor.createTensor(
             OnnxRuntimeProvider.environment,
-            origSizes,
+            originalSizes,
             longArrayOf(1, 2),
         )
     }
@@ -181,9 +170,9 @@ class OnnxPageTextDetector {
     ): List<Detection> {
         val detections = mutableListOf<Detection>()
         for (i in labels.indices) {
-            val scr = scores[i]
-            if (scr.isNaN()) continue
-            if (scr < CONFIDENCE_THRESHOLD) continue
+            val scoreValue = scores[i]
+            if (scoreValue.isNaN()) continue
+            if (scoreValue < CONFIDENCE_THRESHOLD) continue
             val box = boxes[i]
             detections.add(
                 Detection(
@@ -194,7 +183,7 @@ class OnnxPageTextDetector {
                         box[3].toInt(),
                     ),
                     label = labels[i].toInt(),
-                    score = (Math.round(scr * 10000.0) / 10000.0).toFloat(),
+                    score = (Math.round(scoreValue * 10000.0) / 10000.0).toFloat(),
                     className = classNames[labels[i].toInt()] ?: "class_${labels[i]}",
                 ),
             )

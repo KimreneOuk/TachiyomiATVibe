@@ -1,10 +1,12 @@
 package eu.kanade.translation.model
 
 import eu.kanade.translation.batch.BatchPhase
+import androidx.compose.runtime.Immutable
 
 /**
  * TachiyomiAT: per-stage count for the redesigned progress sheet.
  */
+@Immutable
 data class StageCount(
     val done: Int,
     val failed: Int,
@@ -18,6 +20,7 @@ data class StageCount(
  * dependency. UI layers can render the summary while tests pin the lifecycle
  * rules independently from the translation engines.
  */
+@Immutable
 data class TranslationProgressSnapshot(
     val chapterId: Long,
     val state: Translation.State,
@@ -31,7 +34,6 @@ data class TranslationProgressSnapshot(
     val pages: List<Page>,
     val doneStages: Int = 0,
     val totalStages: Int = 0,
-    // TachiyomiAT: extended fields for the redesigned §12 sheet
     val perStage: Map<BatchPhase, StageCount> = emptyMap(),
     val partialPages: Int = 0,
     val groupedFailures: Map<String, List<String>> = emptyMap(),
@@ -45,6 +47,7 @@ data class TranslationProgressSnapshot(
     val countPair: Pair<Int, Int>
         get() = donePages to totalPages
 
+    @Immutable
     data class Page(
         val pageKey: String,
         val index: Int,

@@ -132,6 +132,21 @@ open class ReaderPageImageView @JvmOverloads constructor(
         // TachiyomiAT: the image just decoded, so its on-screen rect is now
         // known — re-pin the translate button onto the image (not the holder).
         relayoutTranslateButton()
+        // TachiyomiAT: re-bind the overlay against the now-created/ready
+        // pageView. On a fresh holder, setTranslationBlocks() ran (from
+        // refreshTranslation() via observePageView) BEFORE the SSIV existed,
+        // so the overlay captured a null imageView. Now pageView is live and
+        // ready, re-issue the bind so the overlay has a valid coordinate-mapping
+        // target before the invalidate() below triggers a redraw.
+        if (pendingTranslationBlocks.isNotEmpty()) {
+            translationOverlay?.bind(
+                pageView as? SubsamplingScaleImageView,
+                pendingTranslationBlocks,
+                pendingPageWidth,
+                pendingPageHeight,
+            )
+        }
+        translationOverlay?.onImageTransformChanged()
     }
 
     @CallSuper
@@ -144,8 +159,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         onScaleChanged?.invoke(newScale)
         // TachiyomiAT: zoom changes the image's rect within the holder; keep the
         // button anchored to the image's top-left so it doesn't drift into the
+        // button anchored to the image's top-left so it doesn't drift into the
         // letterbox area as the user zooms.
         relayoutTranslateButton()
+        translationOverlay?.onImageTransformChanged()
     }
 
     // TachiyomiAT
@@ -155,6 +172,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         // TachiyomiAT: pan moves the image within the holder; follow it so the
         // button stays on the image instead of floating in empty space.
         relayoutTranslateButton()
+        translationOverlay?.onImageTransformChanged()
     }
 
     @CallSuper
@@ -178,6 +196,42 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     // TachiyomiAT: per-page translate button at top-left corner
     private var translateButton: AppCompatImageView? = null
+
+    // TachiyomiAT: renders translated text over the image
+    private var translationOverlay: TranslationOverlayView? = null
+
+    // TachiyomiAT: last translation blocks passed to [setTranslationBlocks].
+    // Cached so [onImageLoaded] can re-bind the overlay against the now-live
+    // pageView: on a fresh holder, [refreshTranslation] runs (via the
+    // observePageView StateFlow re-emission) BEFORE [setImage] has created the
+    // SSIV, so the overlay captures a null imageView and never draws. Re-binding
+    // here once the image is decoded gives the overlay a valid coordinate target.
+    private var pendingTranslationBlocks: List<eu.kanade.translation.model.TranslationBlock> = emptyList()
+    private var pendingPageWidth = 0
+    private var pendingPageHeight = 0
+
+    private fun ensureTranslationOverlay() {
+        if (translationOverlay != null) return
+        translationOverlay = TranslationOverlayView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        }
+        addView(translationOverlay)
+        restoreOverlayOrder()
+    }
+
+    fun setTranslationBlocks(blocks: List<eu.kanade.translation.model.TranslationBlock>, pageWidth: Int, pageHeight: Int) {
+        pendingTranslationBlocks = blocks
+        pendingPageWidth = pageWidth
+        pendingPageHeight = pageHeight
+        if (blocks.isNotEmpty()) {
+            ensureTranslationOverlay()
+            translationOverlay?.isVisible = true
+            translationOverlay?.bind(pageView as? SubsamplingScaleImageView, blocks, pageWidth, pageHeight)
+        } else {
+            translationOverlay?.isVisible = false
+            translationOverlay?.clear()
+        }
+    }
 
     private fun ensureTranslateButton() {
         if (translateButton != null) return
@@ -390,6 +444,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * button would be invisible to touch.
      */
     private fun restoreOverlayOrder() {
+        // Overlay goes above the pageView
+        translationOverlay?.let { if (it.isVisible) it.bringToFront() }
         // Button: must always be on top so it can receive taps.
         translateButton?.let { btn ->
             if (btn.isVisible) btn.bringToFront()

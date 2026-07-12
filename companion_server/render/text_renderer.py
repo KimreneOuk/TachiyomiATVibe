@@ -57,9 +57,6 @@ def _find_font() -> str | None:
 # ── Color estimation (port of RenderColorEstimator.kt) ────────────────
 
 DARK_BG_LUMA = 85.0
-GRAY_MIN_LUMA = 40.0
-GRAY_MAX_LUMA = 200.0
-GRAY_MAX_SAT = 25.0
 
 
 def estimate_colors(
@@ -150,17 +147,6 @@ def estimate_colors(
         text_color = 0x000000
         stroke_color = 0xFFFFFF
         stroke_width = 3.0
-
-    # Gray-snap
-    r = (text_color >> 16) & 0xFF
-    g = (text_color >> 8) & 0xFF
-    b = text_color & 0xFF
-    luma = 0.299 * r + 0.587 * g + 0.114 * b
-    max_c = max(r, g, b)
-    min_c = min(r, g, b)
-    sat = float(max_c - min_c)
-    if GRAY_MIN_LUMA <= luma <= GRAY_MAX_LUMA and sat <= GRAY_MAX_SAT:
-        text_color = 0x000000
 
     return (text_color, stroke_color, stroke_width)
 

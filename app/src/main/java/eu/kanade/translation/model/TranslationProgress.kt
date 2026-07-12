@@ -41,8 +41,7 @@ object TranslationProgress {
     private fun PageTranslation.isTerminalForProgress(): Boolean {
         if (hasRenderedResult) return true
         if (isTextlessTerminal) return true
-        // A page whose stages have failed and exhausted retry attempts is
-        // terminal for progress purposes (won't improve without user action).
+        // Failed+exhausted is terminal: won't improve without user action.
         return hasExhaustedRetries
     }
 }

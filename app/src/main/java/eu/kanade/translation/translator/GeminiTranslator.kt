@@ -97,12 +97,9 @@ class GeminiTranslator(
                 createContextualModel(outputTokenLimit)
             }
             val response = activeModel.generateContent(prompt)
-            // TachiyomiAT: response.text is null when the model refuses, is
-            // safety-filtered, or errors internally. The old code did
-            // JSONObject("${response.text}") which turned a null into the literal
-            // string "null" and then threw a JSONException deep in org.json. Fail
-            // early with a clear, typed message so the page is marked FAILED with
-            // an actionable cause instead.
+            // response.text is null when the model refuses, is safety-filtered, or errors internally.
+            // The old code did JSONObject("${response.text}"), turning null into the literal "null"
+            // string and throwing an opaque JSONException. Fail early with a typed, actionable cause.
             val responseText = response.text
             if (responseText.isNullOrBlank()) {
                 throw GeminiEmptyResponseException(
@@ -111,10 +108,8 @@ class GeminiTranslator(
             }
             val resJson = JSONObject(responseText)
             for ((k, v) in pages) {
-                // TachiyomiAT: log when the model returned a different number of
-                // translations than blocks for this page. Previously a mismatch
-                // silently fell back to the original (untranslated) text with no
-                // signal, making it look like translation "just didn't work".
+                // Log when the model returns a different count of translations than blocks;
+                // previously a mismatch silently fell back to untranslated text with no signal.
                 val expected = v.blocks.size
                 val actual = resJson.optJSONArray(k)?.length() ?: 0
                 if (expected != actual) {
@@ -123,11 +118,8 @@ class GeminiTranslator(
                             "(mismatched blocks stay blank, retried by pipeline PARTIAL recovery)"
                     }
                 }
-                // TachiyomiAT: do NOT fall back to `b.text` when the model returns
-                // null/"NULL"/missing. Leaving translation blank lets the batch
-                // validation gate mark the block/page PARTIAL/FAILED instead of
-                // passing OCR text off as a translation (the mixed-source-text
-                // bug). The renderer no longer falls back to `b.text` either.
+                // Never fall back to `b.text` on null/missing: a blank translation lets the
+                // validation gate mark the block/page PARTIAL/FAILED instead of passing OCR as a translation.
                 v.blocks.forEachIndexed { i, b ->
                     val res = resJson.optJSONArray(k)?.optString(i, "NULL")
                     if (res != null && res != "NULL" && res.isNotBlank()) {
@@ -174,9 +166,7 @@ class GeminiTranslator(
 }
 
 /**
- * TachiyomiAT: thrown when the Gemini model returns no usable text (refusal,
- * safety filter, or internal error). Distinct from a generic [Exception] so the
- * caller can report a clear cause to the user instead of a low-level JSON parse
- * error.
+ * TachiyomiAT: thrown when Gemini returns no usable text (refusal, safety filter, or internal error).
+ * Distinct from a generic [Exception] so the caller can report a clear cause instead of a low-level JSON error.
  */
 class GeminiEmptyResponseException(message: String) : Exception(message)

@@ -482,6 +482,7 @@ class ReaderActivity : BaseActivity() {
             val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
             // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
             val translationQueue by viewModel.translationQueueState.collectAsState()
+            val translationSettingsState by viewModel.translationSettingsState.collectAsState()
             val compareState by viewModel.compareState.collectAsState()
 
             ReaderContentOverlay(
@@ -606,8 +607,24 @@ class ReaderActivity : BaseActivity() {
                 }
                 is ReaderViewModel.Dialog.TranslationSettings -> {
                     TranslationSettingsSheet(
+                        state = translationSettingsState,
                         onDismissRequest = onDismissRequest,
                         onStopAllTranslation = { viewModel.stopAllTranslation() },
+                        onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
+                        onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
+                        onAutoTranslatePrefetchCountChange = { viewModel.setAutoTranslatePrefetchCount(it) },
+                        onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
+                        onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
+                        onOcrModelChange = { viewModel.setOcrModel(it) },
+                        onTranslationInpaintingModeChange = { viewModel.setTranslationInpaintingMode(it) },
+                        onTranslationEngineCategoryChange = { viewModel.setTranslationEngineCategory(it) },
+                        onTranslationStandardEngineChange = { viewModel.setTranslationStandardEngine(it) },
+                        onTranslationDeeplApiKeyChange = { viewModel.setTranslationDeeplApiKey(it) },
+                        onTranslationAiEngineChange = { viewModel.setTranslationAiEngine(it) },
+                        onTranslationAiApiKeyChange = { viewModel.setTranslationAiApiKey(it) },
+                        onTranslationAiBaseUrlChange = { viewModel.setTranslationAiBaseUrl(it) },
+                        onTranslationAiModelChange = { viewModel.setTranslationAiModel(it) },
+                        onFetchAiModels = { viewModel.fetchAiModels() },
                         queue = translationQueue,
                         translationProgress = translationProgress,
                         translationCurrentPage = translationCurrentPage,

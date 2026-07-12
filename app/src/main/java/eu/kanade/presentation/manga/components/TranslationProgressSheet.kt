@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -123,12 +124,17 @@ fun TranslationProgressSheet(
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.error,
                 )
-                snapshot.groupedFailures.entries.take(10).forEach { (reason, pageKeys) ->
+                val formattedFailures = remember(snapshot.groupedFailures) {
+                    snapshot.groupedFailures.entries.take(10).map { (reason, pageKeys) ->
+                        reason to pageKeys.take(8).joinToString(", ")
+                    }
+                }
+                formattedFailures.forEach { (reason, pagesString) ->
                     Text(
                         text = stringResource(
                             ATMR.strings.manga_batch_failure_group,
                             reason,
-                            pageKeys.take(8).joinToString(", "),
+                            pagesString,
                         ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,

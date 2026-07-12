@@ -98,23 +98,14 @@ internal class DownloadPageLoader(
     }
 
     fun resolveTranslatedStream(pageTranslation: PageTranslation): (() -> java.io.InputStream)? {
-        if (pageTranslation.renderedImageName != null) {
-            return translationManager.getRenderedImageStream(
-                manga.title,
-                source,
-                chapter.chapter.name,
-                chapter.chapter.scanlator,
-                pageTranslation.renderedImageName!!,
-            )
-        } else if (pageTranslation.displayImageName == pageTranslation.cleanedImageName &&
-            pageTranslation.cleanedImageName != null
-        ) {
+        val displayImageName = pageTranslation.displayImageName
+        if (displayImageName != null) {
             return translationManager.getCleanedImageStream(
                 manga.title,
                 source,
                 chapter.chapter.name,
                 chapter.chapter.scanlator,
-                pageTranslation.cleanedImageName!!,
+                displayImageName,
             )
         }
         return null

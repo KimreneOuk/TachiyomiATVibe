@@ -18,11 +18,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import eu.kanade.presentation.components.AdaptiveSheet
@@ -33,24 +31,23 @@ import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
-import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.StandardTranslatorKind
 import eu.kanade.translation.translator.TextTranslatorLanguage
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
-import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
-import tachiyomi.domain.translation.TranslationPreferences
+import tachiyomi.domain.translation.OcrModel
+import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
-import tachiyomi.presentation.core.util.collectAsState
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 /**
  * Compact Translation settings sheet shown from the reader overlay.
@@ -66,22 +63,28 @@ import uy.kohesive.injekt.api.get
  */
 @Composable
 fun TranslationSettingsSheet(
+    state: TranslationSettingsState,
     onDismissRequest: () -> Unit,
-    // TachiyomiAT: backs the "Stop all translation" row. Lets the user cancel
-    // every in-flight single-page/auto/batch translation job from the reader
-    // settings sheet — previously there was no way to stop translation at all
-    // short of navigating away or disabling the master toggle.
-    onStopAllTranslation: () -> Unit = {},
-    // TachiyomiAT: live queue to render in the QueueSection. Passed in from the
-    // activity (collected from viewModel.translationQueueState) so the sheet
-    // stays a stateless composable and the heavy per-page list only recomposes
-    // the sheet, not the reader. Plus the running-page index + totals for the
-    // summary line.
-    queue: List<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo> = emptyList(),
+    onStopAllTranslation: () -> Unit,
+    onTranslationEnabledChange: (Boolean) -> Unit,
+    onAutoTranslateChange: (Boolean) -> Unit,
+    onAutoTranslatePrefetchCountChange: (Int) -> Unit,
+    onTranslateFromLanguageChange: (String) -> Unit,
+    onTranslateToLanguageChange: (String) -> Unit,
+    onOcrModelChange: (OcrModel) -> Unit,
+    onTranslationInpaintingModeChange: (String) -> Unit,
+    onTranslationEngineCategoryChange: (TranslationEngineCategory) -> Unit,
+    onTranslationStandardEngineChange: (StandardEngine) -> Unit,
+    onTranslationDeeplApiKeyChange: (String) -> Unit,
+    onTranslationAiEngineChange: (AiEngine) -> Unit,
+    onTranslationAiApiKeyChange: (String) -> Unit,
+    onTranslationAiBaseUrlChange: (String) -> Unit,
+    onTranslationAiModelChange: (String) -> Unit,
+    onFetchAiModels: () -> Unit,
+    queue: ImmutableList<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo> = persistentListOf(),
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     translationCurrentPage: Int = 0,
 ) {
-    val prefs = remember { Injekt.get<TranslationPreferences>() }
     var showAdvanced by remember { mutableStateOf(false) }
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
@@ -92,14 +95,31 @@ fun TranslationSettingsSheet(
                 .padding(vertical = MaterialTheme.padding.medium),
             verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
         ) {
-            TogglesSection(prefs)
+            TogglesSection(
+                enabled = state.enabled,
+                autoTranslate = state.autoTranslate,
+                prefetchCount = state.autoTranslatePrefetchCount,
+                onTranslationEnabledChange = onTranslationEnabledChange,
+                onAutoTranslateChange = onAutoTranslateChange,
+                onAutoTranslatePrefetchCountChange = onAutoTranslatePrefetchCountChange,
+            )
             QueueSection(
                 queue = queue,
                 translationProgress = translationProgress,
                 translationCurrentPage = translationCurrentPage,
             )
             StopAllSection(onStopAllTranslation)
-            LanguagesSection(prefs)
+            LanguagesSection(
+                translateFromLanguage = state.translateFromLanguage,
+                translateToLanguage = state.translateToLanguage,
+                translationRecentLanguagesFrom = state.translationRecentLanguagesFrom,
+                translationRecentLanguagesTo = state.translationRecentLanguagesTo,
+                ocrModel = state.ocrModel,
+                ocrModelEntries = state.ocrModelEntries,
+                onTranslateFromLanguageChange = onTranslateFromLanguageChange,
+                onTranslateToLanguageChange = onTranslateToLanguageChange,
+                onOcrModelChange = onOcrModelChange,
+            )
             TextButton(
                 onClick = { showAdvanced = !showAdvanced },
                 modifier = Modifier.fillMaxWidth(),
@@ -112,8 +132,21 @@ fun TranslationSettingsSheet(
                 )
             }
             if (showAdvanced) {
-                InpaintSection(prefs)
-                EngineSection(prefs)
+                InpaintSection(
+                    inpaintingMode = state.inpaintingMode,
+                    onTranslationInpaintingModeChange = onTranslationInpaintingModeChange,
+                )
+                EngineSection(
+                    state = state,
+                    onTranslationEngineCategoryChange = onTranslationEngineCategoryChange,
+                    onTranslationStandardEngineChange = onTranslationStandardEngineChange,
+                    onTranslationDeeplApiKeyChange = onTranslationDeeplApiKeyChange,
+                    onTranslationAiEngineChange = onTranslationAiEngineChange,
+                    onTranslationAiApiKeyChange = onTranslationAiApiKeyChange,
+                    onTranslationAiBaseUrlChange = onTranslationAiBaseUrlChange,
+                    onTranslationAiModelChange = onTranslationAiModelChange,
+                    onFetchAiModels = onFetchAiModels,
+                )
             }
         }
     }
@@ -139,7 +172,7 @@ private fun ColumnScope.StopAllSection(onStopAllTranslation: () -> Unit) {
  */
 @Composable
 private fun ColumnScope.QueueSection(
-    queue: List<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo>,
+    queue: ImmutableList<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo>,
     translationProgress: Pair<Int, Int>,
     translationCurrentPage: Int,
 ) {
@@ -240,39 +273,43 @@ private fun QueueRow(info: eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedP
 }
 
 @Composable
-private fun ColumnScope.TogglesSection(prefs: TranslationPreferences) {
-    val enabledPref = prefs.translationEnabled()
-    val enabled by enabledPref.collectAsState()
-
+private fun ColumnScope.TogglesSection(
+    enabled: Boolean,
+    autoTranslate: Boolean,
+    prefetchCount: Int,
+    onTranslationEnabledChange: (Boolean) -> Unit,
+    onAutoTranslateChange: (Boolean) -> Unit,
+    onAutoTranslatePrefetchCountChange: (Int) -> Unit,
+) {
     SwitchPreferenceWidget(
         title = stringResource(ATMR.strings.pref_translation_enabled),
         checked = enabled,
-        onCheckedChanged = { enabledPref.set(it) },
+        onCheckedChanged = onTranslationEnabledChange,
     )
 
     // Auto mode + prefetch slider are only meaningful when translation is on.
     if (enabled) {
-        val autoPref = prefs.autoTranslate()
-        val auto by autoPref.collectAsState()
-
         SwitchPreferenceWidget(
             title = stringResource(ATMR.strings.pref_auto_translate),
             subtitle = stringResource(ATMR.strings.pref_auto_translate_summary),
-            checked = auto,
-            onCheckedChanged = { autoPref.set(it) },
+            checked = autoTranslate,
+            onCheckedChanged = onAutoTranslateChange,
         )
 
-        if (auto) {
-            PrefetchSlider(prefs)
+        if (autoTranslate) {
+            PrefetchSlider(
+                value = prefetchCount,
+                onValueChange = onAutoTranslatePrefetchCountChange,
+            )
         }
     }
 }
 
 @Composable
-private fun PrefetchSlider(prefs: TranslationPreferences) {
-    val pref = prefs.autoTranslatePrefetchCount()
-    val value by pref.collectAsState()
-
+private fun PrefetchSlider(
+    value: Int,
+    onValueChange: (Int) -> Unit,
+) {
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.extraSmall),
@@ -296,7 +333,7 @@ private fun PrefetchSlider(prefs: TranslationPreferences) {
         Slider(
             modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
             value = value.toFloat(),
-            onValueChange = { pref.set(it.toInt()) },
+            onValueChange = { onValueChange(it.toInt()) },
             valueRange = 1f..5f,
             steps = 3,
         )
@@ -304,7 +341,17 @@ private fun PrefetchSlider(prefs: TranslationPreferences) {
 }
 
 @Composable
-private fun ColumnScope.LanguagesSection(prefs: TranslationPreferences) {
+private fun ColumnScope.LanguagesSection(
+    translateFromLanguage: String,
+    translateToLanguage: String,
+    translationRecentLanguagesFrom: ImmutableList<String>,
+    translationRecentLanguagesTo: ImmutableList<String>,
+    ocrModel: OcrModel,
+    ocrModelEntries: ImmutableMap<OcrModel, String>,
+    onTranslateFromLanguageChange: (String) -> Unit,
+    onTranslateToLanguageChange: (String) -> Unit,
+    onOcrModelChange: (OcrModel) -> Unit,
+) {
     val fromLangs = remember {
         TextRecognizerLanguage.entries.associate { it.name to it.label }.toImmutableMap()
     }
@@ -315,46 +362,24 @@ private fun ColumnScope.LanguagesSection(prefs: TranslationPreferences) {
     SearchableLanguageRow(
         title = stringResource(ATMR.strings.pref_translate_from),
         entries = fromLangs,
-        valuePref = prefs.translateFromLanguage(),
-        recentPref = prefs.translationRecentLanguagesFrom(),
+        value = translateFromLanguage,
+        recentLangs = translationRecentLanguagesFrom,
+        onValueChange = onTranslateFromLanguageChange,
     )
-    OcrModelRow(prefs)
+    
+    EngineListRow(
+        title = stringResource(ATMR.strings.pref_ocr_model),
+        entries = ocrModelEntries,
+        value = ocrModel,
+        onValueChange = onOcrModelChange,
+    )
+    
     SearchableLanguageRow(
         title = stringResource(ATMR.strings.pref_translate_to),
         entries = toLangs,
-        valuePref = prefs.translateToLanguage(),
-        recentPref = prefs.translationRecentLanguagesTo(),
-    )
-}
-
-@Composable
-private fun ColumnScope.OcrModelRow(prefs: TranslationPreferences) {
-    val fromValue by prefs.translateFromLanguage().collectAsState()
-    val language = remember(fromValue) {
-        TextRecognizerLanguage.entries.firstOrNull { it.name == fromValue }
-            ?: TextRecognizerLanguage.CHINESE
-    }
-    val ocrPref = remember(language) {
-        OcrModelCatalog.preferenceFor(prefs, language)
-    }
-    val storedModel by ocrPref.collectAsState()
-    val selectedModel = remember(storedModel, language) {
-        OcrModelCatalog.coerce(storedModel, language)
-    }
-    LaunchedEffect(storedModel, selectedModel) {
-        if (storedModel != selectedModel) {
-            ocrPref.set(selectedModel)
-        }
-    }
-    val entries = remember(language) {
-        OcrModelCatalog.labelsFor(language)
-    }
-
-    EngineListRow(
-        title = stringResource(ATMR.strings.pref_ocr_model),
-        entries = entries,
-        value = selectedModel,
-        onValueChange = { ocrPref.set(it) },
+        value = translateToLanguage,
+        recentLangs = translationRecentLanguagesTo,
+        onValueChange = onTranslateToLanguageChange,
     )
 }
 
@@ -362,14 +387,10 @@ private fun ColumnScope.OcrModelRow(prefs: TranslationPreferences) {
 private fun SearchableLanguageRow(
     title: String,
     entries: Map<out String, String>,
-    valuePref: tachiyomi.core.common.preference.Preference<String>,
-    recentPref: tachiyomi.core.common.preference.Preference<String>,
+    value: String,
+    recentLangs: List<String>,
+    onValueChange: (String) -> Unit,
 ) {
-    val value by valuePref.collectAsState()
-    val recentRaw by recentPref.collectAsState()
-    val recentLangs = remember(recentRaw) {
-        TranslationPreferences.decodeRecentLanguages(recentRaw)
-    }
     SearchableListPreferenceWidget(
         value = value,
         title = title,
@@ -377,24 +398,15 @@ private fun SearchableLanguageRow(
         icon = null,
         entries = entries,
         recentItems = recentLangs,
-        onValueChange = { newValue ->
-            valuePref.set(newValue)
-            val updated = TranslationPreferences.encodeRecentLanguages(listOf(newValue) + recentLangs)
-            recentPref.set(updated)
-        },
+        onValueChange = onValueChange,
     )
 }
 
-/**
- * TachiyomiAT: reader-side inpaint-mode picker. Previously inpaint mode was
- * only configurable in global Settings. FAST = non-neural Telea fill; QUALITY
- * = neural AOT-GAN reconstruction. The preference is a raw stored string
- * ("FAST"/"QUALITY"), mapped to localized labels here.
- */
 @Composable
-private fun ColumnScope.InpaintSection(prefs: TranslationPreferences) {
-    val pref = prefs.translationInpaintingMode()
-    val value by pref.collectAsState()
+private fun ColumnScope.InpaintSection(
+    inpaintingMode: String,
+    onTranslationInpaintingModeChange: (String) -> Unit,
+) {
     val entries = mapOf(
         "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
         "FAST" to stringResource(ATMR.strings.pref_inpainting_mode_fast),
@@ -403,15 +415,23 @@ private fun ColumnScope.InpaintSection(prefs: TranslationPreferences) {
     EngineListRow(
         title = stringResource(ATMR.strings.pref_inpainting_mode),
         entries = entries,
-        value = value,
-        onValueChange = { pref.set(it) },
+        value = inpaintingMode,
+        onValueChange = onTranslationInpaintingModeChange,
     )
 }
 
 @Composable
-private fun ColumnScope.EngineSection(prefs: TranslationPreferences) {
-    val categoryPref = prefs.translationEngineCategory()
-    val category by categoryPref.collectAsState()
+private fun ColumnScope.EngineSection(
+    state: TranslationSettingsState,
+    onTranslationEngineCategoryChange: (TranslationEngineCategory) -> Unit,
+    onTranslationStandardEngineChange: (StandardEngine) -> Unit,
+    onTranslationDeeplApiKeyChange: (String) -> Unit,
+    onTranslationAiEngineChange: (AiEngine) -> Unit,
+    onTranslationAiApiKeyChange: (String) -> Unit,
+    onTranslationAiBaseUrlChange: (String) -> Unit,
+    onTranslationAiModelChange: (String) -> Unit,
+    onFetchAiModels: () -> Unit,
+) {
     val typeEntries = TranslationEngineCategory.entries.associateWith { entry ->
         when (entry) {
             TranslationEngineCategory.STANDARD -> stringResource(ATMR.strings.pref_translation_type_standard)
@@ -419,28 +439,38 @@ private fun ColumnScope.EngineSection(prefs: TranslationPreferences) {
         }
     }.toImmutableMap()
 
-    // TachiyomiAT: the top-level translator type (Standard vs AI model) is now
-    // switchable from inside the reader, not only global Settings. Previously
-    // this was a read-only TextPreferenceWidget (no-op click). The sub-engine
-    // rows below still render the per-category picker (MLKit/Google or provider
-    // + model) and reactively swap when the category changes.
     EngineListRow(
         title = stringResource(ATMR.strings.pref_translation_type),
         entries = typeEntries,
-        value = category,
-        onValueChange = { categoryPref.set(it) },
+        value = state.engineCategory,
+        onValueChange = onTranslationEngineCategoryChange,
     )
 
-    when (category) {
-        TranslationEngineCategory.STANDARD -> StandardEngineRows(prefs)
-        TranslationEngineCategory.AI_MODEL -> AiEngineRows(prefs)
+    when (state.engineCategory) {
+        TranslationEngineCategory.STANDARD -> StandardEngineRows(
+            standardEngine = state.standardEngine,
+            deeplApiKey = state.deeplApiKey,
+            onTranslationStandardEngineChange = onTranslationStandardEngineChange,
+            onTranslationDeeplApiKeyChange = onTranslationDeeplApiKeyChange,
+        )
+        TranslationEngineCategory.AI_MODEL -> AiEngineRows(
+            state = state,
+            onTranslationAiEngineChange = onTranslationAiEngineChange,
+            onTranslationAiApiKeyChange = onTranslationAiApiKeyChange,
+            onTranslationAiBaseUrlChange = onTranslationAiBaseUrlChange,
+            onTranslationAiModelChange = onTranslationAiModelChange,
+            onFetchAiModels = onFetchAiModels,
+        )
     }
 }
 
 @Composable
-private fun ColumnScope.StandardEngineRows(prefs: TranslationPreferences) {
-    val pref = prefs.translationStandardEngine()
-    val value by pref.collectAsState()
+private fun ColumnScope.StandardEngineRows(
+    standardEngine: StandardEngine,
+    deeplApiKey: String,
+    onTranslationStandardEngineChange: (StandardEngine) -> Unit,
+    onTranslationDeeplApiKeyChange: (String) -> Unit,
+) {
     val engines = StandardTranslatorKind.entries.associate {
         StandardEngine.valueOf(it.name) to it.label
     }.toImmutableMap()
@@ -448,122 +478,90 @@ private fun ColumnScope.StandardEngineRows(prefs: TranslationPreferences) {
     EngineListRow(
         title = stringResource(ATMR.strings.pref_standard_engine),
         entries = engines,
-        value = value,
-        onValueChange = { pref.set(it) },
+        value = standardEngine,
+        onValueChange = onTranslationStandardEngineChange,
     )
 
-    // DeepL is the only Standard engine that needs credentials; show its key
-    // row only when DeepL is selected so the user can configure it from the
-    // reader without leaving for global Settings.
-    if (value == StandardEngine.DEEPL) {
-        val apiKeyPref = prefs.translationDeeplApiKey()
-        val apiKey by apiKeyPref.collectAsState()
+    if (standardEngine == StandardEngine.DEEPL) {
         ApiKeyPreferenceWidget(
             title = stringResource(ATMR.strings.pref_deepl_api_key),
-            apiKey = apiKey,
+            apiKey = deeplApiKey,
             keySetLabel = stringResource(ATMR.strings.pref_ai_key_set),
             keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set),
-            onApiKeyChange = { apiKeyPref.set(it) },
+            onApiKeyChange = onTranslationDeeplApiKeyChange,
         )
     }
 }
 
 @Composable
-private fun ColumnScope.AiEngineRows(prefs: TranslationPreferences) {
-    val scope = rememberCoroutineScope()
+private fun ColumnScope.AiEngineRows(
+    state: TranslationSettingsState,
+    onTranslationAiEngineChange: (AiEngine) -> Unit,
+    onTranslationAiApiKeyChange: (String) -> Unit,
+    onTranslationAiBaseUrlChange: (String) -> Unit,
+    onTranslationAiModelChange: (String) -> Unit,
+    onFetchAiModels: () -> Unit,
+) {
     val providers = AiTranslatorKind.entries.associate { it.engine to it.label }.toImmutableMap()
-
-    val enginePref = prefs.translationAiEngine()
-    val aiEngine by enginePref.collectAsState()
-
-    val apiKeyPref = remember(aiEngine) { prefs.translationAiApiKey(aiEngine) }
-    val apiKey by apiKeyPref.collectAsState()
-    val baseUrlPref = remember(aiEngine) { prefs.translationAiBaseUrl(aiEngine) }
-    val baseUrl by baseUrlPref?.collectAsState() ?: remember { mutableStateOf("") }
-    val modelPref = remember(aiEngine) { prefs.translationAiModel(aiEngine) }
-    val currentModel by modelPref.collectAsState()
-    val recentPref = remember(aiEngine) { prefs.translationAiRecentModels(aiEngine) }
-    val recentRaw by recentPref.collectAsState()
-    val recentModels = remember(recentRaw) {
-        TranslationPreferences.decodeRecentModels(recentRaw)
-    }
-    var fetchState by remember(aiEngine) { mutableStateOf<AiModelListState>(AiModelListState.Idle) }
 
     EngineListRow(
         title = stringResource(ATMR.strings.pref_ai_provider),
         entries = providers,
-        value = aiEngine,
-        onValueChange = { enginePref.set(it) },
+        value = state.aiEngine,
+        onValueChange = onTranslationAiEngineChange,
     )
 
-    val apiKeyTitle = when (aiEngine) {
+    val apiKeyTitle = when (state.aiEngine) {
         AiEngine.GEMINI -> stringResource(ATMR.strings.pref_ai_api_key_gemini)
         AiEngine.OPENROUTER -> stringResource(ATMR.strings.pref_ai_api_key_openrouter)
         AiEngine.DEEPSEEK -> stringResource(ATMR.strings.pref_ai_api_key_deepseek)
         AiEngine.LMSTUDIO -> stringResource(ATMR.strings.pref_ai_base_url_lmstudio)
     }
-    if (aiEngine == AiEngine.LMSTUDIO && baseUrlPref != null) {
+    
+    if (state.aiEngine == AiEngine.LMSTUDIO) {
         EditTextPreferenceWidget(
             title = apiKeyTitle,
             subtitle = "%s",
             icon = null,
-            value = baseUrl,
+            value = state.aiBaseUrl,
             isValueValid = { true },
             normalizeValue = { AiModelFetcher.normalizeBaseUrl(it) },
             onConfirm = { newUrl ->
-                baseUrlPref.set(newUrl)
+                onTranslationAiBaseUrlChange(newUrl)
                 true
             },
         )
     } else {
         ApiKeyPreferenceWidget(
             title = apiKeyTitle,
-            apiKey = apiKey,
+            apiKey = state.aiApiKey,
             keySetLabel = stringResource(ATMR.strings.pref_ai_key_set),
             keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set),
-            onApiKeyChange = { apiKeyPref.set(it) },
+            onApiKeyChange = onTranslationAiApiKeyChange,
         )
     }
 
-    val missingConnectionMessage = if (aiEngine == AiEngine.LMSTUDIO) {
+    val missingConnectionMessage = if (state.aiEngine == AiEngine.LMSTUDIO) {
         stringResource(ATMR.strings.pref_ai_no_base_url)
     } else {
         stringResource(ATMR.strings.pref_ai_no_key)
     }
-    val hasConnection = if (aiEngine == AiEngine.LMSTUDIO) {
-        baseUrl.isNotBlank()
+    val hasConnection = if (state.aiEngine == AiEngine.LMSTUDIO) {
+        state.aiBaseUrl.isNotBlank()
     } else {
-        apiKey.isNotBlank()
+        state.aiApiKey.isNotBlank()
     }
 
-    val onFetch: () -> Unit = {
-        val key = apiKey
-        val url = baseUrl
-        fetchState = AiModelListState.Loading(if (aiEngine == AiEngine.LMSTUDIO) url else key)
-        scope.launch {
-            val result = AiModelFetcher.fetch(aiEngine, key, url)
-            fetchState = when (result) {
-                is AiModelFetcher.Result.Success -> AiModelListState.Loaded(result.models)
-                is AiModelFetcher.Result.InvalidKey -> AiModelListState.Failed("Invalid or expired API key")
-                is AiModelFetcher.Result.NoModels -> AiModelListState.Loaded(emptyList())
-                is AiModelFetcher.Result.Error -> AiModelListState.Failed(result.message)
-            }
-        }
-    }
-    val onSelectModel: (String) -> Unit = { id ->
-        modelPref.set(id)
-        recentPref.set(TranslationPreferences.encodeRecentModels(listOf(id) + recentModels))
-    }
     AiModelPickerWidget(
         title = stringResource(ATMR.strings.pref_engine_model),
-        currentModel = currentModel,
-        recentModels = recentModels,
-        listState = fetchState,
+        currentModel = state.aiModel,
+        recentModels = state.aiRecentModels,
+        listState = state.aiModelFetchState,
         hasApiKey = hasConnection,
         missingConnectionMessage = missingConnectionMessage,
-        onFetchModels = onFetch,
-        onSelectModel = onSelectModel,
-        onManualModel = onSelectModel,
+        onFetchModels = onFetchAiModels,
+        onSelectModel = onTranslationAiModelChange,
+        onManualModel = onTranslationAiModelChange,
     )
 }
 
@@ -574,7 +572,6 @@ private fun <T> ColumnScope.EngineListRow(
     value: T,
     onValueChange: (T) -> Unit,
 ) {
-    // Use the non-searchable ListPreferenceWidget for short engine lists.
     eu.kanade.presentation.more.settings.widget.ListPreferenceWidget(
         value = value,
         title = title,

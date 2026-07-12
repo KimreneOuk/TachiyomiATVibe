@@ -4,20 +4,17 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 
 /**
- * Single source of truth for the AI-translator prompts and the [SPEECH_TAG]
- * structural hint, shared by all four AI translators (DeepSeek, LM Studio,
- * Gemini, OpenRouter) so the localization guidance never diverges between
- * providers.
+ * Single source of truth for the AI-translator prompts and the [SPEECH_TAG] structural hint,
+ * shared by all four AI translators (DeepSeek, LM Studio, Gemini, OpenRouter) so localization
+ * guidance never diverges between providers.
  *
- * The [SPEECH_TAG] is a **positive-only** structural cue: a block INSIDE a speech
- * bubble (conversation) is tagged; free text (narration / self-dialogue) is left
- * untagged. The tag is embedded ONLY in the prompt INPUT — it is never stored on
- * the block and never echoed in output — and any accidental echo is stripped
- * defensively by [OcrArtifactSanitizer].
+ * The [SPEECH_TAG] is a **positive-only** cue: a block INSIDE a speech bubble is tagged; free text
+ * (narration / self-dialogue) is left untagged. It is embedded ONLY in prompt INPUT — never stored
+ * on the block, never echoed in output — and any accidental echo is stripped by [OcrArtifactSanitizer].
  *
- * Relies on the recognition engine populating `parentWidth/Height` for in-bubble
- * blocks. On the live path only [RoiPageRecognitionEngine] does this; the (unused)
- * ML Kit full-page engine does not, so tag-coverage is logged by the pipeline.
+ * Relies on the recognition engine populating `parentWidth/Height` for in-bubble blocks. On the live
+ * path only [RoiPageRecognitionEngine] does this; the (unused) ML Kit full-page engine does not,
+ * so tag-coverage is logged by the pipeline.
  *
  * [RoiPageRecognitionEngine]: eu.kanade.translation.recognition.RoiPageRecognitionEngine
  */
@@ -103,10 +100,8 @@ object TranslationPrompts {
         } else {
             "Return ONLY a JSON object with the same keys and array lengths as the input; each element is ONLY the translation string (no explanations)."
         }
-        // TachiyomiAT: the subject-inference guidance only helps for pro-drop
-        // source languages (Japanese/Chinese/Korean, plus the Romance pro-drop
-        // languages Spanish/Portuguese/Italian). For non-pro-drop sources it
-        // misleads the model into inventing omitted subjects that aren't there.
+        // Subject-inference guidance only helps pro-drop sources (JP/ZH/KO + Romance pro-drop).
+        // For non-pro-drop sources it misleads the model into inventing omitted subjects that aren't there.
         val sourceLanguageContext = if (isProDrop(from)) {
             """
             SOURCE-LANGUAGE CONTEXT: ${from.label} frequently omits subjects and pronouns (it is a pro-drop language). English requires an explicit subject. Infer the implied subject from the line itself, the surrounding blocks, and the provided "previous pairs" context, then choose ONE consistent pronoun and keep it. Never leave a subject ambiguous and never switch person mid-utterance.

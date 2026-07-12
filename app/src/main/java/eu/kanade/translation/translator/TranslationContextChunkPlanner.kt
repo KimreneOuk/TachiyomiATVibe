@@ -23,8 +23,15 @@ object TranslationContextChunkPlanner {
     // via TranslationPrompts.contextPrefix. Large enough for a small glossary
     // (~400) plus ~32 recent pairs; drops cleanly when exceeded.
     const val MAX_ROLLING_CONTEXT_TOKENS = 1_500
-    // Pair-count cap on the rolling recent-pairs window (token-capped separately).
+    // Pair-count cap on the rolling recent-pairs window.
     const val MAX_ROLLING_PAIRS = 32
+
+    /**
+     * TachiyomiAT: cap on past source->target pairs the Analytical-Mode sliding window
+     * retains for speaker/voice continuity, so a long chapter's history stays bounded
+     * instead of growing unboundedly into the prompt token budget.
+     */
+    const val MAX_PAST_TRANSLATION_PAIRS = 32
 
     enum class Profile {
         DEFAULT,
@@ -113,9 +120,7 @@ object TranslationContextChunkPlanner {
                     if (text.isBlank() || translation.isBlank() || translation == text) {
                         null
                     } else {
-                        // TachiyomiAT: tag the source side for in-bubble blocks so the
-                        // rolling context carries speaker (conversation) continuity
-                        // across chunk boundaries, not just the translation text.
+                        // Tag in-bubble source lines so rolling context carries speaker continuity across chunk boundaries.
                         val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
                             "[${TranslationPrompts.SPEECH_TAG}] "
                         } else {
@@ -130,6 +135,117 @@ object TranslationContextChunkPlanner {
             .toList()
             .takeLast(MAX_ROLLING_PAIRS)
         return lines.joinToString("\n")
+    }
+
+    /**
+     * TachiyomiAT: build a FUTURE-CONTEXT string from OCR'd-but-untranslated pages.
+     * Analytical Mode injects this so the model sees upcoming source text when
+     * translating the current chunk, preserving narrative/POV continuity. Returns
+     * "" when no page contributes non-blank text so callers can skip it cheaply.
+     */
+    fun buildFutureContext(upcoming: Collection<PageTranslation>): String {
+        if (upcoming.isEmpty()) return ""
+        val lines = upcoming.flatMap { page ->
+            page.blocks.mapNotNull { block ->
+                val text = block.text.trim()
+                if (text.isBlank()) null else {
+                    val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
+                        "[${TranslationPrompts.SPEECH_TAG}] "
+                    } else {
+                        ""
+                    }
+                    "$tag$text"
+                }
+            }
+        }
+        if (lines.isEmpty()) return ""
+        return lines.joinToString("\n")
+    }
+
+    /**
+     * TachiyomiAT: build a PAST-TRANSLATIONS string (source => target pairs) from freshly
+     * translated pages. The Analytical-Mode sliding window accumulates these across chunks
+     * for speaker/voice continuity. Returns "" when nothing is translated yet.
+     */
+    fun buildPastTranslations(translatedPages: Map<String, PageTranslation>): String {
+        val pairs = translatedPages.values.flatMap { page ->
+            page.blocks.mapNotNull { block ->
+                val translation = block.translation.trim()
+                val text = block.text.trim()
+                if (text.isBlank() || translation.isBlank() || translation == text) {
+                    null
+                } else {
+                    val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
+                        "[${TranslationPrompts.SPEECH_TAG}] "
+                    } else {
+                        ""
+                    }
+                    "$tag$text => $translation"
+                }
+            }
+        }
+        if (pairs.isEmpty()) return ""
+        return pairs.joinToString("\n")
+    }
+
+    /**
+     * TachiyomiAT: fold the Analytical-Mode SLIDING CONTEXT (past translated pairs +
+     * future source text) into a chunk's rolling-context buffer, since translators read
+     * only [TranslationContextChunk.rollingContext] via [TranslationPrompts.contextPrefix].
+     *
+     * Labelled sections let the model distinguish "already translated" (authoritative
+     * continuity) from "coming up next" (forward-looking). Token-safety mirrors
+     * [withRollingContext]: if the merged context overflows the rolling budget, the
+     * past/future sections are dropped so a runaway context can't squeeze the output
+     * cap toward the min floor, and the output cap is recomputed.
+     */
+    fun withSlidingContext(
+        chunk: TranslationContextChunk,
+        pastTranslations: String,
+        futureContext: String,
+        requestedOutputTokens: Int,
+        profile: Profile = Profile.DEFAULT,
+    ): TranslationContextChunk {
+        val constraints = constraintsFor(profile)
+        val trimmedPast = pastTranslations.trim()
+        val trimmedFuture = futureContext.trim()
+        if (trimmedPast.isEmpty() && trimmedFuture.isEmpty()) {
+            return chunk.withOutputCap(requestedOutputTokens, constraints)
+        }
+
+        val sb = StringBuilder()
+        val base = chunk.rollingContext.trim()
+        if (base.isNotEmpty()) {
+            sb.append(chunk.rollingContext)
+        }
+        if (trimmedPast.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("\n---\n")
+            sb.append("Past translations (already translated; reuse voice & terms):\n")
+            sb.append(trimmedPast)
+        }
+        if (trimmedFuture.isNotEmpty()) {
+            if (sb.isNotEmpty()) sb.append("\n---\n")
+            sb.append("Upcoming source text (for forward context only; do NOT translate now):\n")
+            sb.append(trimmedFuture)
+        }
+        val merged = sb.toString()
+
+        // Token-safety: if the merged context blows the rolling budget, fall back to
+        // the chunk's original rolling context (drop sliding sections) and re-derive
+        // the output cap — preserves continuity while keeping the prompt in budget.
+        val mergedTokens = estimateTokens(merged)
+        val maxContextPrompt = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
+        val overBudget = mergedTokens > constraints.maxRollingContextTokens ||
+            chunk.estimatedPromptTokens + mergedTokens - estimateTokens(chunk.rollingContext) > maxContextPrompt
+        if (overBudget) {
+            return chunk.withOutputCap(requestedOutputTokens, constraints)
+        }
+
+        val newEstimatedPrompt = chunk.estimatedPromptTokens + mergedTokens - estimateTokens(chunk.rollingContext)
+        return chunk.copy(
+            rollingContext = merged,
+            estimatedPromptTokens = newEstimatedPrompt,
+        ).withOutputCap(requestedOutputTokens, constraints)
     }
 
     private val encodingRegistry = com.knuddels.jtokkit.Encodings.newDefaultEncodingRegistry()

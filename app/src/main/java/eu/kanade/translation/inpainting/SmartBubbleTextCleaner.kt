@@ -14,12 +14,9 @@ class SmartBubbleTextCleaner(
     private val contextPad: Int = 10,
     private val textMaskPad: Int = 2,
     private val colorDistanceThreshold: Float = 45.0f,
-    // TachiyomiAT: 2 → 3 iterations. With faint-text detection now also keying off
-    // the ring-sampled background median (see generateTextMask), the text mask
-    // captures thinner/fainter strokes. Those strokes have thin anti-aliased edges
-    // that, after feathering, can leave a hairline of the original showing through
-    // the fill. One extra dilation pass grows the mask outward by a couple of px so
-    // the fill fully covers those edges before feathering softens the boundary.
+    // 2→3 iterations: faint-text detection captures thinner strokes whose
+    // anti-aliased edges show through the fill; the extra dilation pass grows
+    // the mask to cover them before feathering.
     private val dilationIterations: Int = 3,
     private val featherRadius: Int = 6,
 ) {
@@ -63,24 +60,18 @@ class SmartBubbleTextCleaner(
      * TachiyomiAT: FAST free-text erase driven by SOLID boxes (the prototype
      * `mask_mode = paddle_boxes` behavior for the non-neural path).
      *
-     * The boxes passed in are already the PaddleOCR-v6 line boxes back-projected
-     * to page coords by [AOTInpainting.refineFreeTextBoxes] (or a detector-v4
-     * fallback box when Paddle found no lines for a region). Each box is padded
-     * outward by [maskPad] and filled SOLID — NO `generateTextMask`, NO
-     * `buildLocalContrastTextMask`, NO faint-recovery. The prior bug was caused
-     * by shrinking/over-processing masks after detection; this is intentionally
-     * boring and direct: solid padded box → fill.
+     * Boxes are PaddleOCR-v6 line boxes back-projected to page coords by
+     * [AOTInpaintion.refineFreeTextBoxes] (or a detector-v4 fallback box). Each
+     * box is padded by [maskPad] and filled SOLID — no [generateTextMask], no
+     * faint-recovery. The prior bug came from shrinking/over-processing masks
+     * after detection; this path is deliberately direct: solid padded box → fill.
      *
-     * The fill itself reuses the cleaner's established background-estimate +
-     * feathered-blend machinery ([sampleBackgroundStats] →
-     * [buildLocalBackground] → [applyFeatheredFill]) so the color/feather
-     * behavior is consistent with [cleanSingleRegion]; only the *erase mask*
-     * source changes (solid boxes instead of detected pixels).
-     *
-     * Used by the FAST free-text route in [AOTInpainting.inpaintRegions] when
-     * Paddle-refined boxes are available. When `paddleDet` is null the caller
-     * keeps using [cleanRegions] (detector-v4 boxes + pixel heuristics), which
-     * remains the conservative fallback.
+     * The fill reuses the cleaner's background-estimate + feathered-blend
+     * machinery so behavior is consistent with [cleanSingleRegion]; only the
+     * erase-mask source differs. Used by the FAST route in
+     * [AOTInpaintion.inpaintRegions] when Paddle-refined boxes are available;
+     * [cleanRegions] (pixel heuristics) remains the conservative fallback when
+     * `paddleDet` is null.
      */
     fun fillSolidBoxes(
         image: Bitmap,
@@ -100,16 +91,13 @@ class SmartBubbleTextCleaner(
 
     /**
      * TachiyomiAT: body of [fillSolidBoxes] for one padded SOLID box. The erase
-     * mask is the SOLID padded box (no pixel-heuristic detection — see
-     * [fillSolidBoxes]), and the fill is the **Telea Fast Marching Method**
-     * ([FastMarchingMethod.inpaintTelea]) — the same algorithm the prototype
-     * demo's `method = "telea"` (`cv2.inpaint(INPAINT_TELEA)`) uses.
+     * mask is the solid padded box; the fill is the **Telea Fast Marching Method**
+     * ([FastMarchingMethod.inpaintTelea]) — same as the prototype's
+     * `cv2.inpaint(INPAINT_TELEA)`.
      *
      * Telea reconstructs each hole pixel from its known neighbours in fast-
-     * marching arrival order, so the surrounding gradient/texture flows in
-     * instead of a flat white block. A feathered blend ([featherAlpha] +
-     * [applyFeatheredFill]) softens the boundary between the reconstructed hole
-     * and the kept artwork.
+     * marching arrival order, so surrounding gradient/texture flows in rather
+     * than a flat block. A feathered blend softens the hole/artwork boundary.
      */
     private fun fillSolidRegion(
         image: Bitmap,
@@ -141,8 +129,7 @@ class SmartBubbleTextCleaner(
         val localX2 = x2 - cx1
         val localY2 = y2 - cy1
 
-        // The erase mask: the SOLID padded box. No text detection. Localized to
-        // the context crop and clamped to its bounds.
+        // Erase mask: the SOLID padded box (no pixel-heuristic detection).
         val fx1 = max(0, localX1 - maskPad)
         val fy1 = max(0, localY1 - maskPad)
         val fx2 = min(contextW, localX2 + maskPad)
@@ -161,15 +148,12 @@ class SmartBubbleTextCleaner(
             .coerceAtMost((localY2 - localY1).coerceAtLeast(1))
         val (scaledFeather, _) = BubbleCleanerMath.scaledMorphology(minRegionDim, featherRadius, dilationIterations)
 
-        // Telea Fast Marching Method reconstruction of the hole. inpaintTelea
-        // solves in place, so reconstruct on a COPY and leave contextPixels as
-        // the original for the feathered blend below. radius=3 matches the
-        // prototype (cv2.inpaint flag 3) and cleanBubbleGroupFmm.
+        // Telea reconstructs in place; copy so contextPixels stays original for the blend.
+        // radius=3 matches the prototype (cv2.inpaint flag 3) and cleanBubbleGroupFmm.
         val reconstructed = contextPixels.copyOf()
         FastMarchingMethod.inpaintTelea(reconstructed, solidMask, contextW, contextH, radius = 3)
 
-        // Feather-blend the reconstruction into the original so the hole boundary
-        // is a soft ramp, not a hard edge. alpha covers the mask core + ring.
+        // Feather-blend so the hole boundary is a soft ramp; alpha covers mask core + ring.
         val alpha = BubbleMaskBuilder.featherAlpha(solidMask, contextW, contextH, scaledFeather)
         val filled = applyFeatheredFill(contextPixels, reconstructed, alpha)
         System.arraycopy(filled, 0, resultPixels, 0, contextW * contextH)
@@ -210,7 +194,7 @@ class SmartBubbleTextCleaner(
         val localX2 = x2 - cx1
         val localY2 = y2 - cy1
 
-        // TachiyomiAT: scale the text-mask pad by region size (see cleanBubbleGroup).
+        // TachiyomiAT: scale text-mask pad by region size (see cleanBubbleGroup).
         val minRegionDim = min(localX2 - localX1, localY2 - localY1).coerceAtLeast(1)
         val mp = BubbleCleanerMath.scaledTextMaskPad(minRegionDim, textMaskPad)
         val ex1 = max(0, localX1 - mp)
@@ -267,11 +251,8 @@ class SmartBubbleTextCleaner(
             }
         }
         if (!hasAny) {
-            // TachiyomiAT: same faint-text recovery as cleanBubbleGroup's
-            // fallback. generateTextMask found nothing here either; try a
-            // lowered-threshold pass keyed off the ring median before resorting
-            // to the whole-box fill (which paints the median color over the
-            // entire box — the "gray rectangle" symptom on grayscale panels).
+            // Faint-text recovery (cf. cleanBubbleGroup): lowered-threshold pass
+            // keyed off the ring median before the whole-box "gray rectangle" fill.
             val singleBox = intArrayOf(ex1, ey1, ex2, ey2)
             val recovered = recoverFaintTextMask(
                 contextPixels,
@@ -308,9 +289,7 @@ class SmartBubbleTextCleaner(
         )
 
         var finalMask = combinedMask
-        // TachiyomiAT: scale morphology by region size so small free-text
-        // regions get a proportional feather + dilation (see cleanBubbleGroup).
-        // minRegionDim was computed above from the region box.
+        // TachiyomiAT: scale morphology by region size for proportional feather/dilation.
         val (scaledFeather, scaledDilation) = BubbleCleanerMath.scaledMorphology(minRegionDim, featherRadius, dilationIterations)
         finalMask = BubbleMaskBuilder.dilateMaskDisk(finalMask, contextW, contextH, scaledDilation)
         if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE) {
@@ -330,17 +309,14 @@ class SmartBubbleTextCleaner(
         }
         val alpha = BubbleMaskBuilder.featherAlpha(finalMask, contextW, contextH, scaledFeather)
 
-        // TachiyomiAT: activate feathering — same fix as cleanBubbleGroup. The
-        // fill region is the mask CORE plus the feather RING (alpha > 0), and
-        // buildLocalBackground interpolates a background for the ring too, so
-        // the blend produces a soft ramp instead of a hard 1px edge.
+        // TachiyomiAT: fill region = mask core + feather ring (alpha > 0), so
+        // buildLocalBackground interpolates the ring and the blend is a soft ramp.
         val fillMask = ByteArray(contextW * contextH)
         for (i in alpha.indices) {
             if (alpha[i] > 0f) fillMask[i] = 1
         }
 
-        // TachiyomiAT: local per-pixel background — same gray-rectangle fix as
-        // cleanBubbleGroup (see buildLocalBackground).
+        // TachiyomiAT: local per-pixel background — gray-rectangle fix (cf. cleanBubbleGroup).
         val localBg = buildLocalBackground(
             contextPixels,
             fillMask,
@@ -361,17 +337,13 @@ class SmartBubbleTextCleaner(
     }
 
     /**
-     * TachiyomiAT: recovery pass for the whole-box fallback. When
-     * generateTextMask returns an empty mask (all strokes fell under the normal
-     * threshold), re-scan each box with a MUCH lower threshold keyed off the
-     * ring-sampled background median (the most reliable background reference —
-     * it is sampled from the border ring AROUND the box, not the box interior).
-     * The lowered threshold catches the faint strokes the main pass missed, and
-     * removeEdgeTouchingComponents keeps the mask bounded to genuine text
-     * regions rather than bleeding to the box edges.
+     * TachiyomiAT: recovery pass when [generateTextMask] finds nothing. Re-scans
+     * each box with a much lower threshold keyed off the ring-sampled background
+     * median (reliable: sampled from the border ring, not the text-filled box),
+     * so faint strokes the main pass missed still register.
+     * removeEdgeTouchingComponents bounds the result to genuine text.
      *
-     * Returns a full-context-sized mask (contextW * contextH) — caller ANDs it
-     * into [combinedMask]. Empty if the recovery found nothing.
+     * Returns a full-context-sized mask; caller ANDs it into [combinedMask].
      */
     private fun recoverFaintTextMask(
         pixels: IntArray,
@@ -385,11 +357,8 @@ class SmartBubbleTextCleaner(
         val ringR = (stats.medianColor shr 16 and 0xFF).toFloat()
         val ringG = (stats.medianColor shr 8 and 0xFF).toFloat()
         val ringB = (stats.medianColor and 0xFF).toFloat()
-        // Floor threshold: lower than the main pass (45 → 12) so very faint
-        // strokes still register. The main pass already tried 45 (and a lowered
-        // value when clusters were close); this pass goes to the absolute floor
-        // and relies on removeEdgeTouchingComponents + downstream mask
-        // intersections to bound the region.
+        // Floor threshold (45 → 12) so faint strokes still register; bounded by
+        // removeEdgeTouchingComponents + downstream mask intersections.
         val floorThresh = 12.0f
         for (box in boxes) {
             val bx1 = box[0].coerceIn(0, contextW)
@@ -417,8 +386,7 @@ class SmartBubbleTextCleaner(
                 }
             }
             if (!zoneHasAny) continue
-            // Drop components that touch the zone edge (likely anti-aliasing
-            // bleed, not real text) — same hygiene as generateTextMask.
+            // Drop edge-touching components (likely anti-aliasing bleed, not text).
             val filtered = BubbleMaskBuilder.removeEdgeTouchingComponents(zoneMask, zoneW, zoneH)
             for (zy in 0 until zoneH) {
                 for (zx in 0 until zoneW) {
@@ -433,22 +401,15 @@ class SmartBubbleTextCleaner(
 
     /**
      * TachiyomiAT: last-resort fallback when even [recoverFaintTextMask] finds
-     * nothing. Instead of filling the ENTIRE box (which paints the median over
-     * everything — the "gray rectangle" / "too much space" symptom), set the
-     * mask ONLY on the actual pixels that differ from the ring median by more
-     * than a small epsilon. This catches anti-aliased text edges that the
-     * distance threshold missed, and bounds the filled region to where text
-     * actually is — preserving the background between strokes. If the image is
-     * genuinely uniform (no text, no edges), no pixels are set — preferable to
-     * a spurious full-box rectangle.
+     * nothing. Marks ONLY pixels differing from the ring median by > epsilon,
+     * rather than the whole box (avoids the "gray rectangle" / "too much space"
+     * artifact). Preserves inter-stroke background; no pixels set on uniform
+     * images.
      *
-     * Per-pixel (not bounding-rectangle): the earlier implementation found the
-     * tight bounds of differing pixels and then filled the WHOLE enclosing
-     * rectangle, erasing the gaps between strokes. That produced the reported
-     * "too much space" destruction. The downstream dilation
-     * ([BubbleMaskBuilder.dilateMask], now a true multi-pass grower) covers the
-     * anti-aliased fringe around each stroke pixel without erasing the inter-
-     * stroke background, so per-pixel marking is both safe and correct.
+     * Per-pixel (not bounding-rectangle): the old impl filled the whole
+     * enclosing rect and erased inter-stroke gaps. The downstream dilation
+     * ([BubbleMaskBuilder.dilateMask]) covers each stroke's anti-aliased fringe
+     * without erasing those gaps, so per-pixel marking is correct.
      */
     internal fun tightDifferenceMask(
         pixels: IntArray,
@@ -462,10 +423,7 @@ class SmartBubbleTextCleaner(
         val ringR = (stats.medianColor shr 16 and 0xFF)
         val ringG = (stats.medianColor shr 8 and 0xFF)
         val ringB = (stats.medianColor and 0xFF)
-        // Small epsilon: any pixel that differs from the background median at
-        // all is a candidate text/edge pixel. This is deliberately permissive —
-        // the goal is to mark "where the pixels aren't pure background" rather
-        // than the full OCR box.
+        // Permissive epsilon: marks any non-background pixel as a text candidate.
         val epsilon = 8
         for (box in boxes) {
             val bx1 = box[0].coerceIn(0, contextW)
@@ -583,30 +541,20 @@ class SmartBubbleTextCleaner(
         val mask = ByteArray(zoneW * zoneH)
         val bgCluster = findBackgroundCluster(pixels, x1, y1, zoneW, zoneH, contextW)
 
-        // TachiyomiAT: the in-box 2-cluster centroid (bgCluster) is a *noisy*
-        // background estimate because the box ITSELF is mostly text, so the
-        // "background" centroid drifts toward the text color. Faint strokes — whose
-        // color sits between true background and text — then fall UNDER the
-        // detection threshold and never get masked, leaving the original text
-        // faintly visible through the fill. The ring-sampled median
-        // (stats.medianColor) is a far more reliable background reference because
-        // it is sampled from the border ring AROUND the box, which is real
-        // background. Use BOTH references: a pixel is "text" if it differs from the
-        // in-box centroid OR from the ring median beyond the threshold. The OR
-        // catches faint strokes that the in-box centroid alone misses, without
-        // over-erasing, because removeEdgeTouchingComponents + the rounded-rect /
-        // bubble-interior mask intersection downstream still bound the mask to the
-        // text region.
+        // TachiyomiAT: the in-box bg centroid (bgCluster) drifts toward the text
+        // color when the box is mostly text, so faint strokes fall under threshold.
+        // The ring-sampled median (border ring = real background) is more reliable.
+        // Mark as text if a pixel differs from EITHER reference beyond threshold;
+        // the OR catches faint strokes while removeEdgeTouchingComponents + the
+        // downstream mask intersection bound the result to the text region.
         val ringR = (stats.medianColor shr 16 and 0xFF).toFloat()
         val ringG = (stats.medianColor shr 8 and 0xFF).toFloat()
         val ringB = (stats.medianColor and 0xFF).toFloat()
 
         var threshVal = colorDistanceThreshold
         if (bgCluster.foregroundDistance < threshVal * 1.5f) {
-            // Clusters are close (low-contrast text): lower the floor so faint
-            // strokes still clear the bar. Floor was 15; tighten to 12 so very
-            // faint anti-aliasing edges are captured, then cover their thin edges
-            // with the extra dilation pass below.
+            // Low-contrast text: lower threshold so faint strokes clear the bar;
+            // extra dilation covers their anti-aliased edges.
             threshVal = max(12.0f, bgCluster.foregroundDistance * 0.4f)
         }
 
@@ -616,12 +564,10 @@ class SmartBubbleTextCleaner(
                 val r = (px shr 16 and 0xFF).toFloat()
                 val g = (px shr 8 and 0xFF).toFloat()
                 val b = (px and 0xFF).toFloat()
-                // Distance from the in-box background centroid.
                 val dr = r - bgCluster.r
                 val dg = g - bgCluster.g
                 val db = b - bgCluster.b
                 val distFromCluster = sqrt(dr * dr + dg * dg + db * db)
-                // Distance from the ring-sampled true background median.
                 val drRing = r - ringR
                 val dgRing = g - ringG
                 val dbRing = b - ringB
@@ -716,34 +662,18 @@ class SmartBubbleTextCleaner(
 
     /**
      * TachiyomiAT: per-pixel LOCAL background color, replacing the single flat
-     * ring-median fill that produced the reported "gray rectangle over the
-     * whole bounding box" on grayscale/tinted backgrounds.
+     * ring-median fill that produced a "gray rectangle over the whole bounding
+     * box" on grayscale/tinted backgrounds.
      *
-     * The old fill painted every masked pixel with [BackgroundStats.medianColor]
-     * — one global color sampled from the border ring. On a grayscale manga
-     * panel or a tinted bubble, that median IS gray (~128), so the cleaned text
-     * region became a uniform gray patch regardless of the local artwork.
+     * For each masked pixel, averages surrounding non-masked background pixels
+     * in a box kernel with a Gaussian falloff (poor-man's inpaint: background
+     * is interpolated across the text hole). Background pixels keep their own
+     * color. [medianColor] is the fallback when no background falls in the
+     * kernel (degenerate all-masked case).
      *
-     * This builds a background estimate that varies per pixel: for each pixel,
-     * it averages the colors of the SURROUNDING non-masked (background) pixels
-     * within a box kernel, weighted by a Gaussian falloff so nearer background
-     * pixels count more. Background pixels keep their own color; masked pixels
-     * get the local-average background — i.e. the background is interpolated
-     * across the text hole (a poor-man's inpaint). On a gradient or textured
-     * background this matches the local artwork instead of one flat gray.
-     *
-     * [medianColor] is still used as a fallback: if no background pixels fall in
-     * the kernel (e.g. the mask fills the whole context — every neighbor is also
-     * masked), the pixel uses the ring median. This preserves the previous
-     * behavior in the degenerate all-masked case while fixing the common case.
-     *
-     * Cost is O(n·ksize²), the same complexity class as [buildFeatherAlpha]
-     * (which already does a per-pixel radius loop), so this is not a perf
-     * regression relative to the existing feather step.
-     *
-     * `internal` so [SmartBubbleTextCleanerTest] can exercise the pure
-     * pixel→color logic without an Android Bitmap (the public clean* API
-     * operates on android.graphics.Bitmap, which plain JVM tests can't load).
+     * Cost is O(n·ksize²), the same class as [buildFeatherAlpha], so no perf
+     * regression. `internal` so [SmartBubbleTextCleanerTest] can exercise it
+     * without an Android Bitmap.
      */
     internal fun buildLocalBackground(
         pixels: IntArray,
@@ -753,19 +683,14 @@ class SmartBubbleTextCleaner(
         medianColor: Int,
         preferFlatFill: Boolean = false,
         /**
-         * TachiyomiAT: optional constraint on which pixels are eligible to be
-         * sampled as background. When non-null, a pixel is only used as a
-         * background reference if it is NOT in [mask] AND IS in [bgSourceMask].
+         * TachiyomiAT: optional constraint on eligible background source pixels.
+         * When non-null, only pixels NOT in [mask] AND in [bgSourceMask] are used.
          *
-         * This is the fix for the color-bleed artifact: on a tinted page the
-         * bubble interior is one color (e.g. white) and the surrounding artwork
-         * is another (e.g. blue). Without a constraint, the directional/Gaussian
-         * background scan reaches past the bubble boundary into the artwork and
-         * pulls that color INTO the bubble fill, producing the reported blue
-         * patches inside cleaned speech bubbles. Passing the eroded bubble
-         * interior here keeps the background reference inside the bubble, so the
-         * fill matches the bubble's own background. Null (the free-text path
-         * with no parent bubble) preserves the original whole-context behavior.
+         * Fixes the color-bleed artifact where, on a tinted page, the background
+         * scan reached past the bubble boundary into surrounding artwork and
+         * pulled its color into the bubble fill. Passing the eroded bubble
+         * interior keeps the reference inside the bubble. Null preserves the
+         * whole-context behavior (free-text path with no parent bubble).
          */
         bgSourceMask: ByteArray? = null,
     ): IntArray {
@@ -786,14 +711,13 @@ class SmartBubbleTextCleaner(
         val r = max(2, featherRadius)
         val kernelGaussian = FloatArray(r * 2 + 1) { dy ->
             val fy = dy - r
-            // sigma ~ r/2 gives a gentle falloff over the kernel half-width.
+            // sigma ~ r/2 for gentle falloff over the kernel half-width.
             kotlin.math.exp(-(fy * fy).toFloat() / (2.0f * (r / 2.0f) * (r / 2.0f)))
         }
         val directionalBg = buildDirectionalBackground(pixels, mask, width, height, bgSourceMask)
 
-        // TachiyomiAT: a neighbor counts as a background reference only when it
-        // is outside [mask] AND (when a bgSourceMask is supplied) inside the
-        // allowed source region. Precompute this as an eligibility test.
+        // TachiyomiAT: neighbor is a background reference only when outside [mask]
+        // AND (if supplied) inside the allowed source region.
         fun isBgSource(ni: Int): Boolean {
             if (mask[ni] != 0.toByte()) return false
             return bgSourceMask == null || bgSourceMask[ni] != 0.toByte()
@@ -802,7 +726,6 @@ class SmartBubbleTextCleaner(
         for (y in 0 until height) {
             for (x in 0 until width) {
                 val idx = y * width + x
-                // Background pixels keep their own color — no estimation needed.
                 if (mask[idx] == 0.toByte()) {
                     bg[idx] = pixels[idx]
                     continue
@@ -837,8 +760,7 @@ class SmartBubbleTextCleaner(
                 } else if (directionalBg[idx] != 0) {
                     directionalBg[idx]
                 } else {
-                    // Degenerate: every neighbor is masked too. Fall back to the
-                    // ring median so the pixel isn't left as the original text.
+                    // Degenerate (all neighbors masked): fall back to ring median.
                     (0xFF shl 24) or (medianR shl 16) or (medianG shl 8) or medianB
                 }
             }
@@ -1058,10 +980,9 @@ class SmartBubbleTextCleaner(
         val bottomColor = IntArray(n)
         val bottomDist = IntArray(n) { Int.MAX_VALUE }
 
-        // TachiyomiAT: a pixel is a valid directional background anchor only
-        // when it is outside [mask] AND (when supplied) inside [bgSourceMask].
-        // Constraining the anchor stops the scan from reaching past the bubble
-        // boundary into the surrounding artwork (the color-bleed source).
+        // TachiyomiAT: anchor only when outside [mask] AND (if supplied) inside
+        // [bgSourceMask]; this stops the scan reaching past the bubble boundary
+        // into surrounding artwork (the color-bleed source).
         fun isAnchor(idx: Int): Boolean {
             if (mask[idx] != 0.toByte()) return false
             return bgSourceMask == null || bgSourceMask[idx] != 0.toByte()
@@ -1165,28 +1086,24 @@ class SmartBubbleTextCleaner(
         val darkPixelRatio: Float,
         val edgeDensity: Float,
         /**
-         * `0` marks a degenerate result from an empty ring (median defaults to
-         * `Color.WHITE`); callers must not trust its [medianColor] for a flat
-         * fill. Mirrors `BoundaryAwarePipeline.RegionStats.sampleCount`.
+         * `0` marks a degenerate empty-ring result (median defaults to
+         * `Color.WHITE`); callers must not trust its [medianColor] for a flat fill.
          */
         val sampleCount: Int,
     )
 
     /**
-     * TachiyomiAT: pure feathered-fill — the shared body of the
-     * cleanBubbleGroup / cleanSingleRegion fill loops, extracted so the
-     * feathering fix is unit-testable without an Android Bitmap.
+     * TachiyomiAT: pure feathered-fill, the shared body of cleanBubbleGroup /
+     * cleanSingleRegion, extracted so the feathering fix is unit-testable
+     * without an Android Bitmap.
      *
      * Blends each pixel where [alpha] > 0 between its original color and the
-     * [background] estimate, weighted by alpha:
-     *  - alpha == 0  → untouched (returned as the original pixel)
-     *  - alpha == 1  → fully replaced by background (mask core)
-     *  - 0 < alpha < 1 → soft ramp (feather ring), killing the hard 1px edge
+     * [background] estimate, weighted by alpha: 0 = untouched, 1 = replaced
+     * (mask core), in between = soft ramp (feather ring), killing the hard edge.
      *
-     * Returns a new IntArray; does not mutate [pixels]. The earlier inline
-     * loops gated on `mask != 0`, which skipped the entire feather ring and
-     * discarded the alpha map — see the activation fix in cleanBubbleGroup /
-     * cleanSingleRegion.
+     * Returns a new IntArray; does not mutate [pixels]. The earlier inline loops
+     * gated on `mask != 0`, which skipped the entire feather ring — see the
+     * activation fix in cleanBubbleGroup / cleanSingleRegion.
      */
     internal fun applyFeatheredFill(
         pixels: IntArray,
@@ -1195,7 +1112,6 @@ class SmartBubbleTextCleaner(
     ): IntArray {
         val n = minOf(pixels.size, background.size, alpha.size)
         val out = IntArray(pixels.size)
-        // Copy first so untouched (alpha==0) pixels keep their original value.
         System.arraycopy(pixels, 0, out, 0, pixels.size)
         for (i in 0 until n) {
             val a = alpha[i]
@@ -1225,9 +1141,9 @@ class SmartBubbleTextCleaner(
         private const val MIN_OCR_TEXT_MASK_COVERAGE = 3.0f
         private const val MAX_CACHED_PIXELS = 1_000_000
 
-        /** The fabricated default [BoundaryAwarePipeline] emits for an empty
-         *  containment seed (see computeContainment → buildSeedMask). Used to
-         *  detect an untrustworthy interior median so it is never painted. */
+        /** Fabricated default [BoundaryAwarePipeline] emits for an empty
+         *  containment seed; used to detect an untrustworthy interior median
+         *  so it is never painted. */
         private const val WHITE_ARGB = 0xFFFFFFFF.toInt()
     }
 

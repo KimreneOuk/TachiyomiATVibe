@@ -4,16 +4,7 @@ import android.os.Build
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
-/**
- * Minimal device diagnostics for the CPU-only ONNX runtime.
- *
- * This no longer selects an execution provider. Generic NNAPI/QNN registration
- * was removed from translation; future NPU work should live in a dedicated
- * Qualcomm QNN/QAIRT backend with converted models.
- */
 object DeviceCapability {
-
-    enum class EpStrategy { CPU }
 
     private val socManufacturer: String by lazy { readSocManufacturer() }
     private val socModel: String by lazy { readSocModel() }

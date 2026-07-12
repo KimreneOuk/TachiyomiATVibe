@@ -1,0 +1,106 @@
+package eu.kanade.translation.translator
+
+import io.kotest.matchers.shouldBe
+import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.test.runTest
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.fail
+import java.io.IOException
+
+class TranslationRetryTest {
+
+    @Test
+    fun `success on first attempt returns without retry`() = runTest {
+        var calls = 0
+        val result = withTranslationRetry(maxAttempts = 3, baseDelayMs = 1, logTag = "t") {
+            calls++
+            "ok"
+        }
+        result shouldBe "ok"
+        calls shouldBe 1
+    }
+
+    @Test
+    fun `transient IOException retried then succeeds`() = runTest {
+        var calls = 0
+        val result = withTranslationRetry(maxAttempts = 3, baseDelayMs = 1, logTag = "t") {
+            calls++
+            if (calls < 2) throw IOException("boom")
+            "ok"
+        }
+        result shouldBe "ok"
+        calls shouldBe 2
+    }
+
+    @Test
+    fun `rate limit message retried then succeeds`() = runTest {
+        var calls = 0
+        val result = withTranslationRetry(maxAttempts = 3, baseDelayMs = 1, logTag = "t") {
+            calls++
+            if (calls < 2) throw RuntimeException("429 Too Many Requests")
+            "ok"
+        }
+        result shouldBe "ok"
+        calls shouldBe 2
+    }
+
+    @Test
+    fun `exhaustion throws last transient error`() = runTest {
+        var calls = 0
+        val thrown = runCatching {
+            withTranslationRetry(maxAttempts = 3, baseDelayMs = 1, logTag = "t") {
+                calls++
+                throw IOException("503 Service Unavailable")
+            }
+        }.exceptionOrNull() ?: fail("expected IOException")
+        thrown.shouldBeInstanceOf<IOException>()
+        thrown.message shouldBe "503 Service Unavailable"
+        calls shouldBe 3
+    }
+
+    @Test
+    fun `non-transient error rethrows immediately`() = runTest {
+        var calls = 0
+        val thrown = runCatching {
+            withTranslationRetry(maxAttempts = 3, baseDelayMs = 1, logTag = "t") {
+                calls++
+                throw IllegalArgumentException("bad arg")
+            }
+        }.exceptionOrNull() ?: fail("expected IllegalArgumentException")
+        thrown.shouldBeInstanceOf<IllegalArgumentException>()
+        thrown.message shouldBe "bad arg"
+        calls shouldBe 1
+    }
+
+    @Test
+    fun `CancellationException propagates without retry`() = runTest {
+        var calls = 0
+        val thrown = runCatching {
+            withTranslationRetry(maxAttempts = 3, baseDelayMs = 1, logTag = "t") {
+                calls++
+                throw CancellationException("cancelled")
+            }
+        }.exceptionOrNull() ?: fail("expected CancellationException")
+        thrown.shouldBeInstanceOf<CancellationException>()
+        thrown.message shouldBe "cancelled"
+        calls shouldBe 1
+    }
+
+    @Test
+    fun `isTransientRateOrServerError detects rate limit phrasings`() {
+        IOException("timeout").isTransientRateOrServerError() shouldBe true
+        RuntimeException("429 Too Many Requests").isTransientRateOrServerError() shouldBe true
+        RuntimeException("Rate Limit Exceeded").isTransientRateOrServerError() shouldBe true
+        RuntimeException("503 Service Unavailable").isTransientRateOrServerError() shouldBe true
+        RuntimeException("connection timed out").isTransientRateOrServerError() shouldBe true
+        RuntimeException("overloaded").isTransientRateOrServerError() shouldBe true
+    }
+
+    @Test
+    fun `isTransientRateOrServerError rejects non-transient`() {
+        IllegalArgumentException("bad").isTransientRateOrServerError() shouldBe false
+        RuntimeException("Unrecognized auth token").isTransientRateOrServerError() shouldBe false
+        NullPointerException().isTransientRateOrServerError() shouldBe false
+    }
+}

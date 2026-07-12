@@ -42,8 +42,6 @@ object BoundaryAwarePipeline {
         val coverage: Float,
     )
 
-    // --- Tunable constants (internal, no settings surface) ---
-
     /** RGB Euclidean distance for flood inclusion. 35 captures minor shading
      *  (screentone base, gradient) without crossing a dark bubble outline. */
     private const val CONTAINMENT_DELTA = 35f
@@ -60,25 +58,19 @@ object BoundaryAwarePipeline {
     /**
      * Compute the true-flat-interior containment mask via BFS flood-fill.
      *
-     * Parented text seeds from the eroded detector-v4 bubble interior. Free
-     * text seeds from the border ring around the erase boxes. In both cases
-     * the flood expands through pixels whose color is close to the seed-area
-     * median, capped by [floodMargin], and stops at the first strong edge
-     * (bubble outline, panel border, artwork boundary).
-     *
-     * When the flood covers too little area (text sits on textured/edge content
-     * where no large connected background exists) the result falls back to a
-     * padded-union of [eraseBoxes] so the caller never over-constrains.
+     * Parented text seeds from the eroded detector-v4 bubble interior; free
+     * text seeds from the border ring around the erase boxes. The flood expands
+     * through pixels whose color is close to the seed-area median, capped by
+     * [floodMargin], and stops at the first strong edge (bubble outline, panel
+     * border, artwork boundary). When the flood covers too little area (text on
+     * textured/edge content) the result falls back to a padded-union of
+     * [eraseBoxes] so the caller never over-constrains.
      *
      * @param pixels context-crop ARGB pixels (contextW × contextH).
-     * @param contextW x-extent of [pixels].
-     * @param contextH y-extent of [pixels].
      * @param parentBubble detector-v4 bubble box in context-local coords, or
      *   null for free text. [x1, y1, x2, y2].
-     * @param eraseBoxes Paddle-v6 line boxes (the holes) in context-local
-     *   coords. At least one box must be non-empty.
-     * @return [ContainmentResult] with the containment mask (1 = interior),
-     *   the interior median color, the fallback flag, and coverage fraction.
+     * @param eraseBoxes Paddle-v6 line boxes (the holes) in context-local coords.
+     * @return [ContainmentResult] (mask 1 = interior, median, fallback, coverage).
      */
     fun computeContainment(
         pixels: IntArray,
@@ -117,7 +109,6 @@ object BoundaryAwarePipeline {
         val seedG = (interiorMedian shr 8 and 0xFF).toFloat()
         val seedB = (interiorMedian and 0xFF).toFloat()
 
-        // Determine flood bounds: bounding box of seed area + floodMargin.
         var minSx = contextW
         var minSy = contextH
         var maxSx = 0
@@ -136,7 +127,6 @@ object BoundaryAwarePipeline {
         val fx2 = min(contextW, maxSx + floodMargin + 1)
         val fy2 = min(contextH, maxSy + floodMargin + 1)
 
-        // Circular BFS queue.
         val queue = IntArray(n)
         var head = 0
         var tail = 0
@@ -345,8 +335,6 @@ object BoundaryAwarePipeline {
         )
     }
 
-    // ---- internal helpers ----
-
     private val colorDelta = CONTAINMENT_DELTA
     private val floodMargin = FLOOD_MARGIN
     private val minFloodFraction = MIN_FLOOD_FRACTION
@@ -399,7 +387,6 @@ object BoundaryAwarePipeline {
     ): Pair<ByteArray, Int> {
         if (eraseBoxes.isEmpty()) return Pair(ByteArray(w * h), 0xFFFFFFFF.toInt())
 
-        // Expand each box by a ring width, then subtract the inner area.
         val ringWidth = 12
         val ringEx1 = eraseBoxes.minOf { max(0, it[0] - ringWidth) }.coerceIn(0, w)
         val ringEy1 = eraseBoxes.minOf { max(0, it[1] - ringWidth) }.coerceIn(0, h)

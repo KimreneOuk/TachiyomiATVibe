@@ -3,35 +3,24 @@ package eu.kanade.translation.translator
 import java.util.regex.Pattern
 
 /**
- * Parses the numbered translation format emitted by chat-style LLM translators
- * (DeepSeek, LM Studio) that are prompted with:
+ * Parses the numbered translation format emitted by chat-style LLM translators (DeepSeek, LM Studio)
+ * that are prompted with `[index] translation`. Centralized (previously duplicated verbatim in
+ * [DeepSeekTranslator] and [LmStudioTranslator]) so a fix propagates from one tested source of truth.
  *
- *   [index] translation
+ * TachiyomiAT: STRICT no-fallback contract. The old parser had a positional fallback that assigned
+ * unnumbered prose lines to block indices 0, 1, 2, ... when no `[index]` line matched. That silently
+ * rescued malformed output, hiding the real failure mode (prose/refusal/partial response still
+ * "parsed", leaving blocks with junk or blank and the page slipping through as READY). Now nothing is
+ * guessed: a model that doesn't emit `[index] text` contributes nothing, blocks stay blank, and
+ * [TranslationBlockValidation] turns the page PARTIAL/FAILED so the cause is visible.
  *
- * Previously this exact parser was duplicated verbatim in [DeepSeekTranslator]
- * and [LmStudioTranslator]; a fix to one never propagated to the other.
- * Centralizing it gives a single tested source of truth.
- *
- * TachiyomiAT: STRICT no-fallback contract. The old parser had a positional
- * fallback that assigned unnumbered prose lines to block indices 0, 1, 2, ...
- * when no `[index]` line matched. That fallback silently rescued malformed
- * model output (a model that ignored the format but returned one translation
- * per line was treated as if it had obeyed), which hid the real failure mode
- * — a model returning prose, a refusal, or a partial response was still
- * "parsed", leaving some blocks with junk and some blank, and the page
- * slipped through as READY. Under the strict no-fallback policy nothing is
- * ever guessed: a model that does not emit the exact `[index] text` format
- * contributes nothing, the blocks stay blank, and [TranslationBlockValidation]
- * turns the page PARTIAL/FAILED so the cause is visible.
- *
- * Rejection rules (an entry that violates any rule is dropped, not guessed):
- *  - no `[index] text` prefix on the line — dropped (no positional fallback)
+ * Rejection rules (a violating entry is dropped, not guessed):
+ *  - no `[index] text` prefix — dropped (no positional fallback)
  *  - index outside `[0, expectedCount)` — dropped
- *  - duplicate index — the FIRST occurrence wins, later ones dropped
+ *  - duplicate index — FIRST occurrence wins, later dropped
  *  - blank translation — dropped
- *  - source-script leakage when [targetLang] is a non-CJK language — dropped.
- *    Guards against a model echoing e.g. `(笑)` back in an English translation.
- *    Pass `targetLang = null` to skip this check (pure-format-only callers).
+ *  - source-script leakage when [targetLang] is non-CJK — dropped (guards against e.g. `(笑)` echoed
+ *    in an English translation). Pass `targetLang = null` to skip (pure-format-only callers).
  */
 object NumberedLineResponseParser {
 
@@ -52,9 +41,8 @@ object NumberedLineResponseParser {
             if (idx < 0 || idx >= expectedCount) continue
             if (text.isBlank()) continue
             if (enforceNoCjkLeak && containsCjk(text)) continue
-            // First occurrence wins — a duplicate index means the model is
-            // confused, and silently overwriting would let a later junk line
-            // clobber an earlier good one.
+            // First occurrence wins: a duplicate index means the model is confused; overwriting
+            // would let a later junk line clobber an earlier good one.
             if (idx in result) continue
             result[idx] = text
         }

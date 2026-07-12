@@ -28,18 +28,6 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
 
     override suspend fun inpaint(bitmap: Bitmap, pageTranslation: PageTranslation): Bitmap? {
         return pageInpainter.inpaint(bitmap, pageTranslation)
-
-        // TachiyomiAT: a page with ZERO text blocks is a successful recognition
-        // of a textless image (splash page, art spread). Mark inpaint READY and
-        // bail — this is NOT a failure and must not increment retryCount, or
-        // auto-translate's dedup gate will re-enqueue the page on every
-        // navigation (the reported "keeps reprocessing the same image" bug).
-
-        // ML Kit mode has no neural inpainter, but there ARE text blocks to
-        // clean. Record the skip as a retryable failure (with a clear reason)
-        // so auto-translate's bounded retry can re-attempt it once the ONNX
-        // engine recovers, instead of silently marking inpaint FAILED forever.
-
     }
 
     private fun convertToPageTranslation(blocks: List<Text.TextBlock>, bitmap: Bitmap, width: Int, height: Int): PageTranslation {
@@ -57,10 +45,8 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
             val angle = block.lines.first().angle
             val isVertical = angle > 85f
             // TachiyomiAT: route through the shared estimator so ML Kit pages get
-            // the SAME fixed inverted/gray-snap logic as the ONNX path. The legacy
-            // local computeContrastColors() had correct constants but diverged
-            // from the ROI path's (buggy) copy — consolidating removes the
-            // divergence and the gray-text bug everywhere.
+            // the same fixed inverted/gray-snap logic as the ONNX path (the legacy
+            // local copy diverged and caused a gray-text bug).
             val contrastColors = RenderColorEstimator.estimate(
                 bitmap,
                 bounds.left, bounds.top, bounds.right, bounds.bottom,
@@ -82,11 +68,9 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
                     ),
                 )
             }
-        // TachiyomiAT: ML Kit emits one block per TextBlock with NO dedupe, so
-        // overlapping TextBlocks (a common ML Kit artefact on dense pages) both
-        // survive and render on top of each other. Apply the same geometric
-        // dedupe the ONNX path uses so both engines produce a clean block list.
-        // Runs before ocrBlockCount is set so the count reflects post-dedupe.
+        // TachiyomiAT: ML Kit emits one block per TextBlock with no dedupe, so
+        // overlapping TextBlocks on dense pages render on top of each other.
+        // Run before ocrBlockCount is set so the count reflects post-dedupe.
         if (translation.blocks.size > 1) {
             val deduped = PageTranslationHelper.dedupeGeometricOverlaps(translation.blocks.toList())
             if (deduped.size < translation.blocks.size) {

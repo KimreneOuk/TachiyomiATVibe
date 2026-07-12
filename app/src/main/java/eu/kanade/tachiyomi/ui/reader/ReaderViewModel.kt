@@ -60,6 +60,7 @@ import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,6 +73,23 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.toImmutableMap
+import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.StandardEngine
+import tachiyomi.domain.translation.TranslationEngineCategory
+import tachiyomi.domain.translation.TranslationPreferences
+import tachiyomi.domain.translation.OcrModel
+import eu.kanade.presentation.more.settings.widget.AiModelListState
+import eu.kanade.translation.ocr.OcrModelCatalog
+import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.AiModelFetcher
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.preference.toggle
@@ -123,7 +141,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private val translationScheduler: TranslationScheduler = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
     private val chapterCache: ChapterCache = Injekt.get(),
-    private val translationPreferences: tachiyomi.domain.translation.TranslationPreferences = Injekt.get(),
+    val translationPreferences: tachiyomi.domain.translation.TranslationPreferences = Injekt.get(),
 ) : ViewModel() {
 
     private val mutableState = MutableStateFlow(State())
@@ -139,15 +157,95 @@ class ReaderViewModel @JvmOverloads constructor(
      * (rather than a field on [State]) so a per-page list update doesn't force a
      * recompose of the whole reader.
      */
-    val translationQueueState: kotlinx.coroutines.flow.StateFlow<List<QueuedPageInfo>> =
+    val translationQueueState: kotlinx.coroutines.flow.StateFlow<ImmutableList<QueuedPageInfo>> =
         translationManager.activeStoreState
-            .map { pages -> buildQueuedPageInfo(pages) }
+            .map { pages -> buildQueuedPageInfo(pages).toImmutableList() }
             .distinctUntilChanged()
             .stateIn(
                 viewModelScope,
                 kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
-                emptyList(),
+                persistentListOf(),
             )
+
+    private val aiModelFetchState = MutableStateFlow<AiModelListState>(AiModelListState.Idle)
+
+    val translationSettingsState: kotlinx.coroutines.flow.StateFlow<TranslationSettingsState> = combine(
+        combine(
+            combine(
+                translationPreferences.translationEnabled().changes(),
+                translationPreferences.autoTranslate().changes(),
+                translationPreferences.autoTranslatePrefetchCount().changes(),
+                translationPreferences.translateFromLanguage().changes(),
+            ) { a, b, c, d -> Quad(a, b, c, d) },
+            combine(
+                translationPreferences.translationRecentLanguagesFrom().changes(),
+                translationPreferences.translateToLanguage().changes(),
+                translationPreferences.translationRecentLanguagesTo().changes(),
+                translationPreferences.translationInpaintingMode().changes()
+            ) { a, b, c, d -> Quad(a, b, c, d) }
+        ) { q1, q2 -> Pair(q1, q2) },
+        combine(
+            combine(
+                translationPreferences.translationEngineCategory().changes(),
+                translationPreferences.translationStandardEngine().changes(),
+                translationPreferences.translationDeeplApiKey().changes(),
+                translationPreferences.translationAiEngine().changes(),
+            ) { a, b, c, d -> Quad(a, b, c, d) },
+            aiModelFetchState
+        ) { q, fetchState -> Pair(q, fetchState) },
+        translationPreferences.translateFromLanguage().changes().flatMapLatest { fromValue ->
+            val language = TextRecognizerLanguage.entries.firstOrNull { it.name == fromValue } ?: TextRecognizerLanguage.CHINESE
+            val ocrPref = OcrModelCatalog.preferenceFor(translationPreferences, language)
+            ocrPref.changes().map { storedModel ->
+                val coerced = OcrModelCatalog.coerce(storedModel, language)
+                val labels = OcrModelCatalog.labelsFor(language)
+                coerced to labels
+            }
+        },
+        translationPreferences.translationAiEngine().changes().flatMapLatest { engine ->
+            val apiKeyFlow = translationPreferences.translationAiApiKey(engine).changes()
+            val baseUrlFlow = translationPreferences.translationAiBaseUrl(engine)?.changes() ?: kotlinx.coroutines.flow.flowOf("")
+            val modelFlow = translationPreferences.translationAiModel(engine).changes()
+            val recentModelsFlow = translationPreferences.translationAiRecentModels(engine).changes()
+            combine(apiKeyFlow, baseUrlFlow, modelFlow, recentModelsFlow) { apiKey, baseUrl, model, recentRaw ->
+                AiSubPrefs(apiKey, baseUrl, model, recentRaw)
+            }
+        }
+    ) { part1, part2, ocrInfo, aiSubPrefs ->
+        val (q1, q2) = part1
+        val (q3, fetchState) = part2
+        val (ocrModel, ocrModelEntries) = ocrInfo
+        
+        val recentLangsFrom = TranslationPreferences.decodeRecentLanguages(q2.a).toImmutableList()
+        val recentLangsTo = TranslationPreferences.decodeRecentLanguages(q2.c).toImmutableList()
+        val recentAiModels = TranslationPreferences.decodeRecentModels(aiSubPrefs.recentRaw).toImmutableList()
+
+        TranslationSettingsState(
+            enabled = q1.a,
+            autoTranslate = q1.b,
+            autoTranslatePrefetchCount = q1.c,
+            translateFromLanguage = q1.d,
+            translateToLanguage = q2.b,
+            translationRecentLanguagesFrom = recentLangsFrom,
+            translationRecentLanguagesTo = recentLangsTo,
+            ocrModel = ocrModel,
+            ocrModelEntries = ocrModelEntries,
+            inpaintingMode = q2.d,
+            engineCategory = q3.a,
+            standardEngine = q3.b,
+            deeplApiKey = q3.c,
+            aiEngine = q3.d,
+            aiApiKey = aiSubPrefs.apiKey,
+            aiBaseUrl = aiSubPrefs.baseUrl,
+            aiModel = aiSubPrefs.model,
+            aiRecentModels = recentAiModels,
+            aiModelFetchState = fetchState,
+        )
+    }.stateIn(
+        viewModelScope,
+        kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
+        TranslationSettingsState()
+    )
 
     /**
      * One row in the translation queue view. [index] is 1-based and stable
@@ -604,21 +702,13 @@ class ReaderViewModel @JvmOverloads constructor(
         }
         val translation = page.translation
         page.translatedStream = when {
-            translation?.renderedImageName != null -> translationManager.getRenderedImageStream(
+            translation?.displayImageName != null -> translationManager.getCleanedImageStream(
                 manga.title,
                 source,
                 chapter.chapter.name,
                 chapter.chapter.scanlator,
-                translation.renderedImageName!!,
+                translation.displayImageName!!,
             )
-            translation?.displayImageName == translation?.cleanedImageName &&
-                translation?.cleanedImageName != null -> translationManager.getCleanedImageStream(
-                    manga.title,
-                    source,
-                    chapter.chapter.name,
-                    chapter.chapter.scanlator,
-                    translation.cleanedImageName!!,
-                )
             else -> null
         }
         if (page.translatedStream == null) {
@@ -1040,7 +1130,7 @@ class ReaderViewModel @JvmOverloads constructor(
                         "index=${readerPage.index} storageKey=$pageKey " +
                         "lifecycle=${currentTranslation?.lifecycle ?: eu.kanade.translation.model.PageLifecycle.Pending} " +
                         "retry=${currentTranslation?.retryCount ?: 0} streamAvailable=${readerPage.originalStream != null || readerPage.imageUrl != null} " +
-                        "rendered=${currentTranslation?.renderedImageName != null} cleaned=${currentTranslation?.cleanedImageName != null} " +
+                        "cleaned=${currentTranslation?.cleanedImageName != null} " +
                         "reason=prefetch-memory-low"
                 }
                 continue
@@ -1913,6 +2003,97 @@ class ReaderViewModel @JvmOverloads constructor(
         recomputeTranslationState()
     }
 
+    fun setTranslationEnabled(enabled: Boolean) {
+        translationPreferences.translationEnabled().set(enabled)
+    }
+
+    fun setAutoTranslate(auto: Boolean) {
+        translationPreferences.autoTranslate().set(auto)
+    }
+
+    fun setAutoTranslatePrefetchCount(count: Int) {
+        translationPreferences.autoTranslatePrefetchCount().set(count)
+    }
+
+    fun setTranslateFromLanguage(language: String) {
+        translationPreferences.translateFromLanguage().set(language)
+        val recent = TranslationPreferences.decodeRecentLanguages(translationPreferences.translationRecentLanguagesFrom().get())
+        val updated = TranslationPreferences.encodeRecentLanguages(listOf(language) + recent)
+        translationPreferences.translationRecentLanguagesFrom().set(updated)
+    }
+
+    fun setTranslateToLanguage(language: String) {
+        translationPreferences.translateToLanguage().set(language)
+        val recent = TranslationPreferences.decodeRecentLanguages(translationPreferences.translationRecentLanguagesTo().get())
+        val updated = TranslationPreferences.encodeRecentLanguages(listOf(language) + recent)
+        translationPreferences.translationRecentLanguagesTo().set(updated)
+    }
+
+    fun setOcrModel(model: OcrModel) {
+        val fromValue = translationPreferences.translateFromLanguage().get()
+        val language = TextRecognizerLanguage.entries.firstOrNull { it.name == fromValue } ?: TextRecognizerLanguage.CHINESE
+        OcrModelCatalog.preferenceFor(translationPreferences, language).set(model)
+    }
+
+    fun setTranslationInpaintingMode(mode: String) {
+        translationPreferences.translationInpaintingMode().set(mode)
+    }
+
+    fun setTranslationEngineCategory(category: TranslationEngineCategory) {
+        translationPreferences.translationEngineCategory().set(category)
+    }
+
+    fun setTranslationStandardEngine(engine: StandardEngine) {
+        translationPreferences.translationStandardEngine().set(engine)
+    }
+
+    fun setTranslationDeeplApiKey(key: String) {
+        translationPreferences.translationDeeplApiKey().set(key)
+    }
+
+    fun setTranslationAiEngine(engine: AiEngine) {
+        translationPreferences.translationAiEngine().set(engine)
+    }
+
+    fun setTranslationAiApiKey(key: String) {
+        val engine = translationPreferences.translationAiEngine().get()
+        translationPreferences.translationAiApiKey(engine).set(key)
+    }
+
+    fun setTranslationAiBaseUrl(url: String) {
+        val engine = translationPreferences.translationAiEngine().get()
+        translationPreferences.translationAiBaseUrl(engine)?.set(url)
+    }
+
+    fun setTranslationAiModel(model: String) {
+        val engine = translationPreferences.translationAiEngine().get()
+        translationPreferences.translationAiModel(engine).set(model)
+        val recentPref = translationPreferences.translationAiRecentModels(engine)
+        val recentModels = TranslationPreferences.decodeRecentModels(recentPref.get())
+        recentPref.set(TranslationPreferences.encodeRecentModels(listOf(model) + recentModels))
+    }
+
+    fun fetchAiModels() {
+        val aiEngine = translationPreferences.translationAiEngine().get()
+        val key = translationPreferences.translationAiApiKey(aiEngine).get()
+        val url = translationPreferences.translationAiBaseUrl(aiEngine)?.get().orEmpty()
+        
+        aiModelFetchState.value = AiModelListState.Loading(if (aiEngine == AiEngine.LMSTUDIO) url else key)
+        viewModelScope.launch {
+            try {
+                val result = AiModelFetcher.fetch(aiEngine, key, url)
+                aiModelFetchState.value = when (result) {
+                    is AiModelFetcher.Result.Success -> AiModelListState.Loaded(result.models)
+                    is AiModelFetcher.Result.InvalidKey -> AiModelListState.Failed("Invalid or expired API key")
+                    is AiModelFetcher.Result.NoModels -> AiModelListState.Loaded(emptyList())
+                    is AiModelFetcher.Result.Error -> AiModelListState.Failed(result.message)
+                }
+            } catch (e: Exception) {
+                aiModelFetchState.value = AiModelListState.Failed(e.message ?: "Unknown error")
+            }
+        }
+    }
+
     /**
      * TachiyomiAT: cancel all translation work when the reader
      * is backgrounded or the activity is finishing. Previously, only onCleared()
@@ -2119,13 +2300,12 @@ class ReaderViewModel @JvmOverloads constructor(
                         }
                     }
                     val displayImageName = updated.displayImageName
-                    val hasRendered = updated.renderedImageName != null
-                    val hasCleaned = displayImageName != null && updated.cleanedImageName != null
+                    val hasCleaned = displayImageName != null
                     val isFailed = updated.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
                         updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED ||
                         updated.translationStatus == eu.kanade.translation.model.StageStatus.FAILED ||
                         updated.renderStatus == eu.kanade.translation.model.StageStatus.FAILED
-                    if (isFailed && !hasRendered && !hasCleaned) anyError = true
+                    if (isFailed && !hasCleaned) anyError = true
                     // TachiyomiAT: this per-page INFO log fires on every RUNNING
                     // stage of every page during a batch run — thousands of string
                     // interpolations + log dispatches on a busy chapter. Gate it
@@ -2142,12 +2322,12 @@ class ReaderViewModel @JvmOverloads constructor(
                             "TachiyomiAT live translation update: pageKey=$pageKey " +
                                 "ocr=${updated.ocrStatus} inpaint=${updated.inpaintStatus} " +
                                 "translate=${updated.translationStatus} render=${updated.renderStatus} " +
-                                "rendered=${updated.renderedImageName} cleaned=${updated.cleanedImageName} " +
+                                "cleaned=${updated.cleanedImageName} " +
                                 "error=${updated.errorMessage}"
                         }
                     }
                     if (displayImageName != null || updated.isTextlessTerminal) translatedCount++
-                    if (isFailed && !hasRendered && !hasCleaned) translatedCount++
+                    if (isFailed && !hasCleaned) translatedCount++
                     readerPage.translation = updated
                 }
                 state.value.viewerChapters?.currChapter?.let { current ->
@@ -2230,7 +2410,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 "[reader_translate_diag] observePageView pageIdx=${page.index} pageKey=$pageKey " +
                     "sourceFileName=${page.sourceFileName} storeSize=$storeSize hasKey=$hasKey " +
                     "sampleKeys=$sampleKeys " +
-                    "entryRendered=${entry?.renderedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus} render=${it.renderStatus}" }}"
+                    "entryCleaned=${entry?.cleanedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus} render=${it.renderStatus}" }}"
             }
         }
         return store.state
@@ -2243,7 +2423,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     }
                     return@onEach
                 }
-                val newlyFinished = updated.renderedImageName != null && page.translatedStream == null
+                val newlyFinished = updated.displayImageName != null && page.translatedStream == null
                 page.translation = updated
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
                 if (newlyFinished && translationPreferences.translationEnabled().get()) {
@@ -2254,9 +2434,6 @@ class ReaderViewModel @JvmOverloads constructor(
             .map { it.toPageView() }
             .distinctUntilChanged()
     }
-
-    private val ReaderPage.renderedImageName: String?
-        get() = translation?.renderedImageName
 
     /**
      * Resolves the page key the translator uses to write live updates, in order of
@@ -2298,3 +2475,36 @@ class ReaderViewModel @JvmOverloads constructor(
         data class RefreshTranslationPages(val pages: Set<ReaderPage>) : Event
     }
 }
+
+@Immutable
+data class TranslationSettingsState(
+    val enabled: Boolean = false,
+    val autoTranslate: Boolean = false,
+    val autoTranslatePrefetchCount: Int = 3,
+    val translateFromLanguage: String = "",
+    val translateToLanguage: String = "",
+    val translationRecentLanguagesFrom: ImmutableList<String> = persistentListOf(),
+    val translationRecentLanguagesTo: ImmutableList<String> = persistentListOf(),
+    val ocrModel: OcrModel = OcrModel.MLKIT,
+    val ocrModelEntries: ImmutableMap<OcrModel, String> = persistentMapOf(),
+    val inpaintingMode: String = "",
+    val engineCategory: TranslationEngineCategory = TranslationEngineCategory.STANDARD,
+    val standardEngine: StandardEngine = StandardEngine.GOOGLE,
+    val deeplApiKey: String = "",
+    val aiEngine: AiEngine = AiEngine.GEMINI,
+    val aiApiKey: String = "",
+    val aiBaseUrl: String = "",
+    val aiModel: String = "",
+    val aiRecentModels: ImmutableList<String> = persistentListOf(),
+    val aiModelFetchState: AiModelListState = AiModelListState.Idle,
+)
+
+private data class AiSubPrefs(
+    val apiKey: String,
+    val baseUrl: String,
+    val model: String,
+    val recentRaw: String,
+)
+
+private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
+
