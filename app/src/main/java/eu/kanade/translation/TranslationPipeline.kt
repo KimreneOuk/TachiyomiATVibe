@@ -450,16 +450,16 @@ class TranslationPipeline(
     }
 
     fun closeEngines() {
+        // Clear deduplication state before attempting the permit. If a worker
+        // currently owns it, closeEngines returns below, but future retries
+        // must not inherit stale keys from that abandoned worker.
+        inFlightPageKeys.clear()
         if (!translatorPermit.tryAcquire()) {
             enginesClosed = true
             return
         }
         try {
             enginesClosed = true
-            // Drop the in-flight dedup set so a page wedged in uncancellable native
-            // code when closeEngines ran can't stay blacklisted forever (the dedup
-            // gate would silently drop every future translate request for it).
-            inFlightPageKeys.clear()
             try { recognitionEngine.close() } catch (_: Exception) {}
             try { textTranslator.close() } catch (_: Exception) {}
         } finally {
