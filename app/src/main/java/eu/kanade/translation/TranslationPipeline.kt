@@ -693,6 +693,8 @@ class TranslationPipeline(
             }
         } ?: return  // timed out, failed, or resume-completed
 
+        persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+
         try {
             withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
                 translateSinglePageHttpRender(manga, chapter, source, pageKey, onnxResult)
@@ -752,6 +754,8 @@ class TranslationPipeline(
                 inFlightPageKeys.remove(pageKey)
             }
         } ?: return
+
+        persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
 
         try {
             withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
@@ -1139,6 +1143,7 @@ class TranslationPipeline(
                             tryRender(pageKey)
                             continue
                         }
+                        var targetForSend: PageTranslation? = null
                         withLeakProofPermit(
                             permit = translatorPermit,
                             timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
@@ -1210,14 +1215,11 @@ class TranslationPipeline(
                                     } else {
                                         tracker?.markInpaintRunning(pageKey)
                                         preflightInpaintGate(bitmap, pageKey)
-                                        inpaintPage(pageKey, bitmap, target, store, ensureCompanionDir)
+                                        inpaintPage(pageKey, bitmap, target, store)
                                         if (target.inpaintStatus == StageStatus.READY) tracker?.markInpaintDone(pageKey)
                                         else tracker?.markInpaintFailed(pageKey, target.errorMessage ?: "Inpaint failed")
                                     }
-                                    holdCleaned(pageKey, target.cleanedBitmap)
-                                    target.cleanedBitmap = null
-                                    send(pageKey to target)
-                                    tryRender(pageKey)
+                                    targetForSend = target
                                 } finally {
                                     try { bitmap.recycle() } catch (_: Exception) {}
                                     BitmapPool.releaseAll()
@@ -1231,6 +1233,27 @@ class TranslationPipeline(
                                 }
                                 tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
                             }
+                        }
+                        targetForSend?.let { target ->
+                            val cleaned = target.cleanedBitmap
+                            if (cleaned != null && target.cleanedImageName == null) {
+                                val companionDir = ensureCompanionDir()
+                                persistCleanedBitmap(target, cleaned, companionDir, pageKey)
+                                target.updatedAt = System.currentTimeMillis()
+                                store.updatePage(pageKey) { existing ->
+                                    (existing ?: target).apply {
+                                        cleanedImageName = target.cleanedImageName
+                                        inpaintRevision = target.inpaintRevision
+                                        inpaintStatus = target.inpaintStatus
+                                        errorMessage = target.errorMessage
+                                        updatedAt = target.updatedAt
+                                    }
+                                }
+                            }
+                            holdCleaned(pageKey, target.cleanedBitmap)
+                            target.cleanedBitmap = null
+                            send(pageKey to target)
+                            tryRender(pageKey)
                         }
                         val oomDecision = BatchOomPolicy.shouldAbort(consecutiveOomCount)
                         if (oomDecision.abort) {
@@ -1760,12 +1783,7 @@ class TranslationPipeline(
             try {
                 pageTranslation = processSinglePage(
                     pageKey, bitmap, decoded, store,
-                ) {
-                    provider.getCompanionImageDir(
-                        manga.title, source,
-                        chapter.name, chapter.scanlator,
-                    )
-                }
+                )
             } finally {
                 try { bitmap.recycle() } catch (_: Exception) {}
                 BitmapPool.releaseAll()
@@ -2109,6 +2127,36 @@ class TranslationPipeline(
         }
     }
 
+    private suspend fun persistOnnxCleanedImage(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        result: OnnxPhaseResult,
+    ) {
+        val page = result.pageTranslation
+        val cleaned = page.cleanedBitmap ?: return
+        if (page.cleanedImageName == null) {
+            val companionDir = provider.getCompanionImageDir(
+                manga.title,
+                source,
+                chapter.name,
+                chapter.scanlator,
+            )
+            persistCleanedBitmap(page, cleaned, companionDir, pageKey)
+        }
+        page.updatedAt = System.currentTimeMillis()
+        result.store.updatePage(pageKey) { existing ->
+            (existing ?: page).apply {
+                cleanedImageName = page.cleanedImageName
+                inpaintRevision = page.inpaintRevision
+                inpaintStatus = page.inpaintStatus
+                errorMessage = page.errorMessage
+                updatedAt = page.updatedAt
+            }
+        }
+    }
+
     private suspend fun renderResumedPage(
         manga: Manga,
         chapter: Chapter,
@@ -2445,7 +2493,6 @@ class TranslationPipeline(
         bitmap: Bitmap,
         pageTranslation: PageTranslation,
         store: ChapterTranslationStore,
-        ensureCompanionDir: suspend () -> UniFile?,
     ): PageTranslation {
         try {
             pageTranslation.inpaintStatus = StageStatus.RUNNING
@@ -2473,47 +2520,10 @@ class TranslationPipeline(
             return pageTranslation
         }
 
-        if (pageTranslation.cleanedBitmap != null) {
-            val cDir = ensureCompanionDir()
-            val safeName = fileName.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val cleanedFileName = "${safeName}.cleaned.jpg"
-            val cleanedFile = cDir?.createFile(cleanedFileName)
-            if (cleanedFile != null) {
-                cleanedFile.openOutputStream().use { os ->
-                    val encodeStart = System.nanoTime()
-                    pageTranslation.cleanedBitmap!!.compress(Bitmap.CompressFormat.JPEG, 90, os)
-                    logcat(LogPriority.INFO) {
-                        "[inpaint_encode] $fileName elapsedMs=${(System.nanoTime() - encodeStart) / 1_000_000}"
-                    }
-                }
-                pageTranslation.cleanedImageName = cleanedFileName
-                pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                pageTranslation.inpaintStatus = StageStatus.READY
-            } else {
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                // Bitmap produced but couldn't be persisted — first terminal stage.
-                pageTranslation.recordAttemptFailure()
-                pageTranslation.errorMessage =
-                    "Could not save cleaned image — translation output folder is unavailable. " +
-                        "Grant storage permission to the app and retry."
-                logcat(LogPriority.ERROR) {
-                    "Could not create cleaned image file for $fileName (cDir=${cDir == null}); inpaint FAILED"
-                }
-            }
-        } else {
-            // inpaint returned null: textless page or failure already recorded. Leave
-            // inpaintStatus as set by inpaint() (READY for textless, FAILED otherwise).
-        }
+        // JPEG persistence is deliberately performed after the permit-held ONNX
+        // phase. The cleaned bitmap remains available to the downstream render,
+        // while the next page can start native work during this CPU-only encode.
         pageTranslation.updatedAt = System.currentTimeMillis()
-        store.updatePage(fileName) {
-            (it ?: pageTranslation).apply {
-                cleanedImageName = pageTranslation.cleanedImageName
-                inpaintRevision = pageTranslation.inpaintRevision
-                inpaintStatus = pageTranslation.inpaintStatus
-                errorMessage = pageTranslation.errorMessage
-                updatedAt = System.currentTimeMillis()
-            }
-        }
         return pageTranslation
     }
 
@@ -2522,7 +2532,6 @@ class TranslationPipeline(
         bitmap: Bitmap,
         decoded: DecodedPage,
         store: ChapterTranslationStore,
-        ensureCompanionDir: suspend () -> UniFile?,
     ): PageTranslation {
         val pageStart = System.nanoTime()
         var pageTranslation: PageTranslation
@@ -2606,32 +2615,6 @@ class TranslationPipeline(
         // calls) can't observe a cancel, so one issued mid-call only lands at the next suspend
         // point. Drop out here so we don't render/translate/persist a page the caller no longer wants.
         coroutineContext.ensureActive()
-
-        if (pageTranslation.cleanedBitmap != null) {
-            // Persist the cleaned image but keep cleanedBitmap alive for the render stage.
-            val cDir = ensureCompanionDir()
-            val safeName = fileName.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            val cleanedFileName = "${safeName}.cleaned.jpg"
-            val cleanedFile = cDir?.createFile(cleanedFileName)
-            if (cleanedFile != null) {
-                cleanedFile.openOutputStream().use { os ->
-                    pageTranslation.cleanedBitmap!!.compress(Bitmap.CompressFormat.JPEG, 90, os)
-                }
-                pageTranslation.cleanedImageName = cleanedFileName
-                pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                pageTranslation.inpaintStatus = StageStatus.READY
-            } else {
-                // Surface the storage failure so it's distinguishable from "no text detected".
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.errorMessage =
-                    "Could not save cleaned image — translation output folder is unavailable. " +
-                    "Grant storage permission to the app and retry."
-                logcat(LogPriority.ERROR) {
-                    "Could not create cleaned image file for $fileName " +
-                        "(cDir=${cDir == null}); inpaint marked FAILED"
-                }
-            }
-        }
 
         return pageTranslation
     }
