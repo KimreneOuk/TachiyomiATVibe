@@ -23,6 +23,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -43,6 +44,7 @@ import java.util.concurrent.atomic.AtomicLong
 class TranslationScheduler(
     private val executor: TranslationExecutor,
     private val storeResolver: TranslationStoreResolver,
+    private val immediateStoreResolver: ((Long) -> ChapterTranslationStore?)? = null,
 ) : java.io.Closeable {
 
     override fun close() {
@@ -440,6 +442,10 @@ class TranslationScheduler(
     private suspend fun markPageCancelled(chapter: Chapter, pageKey: String) {
         val chapterId = chapter.id ?: return
         val store = storeResolver.resolve(chapterId) ?: return
+        markPageCancelled(store, pageKey)
+    }
+
+    private suspend fun markPageCancelled(store: ChapterTranslationStore, pageKey: String) {
         // Peek first: if no entry or already terminal, nothing is stranded — skip
         // the write rather than creating a spurious FAILED entry.
         val existing = store.state.value[pageKey] ?: return
@@ -495,6 +501,12 @@ class TranslationScheduler(
         val job = synchronized(activePageJobs) { activePageJobs.remove(jobKey) }
         job?.cancel()
         val autoCancelled = cancelAutoTranslations(chapterId)
+        // The reader's stop action is synchronous. Flip the shared store before
+        // returning so the UI cannot remain stuck on RUNNING while the cancelled
+        // worker is still unwinding its coroutine finally block.
+        immediateStoreResolver?.invoke(chapterId)?.let { store ->
+            runBlocking { markPageCancelled(store, pageKey) }
+        }
         return job != null || autoCancelled
     }
 

@@ -83,6 +83,7 @@ class TranslationManager(
         storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { chapterId ->
             activeTranslationStores[chapterId]
         },
+        immediateStoreResolver = { chapterId -> activeTranslationStores[chapterId] },
     )
 
     init {
