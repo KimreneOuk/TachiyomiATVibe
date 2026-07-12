@@ -286,7 +286,13 @@ class TranslationPipeline(
                 "TachiyomiAT permit-watchdog FORCE-RELEASED after ${timeoutMs}ms " +
                     "(worker stuck in uncancellable code): pageKey=$pageKey chapterId=$chapterId"
             }
-            onPageStuck?.invoke(chapterId, pageKey)
+            try {
+                onPageStuck?.invoke(chapterId, pageKey)
+            } catch (e: Throwable) {
+                logcat(LogPriority.WARN, e) {
+                    "TachiyomiAT permit-watchdog onPageStuck threw: pageKey=$pageKey"
+                }
+            }
             // Clear caller bookkeeping (e.g. inFlightPageKeys) BEFORE freeing the
             // permit: the worker's own finally is unreachable while stuck in native code.
             try {
