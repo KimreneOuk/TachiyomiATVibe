@@ -1,6 +1,7 @@
 package eu.kanade.translation.runtime.onnx
 
 import android.content.Context
+import eu.kanade.translation.util.ModelDeployment
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.File
@@ -197,32 +198,42 @@ class OnnxModelStore(private val context: Context) {
     private fun copyIfNeeded(dir: File, name: String, assetPath: String): File {
         val dest = File(dir, name)
         val stampFile = File(dir, "$name.version")
-        val expectedStamp = "$MODEL_ASSET_VERSION:$assetPath"
+        // Fast path: cached file exists and its recorded stamp matches the
+        // version marker + asset path prefix. This avoids hashing the bundled
+        // asset on every app start; the per-file ONNX integrity check below is
+        // the corruption guard (truncation / wrong magic catches the common
+        // cases cheaply). Full content-hash validation runs only at deploy
+        // time (computeExpectedStamp below) so its cost is paid once per
+        // actual re-copy, not per start.
+        val expectedPrefix = "$MODEL_ASSET_VERSION:$assetPath:"
         if (dest.exists() && dest.length() > 0) {
-            val stampMatches = stampFile.isFile && runCatching {
-                stampFile.readText(Charsets.UTF_8) == expectedStamp
-            }.getOrDefault(false)
-            if (stampMatches && name.endsWith(".onnx")) {
-                if (looksLikeValidOnnx(dest)) return dest
-                // Cached copy is structurally invalid (truncated/corrupt). A bad
-                // .onnx previously passed the old 0x08 check and produced garbage
-                // all-gray inpaint or an opaque OrtException; delete to re-copy.
-                logcat(LogPriority.WARN) {
-                    "Cached $name failed ONNX integrity check (size=${dest.length()}); re-copying from assets"
+            val cachedStamp = ModelDeployment.readStamp(stampFile)
+            val prefixMatches = cachedStamp != null && cachedStamp.startsWith(expectedPrefix)
+            if (prefixMatches) {
+                if (name.endsWith(".onnx")) {
+                    if (looksLikeValidOnnx(dest)) return dest
+                    // Cached copy is structurally invalid (truncated/corrupt).
+                    // A bad .onnx previously passed the old 0x08 check and
+                    // produced garbage all-gray inpaint or an opaque
+                    // OrtException; delete to re-copy.
+                    logcat(LogPriority.WARN) {
+                        "Cached $name failed ONNX integrity check (size=${dest.length()}); re-copying from assets"
+                    }
+                    if (!dest.delete()) {
+                        logcat(LogPriority.WARN) { "Could not delete corrupt cached $name; attempting overwrite" }
+                    }
+                } else {
+                    return dest
+                }
+            } else {
+                logcat(LogPriority.INFO) {
+                    "Cached $name has a stale or missing asset stamp; replacing bundled model copy"
                 }
                 if (!dest.delete()) {
-                    logcat(LogPriority.WARN) { "Could not delete corrupt cached $name; attempting overwrite" }
+                    logcat(LogPriority.WARN) { "Could not delete stale cached $name; attempting overwrite" }
                 }
-            } else if (stampMatches) {
-                return dest
+                stampFile.delete()
             }
-            logcat(LogPriority.INFO) {
-                "Cached $name has no current asset stamp; replacing bundled model copy"
-            }
-            if (!dest.delete()) {
-                logcat(LogPriority.WARN) { "Could not delete stale cached $name; attempting overwrite" }
-            }
-            stampFile.delete()
         }
 
         logcat(LogPriority.INFO) { "Copying model from assets: $assetPath -> ${dest.absolutePath}" }
@@ -237,12 +248,18 @@ class OnnxModelStore(private val context: Context) {
                 outputStream.write(buffer, 0, bytesRead)
             }
             outputStream.flush()
-            runCatching { stampFile.writeText(expectedStamp, Charsets.UTF_8) }
-                .onFailure { e ->
-                    logcat(LogPriority.WARN, e) {
-                        "Copied $assetPath but could not write its cache stamp"
-                    }
+            // Compute the stamp from the bundled asset now that we know it needs
+            // deploying, and write it so the next call's fast path can validate.
+            // The stamp embeds the full SHA-256 so a future build-time-hash
+            // Gradle task can compare expected vs cached without re-hashing at
+            // runtime; today the hash is written-but-not-compared on the fast
+            // path (the ONNX header check is the corruption guard instead).
+            val expectedStamp = computeExpectedStamp(assetPath)
+            if (!ModelDeployment.writeStamp(stampFile, expectedStamp)) {
+                logcat(LogPriority.WARN) {
+                    "Copied $assetPath but could not write its cache stamp"
                 }
+            }
             logcat(LogPriority.INFO) { "Copied $assetPath (${dest.length()} bytes)" }
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to copy $assetPath" }
@@ -252,6 +269,17 @@ class OnnxModelStore(private val context: Context) {
             outputStream?.close()
         }
         return dest
+    }
+
+    /**
+     * Computes the deployment stamp for [assetPath] from the bundled asset
+     * stream. Called only when deploying (not on the fast path), so the cost of
+     * hashing the full asset is paid once per actual re-copy, not per app start.
+     */
+    private fun computeExpectedStamp(assetPath: String): String {
+        return context.assets.open(assetPath).use { stream ->
+            ModelDeployment.computeStamp(MODEL_ASSET_VERSION, assetPath, stream)
+        }
     }
 
     /**
@@ -298,8 +326,11 @@ class OnnxModelStore(private val context: Context) {
     }
 
     private companion object {
-        // Bump whenever bundled model bytes change. Existing caches without this
-        // stamp are deliberately recopied once after the deployment fix ships.
+        // Bundled-model generation label. Bump when shipping a new model
+        // generation; the per-asset SHA-256 in ModelDeployment.computeStamp
+        // already auto-detects byte-level changes to a cached file. This label
+        // exists so a forced re-deploy can ship WITHOUT a byte change (e.g.
+        // fixing a corrupt bundle whose hash happens to match an older cache).
         const val MODEL_ASSET_VERSION = "quality-2026-07-12-v1"
         // Real models are multi-MB (AOT ~23MB); below 64 KiB is certainly truncated.
         const val MIN_VALID_ONNX_BYTES = 64L * 1024L
