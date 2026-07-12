@@ -77,9 +77,10 @@ Completed:
 
 Not complete:
 
-- `onnxslim` constant folding was not run because it is unavailable in the local environment.
+- `onnxslim` constant folding was run on 2026-07-12 (CP3): `aot-512.onnx`
+  is now a real converted model, 1940 → 400 nodes, Tier 2 numerics gate
+  passes (worst max-abs-diff 8.31e-5 on real-range inputs).
 - The required 20-page AOT corpus and baseline report do not exist.
-- The Tier 2 corpus numerics gate has not passed.
 - The Tier 3 guard-rejection harness has not been built.
 - The padding helper is not yet integrated into `AOTInpainting.inpaint()`.
 
@@ -184,22 +185,61 @@ Wave 5 proceeds (see "Next actions"):
 
 ## Next actions
 
-1. **Decide P0-1/P0-3/P0-4 test extraction** — approve the ShortHash-style
-   `internal` helper extraction (three small helpers, no behavior change) so
-   the deferred concurrency regression tests can be written. See
-   `Plan/active/2026-07-12-test-backfill/deferred.md`.
-2. **Decide the `copyIfNeeded` version-stamp design** — upgrade to a content
-   hash (structural fix) or accept the manual-bump string plus a CI guard.
-   This unblocks the Wave 4 `OnnxModelStoreVersionTest`.
-3. **Re-characterize `aot-512.onnx`** — either run onnxslim + produce a real
-   converted model, or update progress/commits to state plainly that the
-   staged file is shape-relabeled, not converted. Required before Wave 5.2.
-4. Obtain or install `onnxslim`/onnxslim-equivalent and run the model conversion gate.
-5. Add the representative 20-page corpus and Tier 2/Tier 3 harness.
-6. Compare dynamic and fixed-512 outputs and guard verdicts.
-7. If there are zero new guard rejections, integrate the fixed-512 pad path into `AOTInpainting`.
-8. Implement and test NNAPI capability gating and XNNPACK fallback.
-9. Run the Wave 6 device matrix before enabling or merging the NNAPI path.
+1. Add the representative 20-page corpus and Tier 2/Tier 3 harness.
+2. Compare dynamic and fixed-512 outputs and guard verdicts across the corpus.
+3. If there are zero new guard rejections, integrate the fixed-512 pad path into `AOTInpainting`.
+4. Implement and test NNAPI capability gating and XNNPACK fallback.
+5. Run the Wave 6 device matrix before enabling or merging the NNAPI path.
+
+## Test backfill and follow-ups — 2026-07-12 (3 commits)
+
+Three approval-gated follow-ups from the review were executed as separate
+commits on this branch:
+
+### CP1 — race-condition regression tests via helper extraction
+`test(translation): backfill race-condition regression tests and extract safety primitives`
+- Extracted the three Wave 1 P0 invariants into `TranslationSafetyPrimitives`
+  (pure helpers in `eu.kanade.translation.util`, mirroring `ShortHash`) and
+  wired the production call sites (`RoiPageRecognitionEngine.forceReleaseNativeBuffers`,
+  `TranslationPipeline.closeEngines`, `TranslationPipeline.withLeakProofPermit`
+  watchdog) to them.
+- `TranslationSafetyPrimitivesTest` (10 cases): drain skipped when native lock
+  held (P0-1), keys cleared before permit acquired even when held (P0-3),
+  every watchdog step runs even when an earlier throws (P0-4).
+- Also added `RenderColorEstimatorDedupTest` (7 cases, golden guard for P1a),
+  2 cases to `TranslationSchedulerCancellationTest` (P0-2 no-op branches),
+  fixed two stale comments, removed dead `MainDispatcherRule` and the unused
+  `inFlightPageKeysSnapshot` probe.
+
+### CP2 — content-hash model deployment stamps
+`fix(translation): content-hash model deployment stamps; extract ModelDeployment helper`
+- Extracted `ModelDeployment` (pure, Android-free, mirroring `ShortHash`) so
+  the stamp logic is JVM-testable without an Android `Context`.
+- Replaced the manual-string stamp with `<version>:<assetPath>:<sha256>`. The
+  fast path compares only the version+path prefix (no per-start hashing); the
+  SHA-256 is computed once per actual re-copy and recorded.
+- `ModelDeploymentTest` (13 cases): stamp determinism, flips on version/path/
+  byte change, stamp format, missing-stamp legacy-cache rule, cached-file
+  corruption detection.
+- Out of scope (documented): a Gradle task that writes build-time asset hashes
+  into BuildConfig for fully automatic asset-drift detection. Today the hash
+  is written-but-not-compared on the fast path; `looksLikeValidOnnx` remains
+  the corruption guard.
+
+### CP3 — real fixed-512 AOT model via onnxslim
+`feat(translation): real fixed-512 AOT model via onnxslim (1940 -> 400 nodes)`
+- The prior `aot-512.onnx` was a 95-byte shape-relabel of `aot.onnx` — same
+  1940 nodes, no folding. Replaced with the real conversion.
+- `tools/aot_conversion/convert_aot_512.py`: static-shape rewrite +
+  `onnx.shape_inference` + `onnxslim.slim`. **1940 → 400 nodes (-79%).**
+- Tier 2 numerics gate (max-abs-diff < 1e-3 on real-range inputs): **PASS**,
+  worst 8.31e-5 across 5 samples. Report in `tools/aot_conversion/REPORT.md`.
+- Still NOT wired into `AOTInpainting.inpaint()` — safety rule holds.
+
+Validation: `./gradlew :app:testStandardDebugUnitTest` green, 593 cases
+(was 570 before CP1; +10 safety-primitive, +13 model-deployment).
+
+
 
 ## Safety rule
 

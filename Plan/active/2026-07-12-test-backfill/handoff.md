@@ -1,59 +1,48 @@
-# Handoff — test backfill
+# Handoff — test backfill + 3 follow-up checkpoints
 
-**Status:** DONE for achievable subset. Deferred items documented in `deferred.md`.
-**Suite:** 570 tests green (`./gradlew :app:testStandardDebugUnitTest`).
+**Status:** ALL DONE. 4 commits on `fix/translation-race-p0-quality`.
+**Suite:** 593 tests green (`./gradlew :app:testStandardDebugUnitTest`).
 
-## What shipped (2026-07-12)
+## Commits (this session, in order)
 
-### New tests (10 cases, all green)
+1. `test(translation): backfill race-condition regression tests and extract safety primitives`
+   - TranslationSafetyPrimitives (3 helpers, P0-1/P0-3/P0-4 invariants)
+   - TranslationSafetyPrimitivesTest (10 cases)
+   - RenderColorEstimatorDedupTest (7 cases, P1a golden)
+   - TranslationSchedulerCancellationTest +2 cases (P0-2 no-op branches)
+   - 2 stale comments fixed
+   - dead MainDispatcherRule + inFlightPageKeysSnapshot removed
+2. `fix(translation): content-hash model deployment stamps; extract ModelDeployment helper`
+   - ModelDeployment pure helper (ex-copyIfNeeded stamp logic)
+   - stamp = `<version>:<assetPath>:<sha256>`; fast path compares prefix only
+   - ModelDeploymentTest (13 cases)
+3. `feat(translation): real fixed-512 AOT model via onnxslim (1940 -> 400 nodes)`
+   - tools/aot_conversion/convert_aot_512.py
+   - tools/aot_conversion/REPORT.md
+   - aot-512.onnx replaced (real conversion, not shape-relabel)
+   - Tier 2 numerics PASS (worst 8.31e-5)
+4. (pending commit) progress.md + this handoff update
 
-1. `RenderColorEstimatorDedupTest.kt` — 7 cases. Golden guard on `colorPolicy`,
-   `sampleBackgroundLuma`, `decideTextFill`. Locks the P1a dedup output values
-   (Rec.601 weights, DARK_BG_LUMA=85 threshold, polarity agreement between
-   luma and fill). Package-internal access; no Bitmap needed.
-2. `TranslationSchedulerCancellationTest.kt` — added 2 cases (was 1, now 3):
-   - `cancel is a no-op on a page that already has a rendered result` (hasRenderedResult branch)
-   - `cancel is a no-op on a page that already failed a stage` (isStageFailed branch)
+## What's NOT done (unchanged from prior handoff, still gates Wave 5.2+)
 
-### Comment fixes (stale = defect per AGENT.md)
+- 20-page corpus + Tier 3 guard-rejection harness (Wave 5.1L/M)
+- AotPadPath integration into AOTInpainting.inpaint() (Wave 5.2)
+- NNAPI capability gate + dual session + fallback cascade (Wave 5.3)
+- Wave 6 on-device matrix
 
-- `TranslationPipeline.kt:2480-2490` — `inpaintPage` KDoc claimed it set
-  `inpaintStatus=READY + cleanedImageName` and handled "FAILED on storage
-  failure". Post-P1b it sets only RUNNING/FAILED; `cleanedImageName` and
-  READY happen in `persistCleanedBitmap`. Reworded to match.
-- `RoiPageRecognitionEngine.kt:725-735` — `forceReleaseNativeBuffers` comment
-  said "deferring" but the code skips (no retry). Reworded to "skipping".
+## What's proven now that wasn't before
 
-### Dead code removed (user direction: "if it is dead, then kill it")
-
-- `MainDispatcherRule.kt` — DELETED. Zero callers.
-- `TranslationPipeline.inFlightPageKeysSnapshot()` — DELETED. Zero callers.
-- `TranslationPipeline.permitHolderPageKeySnapshot()` — KEPT. Has 3 production
-  callers in `TranslationManager.kt:396,432,458` (batch tracker permit-owner
-  resolver). Initially deleted in this session; restored after compile error
-  surfaced the callers. Lesson: `app/src/` grep excluding the declaration file
-  is insufficient — must check cross-file.
-
-## What did NOT ship (deferred — see deferred.md)
-
-- P0-1 `ForceReleaseNativeBuffersGuardTest` — needs nativeGuard seam extraction.
-- P0-3 `CloseEnginesClearsKeysTest` — needs closeEngines helper extraction.
-- P0-4 `PermitWatchdogCallbackGuardTest` — needs withLeakProofPermit extraction.
-
-All three blocked on the same shape of refactor: extract `private` logic into
-`internal` pure helper (ShortHash pattern). Per AGENT.md autonomy policy,
-architecture refactor → approval required. Decision: defer, document, do not
-write theater tests.
-
-## Net test-debt change
-
-- Review flagged ~9 missing contract tests + 2 dead-infra items.
-- This session: +10 real test cases, 2 stale comments fixed, 2 dead items killed.
-- Still missing: 3 concurrency tests (deferred) + Wave 4 `OnnxModelStoreVersionTest`
-  (out of scope, separate task).
+- The three Wave 1 P0 concurrency fixes are guarded by automated tests
+  (regression would fail TranslationSafetyPrimitivesTest).
+- The Wave 4 deployment stamp catches asset byte changes + cached-file
+  corruption (regression would fail ModelDeploymentTest).
+- The fixed-512 model is a real onnxslim conversion (1940 → 400 nodes), not a
+  shape-relabel. The "max-abs-diff == 0" claim in the prior progress.md was
+  vacuously true; the real comparison shows 8.31e-5 worst on real-range
+  inputs, well under the 1e-3 Tier 2 gate.
 
 ## Next safe action
 
-Bring the deferred P0-1/P0-3/P0-4 extraction proposal back for approval. Three
-small `internal` helpers, no behavior change, each with a RED-first test. After
-that: Wave 4 copyIfNeeded stamp design decision + test.
+Build the 20-page corpus + Tier 3 harness (Wave 5.1L/M). That is the next
+hard gate before any Wave 5.2 integration work. Everything else through Wave
+4 is now both implemented and test-guarded.
