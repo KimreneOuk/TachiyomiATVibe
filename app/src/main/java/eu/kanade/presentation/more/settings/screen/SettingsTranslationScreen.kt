@@ -8,7 +8,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import eu.kanade.presentation.more.settings.Preference
 import eu.kanade.presentation.more.settings.widget.AiModelListState
 import eu.kanade.presentation.more.settings.widget.AiModelPickerWidget
@@ -20,11 +19,12 @@ import eu.kanade.translation.data.TranslationFont
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiModelFetcher
-import eu.kanade.translation.translator.AiTranslators
-import eu.kanade.translation.translator.StandardTranslators
+import eu.kanade.translation.translator.AiTranslatorKind
+import eu.kanade.translation.translator.StandardTranslatorKind
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
+import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
@@ -46,8 +46,9 @@ object SettingsTranslationScreen : SearchableSettings {
         val translationPreferences = remember { Injekt.get<TranslationPreferences>() }
         return listOf(
             Preference.PreferenceItem.SwitchPreference(
-                pref = translationPreferences.autoTranslateAfterDownload(),
-                title = stringResource(ATMR.strings.pref_translate_after_downloading),
+                pref = translationPreferences.translationConfirmPretranslate(),
+                title = stringResource(ATMR.strings.pref_confirm_pretranslate),
+                subtitle = stringResource(ATMR.strings.pref_confirm_pretranslate_summary),
             ),
             Preference.PreferenceItem.ListPreference(
                 pref = translationPreferences.translationFont(),
@@ -64,6 +65,7 @@ object SettingsTranslationScreen : SearchableSettings {
     private fun getInpaintingModeGroup(
         translationPreferences: TranslationPreferences,
     ): Preference.PreferenceGroup {
+        val inpaintMode by translationPreferences.translationInpaintingMode().collectAsState()
         val modes = mapOf(
             "QUALITY" to stringResource(ATMR.strings.pref_inpainting_mode_quality),
             "FAST" to stringResource(ATMR.strings.pref_inpainting_mode_fast),
@@ -75,6 +77,12 @@ object SettingsTranslationScreen : SearchableSettings {
                     pref = translationPreferences.translationInpaintingMode(),
                     title = stringResource(ATMR.strings.pref_inpainting_mode),
                     entries = modes.toImmutableMap(),
+                ),
+                Preference.PreferenceItem.SwitchPreference(
+                    pref = translationPreferences.translationInpaintQualityFallback(),
+                    title = "QUALITY → FAST fallback",
+                    subtitle = "Use FAST inpainting when the QUALITY neural model is unavailable",
+                    enabled = inpaintMode == "QUALITY",
                 ),
             ),
         )
@@ -110,7 +118,7 @@ object SettingsTranslationScreen : SearchableSettings {
                             pref.set(newValue)
                             TextRecognizerLanguage.entries
                                 .firstOrNull { it.name == newValue }
-                            ?.let { OcrModelCatalog.selectedModel(translationPreferences, it) }
+                                ?.let { OcrModelCatalog.selectedModel(translationPreferences, it) }
                             val updated = TranslationPreferences.encodeRecentLanguages(listOf(newValue) + recentLangs)
                             recentPref.set(updated)
                         },
@@ -217,18 +225,47 @@ object SettingsTranslationScreen : SearchableSettings {
     private fun standardEngineItems(
         translationPreferences: TranslationPreferences,
     ): List<Preference.PreferenceItem<out Any>> {
-        val engines = StandardTranslators.entries
-        return listOf(
-            Preference.PreferenceItem.ListPreference(
-                pref = translationPreferences.translationStandardEngine(),
-                title = stringResource(ATMR.strings.pref_standard_engine),
-                // The pref stores a StandardEngine; entries are keyed by the
-                // matching StandardEngine and labelled from StandardTranslators.
-                entries = engines.associate { translator ->
-                    StandardEngine.valueOf(translator.name) to translator.label
-                }.toImmutableMap(),
-            ),
-        )
+        val engines = StandardTranslatorKind.entries
+        val enginePref = translationPreferences.translationStandardEngine()
+        val selectedEngine by enginePref.collectAsState()
+        // DeepL is the only Standard engine that needs credentials. Collect its
+        // key so the row stays reactive while DeepL is selected.
+        val apiKeyPref = translationPreferences.translationDeeplApiKey()
+        val apiKey by apiKeyPref.collectAsState()
+        val deeplKeyTitle = stringResource(ATMR.strings.pref_deepl_api_key)
+        val keySetLabel = stringResource(ATMR.strings.pref_ai_key_set)
+        val keyNotSetLabel = stringResource(ATMR.strings.pref_ai_key_not_set)
+
+        return buildList {
+            add(
+                Preference.PreferenceItem.ListPreference(
+                    pref = enginePref,
+                    title = stringResource(ATMR.strings.pref_standard_engine),
+                    // The pref stores a StandardEngine; entries are keyed by the
+                    // matching StandardEngine and labelled from StandardTranslatorKind.
+                    entries = engines.associate { translator ->
+                        StandardEngine.valueOf(translator.name) to translator.label
+                    }.toImmutableMap(),
+                ),
+            )
+            // Show the DeepL key row only when DeepL is selected (it is the only
+            // Standard engine with credentials). Mirrors the AI-provider key row.
+            if (selectedEngine == StandardEngine.DEEPL) {
+                add(
+                    Preference.PreferenceItem.CustomPreference(
+                        title = deeplKeyTitle,
+                    ) {
+                        ApiKeyPreferenceWidget(
+                            title = deeplKeyTitle,
+                            apiKey = apiKey,
+                            keySetLabel = keySetLabel,
+                            keyNotSetLabel = keyNotSetLabel,
+                            onApiKeyChange = { newKey -> apiKeyPref.set(newKey) },
+                        )
+                    },
+                )
+            }
+        }
     }
 
     @Composable
@@ -236,7 +273,7 @@ object SettingsTranslationScreen : SearchableSettings {
         translationPreferences: TranslationPreferences,
     ): List<Preference.PreferenceItem<out Any>> {
         val scope = rememberCoroutineScope()
-        val providers = AiTranslators.entries
+        val providers = AiTranslatorKind.entries
 
         // Live AI-provider selection drives the API key / model / picker rows.
         val aiEngine by translationPreferences.translationAiEngine().collectAsState()

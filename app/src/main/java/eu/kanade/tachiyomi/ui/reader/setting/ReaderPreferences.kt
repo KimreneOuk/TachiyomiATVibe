@@ -12,7 +12,7 @@ class ReaderPreferences(
 ) {
     // region General
 
-    //TachiyomiAT
+    // TachiyomiAT
     fun showTranslations() = preferenceStore.getBoolean("show_translations", true)
 
     fun pageTransitions() = preferenceStore.getBoolean("pref_enable_transitions_key", true)

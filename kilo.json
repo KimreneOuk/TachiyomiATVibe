@@ -1,0 +1,16 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "permission": {
+    "zai-mcp-server_*": "allow"
+  },
+  "mcp": {
+    "zai-mcp-server": {
+      "type": "local",
+      "command": ["npx", "-y", "@z_ai/mcp-server"],
+      "environment": {
+        "Z_AI_API_KEY": "8bb0f947da80472694269d705512e679.RRZcRjBAcfU74h60",
+        "Z_AI_MODE": "ZAI"
+      }
+    }
+  }
+}

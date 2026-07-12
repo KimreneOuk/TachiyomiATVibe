@@ -103,7 +103,6 @@ import tachiyomi.core.common.util.lang.launchNonCancellable
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.i18n.MR
-import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.util.collectAsState
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -116,7 +115,6 @@ class ReaderActivity : BaseActivity() {
             return Intent(context, ReaderActivity::class.java).apply {
                 putExtra("manga", mangaId)
                 putExtra("chapter", chapterId)
-                addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             }
         }
 
@@ -288,6 +286,7 @@ class ReaderActivity : BaseActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.restartReadTimer()
+        viewModel.resumeTranslationsOnForeground()
         setMenuVisibility(viewModel.state.value.menuVisible)
     }
 
@@ -377,13 +376,16 @@ class ReaderActivity : BaseActivity() {
     private var lastDoubleTapTime = 0L
 
     private val doubleTapDetector by lazy {
-        android.view.GestureDetector(this, object : android.view.GestureDetector.SimpleOnGestureListener() {
-            override fun onDoubleTap(e: MotionEvent): Boolean {
-                lastDoubleTapTime = android.os.SystemClock.uptimeMillis()
-                toggleMenu()
-                return true
-            }
-        })
+        android.view.GestureDetector(
+            this,
+            object : android.view.GestureDetector.SimpleOnGestureListener() {
+                override fun onDoubleTap(e: MotionEvent): Boolean {
+                    lastDoubleTapTime = android.os.SystemClock.uptimeMillis()
+                    toggleMenu()
+                    return true
+                }
+            },
+        )
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
@@ -399,7 +401,8 @@ class ReaderActivity : BaseActivity() {
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP,
                 MotionEvent.ACTION_MOVE, MotionEvent.ACTION_CANCEL,
-                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP -> {
+                MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_POINTER_UP,
+                -> {
                     return true
                 }
             }
@@ -470,11 +473,16 @@ class ReaderActivity : BaseActivity() {
             val isPagerType = ReadingMode.isPagerType(viewModel.getMangaReadingMode())
             val cropEnabled = if (isPagerType) cropBorderPaged else cropBorderWebtoon
 
-            val translationState by viewModel.state.map { it.translationState }.collectAsState(initial = Translation.State.NOT_TRANSLATED)
-            val translationProgress by viewModel.state.map { it.translationProgress }.collectAsState(initial = Pair(0, 0))
+            val translationState by viewModel.state.map {
+                it.translationState
+            }.collectAsState(initial = Translation.State.NOT_TRANSLATED)
+            val translationProgress by viewModel.state.map {
+                it.translationProgress
+            }.collectAsState(initial = Pair(0, 0))
             val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
             // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
             val translationQueue by viewModel.translationQueueState.collectAsState()
+            val translationSettingsState by viewModel.translationSettingsState.collectAsState()
             val compareState by viewModel.compareState.collectAsState()
 
             ReaderContentOverlay(
@@ -503,6 +511,8 @@ class ReaderActivity : BaseActivity() {
                     onSelectOriginal = { viewModel.setCurrentPageShowTranslated(false) },
                     onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
                     onOpenSettings = { viewModel.openTranslationSettingsDialog() },
+                    onDeletePageTranslation = { viewModel.deleteCurrentPageTranslation() },
+                    onDeleteChapterTranslation = { viewModel.deleteCurrentChapterTranslation() },
                     modifier = Modifier.padding(start = 8.dp),
                 )
             }
@@ -597,8 +607,24 @@ class ReaderActivity : BaseActivity() {
                 }
                 is ReaderViewModel.Dialog.TranslationSettings -> {
                     TranslationSettingsSheet(
+                        state = translationSettingsState,
                         onDismissRequest = onDismissRequest,
                         onStopAllTranslation = { viewModel.stopAllTranslation() },
+                        onTranslationEnabledChange = { viewModel.setTranslationEnabled(it) },
+                        onAutoTranslateChange = { viewModel.setAutoTranslate(it) },
+                        onAutoTranslatePrefetchCountChange = { viewModel.setAutoTranslatePrefetchCount(it) },
+                        onTranslateFromLanguageChange = { viewModel.setTranslateFromLanguage(it) },
+                        onTranslateToLanguageChange = { viewModel.setTranslateToLanguage(it) },
+                        onOcrModelChange = { viewModel.setOcrModel(it) },
+                        onTranslationInpaintingModeChange = { viewModel.setTranslationInpaintingMode(it) },
+                        onTranslationEngineCategoryChange = { viewModel.setTranslationEngineCategory(it) },
+                        onTranslationStandardEngineChange = { viewModel.setTranslationStandardEngine(it) },
+                        onTranslationDeeplApiKeyChange = { viewModel.setTranslationDeeplApiKey(it) },
+                        onTranslationAiEngineChange = { viewModel.setTranslationAiEngine(it) },
+                        onTranslationAiApiKeyChange = { viewModel.setTranslationAiApiKey(it) },
+                        onTranslationAiBaseUrlChange = { viewModel.setTranslationAiBaseUrl(it) },
+                        onTranslationAiModelChange = { viewModel.setTranslationAiModel(it) },
+                        onFetchAiModels = { viewModel.fetchAiModels() },
                         queue = translationQueue,
                         translationProgress = translationProgress,
                         translationCurrentPage = translationCurrentPage,

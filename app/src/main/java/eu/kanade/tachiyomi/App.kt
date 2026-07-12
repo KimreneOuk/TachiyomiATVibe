@@ -157,7 +157,7 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         // Updates widget update
         WidgetManager(Injekt.get(), Injekt.get()).apply { init(scope) }
 
-        if (!LogcatLogger.isInstalled && networkPreferences.verboseLogging().get()) {
+        if (!LogcatLogger.isInstalled) {
             LogcatLogger.install(AndroidLogcatLogger(LogPriority.VERBOSE))
         }
 

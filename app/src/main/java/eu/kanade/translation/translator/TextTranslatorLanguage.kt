@@ -189,7 +189,8 @@ enum class TextTranslatorLanguage(val code: String, val label: String) {
     ZHUANG_CHUANG("za", "Zhuang; Chuang"),
     CHINESESIM("zh", "Chinese Simplified"),
     CHINESETRAD("zh", "Chinese Traditional"),
-    ZULU("zu", "Zulu");
+    ZULU("zu", "Zulu"),
+    ;
 
     companion object {
 
@@ -198,15 +199,20 @@ enum class TextTranslatorLanguage(val code: String, val label: String) {
             return entries.filter { langs.contains(it.code) }
         }
 
+        /**
+         * TachiyomiAT: STRICT no-fallback. The old code silently rewrote an unknown stored value to ENGLISH
+         * — a corrupted/migrated pref quietly picked English as the target with no signal. Now an invalid
+         * value throws and the pipeline surfaces it as a FAILED page so the user fixes the setting.
+         */
         fun fromPref(pref: Preference<String>): TextTranslatorLanguage {
             val name = pref.get()
-            var lang = entries.firstOrNull { it.name.equals(name, true) }
+            val lang = entries.firstOrNull { it.name.equals(name, true) }
             if (lang == null) {
-                pref.set(ENGLISH.name)
-                return ENGLISH
+                throw IllegalArgumentException(
+                    "Unknown translator target language '$name'. Reconfigure translation settings.",
+                )
             }
             return lang
         }
-
     }
 }

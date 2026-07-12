@@ -14,8 +14,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.util.concurrent.TimeUnit
-import java.util.regex.Pattern
+import logcat.LogPriority
 
 class LmStudioTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -23,18 +22,25 @@ class LmStudioTranslator(
     baseUrl: String,
     val modelName: String,
     val maxOutputToken: Int,
-    val temp: Float,
-) : TextTranslator {
+    val temperature: Float,
+) : OpenAiCompatibleTranslator() {
 
     private val normalizedBaseUrl = AiModelFetcher.normalizeBaseUrl(baseUrl)
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
-        .build()
-
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        translateInternal(pages, rollingContext = "", glossary = "", outputTokenLimit = maxOutputToken)
+    }
+
+    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+        translateInternal(chunk.pages, chunk.rollingContext, chunk.glossary, chunk.maxOutputTokens)
+    }
+
+    private suspend fun translateInternal(
+        pages: MutableMap<String, PageTranslation>,
+        rollingContext: String,
+        glossary: String,
+        outputTokenLimit: Int,
+    ) {
         if (normalizedBaseUrl.isBlank()) {
             throw IllegalArgumentException("LM Studio base URL is required")
         }
@@ -54,29 +60,24 @@ class LmStudioTranslator(
         if (flatBlocks.isEmpty()) return
 
         try {
-            val textBlocksStr = flatBlocks.mapIndexed { index, (_, text) ->
-                "[$index] $text"
+            val textBlocksStr = flatBlocks.mapIndexed { index, (block, _) ->
+                TranslationPrompts.numberedSourceLine(index, block)
             }.joinToString("\n")
+            val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, glossary)
 
-            val systemPrompt = """
-                You are an expert manga/comic translator and localization specialist. Translate the following list of sequential text blocks from ${fromLang.label} to ${toLang.label}.
-
-                CRITICAL GUIDELINES:
-                1. READING ORDER: Manga panels and bubbles fundamentally follow a Right-to-Left (RTL) and Top-to-Bottom (TTB) flow. Interpret sequential blocks with this context in mind.
-                2. BUBBLE SIZE & CONCISENESS: Manga speech bubbles have very limited space. Keep translations concise, natural, and close to the original length.
-                3. STYLE & TONE: Adapt register, slang, dialect, and sound effects to fit the character and scene.
-                4. WATERMARKS: Replace watermark or site-link text with RTMTH.
-                5. NO EXTRA TEXT: Output only the translations in the exact numbered format below, one block per line. Do not include explanations, notes, or preambles.
-
-                Format:
-                [index] translation
-            """.trimIndent()
+            val systemPrompt = TranslationPrompts.numberedSystemPrompt(fromLang, toLang)
 
             val mediaType = "application/json; charset=utf-8".toMediaType()
+            logcat(LogPriority.INFO) {
+                "LM Studio request: pages=${pages.size} blocks=${flatBlocks.size} " +
+                    "promptTokens=${TranslationContextChunkPlanner.estimateTokens(contextPrefix + textBlocksStr)} " +
+                    "chunkPromptTokens=${if (rollingContext.isBlank()) -1 else TranslationContextChunkPlanner.estimateTokens(rollingContext)} " +
+                    "maxOutput=$outputTokenLimit"
+            }
             val jsonObject = buildJsonObject {
                 put("model", modelName)
-                put("temperature", temp)
-                put("max_tokens", maxOutputToken)
+                put("temperature", temperature)
+                put("max_tokens", outputTokenLimit)
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "system")
@@ -84,35 +85,48 @@ class LmStudioTranslator(
                     }
                     addJsonObject {
                         put("role", "user")
-                        put("content", "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr")
+                        put(
+                            "content",
+                            contextPrefix +
+                                "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
+                        )
                     }
                 }
             }.toString()
 
-            val body = jsonObject.toRequestBody(mediaType)
-            val request = Request.Builder()
-                .url("$normalizedBaseUrl/chat/completions")
-                .header("Content-Type", "application/json")
-                .post(body)
-                .build()
+            val rawOutput = postChatCompletion(
+                url = "$normalizedBaseUrl/chat/completions",
+                headers = emptyMap(),
+                payloadJson = jsonObject,
+            )
 
-            val response = okHttpClient.newCall(request).await()
-            val responseBody = response.body
-                ?: throw IllegalStateException("Empty response body from LM Studio API")
-            val responseJson = JSONObject(responseBody.string())
-            val rawOutput = responseJson.optJSONArray("choices")?.optJSONObject(0)
-                ?.optJSONObject("message")?.optString("content")
-            if (rawOutput.isNullOrBlank()) {
-                throw IllegalStateException(
-                    "LM Studio returned no content (choices missing or empty): " +
-                        responseJson.optString("error", responseJson.toString()),
-                )
+            val parsedTranslations = NumberedLineResponseParser.parse(
+                raw = rawOutput,
+                expectedCount = flatBlocks.size,
+                targetLang = toLang,
+            )
+            // Log parse yield: a common failure mode is the model ignoring the [index] format AND
+            // the positional fallback (e.g. returning one prose paragraph), so parse yields 0 entries.
+            val parsedCount = parsedTranslations.count { (_, v) -> v.isNotBlank() }
+            logcat(LogPriority.INFO) {
+                "LM Studio parse: requested=${flatBlocks.size} parsed=$parsedCount " +
+                    "contentFirstLine=${rawOutput.lineSequence().firstOrNull()?.take(80)}"
             }
-
-            val parsedTranslations = parseResponse(rawOutput, flatBlocks.size)
-            flatBlocks.forEachIndexed { index, (block, originalText) ->
-                val translated = parsedTranslations[index].takeUnless { it.isNullOrBlank() } ?: originalText
-                block.translation = translated
+            if (parsedCount < flatBlocks.size) {
+                val missingCount = flatBlocks.size - parsedCount
+                logcat(LogPriority.WARN) {
+                    "LM Studio response parsed $parsedCount/${flatBlocks.size} translations; " +
+                        "remainingMissing=$missingCount. The batch pipeline will retry missing blocks " +
+                        "with smaller requests when possible."
+                }
+            }
+            // Never fall back to source text on a blank/missing line: a blank translation lets the
+            // validation gate mark the block/page PARTIAL/FAILED instead of rendering OCR as a translation.
+            flatBlocks.forEachIndexed { index, (block, _) ->
+                val translated = parsedTranslations[index]
+                if (!translated.isNullOrBlank()) {
+                    block.translation = OcrArtifactSanitizer.sanitize(translated)
+                }
             }
             TranslationBlockFilters.removeWatermarkBlocks(pages)
         } catch (e: Exception) {
@@ -121,29 +135,28 @@ class LmStudioTranslator(
         }
     }
 
-    private fun parseResponse(raw: String, expectedCount: Int): Map<Int, String> {
-        val result = mutableMapOf<Int, String>()
-        val pattern = Pattern.compile("^\\[(\\d+)\\]\\s*(.+)$", Pattern.MULTILINE)
-        val matcher = pattern.matcher(raw)
-        while (matcher.find()) {
-            val idx = matcher.group(1)!!.toInt()
-            val text = matcher.group(2)!!.trim()
-            result[idx] = text
-        }
-
-        if (result.isEmpty()) {
-            raw.trim().split("\n").forEachIndexed { i, line ->
-                val trimmed = line.trim()
-                if (trimmed.isNotEmpty() && i < expectedCount) {
-                    result[i] = trimmed
+    override suspend fun promptText(prompt: String): String {
+        return try {
+            val jsonObject = buildJsonObject {
+                put("model", modelName)
+                put("temperature", temperature)
+                put("max_tokens", maxOutputToken)
+                putJsonArray("messages") {
+                    addJsonObject {
+                        put("role", "user")
+                        put("content", prompt)
+                    }
                 }
-            }
-        }
-        return result
-    }
+            }.toString()
 
-    override fun close() {
-        okHttpClient.connectionPool.evictAll()
-        okHttpClient.dispatcher.executorService.shutdown()
+            postChatCompletion(
+                url = "$normalizedBaseUrl/chat/completions",
+                headers = emptyMap(),
+                payloadJson = jsonObject,
+            )
+        } catch (e: Exception) {
+            logcat { "LM Studio promptText Error : ${e.stackTraceToString()}" }
+            ""
+        }
     }
 }

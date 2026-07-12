@@ -218,6 +218,7 @@ ChapterTranslator.translate(chapter)
     │   │  TextTranslator (selected by settings)
     │   │  ├── GeminiTranslator (Google Gemini API)
     │   │  ├── DeepSeekTranslator (DeepSeek API)
+    │   │  ├── DeepLTranslator (DeepL API)
     │   │  ├── GoogleTranslator (Google Translate)
     │   │  ├── OpenRouterTranslator (OpenRouter API)
     │   │  ├── MLKitTranslator (on-device ML Kit)
@@ -234,11 +235,33 @@ ChapterTranslator.translate(chapter)
         │      └── RenderColorEstimator picks text color
         │
         ▼
+Note: shared pure logic used across stages lives in focused helpers, not inline:
+  • recognition/BoxGeometry        — bbox IoU + geometric dedupe (Stages 1 & 2)
+  • inpainting/BubbleMaskBuilder   — mask construction + morphology (Stage 4)
+  • translator/NumberedLineResponseParser + OcrArtifactSanitizer — LLM output parsing (Stage 3)
+  • rendering/RenderColorEstimator.colorPolicy — text/stroke color decision (Stage 5)
+See docs/TRANSLATION_MODULE.md for the full map.
+        ▼
 PageTranslationState updated through states:
   Pending → Detecting → Detected → Recognizing → Recognized
   → Translating → Translated → Inpainting → Inpainted
   → Rendering → Rendered → Complete
 ```
+
+Rendered image quality is an invariant, not a best effort. Before decode, the
+pipeline reclaims bitmap pools, OCR/inpaint native pools, and Coil memory cache
+if a normal page would otherwise be heap-downsampled. Additionally, to prevent
+chronic native memory pressure accumulation across consecutive page translations,
+the pipeline immediately calls native/off-heap memory reclamation at the end of
+each page. If full-quality decode is still unsafe, the page becomes retryable
+instead of saving blurry output. Only hard source-size limits may produce
+sampled output, and those pages are marked `RenderQuality.SIZE_LIMITED`.
+
+Reader-side translated image streams are on demand. `ReaderPageWarmWindow`
+attaches translated streams only for the current page plus two pages on either
+side; cold pages keep only persisted metadata and reopen translated images from
+disk when they enter the warm window. A 200-page chapter therefore does not keep
+200 translated stream factories or compressed source byte arrays in memory.
 
 ### State Machine (`PageTranslationState`)
 
@@ -311,6 +334,27 @@ TranslationManager (central coordinator)
            Tracks current page being translated
            Provides status callbacks to UI
 ```
+
+Batch pre-translation ownership:
+
+- Manga-screen chapter translation opens/registers a shared
+  `ChapterTranslationStore`, pre-registers all ordered page keys, then emits
+  `TranslationProgressSnapshot` updates to the chapter row and progress sheet.
+  The START action is gated behind a read-only confirmation popup
+  (`MangaScreenModel.Dialog.ConfirmTranslation` → `ConfirmTranslationDialog`)
+  unless the `translationConfirmPretranslate` preference is off. The popup
+  renders a `TranslationSettingsSummary` (source/target language, engine/model,
+  OCR model, output tokens, inpaint mode), offers a "Don't show this again"
+  checkbox bound to that preference, and an "Open settings" link to
+  `SettingsScreen.Destination.Translation`. The reader per-page path is not
+  affected.
+- If the reader opens the same chapter while the batch is active, reader
+  auto/manual page scheduling is suppressed for that chapter and the reader only
+  observes the shared store. Reader pause/close cancels reader jobs and streams
+  without clearing active batch queues or unregistering active batch stores.
+- AI_MODEL batch translation chunks OCR text with
+  `TranslationContextChunkPlanner` under an 8192-token context budget before
+  inpaint/render. Standard translators keep the per-page translate path.
 
 ---
 

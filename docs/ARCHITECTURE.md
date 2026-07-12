@@ -26,10 +26,10 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                        APP MODULE (:app)                        │
-│  ┌───────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │
-│  │   UI/UX   │ │  Reader  │ │Translate │ │  Settings/More   │  │
-│  │ (Compose) │ │ (Viewer) │ │ Pipeline │ │    Screens       │  │
-│  └─────┬─────┘ └────┬─────┘ └────┬─────┘ └────────┬─────────┘  │
+│  ┌───────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐   │
+│  │   UI/UX   │ │  Reader  │ │Translate │ │  Settings/More   │   │
+│  │ (Compose) │ │ (Viewer) │ │ Pipeline │ │    Screens       │   │
+│  └─────┬─────┘ └────┬─────┘ └────┬─────┘ └────────┬─────────┘   │
 │        │            │            │                 │            │
 │  ┌─────┴────────────┴────────────┴─────────────────┴─────────┐  │
 │  │              Presentation Layer (eu.kanade.presentation)  │  │
@@ -38,12 +38,12 @@
 └──────────────────────────────┼──────────────────────────────────┘
                                │
 ┌──────────────────────────────┼──────────────────────────────────┐
-│          DOMAIN LAYER (:domain)                        │
-│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌───────┐  │
-│  │ Manga   │ │ Chapter │ │ Category │ │  Track   │ │Translate  │
-│  │UseCases │ │UseCases │ │ UseCases │ │ UseCases │ │UseCases │  │
-│  └────┬────┘ └────┬────┘ └────┬─────┘ └────┬─────┘ └───┬───┘  │
-│       └───────────┴───────────┴────────────┴───────────┴───────│
+│          DOMAIN LAYER (:domain)                                 │
+│  ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌───────┐    │
+│  │ Manga   │ │ Chapter │ │ Category │ │  Track   │ │Translate   │
+│  │UseCases │ │UseCases │ │ UseCases │ │ UseCases │ │UseCase│    │
+│  └────┬────┘ └────┬────┘ └────┬─────┘ └────┬─────┘ └───┬───┘    │
+│       └───────────┴───────────┴────────────┴───────────┴────────┘│
 │                   Repository Interfaces & Models                │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
@@ -55,8 +55,8 @@
 │  └──────────┘ └──────────┘ └──────────┘ └───────────────────┘  │
 └──────────────────────────────┬──────────────────────────────────┘
                                │
-┌──────────────────────────────┼──────────────────────────────────┐
-│       CORE LAYER (:core)                             │
+┌──────────────────────────────┼─────────────────────────────────┐
+│       CORE LAYER (:core)                                       │
 │  ┌────────────────────┐ ┌──────────────────────────────┐       │
 │  │  core/common       │ │  core/archive                │       │
 │  │  ─ Networking      │ │  ─ CBZ/CBR/EPUB readers      │       │
@@ -75,7 +75,7 @@
 │  │  ─ Local manga src │ │                              │       │
 │  │  (CBZ/EPUB/dir)    │ │                              │       │
 │  └────────────────────┘ └──────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ### Module Dependency Graph
@@ -139,9 +139,10 @@ The automatic translation system is the defining feature of this fork:
   ONNX/Mobile   PaddleOCR v6   ML Kit /       AOT-based      Font-based
   Detect Model   MangaOCR       Gemini /       Inpainting     Text Renderer
                  ML Kit         DeepSeek /
-                                OpenRouter /
-                                LM Studio /
-                                Google Translate
+                                 OpenRouter /
+                                 LM Studio /
+                                 DeepL /
+                                 Google Translate
 ```
 
 **Key components:**
@@ -149,9 +150,14 @@ The automatic translation system is the defining feature of this fork:
 - `eu.kanade.translation.TranslationManager` — manages translation jobs, auto-prefetch, cancellation
 - `eu.kanade.translation.detection.OnnxPageTextDetector` — text region detection via ONNX
 - `eu.kanade.translation.ocr.*` — OCR engines (PaddleOCR v6, MangaOCR, ML Kit)
-- `eu.kanade.translation.translator.*` — text translators (Gemini, DeepSeek, Google, OpenRouter, LM Studio, ML Kit)
-- `eu.kanade.translation.inpainting.AOTInpainting` — AOT-based bubble cleaning
-- `eu.kanade.translation.rendering.PageTextRenderer` — renders translated text
+- `eu.kanade.translation.translator.*` — text translators (Gemini, DeepSeek, DeepL, Google, OpenRouter, LM Studio, ML Kit) + shared pure helpers (`NumberedLineResponseParser`, `OcrArtifactSanitizer`, `AiModelFetcher`)
+- `eu.kanade.translation.inpainting.AOTInpainting` — AOT-based bubble cleaning; mask/morphology math in `BubbleMaskBuilder`
+- `eu.kanade.translation.recognition.BoxGeometry` — shared bbox IoU / geometric-dedupe used by both the detector and OCR stages
+- `eu.kanade.translation.rendering.PageTextRenderer` — renders translated text; color policy in `RenderColorEstimator`
+
+> 📖 For the complete file map, the test-coverage table, and the deduplication/
+> god-file-split history of this module, see
+> [`docs/TRANSLATION_MODULE.md`](./TRANSLATION_MODULE.md).
 
 ---
 

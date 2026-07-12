@@ -17,4 +17,27 @@ local.properties
 
 # Logs
 *.log
+logcat*.txt
+log.txt
+recent_log.txt
+*.logcat
+logs/
 
+# Tool caches (not project artifacts)
+.codex-remote-attachments/
+.codex/
+
+# Local agent state — agent tooling/runtime dirs, not project code
+.kilo/
+.zcode/
+.agents/
+
+# Inpaint debug viewer: local-only dev tool, not a build dependency
+tools/inpaint-debug-viewer/
+# Downloaded raw manga test images (regenerable; very long path names)
+tools/*Rawkuma*/
+__pycache__/
+*.pyc
+
+# Regenerable debug/test outputs from overlay_lab (code is tracked, these are not)
+overlay_lab/debug_*.png

@@ -4,10 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.PointF
 import android.view.LayoutInflater
-import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import androidx.core.view.isVisible
-import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
+import eu.kanade.translation.model.shouldSurfaceError
+import eu.kanade.translation.model.displayImageName
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -16,11 +16,10 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
-
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
@@ -47,11 +46,11 @@ class PagerPageHolder(
     readerThemedContext: Context,
     val viewer: PagerViewer,
     val page: ReaderPage,
-    //TachiyomiAT
-    readerPreferences: ReaderPreferences = Injekt.get(),
+    // TachiyomiAT
+    private val readerPreferences: ReaderPreferences = Injekt.get(),
 ) : ReaderPageImageView(readerThemedContext), ViewPagerAdapter.PositionableView {
 
-    //TachiyomiAT
+    // TachiyomiAT
     private var showTranslations = true
 
     // TachiyomiAT: master gate for the per-page translate button. Updated live
@@ -77,7 +76,10 @@ class PagerPageHolder(
      */
     private var errorLayout: ReaderErrorBinding? = null
 
-    private val holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // TachiyomiAT: var so [onAttachedToWindow] can replace it with a fresh scope
+    // after [onDetachedFromWindow] cancels the previous one (see lifecycle note
+    // on the first-page translation animation fix).
+    private var holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /**
      * Job for loading the page and processing changes to the page's status.
@@ -102,10 +104,28 @@ class PagerPageHolder(
      * Null means "we have not yet rendered a translated image for this holder".
      */
     private var lastShownImageName: String? = null
-    private var lastShownRenderRevision: Long = -1L
 
     init {
-        loadJob = holderScope.launch { loadPageAndProcessStatus() }
+        // TachiyomiAT: init only seeds durable state + wires click handlers.
+        // The long-running collectors (status load, showTranslations /
+        // translationEnabled reactivity, observePageView) are (re)established in
+        // [onAttachedToWindow]: ViewPager detaches holder views during layout
+        // passes and on activity resume, [onDetachedFromWindow] cancels
+        // [holderScope] to avoid leaks, and there is no logic to revive the scope
+        // or its collectors on re-attach. Keeping the collectors here left them
+        // permanently dead after the first re-attach — the first page never
+        // received the observePageView emission that swaps in the translated
+        // image, so no replace animation fired.
+        showTranslations = readerPreferences.showTranslations().get()
+        // Per-page translate button
+        onTranslateClicked = {
+            viewer.activity.viewModel.translateSinglePage(page)
+        }
+        // TachiyomiAT: cancel affordance shown while a translation is running
+        // for this page (the button re-purposes itself via setTranslating).
+        onCancelTranslateClicked = {
+            viewer.activity.viewModel.cancelSinglePageTranslation(page)
+        }
         // TachiyomiAT: seed the processing overlay from the page's DURABLE
         // translation status at construction. A PagerPageHolder is freshly created
         // whenever the ViewPager rebuilds its offscreen holder set (scroll/navigate
@@ -118,8 +138,25 @@ class PagerPageHolder(
         // and shows the scrim/spinner immediately; it only touches the overlay +
         // button, never re-decodes, so it's safe to call before the image loads.
         syncTranslationStatus()
-        //TachiyomiAT
-        showTranslations = readerPreferences.showTranslations().get()
+    }
+
+    /**
+     * TachiyomiAT: (re)create the holder scope and re-establish its long-running
+     * collectors whenever the view attaches. [onDetachedFromWindow] cancels
+     * [holderScope]; ViewPager routinely detaches and re-attaches holder views
+     * during layout passes and on activity resume. Because init no longer
+     * subscribes (it only seeds state), this is the single place subscriptions
+     * are created — once on the first attach, and again after every re-attach
+     * that followed a scope-cancelling detach. This is what keeps the first
+     * page's observePageView collector (which drives the translated-image
+     * replace animation) alive instead of permanently cancelled.
+     */
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (!holderScope.isActive) {
+            holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+        }
+        loadJob = holderScope.launch { loadPageAndProcessStatus() }
         readerPreferences.showTranslations().changes().onEach {
             showTranslations = it
             page.showTranslatedImage = it && page.translatedStream != null
@@ -145,15 +182,6 @@ class PagerPageHolder(
         viewer.activity.viewModel.observePageView(page)
             ?.onEach { refreshTranslation() }
             ?.launchIn(holderScope)
-        // Per-page translate button
-        onTranslateClicked = {
-            viewer.activity.viewModel.translateSinglePage(page)
-        }
-        // TachiyomiAT: cancel affordance shown while a translation is running
-        // for this page (the button re-purposes itself via setTranslating).
-        onCancelTranslateClicked = {
-            viewer.activity.viewModel.cancelSinglePageTranslation(page)
-        }
     }
 
     /**
@@ -164,9 +192,10 @@ class PagerPageHolder(
      * cancel affordance vs. the translate affordance.
      */
     private fun isPageBeingTranslated(): Boolean = page.translation?.let { t ->
-        (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-            t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && (t.cleanedImageName == null || t.blocks.isNotEmpty())
+        t.ocrStatus == "RUNNING" ||
+            t.inpaintStatus == "RUNNING" ||
+            t.translationStatus == "RUNNING" ||
+            t.renderStatus == "RUNNING"
     } ?: false
 
     /**
@@ -205,8 +234,15 @@ class PagerPageHolder(
             showTranslateButton(translationEnabled)
             setTranslating(false)
         }
-        // Surface errors only when idle (matches refreshTranslation's guard).
-        val errorMsg = if (!isBeingTranslated) page.translation?.errorMessage else null
+        // Surface errors only for a genuine terminal failure (matches
+        // refreshTranslation's guard). PARTIAL/Cancelled/Textless pages carry
+        // an explanatory errorMessage that must NOT be painted red.
+        val translation = page.translation
+        val errorMsg = if (translation != null && translation.shouldSurfaceError) {
+            translation.errorMessage
+        } else {
+            null
+        }
         showTranslationError(errorMsg)
     }
 
@@ -294,22 +330,20 @@ class PagerPageHolder(
     private suspend fun setImage() {
         progressIndicator?.setProgress(0)
 
-        page.showTranslatedImage = showTranslations && page.translatedStream != null
+        // Eagerly resolve the translated stream to avoid original-then-translated flash on load.
+        if (page.translatedStream == null && showTranslations) {
+            viewer.activity.viewModel.attachTranslatedStreamForPage(page)
+        }
+        if (!page.translationToggled) {
+            page.showTranslatedImage = showTranslations && page.translatedStream != null
+        }
         val streamFn = page.stream ?: return
 
-        // TachiyomiAT: record the rendered/cleaned image file name we're about to
-        // display (rendered wins over cleaned, matching the ViewModel collector's
-        // precedence) so refreshTranslation() can detect a no-op refresh (same
-        // image already on screen) and skip the re-decode.
+        // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (page.showTranslatedImage) {
-            page.translation?.renderedImageName ?: page.translation?.cleanedImageName
+            page.translation?.displayImageName
         } else {
             null
-        }
-        lastShownRenderRevision = if (page.showTranslatedImage) {
-            page.translation?.renderRevision ?: -1L
-        } else {
-            -1L
         }
 
         val isBeingTranslated = isPageBeingTranslated()
@@ -371,34 +405,27 @@ class PagerPageHolder(
     fun refreshTranslation() {
         val streamAvailable = page.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
-        // TachiyomiAT: detect whether the translated image we'd render is the
-        // SAME one already on screen. refreshTranslation() can be called for this
-        // holder when only its STATUS changed (e.g. RUNNING→READY re-emitted, or
-        // a status nudge with no new image) — in which case reloading the image
-        // is pure waste and a visible flash. The dedup is keyed on the stable
-        // rendered/cleaned file NAME (rendered wins over cleaned, matching the
-        // ViewModel collector) rather than the stream lambda's referential
-        // identity, which was fragile because the stream factories allocate a
-        // fresh lambda on every call. Only relaunch setImage() when the image
-        // changed (a genuinely new rendered/cleaned result) OR we're switching
-        // between showing the original and the translated image.
-        val newName = page.translation?.renderedImageName ?: page.translation?.cleanedImageName
-        val newRevision = page.translation?.renderRevision ?: -1L
-        val alreadyShowingThisImage =
-            page.showTranslatedImage &&
-                newName != null &&
-                newName == lastShownImageName &&
-                newRevision == lastShownRenderRevision
+        val newName = page.translation?.displayImageName
+
+        val wantTranslated = if (page.translationToggled) {
+            page.showTranslatedImage && streamAvailable
+        } else {
+            showTranslations && streamAvailable
+        }
+
+        val alreadyShowingCorrectImage = if (wantTranslated) {
+            newName != null && newName == lastShownImageName
+        } else {
+            lastShownImageName == null
+        }
+
         when {
             isBeingTranslated -> {
                 showProcessingOverlay(true)
-                // Cancel affordance while running, instead of hiding the button.
                 setTranslating(true)
             }
-            showTranslations && streamAvailable -> {
-                if (alreadyShowingThisImage) {
-                    // Same translated image already on screen — just sync the
-                    // overlay/button state, do NOT re-decode & re-set the image.
+            wantTranslated -> {
+                if (alreadyShowingCorrectImage) {
                     showProcessingOverlay(false)
                     showTranslateButton(translationEnabled)
                     setTranslating(false)
@@ -412,23 +439,45 @@ class PagerPageHolder(
                 }
             }
             else -> {
-                showProcessingOverlay(false)
-                showTranslateButton(translationEnabled)
-                setTranslating(false)
+                if (alreadyShowingCorrectImage) {
+                    showProcessingOverlay(false)
+                    showTranslateButton(translationEnabled)
+                    setTranslating(false)
+                } else {
+                    page.showTranslatedImage = false
+                    showProcessingOverlay(false)
+                    showTranslateButton(translationEnabled)
+                    setTranslating(false)
+                    loadJob?.cancel()
+                    loadJob = holderScope.launch { setImage() }
+                }
             }
         }
         // Remember the image name we're now showing so the next
         // refreshTranslation() can short-circuit if nothing changed. When showing
         // the original (not a translated stream) there's no name to track.
         lastShownImageName = if (page.showTranslatedImage) newName else null
-        lastShownRenderRevision = if (page.showTranslatedImage) newRevision else -1L
-        // TachiyomiAT: surface translation errors to the user — but only when the
-        // page is NOT currently running. A page that's being retried may carry
-        // a stale errorMessage from a prior failed attempt; showing it alongside
-        // the RUNNING overlay is misleading. Only surface the error when the
-        // page is idle and actually has a terminal failure.
-        val errorMsg = if (!isBeingTranslated) page.translation?.errorMessage else null
+        // TachiyomiAT: surface translation errors to the user — but only for a
+        // genuine terminal failure. Cancellation, the stranded-page sweep, and
+        // PARTIAL all write an explanatory errorMessage that is NOT a failure;
+        // painting those red over a page that produced output (or was stopped
+        // deliberately) is misleading. shouldSurfaceError admits only real
+        // FAILED stages with no rendered/cleaned result to show instead.
+        val translation = page.translation
+        val errorMsg = if (translation != null && translation.shouldSurfaceError) {
+            translation.errorMessage
+        } else {
+            null
+        }
         showTranslationError(errorMsg)
+
+        val wantOverlay = page.showTranslatedImage && translation != null
+        val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
+        val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0
+        val h = if (wantOverlay) translation!!.imgHeight.toInt() else 0
+        viewer.activity.runOnUiThread {
+            setTranslationBlocks(blocksToDraw, w, h)
+        }
     }
 
     private fun process(page: ReaderPage, imageSource: BufferedSource): BufferedSource {
@@ -517,7 +566,7 @@ class PagerPageHolder(
         viewer.activity.hideMenu()
     }
 
-    //TachiyomiAT
+    // TachiyomiAT
     override fun onCenterChanged(newCenter: PointF?) {
         super.onCenterChanged(newCenter)
     }

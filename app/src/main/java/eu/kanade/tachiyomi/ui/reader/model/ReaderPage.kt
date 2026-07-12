@@ -8,7 +8,7 @@ open class ReaderPage(
     index: Int,
     url: String = "",
     imageUrl: String? = null,
-    var translation : PageTranslation?=null,
+    var translation: PageTranslation? = null,
     var originalStream: (() -> InputStream)? = null,
     var translatedStream: (() -> InputStream)? = null,
     /**
@@ -26,6 +26,7 @@ open class ReaderPage(
     var translationStorageKey: String? = null
 
     var showTranslatedImage: Boolean = false
+    var translationToggled: Boolean = false
 
     val stream: (() -> InputStream)?
         get() = if (showTranslatedImage && translatedStream != null) translatedStream else originalStream

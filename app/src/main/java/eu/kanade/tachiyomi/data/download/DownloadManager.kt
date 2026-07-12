@@ -158,7 +158,7 @@ class DownloadManager(
      * @param chapter the downloaded chapter.
      * @return the list of pages from the chapter.
      */
-    fun buildPageList(source: Source, manga: Manga, chapter: Chapter): List<Pair<String,Page>> {
+    fun buildPageList(source: Source, manga: Manga, chapter: Chapter): List<Pair<String, Page>> {
         val chapterDir = provider.findChapterDir(chapter.name, chapter.scanlator, manga.title, source)
             ?: throw Exception(context.stringResource(MR.strings.page_list_empty_error))
         // TachiyomiAT: harden against stale/revoked SAF paths. listFiles() can
@@ -199,7 +199,7 @@ class DownloadManager(
 
         return files.sortedBy { it.name }
             .mapIndexed { i, file ->
-                Pair(file.name!!,Page(i, uri = file.uri).apply { status = Page.State.READY })
+                Pair(file.name!!, Page(i, uri = file.uri).apply { status = Page.State.READY })
             }
     }
 

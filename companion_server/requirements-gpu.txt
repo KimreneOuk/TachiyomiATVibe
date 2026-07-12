@@ -1,0 +1,4 @@
+-r requirements-cpu.txt
+onnxruntime-gpu>=1.18
+watchdog>=4.0
+opencv-python-headless>=4.8

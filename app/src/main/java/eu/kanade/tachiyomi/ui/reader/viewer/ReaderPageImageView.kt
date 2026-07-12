@@ -92,7 +92,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
         processingIndicator?.hide()
     }
 
-    //TachiyomiAT : need this for textblock placements
+    // TachiyomiAT : need this for textblock placements
     var pageView: View? = null
 
     private var config: Config? = null
@@ -100,7 +100,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     var onImageLoaded: (() -> Unit)? = null
     var onImageLoadError: (() -> Unit)? = null
     var onScaleChanged: ((newScale: Float) -> Unit)? = null
-    //TachiyomiAT
+
+    // TachiyomiAT
     var onCenterChanged: ((newCenter: PointF) -> Unit)? = null
 
     var onViewClicked: (() -> Unit)? = null
@@ -131,6 +132,21 @@ open class ReaderPageImageView @JvmOverloads constructor(
         // TachiyomiAT: the image just decoded, so its on-screen rect is now
         // known — re-pin the translate button onto the image (not the holder).
         relayoutTranslateButton()
+        // TachiyomiAT: re-bind the overlay against the now-created/ready
+        // pageView. On a fresh holder, setTranslationBlocks() ran (from
+        // refreshTranslation() via observePageView) BEFORE the SSIV existed,
+        // so the overlay captured a null imageView. Now pageView is live and
+        // ready, re-issue the bind so the overlay has a valid coordinate-mapping
+        // target before the invalidate() below triggers a redraw.
+        if (pendingTranslationBlocks.isNotEmpty()) {
+            translationOverlay?.bind(
+                pageView as? SubsamplingScaleImageView,
+                pendingTranslationBlocks,
+                pendingPageWidth,
+                pendingPageHeight,
+            )
+        }
+        translationOverlay?.onImageTransformChanged()
     }
 
     @CallSuper
@@ -143,17 +159,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
         onScaleChanged?.invoke(newScale)
         // TachiyomiAT: zoom changes the image's rect within the holder; keep the
         // button anchored to the image's top-left so it doesn't drift into the
+        // button anchored to the image's top-left so it doesn't drift into the
         // letterbox area as the user zooms.
         relayoutTranslateButton()
+        translationOverlay?.onImageTransformChanged()
     }
 
-    //TachiyomiAT
+    // TachiyomiAT
     @CallSuper
     open fun onCenterChanged(newCenter: PointF?) {
         if (newCenter != null) onCenterChanged?.invoke(newCenter)
         // TachiyomiAT: pan moves the image within the holder; follow it so the
         // button stays on the image instead of floating in empty space.
         relayoutTranslateButton()
+        translationOverlay?.onImageTransformChanged()
     }
 
     @CallSuper
@@ -176,23 +195,69 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var errorText: android.widget.TextView? = null
 
     // TachiyomiAT: per-page translate button at top-left corner
-    private var translateButton: MaterialButton? = null
+    private var translateButton: AppCompatImageView? = null
+
+    // TachiyomiAT: renders translated text over the image
+    private var translationOverlay: TranslationOverlayView? = null
+
+    // TachiyomiAT: last translation blocks passed to [setTranslationBlocks].
+    // Cached so [onImageLoaded] can re-bind the overlay against the now-live
+    // pageView: on a fresh holder, [refreshTranslation] runs (via the
+    // observePageView StateFlow re-emission) BEFORE [setImage] has created the
+    // SSIV, so the overlay captures a null imageView and never draws. Re-binding
+    // here once the image is decoded gives the overlay a valid coordinate target.
+    private var pendingTranslationBlocks: List<eu.kanade.translation.model.TranslationBlock> = emptyList()
+    private var pendingPageWidth = 0
+    private var pendingPageHeight = 0
+
+    private fun ensureTranslationOverlay() {
+        if (translationOverlay != null) return
+        translationOverlay = TranslationOverlayView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        }
+        addView(translationOverlay)
+        restoreOverlayOrder()
+    }
+
+    fun setTranslationBlocks(blocks: List<eu.kanade.translation.model.TranslationBlock>, pageWidth: Int, pageHeight: Int) {
+        pendingTranslationBlocks = blocks
+        pendingPageWidth = pageWidth
+        pendingPageHeight = pageHeight
+        if (blocks.isNotEmpty()) {
+            ensureTranslationOverlay()
+            translationOverlay?.isVisible = true
+            translationOverlay?.bind(pageView as? SubsamplingScaleImageView, blocks, pageWidth, pageHeight)
+        } else {
+            translationOverlay?.isVisible = false
+            translationOverlay?.clear()
+        }
+    }
 
     private fun ensureTranslateButton() {
         if (translateButton != null) return
-        val btn = MaterialButton(context).apply {
-            setIconResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
-            iconSize = (24 * resources.displayMetrics.density).toInt()
-            iconGravity = MaterialButton.ICON_GRAVITY_TEXT_START
-            text = ""  // icon-only button
-            insetTop = 0
-            insetBottom = 0
-            cornerRadius = (4 * resources.displayMetrics.density).toInt()
-            strokeWidth = 0
-            setBackgroundColor(0x66000000)  // semi-transparent dark
+        val btn = AppCompatImageView(context).apply {
+            setImageResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
+            imageTintList = android.content.res.ColorStateList.valueOf(android.graphics.Color.WHITE)
+            scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
+            val p = (5 * resources.displayMetrics.density).toInt()
+            setPadding(p, p, p, p)
+            
+            // Circular ripple background with 40% transparent black
+            val mask = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(android.graphics.Color.WHITE)
+            }
+            val content = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(0x66000000.toInt())
+            }
+            val rippleColor = android.content.res.ColorStateList.valueOf(0x33FFFFFF.toInt())
+            background = android.graphics.drawable.RippleDrawable(rippleColor, content, mask)
+
             isClickable = true
             isFocusable = true
-            layoutParams = FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT).apply {
+            val btnSize = (32 * resources.displayMetrics.density).toInt()
+            layoutParams = FrameLayout.LayoutParams(btnSize, btnSize).apply {
                 gravity = Gravity.TOP or Gravity.START
                 val margin = (8 * resources.displayMetrics.density).toInt()
                 setMargins(margin, margin, 0, 0)
@@ -379,6 +444,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * button would be invisible to touch.
      */
     private fun restoreOverlayOrder() {
+        // Overlay goes above the pageView
+        translationOverlay?.let { if (it.isVisible) it.bringToFront() }
         // Button: must always be on top so it can receive taps.
         translateButton?.let { btn ->
             if (btn.isVisible) btn.bringToFront()
@@ -415,10 +482,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (running == translateButtonShowingCancel) return
         translateButtonShowingCancel = running
         if (running) {
-            btn.setIconResource(eu.kanade.tachiyomi.R.drawable.ic_close_24dp)
+            btn.setImageResource(eu.kanade.tachiyomi.R.drawable.ic_close_24dp)
             btn.setOnClickListener { onCancelTranslateClicked?.invoke() }
         } else {
-            btn.setIconResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
+            btn.setImageResource(eu.kanade.tachiyomi.R.drawable.ic_translate_circle)
             btn.setOnClickListener { onTranslateClicked?.invoke() }
         }
     }
@@ -673,7 +740,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     }
 
                     override fun onCenterChanged(newCenter: PointF?, origin: Int) {
-                        //TachiyomiAT
+                        // TachiyomiAT
                         this@ReaderPageImageView.onCenterChanged(newCenter)
                     }
                 },

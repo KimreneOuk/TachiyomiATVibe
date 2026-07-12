@@ -1,0 +1,1 @@
+import ai.onnxruntime.OrtSession; public class CheckNnapi { public static void test() { try { OrtSession.SessionOptions opts = new OrtSession.SessionOptions(); opts.addNnapi(); } catch (Exception e) {} } }

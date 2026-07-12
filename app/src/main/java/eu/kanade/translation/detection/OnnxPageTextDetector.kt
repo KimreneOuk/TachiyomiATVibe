@@ -1,22 +1,29 @@
 package eu.kanade.translation.detection
 
-import android.graphics.Bitmap
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession
+import android.graphics.Bitmap
+import eu.kanade.translation.recognition.BoxGeometry
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
+import tachiyomi.domain.translation.pools.DirectBufferPool
 import java.io.File
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
-import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
 class OnnxPageTextDetector {
 
     private var session: OrtSession? = null
+
+    // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor (contract
+    // #12). Heap-backed buffers caused a per-call native-copy leak; maxPoolSize=2
+    // bounds resident memory to two ~4.8 MiB buffers regardless of chapter length.
+    private val inputBufferPool = DirectBufferPool(
+        bufferCapacityBytes = DETECTOR_INPUT_FLOATS * Float.SIZE_BYTES,
+        maxPoolSize = 2,
+    )
 
     private val classNames = mapOf(
         0 to "bubble",
@@ -28,13 +35,7 @@ class OnnxPageTextDetector {
         logcat(LogPriority.INFO) {
             "Detector init: ${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        // TachiyomiAT: detector stays on CPU. It's one cheap 640x640 pass per
-        // page and runs in the same init sequence as the manga-ocr sessions;
-        // keeping it off the accelerator avoids any chance an NNAPI partitioning
-        // hiccup destabilizes the OCR session init that follows. The AOT
-        // inpainting model is the only model that opts into the accelerator
-        // (single big generative pass — its ideal workload).
-        val opts = OnnxRuntimeProvider.createSessionOptions(forceCpu = true)
+        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
         try {
             session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
         } catch (e: Exception) {
@@ -50,7 +51,7 @@ class OnnxPageTextDetector {
     }
 
     fun detect(bitmap: Bitmap): List<Detection> {
-        val sess = session ?: throw IllegalStateException("Detector not initialized")
+        val localSession = session ?: throw IllegalStateException("Detector not initialized")
 
         val t0 = System.nanoTime()
         val resized = BitmapPool.getARGB8888(640, 640)
@@ -60,15 +61,19 @@ class OnnxPageTextDetector {
         var inputTensor: OnnxTensor? = null
         var sizesTensor: OnnxTensor? = null
         var results: OrtSession.Result? = null
+        var inputBuffer: FloatBuffer? = null
 
         try {
-            inputTensor = preprocess(resized)
-            sizesTensor = createOrigSizes(bitmap)
+            // TachiyomiAT: ORT consumes the direct buffer in place (no native copy),
+            // so it MUST outlive the tensor — keep referenced until the finally (#12).
+            inputBuffer = inputBufferPool.acquire()
+            inputTensor = preprocess(resized, inputBuffer)
+            sizesTensor = createOriginalSizes(bitmap)
             val inputTensorValue = inputTensor!!
             val sizesTensorValue = sizesTensor!!
             val t1 = System.nanoTime()
 
-            results = sess.run(
+            results = localSession.run(
                 mapOf(
                     "images" to inputTensorValue,
                     "orig_target_sizes" to sizesTensorValue,
@@ -100,6 +105,7 @@ class OnnxPageTextDetector {
             results?.close()
             inputTensor?.close()
             sizesTensor?.close()
+            inputBuffer?.let { inputBufferPool.release(it) }
             BitmapPool.putARGB8888(resized)
         }
     }
@@ -107,35 +113,36 @@ class OnnxPageTextDetector {
     fun close() {
         session?.close()
         session = null
+        inputBufferPool.clear()
     }
 
-    // TachiyomiAT: rewritten from a triple-nested per-channel loop
-    // (for c in 0..2 { for y { for x { ... } } }) to a single-pass scan through
-    // the pixel array. The old code traversed every pixel three times (once per
-    // channel); this version reads each pixel once, extracts R/G/B, and writes
-    // to contiguous FloatBuffer regions via bulk-put where possible, reducing
-    // the per-page pixel-array traversal from ~3.6M to ~1.2M.
-    private fun preprocess(resized: Bitmap): OnnxTensor {
+    // TachiyomiAT: frees the pooled direct buffer without tearing down the ONNX
+    // session; wired into per-page OOM relief (contracts #4/#10).
+    fun reclaimPooledMemory() {
+        inputBufferPool.clear()
+    }
+
+    fun forceReleaseNativeBuffers() {
+        inputBufferPool.clear()
+    }
+
+    // TachiyomiAT: NCHW [1,3,640,640] written channel-first into a pooled DIRECT
+    // buffer (contract #12). Every position is overwritten each call, so the
+    // pool's non-zeroed acquire is safe (contract #1).
+    private fun preprocess(resized: Bitmap, floatBuf: FloatBuffer): OnnxTensor {
         val pixels = IntArray(640 * 640)
         resized.getPixels(pixels, 0, 640, 0, 0, 640, 640)
 
         val total = 640 * 640
-        // Layout: [R_0...R_n, G_0...G_n, B_0...B_n] — contiguous float arrays
-        // so ONNX can read them directly without interleaving.
-        val rChannel = FloatArray(total)
-        val gChannel = FloatArray(total)
-        val bChannel = FloatArray(total)
+        floatBuf.clear()
         for (i in 0 until total) {
             val pixel = pixels[i]
-            rChannel[i] = (pixel shr 16 and 0xFF) / 255.0f
-            gChannel[i] = (pixel shr 8 and 0xFF) / 255.0f
-            bChannel[i] = (pixel and 0xFF) / 255.0f
+            floatBuf.put(i, (pixel shr 16 and 0xFF) / 255.0f)
+            floatBuf.put(total + i, (pixel shr 8 and 0xFF) / 255.0f)
+            floatBuf.put(2 * total + i, (pixel and 0xFF) / 255.0f)
         }
-        val floatBuf = FloatBuffer.allocate(3 * total)
-        floatBuf.put(rChannel)
-        floatBuf.put(gChannel)
-        floatBuf.put(bChannel)
-        floatBuf.rewind()
+        floatBuf.limit(3 * total)
+        floatBuf.position(0)
         return OnnxTensor.createTensor(
             OnnxRuntimeProvider.environment,
             floatBuf,
@@ -143,11 +150,15 @@ class OnnxPageTextDetector {
         )
     }
 
-    private fun createOrigSizes(bitmap: Bitmap): OnnxTensor {
-        val origSizes = longArrayOf(bitmap.width.toLong(), bitmap.height.toLong())
+    private fun createOriginalSizes(bitmap: Bitmap): OnnxTensor {
+        val originalSizes = java.nio.ByteBuffer.allocateDirect(16)
+            .order(java.nio.ByteOrder.nativeOrder())
+            .asLongBuffer()
+        originalSizes.put(0, bitmap.width.toLong())
+        originalSizes.put(1, bitmap.height.toLong())
         return OnnxTensor.createTensor(
             OnnxRuntimeProvider.environment,
-            LongBuffer.wrap(origSizes),
+            originalSizes,
             longArrayOf(1, 2),
         )
     }
@@ -159,9 +170,9 @@ class OnnxPageTextDetector {
     ): List<Detection> {
         val detections = mutableListOf<Detection>()
         for (i in labels.indices) {
-            val scr = scores[i]
-            if (scr.isNaN()) continue
-            if (scr < CONFIDENCE_THRESHOLD) continue
+            val scoreValue = scores[i]
+            if (scoreValue.isNaN()) continue
+            if (scoreValue < CONFIDENCE_THRESHOLD) continue
             val box = boxes[i]
             detections.add(
                 Detection(
@@ -172,7 +183,7 @@ class OnnxPageTextDetector {
                         box[3].toInt(),
                     ),
                     label = labels[i].toInt(),
-                    score = (Math.round(scr * 10000.0) / 10000.0).toFloat(),
+                    score = (Math.round(scoreValue * 10000.0) / 10000.0).toFloat(),
                     className = classNames[labels[i].toInt()] ?: "class_${labels[i]}",
                 ),
             )
@@ -193,7 +204,7 @@ class OnnxPageTextDetector {
                 .sortedByDescending { it.second.score }
             val keep = mutableListOf<Detection>()
             for ((_, det) in indexed) {
-                if (keep.any { isGeometricDuplicate(det.bbox, it.bbox) }) {
+                if (keep.any { BoxGeometry.isGeometricDuplicate(det.bbox, it.bbox, DEDUP_THRESHOLDS) }) {
                     removed.add(det)
                 } else {
                     keep.add(det)
@@ -206,55 +217,20 @@ class OnnxPageTextDetector {
         return detections.filter { it !in removed }
     }
 
-    private fun isGeometricDuplicate(a: IntArray, b: IntArray): Boolean {
-        val iou = computeIou(a, b)
-        if (iou > IOU_THRESHOLD) return true
-        val minArea = min(bboxArea(a), bboxArea(b))
-        if (minArea > 0 && intersectionArea(a, b).toFloat() / minArea.toFloat() > CONTAINMENT_THRESHOLD) return true
-
-        val aw = max(1, a[2] - a[0])
-        val ah = max(1, a[3] - a[1])
-        val bw = max(1, b[2] - b[0])
-        val bh = max(1, b[3] - b[1])
-        val centerDx = kotlin.math.abs((a[0] + a[2]) - (b[0] + b[2])) / 2f
-        val centerDy = kotlin.math.abs((a[1] + a[3]) - (b[1] + b[3])) / 2f
-        return centerDx <= CENTER_THRESHOLD * min(aw, bw) &&
-            centerDy <= CENTER_THRESHOLD * min(ah, bh) &&
-            kotlin.math.abs(aw - bw).toFloat() <= SIZE_THRESHOLD * max(aw, bw) &&
-            kotlin.math.abs(ah - bh).toFloat() <= SIZE_THRESHOLD * max(ah, bh)
-    }
-
-    private fun computeIou(a: IntArray, b: IntArray): Float {
-        val ax1 = a[0]; val ay1 = a[1]; val ax2 = a[2]; val ay2 = a[3]
-        val bx1 = b[0]; val by1 = b[1]; val bx2 = b[2]; val by2 = b[3]
-        val ix1 = max(ax1, bx1)
-        val iy1 = max(ay1, by1)
-        val ix2 = min(ax2, bx2)
-        val iy2 = min(ay2, by2)
-        if (ix2 <= ix1 || iy2 <= iy1) return 0.0f
-        val inter = (ix2 - ix1) * (iy2 - iy1)
-        val aArea = max(0, ax2 - ax1) * max(0, ay2 - ay1)
-        val bArea = max(0, bx2 - bx1) * max(0, by2 - by1)
-        val union = aArea + bArea - inter
-        return if (union > 0) inter.toFloat() / union.toFloat() else 0.0f
-    }
-
-    private fun intersectionArea(a: IntArray, b: IntArray): Int {
-        val ix1 = max(a[0], b[0])
-        val iy1 = max(a[1], b[1])
-        val ix2 = min(a[2], b[2])
-        val iy2 = min(a[3], b[3])
-        if (ix2 <= ix1 || iy2 <= iy1) return 0
-        return (ix2 - ix1) * (iy2 - iy1)
-    }
-
-    private fun bboxArea(box: IntArray): Int = max(0, box[2] - box[0]) * max(0, box[3] - box[1])
-
     companion object {
         private const val CONFIDENCE_THRESHOLD = 0.45f
-        private const val IOU_THRESHOLD = 0.75f
-        private const val CONTAINMENT_THRESHOLD = 0.88f
-        private const val CENTER_THRESHOLD = 0.12f
-        private const val SIZE_THRESHOLD = 0.18f
+
+        private const val DETECTOR_INPUT_FLOATS = 3 * 640 * 640
+
+        /**
+         * Tuned thresholds for the detector-stage geometric dedupe. The
+         * algorithm lives in [BoxGeometry]; only the constants are stage-specific.
+         */
+        private val DEDUP_THRESHOLDS = BoxGeometry.DedupThresholds(
+            iou = 0.75f,
+            containment = 0.88f,
+            center = 0.12f,
+            size = 0.18f,
+        )
     }
 }

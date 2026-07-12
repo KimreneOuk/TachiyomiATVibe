@@ -12,11 +12,12 @@ import tachiyomi.core.common.preference.getEnum
 enum class TranslationEngineCategory { STANDARD, AI_MODEL }
 
 /**
- * Standard translators. These do not use dynamic LLM model selection and
- * do not require API keys. Keeps the list scalable for future providers
+ * Standard translators. These do not use dynamic LLM model selection. Most
+ * require no credentials; DeepL is the exception (it needs an API key, stored
+ * via [translationDeeplApiKey]). Keeps the list scalable for future providers
  * such as Microsoft or Yandex.
  */
-enum class StandardEngine { MLKIT, GOOGLE }
+enum class StandardEngine { MLKIT, GOOGLE, DEEPL }
 
 /**
  * AI model translators. Each provider has its own API key and model
@@ -30,6 +31,19 @@ enum class AiEngine { GEMINI, OPENROUTER, DEEPSEEK, LMSTUDIO }
  */
 enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
 
+/**
+ * TachiyomiAT: source reading order for a manga/comic page. Determines how the
+ * recognition engine orders detected blocks and which direction the inpainter
+ * assumes for text flow.
+ *
+ * - [AUTO]: derive from the source language (CJK languages -> RTL manga flow,
+ *   everything else -> LTR comic flow). The historical default.
+ * - [RTL_MANGA]: force right-to-left manga ordering regardless of language.
+ * - [LTR_COMIC]: force left-to-right western-comic ordering regardless of
+ *   language.
+ */
+enum class TranslationReadingOrder { AUTO, RTL_MANGA, LTR_COMIC }
+
 class TranslationPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
@@ -40,6 +54,16 @@ class TranslationPreferences(
      * exposes a toggle, so translation is opt-in.
      */
     fun translationEnabled() = preferenceStore.getBoolean("translation_enabled", false)
+
+    /**
+     * Show a read-only confirmation popup (current source/target language,
+     * engine/model, OCR model, output tokens) before the manga-screen batch
+     * "Translate chapter" action runs. The reader per-page/on-the-fly path is
+     * unaffected. Defaults to true so users review their settings at least
+     * once; the popup's "Don't show this again" checkbox and the Translation
+     * settings sheet both toggle this off.
+     */
+    fun translationConfirmPretranslate() = preferenceStore.getBoolean("translation_confirm_pretranslate", true)
 
     /**
      * Reader auto-translation: when enabled (and [translationEnabled] is on),
@@ -55,40 +79,35 @@ class TranslationPreferences(
      */
     fun autoTranslatePrefetchCount() = preferenceStore.getInt("auto_translate_prefetch_count", 2)
 
-    fun autoTranslateAfterDownload() = preferenceStore.getBoolean("auto_translate_after_download", false)
     fun translateFromLanguage() = preferenceStore.getString("translate_language_from", "CHINESE")
     fun translateToLanguage() = preferenceStore.getString("translate_language_to", "ENGLISH")
     fun translationFont() = preferenceStore.getInt("translation_font", 0)
 
-    fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "QUALITY")
+    fun translationInpaintingMode() = preferenceStore.getString("translation_inpainting_mode", "FAST")
 
     /**
-     * TachiyomiAT: ONNX Runtime execution-provider strategy.
+     * Opt-in fallback: when QUALITY inpainting is selected but the neural AOT
+     * model is absent, fall back to FAST instead of failing. Default OFF — keeps
+     * the strict QUALITY behaviour unless the user explicitly accepts the
+     * quality trade-off.
+     */
+    fun translationInpaintQualityFallback() = preferenceStore.getBoolean("translation_inpaint_quality_fallback", false)
+
+    /**
+     * Legacy ONNX execution-provider preference.
      *
-     * Values:
-     *   "AUTO"   — pick the safe default for this device (NNAPI where supported,
-     *              else CPU). This is the recommended value and the default.
-     *   "NNAPI"  — force the NNAPI EP (NPU/GPU/DSP via Android's driver layer).
-     *              Useful to opt back in after AUTO chose CPU on a misdetected
-     *              device, or to force NNAPI for benchmarking.
-     *   "CPU"    — force CPU-only (the legacy behavior). Use if a device's NNAPI
-     *              driver is unstable (rare; the runtime also auto-disables
-     *              NNAPI for the process after one failure).
-     *
-     * NOTE: "QNN" is intentionally NOT a value here. QNN (Qualcomm HTP) requires
-     * the onnxruntime-android-qnn artifact and QNN-quantized models, neither of
-     * which ship yet. It is gated behind [translationExperimentalQnn] below and
-     * wired in a future cycle — enabling it without the prerequisites is a
-     * silent no-op (see OnnxRuntimeProvider.registerQnnSafely).
+     * Translation ONNX sessions are CPU-only now. This key remains for backward
+     * compatibility with existing installs, but runtime code intentionally
+     * ignores it. Future NPU support should be a separate Qualcomm QNN/QAIRT
+     * backend with converted models, not generic NNAPI.
      */
     fun translationOnnxEp() = preferenceStore.getString("translation_onnx_ep", "AUTO")
 
     /**
-     * TachiyomiAT: experimental QNN (Qualcomm HTP/NPU) toggle. OFF by default
-     * and NOT functional until onnxruntime-android-qnn + QNN-quantized models
-     * are shipped. When ON, ChapterTranslator's ONNX sessions will be created
-     * with EpStrategy.QNN — which is currently a logged no-op falling back to
-     * CPU. Surfaced as a preference now so the integration point is stable.
+     * Legacy experimental QNN toggle.
+     *
+     * Kept only so old preference files deserialize cleanly. Current translation
+     * ONNX runtime ignores it and always creates CPU sessions.
      */
     fun translationExperimentalQnn() = preferenceStore.getBoolean("translation_experimental_qnn", false)
 
@@ -104,6 +123,14 @@ class TranslationPreferences(
     fun translationEngineCategory() = preferenceStore.getEnum("translation_engine_category", TranslationEngineCategory.STANDARD)
     fun translationStandardEngine() = preferenceStore.getEnum("translation_standard_engine", StandardEngine.MLKIT)
     fun translationAiEngine() = preferenceStore.getEnum("translation_ai_engine", AiEngine.GEMINI)
+
+    /**
+     * DeepL (Standard engine) API key. DeepL is the only Standard engine that
+     * requires credentials. Stored private (excluded from backups / masked in
+     * the UI) via the same __PRIVATE_ convention as the AI keys.
+     */
+    fun translationDeeplApiKey() =
+        preferenceStore.getString("__PRIVATE_translation_deepl_api_key", "")
     //endregion
 
     //region AI-only preferences
@@ -175,6 +202,24 @@ class TranslationPreferences(
      * translation run without rebuilding.
      */
     fun translationDiagnostics() = preferenceStore.getBoolean("translation_diagnostics", false)
+
+    /**
+     * TachiyomiAT: opt-in "Analytical Mode" for AI translation. When enabled,
+     * the translation pipeline assembles extra context for each chunk — past
+     * translated pairs from earlier pages (speaker/voice continuity) and future
+     * OCR'd-but-not-yet-translated source text (so the model can see what comes
+     * next) — and injects it via the sliding-window context planner. Off by
+     * default to keep the non-analytical path (and its token budget) unchanged.
+     */
+    fun translationAnalyticalMode() = preferenceStore.getBoolean("translation_analytical_mode", false)
+
+    /**
+     * TachiyomiAT: source-page reading order (RTL manga / LTR comic / auto from
+     * language). The recognition engine caches its resolved RTL/LTR decision
+     * once per instance, so changing this at runtime forces a recognition
+     * rebuild (see the engine-rebuild gate in TranslationPipeline).
+     */
+    fun translationReadingOrder() = preferenceStore.getEnum("translation_reading_order", TranslationReadingOrder.AUTO)
 
     //endregion
 

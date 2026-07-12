@@ -20,16 +20,19 @@ class GoogleTranslator(
     val okHttpClient = OkHttpClient()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
+        // Pin sl=fromLang.code (not the old hardcoded "auto"). "auto" made Google guess the source
+        // per request, a silent fallback that hid misconfigured OCR language settings and produced
+        // inconsistent results across blocks. Pinning makes the configured language authoritative.
         pages.mapValues { (_, v) ->
             v.blocks.map { b ->
-                b.translation = translateText(toLang.code, b.text)
+                b.translation = translateText(toLang.code, fromLang.code, b.text)
             }
         }
     }
 
-    private suspend fun translateText(lang: String, text: String): String {
+    private suspend fun translateText(lang: String, sourceLang: String, text: String): String {
         if (text.isBlank()) return ""
-        val access = getTranslateUrl(lang, text)
+        val access = getTranslateUrl(lang, sourceLang, text)
         val build: Request = Request.Builder().url(access).build()
         val newCall = okHttpClient.newCall(build)
         val response = newCall.await()
@@ -45,12 +48,9 @@ class GoogleTranslator(
             val jSONArray = JSONArray(string).getJSONArray(0).getJSONArray(0)
             return jSONArray.getString(0)
         } catch (e: Exception) {
-            // TachiyomiAT: the old logcat here printed only the exception, never
-            // the HTTP code or the response body. Google's free endpoint returns
-            // 429/HTML (not JSON) on rate-limiting or bot-detection, which this
-            // catch then silently turned into "" — so the whole page rendered
-            // with blank translations and no visible error. Log the code + a
-            // snippet of the body so the real cause is diagnosable.
+            // Google's free endpoint returns 429/HTML (not JSON) on rate-limiting or bot-detection,
+            // which this catch previously turned into "" with no visible error — blank pages with
+            // no cause. Log the code + a body snippet so the real cause is diagnosable.
             val snippet = if (string.length > 200) string.substring(0, 200) else string
             logcat(LogPriority.WARN, e) {
                 "GoogleTranslator: parse failed for lang=$lang text=\"$text\" " +
@@ -60,16 +60,16 @@ class GoogleTranslator(
         return ""
     }
 
-    private fun getTranslateUrl(lang: String, text: String): String {
+    private fun getTranslateUrl(lang: String, sourceLang: String, text: String): String {
         try {
             val client = client1
             val calculateToken = calculateToken(text)
             val encode: String = URLEncoder.encode(text, "utf-8")
-            return "https://translate.google.com/translate_a/single?client=$client&sl=auto&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken&q=$encode"
+            return "https://translate.google.com/translate_a/single?client=$client&sl=$sourceLang&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken&q=$encode"
         } catch (unused: UnsupportedEncodingException) {
             val client2 = client1
             val calculateToken2 = calculateToken(text)
-            return "https://translate.google.com/translate_a/single?client=$client2&sl=auto&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken2&q=$text"
+            return "https://translate.google.com/translate_a/single?client=$client2&sl=$sourceLang&tl=$lang&dt=at&dt=bd&dt=ex&dt=ld&dt=md&dt=qca&dt=rw&dt=rm&dt=ss&dt=t&otf=1&ssel=0&tsel=0&kc=1&tk=$calculateToken2&q=$text"
         }
     }
 

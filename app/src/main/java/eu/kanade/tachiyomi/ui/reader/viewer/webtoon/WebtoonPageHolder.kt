@@ -11,17 +11,18 @@ import androidx.core.view.updateLayoutParams
 import androidx.core.view.updateMargins
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
+import eu.kanade.translation.model.shouldSurfaceError
+import eu.kanade.translation.model.displayImageName
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
-
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.launchIn
@@ -89,7 +90,6 @@ class WebtoonPageHolder(
      * dedup content-based and robust to any path that re-resolves the stream.
      */
     private var lastShownImageName: String? = null
-    private var lastShownRenderRevision: Long = -1L
 
     /**
      * TachiyomiAT: a generation counter bumped on every [bind]. In-flight
@@ -131,9 +131,10 @@ class WebtoonPageHolder(
      * affordance vs. the translate affordance.
      */
     private fun isPageBeingTranslated(): Boolean = page?.translation?.let { t ->
-        (t.ocrStatus == "RUNNING" || t.inpaintStatus == "RUNNING" ||
-            t.translationStatus == "RUNNING" || t.renderStatus == "RUNNING") &&
-            t.renderedImageName == null && (t.cleanedImageName == null || t.blocks.isNotEmpty())
+        t.ocrStatus == "RUNNING" ||
+            t.inpaintStatus == "RUNNING" ||
+            t.translationStatus == "RUNNING" ||
+            t.renderStatus == "RUNNING"
     } ?: false
 
     /**
@@ -284,27 +285,23 @@ class WebtoonPageHolder(
         // TachiyomiAT: capture the generation this setImage() was launched for.
         // If a newer bind() lands before we reach the UI update, bail —
         // cooperative cancellation only fires at suspension points, so without
-        // this check a refresh job past its withIOContext could still call
-        // frame.setImage() with the OLD page's bytes into a rebound holder.
         val myGeneration = bindGeneration
         val boundPage = page ?: return
 
-        boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
+        // Eagerly resolve the translated stream to avoid original-then-translated flash on load.
+        if (boundPage.translatedStream == null && showTranslations) {
+            viewer.activity.viewModel.attachTranslatedStreamForPage(boundPage)
+        }
+        if (!boundPage.translationToggled) {
+            boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
+        }
         val streamFn = boundPage.stream ?: return
 
-        // TachiyomiAT: record the rendered/cleaned image file name we're about to
-        // display (rendered wins over cleaned, matching the ViewModel collector's
-        // precedence) so refreshTranslation() can skip a redundant re-decode when
-        // the same image is already on screen. See [lastShownImageName].
+        // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (boundPage.showTranslatedImage) {
-            boundPage.translation?.renderedImageName ?: boundPage.translation?.cleanedImageName
+            boundPage.translation?.displayImageName
         } else {
             null
-        }
-        lastShownRenderRevision = if (boundPage.showTranslatedImage) {
-            boundPage.translation?.renderRevision ?: -1L
-        } else {
-            -1L
         }
 
         val isBeingTranslated = isPageBeingTranslated()
@@ -359,31 +356,27 @@ class WebtoonPageHolder(
         val currentPage = page ?: return
         val streamAvailable = currentPage.translatedStream != null
         val isBeingTranslated = isPageBeingTranslated()
-        // TachiyomiAT: only relaunch setImage() when the translated image we'd
-        // render is DIFFERENT from the one already on screen. The dedup is keyed
-        // on the stable rendered/cleaned file NAME (rendered wins over cleaned,
-        // matching the ViewModel collector) rather than the stream lambda's
-        // referential identity, which was fragile because the stream factories
-        // return a fresh lambda on every call. A refresh for a status-only
-        // change (RUNNING→READY re-emitted, no new image) must NOT re-decode &
-        // re-set the image — that's the visible flash.
-        val newName = currentPage.translation?.renderedImageName ?: currentPage.translation?.cleanedImageName
-        val newRevision = currentPage.translation?.renderRevision ?: -1L
-        val alreadyShowingThisImage =
-            currentPage.showTranslatedImage &&
-                newName != null &&
-                newName == lastShownImageName &&
-                newRevision == lastShownRenderRevision
+        val newName = currentPage.translation?.displayImageName
+
+        val wantTranslated = if (currentPage.translationToggled) {
+            currentPage.showTranslatedImage && streamAvailable
+        } else {
+            showTranslations && streamAvailable
+        }
+
+        val alreadyShowingCorrectImage = if (wantTranslated) {
+            newName != null && newName == lastShownImageName
+        } else {
+            lastShownImageName == null
+        }
+
         when {
             isBeingTranslated -> {
                 frame.showProcessingOverlay(true)
-                // Cancel affordance while running, instead of hiding the button.
                 frame.setTranslating(true)
             }
-            showTranslations && streamAvailable -> {
-                if (alreadyShowingThisImage) {
-                    // Same translated image already on screen — sync overlays
-                    // only, do NOT re-decode & re-set the image.
+            wantTranslated -> {
+                if (alreadyShowingCorrectImage) {
                     frame.showProcessingOverlay(false)
                     frame.showTranslateButton(translationEnabled)
                     frame.setTranslating(false)
@@ -397,21 +390,41 @@ class WebtoonPageHolder(
                 }
             }
             else -> {
-                frame.showProcessingOverlay(false)
-                frame.showTranslateButton(translationEnabled)
-                frame.setTranslating(false)
+                if (alreadyShowingCorrectImage) {
+                    frame.showProcessingOverlay(false)
+                    frame.showTranslateButton(translationEnabled)
+                    frame.setTranslating(false)
+                } else {
+                    currentPage.showTranslatedImage = false
+                    frame.showProcessingOverlay(false)
+                    frame.showTranslateButton(translationEnabled)
+                    frame.setTranslating(false)
+                    loadJob?.cancel()
+                    loadJob = holderScope.launch { setImage() }
+                }
             }
         }
         // Record the image name we're now showing so the next refresh can
         // short-circuit if nothing changed. When showing the original (not a
         // translated stream) there's no name to track.
         lastShownImageName = if (currentPage.showTranslatedImage) newName else null
-        lastShownRenderRevision = if (currentPage.showTranslatedImage) newRevision else -1L
-        // TachiyomiAT: surface translation errors — but only when the page is NOT
-        // currently running, to avoid showing stale errors from a prior failed
-        // attempt alongside the RUNNING overlay.
-        val errorMsg = if (!isBeingTranslated) currentPage.translation?.errorMessage else null
+        // TachiyomiAT: surface translation errors — but only for a genuine
+        // terminal failure. Cancellation, the stranded-page sweep, and PARTIAL
+        // all write an explanatory errorMessage that is NOT a failure;
+        // shouldSurfaceError admits only real FAILED stages with no result.
+        val translation = currentPage.translation
+        val errorMsg = if (translation != null && translation.shouldSurfaceError) {
+            translation.errorMessage
+        } else {
+            null
+        }
         frame.showTranslationError(errorMsg)
+
+        val wantOverlay = currentPage.showTranslatedImage && translation != null
+        val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
+        val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0
+        val h = if (wantOverlay) translation!!.imgHeight.toInt() else 0
+        frame.setTranslationBlocks(blocksToDraw, w, h)
     }
 
     private fun process(imageSource: BufferedSource): BufferedSource {

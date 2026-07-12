@@ -14,11 +14,35 @@ data class ModelPaths(
     val ocrDecoderStep: File,
     val ocrVocab: File,
     val inpaintModel: File?,
+    /**
+     * TachiyomiAT: optional YOLO26-nano manga panel detector model
+     * (`manga_panel_detector_int8.onnx`). Nullable because the panel detector
+     * is best-effort context — when absent or corrupt, panel assignment is
+     * skipped and translation proceeds panel-less. Copied from
+     * `models/detection/manga_panel_detector_int8.onnx` alongside the text
+     * detector; a failed copy leaves this null rather than throwing.
+     */
+    val panelDetectorModel: File?,
+    /**
+     * TachiyomiAT: YOLO11-seg manga bubble segmenter model (`manga_bubble_segmenter_int8.onnx`).
+     */
+    val bubbleSegmenterModel: File?,
 )
 
 data class PaddleOcrV6SmallPaths(
     val recognitionModel: File,
     val dictionary: File,
+)
+
+/**
+ * TachiyomiAT: resolved paths for the PP-OCRv6 small **detection** (det) model.
+ * The det model runs inside each ROI crop from Stage-1 detection to find
+ * individual text lines (polygons), replacing the ink-gap column heuristic for
+ * the PaddleOCR rec path. See
+ * `docs/superpowers/specs/2026-06-23-paddleocr-v6-det-onnx-integration-design.md`.
+ */
+data class PaddleOcrV6DetPaths(
+    val detectionModel: File,
 )
 
 class OnnxModelStore(private val context: Context) {
@@ -67,6 +91,22 @@ class OnnxModelStore(private val context: Context) {
             null
         }
 
+        // Panel detector is best-effort context (mirrors inpaint copy): a missing
+        // asset or failed copy leaves it null so panel assignment is skipped, not crashed.
+        val panelDetectorFile = try {
+            copyIfNeeded(dir, "panel_detector.onnx", "models/detection/manga_panel_detector_int8.onnx")
+        } catch (_: Exception) {
+            logcat(LogPriority.WARN) { "Panel detector model not found in assets, skipping" }
+            null
+        }
+        
+        val bubbleSegmenterFile = try {
+            copyIfNeeded(dir, "bubble_segmenter.onnx", "models/segmentation/manga109_bubble_int8.onnx")
+        } catch (_: Exception) {
+            logcat(LogPriority.WARN) { "Bubble segmenter model not found in assets, skipping" }
+            null
+        }
+
         return ModelPaths(
             detectorModel = detectorFile,
             ocrEncoder = encoderFile,
@@ -74,13 +114,15 @@ class OnnxModelStore(private val context: Context) {
             ocrDecoderStep = decoderStepFile,
             ocrVocab = vocabFile,
             inpaintModel = inpaintFile,
+            panelDetectorModel = panelDetectorFile,
+            bubbleSegmenterModel = bubbleSegmenterFile,
         )
     }
 
     fun paddleOcrV6SmallAvailable(): Boolean {
         val dir = File(modelsDir, "paddle-v6-small")
         return listOf(
-            "PP-OCRv6_small_rec.onnx",
+            "inference.onnx",
             "PP-OCRv6_small_rec.txt",
         ).all { File(dir, it).exists() }
     }
@@ -98,8 +140,8 @@ class OnnxModelStore(private val context: Context) {
         return PaddleOcrV6SmallPaths(
             recognitionModel = copyIfNeeded(
                 dir,
-                "PP-OCRv6_small_rec.onnx",
-                "models/ocr/paddle-v6-small/PP-OCRv6_small_rec.onnx",
+                "inference.onnx",
+                "models/ocr/paddle-v6-small/inference.onnx",
             ),
             dictionary = copyIfNeeded(
                 dir,
@@ -109,13 +151,53 @@ class OnnxModelStore(private val context: Context) {
         )
     }
 
+    /**
+     * TachiyomiAT: PP-OCRv6 small **detection** model availability.
+     *
+     * The det model is an optional refinement of the PaddleOCR rec path: when
+     * present it replaces the ink-gap vertical-column heuristic with a learned
+     * text-line detector. The pipeline must therefore tolerate its absence
+     * (graceful fallback) — [paddleOcrV6DetAvailable] / [assetsAvailable] gate
+     * whether the det engine is built.
+     */
+    fun paddleOcrV6DetAvailable(): Boolean {
+        val dir = File(modelsDir, "paddle-v6-small/det")
+        return File(dir, "inference.onnx").exists()
+    }
+
+    fun paddleOcrV6DetAssetsAvailable(): Boolean {
+        return try {
+            context.assets.list("models/ocr/paddle-v6-small/det")?.isNotEmpty() == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun ensurePaddleOcrV6Det(): PaddleOcrV6DetPaths {
+        val dir = File(modelsDir, "paddle-v6-small/det").also { if (!it.exists()) it.mkdirs() }
+        return PaddleOcrV6DetPaths(
+            detectionModel = copyIfNeeded(
+                dir,
+                "inference.onnx",
+                "models/ocr/paddle-v6-small/det/inference.onnx",
+            ),
+        )
+    }
+
     private fun copyIfNeeded(dir: File, name: String, assetPath: String): File {
         val dest = File(dir, name)
         if (dest.exists() && dest.length() > 0) {
             if (name.endsWith(".onnx")) {
-                val buffer = ByteArray(1)
-                dest.inputStream().use { it.read(buffer) }
-                if (buffer[0] == 0x08.toByte()) return dest
+                if (looksLikeValidOnnx(dest)) return dest
+                // Cached copy is structurally invalid (truncated/corrupt). A bad
+                // .onnx previously passed the old 0x08 check and produced garbage
+                // all-gray inpaint or an opaque OrtException; delete to re-copy.
+                logcat(LogPriority.WARN) {
+                    "Cached $name failed ONNX integrity check (size=${dest.length()}); re-copying from assets"
+                }
+                if (!dest.delete()) {
+                    logcat(LogPriority.WARN) { "Could not delete corrupt cached $name; attempting overwrite" }
+                }
             } else {
                 return dest
             }
@@ -142,5 +224,53 @@ class OnnxModelStore(private val context: Context) {
             outputStream?.close()
         }
         return dest
+    }
+
+    /**
+     * TachiyomiAT: lightweight structural validity check for a cached .onnx,
+     * replacing the old single-byte `0x08` heuristic which any truncated file
+     * could pass. A corrupt/garbage model that passes the old check either
+     * throws an opaque OrtException at session creation (surfaces as a generic
+     * "Inpainting failed") or, worse, loads a session that emits near-zero
+     * output → uniform 128-gray inpaint. Catching it here forces a clean
+     * re-copy from assets instead.
+     *
+     * Verifies, without a protobuf parser:
+     *  1. Size floor: a real ONNX model for this app is multi-MB. A file below
+     *     [MIN_VALID_ONNX_BYTES] is certainly truncated/empty. (The AOT model
+     *     is ~23MB; this floor is deliberately permissive for future smaller
+     *     models while still rejecting garbage.)
+     *  2. Protobuf header shape: an onnx ModelProto's first field is
+     *     `ir_version` (field 1, varint), so byte 0 is 0x08 and byte 1 is a
+     *     single-byte varint ir_version (1..15 → high bit clear). Field 7
+     *     (`producer_name`, length-delimited, tag 0x3a) commonly follows.
+     *  3. Magic NOT matching: reject files that are clearly something else
+     *     (PNG `89 50 4E 47`, ZIP/PK `50 4B`, gzip `1F 8B`).
+     *
+     * Returns true only if all cheap checks pass; a true validation is the
+     * downstream OrtSession creation (in [AOTInpainting.initialize]).
+     */
+    private fun looksLikeValidOnnx(file: File): Boolean {
+        if (file.length() < MIN_VALID_ONNX_BYTES) return false
+        val header = ByteArray(2)
+        val read = try {
+            file.inputStream().use { it.read(header) }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN) { "Could not read ${file.name} header: ${e.message}" }
+            return false
+        }
+        if (read < 2) return false
+        // Field 1 (ir_version), varint wire type → tag 0x08.
+        if (header[0] != 0x08.toByte()) return false
+        // ir_version is a single-byte varint (values 1..15 have the high bit
+        // clear; current ONNX ir_version is 8). A high-bit-set first varint byte
+        // with no continuation is not a valid ModelProto opener.
+        if (header[1].toInt() and 0x80 != 0) return false
+        return true
+    }
+
+    private companion object {
+        // Real models are multi-MB (AOT ~23MB); below 64 KiB is certainly truncated.
+        const val MIN_VALID_ONNX_BYTES = 64L * 1024L
     }
 }

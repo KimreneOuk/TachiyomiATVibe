@@ -75,15 +75,19 @@ eu.kanade.tachiyomi/
 │   └── webview/                   # WebView screen
 ├── source/                        # Source management (AndroidSourceManager)
 ├── translation/                   # ★ TachiyomiAT exclusive ★ (package root: eu/kanade/translation/)
-│   ├── detection/                 # ONNX text detection
-│   ├── inpainting/                # AOT-based bubble cleaning
-│   ├── model/                     # PageTranslation state machine
+│   │                              # See docs/TRANSLATION_MODULE.md for the full file map,
+│   │                              # test-coverage table, and dedup/structure notes.
+│   ├── detection/                 # ONNX text detection (dedup math in recognition/BoxGeometry)
+│   ├── inpainting/                # AOT-based bubble cleaning + BubbleMaskBuilder (pure masks)
+│   ├── model/                     # PageTranslation state machine + status predicates
 │   ├── ocr/                       # OCR engines (PaddleOCR, MangaOCR, ML Kit)
-│   ├── recognition/               # Page recognition engines
-│   ├── rendering/                 # Text rendering onto cleaned pages
+│   ├── recognition/               # Page recognition engines + BoxGeometry (shared IoU/dedupe)
+│   ├── rendering/                 # Text rendering + RenderColorEstimator (pure colorPolicy)
 │   ├── runtime/onnx/              # ONNX runtime & model management
-│   ├── translator/                # AI/API translators (Gemini, DeepSeek, etc.)
-│   └── util/                      # Task extensions, memory budget
+│   ├── scheduling/                # Job lifecycle, executor, stream registry, lifecycle policy
+│   ├── translator/                # AI/API translators + shared parsers (NumberedLineResponseParser,
+│   │                              #   OcrArtifactSanitizer) + engine kinds + AiModelFetcher
+│   └── util/                      # Task extensions, memory budget, ShortHash (FNV digest)
 ├── ui/                            # Legacy/activity-based UI
 │   ├── base/                      # BaseActivity, delegates
 │   ├── main/                      # MainActivity

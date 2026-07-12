@@ -64,20 +64,10 @@ internal class DownloadPageLoader(
         file: UniFile,
         translations: Map<String, PageTranslation>,
     ): List<ReaderPage> {
-        val resolver: ((String, PageTranslation) -> (() -> java.io.InputStream)?)? = { _, pageTranslation ->
-            if (pageTranslation.renderedImageName != null) {
-                translationManager.getRenderedImageStream(
-                    manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
-                    pageTranslation.renderedImageName!!,
-                )
-            } else if (pageTranslation.displayImageName == pageTranslation.cleanedImageName && pageTranslation.cleanedImageName != null) {
-                translationManager.getCleanedImageStream(
-                    manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
-                    pageTranslation.cleanedImageName!!,
-                )
-            } else null
+        val loader = ArchivePageLoader(file.archiveReader(context), translations).also {
+            archivePageLoader =
+                it
         }
-        val loader = ArchivePageLoader(file.archiveReader(context), translations, resolver).also { archivePageLoader = it }
         return loader.getPages()
     }
 
@@ -85,7 +75,9 @@ internal class DownloadPageLoader(
         val pages = downloadManager.buildPageList(source, manga, chapter.chapter.toDomainChapter()!!)
         return pages.map { (fileName, page) ->
             ReaderPage(
-                page.index, page.url, page.imageUrl,
+                page.index,
+                page.url,
+                page.imageUrl,
                 null,
                 // TachiyomiAT: null-safe stream open — if the SAF URI is
                 // inaccessible (revoked permission, deleted file, etc.), throw
@@ -93,37 +85,27 @@ internal class DownloadPageLoader(
                 // error-handling can surface it gracefully.
                 {
                     context.contentResolver.openInputStream(page.uri ?: Uri.EMPTY)
-                        ?: throw java.io.IOException("Cannot open file for downloaded page: $fileName (uri=${page.uri})")
+                        ?: throw java.io.IOException(
+                            "Cannot open file for downloaded page: $fileName (uri=${page.uri})",
+                        )
                 },
             ).apply {
                 sourceFileName = fileName
                 translation = translations[fileName]
-                if (translation?.renderedImageName != null) {
-                    translatedStream = translationManager.getRenderedImageStream(
-                        manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
-                        translation!!.renderedImageName!!,
-                    )
-                } else if (translation?.displayImageName == translation?.cleanedImageName && translation?.cleanedImageName != null) {
-                    translatedStream = translationManager.getCleanedImageStream(
-                        manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
-                        translation!!.cleanedImageName!!,
-                    )
-                }
                 status = Page.State.READY
             }
         }
     }
 
     fun resolveTranslatedStream(pageTranslation: PageTranslation): (() -> java.io.InputStream)? {
-        if (pageTranslation.renderedImageName != null) {
-            return translationManager.getRenderedImageStream(
-                manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
-                pageTranslation.renderedImageName!!,
-            )
-        } else if (pageTranslation.displayImageName == pageTranslation.cleanedImageName && pageTranslation.cleanedImageName != null) {
+        val displayImageName = pageTranslation.displayImageName
+        if (displayImageName != null) {
             return translationManager.getCleanedImageStream(
-                manga.title, source, chapter.chapter.name, chapter.chapter.scanlator,
-                pageTranslation.cleanedImageName!!,
+                manga.title,
+                source,
+                chapter.chapter.name,
+                chapter.chapter.scanlator,
+                displayImageName,
             )
         }
         return null

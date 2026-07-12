@@ -33,10 +33,13 @@ import eu.kanade.presentation.manga.ChapterSettingsDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.manga.EditCoverAction
 import eu.kanade.presentation.manga.MangaScreen
+import eu.kanade.presentation.manga.components.ChapterTranslationAction
+import eu.kanade.presentation.manga.components.ConfirmTranslationDialog
 import eu.kanade.presentation.manga.components.DeleteChaptersDialog
 import eu.kanade.presentation.manga.components.MangaCoverDialog
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.manga.components.SetIntervalDialog
+import eu.kanade.presentation.manga.components.TranslationProgressSheet
 import eu.kanade.presentation.util.AssistContentScreen
 import eu.kanade.presentation.util.Screen
 import eu.kanade.presentation.util.isTabletUi
@@ -57,6 +60,7 @@ import eu.kanade.tachiyomi.ui.webview.WebViewScreen
 import eu.kanade.tachiyomi.util.system.copyToClipboard
 import eu.kanade.tachiyomi.util.system.toShareIntent
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.i18n.stringResource
@@ -124,7 +128,7 @@ class MangaScreen(
             onBackClicked = navigator::pop,
             onChapterClicked = { openChapter(context, it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
-            //TachiyomiAT
+            // TachiyomiAT
             onTranslationChapter = screenModel::runChapterTranslationActions,
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
@@ -275,6 +279,36 @@ class MangaScreen(
                 } else {
                     LoadingScreen(Modifier.systemBarsPadding())
                 }
+            }
+
+            is MangaScreenModel.Dialog.TranslationProgress -> {
+                val item = successState.chapters.firstOrNull { it.id == dialog.chapterId }
+                TranslationProgressSheet(
+                    chapterName = item?.chapter?.name.orEmpty(),
+                    snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
+                    onDismissRequest = onDismissRequest,
+                    onCancel = {
+                        if (item != null) {
+                            screenModel.runChapterTranslationActions(item, ChapterTranslationAction.CANCEL)
+                        }
+                        screenModel.dismissDialog()
+                    },
+                )
+            }
+
+            is MangaScreenModel.Dialog.ConfirmTranslation -> {
+                ConfirmTranslationDialog(
+                    chapterName = dialog.item.chapter.name,
+                    summary = dialog.summary,
+                    showAgain = screenModel.translationConfirmPretranslate(),
+                    onShowAgainChange = screenModel::setConfirmPretranslate,
+                    onOpenSettings = {
+                        screenModel.dismissDialog()
+                        navigator.push(SettingsScreen(SettingsScreen.Destination.Translation))
+                    },
+                    onConfirm = { screenModel.confirmChapterTranslation(dialog.item) },
+                    onDismissRequest = onDismissRequest,
+                )
             }
 
             is MangaScreenModel.Dialog.SetFetchInterval -> {

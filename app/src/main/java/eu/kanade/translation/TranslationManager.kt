@@ -9,14 +9,18 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.hasRecognizedTranslation
-import eu.kanade.translation.model.lifecycle
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.model.shouldSkipAutoScheduling
 import eu.kanade.translation.model.toPageView
+import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -31,6 +35,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
@@ -55,64 +60,34 @@ class TranslationManager(
     private val sourceManager: SourceManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
 ) {
-    private val translator = ChapterTranslator(context, provider);
+    private val pipeline = TranslationPipeline(context, provider)
+    private val translator = ChapterTranslator(context, provider, pipeline = pipeline);
 
-    companion object {
-        /**
-         * Maximum time [cancelPageTranslations] will wait for a chapter's
-         * cancelled jobs to finish unwinding (their finally blocks reset a
-         * stranded page's RUNNING status on a NonCancellable child). Bounded so
-         * chapter navigation stays responsive even if a job is slow to tear down.
-         */
-        private const val JOIN_TIMEOUT_MS = 2_000L
-    }
+    // Held here (DI singleton) so deleteTranslation can evict stale reader page-stream closures pointing at the deleted rendered/cleaned PNGs.
+    private val streamRegistry: TranslationStreamRegistry = Injekt.get()
 
     /**
-     * TachiyomiAT: owns single-page (and auto) translation jobs so they can be
-     * cancelled on chapter change, reader exit, or translation disable. The
-     * previous implementation launched these on `GlobalScope` and discarded the
-     * returned [Job], which meant orphaned jobs from a previous chapter kept
-     * running (and kept holding the translator's single `translatorPermit`),
-     * starving all later work — appearing as "translate does nothing".
+     * Application-lifetime scope for one-off init work (queue rehydration). SupervisorJob so a
+     * failure in restoreQueue does not cancel unrelated work; IO dispatcher because restoreQueue does DB reads.
      */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * Tracks independently-launched single-page jobs by `"$chapterId:$pageKey"`.
-     * Sequential auto-prefetch does not create one coroutine per page, so it is
-     * deduped separately by [queuedPageKeys] below.
+     * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
+     * keeps the store lifecycle (open/evict/observe), chapter queue, and translation-file I/O.
+     * The scheduler resolves the per-chapter store back through this manager via [storeResolver]
+     * — store instances are shared between reader and translator, so they must not be owned by the scheduler.
      */
-    private val activePageJobs = ConcurrentHashMap<String, Job>()
-
-    /**
-     * Tracks pages that are queued or currently executing inside an ordered
-     * auto-prefetch batch. This closes the gap where page selection events
-     * enqueue overlapping windows:
-     *
-     * page 4 -> [4,5,6]
-     * page 5 -> [5,6,7]
-     * page 4 again -> [4,5,6]
-     *
-     * Before this set, only the actively executing page was protected, so page
-     * 6 could sit in multiple pending batches and run two to four times before
-     * any persisted "done" state was visible to later batches.
-     */
-    private val queuedPageKeys = ConcurrentHashMap.newKeySet<String>()
-
-    /**
-     * Manager-owned auto-prefetch windows. These are the jobs the reader used to
-     * launch on its own ViewModel scope; keeping them here makes auto off,
-     * chapter switch, memory pressure, and reader close able to cancel the work
-     * that is actually running.
-     */
-    private val activeAutoJobs = ConcurrentHashMap<String, Job>()
-    private val autoWindowIds = AtomicLong(0L)
-    private val autoGenerations = ConcurrentHashMap<Long, AtomicLong>()
+    val scheduler = eu.kanade.translation.scheduling.TranslationScheduler(
+        executor = pipeline,
+        storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { chapterId ->
+            activeTranslationStores[chapterId]
+        },
+    )
 
     init {
-        // Make the translator use the same store instance the reader observes
-        // so live updates do not need a chapter reload.
-        translator.activeStoreResolver = { translation ->
+        // Share the store instance between reader and translator so live updates do not need a chapter reload.
+        pipeline.activeStoreResolver = { translation ->
             openOrCreateActiveChapterTranslationStore(
                 translation.chapter.id!!,
                 translation.chapter.name,
@@ -121,50 +96,54 @@ class TranslationManager(
                 translation.source,
             )
         }
-        // NOTE: activeStoreUnregister is intentionally NOT wired. The previous
-        // wiring evicted the shared store from activeTranslationStores after
-        // every single-page translation finished, but the reader captured the
-        // store's StateFlow once at observe time — so the next translate got a
-        // fresh store the reader never observed, breaking live updates for
-        // every page after the first. Store eviction now happens only on
-        // chapter change / reader exit (see cancelPageTranslations /
+        // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
+        // each single-page translation broke live updates (reader captured the
+        // StateFlow once; next translate got a fresh unobserved store). Eviction
+        // now happens only on chapter change / reader exit (cancelPageTranslations /
         // cancelAllPageTranslations callers).
 
-        // TachiyomiAT: wire the permit-watchdog callback. When a page's worker
-        // is stuck in uncancellable native/HTTP code, the translator's watchdog
-        // force-releases the permit (so other pages can proceed) and invokes
-        // this. We then evict the dead job from activePageJobs, otherwise its
-        // entry stays "active" and the existing.isActive dedup in translatePage
-        // would silently drop every future retry of that page forever.
-        translator.onPageStuck = { chapterId, pageKey ->
+        // Permit-watchdog: when a worker is stuck in uncancellable native/HTTP code the
+        // watchdog force-releases the permit and calls this; we evict the dead job so the
+        // dedup in translatePage does not drop every future retry of that page forever.
+        pipeline.onPageStuck = { chapterId, pageKey ->
             if (chapterId != null && pageKey.isNotEmpty()) {
-                markPageJobStuck(chapterId, pageKey)
+                scheduler.markPageJobStuck(chapterId, pageKey)
             }
         }
+
+        // Batch tracker factory: lets the pipeline create and register a tracker per active batch (observable via observeBatchProgress).
+        pipeline.batchTrackerFactory = { chapterId, store, orderedPageKeys ->
+            createBatchTracker(chapterId, store, orderedPageKeys)
+        }
+
+        // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
+        // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
+        applicationScope.launch { translator.restoreQueue() }
     }
 
     /**
-     * TachiyomiAT: evicts a single-page translation job that its worker has
-     * abandoned (stuck in uncancellable native code past its deadline). The
-     * coroutine itself can't be interrupted, but its [activePageJobs] entry is
-     * stale: it reads as "active" so [translatePage]'s dedup keeps rejecting
-     * retries for this page. Remove it (best-effort cancel first) so the page
-     * becomes eligible for translation again. Idempotent.
+     * Evicts a single-page translation job whose worker is stuck in uncancellable native
+     * code past its deadline. Delegates to the scheduler, which owns the [activePageJobs] map.
      */
     fun markPageJobStuck(chapterId: Long, pageKey: String) {
-        val jobKey = "$chapterId:$pageKey"
-        val job = activePageJobs.remove(jobKey)
-        try { job?.cancel() } catch (_: Throwable) {}
-        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") && it.endsWith(":${pageKey.replace(':', '_')}") }
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT evicted stuck page job: jobKey=$jobKey (worker abandoned in native/HTTP code)"
-        }
+        scheduler.markPageJobStuck(chapterId, pageKey)
     }
 
-    private val activeTranslationStores = mutableMapOf<Long, ChapterTranslationStore>()
-    private val activeStoreJobs = mutableMapOf<Long, Job>()
+    private val activeTranslationStores = java.util.concurrent.ConcurrentHashMap<Long, ChapterTranslationStore>()
+    private val activeStoreJobs = java.util.concurrent.ConcurrentHashMap<Long, Job>()
+    private val _activeStoreMap = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     private val _activeStoreState = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
     val activeStoreState: StateFlow<Map<String, PageTranslation>> = _activeStoreState.asStateFlow()
+
+    private val batchTrackers = java.util.concurrent.ConcurrentHashMap<Long, TranslationBatchProgressTracker>()
+    private val _batchTrackerMap = MutableStateFlow<Map<Long, TranslationBatchProgressTracker>>(emptyMap())
+
+    /**
+     * Separate scope for per-chapter store collectors (the `_activeStoreState` fan-in) so
+     * cancelling translation jobs never tears down a collector the reader observes.
+     * SupervisorJob so one chapter's failure does not cancel another's.
+     */
+    private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val isRunning: Boolean
         get() = translator.isRunning
@@ -172,12 +151,22 @@ class TranslationManager(
     val queueState
         get() = translator.queueState
 
+    val isAnyBatchTranslationActive: Boolean
+        get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
+
+    fun stopReaderTranslations(reason: String) {
+        cancelAllPageTranslations(cancelBatchQueue = false)
+        if (!isAnyBatchTranslationActive) {
+            translatorStop(reason, closeEngines = false)
+        }
+    }
+
     fun translatorStart() = translator.start()
     fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 
     fun onMemoryPressure(level: Int) {
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-            cancelAllPageTranslations()
+            scheduler.cancelAllPageTranslations()
         }
         translator.onMemoryPressure(level)
     }
@@ -199,6 +188,13 @@ class TranslationManager(
 
     fun getQueuedTranslationOrNull(chapterId: Long): Translation? {
         return queueState.value.find { it.chapter.id == chapterId }
+    }
+
+    fun isBatchTranslationActive(chapterId: Long): Boolean {
+        return queueState.value.any { translation ->
+            translation.chapter.id == chapterId &&
+                (translation.status == Translation.State.QUEUE || translation.status == Translation.State.TRANSLATING)
+        }
     }
 
     fun translateChapter(manga: Manga, chapters: Chapter) {
@@ -224,23 +220,26 @@ class TranslationManager(
         chapterScanlator: String?,
         mangaTitle: String,
         sourceId: Long,
-    ): Boolean {
+    ): Boolean = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         val source = sourceManager.get(sourceId);
-        if (source == null) return false
+        if (source == null) return@runBlocking false
         val file = provider.findTranslationFile(chapterName, chapterScanlator, mangaTitle, source)
-            ?: return false
-        // Existence alone is NOT enough: openOrCreateActiveChapterTranslationStore
-        // (called when the reader opens a chapter) creates an empty translation
-        // file so the reader and translator share a store instance. Treat an
-        // empty/blank file as "not translated" so the reader never shows a false
-        // TRANSLATED state. A truly-translated chapter has a non-trivial page
-        // map; decode it and require at least one entry.
-        if (!file.exists() || file.length() <= 2L) return false
-        return try {
-            Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream()).isNotEmpty()
+            ?: return@runBlocking false
+        // Existence alone is NOT enough: opening a chapter creates an empty translation file so
+        // reader and translator share a store. Treat empty/blank files as not-translated to avoid
+        // a false TRANSLATED state; a truly-translated chapter has a non-trivial page map.
+        if (!file.exists() || file.length() <= 2L) return@runBlocking false
+        try {
+            val pages = Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
+            // Counts as translated ONLY when a page produced real output — a rendered image
+            // (hasRenderedResult) or recognized text blocks READY to translate (hasRecognizedTranslation).
+            // Reusing the same helpers the reader treats as Done/NeedsRender keeps this consistent
+            // with the live UI. Previously `pages.isNotEmpty()`, which counted a single placeholder
+            // page (written by the stranded-page sweep on chapter open or by failed/aborted
+            // translations) as fully translated forever — a false-positive now closed.
+            pages.values.any { it.hasRenderedResult || it.hasRecognizedTranslation }
         } catch (e: Exception) {
-            // Corrupt/empty file isn't a translation. getChapterTranslation(file)
-            // will delete it on read; here just report not-translated.
+            // Corrupt/empty file isn't a translation; getChapterTranslation(file) deletes it on read.
             logcat(LogPriority.WARN, e) { "Translation file for $chapterName unreadable; treating as not translated" }
             false
         }
@@ -270,13 +269,13 @@ class TranslationManager(
 
     fun getChapterTranslation(
         file: UniFile,
-    ): Map<String, PageTranslation> {
+    ): Map<String, PageTranslation> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         try {
-            return Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
+            return@runBlocking Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
         } catch (e: Exception) {
             file.delete()
         }
-        return emptyMap()
+        return@runBlocking emptyMap()
     }
 
     fun openChapterTranslationStore(file: UniFile): StateFlow<Map<String, PageTranslation>> {
@@ -284,28 +283,33 @@ class TranslationManager(
     }
 
     fun registerActiveTranslationStore(chapterId: Long, store: ChapterTranslationStore) {
-        // If a store is already registered for this chapter (e.g. a previous
-        // translation re-registered one), keep the existing instance so the
-        // reader's already-captured StateFlow keeps observing the same object.
-        if (activeTranslationStores[chapterId] === store) return
-        activeTranslationStores[chapterId] = store
-        // Launch the aggregate collector on the manager's OWN scope (not
-        // GlobalScope) and track the Job so unregisterActiveTranslationStore can
-        // cancel it. Previously this leaked a GlobalScope collector per chapter
-        // that accumulated across navigations.
-        activeStoreJobs[chapterId]?.cancel()
-        activeStoreJobs[chapterId] = scope.launch {
-            store.state.collect { pages ->
-                _activeStoreState.value = pages
+        synchronized(activeTranslationStores) {
+            // Keep the existing instance if already registered so the reader's captured StateFlow keeps observing the same object.
+            if (activeTranslationStores[chapterId] === store) return
+            activeTranslationStores[chapterId] = store
+            _activeStoreMap.value = activeTranslationStores.toMap()
+            // Track the collector Job on the manager's own scope (not GlobalScope, which leaked per chapter across navigations) so unregister can cancel it.
+            activeStoreJobs[chapterId]?.cancel()
+            activeStoreJobs[chapterId] = storeScope.launch {
+                store.state.collect { pages ->
+                    _activeStoreState.value = pages
+                }
             }
         }
     }
 
     fun unregisterActiveTranslationStore(chapterId: Long) {
-        activeStoreJobs.remove(chapterId)?.cancel()
-        activeTranslationStores.remove(chapterId)
-        if (activeTranslationStores.isEmpty()) {
-            _activeStoreState.value = emptyMap()
+        synchronized(activeTranslationStores) {
+            activeStoreJobs.remove(chapterId)?.cancel()
+            // Mark the evicted store defunct BEFORE removing it from the registry. A worker still
+            // holding a reference (e.g. mid-uncancellable ONNX when cancel() was requested) has its
+            // late writes rejected by the defunct guard instead of recreating the deleted file or
+            // stranding a page at RUNNING on a store the reader no longer observes.
+            activeTranslationStores.remove(chapterId)?.markDefunct()
+            _activeStoreMap.value = activeTranslationStores.toMap()
+            if (activeTranslationStores.isEmpty()) {
+                _activeStoreState.value = emptyMap()
+            }
         }
     }
 
@@ -322,24 +326,25 @@ class TranslationManager(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
-    ): ChapterTranslationStore? {
-        activeTranslationStores[chapterId]?.let { return it }
-        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
-        val store = if (file != null && file.exists()) {
-            ChapterTranslationStore.open(file)
-        } else {
-            // No translation file yet: create a LAZY store. The on-disk file is
-            // materialized only on the first real write (persistLocked), so
-            // merely opening a chapter never leaves an empty file behind that
-            // would make isChapterTranslated report a false TRANSLATED state.
-            val saveFile = provider.getTranslationFileName(chapterName, scanlator)
-            ChapterTranslationStore.lazy {
-                provider.getMangaDir(mangaTitle, source)?.createFile(saveFile)
-                    ?: throw java.io.IOException("Cannot create translation file for $chapterName")
+    ): ChapterTranslationStore? = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+        synchronized(activeTranslationStores) {
+            activeTranslationStores[chapterId]?.let { return@runBlocking it }
+            val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+            val store = if (file != null && file.exists()) {
+                ChapterTranslationStore.open(file)
+            } else {
+                // Create a LAZY store: the on-disk file materializes only on the first real write
+                // (persistLocked), so merely opening a chapter never leaves an empty file behind that
+                // would make isChapterTranslated report a false TRANSLATED state.
+                val saveFile = provider.getTranslationFileName(chapterName, scanlator)
+                ChapterTranslationStore.lazy {
+                    provider.getMangaDir(mangaTitle, source)?.createFile(saveFile)
+                        ?: throw java.io.IOException("Cannot create translation file for $chapterName")
+                }
             }
+            registerActiveTranslationStore(chapterId, store)
+            return@runBlocking store
         }
-        registerActiveTranslationStore(chapterId, store)
-        return store
     }
 
     fun openActiveChapterTranslationStore(chapterId: Long, chapterName: String, scanlator: String?, mangaTitle: String, sourceId: Long): StateFlow<Map<String, PageTranslation>>? {
@@ -367,284 +372,91 @@ class TranslationManager(
     fun requestAutoWindow(
         session: TranslationSession,
         requests: List<TranslationPageRequest>,
-    ) {
-        if (requests.isEmpty()) return
-        val chapterId = session.chapter.id ?: return
-        val generation = autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
-        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
+    ) = scheduler.requestAutoWindow(session, requests)
 
-        val accepted = mutableListOf<Pair<String, TranslationPageRequest>>()
-        val distinctRequests = requests.distinctBy { it.id }
-            .sortedWith(compareBy<TranslationPageRequest> { it.priority }.thenBy { it.id.pageIndex })
-
-        for (request in distinctRequests) {
-            val current = session.store.state.value[request.storageKey]
-            if (current != null && current.shouldSkipAutoScheduling) {
-                logAutoDecision("skipped", request, current, request.streamAvailable)
-                continue
-            }
-
-            val manualJobKey = "${request.id.chapterId}:${request.storageKey}"
-            val manualJob = activePageJobs[manualJobKey]
-            if (manualJob != null && manualJob.isActive) {
-                logAutoDecision("skipped", request, current, request.streamAvailable, "manual-active")
-                continue
-            }
-            if (manualJob != null) activePageJobs.remove(manualJobKey)
-
-            val reservationKey = autoReservationKey(request, generation)
-            if (!queuedPageKeys.add(reservationKey)) {
-                logAutoDecision("skipped", request, current, request.streamAvailable, "already-queued")
-                continue
-            }
-
-            accepted.add(reservationKey to request)
-            logAutoDecision("scheduled", request, current, request.streamAvailable)
-        }
-
-        if (accepted.isEmpty()) return
-
-        val jobKey = "auto:$chapterId:$generation:${session.key}:${autoWindowIds.incrementAndGet()}"
-        val job = scope.launch {
-            val completedReservations = mutableSetOf<String>()
-            try {
-                for ((reservationKey, request) in accepted) {
-                    coroutineContext.ensureActive()
-                    if (autoGenerations[chapterId]?.get() != generation) {
-                        logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], request.streamAvailable, "stale-generation")
-                        completedReservations.add(reservationKey)
-                        queuedPageKeys.remove(reservationKey)
-                        break
-                    }
-                    val current = session.store.state.value[request.storageKey]
-                    if (current != null && current.shouldSkipAutoScheduling) {
-                        logAutoDecision("skipped", request, current, request.streamAvailable, "completed-while-queued")
-                        completedReservations.add(reservationKey)
-                        queuedPageKeys.remove(reservationKey)
-                        continue
-                    }
-                    val manualJobKey = "${request.id.chapterId}:${request.storageKey}"
-                    val manualJob = activePageJobs[manualJobKey]
-                    if (manualJob != null && manualJob.isActive) {
-                        logAutoDecision("skipped", request, current, request.streamAvailable, "manual-active-while-queued")
-                        completedReservations.add(reservationKey)
-                        queuedPageKeys.remove(reservationKey)
-                        continue
-                    }
-                    if (manualJob != null) activePageJobs.remove(manualJobKey)
-
-                    markAutoPageStarting(session.store, request.storageKey, current)
-
-                    if (current != null &&
-                        current.hasRecognizedTranslation &&
-                        current.renderedImageName == null &&
-                        current.cleanedImageName != null
-                    ) {
-                        try {
-                            translator.translateSinglePage(
-                                session.manga,
-                                session.chapter,
-                                session.source,
-                                request.storageKey,
-                                force = false,
-                            )
-                        } catch (e: CancellationException) {
-                            markPageCancelled(session.chapter, request.storageKey)
-                            logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], request.streamAvailable)
-                            throw e
-                        } catch (e: Throwable) {
-                            logAutoDecision("failed:resume-render", request, session.store.state.value[request.storageKey], request.streamAvailable)
-                            logcat(LogPriority.ERROR, e) {
-                                "TachiyomiAT auto resume render failed: id=${request.id} storageKey=${request.storageKey}"
-                            }
-                        } finally {
-                            completedReservations.add(reservationKey)
-                            queuedPageKeys.remove(reservationKey)
-                        }
-                        continue
-                    }
-
-                    val streamFn = try {
-                        request.streamProvider()
-                    } catch (e: CancellationException) {
-                        logAutoDecision("cancelled", request, current, request.streamAvailable)
-                        throw e
-                    } catch (e: Throwable) {
-                        logcat(LogPriority.WARN, e) {
-                            "TachiyomiAT auto stream provider failed: id=${request.id} " +
-                                "index=${request.id.pageIndex} storageKey=${request.storageKey}"
-                        }
-                        null
-                    }
-
-                    if (streamFn == null) {
-                        logAutoDecision("soft-skip:no-stream", request, current, false)
-                        markPageAutoSoftSkipped(session.store, request.storageKey)
-                        completedReservations.add(reservationKey)
-                        queuedPageKeys.remove(reservationKey)
-                        break
-                    }
-
-                    try {
-                        translator.translateSinglePageFromStream(
-                            session.manga,
-                            session.chapter,
-                            session.source,
-                            request.storageKey,
-                            streamFn,
-                            force = false,
-                        )
-                    } catch (e: CancellationException) {
-                        markPageCancelled(session.chapter, request.storageKey)
-                        logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], true)
-                        throw e
-                    } catch (e: Throwable) {
-                        logAutoDecision("failed:pipeline", request, session.store.state.value[request.storageKey], true)
-                        logcat(LogPriority.ERROR, e) {
-                            "TachiyomiAT auto page translation failed: id=${request.id} " +
-                                "storageKey=${request.storageKey} chapter=${session.chapter.name} " +
-                                "manga=${session.manga.title} source=${session.source.id}"
-                        }
-                        break
-                    } finally {
-                        completedReservations.add(reservationKey)
-                        queuedPageKeys.remove(reservationKey)
-                    }
-                    if (autoGenerations[chapterId]?.get() != generation) {
-                        break
-                    }
-                }
-            } catch (e: CancellationException) {
-                for ((reservationKey, request) in accepted) {
-                    if (reservationKey !in completedReservations) {
-                        logAutoDecision(
-                            "cancelled",
-                            request,
-                            session.store.state.value[request.storageKey],
-                            request.streamAvailable,
-                        )
-                    }
-                }
-                throw e
-            } finally {
-                accepted.forEach { (reservationKey, _) -> queuedPageKeys.remove(reservationKey) }
-                activeAutoJobs.remove(jobKey)
-            }
-        }
-        activeAutoJobs[jobKey] = job
-    }
-
-    fun cancelAutoTranslations(chapterId: Long? = null): Boolean {
-        val jobPrefix = chapterId?.let { "auto:$it:" }
-        val queuePrefix = chapterId?.let { "auto:$it:" }
-        var cancelled = false
-
-        if (chapterId == null) {
-            autoGenerations.values.forEach { it.incrementAndGet() }
-        } else {
-            autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
-        }
-
-        val jobIterator = activeAutoJobs.entries.iterator()
-        while (jobIterator.hasNext()) {
-            val (key, job) = jobIterator.next()
-            if (jobPrefix == null || key.startsWith(jobPrefix)) {
-                job.cancel()
-                jobIterator.remove()
-                cancelled = true
-            }
-        }
-
-        if (queuePrefix == null) {
-            queuedPageKeys.removeIf { it.startsWith("auto:") }
-        } else {
-            queuedPageKeys.removeIf { it.startsWith(queuePrefix) }
-        }
-
-        return cancelled
-    }
-
-    private fun autoReservationKey(request: TranslationPageRequest, generation: Long): String {
-        val safeStorageKey = request.storageKey.replace(':', '_')
-        return "auto:${request.id.chapterId}:$generation:${request.id.sourceId}:${request.id.mangaId}:${request.id.pageIndex}:$safeStorageKey"
-    }
-
-    private suspend fun markAutoPageStarting(
-        store: ChapterTranslationStore,
-        pageKey: String,
-        current: PageTranslation?,
-    ) {
-        if (current != null && current.shouldSkipAutoScheduling) return
-        store.updatePage(pageKey) { existing ->
-            val page = existing ?: PageTranslation(sourceFileName = pageKey)
-            if (page.renderedImageName != null) return@updatePage page
-            page.apply {
-                sourceFileName = pageKey
-                errorMessage = null
-                when {
-                    hasRecognizedTranslation && cleanedImageName != null -> {
-                        renderStatus = StageStatus.RUNNING
-                    }
-                    hasRecognizedTranslation -> {
-                        inpaintStatus = StageStatus.RUNNING
-                        renderStatus = StageStatus.PENDING
-                    }
-                    ocrStatus != StageStatus.READY -> {
-                        ocrStatus = StageStatus.RUNNING
-                        translationStatus = StageStatus.PENDING
-                        inpaintStatus = StageStatus.PENDING
-                        renderStatus = StageStatus.PENDING
-                    }
-                    translationStatus != StageStatus.READY -> {
-                        translationStatus = StageStatus.RUNNING
-                    }
-                    else -> {
-                        renderStatus = StageStatus.RUNNING
-                    }
-                }
-                updatedAt = System.currentTimeMillis()
-            }
-        }
-    }
-
-    private suspend fun markPageAutoSoftSkipped(store: ChapterTranslationStore, pageKey: String) {
-        store.updatePage(pageKey) { existing ->
-            val page = existing ?: return@updatePage PageTranslation(
-                sourceFileName = pageKey,
-                ocrStatus = StageStatus.CANCELLED,
-                errorMessage = null,
-                updatedAt = System.currentTimeMillis(),
-            )
-            if (page.renderedImageName != null) return@updatePage page
-            page.apply {
-                if (ocrStatus == StageStatus.RUNNING) ocrStatus = StageStatus.CANCELLED
-                if (translationStatus == StageStatus.RUNNING) translationStatus = StageStatus.CANCELLED
-                if (inpaintStatus == StageStatus.RUNNING) inpaintStatus = StageStatus.CANCELLED
-                if (renderStatus == StageStatus.RUNNING) renderStatus = StageStatus.CANCELLED
-                errorMessage = null
-                updatedAt = System.currentTimeMillis()
-            }
-        }
-    }
-
-    private fun logAutoDecision(
-        decision: String,
-        request: TranslationPageRequest,
-        page: PageTranslation?,
-        streamAvailable: Boolean?,
-        reason: String? = null,
-    ) {
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT auto page $decision: id=${request.id} index=${request.id.pageIndex} " +
-                "storageKey=${request.storageKey} lifecycle=${page?.lifecycle ?: eu.kanade.translation.model.PageLifecycle.Pending} " +
-                "retry=${page?.retryCount ?: 0} streamAvailable=${streamAvailable ?: "unknown"} " +
-                "rendered=${page?.renderedImageName != null} cleaned=${page?.cleanedImageName != null}" +
-                (reason?.let { " reason=$it" } ?: "")
-        }
-    }
+    fun cancelAutoTranslations(chapterId: Long? = null): Boolean =
+        scheduler.cancelAutoTranslations(chapterId)
 
     fun observeActiveStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? {
         return activeTranslationStores[chapterId]?.state
+    }
+
+    fun createBatchTracker(
+        chapterId: Long,
+        store: ChapterTranslationStore,
+        orderedPageKeys: List<String>,
+    ): TranslationBatchProgressTracker {
+        disposeBatchTracker(chapterId)
+        val tracker = TranslationBatchProgressTracker(
+            chapterId = chapterId,
+            store = store,
+            orderedPageKeys = orderedPageKeys,
+            scope = storeScope,
+        )
+        batchTrackers[chapterId] = tracker
+        _batchTrackerMap.value = batchTrackers.toMap()
+        return tracker
+    }
+
+    fun disposeBatchTracker(chapterId: Long) {
+        val removed = batchTrackers.remove(chapterId)
+        if (removed != null) {
+            removed.close()
+            _batchTrackerMap.value = batchTrackers.toMap()
+        }
+    }
+
+    fun getBatchTracker(chapterId: Long): TranslationBatchProgressTracker? = batchTrackers[chapterId]
+
+    /**
+     * Live batch progress for [chapterId]: emits from the tracker's snapshot StateFlow when a
+     * tracker is active, else falls back to store-derived progress. Switches reactively when a
+     * tracker is created or disposed.
+     */
+    fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
+        return _batchTrackerMap
+            .flatMapLatest { trackers ->
+                val tracker = trackers[chapterId]
+                if (tracker != null) {
+                    tracker.snapshot
+                } else {
+                    val state = getQueuedTranslationOrNull(chapterId)?.status
+                        ?: Translation.State.NOT_TRANSLATED
+                    flowOf(
+                        TranslationProgressSnapshot.compute(
+                            chapterId = chapterId,
+                            state = state,
+                            pageMap = activeTranslationStores[chapterId]?.state?.value,
+                        )
+                    )
+                }
+            }
+            .distinctUntilChanged()
+    }
+
+    /**
+     * Per-chapter batch progress (done/total) for the manga-screen chapter-list indicator, so
+     * the user can watch pre-translation advance without opening the reader. Emits the active
+     * store's page-count progress; empty when no active store exists (no batch in flight).
+     */
+    fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
+        return _activeStoreMap
+            .flatMapLatest { stores ->
+                val state = getQueuedTranslationOrNull(chapterId)?.status ?: Translation.State.NOT_TRANSLATED
+                val store = stores[chapterId]
+                if (store == null) {
+                    flowOf(TranslationProgressSnapshot.empty(chapterId, state))
+                } else {
+                    store.state.map { pages ->
+                        TranslationProgressSnapshot.compute(
+                            chapterId = chapterId,
+                            state = getQueuedTranslationOrNull(chapterId)?.status ?: state,
+                            pageMap = pages,
+                        )
+                    }
+                }
+            }
+            .distinctUntilChanged()
     }
 
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {
@@ -653,12 +465,57 @@ class TranslationManager(
             ?.distinctUntilChanged()
     }
 
-    fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
-        launchIO {
-            removeFromTranslationQueue(chapter)
-            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
-            file?.delete()
-            provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
+    suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
+        val chapterId = chapter.id ?: return
+        // SYNCHRONOUS teardown (was fire-and-forget): a delete-then-retranslate let the reader
+        // re-bind to the about-to-be-evicted store while the translator wrote to a fresh instance,
+        // and a cancelled-but-not-joined batch worker kept writing into the old store after its
+        // file/PNGs were deleted (recreating the JSON or stranding pages at RUNNING). Suspending
+        // guarantees callers land on clean state.
+        //
+        // Ordering is load-bearing and strictly sequenced:
+        //   1. cancelAutoTranslations bumps the auto generation so the window stops dispatching new pages.
+        //   2. cancelPageTranslations cancels + JOINs each auto/single-page job so native work unwinds.
+        //   3. removeFromTranslationQueue + cancelTranslatorJobAndJoin drop the batch entry and JOIN the
+        //      batch worker (plain removeFrom only cancel()s) so it releases the translator permit before deletion.
+        //   4. unregisterActiveTranslationStore marks the store defunct so a still-unwinding worker's late writes no-op.
+        //   5. streamRegistry.clearChapter drops stale reader closures pointing at the about-to-be-deleted PNGs.
+        //   6. Only once all work is wound down is it safe to delete the on-disk file + companion images.
+        scheduler.cancelAutoTranslations(chapterId)
+        cancelPageTranslations(chapterId)
+        removeFromTranslationQueue(chapter)
+        translator.cancelTranslatorJobAndJoin()
+        disposeBatchTracker(chapterId)
+        unregisterActiveTranslationStore(chapterId)
+        streamRegistry.clearChapter(source.id, manga.id, chapterId)
+        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
+        file?.delete()
+        provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
+    }
+
+    suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
+        val chapterId = chapter.id ?: return
+        
+        cancelPageTranslation(chapterId, pageKey)
+        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
+        
+        val activeStore = activeTranslationStores[chapterId]
+        if (activeStore != null) {
+            activeStore.deletePage(pageKey)
+        } else {
+            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+            if (file?.exists() == true) {
+                val store = ChapterTranslationStore.open(file)
+                store.deletePage(pageKey)
+                store.flush()
+            }
+        }
+        
+        val companionDir = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
+        if (companionDir != null) {
+            companionDir.findFile("$pageKey.cleaned.png")?.delete()
+            companionDir.findFile("$pageKey.cleaned.jpg")?.delete()
+            companionDir.findFile("$pageKey.rendered.png")?.delete()
         }
     }
 
@@ -695,329 +552,72 @@ class TranslationManager(
     }
 
     fun getCleanedImageStream(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?, cleanedImageName: String): (() -> java.io.InputStream)? {
-        val file = provider.findPageCleanedImage(mangaTitle, source, chapterName, chapterScanlator, cleanedImageName)
-        if (file?.exists() == true) {
-            return { file.openInputStream() }
+        return {
+            val file = provider.findPageCleanedImage(mangaTitle, source, chapterName, chapterScanlator, cleanedImageName)
+            if (file?.exists() == true) {
+                file.openInputStream()
+            } else {
+                throw java.io.FileNotFoundException("Cleaned image not found: $cleanedImageName")
+            }
         }
-        return null
     }
 
-    fun getRenderedImageStream(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?, renderedImageName: String): (() -> java.io.InputStream)? {
-        val file = provider.findPageRenderedImage(mangaTitle, source, chapterName, chapterScanlator, renderedImageName)
-        if (file?.exists() == true) {
-            return { file.openInputStream() }
-        }
-        return null
-    }
+
 
     fun getCompanionImageDirForChapter(chapterName: String, scanlator: String?, title: String, source: Source): UniFile? {
         return provider.findCompanionImageDir(title, source, chapterName, scanlator)
     }
 
-    fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) {
-        val jobKey = "${chapter.id}:$pageKey"
-        // TachiyomiAT: do NOT cancel an in-flight job for this same page on a
-        // duplicate request. The previous `activePageJobs[jobKey]?.cancel()`
-        // here meant every repeated page-selection event (auto-mode firing on
-        // scroll, a page-holder re-binding, or a rapid double-tap) tore down and
-        // restarted the same translation — oscillating between cancel/restart,
-        // visibly blinking the processing overlay, and re-decoding the bitmap
-        // each time. The translator already dedups via inFlightPageKeys once the
-        // permit is acquired, so a second launch for the same page is a no-op
-        // for the expensive work. We only clear/replace a prior entry when it is
-        // no longer active (completed or already cancelled), keeping the
-        // map free of dead jobs while leaving a genuine in-flight job alone.
-        val existing = activePageJobs[jobKey]
-        if (existing != null && existing.isActive) {
-            logcat(LogPriority.DEBUG) { "translatePage: skipping $jobKey (already active)" }
-            return
-        }
-        if (existing != null) {
-            activePageJobs.remove(jobKey)
-        }
-        logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
-        val job = scope.launch {
-            var cancelledMidFlight = false
-            try {
-                translator.translateSinglePage(manga, chapter, source, pageKey)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // The job was cancelled (chapter switch, reader exit, Stop all).
-                // If this happened after the translator wrote ocrStatus=RUNNING
-                // but before it reached a terminal state, the page is stranded
-                // RUNNING — the store never gets updated because the coroutine
-                // is torn down. Flag it so the finally can reset the status,
-                // matching the single-page timeout handling in ChapterTranslator.
-                cancelledMidFlight = true
-                throw e
-            } catch (e: Throwable) {
-                logcat(LogPriority.ERROR, e) {
-                    "TachiyomiAT single-page translation failed: pageKey=$pageKey " +
-                        "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
-                }
-            } finally {
-                activePageJobs.remove(jobKey)
-                if (cancelledMidFlight) {
-                    // Best-effort: clear a stranded RUNNING status so the reader's
-                    // overlay/spinner and disabled translate icon recover. Runs on
-                    // a non-cancellable child launch so the reset itself can't be
-                    // torn down by the cancellation that triggered it. Guarded so
-                    // a reset failure never masks the original CancellationException.
-                    try {
-                        kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                            markPageCancelled(chapter, pageKey)
-                        }
-                    } catch (resetError: Throwable) {
-                        logcat(LogPriority.WARN, resetError) {
-                            "TachiyomiAT reset of stranded page status failed: pageKey=$pageKey"
-                        }
-                    }
-                }
-            }
-        }
-        activePageJobs[jobKey] = job
-    }
+    fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) =
+        scheduler.translatePage(manga, chapter, source, pageKey)
 
     /**
-     * TachiyomiAT: strictly-ordered sequential translation for a list of
-     * [pageKeys] within the same chapter. Each page is processed to completion
-     * (or failure) before the next begins — absolute ordering guarantee.
-     *
-     * This is the prefetch backbone for auto-translate: the reader hands the
-     * current page plus lookahead pages here, and this method translates them
-     * strictly in page order. Overlapping page-selection events are expected,
-     * so pages are first reserved in [queuedPageKeys]. That reservation covers
-     * both "waiting in an older sequential batch" and "currently executing",
-     * which prevents the same prefetch page from being processed several times
-     * before the first batch reaches a persisted terminal state.
-     *
-     * Cancellation is cooperative: [ensureActive] runs before reservation and
-     * before each page; all reservations are cleared in finally blocks.
+     * Cancels the in-flight single-page translation job for one [pageKey] within [chapterId] —
+     * the per-page granularity [cancelPageTranslations] (chapter-scoped) is too coarse for.
+     * Returns true if a job was actually cancelled, false if none was running for that page.
      */
-    suspend fun translatePagesSequential(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKeys: List<String>,
-    ) {
-        val chapterId = chapter.id ?: return
-        val accepted = mutableListOf<Pair<String, String>>()
-
-        for (pageKey in pageKeys.distinct()) {
-            coroutineContext.ensureActive()
-            val jobKey = "$chapterId:$pageKey"
-            val existing = activePageJobs[jobKey]
-            if (existing != null && existing.isActive) {
-                logcat(LogPriority.DEBUG) { "TachiyomiAT sequential SKIP (active): pageKey=$pageKey" }
-                continue
-            }
-            if (existing != null) activePageJobs.remove(jobKey)
-
-            val current = activeTranslationStores[chapterId]?.state?.value?.get(pageKey)
-            if (current != null) {
-                if (current.shouldSkipAutoScheduling) {
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT sequential SKIP (already done): pageKey=$pageKey " +
-                            "rendered=${current.renderedImageName != null} trans=${current.translationStatus}"
-                    }
-                    continue
-                }
-            }
-
-            if (!queuedPageKeys.add(jobKey)) {
-                logcat(LogPriority.DEBUG) { "TachiyomiAT sequential SKIP (already queued): pageKey=$pageKey" }
-                continue
-            }
-
-            accepted.add(jobKey to pageKey)
-        }
-
-        try {
-            for ((jobKey, pageKey) in accepted) {
-                coroutineContext.ensureActive()
-                val current = activeTranslationStores[chapterId]?.state?.value?.get(pageKey)
-                if (current != null && current.shouldSkipAutoScheduling) {
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT sequential SKIP (completed while queued): pageKey=$pageKey " +
-                            "rendered=${current.renderedImageName != null} trans=${current.translationStatus}"
-                    }
-                    continue
-                }
-                val existing = activePageJobs[jobKey]
-                if (existing != null && existing.isActive) {
-                    logcat(LogPriority.DEBUG) { "TachiyomiAT sequential SKIP (active while queued): pageKey=$pageKey" }
-                    continue
-                }
-                if (existing != null) activePageJobs.remove(jobKey)
-
-                try {
-                    translator.translateSinglePage(manga, chapter, source, pageKey)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Throwable) {
-                    logcat(LogPriority.ERROR, e) {
-                        "TachiyomiAT sequential page translation failed: pageKey=$pageKey " +
-                            "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
-                    }
-                } finally {
-                    queuedPageKeys.remove(jobKey)
-                }
-            }
-        } finally {
-            accepted.forEach { (jobKey, _) -> queuedPageKeys.remove(jobKey) }
-        }
-            }
+    fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean =
+        scheduler.cancelPageTranslation(chapterId, pageKey)
 
     /**
-     * Clears a non-terminal RUNNING/PENDING status for [pageKey] left behind
-     * when translation was cancelled mid-flight. Normal cancellation is not a
-     * stage failure and must not increment retryCount.
-     */
-    private suspend fun markPageCancelled(chapter: Chapter, pageKey: String) {
-        val chapterId = chapter.id ?: return
-        val store = activeTranslationStores[chapterId] ?: return
-        // Peek the live state first. If the page has no entry (it was never
-        // tracked) or is already terminal, there is nothing stranded to reset —
-        // skip the write entirely rather than creating a spurious FAILED entry.
-        val existing = store.state.value[pageKey] ?: return
-        val hasResult = existing.renderedImageName != null
-        val failed = existing.ocrStatus == StageStatus.FAILED ||
-            existing.inpaintStatus == StageStatus.FAILED ||
-            existing.translationStatus == StageStatus.FAILED ||
-            existing.renderStatus == StageStatus.FAILED
-        if (hasResult || failed) return
-        // Stranded RUNNING/PENDING: flip the active stage(s) to CANCELLED so the
-        // reader clears the overlay and auto can schedule the page again later.
-        store.updatePage(pageKey) { current ->
-            // Re-check inside the lock in case it changed between peek and write.
-            val cur = current ?: return@updatePage PageTranslation(
-                sourceFileName = pageKey,
-                ocrStatus = StageStatus.CANCELLED,
-                errorMessage = "Translation cancelled",
-                updatedAt = System.currentTimeMillis(),
-            )
-            val curHasResult = cur.renderedImageName != null
-            val curFailed = cur.ocrStatus == StageStatus.FAILED ||
-                cur.inpaintStatus == StageStatus.FAILED ||
-                cur.translationStatus == StageStatus.FAILED ||
-                cur.renderStatus == StageStatus.FAILED
-            if (curHasResult || curFailed) return@updatePage cur
-            cur.apply {
-                if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
-                    ocrStatus = StageStatus.CANCELLED
-                }
-                if (inpaintStatus == StageStatus.RUNNING) {
-                    inpaintStatus = StageStatus.CANCELLED
-                }
-                if (translationStatus == StageStatus.RUNNING) {
-                    translationStatus = StageStatus.CANCELLED
-                }
-                if (renderStatus == StageStatus.RUNNING) {
-                    renderStatus = StageStatus.CANCELLED
-                }
-                errorMessage = "Translation cancelled"
-                updatedAt = System.currentTimeMillis()
-            }
-        }
-    }
-
-    /**
-     * TachiyomiAT: cancels the in-flight single-page translation job for one
-     * specific [pageKey] within [chapterId], if any. This is the per-page
-     * granularity that [cancelPageTranslations] (chapter-scoped) is too coarse
-     * for: it backs the per-page button's cancel affordance, so a user can stop
-     * a single slow/stuck page without abandoning the whole chapter.
-     *
-     * Returns true if a job was actually cancelled, false if none was running
-     * for that page (e.g. it already finished or the translator deduped it).
-     */
-    fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean {
-        val jobKey = "$chapterId:$pageKey"
-        queuedPageKeys.remove(jobKey)
-        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") && it.endsWith(":${pageKey.replace(':', '_')}") }
-        val job = activePageJobs.remove(jobKey)
-        job?.cancel()
-        val autoCancelled = cancelAutoTranslations(chapterId)
-        return job != null || autoCancelled
-    }
-
-    /**
-     * Cancels all in-flight single-page translation jobs for [chapterId] and
-     * evicts the reader page streams registered for that chapter. Also drops the
-     * shared [ChapterTranslationStore] for this chapter so it doesn't leak
-     * across chapter navigations. Call this when the reader navigates away from
-     * a chapter so the previous chapter's work can no longer hold the
-     * translator's single permit.
-     *
-     * TachiyomiAT: suspend + bounded join. After cancelling, it waits (up to
-     * [JOIN_TIMEOUT_MS]) for those jobs to actually finish their finally blocks.
-     * translatePage's finally resets a stranded page's RUNNING status on a
-     * NonCancellable child, which itself needs the coroutine to unwind. Without
-     * waiting, the previous chapter's reset could land AFTER the reader
-     * subscribed to the new chapter's store — briefly surfacing chapter 1's
-     * state (or its RUNNING overlay) while chapter 2 is on screen. The timeout
-     * keeps chapter navigation responsive even if a job is slow to unwind.
+     * Cancels all in-flight single-page translation jobs for [chapterId] and evicts the shared
+     * [ChapterTranslationStore] so it does not leak across chapter navigations. Call this on
+     * reader navigate-away so the previous chapter's work can no longer hold the executor's
+     * single permit. Job cancellation is delegated to the scheduler; store eviction is manager-owned.
      */
     suspend fun cancelPageTranslations(chapterId: Long) {
-        val prefix = "$chapterId:"
-        queuedPageKeys.removeIf { it.startsWith(prefix) }
-        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
-        val toJoin = mutableListOf<Job>()
-        val autoIterator = activeAutoJobs.entries.iterator()
-        while (autoIterator.hasNext()) {
-            val (key, job) = autoIterator.next()
-            if (key.startsWith("auto:$chapterId:")) {
-                job.cancel()
-                toJoin.add(job)
-                autoIterator.remove()
-            }
+        scheduler.cancelPageTranslations(chapterId)
+        if (isBatchTranslationActive(chapterId)) {
+            return
         }
-        val iterator = activePageJobs.entries.iterator()
-        while (iterator.hasNext()) {
-            val (key, job) = iterator.next()
-            if (key.startsWith(prefix)) {
-                job.cancel()
-                toJoin.add(job)
-                iterator.remove()
-            }
-        }
-        // Wait for the cancelled jobs to finish their finally blocks (including
-        // the stranded-status reset) so the previous chapter is fully wound down
-        // before the caller subscribes to the next chapter's store. Bounded so a
-        // stuck unwind can't hang chapter navigation.
-        if (toJoin.isNotEmpty()) {
-            kotlinx.coroutines.withTimeoutOrNull(JOIN_TIMEOUT_MS) {
-                toJoin.joinAll()
-            }
-        }
-        // Evict the shared store for this chapter now that we've left it; the
-        // reader re-opens the store via observeLiveTranslationStore on the next
-        // loadChapter for whatever chapter becomes active.
+        disposeBatchTracker(chapterId)
+        activeTranslationStores[chapterId]?.clearTransientQueuePages("Translation cancelled")
+        // Evict the store on chapter exit; the reader re-opens it via observeLiveTranslationStore on the next loadChapter.
         unregisterActiveTranslationStore(chapterId)
     }
 
     /**
-     * Cancels every in-flight single-page translation job and drops all shared
-     * stores. Call this when the reader is destroyed or the master translation
-     * toggle is switched off, so no orphaned work keeps running in the
-     * background and no collector outlives the session.
+     * Cancels every in-flight single-page translation job and drops all shared stores. Call this
+     * when the reader is destroyed or the master toggle is switched off, so no orphaned work
+     * keeps running and no collector outlives the session. Job cancellation is delegated to the
+     * scheduler; store eviction + chapter queue clearing are manager-owned.
      */
-    fun cancelAllPageTranslations() {
-        queuedPageKeys.clear()
-        val autoIterator = activeAutoJobs.entries.iterator()
-        while (autoIterator.hasNext()) {
-            val (_, job) = autoIterator.next()
-            job.cancel()
-            autoIterator.remove()
+    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) {
+        scheduler.cancelAllPageTranslations()
+        val chapterIdsToEvict = activeTranslationStores.keys
+            .filter { cancelBatchQueue || !isBatchTranslationActive(it) }
+        val stores = chapterIdsToEvict.mapNotNull { activeTranslationStores[it] }
+        if (stores.isNotEmpty()) {
+            storeScope.launch {
+                stores.forEach { store ->
+                    store.clearTransientQueuePages("All translation cancelled")
+                }
+            }
         }
-        val iterator = activePageJobs.entries.iterator()
-        while (iterator.hasNext()) {
-            val (_, job) = iterator.next()
-            job.cancel()
-            iterator.remove()
+        chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
+        if (cancelBatchQueue) {
+            translator.clearQueue()
         }
-        // Evict every shared store + its collector.
-        val chapterIds = activeTranslationStores.keys.toList()
-        chapterIds.forEach { unregisterActiveTranslationStore(it) }
     }
 
     fun statusFlow(): Flow<Translation> = queueState

@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.IconButtonTokens
@@ -38,6 +39,7 @@ import tachiyomi.presentation.core.util.secondaryItemAlpha
 
 enum class ChapterTranslationAction {
     START,
+    DETAILS,
     CANCEL,
     DELETE,
 }
@@ -47,6 +49,8 @@ fun ChapterTranslationIndicator(
     enabled: Boolean,
     translationStateProvider: () -> Translation.State,
     onClick: (ChapterTranslationAction) -> Unit,
+    // TachiyomiAT: batch translation progress snapshot for the indicator.
+    translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
     modifier: Modifier = Modifier,
 ) {
     when (val translationState = translationStateProvider()) {
@@ -59,6 +63,7 @@ fun ChapterTranslationIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
+            snapshot = translationProgressProvider(),
         )
         Translation.State.TRANSLATED -> TranslatedIndicator(
             enabled = enabled,
@@ -105,6 +110,7 @@ private fun TranslatingIndicator(
     enabled: Boolean,
     onClick: (ChapterTranslationAction) -> Unit,
     modifier: Modifier = Modifier,
+    snapshot: TranslationProgressSnapshot? = null,
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
@@ -114,13 +120,17 @@ private fun TranslatingIndicator(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
                 onLongClick = { onClick(ChapterTranslationAction.CANCEL) },
-                onClick = { isMenuExpanded = true },
+                onClick = { onClick(ChapterTranslationAction.DETAILS) },
             ),
         contentAlignment = Alignment.Center,
     ) {
         val strokeColor = MaterialTheme.colorScheme.onSurfaceVariant
+        // TachiyomiAT: stage-based progress fraction
+        val isDeterminate = snapshot != null && snapshot.totalStages > 0
+        val progressFraction = if (isDeterminate) snapshot!!.fraction else 0f
 
         CircularProgressIndicator(
+            progress = { if (isDeterminate) progressFraction else 0f },
             modifier = IndicatorModifier,
             color = strokeColor,
             strokeWidth = IndicatorStrokeWidth,
@@ -143,6 +153,19 @@ private fun TranslatingIndicator(
             modifier = TranslatingModifier,
             tint = strokeColor,
         )
+        // TachiyomiAT: stage-based percentage label under the icon
+        if (isDeterminate) {
+            val percentageText = "${(progressFraction * 100).toInt()}%"
+            Text(
+                text = percentageText,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 0.dp),
+                color = strokeColor,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -165,12 +188,19 @@ private fun TranslatedIndicator(
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            painter= painterResource(R.drawable.ic_translate_circle_filled),
+            painter = painterResource(R.drawable.ic_translate_circle_filled),
             contentDescription = null,
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
+            DropdownMenuItem(
+                text = { Text(text = stringResource(ATMR.strings.manga_translate)) },
+                onClick = {
+                    onClick(ChapterTranslationAction.START)
+                    isMenuExpanded = false
+                },
+            )
             DropdownMenuItem(
                 text = { Text(text = stringResource(MR.strings.action_delete)) },
                 onClick = {

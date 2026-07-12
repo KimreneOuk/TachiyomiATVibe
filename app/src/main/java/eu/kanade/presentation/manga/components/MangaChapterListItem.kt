@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import me.saket.swipe.SwipeableActionsBox
 import tachiyomi.domain.library.service.LibraryPreferences
 import tachiyomi.i18n.MR
@@ -57,15 +58,17 @@ fun MangaChapterListItem(
     selected: Boolean,
     downloadIndicatorEnabled: Boolean,
     downloadStateProvider: () -> Download.State,
-    //TachiyomiAT
+    // TachiyomiAT
     translationStateProvider: () -> Translation.State,
+    // TachiyomiAT: batch translation progress for the indicator.
+    translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
     onLongClick: () -> Unit,
     onClick: () -> Unit,
     onDownloadClick: ((ChapterDownloadAction) -> Unit)?,
-    //TachiyomiAT
+    // TachiyomiAT
     onTranslationClick: ((ChapterTranslationAction) -> Unit)?,
     onChapterSwipe: (LibraryPreferences.ChapterSwipeAction) -> Unit,
     modifier: Modifier = Modifier,
@@ -175,12 +178,13 @@ fun MangaChapterListItem(
                     }
                 }
             }
-            //TachiyomiAT
-            if(downloadStateProvider()==Download.State.DOWNLOADED){
+            // TachiyomiAT
+            if (downloadStateProvider() == Download.State.DOWNLOADED) {
                 ChapterTranslationIndicator(
                     enabled = true,
                     modifier = Modifier.padding(start = 4.dp),
                     translationStateProvider = translationStateProvider,
+                    translationProgressProvider = translationProgressProvider,
                     onClick = { onTranslationClick?.invoke(it) },
                 )
             }

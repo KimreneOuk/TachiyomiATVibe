@@ -13,7 +13,7 @@ class BitmapPool private constructor(
     private val maxPoolSizePerSize: Int,
     private val maxTotalPoolSize: Int,
 ) {
-    private val pools = ConcurrentHashMap<Int, ConcurrentLinkedQueue<Bitmap>>()
+    private val pools = ConcurrentHashMap<String, ConcurrentLinkedQueue<Bitmap>>()
     private val totalPoolSize = AtomicInteger(0)
     private val poolLock = ReentrantLock()
 
@@ -42,7 +42,7 @@ class BitmapPool private constructor(
     }
 
     fun get(width: Int, height: Int): Bitmap {
-        val sizeKey = width * height
+        val sizeKey = "${width}x${height}"
         val pool = pools.getOrPut(sizeKey) { ConcurrentLinkedQueue() }
 
         return poolLock.withLock {
@@ -56,7 +56,7 @@ class BitmapPool private constructor(
     }
 
     fun put(bitmap: Bitmap) {
-        val sizeKey = bitmap.width * bitmap.height
+        val sizeKey = "${bitmap.width}x${bitmap.height}"
 
         poolLock.withLock {
             if (estimatedBytes(bitmap) > maxRetainedBitmapBytes) {
