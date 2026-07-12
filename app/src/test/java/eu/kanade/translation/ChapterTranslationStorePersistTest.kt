@@ -108,8 +108,7 @@ class ChapterTranslationStorePersistTest {
         store.shouldPersistUpdate(
             previous = null,
             updated = PageTranslation(
-                renderedImageName = "001.rendered.png",
-                renderQuality = RenderQuality.FULL,
+                cleanedImageName = "001.cleaned.png",
             ),
         ) shouldBe true
     }
@@ -117,12 +116,11 @@ class ChapterTranslationStorePersistTest {
     @Test
     fun `transition from rendered result to cleared IS persisted`() {
         val previousRendered = PageTranslation(
-            renderedImageName = "001.rendered.png",
-            renderQuality = RenderQuality.FULL,
+            cleanedImageName = "001.cleaned.png",
         )
         val cleared = PageTranslation(
             ocrStatus = StageStatus.RUNNING,
-            renderedImageName = null,
+            cleanedImageName = null,
         )
 
         store.shouldPersistUpdate(previous = previousRendered, updated = cleared) shouldBe true

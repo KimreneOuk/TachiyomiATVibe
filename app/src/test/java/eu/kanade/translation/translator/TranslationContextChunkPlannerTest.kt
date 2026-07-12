@@ -31,14 +31,14 @@ class TranslationContextChunkPlannerTest {
         val latin = "a".repeat(100)
 
         TranslationContextChunkPlanner.estimateTokens(cjk) shouldBe 100
-        TranslationContextChunkPlanner.estimateTokens(latin) shouldBe 25
+        TranslationContextChunkPlanner.estimateTokens(latin) shouldBe 13
     }
 
     @Test
     fun `large pages split by block without exceeding context`() {
         val pages = linkedMapOf(
             "001.jpg" to PageTranslation(
-                blocks = MutableList(20) { index -> block("block-$index " + "x".repeat(2000)) },
+                blocks = MutableList(20) { index -> block("block-$index " + "x".repeat(10_000)) },
             ),
         )
 
@@ -58,7 +58,7 @@ class TranslationContextChunkPlannerTest {
     @Test
     fun `single oversized block is rejected instead of planned`() {
         val pages = linkedMapOf(
-            "001.jpg" to page("x".repeat(40_000)),
+            "001.jpg" to page("x".repeat(100_000)),
             "002.jpg" to page("small"),
         )
 

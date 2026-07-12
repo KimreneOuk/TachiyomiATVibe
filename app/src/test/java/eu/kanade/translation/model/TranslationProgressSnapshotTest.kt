@@ -64,8 +64,7 @@ class TranslationProgressSnapshotTest {
                     renderStatus = StageStatus.RUNNING,
                 ),
                 "005.jpg" to PageTranslation(
-                    renderedImageName = "005.rendered.png",
-                    renderQuality = RenderQuality.FULL,
+                    cleanedImageName = "005.cleaned.png",
                 ),
                 "006.jpg" to PageTranslation(
                     ocrStatus = StageStatus.FAILED,

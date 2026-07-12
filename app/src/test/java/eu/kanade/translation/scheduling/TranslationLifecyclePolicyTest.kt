@@ -2,7 +2,6 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.RenderQuality
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.shouldBe
@@ -65,7 +64,7 @@ class TranslationLifecyclePolicyTest {
     @Test
     fun `running and rendered pages are skipped with a readable reason`() {
         val running = PageTranslation(ocrStatus = StageStatus.RUNNING)
-        val rendered = PageTranslation(renderedImageName = "001.rendered.webp")
+        val rendered = PageTranslation(cleanedImageName = "001.cleaned.webp")
         // Textless-terminal requires ocrStatus=READY, empty blocks, AND inpaint
         // out of PENDING/RUNNING (see isTextlessTerminal). A default page has
         // inpaintStatus=PENDING so it is NOT terminal.
@@ -89,7 +88,6 @@ class TranslationLifecyclePolicyTest {
     fun `rendered translated page from old inpaint revision is scheduled again`() {
         val stale = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
-            renderedImageName = "001.rendered.webp"
             inpaintRevision = 0
         }
         val current = stale.copy(inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION)
@@ -100,18 +98,15 @@ class TranslationLifecyclePolicyTest {
     }
 
     @Test
-    fun `unknown downsampled rendered page is scheduled again unless size limited`() {
+    fun `downsampled page with current inpaint revision is complete`() {
         val stale = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
-            renderedImageName = "001.rendered.webp"
             decodeSampleSize = 2
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         }
-        val sizeLimited = stale.copy(renderQuality = RenderQuality.SIZE_LIMITED)
 
-        TranslationLifecyclePolicy.classify(stale) shouldBe PageLifecycle.NeedsRender
-        TranslationLifecyclePolicy.shouldSchedule(stale) shouldBe true
-        TranslationLifecyclePolicy.shouldSchedule(sizeLimited) shouldBe false
+        TranslationLifecyclePolicy.classify(stale) shouldBe PageLifecycle.Done
+        TranslationLifecyclePolicy.shouldSchedule(stale) shouldBe false
     }
 
     private fun translatedPage(): PageTranslation {

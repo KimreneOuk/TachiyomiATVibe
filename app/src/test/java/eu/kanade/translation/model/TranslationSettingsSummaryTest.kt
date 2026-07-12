@@ -104,7 +104,7 @@ class TranslationSettingsSummaryTest {
     }
 
     @Test
-    fun `Japanese keeps a compatible stored OCR model and resolves its label`() {
+    fun `Japanese coerces an incompatible stored OCR model to its default label`() {
         val prefs = preferences(
             from = "JAPANESE",
             ocrModel = OcrModel.PADDLEOCR_V6_SMALL,
@@ -112,7 +112,7 @@ class TranslationSettingsSummaryTest {
 
         val summary = prefs.snapshotTranslationSummary()
 
-        summary.ocrModelLabel shouldBe "PaddleOCR v6 small"
+        summary.ocrModelLabel shouldBe "MangaOCR"
     }
 
     @Test

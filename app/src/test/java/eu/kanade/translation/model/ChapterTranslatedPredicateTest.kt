@@ -100,8 +100,6 @@ class ChapterTranslatedPredicateTest {
             inpaintStatus = StageStatus.READY,
             renderStatus = StageStatus.READY,
             cleanedImageName = "001.cleaned.png",
-            renderedImageName = "001.rendered.png",
-            renderQuality = RenderQuality.FULL,
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         )
 

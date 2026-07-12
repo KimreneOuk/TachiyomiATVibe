@@ -30,7 +30,6 @@ class PageTranslationStateTest {
     fun `rendered text page from old inpaint revision is schedulable`() {
         val page = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
-            renderedImageName = "001.rendered.webp"
             inpaintRevision = 0
         }
 
@@ -43,42 +42,38 @@ class PageTranslationStateTest {
     fun `rendered text page from current inpaint revision is done`() {
         val page = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
-            renderedImageName = "001.rendered.webp"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         }
 
         page.lifecycle shouldBe PageLifecycle.Done
         page.shouldSkipAutoScheduling shouldBe true
-        page.displayImageName shouldBe "001.rendered.webp"
+        page.displayImageName shouldBe "001.cleaned.png"
     }
 
     @Test
-    fun `legacy unknown rendered page with downsample is stale`() {
+    fun `downsampled text page with current inpaint revision is done`() {
         val page = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
-            renderedImageName = "001.rendered.webp"
-            decodeSampleSize = 2
-            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-        }
-
-        page.lifecycle shouldBe PageLifecycle.NeedsRender
-        page.shouldSkipAutoScheduling shouldBe false
-        page.displayImageName shouldBe null
-    }
-
-    @Test
-    fun `size limited rendered page is trusted when explicitly marked`() {
-        val page = translatedPage().apply {
-            cleanedImageName = "001.cleaned.png"
-            renderedImageName = "001.rendered.png"
-            renderQuality = RenderQuality.SIZE_LIMITED
             decodeSampleSize = 2
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
         }
 
         page.lifecycle shouldBe PageLifecycle.Done
         page.shouldSkipAutoScheduling shouldBe true
-        page.displayImageName shouldBe "001.rendered.png"
+        page.displayImageName shouldBe "001.cleaned.png"
+    }
+
+    @Test
+    fun `downsampled text page does not need a separate render quality marker`() {
+        val page = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            decodeSampleSize = 2
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+        }
+
+        page.lifecycle shouldBe PageLifecycle.Done
+        page.shouldSkipAutoScheduling shouldBe true
+        page.displayImageName shouldBe "001.cleaned.png"
     }
 
     @Test
@@ -86,7 +81,7 @@ class PageTranslationStateTest {
         val page = PageTranslation(
             ocrStatus = StageStatus.FAILED,
             renderStatus = StageStatus.FAILED,
-            renderedImageName = "001.rendered.webp",
+            cleanedImageName = "001.cleaned.webp",
             decodeSampleSize = 2,
             retryCount = StageStatus.MAX_STAGE_RETRIES,
             errorMessage = "old failure",
@@ -100,15 +95,13 @@ class PageTranslationStateTest {
         page.renderStatus shouldBe StageStatus.PENDING
         page.retryCount shouldBe 0
         page.errorMessage shouldBe null
-        page.renderedImageName shouldBe null
+        page.cleanedImageName shouldBe null
     }
 
     @Test
     fun `forced retry clears trusted rendered output so retry cannot show stale result`() {
         val page = translatedPage().apply {
-            renderedImageName = "001.rendered.png"
             cleanedImageName = "001.cleaned.png"
-            renderQuality = RenderQuality.FULL
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
             retryCount = StageStatus.MAX_STAGE_RETRIES
             errorMessage = "old failure"
@@ -119,7 +112,7 @@ class PageTranslationStateTest {
         page.ocrStatus shouldBe StageStatus.RUNNING
         page.retryCount shouldBe 0
         page.errorMessage shouldBe null
-        page.renderedImageName shouldBe null
+        page.cleanedImageName shouldBe null
         page.cleanedImageName shouldBe null
         page.displayImageName shouldBe null
     }
@@ -373,8 +366,7 @@ class PageTranslationStateTest {
         // error — even if some stage is FAILED (e.g. a stale render from a
         // prior run while the current retry failed).
         val page = translatedPage().apply {
-            renderedImageName = "001.rendered.png"
-            renderQuality = RenderQuality.FULL
+            cleanedImageName = "001.cleaned.png"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
             translationStatus = StageStatus.FAILED
             errorMessage = "stale"

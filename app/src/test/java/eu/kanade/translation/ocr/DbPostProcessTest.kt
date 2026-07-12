@@ -80,7 +80,7 @@ class DbPostProcessTest {
     @Test
     fun `lowering box_thresh recovers the weak rectangle`() {
         val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.3f)
-        val lines = DbPostProcess.detectLines(map, width, height, boxThresh = 0.2f)
+        val lines = DbPostProcess.detectLines(map, width, height, boxThreshold = 0.2f)
         lines shouldHaveSize 1
     }
 
@@ -98,7 +98,7 @@ class DbPostProcessTest {
         // Inpaint thresh 0.18 < 0.19 → binarized, and box_thresh default (0.45)
         // drops it (mean 0.19 < 0.45); so also lower box_thresh to recover it,
         // matching how the inpaint path calls both lowered thresholds together.
-        val lines = DbPostProcess.detectLines(map, width, height, thresh = 0.18f, boxThresh = 0.1f)
+        val lines = DbPostProcess.detectLines(map, width, height, threshold = 0.18f, boxThreshold = 0.1f)
         lines shouldHaveSize 1
     }
 
@@ -120,14 +120,14 @@ class DbPostProcessTest {
     fun `back-project maps map-space bbox to crop-space with scale factors`() {
         val mapBox = intArrayOf(100, 50, 200, 150)
         // scaleX = cropW/mapW = 800/400 = 2.0 ; scaleY = 600/300 = 2.0
-        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropW = 800, cropH = 600)
+        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropWidth = 800, cropHeight = 600)
         crop.toList() shouldBe listOf(200, 100, 400, 300)
     }
 
     @Test
     fun `back-project clamps to crop bounds`() {
         val mapBox = intArrayOf(0, 0, 1000, 1000)
-        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropW = 100, cropH = 100)
+        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropWidth = 100, cropHeight = 100)
         crop.toList() shouldBe listOf(0, 0, 99, 99)
     }
 

@@ -91,8 +91,6 @@ class TranslationProgressTest {
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         )
         if (rendered) {
-            p.renderedImageName = "1.rendered.png"
-            p.renderQuality = RenderQuality.FULL
             p.cleanedImageName = "1.cleaned.png"
         }
         return p

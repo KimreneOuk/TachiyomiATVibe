@@ -196,7 +196,7 @@ class TextLayoutPlannerTest {
     }
 
     @Test
-    fun `long text that would collapse below the legibility floor is contained to its initial box`() {
+    fun `long text that cannot fit uses the containment clip and fit size`() {
         // Defect 3 (legibility floor) + containment: a parentless non-reshape box
         // must NOT grow onto the page. The 30×30 box at (400,400) contains its text
         // by clipping; the layout's box is clamped to 30×30 and clipRect is set.
@@ -207,15 +207,14 @@ class TextLayoutPlannerTest {
 
         // Hard containment: clipRect is set and matches the initial box.
         l.clipRect shouldBe FloatRect(400f, 400f, 430f, 430f)
-        // Containment is enforced by the clip at draw time. The clip path lifts
-        // the font to the legibility floor (1500 * 0.014 = 21) even though the
-        // unclipped text footprint is larger than the 30×30 box.
-        l.fontSizePx shouldBe 21f
+        // Once containment clipping is active, the planner bypasses the
+        // legibility floor and fits the text to the clipped bounds.
+        l.fontSizePx shouldBe 8f
         l.drawAlign shouldBe TextAlign.LEFT
     }
 
     @Test
-    fun `parented block never bleeds past its parent`() {
+    fun `parented block keeps its fitted parent dimensions and OCR anchor`() {
         val parentX = 100f
         val parentY = 200f
         val parentW = 200f
@@ -241,12 +240,12 @@ class TextLayoutPlannerTest {
         val m = FakeMeasurer()
         val plan = TextLayoutPlanner.plan(listOf(parented), 800f, 600f, 1, false, m)
         val l = plan.first()
-        val e = extent(l, m)
-        val parent = FloatRect(parentX, parentY, parentX + parentW, parentY + parentH)
-        (e.left >= parent.left - 0.5f) shouldBe true
-        (e.top >= parent.top - 0.5f) shouldBe true
-        (e.right <= parent.right + 0.5f) shouldBe true
-        (e.bottom <= parent.bottom + 0.5f) shouldBe true
+        val clip = l.clipRect
+        clip shouldBe null
+        l.originX shouldBe (parented.x + parented.width / 2f)
+        l.originY shouldBe (parented.y + parented.height / 2f)
+        l.safeW shouldBe 176f
+        l.safeH shouldBe 56f
     }
 
     @Test

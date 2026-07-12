@@ -1,7 +1,6 @@
 package eu.kanade.translation.batch
 
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.RenderQuality
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import io.kotest.matchers.shouldBe
@@ -19,8 +18,8 @@ class BatchProgressReconcilerTest {
     @Test
     fun `all pages rendered is TRANSLATED`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(renderedImageName = "001.rendered.png", renderQuality = RenderQuality.FULL),
-            "002.jpg" to PageTranslation(renderedImageName = "002.rendered.png", renderQuality = RenderQuality.FULL),
+            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png"),
+            "002.jpg" to PageTranslation(cleanedImageName = "002.cleaned.png"),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
         result.chapterStatus shouldBe Translation.State.TRANSLATED
@@ -32,7 +31,7 @@ class BatchProgressReconcilerTest {
     @Test
     fun `a failed page makes chapter ERROR`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(renderedImageName = "001.rendered.png", renderQuality = RenderQuality.FULL),
+            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png"),
             "002.jpg" to PageTranslation(ocrStatus = StageStatus.FAILED, errorMessage = "OOM"),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
@@ -43,7 +42,7 @@ class BatchProgressReconcilerTest {
     @Test
     fun `stranded RUNNING page without output is flipped to FAILED`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(renderedImageName = "001.rendered.png", renderQuality = RenderQuality.FULL),
+            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png"),
             "002.jpg" to PageTranslation(ocrStatus = StageStatus.RUNNING),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
