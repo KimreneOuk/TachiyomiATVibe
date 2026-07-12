@@ -27,6 +27,7 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.util.TranslationMemoryBudget
+import eu.kanade.translation.util.TranslationSafetyPrimitives
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -724,21 +725,31 @@ class RoiPageRecognitionEngine(
 
     override fun forceReleaseNativeBuffers() {
         // Memory-pressure callbacks may race an in-flight native run. Never
-        // drain child pools while the worker owns nativeGuard; the worker will
-        // release them after its guarded call completes.
-        if (!nativeGuard.tryLock()) {
+        // drain child pools while the worker owns nativeGuard: skip this call
+        // (leak-instead-of-SIGSEGV, mirroring close()). The worker's own
+        // finally releases its pools after the guarded native call completes,
+        // and the next memory-pressure callback will retry.
+        //
+        // The skip-vs-drain decision forwards to TranslationSafetyPrimitives so
+        // the P0-1 invariant (no drain while the native lock is held) is
+        // unit-testable without an ONNX engine — see drainChildBuffersGuarded.
+        val lockAcquired = nativeGuard.tryLock()
+        if (!lockAcquired) {
             logcat(LogPriority.WARN) {
                 "RoiPageRecognitionEngine.forceReleaseNativeBuffers: nativeGuard held; " +
-                    "deferring pooled-buffer release to avoid native use-after-free"
+                    "skipping pooled-buffer release to avoid native use-after-free"
             }
             return
         }
         try {
-            try { detector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-            try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-            try { paddleDet?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-            try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-            try { panelDetector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+            val engines = listOfNotNull(
+                detector?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                roiOcrEngine?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                paddleDet?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                inpainting?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                panelDetector?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+            )
+            TranslationSafetyPrimitives.drainChildBuffersGuarded(lockHeld = false, engines = engines)
         } finally {
             nativeGuard.unlock()
         }

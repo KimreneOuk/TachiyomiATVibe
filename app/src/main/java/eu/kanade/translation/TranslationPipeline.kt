@@ -42,6 +42,7 @@ import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
+import eu.kanade.translation.util.TranslationSafetyPrimitives
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -200,9 +201,6 @@ class TranslationPipeline(
      */
     private val inFlightPageKeys = ConcurrentHashMap.newKeySet<String>()
 
-    /** Test-only visibility into the dedup set; production callers cannot mutate it. */
-    internal fun inFlightPageKeysSnapshot(): Set<String> = inFlightPageKeys.toSet()
-
     /**
      * TachiyomiAT: independent scope for the permit watchdog. It uses a
      * [SupervisorJob] on purpose: a child launched here is NOT cancelled when
@@ -284,32 +282,29 @@ class TranslationPipeline(
         }
         val watchdog = permitWatchdogScope.launch {
             delay(timeoutMs)
-            // Deadline fired while block still holds the permit — force-release.
-            try {
-                onTimeout()
-            } catch (e: Throwable) {
-                logcat(LogPriority.WARN, e) {
-                    "TachiyomiAT permit-watchdog onTimeout threw: pageKey=$pageKey"
-                }
-            }
             logcat(LogPriority.ERROR) {
                 "TachiyomiAT permit-watchdog FORCE-RELEASED after ${timeoutMs}ms " +
                     "(worker stuck in uncancellable code): pageKey=$pageKey chapterId=$chapterId"
             }
-            try {
-                onPageStuck?.invoke(chapterId, pageKey)
-            } catch (e: Throwable) {
-                logcat(LogPriority.WARN, e) {
-                    "TachiyomiAT permit-watchdog onPageStuck threw: pageKey=$pageKey"
+            // Run the force-release callback chain in isolation (P0-4): each
+            // step runs even if an earlier one throws, so a misbehaving
+            // onPageStuck listener cannot swallow onForceRelease (which would
+            // leak the permit and deadlock all translation). Forwards to
+            // TranslationSafetyPrimitives so the isolation is unit-testable.
+            val steps = buildList {
+                add(TranslationSafetyPrimitives.WatchdogStep("onTimeout") { onTimeout() })
+                val stuck = onPageStuck
+                if (stuck != null) {
+                    add(TranslationSafetyPrimitives.WatchdogStep("onPageStuck") { stuck.invoke(chapterId, pageKey) })
                 }
+                // Clear caller bookkeeping (e.g. inFlightPageKeys) BEFORE freeing the
+                // permit: the worker's own finally is unreachable while stuck in native code.
+                add(TranslationSafetyPrimitives.WatchdogStep("onForceRelease") { onForceRelease() })
             }
-            // Clear caller bookkeeping (e.g. inFlightPageKeys) BEFORE freeing the
-            // permit: the worker's own finally is unreachable while stuck in native code.
-            try {
-                onForceRelease()
-            } catch (e: Throwable) {
+            val outcome = TranslationSafetyPrimitives.runGuardedWatchdogChain(steps = steps.toTypedArray())
+            outcome.failures.forEach { e ->
                 logcat(LogPriority.WARN, e) {
-                    "TachiyomiAT permit-watchdog onForceRelease threw: pageKey=$pageKey"
+                    "TachiyomiAT permit-watchdog step threw (isolation contained it): pageKey=$pageKey"
                 }
             }
             releaseOnce()
@@ -466,11 +461,16 @@ class TranslationPipeline(
     }
 
     fun closeEngines() {
-        // Clear deduplication state before attempting the permit. If a worker
-        // currently owns it, closeEngines returns below, but future retries
-        // must not inherit stale keys from that abandoned worker.
-        inFlightPageKeys.clear()
-        if (!translatorPermit.tryAcquire()) {
+        // Clear deduplication state BEFORE attempting the permit (P0-3). If a
+        // worker currently owns it, closeEngines returns below, but future
+        // retries must not inherit stale keys from that abandoned worker.
+        // Forwards to TranslationSafetyPrimitives so the clear-before-permit
+        // ordering is unit-testable without the singleton pipeline.
+        val outcome = TranslationSafetyPrimitives.clearKeysBeforePermitAcquire(
+            keys = inFlightPageKeys,
+            acquirePermit = { translatorPermit.tryAcquire() },
+        )
+        if (outcome == TranslationSafetyPrimitives.PermitOutcome.PermitHeld) {
             enginesClosed = true
             return
         }
@@ -2480,13 +2480,17 @@ class TranslationPipeline(
      * TachiyomiAT: STAGE 2 of the staged batch pipeline — inpaint only.
      *
      * Re-decoded [bitmap] + the analyzed [pageTranslation] (blocks +
-     * allTextDetections) → cleaned bitmap, persisted to the companion image dir.
-     * Mirrors the inpaint half of [processSinglePage] and the standalone
-     * resume path [resumeInpaintAndRender]. The caller recycles the bitmap.
+     * allTextDetections) → cleaned bitmap, returned for downstream JPEG
+     * persistence + render. Mirrors the inpaint half of [processSinglePage]
+     * and the standalone resume path [resumeInpaintAndRender]. The caller
+     * recycles the bitmap.
      *
-     * Sets inpaintStatus=READY + cleanedImageName on success; FAILED on storage
-     * failure. The cleanedBitmap on the returned translation stays alive for the
-     * downstream render stage (caller draws translated text onto it).
+     * Sets inpaintStatus=RUNNING, then FAILED (with [recordAttemptFailure] +
+     * errorMessage) on a thrown exception. Does NOT set inpaintStatus=READY or
+     * cleanedImageName — those are written by the caller in
+     * [persistCleanedBitmap] after the JPEG encode moves off the translation
+     * permit. The cleanedBitmap on the returned translation stays alive for
+     * the downstream render stage (caller draws translated text onto it).
      */
     private suspend fun inpaintPage(
         fileName: String,

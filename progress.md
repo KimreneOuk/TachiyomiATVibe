@@ -120,9 +120,47 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
 .\gradlew.bat :app:testStandardDebugUnitTest --no-daemon
 ```
 
-Latest result: `BUILD SUCCESSFUL`.
+Latest result: `BUILD SUCCESSFUL`, 570 test cases pass.
 
 The Dev flavor remains unavailable on this machine because `app/src/devDebug/google-services.json` is missing. Use the Standard flavor for local verification.
+
+## Review and test backfill — 2026-07-12
+
+A four-way parallel code review (race-condition, pipeline perf, model/AOT prep,
+test quality) audited every implementation commit against the approved designs
+in `Plan/`. Findings and the backfill work live in
+`Plan/active/2026-07-12-test-backfill/`.
+
+Verdict from review: production code is correct across all waves; no behavior
+bugs. Three process/coverage issues surfaced and were addressed:
+
+- **Missing contract tests.** Roughly half the tests promised in
+  `SUBAGENT_TEST_CONTRACTS_2026-07-12.md` were never written. Shipped this
+  pass: `RenderColorEstimatorDedupTest` (7 cases, golden guard for the P1a
+  dedup) and 2 new cases on `TranslationSchedulerCancellationTest` (the
+  `hasRenderedResult` and `isStageFailed` no-op branches of
+  `markPageCancelled`). Still missing: P0-1 / P0-3 / P0-4 concurrency tests —
+  deferred because they need a ShortHash-style extraction of `private` logic
+  into `internal` helpers (architecture change, approval-gated).
+- **Dead infrastructure.** `MainDispatcherRule.kt` and
+  `TranslationPipeline.inFlightPageKeysSnapshot()` had zero callers. Deleted.
+  (`permitHolderPageKeySnapshot` initially looked dead but has three live
+  callers in `TranslationManager.kt` — kept.)
+- **Stale comments** (AGENT.md: a stale comment is a defect). Fixed two:
+  `inpaintPage` KDoc claimed it set `cleanedImageName` (it does not, post-P1b),
+  and `forceReleaseNativeBuffers` said "deferring" when the code skips.
+
+Two higher-severity items from review remain open and need decisions before
+Wave 5 proceeds (see "Next actions"):
+
+- `aot-512.onnx` is `aot.onnx` with 95 bytes of shape-metadata edited, NOT a
+  converted/slimmed model. The "max-abs-diff == 0" comparison is vacuously
+  true (identical weights). onnxslim was never run; the 4 ConvTranspose ops
+  that drive the NNAPI partition problem are untouched.
+- `OnnxModelStore` version stamp is a hand-typed string
+  (`MODEL_ASSET_VERSION = "quality-2026-07-12-v1"`), not the content hash the
+  design required. Works today; a future model swap that forgets to bump the
+  string re-creates the exact bug class Wave 4 was meant to eliminate.
 
 ## Implementation commits
 
@@ -146,12 +184,22 @@ The Dev flavor remains unavailable on this machine because `app/src/devDebug/goo
 
 ## Next actions
 
-1. Obtain or install `onnxslim`/onnxslim-equivalent and run the model conversion gate.
-2. Add the representative 20-page corpus and Tier 2/Tier 3 harness.
-3. Compare dynamic and fixed-512 outputs and guard verdicts.
-4. If there are zero new guard rejections, integrate the fixed-512 pad path into `AOTInpainting`.
-5. Implement and test NNAPI capability gating and XNNPACK fallback.
-6. Run the Wave 6 device matrix before enabling or merging the NNAPI path.
+1. **Decide P0-1/P0-3/P0-4 test extraction** — approve the ShortHash-style
+   `internal` helper extraction (three small helpers, no behavior change) so
+   the deferred concurrency regression tests can be written. See
+   `Plan/active/2026-07-12-test-backfill/deferred.md`.
+2. **Decide the `copyIfNeeded` version-stamp design** — upgrade to a content
+   hash (structural fix) or accept the manual-bump string plus a CI guard.
+   This unblocks the Wave 4 `OnnxModelStoreVersionTest`.
+3. **Re-characterize `aot-512.onnx`** — either run onnxslim + produce a real
+   converted model, or update progress/commits to state plainly that the
+   staged file is shape-relabeled, not converted. Required before Wave 5.2.
+4. Obtain or install `onnxslim`/onnxslim-equivalent and run the model conversion gate.
+5. Add the representative 20-page corpus and Tier 2/Tier 3 harness.
+6. Compare dynamic and fixed-512 outputs and guard verdicts.
+7. If there are zero new guard rejections, integrate the fixed-512 pad path into `AOTInpainting`.
+8. Implement and test NNAPI capability gating and XNNPACK fallback.
+9. Run the Wave 6 device matrix before enabling or merging the NNAPI path.
 
 ## Safety rule
 
