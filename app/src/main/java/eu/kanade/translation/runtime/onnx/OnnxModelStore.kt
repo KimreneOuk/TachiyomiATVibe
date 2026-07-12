@@ -14,6 +14,8 @@ data class ModelPaths(
     val ocrDecoderStep: File,
     val ocrVocab: File,
     val inpaintModel: File?,
+    /** Fixed-shape AOT variant; kept optional until its corpus gate is passed. */
+    val inpaint512Model: File?,
     /**
      * TachiyomiAT: optional YOLO26-nano manga panel detector model
      * (`manga_panel_detector_int8.onnx`). Nullable because the panel detector
@@ -91,6 +93,13 @@ class OnnxModelStore(private val context: Context) {
             null
         }
 
+        val inpaint512File = try {
+            copyIfNeeded(dir, "aot-512.onnx", "models/inpainting/aot-512.onnx")
+        } catch (_: Exception) {
+            logcat(LogPriority.WARN) { "Fixed-512 inpainting model not found in assets, skipping" }
+            null
+        }
+
         // Panel detector is best-effort context (mirrors inpaint copy): a missing
         // asset or failed copy leaves it null so panel assignment is skipped, not crashed.
         val panelDetectorFile = try {
@@ -114,6 +123,7 @@ class OnnxModelStore(private val context: Context) {
             ocrDecoderStep = decoderStepFile,
             ocrVocab = vocabFile,
             inpaintModel = inpaintFile,
+            inpaint512Model = inpaint512File,
             panelDetectorModel = panelDetectorFile,
             bubbleSegmenterModel = bubbleSegmenterFile,
         )

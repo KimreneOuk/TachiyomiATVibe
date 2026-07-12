@@ -78,6 +78,29 @@ class AotBoxGeometryTest {
     }
 
     @Test
+    fun `centeredReportCrop returns an in-bounds crop on a sub-512 page`() {
+        val crop = AotBoxGeometry.centeredReportCrop(
+            boxes = listOf(intArrayOf(180, 260, 220, 300)),
+            width = 400,
+            height = 600,
+            contextSize = 512,
+        )!!
+
+        crop.toList() shouldBe listOf(0, 80, 400, 480)
+        (crop[0] >= 0 && crop[1] >= 0 && crop[2] <= 400 && crop[3] <= 600) shouldBe true
+    }
+
+    @Test
+    fun `centeredReportCrop uses the whole short side on a small square page`() {
+        AotBoxGeometry.centeredReportCrop(
+            boxes = listOf(intArrayOf(120, 120, 180, 180)),
+            width = 300,
+            height = 300,
+            contextSize = 512,
+        )!!.toList() shouldBe listOf(0, 0, 300, 300)
+    }
+
+    @Test
     fun `findParentBubble chooses smallest bubble containing text center`() {
         val outer = intArrayOf(0, 0, 100, 100)
         val inner = intArrayOf(20, 20, 60, 60)
