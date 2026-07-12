@@ -193,6 +193,9 @@ class TranslationPipeline(
      */
     private val inFlightPageKeys = ConcurrentHashMap.newKeySet<String>()
 
+    /** Test-only visibility into the dedup set; production callers cannot mutate it. */
+    internal fun inFlightPageKeysSnapshot(): Set<String> = inFlightPageKeys.toSet()
+
     /**
      * TachiyomiAT: independent scope for the permit watchdog. It uses a
      * [SupervisorJob] on purpose: a child launched here is NOT cancelled when
