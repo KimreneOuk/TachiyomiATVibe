@@ -19,6 +19,33 @@ class TranslationProgressSnapshotTest {
     }
 
     @Test
+    fun `page index resolver handles split and ordinary filenames`() {
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATING,
+            pageMap = linkedMapOf(
+                "009__002.jpg" to PageTranslation(),
+                "page-09.png" to PageTranslation(),
+                "009.jpg" to PageTranslation(),
+            ),
+        )
+
+        snapshot.pages.map { it.index } shouldContainExactly listOf(9, 9, 9)
+    }
+
+    @Test
+    fun `real page index map takes precedence over filename parsing`() {
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATING,
+            pageMap = mapOf("009__002.jpg" to PageTranslation()),
+            indexResolver = mapOf("009__002.jpg" to 17),
+        )
+
+        snapshot.pages.single().index shouldBe 17
+    }
+
+    @Test
     fun `pre registered pages show full total as queued`() = runTest {
         val store = ChapterTranslationStore(
             translationFile = null,

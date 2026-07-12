@@ -6,6 +6,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
@@ -24,6 +25,7 @@ class TranslationBatchProgressTracker(
     private val store: ChapterTranslationStore,
     private val orderedPageKeys: List<String>,
     private val scope: CoroutineScope,
+    private val permitHolderResolver: (() -> String?)? = null,
 ) {
     private val _snapshot = MutableStateFlow(emptySnapshot())
     val snapshot: StateFlow<TranslationProgressSnapshot> = _snapshot.asStateFlow()
@@ -31,6 +33,23 @@ class TranslationBatchProgressTracker(
     private var tickJob: Job? = null
     private var batchStartTime = System.currentTimeMillis()
     private var finished = false
+    private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
+
+    private fun computeSnapshotFor(
+        pageMap: Map<String, PageTranslation>,
+        chapterState: Translation.State,
+        forcedPartialCount: Int = -1,
+        forcedFailedCount: Int = -1,
+        forcedDoneCount: Int = -1,
+    ): TranslationProgressSnapshot = computeSnapshot(
+        pageMap = pageMap,
+        chapterState = chapterState,
+        forcedPartialCount = forcedPartialCount,
+        forcedFailedCount = forcedFailedCount,
+        forcedDoneCount = forcedDoneCount,
+        indexResolver = indexResolver,
+        permitHolderPageKey = permitHolderResolver?.invoke(),
+    )
 
     init {
         rebuildFromStore()
@@ -43,12 +62,12 @@ class TranslationBatchProgressTracker(
 
     fun rebuildFromStore() {
         if (finished) return
-        val pageMap = store.state.value
+            val pageMap = store.state.value
         if (pageMap.isEmpty()) {
             _snapshot.value = emptySnapshot()
             return
         }
-        _snapshot.value = computeSnapshot(pageMap, Translation.State.TRANSLATING)
+        _snapshot.value = computeSnapshotFor(pageMap, Translation.State.TRANSLATING)
     }
 
     suspend fun markOcrRunning(pageKey: String) {
@@ -135,7 +154,7 @@ class TranslationBatchProgressTracker(
         finished = true
         tickJob?.cancel()
         val pageMap = store.state.value
-        val snapshot = computeSnapshot(
+        val snapshot = computeSnapshotFor(
             pageMap = pageMap,
             chapterState = result.chapterStatus,
             forcedPartialCount = result.partialCount,
@@ -162,7 +181,7 @@ class TranslationBatchProgressTracker(
             }
         }
         val pageMap = store.state.value
-        _snapshot.value = computeSnapshot(pageMap, Translation.State.ERROR).copy(
+        _snapshot.value = computeSnapshotFor(pageMap, Translation.State.ERROR).copy(
             aborted = true,
             abortedReason = reason,
         )
@@ -185,7 +204,7 @@ class TranslationBatchProgressTracker(
                 if (!finished) {
                     val pageMap = store.state.value
                     if (pageMap.isNotEmpty()) {
-                        _snapshot.value = computeSnapshot(pageMap, Translation.State.TRANSLATING)
+                        _snapshot.value = computeSnapshotFor(pageMap, Translation.State.TRANSLATING)
                     }
                 }
             }
@@ -199,6 +218,8 @@ class TranslationBatchProgressTracker(
             forcedPartialCount: Int = -1,
             forcedFailedCount: Int = -1,
             forcedDoneCount: Int = -1,
+            indexResolver: Map<String, Int>? = null,
+            permitHolderPageKey: String? = null,
         ): TranslationProgressSnapshot {
             if (pageMap.isEmpty()) {
                 return TranslationProgressSnapshot.empty(0, chapterState)
@@ -206,11 +227,13 @@ class TranslationBatchProgressTracker(
 
             val rows = pageMap.entries
                 .mapIndexed { insertionOrder, (pageKey, page) ->
-                    val stage = progressStage(page)
+                    val rawStage = progressStage(page)
                     TranslationProgressSnapshot.Page(
                         pageKey = pageKey,
-                        index = resolvePageIndex(pageKey, insertionOrder),
-                        stage = stage,
+                        index = PageIndexResolver.resolve(pageKey, insertionOrder, indexResolver),
+                        stage = if (permitHolderPageKey != null && rawStage.isRunning && pageKey != permitHolderPageKey) {
+                            eu.kanade.translation.model.TranslationProgressStage.QUEUED
+                        } else rawStage,
                         errorMessage = page.errorMessage,
                     )
                 }
@@ -299,9 +322,5 @@ class TranslationBatchProgressTracker(
             return count
         }
 
-        private fun resolvePageIndex(pageKey: String, fallback: Int): Int {
-            val match = Regex("""(\d+)(?!.*\d)""").find(pageKey)
-            return match?.groupValues?.get(1)?.toIntOrNull() ?: (fallback + 1)
-        }
     }
 }

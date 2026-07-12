@@ -52,6 +52,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -159,7 +160,7 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     val translationQueueState: kotlinx.coroutines.flow.StateFlow<ImmutableList<QueuedPageInfo>> =
         translationManager.activeStoreState
-            .map { pages -> buildQueuedPageInfo(pages).toImmutableList() }
+                .map { pages -> buildQueuedPageInfo(pages, currentPageIndexResolver()).toImmutableList() }
             .distinctUntilChanged()
             .stateIn(
                 viewModelScope,
@@ -268,26 +269,28 @@ class ReaderViewModel @JvmOverloads constructor(
      * an entry in the store (i.e. are/were being translated) appear — untouched
      * pages are omitted to keep the list focused on active work.
      */
-    private fun buildQueuedPageInfo(pages: Map<String, PageTranslation>): List<QueuedPageInfo> {
+    private fun buildQueuedPageInfo(
+        pages: Map<String, PageTranslation>,
+        indexResolver: Map<String, Int> = emptyMap(),
+    ): List<QueuedPageInfo> {
         if (pages.isEmpty()) return emptyList()
         return pages.entries
             .mapIndexedNotNull { insertionOrder, (pageKey, pt) ->
                 val stage = stageOf(pt) ?: return@mapIndexedNotNull null
                 QueuedPageInfo(
                     pageKey = pageKey,
-                    index = resolvePageIndex(pageKey, insertionOrder),
+                    index = PageIndexResolver.resolve(pageKey, insertionOrder, indexResolver),
                     stage = stage,
                 )
             }
             .sortedBy { it.index }
     }
 
-    /** Best-effort 1-based page index from the page key (e.g. "page-07" → 7). */
-    private fun resolvePageIndex(pageKey: String, fallback: Int): Int {
-        // Page keys in this codebase are typically "<something>-<number>" or a
-        // bare number; fall back to insertion order if no trailing int is found.
-        val match = Regex("""(\d+)$""").find(pageKey)
-        return match?.groupValues?.get(1)?.toIntOrNull() ?: (fallback + 1)
+    private fun currentPageIndexResolver(): Map<String, Int> {
+        return state.value.currentChapter?.pages
+            ?.mapIndexed { index, page -> resolvePageKey(page) to index + 1 }
+            ?.toMap()
+            ?: emptyMap()
     }
 
     /** Derives the display stage from a page's four stage statuses. */
@@ -2507,4 +2510,3 @@ private data class AiSubPrefs(
 )
 
 private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
-

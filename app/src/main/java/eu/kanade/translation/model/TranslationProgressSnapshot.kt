@@ -76,15 +76,22 @@ data class TranslationProgressSnapshot(
             chapterId: Long,
             state: Translation.State,
             pageMap: Map<String, PageTranslation>?,
+            indexResolver: Map<String, Int>? = null,
+            permitHolderPageKey: String? = null,
         ): TranslationProgressSnapshot {
             if (pageMap.isNullOrEmpty()) return empty(chapterId, state)
 
             val rows = pageMap.entries
                 .mapIndexed { insertionOrder, (pageKey, page) ->
+                    val rawStage = page.progressStage()
                     Page(
                         pageKey = pageKey,
-                        index = resolvePageIndex(pageKey, insertionOrder),
-                        stage = page.progressStage(),
+                        index = PageIndexResolver.resolve(pageKey, insertionOrder, indexResolver),
+                        stage = if (permitHolderPageKey != null && rawStage.isRunning && pageKey != permitHolderPageKey) {
+                            TranslationProgressStage.QUEUED
+                        } else {
+                            rawStage
+                        },
                         errorMessage = page.errorMessage,
                     )
                 }
@@ -142,10 +149,23 @@ data class TranslationProgressSnapshot(
             )
         }
 
-        private fun resolvePageIndex(pageKey: String, fallback: Int): Int {
-            val match = Regex("""(\d+)(?!.*\d)""").find(pageKey)
-            return match?.groupValues?.get(1)?.toIntOrNull() ?: (fallback + 1)
+    }
+}
+
+/** Resolves page numbers from the chapter's real ordered keys when available. */
+internal object PageIndexResolver {
+    fun resolve(pageKey: String, fallback: Int, indexResolver: Map<String, Int>? = null): Int {
+        indexResolver?.get(pageKey)?.let { return it }
+
+        val leaf = pageKey.substringAfterLast('/').substringBeforeLast('.')
+        val primary = leaf.substringBefore("__")
+        val start = primary.indexOfFirst { it.isDigit() }
+        if (start >= 0) {
+            val end = (start until primary.length).firstOrNull { !primary[it].isDigit() }
+                ?: primary.length
+            primary.substring(start, end).toIntOrNull()?.let { return it }
         }
+        return fallback + 1
     }
 }
 
