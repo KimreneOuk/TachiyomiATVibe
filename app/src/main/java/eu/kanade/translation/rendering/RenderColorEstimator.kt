@@ -124,10 +124,14 @@ object RenderColorEstimator {
         val pixels = IntArray(cropWidth * cropHeight)
         bitmap.getPixels(pixels, 0, cropWidth, left, top, cropWidth, cropHeight)
 
-        val textArgb = decideTextFill(pixels, cropWidth, cropHeight, left, top, parentBbox)
+        // Sample the two clusters once. The previous path ran the same mask
+        // construction and 5-iteration 2-means twice: once for fill and again
+        // for the vestigial stroke luma.
+        val (bgColor, fgColor) = sampleClusters(pixels, cropWidth, cropHeight, left, top, parentBbox)
+        val textArgb = colorPolicy(bgColor, fgColor)
         // Stroke color mirrors the renderer's luma-inverse invariant so the
         // persisted value is correct if read directly; width is vestigial.
-        val bgLuma = sampleBackgroundLuma(pixels, cropWidth, cropHeight, left, top, parentBbox)
+        val bgLuma = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
         val strokeArgb = if (bgLuma < DARK_BG_LUMA) 0xFF000000L else 0xFFFFFFFFL
         return Triple(textArgb, strokeArgb, 0f)
     }
@@ -149,9 +153,7 @@ object RenderColorEstimator {
         cropTop: Int,
         parentBbox: IntArray? = null,
     ): Long {
-        val sampleMask = bubbleInteriorMask(parentBbox, cropWidth, cropHeight, cropLeft, cropTop)
-        val step = max(1, pixels.size / 1200)
-        val (bgColor, fgColor) = extractClusters(pixels, step, sampleMask)
+        val (bgColor, fgColor) = sampleClusters(pixels, cropWidth, cropHeight, cropLeft, cropTop, parentBbox)
         return colorPolicy(bgColor, fgColor)
     }
 
@@ -167,10 +169,21 @@ object RenderColorEstimator {
         cropTop: Int,
         parentBbox: IntArray? = null,
     ): Float {
+        val (bgColor, _) = sampleClusters(pixels, cropWidth, cropHeight, cropLeft, cropTop, parentBbox)
+        return 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
+    }
+
+    private fun sampleClusters(
+        pixels: IntArray,
+        cropWidth: Int,
+        cropHeight: Int,
+        cropLeft: Int,
+        cropTop: Int,
+        parentBbox: IntArray?,
+    ): Pair<FloatArray, FloatArray> {
         val sampleMask = bubbleInteriorMask(parentBbox, cropWidth, cropHeight, cropLeft, cropTop)
         val step = max(1, pixels.size / 1200)
-        val (bgColor, _) = extractClusters(pixels, step, sampleMask)
-        return 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
+        return extractClusters(pixels, step, sampleMask)
     }
 
     private fun bubbleInteriorMask(
