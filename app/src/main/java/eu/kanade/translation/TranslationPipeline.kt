@@ -483,7 +483,9 @@ class TranslationPipeline(
         }
     }
 
+    @Volatile
     private var consecutiveOomCount = 0
+    @Volatile
     private var currentChapterTranslation: Translation? = null
     @Volatile
     private var enginesClosed = false
