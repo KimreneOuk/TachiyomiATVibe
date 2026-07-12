@@ -100,7 +100,7 @@ class MangaOcrEngine : RoiOcrEngine {
         val t0 = System.nanoTime()
         val pixels = preprocess(cropBitmap)
 
-        if (isAllZero(pixels)) return ""
+        if (pixels.isEmpty()) return ""
 
         val t1 = System.nanoTime()
 
@@ -125,8 +125,9 @@ class MangaOcrEngine : RoiOcrEngine {
             // than the leak.
             pixelBuffer = inputPixelPool.acquire().apply {
                 clear()
-                put(pixels)
-                flip()
+                writeNormalizedChw(pixels, this)
+                limit(3 * 224 * 224)
+                position(0)
             }
             inputTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
@@ -326,11 +327,11 @@ class MangaOcrEngine : RoiOcrEngine {
         inputPixelPool.clear()
     }
 
-    private fun preprocess(cropBitmap: Bitmap): FloatArray {
+    private fun preprocess(cropBitmap: Bitmap): IntArray {
         val w = cropBitmap.width
         val h = cropBitmap.height
 
-        if (max(w, h) == 0) return FloatArray(1 * 3 * 224 * 224)
+        if (max(w, h) == 0) return IntArray(0)
 
         var grayBitmap: Bitmap? = null
         var resized: Bitmap? = null
@@ -361,36 +362,12 @@ class MangaOcrEngine : RoiOcrEngine {
             val pixels = IntArray(224 * 224)
             padded.getPixels(pixels, 0, 224, 0, 0, 224, 224)
 
-            val result = FloatArray(1 * 3 * 224 * 224)
-            for (c in 0 until 3) {
-                for (y in 0 until 224) {
-                    for (x in 0 until 224) {
-                        val pixel = pixels[y * 224 + x]
-                        val channelValue = when (c) {
-                            0 -> (pixel shr 16 and 0xFF) / 255.0f
-                            1 -> (pixel shr 8 and 0xFF) / 255.0f
-                            2 -> (pixel and 0xFF) / 255.0f
-                            else -> 0f
-                        }
-                        val normalized = (channelValue - 0.5f) / 0.5f
-                        result[c * 224 * 224 + y * 224 + x] = normalized
-                    }
-                }
-            }
-
-            return result
+            return pixels
         } finally {
             if (padded != null) BitmapPool.putARGB8888(padded)
             if (resized != null) BitmapPool.putARGB8888(resized)
             if (grayBitmap != null) BitmapPool.putARGB8888(grayBitmap)
         }
-    }
-
-    private fun isAllZero(data: FloatArray): Boolean {
-        for (f in data) {
-            if (f != 0f) return false
-        }
-        return true
     }
 
     private fun copyInitToCache(initTensor: OnnxTensor, dstBuf: FloatBuffer) {
@@ -452,6 +429,27 @@ class MangaOcrEngine : RoiOcrEngine {
         // (node_embedding_1) has 128 entries; pos==128 overflows it and crashes
         // the chapter. MAX_LEN (256) is only the KV-cache dim, not a safe bound.
         private const val DECODER_POSITION_COUNT = 128
+
+        internal fun writeNormalizedChw(sourcePixels: IntArray, destination: FloatBuffer) {
+            val channelSize = 224 * 224
+            require(sourcePixels.size == channelSize) {
+                "MangaOCR preprocessing expected $channelSize pixels, got ${sourcePixels.size}"
+            }
+            require(destination.capacity() >= 3 * channelSize) {
+                "MangaOCR input buffer is too small: ${destination.capacity()}"
+            }
+            for (c in 0 until 3) {
+                for (i in sourcePixels.indices) {
+                    val pixel = sourcePixels[i]
+                    val channelValue = when (c) {
+                        0 -> (pixel shr 16 and 0xFF) / 255.0f
+                        1 -> (pixel shr 8 and 0xFF) / 255.0f
+                        else -> (pixel and 0xFF) / 255.0f
+                    }
+                    destination.put(c * channelSize + i, (channelValue - 0.5f) / 0.5f)
+                }
+            }
+        }
 
         /**
          * TachiyomiAT: mirrors the translation_diagnostics preference. The per-ROI
