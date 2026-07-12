@@ -515,9 +515,12 @@ class AOTInpainting {
                 }
             }
 
-            val imgPixels = IntArray(inferenceWidth * inferenceHeight)
+            // Reuse the bounded scratch arrays already used by postprocess.
+            // getPixels overwrites every element, so a prior page cannot bleed
+            // into this tensor even when the inference dimensions shrink.
+            val imgPixels = getImgPixels()
             imgInput.getPixels(imgPixels, 0, inferenceWidth, 0, 0, inferenceWidth, inferenceHeight)
-            val maskPixels = IntArray(inferenceWidth * inferenceHeight)
+            val maskPixels = getMaskPixels()
             maskInput.getPixels(maskPixels, 0, inferenceWidth, 0, 0, inferenceWidth, inferenceHeight)
 
             imgBuffer = imgInputPool.acquire()
