@@ -723,11 +723,25 @@ class RoiPageRecognitionEngine(
     }
 
     override fun forceReleaseNativeBuffers() {
-        try { detector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { paddleDet?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { panelDetector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        // Memory-pressure callbacks may race an in-flight native run. Never
+        // drain child pools while the worker owns nativeGuard; the worker will
+        // release them after its guarded call completes.
+        if (!nativeGuard.tryLock()) {
+            logcat(LogPriority.WARN) {
+                "RoiPageRecognitionEngine.forceReleaseNativeBuffers: nativeGuard held; " +
+                    "deferring pooled-buffer release to avoid native use-after-free"
+            }
+            return
+        }
+        try {
+            try { detector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+            try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+            try { paddleDet?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+            try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+            try { panelDetector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        } finally {
+            nativeGuard.unlock()
+        }
     }
 
     private fun suppressCrossLabelDuplicates(
