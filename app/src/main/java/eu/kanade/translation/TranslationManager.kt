@@ -393,6 +393,7 @@ class TranslationManager(
             store = store,
             orderedPageKeys = orderedPageKeys,
             scope = storeScope,
+            permitHolderResolver = { pipeline.permitHolderPageKeySnapshot() },
         )
         batchTrackers[chapterId] = tracker
         _batchTrackerMap.value = batchTrackers.toMap()
@@ -428,6 +429,7 @@ class TranslationManager(
                             chapterId = chapterId,
                             state = state,
                             pageMap = activeTranslationStores[chapterId]?.state?.value,
+                            permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
                         )
                     )
                 }
@@ -453,6 +455,7 @@ class TranslationManager(
                             chapterId = chapterId,
                             state = getQueuedTranslationOrNull(chapterId)?.status ?: state,
                             pageMap = pages,
+                            permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
                         )
                     }
                 }

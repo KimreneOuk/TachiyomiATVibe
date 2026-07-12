@@ -182,6 +182,13 @@ class TranslationPipeline(
      */
     private val translatorPermit = Semaphore(1)
 
+    private data class PermitHolder(val pageKey: String)
+
+    @Volatile
+    private var permitHolder: PermitHolder? = null
+
+    internal fun permitHolderPageKeySnapshot(): String? = permitHolder?.pageKey
+
     private val engineRebuildMutex = kotlinx.coroutines.sync.Mutex()
 
     /**
@@ -266,9 +273,12 @@ class TranslationPipeline(
         block: suspend () -> T,
     ): T {
         permit.acquire()
+        val holder = PermitHolder(pageKey)
+        permitHolder = holder
         val released = AtomicBoolean(false)
         fun releaseOnce() {
             if (released.compareAndSet(false, true)) {
+                if (permitHolder === holder) permitHolder = null
                 permit.release()
             }
         }

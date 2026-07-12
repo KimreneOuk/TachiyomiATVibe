@@ -46,6 +46,26 @@ class TranslationProgressSnapshotTest {
     }
 
     @Test
+    fun `only the permit holder is shown as running`() {
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATING,
+            pageMap = linkedMapOf(
+                "001.jpg" to PageTranslation(ocrStatus = StageStatus.RUNNING),
+                "002.jpg" to PageTranslation(ocrStatus = StageStatus.RUNNING),
+            ),
+            permitHolderPageKey = "002.jpg",
+        )
+
+        snapshot.pages.map { it.stage } shouldContainExactly listOf(
+            TranslationProgressStage.QUEUED,
+            TranslationProgressStage.OCR,
+        )
+        snapshot.activePageKey shouldBe "002.jpg"
+        snapshot.activeStage shouldBe TranslationProgressStage.OCR
+    }
+
+    @Test
     fun `pre registered pages show full total as queued`() = runTest {
         val store = ChapterTranslationStore(
             translationFile = null,
