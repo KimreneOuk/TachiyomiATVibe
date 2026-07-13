@@ -80,8 +80,10 @@ Not complete:
 - `onnxslim` constant folding was run on 2026-07-12 (CP3): `aot-512.onnx`
   is now a real converted model, 1940 → 400 nodes, Tier 2 numerics gate
   passes (worst max-abs-diff 8.31e-5 on real-range inputs).
-- The required 20-page AOT corpus and baseline report do not exist.
-- The Tier 3 guard-rejection harness has not been built.
+- The Tier 3 guard-rejection harness is BUILT (2026-07-13, see "Wave 5.1
+  Phase 1-B" below) and proven on a 5-page synthetic corpus (0 new
+  rejections). The required 20-page REAL manga corpus does not exist —
+  that is a human curation step (see `tools/aot_corpus/README.md`).
 - The padding helper is not yet integrated into `AOTInpainting.inpaint()`.
 
 ### Wave 5.2 — fixed-512 runtime integration — not started
@@ -238,6 +240,47 @@ commits on this branch:
 
 Validation: `./gradlew :app:testStandardDebugUnitTest` green, 593 cases
 (was 570 before CP1; +10 safety-primitive, +13 model-deployment).
+
+### Wave 5.1 Phase 1-B — Tier 3 corpus gate harness
+
+`feat(translation): AOT Tier 3 guard-rejection corpus harness (Wave 5.1 Phase 1-B)`
+
+Built the guard-rejection corpus harness the master plan requires before
+Wave 5.2 integration. Lives under `tools/aot_corpus/`:
+
+- `aot_output_guard.py` — faithful numpy reimplementation of `AotOutputGuard.kt`
+  (same constants, same classify logic). Parity-tested against the Kotlin
+  guard by `test_aot_output_guard_parity.py` (8/8 cases mirroring
+  `AotOutputGuardTest.kt`).
+- `run_corpus_gate.py` — runs both AOT models on every page in a corpus dir,
+  applies the guard, writes `baseline_report.json` + optional side-by-side
+  PNGs. Gate criterion: zero new rejections (dynamic=accept AND static=reject).
+- `make_synthetic_corpus.py` — generates 5 synthetic pages (uniform white,
+  screentone, color bubble, large mask, dark panel) to prove the harness
+  end-to-end.
+- README with the why-Python rationale, gate criterion, target 20-page corpus
+  composition, and an explicit "human curation required" section.
+
+Validation:
+- Parity test: 8/8 pass (Python guard matches Kotlin guard on identical inputs).
+- End-to-end gate on synthetic corpus: 5 pages, 0 new rejections, 0 stat
+  shifts, GATE PASSES. `dark_panel_text` is rejected by BOTH models identically
+  (the known AOT near-black uniform-fill failure mode) — proves the guard
+  mirror is doing real work, not rubber-stamping.
+
+Why Python, not Kotlin: `AotOutputGuard` is pure and already JVM-tested, but
+the model inference that produces its input runs through `onnxruntime-android`,
+which does not execute in JVM tests. Adding a JVM `onnxruntime` dep (50MB
+native lib into every test run) or Robolectric (not a current dep) is a larger
+change. Python reuses the same env as the model conversion
+(`tools/aot_conversion/`); the guard mirror is parity-tested; the gate runs
+manually like the Tier 2 numerics check.
+
+What this does NOT do: it does NOT prove the static model is safe on real
+manga. The real 20-page corpus is a human curation step (sourcing pages,
+generating masks via the app's own detection pipeline, filling manifests).
+The synthetic run proves the harness works; it does not satisfy the Wave 5.2
+gate. The static model remains unwired — safety rule holds.
 
 
 
