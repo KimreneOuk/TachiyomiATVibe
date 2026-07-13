@@ -40,7 +40,7 @@ import cv2
 from PIL import Image, ImageDraw, ImageFont
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CORPUS = REPO_ROOT / "tools/aot_corpus/real_corpus"
+CORPUS = REPO_ROOT / "tools/aot_corpus/real_corpus_ft"
 OUT = REPO_ROOT / "tools/aot_corpus/qa_output"
 DYNAMIC_MODEL = REPO_ROOT / "app/src/main/assets/models/inpainting/aot.onnx"
 STATIC_MODEL = REPO_ROOT / "app/src/main/assets/models/inpainting/aot-512.onnx"
@@ -303,7 +303,7 @@ def main() -> int:
     avg_dyn = np.mean([r["dyn_ms"] for r in rows])
     avg_stat = np.mean([r["stat_ms"] for r in rows])
     md = ["# Inpainting QA — fast vs quality (dynamic vs static-512)\n"]
-    md.append(f"18 real pages, 512x512 centered crops, CPU onnxruntime.\n")
+    md.append(f"{len(rows)} faithful free-text pages (AOT-512 path inputs), 512x512 centered crops, CPU onnxruntime.\n")
     md.append(f"**Avg latency:** fast push-pull = {avg_fast:.0f}ms | quality dynamic = {avg_dyn:.0f}ms | quality static-512 = {avg_stat:.0f}ms\n")
     md.append(f"Static-512 vs dynamic speedup: {(avg_dyn/avg_stat):.2f}x (if <1, static is slower).\n\n")
     md.append("| page | category | fast ms | dyn ms | stat ms | fast verdict | dyn verdict | stat verdict |")
