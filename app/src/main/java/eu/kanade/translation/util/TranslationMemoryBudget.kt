@@ -396,6 +396,30 @@ object TranslationMemoryBudget {
         }
     }
 
+    data class NnapiMemorySnapshot(
+        val availableHeapBytes: Long,
+        val systemHeadroomBytes: Long?,
+        val lowMemory: Boolean,
+    )
+
+    fun nnapiMemorySnapshot(): NnapiMemorySnapshot {
+        val heap = snapshot().availableHeapBytes
+        val app = try {
+            Injekt.get<Application>()
+        } catch (_: Throwable) {
+            return NnapiMemorySnapshot(heap, null, false)
+        }
+        val activityManager = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            ?: return NnapiMemorySnapshot(heap, null, false)
+        val memInfo = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memInfo)
+        return NnapiMemorySnapshot(
+            availableHeapBytes = heap,
+            systemHeadroomBytes = max(0L, memInfo.availMem - memInfo.threshold),
+            lowMemory = memInfo.lowMemory,
+        )
+    }
+
     private fun systemHeadroomBytes(): Long? {
         val app = try {
             Injekt.get<Application>()

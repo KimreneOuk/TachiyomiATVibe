@@ -11,10 +11,24 @@ internal object AotSessionLifecycle {
     fun closeIndependently(
         fixed: AutoCloseable?,
         dynamic: AutoCloseable?,
+        nnapi: AutoCloseable? = null,
         onFailure: (CloseFailure) -> Unit = {},
     ) {
-        closeOne("fixed", fixed, onFailure)
-        if (dynamic !== fixed) closeOne("dynamic", dynamic, onFailure)
+        val closed = java.util.Collections.newSetFromMap(
+            java.util.IdentityHashMap<AutoCloseable, Boolean>(),
+        )
+        closeOneIfDistinct("nnapi", nnapi, closed, onFailure)
+        closeOneIfDistinct("fixed", fixed, closed, onFailure)
+        closeOneIfDistinct("dynamic", dynamic, closed, onFailure)
+    }
+
+    private fun closeOneIfDistinct(
+        route: String,
+        session: AutoCloseable?,
+        closed: MutableSet<AutoCloseable>,
+        onFailure: (CloseFailure) -> Unit,
+    ) {
+        if (session != null && closed.add(session)) closeOne(route, session, onFailure)
     }
 
     private fun closeOne(

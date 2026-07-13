@@ -12,6 +12,50 @@ object OnnxRuntimeProvider {
         OrtEnvironment.getEnvironment()
     }
 
+    /** Dedicated options for the fixed AOT baseline. Registration failures are fatal. */
+    fun createRequiredXnnpackSessionOptions(): OrtSession.SessionOptions =
+        configureOwnedAotOptions { options ->
+            options.addXnnpack(java.util.HashMap<String, String>())
+            logcat(LogPriority.INFO) { "ONNX fixed AOT options provider=XNNPACK required=true" }
+        }
+
+    /**
+     * Dedicated strict NNAPI options for fixed AOT only. CPU fallback is disabled,
+     * and both config/EP failures deliberately propagate to the session creator.
+     */
+    fun createStrictNnapiSessionOptions(): OrtSession.SessionOptions =
+        configureOwnedAotOptions { options ->
+            options.addConfigEntry("session.disable_cpu_ep_fallback", "1")
+            options.addNnapi()
+            logcat(LogPriority.INFO) {
+                "ONNX fixed AOT options provider=NNAPI strictCpuFallbackDisabled=true"
+            }
+        }
+
+    private inline fun configureOwnedAotOptions(
+        configure: (OrtSession.SessionOptions) -> Unit,
+    ): OrtSession.SessionOptions {
+        val options = createBaseAotOptions()
+        try {
+            configure(options)
+            return options
+        } catch (error: Throwable) {
+            try { options.close() } catch (closeError: Throwable) { error.addSuppressed(closeError) }
+            throw error
+        }
+    }
+
+    private fun createBaseAotOptions(): OrtSession.SessionOptions =
+        OrtSession.SessionOptions().apply {
+            val threads = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
+            setInterOpNumThreads(threads)
+            setIntraOpNumThreads(threads)
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            setCPUArenaAllocator(false)
+            setMemoryPatternOptimization(false)
+            addConfigEntry("session.intra_op.allow_spinning", "0")
+        }
+
     fun createSessionOptions(
         useAccelerator: Boolean = false,
         useXnnpack: Boolean = false,
