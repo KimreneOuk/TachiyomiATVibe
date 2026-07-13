@@ -2,36 +2,128 @@ package eu.kanade.translation.inpainting
 
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 class AotPadPathTest {
 
     @Test
-    fun `background padding preserves centered source pixels`() {
-        val sourceSize = 4
-        val background = 0xFFB0A090.toInt()
-        val source = IntArray(sourceSize * sourceSize) { index -> 0xFF000000.toInt() or index }
+    fun `supported sides use the same centered offset for image and mask`() {
+        for (sourceSize in SUPPORTED_SIDES) {
+            val expectedOffset = (AotPadPath.SIZE - sourceSize) / 2
+            val image = IntArray(sourceSize * sourceSize) { IMAGE_PIXEL }
+            val mask = IntArray(sourceSize * sourceSize) { MASK_PIXEL }
+            val paddedImage = IntArray(PADDED_PIXELS)
+            val paddedMask = IntArray(PADDED_PIXELS)
 
-        val padded = AotPadPath.padSquare(source, sourceSize, background)
-        val offset = AotPadPath.centeredOffset(sourceSize)
+            AotPadPath.padSquareInto(image, sourceSize, BACKGROUND, paddedImage)
+            AotPadPath.padSquareInto(mask, sourceSize, 0, paddedMask)
 
-        padded[0] shouldBe background
-        padded[offset * AotPadPath.SIZE + offset] shouldBe source[0]
-        padded[(offset + sourceSize - 1) * AotPadPath.SIZE + offset + sourceSize - 1] shouldBe source.last()
+            AotPadPath.centeredOffset(sourceSize) shouldBe expectedOffset
+            paddedImage[expectedOffset * AotPadPath.SIZE + expectedOffset] shouldBe IMAGE_PIXEL
+            paddedMask[expectedOffset * AotPadPath.SIZE + expectedOffset] shouldBe MASK_PIXEL
+        }
     }
 
     @Test
-    fun `crop back recovers the original square exactly`() {
+    fun `image border is background and mask border is zero`() {
+        for (sourceSize in SUPPORTED_SIDES.filter { it < AotPadPath.SIZE }) {
+            val image = IntArray(sourceSize * sourceSize) { IMAGE_PIXEL }
+            val mask = IntArray(sourceSize * sourceSize) { MASK_PIXEL }
+            val paddedImage = IntArray(PADDED_PIXELS) { GUARD_PIXEL }
+            val paddedMask = IntArray(PADDED_PIXELS) { GUARD_PIXEL }
+
+            AotPadPath.padSquareInto(image, sourceSize, BACKGROUND, paddedImage)
+            AotPadPath.padSquareInto(mask, sourceSize, 0, paddedMask)
+
+            val offset = AotPadPath.centeredOffset(sourceSize)
+            val borderIndices = buildList {
+                add((AotPadPath.SIZE - 1) * AotPadPath.SIZE)
+                add(PADDED_PIXELS - 1)
+                if (offset > 0) {
+                    add(0)
+                    add(AotPadPath.SIZE - 1)
+                }
+            }
+            for (index in borderIndices) {
+                paddedImage[index] shouldBe BACKGROUND
+                paddedMask[index] shouldBe 0
+            }
+        }
+    }
+
+    @Test
+    fun `crop back recovers every supported square exactly`() {
+        for (sourceSize in SUPPORTED_SIDES) {
+            val source = IntArray(sourceSize * sourceSize) { index ->
+                0xFF000000.toInt() or (index and 0x00FFFFFF)
+            }
+            val padded = IntArray(PADDED_PIXELS + 1) { GUARD_PIXEL }
+            val cropped = IntArray(source.size + 1) { GUARD_PIXEL }
+
+            AotPadPath.padSquareInto(source, sourceSize, BACKGROUND, padded)
+            AotPadPath.cropSquareInto(padded, sourceSize, cropped)
+
+            cropped.copyOf(source.size).toList() shouldBe source.toList()
+            padded[PADDED_PIXELS] shouldBe GUARD_PIXEL
+            cropped[source.size] shouldBe GUARD_PIXEL
+        }
+    }
+
+    @Test
+    fun `allocating wrappers preserve exact semantics`() {
         val sourceSize = 400
-        val source = IntArray(sourceSize * sourceSize) { index -> 0xFF000000.toInt() or (index and 0x00FFFFFF) }
+        val source = IntArray(sourceSize * sourceSize) { index -> index }
 
-        AotPadPath.cropSquare(
-            AotPadPath.padSquare(source, sourceSize, background = 0xFFFFFFFF.toInt()),
-            sourceSize,
-        ).toList() shouldBe source.toList()
+        val padded = AotPadPath.padSquare(source, sourceSize, BACKGROUND)
+
+        padded.size shouldBe PADDED_PIXELS
+        AotPadPath.cropSquare(padded, sourceSize).toList() shouldBe source.toList()
     }
 
     @Test
-    fun `fixed shape is always 512 square`() {
-        AotPadPath.padSquare(IntArray(300 * 300), 300, 0).size shouldBe 512 * 512
+    fun `invalid source sides are rejected`() {
+        for (sourceSize in listOf(Int.MIN_VALUE, -1, 0, 513, Int.MAX_VALUE)) {
+            assertThrows<IllegalArgumentException> {
+                AotPadPath.padSquareInto(IntArray(1), sourceSize, BACKGROUND, IntArray(PADDED_PIXELS))
+            }
+            assertThrows<IllegalArgumentException> {
+                AotPadPath.cropSquareInto(IntArray(PADDED_PIXELS), sourceSize, IntArray(1))
+            }
+        }
+    }
+
+    @Test
+    fun `undersized buffers are rejected while oversized buffers are accepted`() {
+        val sourceSize = 300
+        val sourcePixels = sourceSize * sourceSize
+
+        assertThrows<IllegalArgumentException> {
+            AotPadPath.padSquareInto(IntArray(sourcePixels - 1), sourceSize, BACKGROUND, IntArray(PADDED_PIXELS))
+        }
+        assertThrows<IllegalArgumentException> {
+            AotPadPath.padSquareInto(IntArray(sourcePixels), sourceSize, BACKGROUND, IntArray(PADDED_PIXELS - 1))
+        }
+        assertThrows<IllegalArgumentException> {
+            AotPadPath.cropSquareInto(IntArray(PADDED_PIXELS - 1), sourceSize, IntArray(sourcePixels))
+        }
+        assertThrows<IllegalArgumentException> {
+            AotPadPath.cropSquareInto(IntArray(PADDED_PIXELS), sourceSize, IntArray(sourcePixels - 1))
+        }
+
+        AotPadPath.padSquareInto(
+            IntArray(sourcePixels + 1),
+            sourceSize,
+            BACKGROUND,
+            IntArray(PADDED_PIXELS + 1),
+        )
+    }
+
+    private companion object {
+        val SUPPORTED_SIDES = listOf(1, 300, 400, 480, 510, 511, 512)
+        const val PADDED_PIXELS = AotPadPath.SIZE * AotPadPath.SIZE
+        val IMAGE_PIXEL = 0xFF123456.toInt()
+        val MASK_PIXEL = 0xFFFFFFFF.toInt()
+        val BACKGROUND = 0xFFB0A090.toInt()
+        const val GUARD_PIXEL = 0x7F55AA33
     }
 }
