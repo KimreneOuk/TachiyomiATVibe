@@ -10,66 +10,66 @@ AOT model does not introduce new guard rejections vs the dynamic model,
 across a representative corpus, before the static model is wired into
 production (Wave 5.2).
 
-## Why a Python harness, not Kotlin?
+## Architecture: Python inference, Kotlin verdict
 
-`AotOutputGuard.kt` is pure (`IntArray` in, verdict out) and already JVM-tested
-by `AotOutputGuardTest`. But the **model inference** that produces the output
-the guard inspects runs through `onnxruntime-android`, which does not execute
-in a JVM unit test. Options were:
+The gate is split cleanly along the language boundary that already exists in
+this repo:
 
-1. Add a JVM `onnxruntime` dep (CPU-only) to the test classpath — new
-   dependency, requires approval, and pulls a 50MB native lib into every
-   developer's test run.
-2. Robolectric — not a current dep; large effort.
-3. Python with `onnxruntime` (already a dep for the model conversion in
-   `tools/aot_conversion/`) + a faithful numpy reimplementation of the guard.
+| Concern | Language | Where | Why |
+|---|---|---|---|
+| Model inference | Python | `emit_corpus_outputs.py` | onnxruntime is Python-only (like `tools/aot_conversion/`) |
+| Guard verdict | Kotlin | `AotCorpusGateTest.kt` | `AotOutputGuard.kt` is production code; the test calls the REAL object |
 
-Option 3 was chosen: it runs in the same Python env already used for model
-work, the guard reimplementation is parity-tested against the Kotlin guard
-(see `test_aot_output_guard_parity.py`), and it produces the same JSON report
-+ visual-QA artifacts a Kotlin harness would.
+`emit_corpus_outputs.py` does INFERENCE ONLY — it runs both models on each
+corpus page and writes raw ARGB pixel arrays (`.bin`). No guard math lives in
+Python. The JVM test reads those `.bin` files and applies the real
+`AotOutputGuard.isSuspiciousUniformFill` — the same object prod uses. There is
+no parity mirror to maintain and no second copy of the guard constants.
 
-The tradeoff: the gate is run manually (not in CI), like the Tier 2 numerics
-check. This matches the master plan's intent — Tier 3 is a pre-merge quality
-gate, not a per-commit test.
+Why `.bin` not PNG for the test: Android unit tests stub out `java.awt`, so
+`javax.imageio` is unavailable on the test classpath. The `.bin` format is
+trivial to read with `java.io.DataInputStream` and carries the exact ARGB
+`IntArray` prod feeds to `AotOutputGuard`. PNGs are also emitted for human
+visual QA.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `aot_output_guard.py` | Faithful numpy reimplementation of `AotOutputGuard.kt`. Constants MUST match; `test_aot_output_guard_parity.py` enforces this. |
-| `test_aot_output_guard_parity.py` | Parity test: 8 cases mirroring `AotOutputGuardTest.kt`, asserting the Python mirror agrees with the Kotlin guard. Run before any corpus gate. |
-| `run_corpus_gate.py` | The harness. Runs both models on every page in a corpus dir, applies the guard, writes `baseline_report.json` + optional side-by-side PNGs. |
+| `emit_corpus_outputs.py` | Runs both AOT models on each corpus page, writes `.bin` (test input) + `.png` (visual QA). No guard logic. |
 | `make_synthetic_corpus.py` | Generates 5 synthetic pages to validate the harness end-to-end. NOT a substitute for the real corpus. |
 | `manifest.schema.json` | JSON schema for the per-page `manifest.json`. |
-| `synthetic_corpus/` | Output of `make_synthetic_corpus.py`. |
+| `synthetic_corpus/` | Output of `make_synthetic_corpus.py` (source images + masks). |
 | `real_corpus/` | Empty placeholder where the real 20-page corpus goes. |
-| `gate_output/` | Output of `run_corpus_gate.py` (gitignored — regenerable). |
+
+The Kotlin half lives at
+`app/src/test/java/eu/kanade/translation/inpainting/AotCorpusGateTest.kt`, and
+its committed inputs at `app/src/test/resources/corpus/aot/`.
 
 ## How to run
 
 ```bash
 # 1. Install deps (same env as the model conversion).
-pip install onnxslim onnxruntime numpy pillow
+pip install onnxruntime numpy pillow
 
-# 2. Confirm the Python guard matches the Kotlin guard.
-python tools/aot_corpus/test_aot_output_guard_parity.py
-# Expected: 8/8 passed.
-
-# 3. (Optional) Regenerate the synthetic corpus.
+# 2. (Optional) Regenerate the synthetic corpus.
 python tools/aot_corpus/make_synthetic_corpus.py
 
-# 4. Run the gate on the synthetic corpus (validates the harness).
-python tools/aot_corpus/run_corpus_gate.py \
+# 3. Emit model outputs (runs both AOT models, writes .bin + .png).
+python tools/aot_corpus/emit_corpus_outputs.py \
     --corpus tools/aot_corpus/synthetic_corpus \
-    --out tools/aot_corpus/gate_output \
-    --save-images
+    --out app/src/test/resources/corpus/aot
+
+# 4. Run the JVM gate (reads the .bin, applies the real Kotlin guard).
+JAVA_HOME='C:\Program Files\Android\Android Studio\jbr' ./gradlew.bat \
+    :app:testStandardDebugUnitTest \
+    --tests "eu.kanade.translation.inpainting.AotCorpusGateTest" --no-daemon
 
 # 5. Run the gate on the REAL corpus once curated.
-python tools/aot_corpus/run_corpus_gate.py \
+python tools/aot_corpus/emit_corpus_outputs.py \
     --corpus tools/aot_corpus/real_corpus \
-    --out tools/aot_corpus/gate_output_real \
-    --save-images
+    --out app/src/test/resources/corpus/aot
+# (then re-run the gradle test; bump EXPECTED_CORPUS_SIZE to 20 in AotCorpusGateTest.kt)
 ```
 
 ## Gate criterion (per master plan Wave 5.2)
@@ -80,10 +80,6 @@ python tools/aot_corpus/run_corpus_gate.py \
 
 Any new rejection FAILS the gate. The static model must not be wired into
 production (Wave 5.2) until the gate passes on the real 20-page corpus.
-
-Pages where the guard verdict is unchanged but the output stats shifted
-significantly (mean delta > 5, variance delta > 2) are flagged for visual QA
-via the side-by-side PNGs but do not fail the gate.
 
 ## Corpus composition (target: 20 real pages)
 
@@ -122,12 +118,3 @@ Until those land, the harness runs only on the 5 synthetic pages. The
 synthetic run PROVES the harness works and the gate logic is sound; it does
 NOT prove the static model is safe on real manga. That proof is the gate's
 actual purpose and requires the real corpus.
-
-## Parity contract
-
-If `AotOutputGuard.kt` changes, `aot_output_guard.py` MUST be updated in the
-same change, and `test_aot_output_guard_parity.py` MUST still pass. The
-constants at the top of `aot_output_guard.py` are duplicated from the Kotlin
-guard's private companion — they have no compile-time link. A future
-improvement would be to generate the Python constants from the Kotlin file,
-but for now the parity test is the guard.
