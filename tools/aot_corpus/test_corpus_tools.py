@@ -148,5 +148,64 @@ class EmitCorpusOutputsValidationTest(unittest.TestCase):
                 emitter.validate_corpus(root, minimum_samples=2)
 
 
+class ProductionSub512PathTest(unittest.TestCase):
+    def test_fixture_spec_is_deterministic_and_exact(self):
+        self.assertEqual(
+            emitter.SUB512_FIXTURE_SPECS,
+            (
+                ("real_001__ft_001", 300),
+                ("real_002__ft_001", 400),
+                ("real_008__ft_003", 480),
+                ("real_024__ft_001", 511),
+            ),
+        )
+
+    def test_center_crop_uses_production_odd_remainder_rule(self):
+        source = np.arange(512 * 512, dtype=np.int32).reshape(512, 512)
+        cropped = emitter.center_crop(source, 511)
+        np.testing.assert_array_equal(cropped, source[:511, :511])
+
+    def test_static_input_is_center_background_pad_with_zero_mask(self):
+        side = 300
+        page = np.zeros((side, side, 3), dtype=np.uint8)
+        page[..., 0] = 17
+        page[..., 1] = 83
+        page[..., 2] = 149
+        mask = np.zeros((side, side), dtype=np.uint8)
+        mask[140:160, 140:160] = 255
+
+        dynamic_image, dynamic_mask, static_image, static_mask = emitter.production_inputs(page, mask)
+        offset = (512 - side) // 2
+
+        self.assertEqual(dynamic_image.shape, (1, 3, 304, 304))
+        self.assertEqual(dynamic_mask.shape, (1, 1, 304, 304))
+        self.assertEqual(static_image.shape, (1, 3, 512, 512))
+        self.assertEqual(static_mask.shape, (1, 1, 512, 512))
+        self.assertTrue(np.all(static_mask[:, :, :offset, :] == 0.0))
+        self.assertTrue(np.all(static_mask[:, :, :, :offset] == 0.0))
+        np.testing.assert_array_equal(
+            static_image[:, :, offset : offset + side, offset : offset + side],
+            dynamic_image[:, :, :side, :side],
+        )
+        expected_background = page[0, 0].astype(np.float32) / 127.5 - 1.0
+        np.testing.assert_allclose(static_image[0, :, 0, 0], expected_background, rtol=0, atol=1e-7)
+
+    def test_background_is_real_channel_median_not_grayscale_or_fake_color(self):
+        page = np.empty((20, 20, 3), dtype=np.uint8)
+        page[...] = (11, 77, 203)
+        mask = np.zeros((20, 20), dtype=np.uint8)
+        mask[8:12, 8:12] = 255
+        np.testing.assert_array_equal(emitter.production_background(page, mask), [11, 77, 203])
+
+    def test_crop_back_recovers_supported_native_sizes_exactly(self):
+        padded = np.arange(512 * 512 * 3, dtype=np.int32).reshape(512, 512, 3)
+        for side in (300, 400, 480, 511):
+            offset = (512 - side) // 2
+            np.testing.assert_array_equal(
+                emitter.center_crop(padded, side),
+                padded[offset : offset + side, offset : offset + side],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

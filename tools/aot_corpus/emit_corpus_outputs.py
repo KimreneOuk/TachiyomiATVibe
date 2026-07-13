@@ -63,6 +63,12 @@ STATIC_MODEL = REPO_ROOT / "app/src/main/assets/models/inpainting/aot-512.onnx"
 MODEL_INPUT_SIZE = 512
 IDENTITY_PATTERN = re.compile(r"^real_\d{3}__ft_\d{3}$")
 REQUIRED_INPUT_FILES = ("page.jpg", "mask.png", "manifest.json")
+SUB512_FIXTURE_SPECS = (
+    ("real_001__ft_001", 300),
+    ("real_002__ft_001", 400),
+    ("real_008__ft_003", 480),
+    ("real_024__ft_001", 511),
+)
 
 
 def validate_corpus(corpus_dir: Path, minimum_samples: int) -> list[tuple[Path, dict[str, Any]]]:
@@ -161,44 +167,78 @@ def load_model(path: Path) -> ort.InferenceSession:
     return ort.InferenceSession(str(path), so, providers=["CPUExecutionProvider"])
 
 
-def page_to_512_inputs(page_path: Path, mask_path: Path):
-    """Build the (image, mask) tensors the AOT model sees in PRODUCTION.
+def center_crop(array: np.ndarray, side: int) -> np.ndarray:
+    """Use AotPadPath's integer centering rule; odd remainders stay right/bottom."""
+    height, width = array.shape[:2]
+    if width != height or side < 1 or side > width:
+        raise ValueError(f"center crop requires square source and side in range: source={width}x{height}, side={side}")
+    offset = (width - side) // 2
+    return np.ascontiguousarray(array[offset : offset + side, offset : offset + side])
 
-    Mirrors AOTInpainting.kt:536-557 EXACTLY:
-      1. Resize page+mask to 512x512 bilinear; binarize mask at >0.5.
-      2. Normalize image to [-1,1] via /127.5 - 1.0 (NOT /255 -> [0,1] like
-         the original emit script; that was a divergence from prod).
-      3. Black out masked image regions: img *= (1 - mask). This is the defining
-         AOT inpainting contract — the model sees a black hole where text was.
-         The original emit skipped this, weakening the gate.
-      4. NCHW float32, mask as {0.0, 1.0}.
 
-    The corpus page.jpg is already a 512x512 centered crop from generate_masks.py
-    (mirroring AotBoxGeometry.centeredReportCrop + inpaintReportFreeTextAot512),
-    so no further crop is needed here — just tensor prep.
-    """
-    page = Image.open(page_path).convert("RGB").resize(
-        (MODEL_INPUT_SIZE, MODEL_INPUT_SIZE), Image.BILINEAR
-    )
-    mask = Image.open(mask_path).convert("L").resize(
-        (MODEL_INPUT_SIZE, MODEL_INPUT_SIZE), Image.BILINEAR
-    )
-    page_arr = np.asarray(page, dtype=np.float32)            # HWC [0,255]
-    mask_arr = (np.asarray(mask, dtype=np.float32) > 127.0).astype(np.float32)  # HW {0,1}
+def histogram_median(values: np.ndarray) -> int:
+    """Match PushPullGradient.histogramMedian: first bin with cumulative > count/2."""
+    histogram = np.bincount(values.reshape(-1), minlength=256)
+    return int(np.searchsorted(np.cumsum(histogram), values.size // 2 + 1))
 
-    # Prod normalize: [-1,1] via /127.5 - 1.0 (AOTInpainting.kt:538-540)
-    img_norm = page_arr / 127.5 - 1.0
-    # Prod black-out: masked pixels -> 0 (AOTInpainting.kt:546-548)
-    img_norm = img_norm * (1.0 - mask_arr[..., None])
 
-    img_chw = np.transpose(img_norm, (2, 0, 1))[None, ...]    # 1,3,H,W
-    mask_nchw = mask_arr[None, None, ...]                     # 1,1,H,W
+def production_background(page: np.ndarray, mask: np.ndarray, ring: int = 8) -> np.ndarray:
+    """Exact channel-wise port of PushPullGradient.localRingMedian."""
+    masked_y, masked_x = np.nonzero(mask > 0.5)
+    if masked_x.size:
+        x1, x2 = int(masked_x.min()), int(masked_x.max())
+        y1, y2 = int(masked_y.min()), int(masked_y.max())
+        rx1, rx2 = max(0, x1 - ring), min(page.shape[1], x2 + ring + 1)
+        ry1, ry2 = max(0, y1 - ring), min(page.shape[0], y2 + ring + 1)
+        sample = page[ry1:ry2, rx1:rx2]
+        keep = np.ones(sample.shape[:2], dtype=bool)
+        keep[y1 - ry1 : y2 - ry1 + 1, x1 - rx1 : x2 - rx1 + 1] = False
+        channels = sample[keep]
+    else:
+        channels = page.reshape(-1, 3)
+    if channels.size == 0:
+        channels = page.reshape(-1, 3)
+    return np.array([histogram_median(channels[:, channel]) for channel in range(3)], dtype=np.uint8)
+
+
+def tensor_inputs(page: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Normalize and black out the mask exactly as AOTInpainting.inpaint()."""
+    page_float = page.astype(np.float32)
+    mask_float = (mask > 127).astype(np.float32)
+    normalized = (page_float / 127.5 - 1.0) * (1.0 - mask_float[..., None])
     return (
-        np.ascontiguousarray(img_chw, dtype=np.float32),
-        np.ascontiguousarray(mask_nchw, dtype=np.float32),
-        mask_arr,
-        page_arr,
+        np.ascontiguousarray(np.transpose(normalized, (2, 0, 1))[None, ...], dtype=np.float32),
+        np.ascontiguousarray(mask_float[None, None, ...], dtype=np.float32),
     )
+
+
+def production_inputs(page: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build dynamic-native and static-512 inputs for the same real crop.
+
+    The static route mirrors production: center the unscaled RGB crop over the
+    channel-wise local-ring background, center the binary mask over zeros, then
+    run at 512 and crop the output back. No synthetic or fake color is inserted.
+    """
+    if page.shape[:2] != mask.shape or page.shape[0] != page.shape[1]:
+        raise ValueError(f"page/mask must be matching squares, got page={page.shape}, mask={mask.shape}")
+    side = page.shape[0]
+    if side > MODEL_INPUT_SIZE:
+        raise ValueError(f"crop side {side} exceeds {MODEL_INPUT_SIZE}")
+    dynamic_side = side + (8 - side % 8) % 8
+    dynamic_page = np.zeros((dynamic_side, dynamic_side, 3), dtype=np.uint8)
+    dynamic_page[:side, :side] = page
+    dynamic_mask_padded = np.zeros((dynamic_side, dynamic_side), dtype=np.uint8)
+    dynamic_mask_padded[:side, :side] = mask
+    dynamic_image, dynamic_mask = tensor_inputs(dynamic_page, dynamic_mask_padded)
+    offset = (MODEL_INPUT_SIZE - side) // 2
+    background = production_background(page, (mask > 127).astype(np.float32))
+    padded_page = np.empty((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 3), dtype=np.uint8)
+    padded_page[...] = background
+    padded_mask = np.zeros((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE), dtype=np.uint8)
+    padded_page[offset : offset + side, offset : offset + side] = page
+    padded_mask[offset : offset + side, offset : offset + side] = mask
+    static_image, static_mask = tensor_inputs(padded_page, padded_mask)
+    return dynamic_image, dynamic_mask, static_image, static_mask
 
 
 def run_model(sess: ort.InferenceSession, img: np.ndarray, mask: np.ndarray, page_arr: np.ndarray) -> np.ndarray:
@@ -221,6 +261,22 @@ def run_model(sess: ort.InferenceSession, img: np.ndarray, mask: np.ndarray, pag
         luma = (0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]).round().astype(np.uint8)
         return np.stack([luma, luma, luma], axis=-1)
     return out.astype(np.uint8)
+
+
+def run_dynamic_native_vs_static_512(
+    dynamic_session: ort.InferenceSession,
+    static_session: ort.InferenceSession,
+    page: np.ndarray,
+    mask: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Compare the production routes and return both outputs at native crop size."""
+    dynamic_image, dynamic_mask, static_image, static_mask = production_inputs(page, mask)
+    side = page.shape[0]
+    dynamic_padded = run_model(dynamic_session, dynamic_image, dynamic_mask, page.astype(np.float32))
+    dynamic_out = np.ascontiguousarray(dynamic_padded[:side, :side])
+    static_512 = run_model(static_session, static_image, static_mask, page.astype(np.float32))
+    static_out = center_crop(static_512, side)
+    return dynamic_out, static_out, (mask > 127).astype(np.float32)
 
 
 def write_argb_bin(path: Path, hwc: np.ndarray) -> None:
@@ -258,6 +314,11 @@ def main() -> int:
     ap.add_argument("--corpus", required=True, help="corpus dir (one subfolder per sample)")
     ap.add_argument("--out", required=True, help="new staging output dir")
     ap.add_argument("--min-samples", type=int, default=20)
+    ap.add_argument(
+        "--sub512-fixtures",
+        action="store_true",
+        help="emit the deterministic transformed real-corpus fixtures at 300,400,480,511",
+    )
     ap.add_argument("--clean", action="store_true", help="replace an existing staging output")
     args = ap.parse_args()
 
@@ -272,6 +333,12 @@ def main() -> int:
         generation_source = json.loads(
             (corpus_dir / "generation_report.json").read_text(encoding="utf-8")
         ).get("source")
+        if args.sub512_fixtures:
+            page_by_identity = {entry.name: (entry, manifest) for entry, manifest in pages}
+            missing_fixtures = [identity for identity, _ in SUB512_FIXTURE_SPECS if identity not in page_by_identity]
+            if missing_fixtures:
+                raise ValueError(f"sub-512 fixture sources missing: {missing_fixtures}")
+            pages = [page_by_identity[identity] for identity, _ in SUB512_FIXTURE_SPECS]
     except (OSError, json.JSONDecodeError, ValueError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
@@ -311,9 +378,18 @@ def main() -> int:
         page_mask = page_dir / "mask.png"
         manifest = page_dir / "manifest.json"
         try:
-            img, mask_nchw, mask_hw, page_arr = page_to_512_inputs(page_img, page_mask)
-            dyn_out = run_model(dyn_sess, img, mask_nchw, page_arr)
-            stat_out = run_model(stat_sess, img, mask_nchw, page_arr)
+            page_arr = np.asarray(Image.open(page_img).convert("RGB"), dtype=np.uint8)
+            mask_arr = np.asarray(Image.open(page_mask).convert("L"), dtype=np.uint8)
+            fixture_side = next(
+                (side for identity, side in SUB512_FIXTURE_SPECS if args.sub512_fixtures and identity == page_dir.name),
+                page_arr.shape[0],
+            )
+            if args.sub512_fixtures:
+                page_arr = center_crop(page_arr, fixture_side)
+                mask_arr = center_crop(mask_arr, fixture_side)
+            dyn_out, stat_out, mask_hw = run_dynamic_native_vs_static_512(
+                dyn_sess, stat_sess, page_arr, mask_arr,
+            )
         except Exception as error:
             failure = {"identity": page_dir.name, "stage": "model_inference", "error": repr(error)}
             failures.append(failure)
@@ -333,7 +409,23 @@ def main() -> int:
             Image.fromarray(dyn_out).save(temporary_out / "dynamic_out.png")
             Image.fromarray(stat_out).save(temporary_out / "static_out.png")
             Image.fromarray((mask_hw * 255).astype(np.uint8), mode="L").save(temporary_out / "mask.png")
-            shutil.copy(manifest, temporary_out / "manifest.json")
+            emitted_manifest = dict(manifest_data)
+            if args.sub512_fixtures:
+                emitted_manifest.update(
+                    {
+                        "fixture_identity": f"{page_dir.name}__center_crop_{fixture_side}",
+                        "fixture_kind": "deterministic_transformed_real_corpus_center_crop",
+                        "fixture_side": fixture_side,
+                        "fixture_source_identity": page_dir.name,
+                        "fixture_transform": f"center_crop_from_512_to_{fixture_side}_no_resize",
+                        "dynamic_route": f"native_{fixture_side}x{fixture_side}",
+                        "static_route": "production_center_background_pad_zero_mask_512_crop_back",
+                        "synthetic_color_used": False,
+                    }
+                )
+            (temporary_out / "manifest.json").write_text(
+                json.dumps(emitted_manifest, indent=2) + "\n", encoding="utf-8"
+            )
             temporary_out.rename(page_out)
         except Exception as error:
             failure = {"identity": page_dir.name, "stage": "output_write", "error": repr(error)}
@@ -353,6 +445,8 @@ def main() -> int:
         "failure_count": len(failures),
         "identities": [page_dir.name for page_dir, _ in pages if (out_dir / page_dir.name).is_dir()],
         "failures": failures,
+        "fixture_mode": "sub512_transformed_real_corpus" if args.sub512_fixtures else "native_corpus",
+        "fixture_sizes": [side for _, side in SUB512_FIXTURE_SPECS] if args.sub512_fixtures else [],
     }
     try:
         (out_dir / "emission_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

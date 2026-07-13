@@ -131,6 +131,48 @@ class AotCorpusGateTest {
     }
 
     @Test
+    fun `sub-512 production pad fixtures pass the real guard gate`() {
+        val fixtures = sub512Fixtures()
+        fixtures.map { it.side } shouldBe listOf(300, 400, 480, 511)
+
+        val newRejections = fixtures.mapNotNull { fixture ->
+            val root = "corpus/aot_sub512/${fixture.identity}"
+            val mask = readArgbBin("$root/mask.bin")
+            val dynamic = readArgbBin("$root/dynamic_out.bin")
+            val static = readArgbBin("$root/static_out.bin")
+            val manifest = readTextResource("$root/manifest.json")
+            val expectedPixels = fixture.side * fixture.side
+            val malformed = buildList {
+                if (mask.width != fixture.side || mask.height != fixture.side) add("mask dimensions")
+                if (dynamic.width != fixture.side || dynamic.height != fixture.side) add("dynamic dimensions")
+                if (static.width != fixture.side || static.height != fixture.side) add("static dimensions")
+                if (mask.pixels.size != expectedPixels || dynamic.pixels.size != expectedPixels || static.pixels.size != expectedPixels) add("pixel count")
+                if (jsonString(manifest, "fixture_kind") != "deterministic_transformed_real_corpus_center_crop") add("fixture_kind")
+                if (jsonInt(manifest, "fixture_side") != fixture.side) add("fixture_side")
+                if (jsonString(manifest, "fixture_source_identity") != fixture.identity) add("fixture_source_identity")
+                if (jsonString(manifest, "fixture_transform") != "center_crop_from_512_to_${fixture.side}_no_resize") add("fixture_transform")
+                if (jsonString(manifest, "dynamic_route") != "native_${fixture.side}x${fixture.side}") add("dynamic_route")
+                if (jsonString(manifest, "static_route") != "production_center_background_pad_zero_mask_512_crop_back") add("static_route")
+                if (jsonBoolean(manifest, "synthetic_color_used") != false) add("synthetic_color_used")
+            }
+            if (malformed.isNotEmpty()) {
+                error("${fixture.identity}: malformed sub-512 fixture ${malformed.joinToString()}")
+            }
+            val dynamicStats = AotOutputGuard.inspect(dynamic.pixels, mask.pixels, mask.width, mask.height)
+            val staticStats = AotOutputGuard.inspect(static.pixels, mask.pixels, mask.width, mask.height)
+            if (!AotOutputGuard.classify(dynamicStats) && AotOutputGuard.classify(staticStats)) {
+                "${fixture.identity}@${fixture.side}: dynamic=accept static=REJECT " +
+                    "dynamic=$dynamicStats static=$staticStats"
+            } else {
+                null
+            }
+        }
+        if (newRejections.isNotEmpty()) {
+            error("Sub-512 real guard gate FAILED:\n  - ${newRejections.joinToString("\n  - ")}")
+        }
+    }
+
+    @Test
     fun `mask is non-empty on every corpus page`() {
         // A page with an empty mask cannot exercise the guard (it returns early
         // on maskedCount < MIN_MASKED_PIXELS). Such a page is corpus noise, not
@@ -172,6 +214,21 @@ class AotCorpusGateTest {
     }
 
     private data class ArgbImage(val width: Int, val height: Int, val pixels: IntArray)
+    private data class Sub512Fixture(val identity: String, val side: Int)
+
+    private fun sub512Fixtures(): List<Sub512Fixture> {
+        val loader = javaClass.classLoader ?: return emptyList()
+        val root = loader.getResource("corpus/aot_sub512") ?: return emptyList()
+        val dir = java.io.File(root.toURI())
+        if (!dir.isDirectory) return emptyList()
+        return dir.listFiles { file -> file.isDirectory }
+            ?.map { file ->
+                val manifest = readTextResource("corpus/aot_sub512/${file.name}/manifest.json")
+                Sub512Fixture(file.name, jsonInt(manifest, "fixture_side") ?: -1)
+            }
+            ?.sortedBy { it.side }
+            ?: emptyList()
+    }
 
     private fun readTextResource(resourcePath: String): String {
         val loader = javaClass.classLoader ?: error("no ClassLoader on test thread")
