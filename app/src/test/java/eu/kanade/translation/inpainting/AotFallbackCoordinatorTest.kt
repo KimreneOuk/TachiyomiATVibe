@@ -58,6 +58,23 @@ class AotFallbackCoordinatorTest {
     }
 
     @Test
+    fun `primary OOM skips fallback allocation`() {
+        var fallbackCalls = 0
+
+        val result = AotFallbackCoordinator.run(
+            primary = { AotFallbackCoordinator.CandidateResult.Failed(OutOfMemoryError("fixed")) },
+            fallback = {
+                fallbackCalls++
+                AotFallbackCoordinator.CandidateResult.Accepted(intArrayOf(1))
+            },
+        )
+
+        fallbackCalls shouldBe 0
+        val exhausted = result.shouldBeInstanceOf<AotFallbackCoordinator.Result.Exhausted>()
+        exhausted.fallback shouldBe AotFallbackCoordinator.CandidateResult.Skipped("primary_oom")
+    }
+
+    @Test
     fun `two unsuccessful attempts preserve both results`() {
         val primary = AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("primary"))
         val fallback = AotFallbackCoordinator.CandidateResult.Rejected(

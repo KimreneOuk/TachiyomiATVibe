@@ -232,9 +232,10 @@ class RoiPageRecognitionEngine(
                 val localInpainting = AOTInpainting()
                 localInpainting.paddleDetector = paddleDet
                 if (inpaintingMode == InpaintingMode.QUALITY) {
-                    paths.inpaintModel?.let { model ->
-                        localInpainting.initialize(model)
-                    }
+                    localInpainting.initialize(
+                        fixedModelFile = paths.inpaint512Model,
+                        dynamicModelFile = paths.inpaintModel,
+                    )
                 } else {
                     logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping AOT session initialization" }
                 }

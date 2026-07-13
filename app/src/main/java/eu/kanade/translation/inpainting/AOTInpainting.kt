@@ -9,11 +9,8 @@ import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.File
 import java.nio.FloatBuffer
 import kotlin.math.max
@@ -82,83 +79,73 @@ class AOTInpainting {
         }
     }
 
-    private var session: OrtSession? = null
+    private var fixedSession: OrtSession? = null
+    private var dynamicSession: OrtSession? = null
     private val bubbleCleaner = SmartBubbleTextCleaner()
     var paddleDetector: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null
 
-    // TachiyomiAT: resolved-once cache of translation_diagnostics to avoid
-    // SharedPreferences reads on the hot path (mirrors the OCR engines).
-    @Volatile
-    private var translationDiagnosticsEnabled: Boolean = false
-    @Volatile
-    private var diagnosticsResolved: Boolean = false
-    private fun resolveDiagnostics(): Boolean {
-        if (diagnosticsResolved) return translationDiagnosticsEnabled
-        translationDiagnosticsEnabled = try {
-            Injekt.get<TranslationPreferences>().translationDiagnostics().get()
-        } catch (_: Throwable) {
-            false
+    fun initialize(fixedModelFile: File?, dynamicModelFile: File?) {
+        fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
+        dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
+        logcat(LogPriority.INFO) {
+            "[inpaint] init fixed=${fixedSession != null} dynamic=${dynamicSession != null} provider=XNNPACK"
         }
-        diagnosticsResolved = true
-        return translationDiagnosticsEnabled
     }
 
-    fun initialize(modelFile: File) {
-        if (!modelFile.exists()) {
-            logcat(LogPriority.WARN) { "Inpainting model not found at ${modelFile.absolutePath}, skipping" }
-            return
+    private fun initializeSession(
+        modelFile: File?,
+        kind: AotModelContract.Kind,
+        route: String,
+    ): OrtSession? {
+        if (modelFile == null || !modelFile.exists()) {
+            logcat(LogPriority.WARN) {
+                "[inpaint] route=$route init=skipped reason=model_missing path=${modelFile?.absolutePath}"
+            }
+            return null
         }
         val opts = OnnxRuntimeProvider.createSessionOptions(
             useAccelerator = false,
             useXnnpack = true,
             disableIntraOpSpinning = true,
         )
-        try {
-            session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
+        var created: OrtSession? = null
+        return try {
+            created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
+            val contract = readContract(created)
+            AotModelContract.validate(kind, contract)
+            logcat(LogPriority.INFO) {
+                "[inpaint] route=$route init=ok provider=XNNPACK model=${modelFile.name} " +
+                    "image=${contract.imageShape.contentToString()} mask=${contract.maskShape.contentToString()} " +
+                    "output=${contract.outputShape.contentToString()}"
+            }
+            created
+        } catch (error: Throwable) {
+            try { created?.close() } catch (_: Throwable) {}
+            logcat(LogPriority.ERROR, error) {
+                "[inpaint] route=$route init=failed provider=XNNPACK model=${modelFile.name}"
+            }
+            null
         } finally {
             opts.close()
         }
-        logcat(LogPriority.INFO) { "AOT Inpainting CPU session created from ${modelFile.name}" }
-
-        val sess = session
-        if (sess != null) {
-            assertContract(sess)
-            if (resolveDiagnostics()) {
-                try {
-                    logcat(LogPriority.INFO) {
-                        "[inpaint] contract inputs=${sess.inputNames} outputs=${sess.outputNames}"
-                    }
-                } catch (e: Throwable) {
-                    logcat(LogPriority.WARN) { "[inpaint] could not dump graph contract: ${e.message}" }
-                }
-            }
-        }
     }
 
-    /**
-     * TachiyomiAT: assert the session inputs match what [inpaint] feeds it
-     * ("image", "mask"). A name mismatch otherwise surfaces only as a generic
-     * [OrtException] that the caller turns into a silent FAILED, hiding the
-     * cause; asserting here gives a readable error. Throws on mismatch.
-     */
-    private fun assertContract(sess: OrtSession) {
-        val names = try {
-            sess.inputNames
-        } catch (e: Throwable) {
-            logcat(LogPriority.WARN) { "[inpaint] could not read input names: ${e.message}" }
-            return
-        }
-        require(names.contains("image")) {
-            "[inpaint] model has no 'image' input; actual inputs=$names. " +
-                "AOTInpainting feeds {\"image\",\"mask\"} — the wiring must be updated."
-        }
-        require(names.contains("mask")) {
-            "[inpaint] model has no 'mask' input; actual inputs=$names. " +
-                "AOTInpainting feeds {\"image\",\"mask\"} — the wiring must be updated."
-        }
+    private fun readContract(sess: OrtSession): AotModelContract.Contract {
+        val inputs = sess.inputInfo
+        val outputs = sess.outputInfo
+        val image = inputs["image"]?.info as? ai.onnxruntime.TensorInfo
+        val mask = inputs["mask"]?.info as? ai.onnxruntime.TensorInfo
+        val output = outputs.values.singleOrNull()?.info as? ai.onnxruntime.TensorInfo
+        return AotModelContract.Contract(
+            inputNames = inputs.keys,
+            outputCount = outputs.size,
+            imageShape = image?.shape ?: longArrayOf(),
+            maskShape = mask?.shape ?: longArrayOf(),
+            outputShape = output?.shape ?: longArrayOf(),
+        )
     }
 
-    fun isInitialized(): Boolean = session != null
+    fun isInitialized(): Boolean = fixedSession != null || dynamicSession != null
 
     fun inpaintRegions(
         image: Bitmap,
@@ -168,7 +155,8 @@ class AOTInpainting {
         blocks: List<eu.kanade.translation.model.TranslationBlock>? = null,
     ): Bitmap {
         if (boxes.isEmpty()) return image.copy(Bitmap.Config.ARGB_8888, true)
-        val sess = session
+        val fixedSess = fixedSession
+        val dynamicSess = dynamicSession
         var result = image.copy(Bitmap.Config.ARGB_8888, true)
 
         val bubbleBoxes = mutableListOf<IntArray>()
@@ -222,7 +210,7 @@ class AOTInpainting {
         logcat(LogPriority.INFO) {
             "[inpaint] pipeline=investigation_report bubbleText=${bubbleTextBoxes.size} " +
                 "freeDets=${freeTextDetectorBoxes.size} freeGroups=${freeTextGroups.size} " +
-                "mode=$mode model=${sess != null}"
+                "mode=$mode fixed=${fixedSess != null} dynamic=${dynamicSess != null}"
         }
         if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
             logcat(LogPriority.INFO) {
@@ -236,19 +224,12 @@ class AOTInpainting {
 
         for (group in freeTextGroups) {
             if (group.isEmpty()) continue
-            if (mode == InpaintingMode.QUALITY && sess != null) {
-                try {
-                    result = inpaintReportFreeTextAot512(sess, result, group)
-                } catch (oom: OutOfMemoryError) {
-                    BitmapPool.releaseAll()
-                    System.gc()
-                    logcat(LogPriority.WARN) { "[inpaint] report AOT OOM; falling back to grouped push-pull" }
-                    result = inpaintReportFreeTextFast(result, group)
-                } catch (e: Exception) {
-                    logcat(LogPriority.WARN, e) { "[inpaint] report AOT failed; falling back to grouped push-pull" }
-                    result = inpaintReportFreeTextFast(result, group)
-                }
+            if (mode == InpaintingMode.QUALITY && (fixedSess != null || dynamicSess != null)) {
+                result = inpaintReportFreeTextNeural(fixedSess, dynamicSess, result, group)
             } else {
+                logcat(LogPriority.INFO) {
+                    "[inpaint] route=push_pull reason=${if (mode != InpaintingMode.QUALITY) "fast_mode" else "no_neural_session"} boxes=${group.size}"
+                }
                 result = inpaintReportFreeTextFast(result, group)
             }
         }
@@ -375,38 +356,148 @@ class AOTInpainting {
         return image
     }
 
-    private fun inpaintReportFreeTextAot512(sess: OrtSession, image: Bitmap, boxes: List<IntArray>): Bitmap {
-        val crop = AotBoxGeometry.centeredReportCrop(boxes, image.width, image.height, REPORT_AOT_CONTEXT) ?: return image
-        val cropWidth = crop[2] - crop[0]
-        val cropHeight = crop[3] - crop[1]
-        if (cropWidth != cropHeight || cropWidth <= 0) return image
-        if (!TranslationMemoryBudget.canRunNeuralInpaint(image.width, image.height, cropWidth, cropHeight)) {
+    private fun inpaintReportFreeTextNeural(
+        fixedSess: OrtSession?,
+        dynamicSess: OrtSession?,
+        image: Bitmap,
+        boxes: List<IntArray>,
+    ): Bitmap {
+        val crop = AotBoxGeometry.centeredReportCrop(boxes, image.width, image.height, REPORT_AOT_CONTEXT)
+            ?: return image
+        val side = crop[2] - crop[0]
+        if (side <= 0 || crop[3] - crop[1] != side) return image
+        if (!TranslationMemoryBudget.canRunNeuralInpaint(image.width, image.height, side, side)) {
             TranslationMemoryBudget.logSnapshot(
-                tag = "skip_report_aot512",
+                tag = "skip_report_aot",
                 width = image.width,
                 height = image.height,
-                extra = "crop=${cropWidth}x$cropHeight boxes=${boxes.size}",
+                extra = "route=push_pull crop=${side}x$side boxes=${boxes.size}",
             )
             return inpaintReportFreeTextFast(image, boxes)
         }
-        val localBoxes = boxes.mapNotNull { AotBoxGeometry.localizeBox(it, crop[0], crop[1], cropWidth, cropHeight) }
-        val maskBytes = BubbleMaskBuilder.buildFixedPillMask(localBoxes, cropWidth, cropHeight, REPORT_FREE_TEXT_PAD, REPORT_FREE_TEXT_DILATE)
+        val localBoxes = boxes.mapNotNull { AotBoxGeometry.localizeBox(it, crop[0], crop[1], side, side) }
+        val maskBytes = BubbleMaskBuilder.buildFixedPillMask(localBoxes, side, side, REPORT_FREE_TEXT_PAD, REPORT_FREE_TEXT_DILATE)
         if (maskBytes.none { it != 0.toByte() }) return image
-        val maskBitmap = BitmapPool.getALPHA8(cropWidth, cropHeight)
+        val maskBitmap = BitmapPool.getALPHA8(side, side)
         try {
-            setAlphaMaskPixels(maskBitmap, maskBytes, cropWidth, cropHeight)
-            return inpaint(
-                sess = sess,
-                image = image,
-                maskBitmap = maskBitmap,
-                cropBounds = crop,
-                maskAlreadyCropped = true,
-                fallbackBoxes = boxes,
-                featherRampPx = 0,
-                reportFallbackOnly = true,
+            setAlphaMaskPixels(maskBitmap, maskBytes, side, side)
+            var fixedOom = false
+            val result = AotFallbackCoordinator.run(
+                primary = {
+                    if (fixedSess == null) {
+                        loggedFailure("fixed", "session_unavailable", crop, side, null)
+                        AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("fixed session unavailable"))
+                    } else {
+                        tryNeuralCandidate("fixed", fixedSess, image, maskBitmap, crop, side, fixedShape = true)
+                            .also { if (it is AotFallbackCoordinator.CandidateResult.Failed && it.error is OutOfMemoryError) fixedOom = true }
+                    }
+                },
+                fallback = {
+                    if (fixedOom) {
+                        loggedFailure("dynamic", "skipped_after_fixed_oom", crop, side, null)
+                        AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("dynamic skipped after fixed OOM"))
+                    } else if (dynamicSess == null) {
+                        loggedFailure("dynamic", "session_unavailable", crop, side, null)
+                        AotFallbackCoordinator.CandidateResult.Failed(IllegalStateException("dynamic session unavailable"))
+                    } else {
+                        tryNeuralCandidate("dynamic", dynamicSess, image, maskBitmap, crop, side, fixedShape = false)
+                    }
+                },
             )
+            return when (result) {
+                is AotFallbackCoordinator.Result.Accepted -> {
+                    image.setPixels(result.pixels, 0, side, crop[0], crop[1], side, side)
+                    image
+                }
+                is AotFallbackCoordinator.Result.Exhausted -> {
+                    if (fixedOom) {
+                        loggedFailure("dynamic", "skipped_after_fixed_oom", crop, side, null)
+                    }
+                    logcat(LogPriority.WARN) {
+                        "[inpaint] route=push_pull reason=neural_exhausted crop=${side}x$side " +
+                            "offset=${crop[0]},${crop[1]} tensor=${side}x$side boxes=${boxes.size}"
+                    }
+                    if (fixedOom) {
+                        BitmapPool.releaseAll()
+                        System.gc()
+                    }
+                    inpaintReportFreeTextFast(image, boxes)
+                }
+            }
         } finally {
             BitmapPool.putALPHA8(maskBitmap)
+        }
+    }
+
+    private fun tryNeuralCandidate(
+        route: String,
+        sess: OrtSession,
+        page: Bitmap,
+        mask: Bitmap,
+        crop: IntArray,
+        side: Int,
+        fixedShape: Boolean,
+    ): AotFallbackCoordinator.CandidateResult {
+        var working: Bitmap? = null
+        val started = System.nanoTime()
+        return try {
+            val candidate = BitmapPool.getARGB8888(side, side)
+            working = candidate
+            Canvas(candidate).drawBitmap(
+                page,
+                android.graphics.Rect(crop[0], crop[1], crop[2], crop[3]),
+                android.graphics.Rect(0, 0, side, side),
+                null,
+            )
+            inpaint(
+                sess = sess,
+                image = candidate,
+                maskBitmap = mask,
+                cropBounds = intArrayOf(0, 0, side, side),
+                maskAlreadyCropped = true,
+                featherRampPx = 0,
+                reportFallbackOnly = true,
+                fixedShape = fixedShape,
+                route = route,
+            )
+            val pixels = IntArray(side * side)
+            candidate.getPixels(pixels, 0, side, 0, 0, side, side)
+            logcat(LogPriority.INFO) {
+                "[inpaint] route=$route accepted totalMs=${elapsedMs(started)} crop=${side}x$side " +
+                    "tensor=${if (fixedShape) "512x512" else "${side}x$side"} offset=${crop[0]},${crop[1]} guard=pass"
+            }
+            AotFallbackCoordinator.CandidateResult.Accepted(pixels)
+        } catch (oom: OutOfMemoryError) {
+            loggedFailure(route, "oom", crop, side, oom, started)
+            AotFallbackCoordinator.CandidateResult.Failed(oom)
+        } catch (rejected: AotRejectedException) {
+            loggedFailure(route, "guard_rejected", crop, side, rejected, started, rejected.stats)
+            AotFallbackCoordinator.CandidateResult.Rejected(rejected.stats)
+        } catch (error: Throwable) {
+            loggedFailure(route, "exception", crop, side, error, started)
+            AotFallbackCoordinator.CandidateResult.Failed(error)
+        } finally {
+            working?.let { BitmapPool.putARGB8888(it) }
+        }
+    }
+
+    private class AotRejectedException(val stats: AotOutputGuard.GuardStats) : RuntimeException("AOT guard rejected output")
+
+    private fun elapsedMs(started: Long): Double = (System.nanoTime() - started) / 1_000_000.0
+
+    private fun loggedFailure(
+        route: String,
+        reason: String,
+        crop: IntArray,
+        side: Int,
+        error: Throwable?,
+        started: Long = System.nanoTime(),
+        stats: AotOutputGuard.GuardStats? = null,
+    ) {
+        logcat(LogPriority.WARN, error) {
+            "[inpaint] route=$route result=fallback reason=$reason totalMs=${elapsedMs(started)} crop=${side}x$side " +
+                "tensor=${if (route == "fixed") "512x512" else "${side}x$side"} offset=${crop[0]},${crop[1]} " +
+                "guard=${stats?.let { "mean=${it.mean},variance=${it.variance},channelDelta=${it.channelDelta},masked=${it.maskedCount}" } ?: "n/a"}"
         }
     }
 
@@ -427,6 +518,8 @@ class AOTInpainting {
         fallbackBoxes: List<IntArray> = emptyList(),
         featherRampPx: Int = FEATHER_RAMP_PX,
         reportFallbackOnly: Boolean = false,
+        fixedShape: Boolean = false,
+        route: String = "dynamic",
     ): Bitmap {
         val cropMargin = 32
         val originalWidth = image.width
@@ -462,10 +555,16 @@ class AOTInpainting {
         val avgChroma = totalChroma / (cropPixelsOriginal.size / sampleStride)
         val isGrayscale = avgChroma < 15
 
-        val needsResize = max(cropWidth, cropHeight) > MAX_INFERENCE_DIM
+        require(!fixedShape || (cropWidth == cropHeight && cropWidth in 1..AotPadPath.SIZE)) {
+            "fixed AOT requires a square crop in 1..${AotPadPath.SIZE}, actual=${cropWidth}x$cropHeight"
+        }
+        val needsResize = !fixedShape && max(cropWidth, cropHeight) > MAX_INFERENCE_DIM
         val inferenceWidth: Int
         val inferenceHeight: Int
-        if (needsResize) {
+        if (fixedShape) {
+            inferenceWidth = AotPadPath.SIZE
+            inferenceHeight = AotPadPath.SIZE
+        } else if (needsResize) {
             val scale = MAX_INFERENCE_DIM.toFloat() / max(cropWidth, cropHeight)
             val wScaled = max(8, (cropWidth * scale).toInt())
             val hScaled = max(8, (cropHeight * scale).toInt())
@@ -477,6 +576,7 @@ class AOTInpainting {
             inferenceWidth = cropWidth + padW
             inferenceHeight = cropHeight + padH
         }
+        val fixedOffset = if (fixedShape) AotPadPath.centeredOffset(cropWidth) else 0
 
         var imgInput: Bitmap? = null
         var maskInput: Bitmap? = null
@@ -490,9 +590,27 @@ class AOTInpainting {
         var blended: Bitmap? = null
         try {
             imgInput = BitmapPool.getARGB8888(inferenceWidth, inferenceHeight)
-            imgInput.eraseColor(0)
+            val fixedBackground = if (fixedShape) {
+                val cropMask = ByteArray(cropWidth * cropHeight)
+                val localMaskPixels = IntArray(cropWidth * cropHeight)
+                maskBitmap.getPixels(localMaskPixels, 0, cropWidth, 0, 0, cropWidth, cropHeight)
+                for (i in cropMask.indices) {
+                    if (AotPixelOps.maskValue(localMaskPixels[i]) > 127) cropMask[i] = 1
+                }
+                PushPullGradient.localRingMedian(cropPixelsOriginal, cropWidth, cropHeight, cropMask, PushPullGradient.DEFAULT_RING)
+            } else {
+                0
+            }
+            imgInput.eraseColor(fixedBackground)
             val imgInputCanvas = android.graphics.Canvas(imgInput)
-            if (needsResize) {
+            if (fixedShape) {
+                imgInputCanvas.drawBitmap(
+                    image,
+                    android.graphics.Rect(xMin, yMin, xMin + cropWidth, yMin + cropHeight),
+                    android.graphics.Rect(fixedOffset, fixedOffset, fixedOffset + cropWidth, fixedOffset + cropHeight),
+                    null,
+                )
+            } else if (needsResize) {
                 imgInputCanvas.drawBitmap(image, android.graphics.Rect(xMin, yMin, xMin + cropWidth, yMin + cropHeight), android.graphics.RectF(0f, 0f, inferenceWidth.toFloat(), inferenceHeight.toFloat()), null)
             } else {
                 imgInputCanvas.drawBitmap(image, android.graphics.Rect(xMin, yMin, xMin + cropWidth, yMin + cropHeight), android.graphics.Rect(0, 0, cropWidth, cropHeight), null)
@@ -502,7 +620,14 @@ class AOTInpainting {
             maskInput.eraseColor(0)
             val maskInputCanvas = android.graphics.Canvas(maskInput)
             if (maskAlreadyCropped) {
-                if (needsResize) {
+                if (fixedShape) {
+                    maskInputCanvas.drawBitmap(
+                        maskBitmap,
+                        android.graphics.Rect(0, 0, maskBitmap.width, maskBitmap.height),
+                        android.graphics.Rect(fixedOffset, fixedOffset, fixedOffset + cropWidth, fixedOffset + cropHeight),
+                        null,
+                    )
+                } else if (needsResize) {
                     maskInputCanvas.drawBitmap(maskBitmap, android.graphics.Rect(0, 0, maskBitmap.width, maskBitmap.height), android.graphics.RectF(0f, 0f, inferenceWidth.toFloat(), inferenceHeight.toFloat()), null)
                 } else {
                     maskInputCanvas.drawBitmap(maskBitmap, android.graphics.Rect(0, 0, maskBitmap.width, maskBitmap.height), android.graphics.Rect(0, 0, cropWidth, cropHeight), null)
@@ -598,7 +723,14 @@ class AOTInpainting {
 
             scaled = BitmapPool.getARGB8888(cropWidth, cropHeight)
             val scaledCanvas = android.graphics.Canvas(scaled)
-            if (needsResize) {
+            if (fixedShape) {
+                scaledCanvas.drawBitmap(
+                    resultBitmap,
+                    android.graphics.Rect(fixedOffset, fixedOffset, fixedOffset + cropWidth, fixedOffset + cropHeight),
+                    android.graphics.Rect(0, 0, cropWidth, cropHeight),
+                    null,
+                )
+            } else if (needsResize) {
                 scaledCanvas.drawBitmap(
                     resultBitmap,
                     null,
@@ -630,7 +762,7 @@ class AOTInpainting {
                         "— falling back to cleanRegions"
                 }
                 if (reportFallbackOnly) {
-                    throw IllegalStateException("Report AOT output rejected by guard")
+                    throw AotRejectedException(guardStats)
                 }
                 val boxesForFallback = fallbackBoxes.ifEmpty { listOf(intArrayOf(boxX1, boxY1, boxX2, boxY2)) }
                 return bubbleCleaner.cleanRegions(image, boxesForFallback)
@@ -642,7 +774,8 @@ class AOTInpainting {
             canvas.drawBitmap(blended ?: throw IllegalStateException("Inpainting blend was not created"), xMin.toFloat(), yMin.toFloat(), null)
 
             logcat(LogPriority.INFO) {
-                "[inpaint] model=${(t1 - t0) / 1_000_000.0}ms crop=${cropWidth}x${cropHeight} infer=${inferenceWidth}x${inferenceHeight}"
+                "[inpaint] route=$route modelMs=${(t1 - t0) / 1_000_000.0} crop=${cropWidth}x${cropHeight} " +
+                    "tensor=${inferenceWidth}x${inferenceHeight} offset=$fixedOffset,$fixedOffset guard=pass"
             }
 
             return image
@@ -780,8 +913,20 @@ class AOTInpainting {
 
     fun close() {
         bubbleCleaner.clearWorkingBuffers()
-        session?.close()
-        session = null
+        try {
+            fixedSession?.close()
+        } catch (error: Throwable) {
+            logcat(LogPriority.ERROR, error) { "[inpaint] route=fixed close=failed" }
+        } finally {
+            fixedSession = null
+        }
+        try {
+            dynamicSession?.close()
+        } catch (error: Throwable) {
+            logcat(LogPriority.ERROR, error) { "[inpaint] route=dynamic close=failed" }
+        } finally {
+            dynamicSession = null
+        }
         clearScratch()
         imgInputPool.clear()
         maskInputPool.clear()

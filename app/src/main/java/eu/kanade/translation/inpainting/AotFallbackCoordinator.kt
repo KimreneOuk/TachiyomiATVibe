@@ -17,6 +17,7 @@ internal object AotFallbackCoordinator {
         data class Accepted(val pixels: IntArray) : CandidateResult
         data class Rejected(val stats: AotOutputGuard.GuardStats) : CandidateResult
         data class Failed(val error: Throwable) : CandidateResult
+        data class Skipped(val reason: String) : CandidateResult
     }
 
     sealed interface Result {
@@ -40,13 +41,20 @@ internal object AotFallbackCoordinator {
             return Result.Accepted(primaryResult.pixels, Attempt.PRIMARY)
         }
 
-        val fallbackResult = fallback()
+        val fallbackResult = if (shouldAttemptFallback(primaryResult)) {
+            fallback()
+        } else {
+            CandidateResult.Skipped("primary_oom")
+        }
         return if (fallbackResult is CandidateResult.Accepted) {
             Result.Accepted(fallbackResult.pixels, Attempt.FALLBACK)
         } else {
             Result.Exhausted(primaryResult, fallbackResult)
         }
     }
+
+    fun shouldAttemptFallback(primary: CandidateResult): Boolean =
+        primary !is CandidateResult.Failed || primary.error !is OutOfMemoryError
 
     fun inspectCroppedCandidate(
         paddedCandidate: IntArray,
