@@ -1,8 +1,8 @@
 # AOT Tier 3 Corpus Gate Harness
 
-**Status (2026-07-13):** harness COMPLETE and proven on a 5-page synthetic
-corpus. Real 20-page manga corpus is a HUMAN CURATION step — see "What's
-missing" below.
+**Status (2026-07-13):** harness COMPLETE. Tier 3 gate PASSES on a real
+18-page corpus (6 of 7 design categories; color deferred). Wave 5.2 unblocked.
+See `CURATION_REPORT.md` for the full result and methodology.
 
 This is the Wave 5.1 Phase 1-B deliverable from
 `Plan/AOT_NPU_FIXED512_DESIGN_2026-07-12.md`. Its job: prove the fixed-512

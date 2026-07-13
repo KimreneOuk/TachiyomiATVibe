@@ -1,7 +1,0 @@
-{
-  "page": "uniform_white_text_box",
-  "category": "dense-text",
-  "expected_box_count": 1,
-  "synthetic": true,
-  "note": "Programmatically generated; not a real manga page. Used to validate the harness, not to substitute for the real corpus."
-}

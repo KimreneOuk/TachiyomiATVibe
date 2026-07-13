@@ -1,7 +1,0 @@
-{
-  "page": "color_bubble_text",
-  "category": "color",
-  "expected_box_count": 1,
-  "synthetic": true,
-  "note": "Programmatically generated; not a real manga page. Used to validate the harness, not to substitute for the real corpus."
-}

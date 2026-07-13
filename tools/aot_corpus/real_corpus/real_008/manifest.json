@@ -1,0 +1,25 @@
+{
+  "page": "real_008",
+  "category": "large_bubble",
+  "expected_box_count": 1,
+  "source": "Okiraku Ryoushu no Tanoshii Ryouchi Bouei ~Seisan-kei Majutsu de Na mo na Kimura wo Saikyou no Jousai Toshi ni~ Chapter 33 &#8211; Rawkuma",
+  "source_dims": [
+    1125,
+    1600
+  ],
+  "crop": [
+    322,
+    550,
+    834,
+    1062
+  ],
+  "crop_dims": [
+    512,
+    512
+  ],
+  "det_thresh": 0.18,
+  "det_box_thresh": 0.34,
+  "mask_pad": 16,
+  "mask_dilate": 8,
+  "selected": true
+}

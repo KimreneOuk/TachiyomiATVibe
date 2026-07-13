@@ -279,6 +279,41 @@ generating masks via the app's own detection pipeline, filling manifests).
 The synthetic run proves the harness works; it does not satisfy the Wave 5.2
 gate. The static model remains unwired — safety rule holds.
 
+### Wave 5.1 Phase 1-C — real 18-page corpus + Tier 3 gate PASS — 2026-07-13
+
+Curated a real 18-page corpus from an Okiraku Ryoushu chapter (B&W isekai)
+across 6 of 7 design categories (color deferred — source is B&W). The Tier 3
+guard-rejection gate PASSES on the real corpus: 0 new static-512 rejections.
+Wave 5.2 is unblocked. Full report: `tools/aot_corpus/CURATION_REPORT.md`.
+
+Three harness corrections landed alongside the corpus:
+
+1. `tools/aot_corpus/generate_masks.py` (new) — faithful Option-B mask path.
+   Runs the app's REAL PaddleOCR det model + DB postprocess at the inpaint
+   thresholds (0.18/0.34, not the OCR-rec 0.2/0.45), then builds the same
+   `centeredReportCrop(512)` + `buildFixedPillMask(pad=16, dilate=8)` the prod
+   `inpaintReportFreeTextAot512` path uses. Each corpus `page.jpg` is the 512²
+   centered crop the AOT model actually sees.
+2. `tools/aot_corpus/emit_corpus_outputs.py` corrected to mirror prod (3
+   divergences from the original emit): normalize `[-1,1]` via `/127.5 - 1.0`
+   (was `/255.0`), black out masked image regions `img *= (1-mask)` (was raw
+   image), dequantize `(out+1)*127.5` + grayscale luma collapse (was
+   `out*255`). Synthetic corpus re-verified green under the corrected emit.
+3. `tools/aot_corpus/curate_corpus.py` (new) — assigns categories by per-crop
+   pixel stats, downscales the small-pages entries to 480px long side (the
+   upscaling crash case), prunes to the selected 18.
+
+`AotCorpusGateTest.EXPECTED_CORPUS_SIZE` bumped 5 → 18. Full standard suite
+still green: 597 tests, 0 failures, 0 errors.
+
+Two open items (do not block Wave 5.2):
+- Color category (2 pages) deferred. Sourcing 2 openly-licensed color samples
+  is a documented follow-up.
+- 3 source pages (001, 023, 029) were excluded because their text is scattered
+  across the whole page; `centeredReportCrop` centers on the union and the 512²
+  window then contains zero localized boxes (correct prod no-op on the 512
+  path, legitimately not a 512-path input).
+
 
 
 ## Safety rule

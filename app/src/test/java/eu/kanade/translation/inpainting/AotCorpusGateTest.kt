@@ -156,9 +156,11 @@ class AotCorpusGateTest {
 
     private companion object {
         const val MODEL_INPUT_SIZE = 512
-        // Synthetic corpus is 5 pages. When the real 20-page corpus lands, bump
-        // this to 20 — the test will fail loudly until then, which is the point:
-        // it forces an explicit decision to switch from synthetic to real.
-        const val EXPECTED_CORPUS_SIZE = 5
+        // Real corpus: 18 Okiraku pages across 6 categories (color deferred,
+        // see tools/aot_corpus/CURATION_REPORT.md). Each page is a 512x512
+        // centered crop produced by generate_masks.py (faithful to
+        // AotBoxGeometry.centeredReportCrop); small-pages entries are
+        // downscaled below 512 then upscaled by emit_corpus_outputs.py.
+        const val EXPECTED_CORPUS_SIZE = 18
     }
 }
