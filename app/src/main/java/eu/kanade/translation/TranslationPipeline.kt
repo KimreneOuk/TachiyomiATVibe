@@ -19,6 +19,7 @@ import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.resetAttemptCharge
@@ -865,12 +866,35 @@ class TranslationPipeline(
         val renderMutexes = ConcurrentHashMap<String, Mutex>()
         val aborted = AtomicBoolean(false)
 
-        fun resumeGate(page: PageTranslation?): BatchResumeGate =
-            when (BatchResumeGateDecider.decide(page)) {
+        suspend fun resumeGate(page: PageTranslation?): BatchResumeGate {
+            val decision = BatchResumeGateDecider.decide(page)
+            if (decision == BatchResumeGateDecider.Decision.SKIP_ALL && page?.cleanedImageName != null) {
+                val physicallyPresent = withContext(Dispatchers.IO) {
+                    provider.findPageCleanedImage(
+                        manga.title,
+                        source,
+                        chapter.name,
+                        chapter.scanlator,
+                        page.cleanedImageName!!,
+                    )?.let { it.exists() && it.length() > 0L } == true
+                }
+                if (!physicallyPresent) {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT resume invalidated metadata-only cleaned image: pageKey=${page.sourceFileName} cleaned=${page.cleanedImageName}"
+                    }
+                    return if (page.hasCurrentInpaintMask) {
+                        BatchResumeGate.INPAINT_ONLY
+                    } else {
+                        BatchResumeGate.FULL
+                    }
+                }
+            }
+            return when (decision) {
                 BatchResumeGateDecider.Decision.SKIP_ALL -> BatchResumeGate.SKIP_ALL
                 BatchResumeGateDecider.Decision.INPAINT_ONLY -> BatchResumeGate.INPAINT_ONLY
                 BatchResumeGateDecider.Decision.FULL -> BatchResumeGate.FULL
             }
+        }
 
         fun holdCleaned(pageKey: String, cleaned: Bitmap?) {
             if (cleaned == null) return
@@ -919,6 +943,13 @@ class TranslationPipeline(
                 }
                 val bitmap = held ?: page.cleanedImageName?.let { loadPersistedCleanedBitmap(manga, chapter, source, it) }
                 if (bitmap == null) {
+                    page.inpaintStatus = StageStatus.FAILED
+                    page.renderStatus = StageStatus.FAILED
+                    page.recordAttemptFailure()
+                    page.errorMessage = "Cleaned image is missing or unreadable; retry inpainting"
+                    tracker?.markInpaintFailed(pageKey, page.errorMessage!!)
+                    tracker?.markRenderFailed(pageKey, page.errorMessage!!)
+                    persistPageWithOomRecovery(store, pageKey, page)
                     translationRegistry.remove(pageKey)
                     return@withLock
                 }
@@ -1204,7 +1235,7 @@ class TranslationPipeline(
                                         translationRegistry[pageKey] = analyzed
                                     }
                                     val target = translationRegistry[pageKey]!!
-                                    val hasDurableCleaned = latest != null &&
+                                    val hasDurableCleaned = innerGate == BatchResumeGate.SKIP_ALL && latest != null &&
                                         latest.cleanedImageName != null &&
                                         latest.inpaintStatus == StageStatus.READY &&
                                         latest.hasCurrentInpaintResult
@@ -1216,6 +1247,23 @@ class TranslationPipeline(
                                         tracker?.markInpaintRunning(pageKey)
                                         preflightInpaintGate(bitmap, pageKey)
                                         inpaintPage(pageKey, bitmap, target, store)
+                                        if (target.inpaintStatus == StageStatus.FAILED &&
+                                            target.cleanedBitmap == null &&
+                                            target.blocks.isNotEmpty()
+                                        ) {
+                                            // One bounded recovery pass reclaims memory and
+                                            // re-runs recognition/inpaint at a larger sample
+                                            // size. It never changes OCR engines or models.
+                                            retryInpaintDownscaled(
+                                                manga,
+                                                chapter,
+                                                source,
+                                                pageKey,
+                                                orderedStreams,
+                                                decoded,
+                                                target,
+                                            )
+                                        }
                                         if (target.inpaintStatus == StageStatus.READY) tracker?.markInpaintDone(pageKey)
                                         else tracker?.markInpaintFailed(pageKey, target.errorMessage ?: "Inpaint failed")
                                     }
@@ -1238,7 +1286,14 @@ class TranslationPipeline(
                             val cleaned = target.cleanedBitmap
                             if (cleaned != null && target.cleanedImageName == null) {
                                 val companionDir = ensureCompanionDir()
-                                persistCleanedBitmap(target, cleaned, companionDir, pageKey)
+                                val published = persistCleanedBitmap(target, cleaned, companionDir, pageKey)
+                                if (!published) {
+                                    // Never render an in-memory cleaned bitmap whose
+                                    // durable publication failed. The reader must
+                                    // remain on the original and receive a retryable
+                                    // failure instead of a transient overlay.
+                                    target.cleanedBitmap = null
+                                }
                                 target.updatedAt = System.currentTimeMillis()
                                 store.updatePage(pageKey) { existing ->
                                     (existing ?: target).apply {
@@ -1634,9 +1689,7 @@ class TranslationPipeline(
             }
             val resumeFromTranslatedBlocks = resumeTranslation
                 ?.takeIf { it.hasRecognizedTranslation }
-            if (resumeFromTranslatedBlocks?.cleanedImageName != null &&
-                resumeFromTranslatedBlocks.hasCurrentInpaintResult
-            ) {
+            if (resumeFromTranslatedBlocks?.isCleanedImageReady == true) {
                 val cleanedBitmap = loadPersistedCleanedBitmap(
                     manga,
                     chapter,
@@ -2012,11 +2065,29 @@ class TranslationPipeline(
                     )
                     val retriedCleaned = retryResult.cleanedBitmap
                     if (retriedCleaned != null) {
+                        val companionDir = provider.getCompanionImageDir(
+                            manga.title,
+                            source,
+                            chapter.name,
+                            chapter.scanlator,
+                        )
+                        val published = persistCleanedBitmap(
+                            pageTranslation,
+                            retriedCleaned,
+                            companionDir,
+                            pageKey,
+                        )
                         try {
-                            pageTranslation.renderStatus = StageStatus.RUNNING
-                            RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
-                            pageTranslation.renderStatus = StageStatus.READY
-                            pageTranslation.updatedAt = System.currentTimeMillis()
+                            if (!published) {
+                                pageTranslation.renderStatus = StageStatus.FAILED
+                                pageTranslation.errorMessage =
+                                    "Cleaned image could not be published; translated text was not rendered."
+                            } else {
+                                pageTranslation.renderStatus = StageStatus.RUNNING
+                                RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
+                                pageTranslation.renderStatus = StageStatus.READY
+                                pageTranslation.updatedAt = System.currentTimeMillis()
+                            }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
                             pageTranslation.renderStatus = StageStatus.FAILED
@@ -2075,13 +2146,15 @@ class TranslationPipeline(
         cleanedImageName: String,
     ): Bitmap? = withContext(Dispatchers.IO) {
         try {
-            provider.findPageCleanedImage(
+            val file = provider.findPageCleanedImage(
                 manga.title,
                 source,
                 chapter.name,
                 chapter.scanlator,
                 cleanedImageName,
-            )?.openInputStream()?.use { BitmapFactory.decodeStream(it) }
+            )?.takeIf { it.exists() && it.length() > 0L }
+                ?: return@withContext null
+            file.openInputStream().use { BitmapFactory.decodeStream(it) }
         } catch (e: Throwable) {
             logcat(LogPriority.WARN, e) {
                 "TachiyomiAT failed to load cleaned image for resume: cleaned=$cleanedImageName"
@@ -2097,22 +2170,52 @@ class TranslationPipeline(
         pageKey: String,
     ): Boolean = withContext(Dispatchers.IO) {
         val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val cleanedFileName = "${safeName}.cleaned.jpg"
-        val cleanedFile = companionDir?.createFile(cleanedFileName)
-        if (cleanedFile != null) {
-            cleanedFile.openOutputStream().use { os ->
+        val previousName = pageTranslation.cleanedImageName
+        val version = System.currentTimeMillis().toString(36) + "-" + System.nanoTime().toString(36).takeLast(6)
+        val cleanedFileName = "${safeName}.cleaned.$version.jpg"
+        val tempFileName = "$cleanedFileName.tmp"
+        val directory = companionDir
+        try {
+            if (directory == null) throw IllegalStateException("translation output folder is unavailable")
+            val tempFile = directory.findFile(tempFileName)?.also { it.delete() }
+                ?: directory.createFile(tempFileName)
+            check(tempFile != null) { "could not create temporary cleaned image" }
+            tempFile.openOutputStream().use { os ->
                 val encodeStart = System.nanoTime()
-                cleanedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, os)
+                check(cleanedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, os)) { "JPEG encoding returned false" }
                 logcat(LogPriority.INFO) {
                     "[inpaint_encode] $pageKey elapsedMs=${(System.nanoTime() - encodeStart) / 1_000_000}"
                 }
             }
+            check(tempFile.exists() && tempFile.length() > 0L) { "encoded cleaned image is empty" }
+
+            // Publish only after the stream is closed and the bytes are verified.
+            val oldFinal = directory.findFile(cleanedFileName)
+            oldFinal?.delete()
+            val published = tempFile.renameTo(cleanedFileName)
+            if (!published) {
+                val finalFile = directory.findFile(cleanedFileName)?.also { it.delete() }
+                    ?: directory.createFile(cleanedFileName)
+                check(finalFile != null) { "could not create final cleaned image" }
+                tempFile.openInputStream().use { input -> finalFile.openOutputStream().use { output -> input.copyTo(output) } }
+                check(finalFile.exists() && finalFile.length() > 0L) { "published cleaned image is empty" }
+                tempFile.delete()
+            }
+            val finalFile = directory.findFile(cleanedFileName)
+            check(finalFile?.exists() == true && finalFile.length() > 0L) { "published cleaned image is unavailable" }
+
             pageTranslation.cleanedImageName = cleanedFileName
             pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
             pageTranslation.inpaintStatus = StageStatus.READY
             pageTranslation.errorMessage = null
+            if (previousName != null && previousName != cleanedFileName) {
+                directory.findFile(previousName)?.delete()
+            }
             true
-        } else {
+        } catch (e: Throwable) {
+            if (e is CancellationException) throw e
+            directory?.findFile(tempFileName)?.delete()
+            directory?.findFile(cleanedFileName)?.delete()
             pageTranslation.inpaintStatus = StageStatus.FAILED
             // Inpaint succeeded but couldn't be persisted — first terminal stage, charges the attempt.
             pageTranslation.recordAttemptFailure()
@@ -2143,7 +2246,12 @@ class TranslationPipeline(
                 chapter.name,
                 chapter.scanlator,
             )
-            persistCleanedBitmap(page, cleaned, companionDir, pageKey)
+            if (!persistCleanedBitmap(page, cleaned, companionDir, pageKey)) {
+                // Do not let HTTP/render consume an in-memory result when the
+                // reader cannot reopen it after publication.
+                try { cleaned.recycle() } catch (_: Exception) {}
+                page.cleanedBitmap = null
+            }
         }
         page.updatedAt = System.currentTimeMillis()
         result.store.updatePage(pageKey) { existing ->

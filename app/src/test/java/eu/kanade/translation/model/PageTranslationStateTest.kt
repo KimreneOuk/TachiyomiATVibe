@@ -43,6 +43,7 @@ class PageTranslationStateTest {
         val page = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.READY
         }
 
         page.lifecycle shouldBe PageLifecycle.Done
@@ -56,6 +57,7 @@ class PageTranslationStateTest {
             cleanedImageName = "001.cleaned.png"
             decodeSampleSize = 2
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.READY
         }
 
         page.lifecycle shouldBe PageLifecycle.Done
@@ -69,6 +71,7 @@ class PageTranslationStateTest {
             cleanedImageName = "001.cleaned.png"
             decodeSampleSize = 2
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.READY
         }
 
         page.lifecycle shouldBe PageLifecycle.Done
@@ -368,11 +371,61 @@ class PageTranslationStateTest {
         val page = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.READY
             translationStatus = StageStatus.FAILED
             errorMessage = "stale"
         }
 
         page.shouldSurfaceError shouldBe false
+    }
+
+    @Test
+    fun `overlay is suppressed until inpaint is ready`() {
+        listOf(StageStatus.PENDING, StageStatus.RUNNING, StageStatus.FAILED).forEach { status ->
+            val page = translatedPage().apply {
+                cleanedImageName = "001.cleaned.jpg"
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+                inpaintStatus = status
+                renderStatus = StageStatus.READY
+            }
+
+            page.shouldShowTranslationOverlay shouldBe false
+        }
+    }
+
+    @Test
+    fun `overlay requires valid translation and render readiness`() {
+        val page = translatedPage().apply {
+            cleanedImageName = "001.cleaned.jpg"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.READY
+        }
+
+        page.translationStatus = StageStatus.PENDING
+        page.shouldShowTranslationOverlay shouldBe false
+        page.translationStatus = StageStatus.FAILED
+        page.shouldShowTranslationOverlay shouldBe false
+        page.translationStatus = StageStatus.PARTIAL
+        page.blocks.first().translation = ""
+        page.shouldShowTranslationOverlay shouldBe false
+        page.blocks.first().translation = "translated"
+        page.renderStatus = StageStatus.PENDING
+        page.shouldShowTranslationOverlay shouldBe false
+    }
+
+    @Test
+    fun `stale or missing cleaned output cannot satisfy the overlay gate`() {
+        val page = translatedPage().apply {
+            cleanedImageName = "001.cleaned.jpg"
+            inpaintStatus = StageStatus.READY
+            renderStatus = StageStatus.READY
+        }
+
+        page.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1
+        page.shouldShowTranslationOverlay shouldBe false
+        page.cleanedImageName = null
+        page.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+        page.shouldShowTranslationOverlay shouldBe false
     }
 
     private fun translatedPage(): PageTranslation {

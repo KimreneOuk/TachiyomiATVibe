@@ -112,6 +112,7 @@ class TranslationProgressSnapshotTest {
                 ),
                 "005.jpg" to PageTranslation(
                     cleanedImageName = "005.cleaned.png",
+                    inpaintStatus = StageStatus.READY,
                 ),
                 "006.jpg" to PageTranslation(
                     ocrStatus = StageStatus.FAILED,

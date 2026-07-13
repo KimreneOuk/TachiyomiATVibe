@@ -8,6 +8,7 @@ import androidx.core.view.isVisible
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.translation.model.shouldSurfaceError
 import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -471,7 +472,7 @@ class PagerPageHolder(
         }
         showTranslationError(errorMsg)
 
-        val wantOverlay = page.showTranslatedImage && translation != null
+        val wantOverlay = page.showTranslatedImage && translation?.shouldShowTranslationOverlay == true
         val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
         val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0
         val h = if (wantOverlay) translation!!.imgHeight.toInt() else 0

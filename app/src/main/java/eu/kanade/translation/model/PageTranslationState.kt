@@ -18,14 +18,34 @@ sealed interface PageLifecycle {
 }
 
 val PageTranslation.displayImageName: String?
-    get() = when {
-        blocks.isEmpty() -> cleanedImageName?.takeIf { decodeSampleSize <= 1 }
-        hasCurrentInpaintResult -> cleanedImageName
-        else -> null
-    }
+    get() = cleanedImageName?.takeIf { isCleanedImageReady && (blocks.isNotEmpty() || decodeSampleSize <= 1) }
 
 val PageTranslation.hasCurrentInpaintResult: Boolean
     get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
+
+/**
+ * The cleaned bitmap is safe to show only after the inpaint stage has published
+ * a current-revision file. A filename in the translation store is metadata, not
+ * proof that the reader can safely open the file.
+ */
+val PageTranslation.isCleanedImageReady: Boolean
+    get() = cleanedImageName != null &&
+        inpaintStatus == StageStatus.READY &&
+        hasCurrentInpaintResult
+
+/**
+ * Single display-readiness predicate for translated text. Pager and webtoon
+ * must use this gate so a late translation/store emission can never draw text
+ * over the original image while inpaint is still pending or failed.
+ */
+val PageTranslation.isTranslationDisplayReady: Boolean
+    get() = isCleanedImageReady &&
+        (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
+        renderStatus == StageStatus.READY &&
+        blocks.any { it.translation.isNotBlank() }
+
+val PageTranslation.shouldShowTranslationOverlay: Boolean
+    get() = isTranslationDisplayReady
 
 /**
  * TachiyomiAT: true when this page carries a persisted inpaint mask captured by
@@ -51,7 +71,10 @@ val PageTranslation.hasCurrentInpaintMask: Boolean
     get() = blocks.isEmpty() || inpaintMaskBoxes.isNotEmpty()
 
 val PageTranslation.hasRenderedResult: Boolean
-    get() = displayImageName != null
+    get() = when {
+        blocks.isEmpty() -> isCleanedImageReady && decodeSampleSize <= 1
+        else -> isTranslationDisplayReady
+    }
 
 val PageTranslation.isStageRunning: Boolean
     get() = ocrStatus == StageStatus.RUNNING ||
@@ -196,7 +219,7 @@ val PageTranslation.lifecycle: PageLifecycle
  * nothing, never a stale/misleading red message.
  */
 val PageTranslation.shouldSurfaceError: Boolean
-    get() = !hasRenderedResult &&
+    get() = !isCleanedImageReady &&
         !isTextlessTerminal &&
         !isStageCancelled &&
         isStageFailed

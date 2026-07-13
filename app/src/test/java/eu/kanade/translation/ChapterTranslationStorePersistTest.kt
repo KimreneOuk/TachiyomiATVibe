@@ -116,7 +116,13 @@ class ChapterTranslationStorePersistTest {
     @Test
     fun `transition from rendered result to cleared IS persisted`() {
         val previousRendered = PageTranslation(
+            blocks = mutableListOf(block()),
             cleanedImageName = "001.cleaned.png",
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.READY,
+            inpaintStatus = StageStatus.READY,
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            renderStatus = StageStatus.READY,
         )
         val cleared = PageTranslation(
             ocrStatus = StageStatus.RUNNING,

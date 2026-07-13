@@ -2,8 +2,8 @@ package eu.kanade.translation.batch
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.hasCurrentInpaintMask
-import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.scheduling.TranslationLifecyclePolicy
+import eu.kanade.translation.model.isStageRunning
 
 /**
  * Batch resume gate, extracted from TranslationPipeline.translateBatch.
@@ -23,17 +23,16 @@ internal object BatchResumeGateDecider {
 
     internal enum class Decision { SKIP_ALL, INPAINT_ONLY, FULL }
 
-    internal fun decide(page: PageTranslation?): Decision {
-        if (page == null) return Decision.FULL
-        val ocrReady = page.ocrStatus == StageStatus.READY
-        val hasMask = page.hasCurrentInpaintMask
-        val durableCleaned = page.cleanedImageName != null &&
-            page.inpaintStatus == StageStatus.READY &&
-            page.hasCurrentInpaintResult
-        return when {
-            ocrReady && hasMask && durableCleaned -> Decision.SKIP_ALL
-            ocrReady && hasMask -> Decision.INPAINT_ONLY
-            else -> Decision.FULL
+    internal fun decide(page: PageTranslation?, cleanedFileValid: Boolean = true): Decision {
+        // A RUNNING state at batch entry is a stranded/in-flight marker from a
+        // previous attempt; the batch must rebuild that page rather than
+        // treating it as a completed resume candidate.
+        if (page?.isStageRunning == true && page.ocrStatus != StageStatus.READY) return Decision.FULL
+        return when (TranslationLifecyclePolicy.nextStage(page, cleanedFileValid)) {
+            TranslationLifecyclePolicy.NextStage.SKIP,
+            TranslationLifecyclePolicy.NextStage.RENDER -> Decision.SKIP_ALL
+            TranslationLifecyclePolicy.NextStage.INPAINT -> Decision.INPAINT_ONLY
+            TranslationLifecyclePolicy.NextStage.FULL -> Decision.FULL
         }
     }
 }

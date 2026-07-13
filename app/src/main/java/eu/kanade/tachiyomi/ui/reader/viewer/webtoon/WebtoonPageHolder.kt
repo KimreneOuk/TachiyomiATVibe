@@ -13,6 +13,7 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.translation.model.shouldSurfaceError
 import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
@@ -420,7 +421,7 @@ class WebtoonPageHolder(
         }
         frame.showTranslationError(errorMsg)
 
-        val wantOverlay = currentPage.showTranslatedImage && translation != null
+        val wantOverlay = currentPage.showTranslatedImage && translation?.shouldShowTranslationOverlay == true
         val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
         val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0
         val h = if (wantOverlay) translation!!.imgHeight.toInt() else 0

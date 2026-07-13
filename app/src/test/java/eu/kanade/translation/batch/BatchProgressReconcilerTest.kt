@@ -18,8 +18,8 @@ class BatchProgressReconcilerTest {
     @Test
     fun `all pages rendered is TRANSLATED`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png"),
-            "002.jpg" to PageTranslation(cleanedImageName = "002.cleaned.png"),
+            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png", inpaintStatus = StageStatus.READY),
+            "002.jpg" to PageTranslation(cleanedImageName = "002.cleaned.png", inpaintStatus = StageStatus.READY),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
         result.chapterStatus shouldBe Translation.State.TRANSLATED
@@ -31,7 +31,7 @@ class BatchProgressReconcilerTest {
     @Test
     fun `a failed page makes chapter ERROR`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png"),
+            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png", inpaintStatus = StageStatus.READY),
             "002.jpg" to PageTranslation(ocrStatus = StageStatus.FAILED, errorMessage = "OOM"),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
@@ -42,7 +42,7 @@ class BatchProgressReconcilerTest {
     @Test
     fun `stranded RUNNING page without output is flipped to FAILED`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png"),
+            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png", inpaintStatus = StageStatus.READY),
             "002.jpg" to PageTranslation(ocrStatus = StageStatus.RUNNING),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())

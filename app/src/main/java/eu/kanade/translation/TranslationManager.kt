@@ -504,6 +504,7 @@ class TranslationManager(
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
         
         val activeStore = activeTranslationStores[chapterId]
+        val persistedCleanedName = activeStore?.state?.value?.get(pageKey)?.cleanedImageName
         if (activeStore != null) {
             activeStore.deletePage(pageKey)
         } else {
@@ -517,9 +518,16 @@ class TranslationManager(
         
         val companionDir = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
         if (companionDir != null) {
-            companionDir.findFile("$pageKey.cleaned.png")?.delete()
-            companionDir.findFile("$pageKey.cleaned.jpg")?.delete()
-            companionDir.findFile("$pageKey.rendered.png")?.delete()
+            persistedCleanedName?.let { companionDir.findFile(it)?.delete() }
+            val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            companionDir.findFile("$safePageKey.cleaned.png")?.delete()
+            companionDir.findFile("$safePageKey.cleaned.jpg")?.delete()
+            companionDir.findFile("$safePageKey.rendered.png")?.delete()
+            // Versioned publication names are unique per replacement attempt;
+            // remove any orphaned versions left after a deleted store entry.
+            companionDir.listFiles()?.asSequence().orEmpty()
+                .filter { it.name?.startsWith("$safePageKey.cleaned.") == true }
+                .forEach { it.delete() }
         }
     }
 

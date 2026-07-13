@@ -8,12 +8,11 @@ import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.cancelInFlightStages
-import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.lifecycle
-import eu.kanade.translation.model.shouldSkipAutoScheduling
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -98,7 +97,9 @@ class TranslationScheduler(
         // marks already-running jobs stale, they finish the page they started
         // (work not wasted), then bail before the next page.
         val generation = autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
-        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
+        // Keep reservations owned by an older window until that window releases
+        // them. Removing them here races with the still-running job and lets the
+        // newer window enqueue the same page a second time.
 
         val accepted = mutableListOf<Pair<String, TranslationPageRequest>>()
         val distinctRequests = requests.distinctBy { it.id }
@@ -106,7 +107,7 @@ class TranslationScheduler(
 
         for (request in distinctRequests) {
             val current = session.store.state.value[request.storageKey]
-            if (current != null && current.shouldSkipAutoScheduling) {
+            if (!TranslationLifecyclePolicy.shouldSchedule(current)) {
                 logAutoDecision("skipped", request, current, request.streamAvailable)
                 continue
             }
@@ -119,7 +120,7 @@ class TranslationScheduler(
             }
             if (manualJob != null) activePageJobs.remove(manualJobKey)
 
-            val reservationKey = autoReservationKey(request, generation)
+            val reservationKey = autoReservationKey(request)
             if (!queuedPageKeys.add(reservationKey)) {
                 logAutoDecision("skipped", request, current, request.streamAvailable, "already-queued")
                 continue
@@ -151,7 +152,7 @@ class TranslationScheduler(
                         break
                     }
                     val current = session.store.state.value[request.storageKey]
-                    if (current != null && current.shouldSkipAutoScheduling) {
+                    if (!TranslationLifecyclePolicy.shouldSchedule(current)) {
                         logAutoDecision("skipped", request, current, request.streamAvailable, "completed-while-queued")
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
@@ -172,8 +173,7 @@ class TranslationScheduler(
                     if (current != null &&
                         current.hasRecognizedTranslation &&
                         current.renderStatus != StageStatus.READY &&
-                        current.cleanedImageName != null &&
-                        current.hasCurrentInpaintResult
+                        current.isCleanedImageReady
                     ) {
                         try {
                             executor.translateSinglePage(
@@ -217,7 +217,7 @@ class TranslationScheduler(
                         markPageAutoSoftSkipped(session.store, request.storageKey)
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
-                        break
+                        continue
                     }
 
                     try {
@@ -240,7 +240,7 @@ class TranslationScheduler(
                                 "storageKey=${request.storageKey} chapter=${session.chapter.name} " +
                                 "manga=${session.manga.title} source=${session.source.id}"
                         }
-                        break
+                        continue
                     } finally {
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
@@ -299,9 +299,12 @@ class TranslationScheduler(
         return cancelled
     }
 
-    private fun autoReservationKey(request: TranslationPageRequest, generation: Long): String {
+    private fun autoReservationKey(request: TranslationPageRequest): String {
         val safeStorageKey = request.storageKey.replace(':', '_')
-        return "auto:${request.id.chapterId}:$generation:${request.id.sourceId}:${request.id.mangaId}:${request.id.pageIndex}:$safeStorageKey"
+        // Generation belongs to the window, not to page ownership. A stable key
+        // makes overlapping windows share one reservation while the old worker
+        // is still processing its page.
+        return "auto:${request.id.chapterId}:${request.id.sourceId}:${request.id.mangaId}:${request.id.pageIndex}:$safeStorageKey"
     }
 
     private suspend fun markAutoPageStarting(
@@ -309,15 +312,15 @@ class TranslationScheduler(
         pageKey: String,
         current: PageTranslation?,
     ) {
-        if (current != null && current.shouldSkipAutoScheduling) return
+        if (!TranslationLifecyclePolicy.shouldSchedule(current)) return
         store.updatePage(pageKey) { existing ->
             val page = existing ?: PageTranslation(sourceFileName = pageKey)
-            if (page.renderStatus == StageStatus.READY && page.hasCurrentInpaintResult) return@updatePage page
+            if (page.renderStatus == StageStatus.READY && page.isCleanedImageReady) return@updatePage page
             page.apply {
                 sourceFileName = pageKey
                 errorMessage = null
                 when {
-                    hasRecognizedTranslation && cleanedImageName != null -> {
+                    hasRecognizedTranslation && isCleanedImageReady -> {
                         renderStatus = StageStatus.RUNNING
                     }
                     hasRecognizedTranslation -> {

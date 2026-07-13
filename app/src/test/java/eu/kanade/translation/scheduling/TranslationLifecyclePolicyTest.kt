@@ -64,7 +64,11 @@ class TranslationLifecyclePolicyTest {
     @Test
     fun `running and rendered pages are skipped with a readable reason`() {
         val running = PageTranslation(ocrStatus = StageStatus.RUNNING)
-        val rendered = PageTranslation(cleanedImageName = "001.cleaned.webp")
+        val rendered = translatedPage().apply {
+            cleanedImageName = "001.cleaned.webp"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.READY
+        }
         // Textless-terminal requires ocrStatus=READY, empty blocks, AND inpaint
         // out of PENDING/RUNNING (see isTextlessTerminal). A default page has
         // inpaintStatus=PENDING so it is NOT terminal.
@@ -90,7 +94,10 @@ class TranslationLifecyclePolicyTest {
             cleanedImageName = "001.cleaned.png"
             inpaintRevision = 0
         }
-        val current = stale.copy(inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION)
+        val current = stale.copy(
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            renderStatus = StageStatus.READY,
+        )
 
         TranslationLifecyclePolicy.classify(stale) shouldBe PageLifecycle.NeedsRender
         TranslationLifecyclePolicy.shouldSchedule(stale) shouldBe true
@@ -103,10 +110,26 @@ class TranslationLifecyclePolicyTest {
             cleanedImageName = "001.cleaned.png"
             decodeSampleSize = 2
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.READY
         }
 
         TranslationLifecyclePolicy.classify(stale) shouldBe PageLifecycle.Done
         TranslationLifecyclePolicy.shouldSchedule(stale) shouldBe false
+    }
+
+    @Test
+    fun `next stage resumes render then inpaint then full recognition`() {
+        val rendered = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.PENDING
+            inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 1, 1, 2))
+        }
+        TranslationLifecyclePolicy.nextStage(rendered, cleanedFileValid = true) shouldBe TranslationLifecyclePolicy.NextStage.RENDER
+        TranslationLifecyclePolicy.nextStage(rendered, cleanedFileValid = false) shouldBe TranslationLifecyclePolicy.NextStage.INPAINT
+
+        val full = rendered.apply { inpaintMaskBoxes = emptyList() }
+        TranslationLifecyclePolicy.nextStage(full, cleanedFileValid = false) shouldBe TranslationLifecyclePolicy.NextStage.FULL
     }
 
     private fun translatedPage(): PageTranslation {
