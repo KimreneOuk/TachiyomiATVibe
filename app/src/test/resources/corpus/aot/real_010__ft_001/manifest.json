@@ -1,0 +1,55 @@
+{
+  "identity": "real_010__ft_001",
+  "page": "real_010__ft_001",
+  "source_page": "real_010",
+  "source_file": "page-010.jpg",
+  "source_dims": [
+    1125,
+    1600
+  ],
+  "category": "free_text_aot512",
+  "inpaint_path": "inpaintReportFreeTextAot512",
+  "detector_index": 1,
+  "detector_box": [
+    796,
+    361,
+    888,
+    543
+  ],
+  "detector_score": 0.73989373,
+  "paddle_roi": [
+    784,
+    349,
+    900,
+    555
+  ],
+  "paddle_lines": [
+    [
+      836,
+      380,
+      875,
+      527
+    ],
+    [
+      811,
+      454,
+      836,
+      523
+    ]
+  ],
+  "paddle_line_count": 2,
+  "crop": [
+    587,
+    198,
+    1099,
+    710
+  ],
+  "crop_dims": [
+    512,
+    512
+  ],
+  "mask_pad": 16,
+  "mask_dilate": 8,
+  "generator": "generate_masks_faithful.py",
+  "fallback_used": false
+}

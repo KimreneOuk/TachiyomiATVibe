@@ -29,7 +29,10 @@ Usage:
 """
 from __future__ import annotations
 
+import argparse
+import csv
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -231,27 +234,60 @@ def make_side_by_side(page_rgb, mask, fast, dyn, stat, page_name, category, timi
 # ============ Main ============
 
 def main() -> int:
-    if not CORPUS.is_dir():
-        print(f"ERROR: corpus not found: {CORPUS}", file=sys.stderr)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", default=str(CORPUS))
+    parser.add_argument("--out", default=str(OUT))
+    parser.add_argument("--min-samples", type=int, default=20)
+    parser.add_argument("--clean", action="store_true")
+    args = parser.parse_args()
+    corpus = Path(args.corpus).resolve()
+    out_dir = Path(args.out).resolve()
+    if not corpus.is_dir():
+        print(f"ERROR: corpus not found: {corpus}", file=sys.stderr)
         return 1
-    OUT.mkdir(parents=True, exist_ok=True)
+    try:
+        from emit_corpus_outputs import validate_corpus
+        validated = validate_corpus(corpus, args.min_samples)
+    except (ImportError, ValueError) as error:
+        print(f"ERROR: QA corpus validation failed: {error}", file=sys.stderr)
+        return 1
+    if out_dir.exists():
+        if not args.clean:
+            print(f"ERROR: QA output exists (pass --clean): {out_dir}", file=sys.stderr)
+            return 1
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
 
     print("Loading AOT models ...")
-    so = ort.SessionOptions(); so.log_severity_level = 3
-    dyn_sess = ort.InferenceSession(str(DYNAMIC_MODEL), so, providers=["CPUExecutionProvider"])
-    stat_sess = ort.InferenceSession(str(STATIC_MODEL), so, providers=["CPUExecutionProvider"])
-
-    pages = sorted(d for d in CORPUS.iterdir() if d.is_dir() and d.name.startswith("real_"))
-    if not pages:
-        print(f"ERROR: no real_* pages in {CORPUS}", file=sys.stderr)
+    failures: list[dict[str, str]] = []
+    try:
+        so = ort.SessionOptions(); so.log_severity_level = 3
+        dyn_sess = ort.InferenceSession(str(DYNAMIC_MODEL), so, providers=["CPUExecutionProvider"])
+        stat_sess = ort.InferenceSession(str(STATIC_MODEL), so, providers=["CPUExecutionProvider"])
+        pages = [directory for directory, _ in validated]
+        # Warmup is part of startup: a failure here invalidates every timing.
+        p0 = pages[0]
+        pa = np.asarray(Image.open(p0 / "page.jpg").convert("RGB").resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)))
+        ma = (np.asarray(Image.open(p0 / "mask.png").convert("L").resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE))) > 127).astype(np.uint8)
+        aot_inpaint(dyn_sess, pa, ma); aot_inpaint(stat_sess, pa, ma)
+    except Exception as error:
+        failure = {"identity": "", "stage": "startup", "error": repr(error)}
+        failures.append(failure)
+        report = {
+            "qa": "qa_compare_modes.py", "corpus": corpus.name,
+            "expected_count": len(validated), "sample_count": 0,
+            "failure_count": 1, "new_rejection_count": 0,
+            "identities": [], "timings_ms": {}, "verdicts": {}, "rows": [],
+            "failures": failures,
+        }
+        try:
+            (out_dir / "qa_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except OSError as report_error:
+            print(f"ERROR: could not write QA failure report: {report_error}", file=sys.stderr)
+        print(f"ERROR: QA startup failed: {error}", file=sys.stderr)
         return 1
 
     rows = []
-    # warmup (first run is slower: model load / thread spin-up)
-    p0 = pages[0]
-    pa = np.asarray(Image.open(p0 / "page.jpg").convert("RGB").resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE)))
-    ma = (np.asarray(Image.open(p0 / "mask.png").convert("L").resize((MODEL_INPUT_SIZE, MODEL_INPUT_SIZE))) > 127).astype(np.uint8)
-    aot_inpaint(dyn_sess, pa, ma); aot_inpaint(stat_sess, pa, ma)
 
     print(f"\n{'page':<10}{'category':<22}{'fast(ms)':>9}{'dyn(ms)':>9}{'stat(ms)':>9}  fast_verdict        dyn_verdict         stat_verdict")
     for d in pages:
@@ -286,7 +322,7 @@ def main() -> int:
         timings = {"fast": t_fast, "dyn": t_dyn, "stat": t_stat}
         verdicts = {"fast": v_fast, "dyn": v_dyn, "stat": v_stat}
         side = make_side_by_side(page_rgb, mask_hw, fast_out, dyn_out, stat_out, name, cat, timings, verdicts)
-        side.save(OUT / f"{name}.png")
+        side.save(out_dir / f"{name}.png")
 
         print(f"{name:<10}{cat:<22}{t_fast*1000:>9.0f}{t_dyn*1000:>9.0f}{t_stat*1000:>9.0f}  {v_fast[0]:<20}{v_dyn[0]:<20}{v_stat[0]}")
         rows.append({
@@ -310,17 +346,81 @@ def main() -> int:
     md.append("|---|---|---|---|---|---|---|---|")
     for r in rows:
         md.append(f"| {r['page']} | {r['category']} | {r['fast_ms']} | {r['dyn_ms']} | {r['stat_ms']} | {r['fast_verdict']} | {r['dyn_verdict']} | {r['stat_verdict']} |")
-    (OUT / "qa_report.md").write_text("\n".join(md) + "\n")
-    import csv
-    with open(OUT / "qa_report.csv", "w", newline="") as f:
+    (out_dir / "qa_report.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+    with open(out_dir / "qa_report.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
 
-    print(f"\nSide-by-side PNGs + report in {OUT}")
-    print(f"avg: fast={avg_fast:.0f}ms dyn={avg_dyn:.0f}ms stat={avg_stat:.0f}ms (static/dyn={avg_stat/avg_dyn:.2f}x)")
-    return 0
+    new_rejection_count = sum(
+        1 for row in rows
+        if not row["dyn_verdict"].startswith("REJECT") and row["stat_verdict"].startswith("REJECT")
+    )
+    qa_report = {
+        "qa": "qa_compare_modes.py",
+        "corpus": corpus.name,
+        "expected_count": len(validated),
+        "sample_count": len(rows),
+        "failure_count": len(failures),
+        "new_rejection_count": new_rejection_count,
+        "identities": [row["page"] for row in rows],
+        "timings_ms": {
+            "average": {"fast": round(float(avg_fast), 3), "dynamic": round(float(avg_dyn), 3), "static": round(float(avg_stat), 3)},
+            "static_vs_dynamic_ratio": round(float(avg_stat / avg_dyn), 6),
+        },
+        "verdicts": {
+            mode: {
+                verdict: sum(1 for row in rows if row[f"{key}_verdict"] == verdict)
+                for verdict in sorted({row[f"{key}_verdict"] for row in rows})
+            }
+            for mode, key in (("fast", "fast"), ("dynamic", "dyn"), ("static", "stat"))
+        },
+        "rows": rows,
+        "failures": failures,
+    }
+    try:
+        (out_dir / "qa_report.json").write_text(json.dumps(qa_report, indent=2) + "\n", encoding="utf-8")
+    except OSError as error:
+        print(f"ERROR: could not write qa_report.json: {error}", file=sys.stderr)
+        return 1
+    success = not failures and len(rows) == len(validated)
+    status = "Side-by-side PNGs + report" if success else "PARTIAL QA outputs"
+    print(f"\n{status} in {out_dir}")
+    print(f"avg: fast={avg_fast:.0f}ms dyn={avg_dyn:.0f}ms stat={avg_stat:.0f}ms (static/dyn={avg_stat/avg_dyn:.2f}x); new rejections={new_rejection_count}")
+    return 0 if success else 1
+
+
+def write_unhandled_failure_report(error: Exception) -> None:
+    """Best-effort machine report when an unexpected per-page/output failure escapes."""
+    try:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--out", default=str(OUT))
+        parser.add_argument("--corpus", default=str(CORPUS))
+        known, _ = parser.parse_known_args()
+        out_dir = Path(known.out).resolve()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        report = {
+            "qa": "qa_compare_modes.py",
+            "corpus": Path(known.corpus).resolve().name,
+            "expected_count": 0,
+            "sample_count": 0,
+            "failure_count": 1,
+            "new_rejection_count": 0,
+            "identities": [],
+            "timings_ms": {},
+            "verdicts": {},
+            "rows": [],
+            "failures": [{"identity": "", "stage": "unhandled", "error": repr(error)}],
+        }
+        (out_dir / "qa_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    except Exception as report_error:
+        print(f"ERROR: could not write unhandled QA failure report: {report_error}", file=sys.stderr)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:
+        write_unhandled_failure_report(error)
+        print(f"ERROR: unhandled QA failure: {error}", file=sys.stderr)
+        sys.exit(1)

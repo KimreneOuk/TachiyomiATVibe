@@ -1,6 +1,7 @@
 package eu.kanade.translation.inpainting
 
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 import java.io.DataInputStream
 
@@ -29,9 +30,9 @@ import java.io.DataInputStream
  * out java.awt, so javax.imageio is unavailable on the test classpath. The .bin
  * carries the exact ARGB IntArray prod feeds to AotOutputGuard, with no decoder.
  *
- * The current corpus is SYNTHETIC (5 pages, see tools/aot_corpus/README.md) —
- * it proves the harness works end-to-end but cannot substitute for the real
- * 20-page corpus the design requires before Wave 5.2 integration.
+ * The current corpus contains 42 independent free-text groups from 14 real
+ * source pages. Each identity is `real_NNN__ft_NNN`: one detector-v4 free-text
+ * ROI, independently refined by Paddle DET, cropped, masked, and inferred.
  */
 class AotCorpusGateTest {
 
@@ -94,6 +95,42 @@ class AotCorpusGateTest {
     }
 
     @Test
+    fun `corpus manifests prove identity source and Paddle provenance without fallback`() {
+        val pages = corpusPages()
+        pages shouldHaveSize EXPECTED_CORPUS_SIZE
+        val identities = pages.map { it.substringAfterLast('/') }
+        identities.distinct().size shouldBe EXPECTED_CORPUS_SIZE
+        val malformed = identities.filterNot { CORPUS_IDENTITY.matches(it) }
+        if (malformed.isNotEmpty()) {
+            error("Malformed corpus identities (expected real_NNN__ft_NNN): ${malformed.joinToString()}")
+        }
+        val provenanceFailures = pages.mapNotNull { page ->
+            val identity = page.substringAfterLast('/')
+            val sourcePage = identity.substringBefore("__ft_")
+            val manifest = readTextResource("$page/manifest.json")
+            val problems = buildList {
+                if (jsonString(manifest, "identity") != identity) add("identity")
+                if (jsonString(manifest, "page") != identity) add("page")
+                if (jsonString(manifest, "source_page") != sourcePage) add("source_page")
+                if (jsonString(manifest, "source_file") != "page-${sourcePage.removePrefix("real_")}.jpg") add("source_file")
+                if (jsonString(manifest, "generator") != "generate_masks_faithful.py") add("generator")
+                if (jsonBoolean(manifest, "fallback_used") != false) add("fallback_used")
+                val lineCount = jsonInt(manifest, "paddle_line_count")
+                if (lineCount == null || lineCount < 1) add("paddle_line_count")
+                if (!PADDLE_LINES_WITH_ENTRY.containsMatchIn(manifest)) add("paddle_lines")
+            }
+            if (problems.isEmpty()) null else "$identity: invalid ${problems.joinToString()}"
+        }
+        if (provenanceFailures.isNotEmpty()) {
+            error("Corpus manifest provenance failures:\n  - ${provenanceFailures.joinToString("\n  - ")}")
+        }
+        val sourcePages = identities.map { it.substringBefore("__ft_") }.distinct()
+        if (sourcePages.size < MIN_SOURCE_PAGE_COUNT) {
+            error("Corpus covers only ${sourcePages.size} source pages; expected at least $MIN_SOURCE_PAGE_COUNT")
+        }
+    }
+
+    @Test
     fun `mask is non-empty on every corpus page`() {
         // A page with an empty mask cannot exercise the guard (it returns early
         // on maskedCount < MIN_MASKED_PIXELS). Such a page is corpus noise, not
@@ -136,6 +173,29 @@ class AotCorpusGateTest {
 
     private data class ArgbImage(val width: Int, val height: Int, val pixels: IntArray)
 
+    private fun readTextResource(resourcePath: String): String {
+        val loader = javaClass.classLoader ?: error("no ClassLoader on test thread")
+        return loader.getResourceAsStream(resourcePath)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            ?: error("corpus resource not found: $resourcePath")
+    }
+
+    // Manifests are generated, flat for scalar fields, and validated structurally by
+    // Python before emission. These dependency-free extractors intentionally handle
+    // JSON whitespace and escapes without introducing an Android JSON dependency.
+    private fun jsonString(json: String, key: String): String? =
+        Regex("\\\"${Regex.escape(key)}\\\"\\s*:\\s*\\\"((?:\\\\.|[^\\\"\\\\])*)\\\"")
+            .find(json)?.groupValues?.get(1)
+            ?.replace("\\\\\"", "\"")
+            ?.replace("\\\\\\\\", "\\")
+
+    private fun jsonInt(json: String, key: String): Int? =
+        Regex("\\\"${Regex.escape(key)}\\\"\\s*:\\s*(-?\\d+)")
+            .find(json)?.groupValues?.get(1)?.toIntOrNull()
+
+    private fun jsonBoolean(json: String, key: String): Boolean? =
+        Regex("\\\"${Regex.escape(key)}\\\"\\s*:\\s*(true|false)")
+            .find(json)?.groupValues?.get(1)?.toBooleanStrictOrNull()
+
     /** Reads a .bin resource (big-endian: int32 width, int32 height, int32[px] ARGB). */
     private fun readArgbBin(resourcePath: String): ArgbImage {
         val loader = javaClass.classLoader ?: error("no ClassLoader on test thread")
@@ -156,13 +216,13 @@ class AotCorpusGateTest {
 
     private companion object {
         const val MODEL_INPUT_SIZE = 512
-        // Faithful free-text corpus: 12 pages that actually route to the AOT-512
-        // path in prod (free-text boxes, no parent bubble). Produced by
-        // generate_masks_faithful.py which runs detector-v4 + bubble segmenter
-        // + paddle det and routes exactly like AOTInpainting.inpaintRegions.
-        // The other 18/30 pages in the source chapter use only the bubble path
-        // (inpaintReportBubbles, classical fill - no AOT model) and are not
-        // AOT-512 inputs. See tools/aot_corpus/CURATION_REPORT.md.
-        const val EXPECTED_CORPUS_SIZE = 12
+        // One sample per detector-v4 free-text ROI. Paddle DET runs independently
+        // on each ROI padded by 12 px, then each resulting group gets its own crop,
+        // mask, and stable real_NNN__ft_NNN identity. This prevents separate groups
+        // on one source page from being incorrectly merged into one gate input.
+        const val EXPECTED_CORPUS_SIZE = 42
+        const val MIN_SOURCE_PAGE_COUNT = 2
+        val CORPUS_IDENTITY = Regex("real_\\d{3}__ft_\\d{3}")
+        val PADDLE_LINES_WITH_ENTRY = Regex("\\\"paddle_lines\\\"\\s*:\\s*\\[\\s*\\[")
     }
 }

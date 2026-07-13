@@ -1,120 +1,94 @@
-# AOT Tier 3 Corpus Gate Harness
+# AOT Tier 3 Offline Corpus Gate
 
-**Status (2026-07-13):** harness COMPLETE. Tier 3 gate PASSES on a real
-18-page corpus (6 of 7 design categories; color deferred). Wave 5.2 unblocked.
-See `CURATION_REPORT.md` for the full result and methodology.
+The fixed-512 AOT gate uses real free-text groups that actually route through
+`inpaintReportFreeTextAot512`. Model inference is offline Python; the verdict is
+the production Kotlin `AotOutputGuard` in `AotCorpusGateTest`.
 
-This is the Wave 5.1 Phase 1-B deliverable from
-`Plan/AOT_NPU_FIXED512_DESIGN_2026-07-12.md`. Its job: prove the fixed-512
-AOT model does not introduce new guard rejections vs the dynamic model,
-across a representative corpus, before the static model is wired into
-production (Wave 5.2).
+## Current corpus
 
-## Architecture: Python inference, Kotlin verdict
+- 42 independent free-text samples
+- 14 source pages from the 30-page Okiraku chapter
+- deterministic identity `real_NNN__ft_NNN`
+- zero generation failures and zero emitter failures
+- 41 samples accepted by both models; `real_023__ft_001` is rejected by both
+  as uniform near-white, so there are zero new static-model rejections
 
-The gate is split cleanly along the language boundary that already exists in
-this repo:
+A sample is one detector-v4 label-2 ROI outside every bubble. It is not a whole
+page and is not merged with neighboring detector ROIs. Paddle DET runs on the
+ROI padded by exactly 12 pixels, DB connected components are filtered and
+merged with the same constants and three-pass algorithm as `DbPostProcess.kt`,
+and that one refined group receives an independent 512 crop and fixed-pill mask.
 
-| Concern | Language | Where | Why |
-|---|---|---|---|
-| Model inference | Python | `emit_corpus_outputs.py` | onnxruntime is Python-only (like `tools/aot_conversion/`) |
-| Guard verdict | Kotlin | `AotCorpusGateTest.kt` | `AotOutputGuard.kt` is production code; the test calls the REAL object |
+There is no detector-box fallback. Empty Paddle output, unreadable input, bad
+geometry, an empty mask, model inference failure, malformed identity, or missing
+asset is logged in a JSON report and makes the command return nonzero.
 
-`emit_corpus_outputs.py` does INFERENCE ONLY — it runs both models on each
-corpus page and writes raw ARGB pixel arrays (`.bin`). No guard math lives in
-Python. The JVM test reads those `.bin` files and applies the real
-`AotOutputGuard.isSuspiciousUniformFill` — the same object prod uses. There is
-no parity mirror to maintain and no second copy of the guard constants.
+## Tracked assets
 
-Why `.bin` not PNG for the test: Android unit tests stub out `java.awt`, so
-`javax.imageio` is unavailable on the test classpath. The `.bin` format is
-trivial to read with `java.io.DataInputStream` and carries the exact ARGB
-`IntArray` prod feeds to `AotOutputGuard`. PNGs are also emitted for human
-visual QA.
-
-## Files
-
-| File | Purpose |
+| Path | Purpose |
 |---|---|
-| `emit_corpus_outputs.py` | Runs both AOT models on each corpus page, writes `.bin` (test input) + `.png` (visual QA). No guard logic. |
-| `make_synthetic_corpus.py` | Generates 5 synthetic pages to validate the harness end-to-end. NOT a substitute for the real corpus. |
-| `manifest.schema.json` | JSON schema for the per-page `manifest.json`. |
-| `synthetic_corpus/` | Output of `make_synthetic_corpus.py` (source images + masks). |
-| `real_corpus/` | Empty placeholder where the real 20-page corpus goes. |
+| `real_corpus_ft/` | source crops, masks, manifests, generation report |
+| `qa_output/` | 42 visual comparisons plus CSV/Markdown/JSON QA reports |
+| `app/src/test/resources/corpus/aot/` | emitted ARGB binaries and PNGs consumed/inspected by the JVM gate |
+| `test_corpus_tools.py` | focused DB merge, identity, and validator tests |
 
-The Kotlin half lives at
-`app/src/test/java/eu/kanade/translation/inpainting/AotCorpusGateTest.kt`, and
-its committed inputs at `app/src/test/resources/corpus/aot/`.
+`real_corpus_faithful/` is historical page-level output and is not the gate
+input. `qa_fullpage_compare.py` and `qa_output_fullpage/` are separate untracked
+full-page QA work and must not be overwritten by this workflow.
 
-## How to run
+## Reproducible staged workflow
+
+Always generate under `build/` first. Never point a generator directly at the
+tracked asset directories.
 
 ```bash
-# 1. Install deps (same env as the model conversion).
-pip install onnxruntime numpy pillow
+SRC='tools/Okiraku Ryoushu no Tanoshii Ryouchi Bouei ~Seisan-kei Majutsu de Na mo na Kimura wo Saikyou no Jousai Toshi ni~ Chapter 33 &#8211; Rawkuma'
 
-# 2. (Optional) Regenerate the synthetic corpus.
-python tools/aot_corpus/make_synthetic_corpus.py
+python tools/aot_corpus/generate_masks_faithful.py \
+  --src "$SRC" --out build/aot_corpus/staging-a --clean
+python tools/aot_corpus/generate_masks_faithful.py \
+  --src "$SRC" --out build/aot_corpus/staging-b --clean
 
-# 3. Emit model outputs (runs both AOT models, writes .bin + .png).
 python tools/aot_corpus/emit_corpus_outputs.py \
-    --corpus tools/aot_corpus/synthetic_corpus \
-    --out app/src/test/resources/corpus/aot
-
-# 4. Run the JVM gate (reads the .bin, applies the real Kotlin guard).
-JAVA_HOME='C:\Program Files\Android\Android Studio\jbr' ./gradlew.bat \
-    :app:testStandardDebugUnitTest \
-    --tests "eu.kanade.translation.inpainting.AotCorpusGateTest" --no-daemon
-
-# 5. Run the gate on the REAL corpus once curated.
+  --corpus build/aot_corpus/staging-a \
+  --out build/aot_corpus/emitted-a --clean
 python tools/aot_corpus/emit_corpus_outputs.py \
-    --corpus tools/aot_corpus/real_corpus \
-    --out app/src/test/resources/corpus/aot
-# (then re-run the gradle test; bump EXPECTED_CORPUS_SIZE to 20 in AotCorpusGateTest.kt)
+  --corpus build/aot_corpus/staging-b \
+  --out build/aot_corpus/emitted-b --clean
+
+python tools/aot_corpus/qa_compare_modes.py \
+  --corpus build/aot_corpus/staging-a \
+  --out build/aot_corpus/qa-a --clean
 ```
 
-## Gate criterion (per master plan Wave 5.2)
+Compare relative paths and SHA-256 digests between both generation trees and
+both emission trees. Reports record only stable source/corpus directory names,
+so every relative path and every byte, including JSON reports, must match.
+Promote only after:
 
-**Zero new rejections.** A page counts as a new rejection when:
-- the dynamic model's output was ACCEPTED by the guard (not suspicious), AND
-- the static-512 model's output on the same page is REJECTED.
+1. both generator runs report at least 20 samples, multiple source pages, and
+   `failure_count: 0`;
+2. both emitter runs report identical outputs and `failure_count: 0`;
+3. Python tests pass;
+4. QA reports contain every identity;
+5. the Kotlin gate and full Gradle suite pass.
 
-Any new rejection FAILS the gate. The static model must not be wired into
-production (Wave 5.2) until the gate passes on the real 20-page corpus.
+## Tests
 
-## Corpus composition (target: 20 real pages)
+```bash
+python -m unittest discover -s tools/aot_corpus -p 'test_*.py' -v
 
-| Category | Count | Why |
-|---|---|---|
-| Dense text (shounen/seinen) | 4 | Stress text-removal |
-| Screentone-heavy | 3 | Edge case: grayscale + boundary artifacts |
-| Color manga | 2 | Non-uniform background padding stress |
-| Large bubbles | 3 | Big inpaint regions |
-| Small pages (<512 either axis) | 3 | The crash case being fixed |
-| Tall/wide asymmetric (>512 one axis) | 3 | Edge cases from the AOT design §3 |
-| Vertical JP text | 2 | MangaOcr path interaction |
+JAVA_HOME='C:\Program Files\Android\Android Studio\jbr' ./gradlew.bat \
+  :app:testStandardDebugUnitTest \
+  --tests 'eu.kanade.translation.inpainting.AotCorpusGateTest' --no-daemon
 
-Each page is a folder under `real_corpus/<page_name>/` containing:
-- `page.jpg` — the source page
-- `mask.png` — the inpaint mask (white = erase, black = keep)
-- `manifest.json` — metadata (see `manifest.schema.json`)
+JAVA_HOME='C:\Program Files\Android\Android Studio\jbr' ./gradlew.bat test --no-daemon
+```
 
-## What's missing (human curation required)
-
-The harness is complete and proven. What does NOT exist is the real 20-page
-corpus. Producing it requires:
-
-1. **Sourcing 20 representative manga pages.** Ideally from titles the app's
-   users actually read, covering the 7 categories above. Licensing/attribution
-   must be considered if the corpus is ever published — for internal gate use,
-   any real pages work.
-2. **Generating the inpaint mask for each page.** The mask is what the AOT
-   model's `mask` input sees in production. The simplest path: run the app's
-   own detection + OCR pipeline on each page, capture the produced mask, save
-   it as `mask.png`. This requires a device/emulator run OR extracting the
-   mask-construction logic into a standalone tool (separate effort).
-3. **Filling in each `manifest.json`** with the correct category + box count.
-
-Until those land, the harness runs only on the 5 synthetic pages. The
-synthetic run PROVES the harness works and the gate logic is sound; it does
-NOT prove the static model is safe on real manga. That proof is the gate's
-actual purpose and requires the real corpus.
+The JVM gate requires exactly 42 unique identities matching
+`real_\d{3}__ft_\d{3}`, at least two source pages, 512x512 emitted arrays,
+matching dimensions, non-empty masks, and zero new static-512 rejections. It
+also validates each manifest's identity/page/source mapping, generator,
+explicit `fallback_used: false`, positive Paddle line count, and non-empty
+`paddle_lines` provenance. The emitter independently requires a valid
+`generation_report.json` with zero failures and an exact ordered identity set.

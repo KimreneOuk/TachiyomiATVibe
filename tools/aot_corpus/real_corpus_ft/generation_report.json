@@ -1,0 +1,265 @@
+{
+  "generator": "generate_masks_faithful.py",
+  "source": "Okiraku Ryoushu no Tanoshii Ryouchi Bouei ~Seisan-kei Majutsu de Na mo na Kimura wo Saikyou no Jousai Toshi ni~ Chapter 33 &#8211; Rawkuma",
+  "selected_page_count": 30,
+  "sample_count": 42,
+  "failure_count": 0,
+  "minimum_samples": 20,
+  "pages": [
+    {
+      "source_page": "real_001",
+      "source_file": "page-001.jpg",
+      "detector_count": 6,
+      "bubble_count": 2,
+      "free_text_count": 2
+    },
+    {
+      "source_page": "real_002",
+      "source_file": "page-002.jpg",
+      "detector_count": 16,
+      "bubble_count": 7,
+      "free_text_count": 2
+    },
+    {
+      "source_page": "real_003",
+      "source_file": "page-003.jpg",
+      "detector_count": 20,
+      "bubble_count": 10,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_004",
+      "source_file": "page-004.jpg",
+      "detector_count": 12,
+      "bubble_count": 6,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_005",
+      "source_file": "page-005.jpg",
+      "detector_count": 24,
+      "bubble_count": 12,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_006",
+      "source_file": "page-006.jpg",
+      "detector_count": 28,
+      "bubble_count": 14,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_007",
+      "source_file": "page-007.jpg",
+      "detector_count": 11,
+      "bubble_count": 5,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_008",
+      "source_file": "page-008.jpg",
+      "detector_count": 4,
+      "bubble_count": 0,
+      "free_text_count": 4
+    },
+    {
+      "source_page": "real_009",
+      "source_file": "page-009.jpg",
+      "detector_count": 26,
+      "bubble_count": 13,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_010",
+      "source_file": "page-010.jpg",
+      "detector_count": 36,
+      "bubble_count": 17,
+      "free_text_count": 2
+    },
+    {
+      "source_page": "real_011",
+      "source_file": "page-011.jpg",
+      "detector_count": 11,
+      "bubble_count": 5,
+      "free_text_count": 1
+    },
+    {
+      "source_page": "real_012",
+      "source_file": "page-012.jpg",
+      "detector_count": 19,
+      "bubble_count": 9,
+      "free_text_count": 1
+    },
+    {
+      "source_page": "real_013",
+      "source_file": "page-013.jpg",
+      "detector_count": 15,
+      "bubble_count": 8,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_014",
+      "source_file": "page-014.jpg",
+      "detector_count": 16,
+      "bubble_count": 8,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_015",
+      "source_file": "page-015.jpg",
+      "detector_count": 13,
+      "bubble_count": 7,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_016",
+      "source_file": "page-016.jpg",
+      "detector_count": 10,
+      "bubble_count": 5,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_017",
+      "source_file": "page-017.jpg",
+      "detector_count": 21,
+      "bubble_count": 9,
+      "free_text_count": 3
+    },
+    {
+      "source_page": "real_018",
+      "source_file": "page-018.jpg",
+      "detector_count": 16,
+      "bubble_count": 8,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_019",
+      "source_file": "page-019.jpg",
+      "detector_count": 12,
+      "bubble_count": 6,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_020",
+      "source_file": "page-020.jpg",
+      "detector_count": 31,
+      "bubble_count": 14,
+      "free_text_count": 3
+    },
+    {
+      "source_page": "real_021",
+      "source_file": "page-021.jpg",
+      "detector_count": 20,
+      "bubble_count": 8,
+      "free_text_count": 4
+    },
+    {
+      "source_page": "real_022",
+      "source_file": "page-022.jpg",
+      "detector_count": 18,
+      "bubble_count": 9,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_023",
+      "source_file": "page-023.jpg",
+      "detector_count": 15,
+      "bubble_count": 7,
+      "free_text_count": 1
+    },
+    {
+      "source_page": "real_024",
+      "source_file": "page-024.jpg",
+      "detector_count": 10,
+      "bubble_count": 1,
+      "free_text_count": 8
+    },
+    {
+      "source_page": "real_025",
+      "source_file": "page-025.jpg",
+      "detector_count": 15,
+      "bubble_count": 5,
+      "free_text_count": 5
+    },
+    {
+      "source_page": "real_026",
+      "source_file": "page-026.jpg",
+      "detector_count": 23,
+      "bubble_count": 9,
+      "free_text_count": 5
+    },
+    {
+      "source_page": "real_027",
+      "source_file": "page-027.jpg",
+      "detector_count": 2,
+      "bubble_count": 1,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_028",
+      "source_file": "page-028.jpg",
+      "detector_count": 19,
+      "bubble_count": 10,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_029",
+      "source_file": "page-029.jpg",
+      "detector_count": 12,
+      "bubble_count": 6,
+      "free_text_count": 0
+    },
+    {
+      "source_page": "real_030",
+      "source_file": "page-030.jpg",
+      "detector_count": 6,
+      "bubble_count": 2,
+      "free_text_count": 1
+    }
+  ],
+  "samples": [
+    "real_001__ft_001",
+    "real_001__ft_002",
+    "real_002__ft_001",
+    "real_002__ft_002",
+    "real_008__ft_001",
+    "real_008__ft_002",
+    "real_008__ft_003",
+    "real_008__ft_004",
+    "real_010__ft_001",
+    "real_010__ft_002",
+    "real_011__ft_001",
+    "real_012__ft_001",
+    "real_017__ft_001",
+    "real_017__ft_002",
+    "real_017__ft_003",
+    "real_020__ft_001",
+    "real_020__ft_002",
+    "real_020__ft_003",
+    "real_021__ft_001",
+    "real_021__ft_002",
+    "real_021__ft_003",
+    "real_021__ft_004",
+    "real_023__ft_001",
+    "real_024__ft_001",
+    "real_024__ft_002",
+    "real_024__ft_003",
+    "real_024__ft_004",
+    "real_024__ft_005",
+    "real_024__ft_006",
+    "real_024__ft_007",
+    "real_024__ft_008",
+    "real_025__ft_001",
+    "real_025__ft_002",
+    "real_025__ft_003",
+    "real_025__ft_004",
+    "real_025__ft_005",
+    "real_026__ft_001",
+    "real_026__ft_002",
+    "real_026__ft_003",
+    "real_026__ft_004",
+    "real_026__ft_005",
+    "real_030__ft_001"
+  ],
+  "failures": []
+}

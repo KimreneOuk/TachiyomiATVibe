@@ -46,10 +46,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import struct
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import onnxruntime as ort
@@ -59,12 +61,101 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DYNAMIC_MODEL = REPO_ROOT / "app/src/main/assets/models/inpainting/aot.onnx"
 STATIC_MODEL = REPO_ROOT / "app/src/main/assets/models/inpainting/aot-512.onnx"
 MODEL_INPUT_SIZE = 512
+IDENTITY_PATTERN = re.compile(r"^real_\d{3}__ft_\d{3}$")
+REQUIRED_INPUT_FILES = ("page.jpg", "mask.png", "manifest.json")
+
+
+def validate_corpus(corpus_dir: Path, minimum_samples: int) -> list[tuple[Path, dict[str, Any]]]:
+    """Validate every input and its generator report; no skip/fallback path exists."""
+    failures: list[str] = []
+    samples: list[tuple[Path, dict[str, Any]]] = []
+    report_path = corpus_dir / "generation_report.json"
+    generation_report: dict[str, Any] | None = None
+    try:
+        generation_report = json.loads(report_path.read_text(encoding="utf-8"))
+        if not isinstance(generation_report, dict):
+            raise ValueError("root must be an object")
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        failures.append(f"generation_report.json: missing or invalid: {error}")
+    for entry in sorted(corpus_dir.iterdir(), key=lambda path: path.name):
+        if entry.name == report_path.name:
+            continue
+        if not entry.is_dir():
+            failures.append(f"{entry.name}: unexpected non-directory entry")
+            continue
+        missing = [name for name in REQUIRED_INPUT_FILES if not (entry / name).is_file()]
+        if missing:
+            failures.append(f"{entry.name}: missing {', '.join(missing)}")
+            continue
+        try:
+            manifest = json.loads((entry / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            failures.append(f"{entry.name}: invalid manifest: {error}")
+            continue
+        identity = manifest.get("identity")
+        if not IDENTITY_PATTERN.fullmatch(entry.name):
+            failures.append(f"{entry.name}: identity does not match real_NNN__ft_NNN")
+        if identity != entry.name or manifest.get("page") != entry.name:
+            failures.append(f"{entry.name}: manifest identity/page must equal directory name")
+        if manifest.get("fallback_used") is not False:
+            failures.append(f"{entry.name}: fallback_used must be explicitly false")
+        if manifest.get("paddle_line_count", 0) < 1:
+            failures.append(f"{entry.name}: paddle_line_count must be positive")
+        try:
+            with Image.open(entry / "page.jpg") as page, Image.open(entry / "mask.png") as mask:
+                if page.size != mask.size:
+                    failures.append(f"{entry.name}: page {page.size} and mask {mask.size} differ")
+                if page.width > MODEL_INPUT_SIZE or page.height > MODEL_INPUT_SIZE:
+                    failures.append(f"{entry.name}: crop {page.size} exceeds model size {MODEL_INPUT_SIZE}")
+                mask_array = np.asarray(mask.convert("L"), dtype=np.uint8)
+                if int(np.count_nonzero(mask_array > 127)) < 16:
+                    failures.append(f"{entry.name}: mask has fewer than 16 erased pixels")
+        except OSError as error:
+            failures.append(f"{entry.name}: unreadable image or mask: {error}")
+        samples.append((entry, manifest))
+    actual_identities = [entry.name for entry, _ in samples]
+    if generation_report is not None:
+        report_failures = generation_report.get("failures")
+        report_identities = generation_report.get("samples")
+        report_failure_count = generation_report.get("failure_count")
+        report_sample_count = generation_report.get("sample_count")
+        if not isinstance(report_failures, list):
+            failures.append("generation_report.json: failures must be an array")
+        elif report_failure_count != len(report_failures) or report_failure_count != 0:
+            failures.append(
+                f"generation_report.json: requires zero failures; "
+                f"failure_count={report_failure_count!r}, failures={len(report_failures)}"
+            )
+        if not isinstance(report_identities, list) or not all(isinstance(value, str) for value in report_identities):
+            failures.append("generation_report.json: samples must be a string array")
+        else:
+            if len(report_identities) != len(set(report_identities)):
+                failures.append("generation_report.json: samples contains duplicate identities")
+            if report_sample_count != len(report_identities):
+                failures.append(
+                    f"generation_report.json: sample_count={report_sample_count!r} "
+                    f"but samples has {len(report_identities)} identities"
+                )
+            if report_identities != actual_identities:
+                failures.append(
+                    "generation_report.json: identity set/order does not exactly match corpus directories "
+                    f"(report={report_identities!r}, actual={actual_identities!r})"
+                )
+    if len(samples) < minimum_samples:
+        failures.append(f"corpus has {len(samples)} samples; minimum is {minimum_samples}")
+    source_pages = {manifest.get("source_page") for _, manifest in samples}
+    if len(source_pages) < 2:
+        failures.append("corpus must contain samples from multiple source pages")
+    if failures:
+        for failure in failures:
+            print(f"CORPUS FAILURE: {failure}", file=sys.stderr)
+        raise ValueError(f"corpus validation failed with {len(failures)} failure(s)")
+    return samples
 
 
 def load_model(path: Path) -> ort.InferenceSession:
-    if not path.exists():
-        print(f"ERROR: model not found: {path}", file=sys.stderr)
-        sys.exit(1)
+    if not path.is_file():
+        raise FileNotFoundError(f"model not found: {path}")
     so = ort.SessionOptions()
     so.log_severity_level = 3  # silence ORT chatter
     return ort.InferenceSession(str(path), so, providers=["CPUExecutionProvider"])
@@ -164,56 +255,114 @@ def write_mask_bin(path: Path, mask_hw: np.ndarray) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--corpus", required=True, help="corpus dir (one subfolder per page)")
-    ap.add_argument("--out", required=True, help="output dir (PNGs written per page)")
+    ap.add_argument("--corpus", required=True, help="corpus dir (one subfolder per sample)")
+    ap.add_argument("--out", required=True, help="new staging output dir")
+    ap.add_argument("--min-samples", type=int, default=20)
+    ap.add_argument("--clean", action="store_true", help="replace an existing staging output")
     args = ap.parse_args()
 
-    corpus_dir = Path(args.corpus)
-    out_dir = Path(args.out)
+    corpus_dir = Path(args.corpus).resolve()
+    out_dir = Path(args.out).resolve()
     if not corpus_dir.is_dir():
         print(f"ERROR: corpus dir not found: {corpus_dir}", file=sys.stderr)
         return 1
 
-    pages = sorted(p for p in corpus_dir.iterdir() if p.is_dir())
-    if not pages:
-        print(f"ERROR: no page subfolders in {corpus_dir}", file=sys.stderr)
+    try:
+        pages = validate_corpus(corpus_dir, args.min_samples)
+        generation_source = json.loads(
+            (corpus_dir / "generation_report.json").read_text(encoding="utf-8")
+        ).get("source")
+    except (OSError, json.JSONDecodeError, ValueError) as error:
+        print(f"ERROR: {error}", file=sys.stderr)
         return 1
-
-    print(f"Loading models ...")
-    dyn_sess = load_model(DYNAMIC_MODEL)
-    stat_sess = load_model(STATIC_MODEL)
+    if out_dir.exists():
+        if not args.clean:
+            print(f"ERROR: output already exists (pass --clean for staging regeneration): {out_dir}", file=sys.stderr)
+            return 1
+        shutil.rmtree(out_dir)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     written = 0
-    for page_dir in pages:
+    failures: list[dict[str, str]] = []
+    print("Loading models ...")
+    try:
+        dyn_sess = load_model(DYNAMIC_MODEL)
+        stat_sess = load_model(STATIC_MODEL)
+    except Exception as error:
+        failure = {"identity": "", "stage": "model_startup", "error": repr(error)}
+        failures.append(failure)
+        print(f"EMIT FAILURE: {json.dumps(failure, sort_keys=True)}", file=sys.stderr)
+        report = {
+            "emitter": "emit_corpus_outputs.py",
+            "corpus": generation_source,
+            "expected_count": len(pages),
+            "emitted_count": 0,
+            "failure_count": 1,
+            "identities": [],
+            "failures": failures,
+        }
+        try:
+            (out_dir / "emission_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        except OSError as report_error:
+            print(f"ERROR: could not write emission failure report: {report_error}", file=sys.stderr)
+        return 1
+    for page_dir, manifest_data in pages:
         page_img = page_dir / "page.jpg"
         page_mask = page_dir / "mask.png"
         manifest = page_dir / "manifest.json"
-        if not (page_img.exists() and page_mask.exists()):
-            print(f"SKIP {page_dir.name}: missing page.jpg or mask.png")
+        try:
+            img, mask_nchw, mask_hw, page_arr = page_to_512_inputs(page_img, page_mask)
+            dyn_out = run_model(dyn_sess, img, mask_nchw, page_arr)
+            stat_out = run_model(stat_sess, img, mask_nchw, page_arr)
+        except Exception as error:
+            failure = {"identity": page_dir.name, "stage": "model_inference", "error": repr(error)}
+            failures.append(failure)
+            print(f"EMIT FAILURE: {json.dumps(failure, sort_keys=True)}", file=sys.stderr)
             continue
 
-        img, mask_nchw, mask_hw, page_arr = page_to_512_inputs(page_img, page_mask)
-        dyn_out = run_model(dyn_sess, img, mask_nchw, page_arr)
-        stat_out = run_model(stat_sess, img, mask_nchw, page_arr)
-
         page_out = out_dir / page_dir.name
-        page_out.mkdir(parents=True, exist_ok=True)
-        # Raw ARGB .bin — what the JVM gate test reads.
-        write_argb_bin(page_out / "dynamic_out.bin", dyn_out)
-        write_argb_bin(page_out / "static_out.bin", stat_out)
-        write_mask_bin(page_out / "mask.bin", mask_hw)
-        # PNG — human visual QA only.
-        Image.fromarray(dyn_out).save(page_out / "dynamic_out.png")
-        Image.fromarray(stat_out).save(page_out / "static_out.png")
-        Image.fromarray((mask_hw * 255).astype(np.uint8), mode="L").save(page_out / "mask.png")
-        if manifest.exists():
-            shutil.copy(manifest, page_out / "manifest.json")
+        temporary_out = out_dir / f".{page_dir.name}.tmp"
+        try:
+            if temporary_out.exists():
+                shutil.rmtree(temporary_out)
+            temporary_out.mkdir()
+            # Write a complete sample privately, then rename it into visibility.
+            write_argb_bin(temporary_out / "dynamic_out.bin", dyn_out)
+            write_argb_bin(temporary_out / "static_out.bin", stat_out)
+            write_mask_bin(temporary_out / "mask.bin", mask_hw)
+            Image.fromarray(dyn_out).save(temporary_out / "dynamic_out.png")
+            Image.fromarray(stat_out).save(temporary_out / "static_out.png")
+            Image.fromarray((mask_hw * 255).astype(np.uint8), mode="L").save(temporary_out / "mask.png")
+            shutil.copy(manifest, temporary_out / "manifest.json")
+            temporary_out.rename(page_out)
+        except Exception as error:
+            failure = {"identity": page_dir.name, "stage": "output_write", "error": repr(error)}
+            failures.append(failure)
+            print(f"EMIT FAILURE: {json.dumps(failure, sort_keys=True)}", file=sys.stderr)
+            shutil.rmtree(temporary_out, ignore_errors=True)
+            shutil.rmtree(page_out, ignore_errors=True)
+            continue
         written += 1
         print(f"  {page_dir.name}: wrote dynamic/static/mask .bin + .png")
 
-    print(f"\nDone. {written} page(s) emitted to {out_dir}")
-    return 0
+    report = {
+        "emitter": "emit_corpus_outputs.py",
+        "corpus": generation_source,
+        "expected_count": len(pages),
+        "emitted_count": written,
+        "failure_count": len(failures),
+        "identities": [page_dir.name for page_dir, _ in pages if (out_dir / page_dir.name).is_dir()],
+        "failures": failures,
+    }
+    try:
+        (out_dir / "emission_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    except OSError as error:
+        print(f"ERROR: could not write emission_report.json: {error}", file=sys.stderr)
+        return 1
+    success = not failures and written == len(pages)
+    status = "Done" if success else "FAILED"
+    print(f"\n{status}. {written}/{len(pages)} sample(s) emitted to {out_dir}; failures={len(failures)}")
+    return 0 if success else 1
 
 
 if __name__ == "__main__":
