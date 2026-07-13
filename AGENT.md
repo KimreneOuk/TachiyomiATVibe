@@ -12,6 +12,46 @@ Kotlin Android manga/manhwa/manhua reader with ONNX translation.
 
 1. **Planning & Investigation** → [`@file:planning.md`](docs/project_context/planning.md)
 2. **Implementation** → [`@file:implementing.md`](docs/project_context/implementing.md)
+3. **Artifact organization** → [`@file:knowledge_base.md`](docs/project_context/knowledge_base.md)
+
+## Autonomy Policy
+
+Proceed automatically for low-risk, reversible work. For normal bugs and
+features, inspect the evidence, create and internally challenge a plan,
+implement the smallest defensible change, add regression coverage, run
+targeted validation, and update the relevant handoff.
+
+Require user approval before:
+
+- architecture rewrites or broad cross-module refactors;
+- database migrations, public API changes, or dependency replacement;
+- destructive or difficult-to-reverse operations;
+- materially ambiguous behavior or scope expansion;
+- changes that cannot be safely validated with available tests.
+
+Do not request approval for file inspection, test discovery, targeted test
+creation, safe local validation, or routine documentation updates.
+
+For large work, use checkpoints: establish a baseline, implement an isolated
+part, validate it, then review the diff before continuing. Report unexpected
+findings when they change the plan or the next checkpoint.
+
+## Knowledge Base Organization
+
+Every substantial task must leave its reasoning in the repository. Use the
+routing rules in [`docs/project_context/knowledge_base.md`](docs/project_context/knowledge_base.md).
+New task material belongs in a dated subfolder under `Plan/active/`; stable
+architecture and workflow knowledge belongs under `docs/`. Do not create a
+second competing folder or scatter task notes through module directories.
+
+If the user returns brainstorming from an external AI, preserve it in the
+task's `external/brainstorm_inbox.md`, verify it against the codebase, and
+update the active design or handoff without requiring a detailed follow-up
+instruction.
+
+Create the `external/` files only when the user explicitly asks for an
+external brainstorming packet or context package. Do not create them during
+ordinary investigation.
 
 ---
 
