@@ -314,6 +314,34 @@ Two open items (do not block Wave 5.2):
   window then contains zero localized boxes (correct prod no-op on the 512
   path, legitimately not a 512-path input).
 
+### Wave 5.1 Phase 1-D — faithful masks + AOT-512 scope finding — 2026-07-13
+
+A user question about the 3 detection models (detector-v4, bubble segmenter,
+paddle det) exposed that the Phase 1-C corpus used a **simplified
+PaddleOCR-det-only mask** that diverged from prod. Rebuilt the masks with
+`generate_masks_faithful.py`, which runs prod's full 3-model detection chain
+(detector-v4 → bubble segmenter → paddle det) and routes boxes exactly like
+`AOTInpainting.inpaintRegions`.
+
+**Architecture finding:** prod has two inpaint paths. The AOT ONNX model is
+used ONLY on the free-text path (`inpaintReportFreeTextAot512`); the bubble
+path (`inpaintReportBubbles`) uses classical `AotReportBubbleFill` over the
+YOLO11 segmentation mask — no neural net. On the 30-page Okiraku chapter, only
+**12/30 pages (40%)** route anything to AOT-512; the other 17/30 use only the
+classical bubble path. Wave 5.2's model swap affects a smaller blast radius
+than the design implied.
+
+Corpus rebuilt to the 12 faithful free-text pages. Gate PASSES: 0 new
+rejections. `real_023` shows both models producing uniform-white (mean=255,
+var=0) — the guard catches it identically in both, so it is a known shared
+failure mode, not a new rejection. `EXPECTED_CORPUS_SIZE`: 18 → 12.
+
+Full standard suite: 597 tests, 0 failures, 0 errors. Safety rule holds.
+
+Documented approximation: PaddleOCR recognition (CNN+CTC rec) is not ported;
+all detector-v4 text detections are treated as OCR-readable, slightly
+over-erasing vs prod's `text.isNotBlank()` filter. Minor at conf > 0.45.
+
 
 
 ## Safety rule

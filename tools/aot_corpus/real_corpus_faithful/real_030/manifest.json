@@ -1,0 +1,51 @@
+{
+  "page": "real_030",
+  "source": "Okiraku Ryoushu no Tanoshii Ryouchi Bouei ~Seisan-kei Majutsu de Na mo na Kimura wo Saikyou no Jousai Toshi ni~ Chapter 33 &#8211; Rawkuma",
+  "source_dims": [
+    1125,
+    1600
+  ],
+  "detector_bubbles": 2,
+  "detector_text": 4,
+  "seg_masks": 2,
+  "bubble_text_boxes": 3,
+  "free_text_boxes": 1,
+  "paths": {
+    "free_text": {
+      "path": "free_text",
+      "inpaint_path": "inpaintReportFreeTextAot512 (AOT model)",
+      "crop": [
+        0,
+        1088,
+        512,
+        1600
+      ],
+      "crop_dims": [
+        512,
+        512
+      ],
+      "free_text_boxes": 1,
+      "paddle_refined_lines": 1,
+      "mask_pad": 16,
+      "mask_dilate": 8
+    },
+    "bubble": {
+      "path": "bubble",
+      "inpaint_path": "inpaintReportBubbles (segmentationMask-based)",
+      "crop": [
+        90,
+        114,
+        1040,
+        1497
+      ],
+      "crop_dims": [
+        950,
+        1383
+      ],
+      "seg_masks": 2,
+      "bubble_text_boxes": 3,
+      "mask_source": "YOLO11-seg precise masks rasterized at page res"
+    }
+  },
+  "note": "OCR-rec filter skipped (PaddleOCR CTC not ported); all text dets treated as readable."
+}

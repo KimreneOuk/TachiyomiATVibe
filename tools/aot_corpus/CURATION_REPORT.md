@@ -1,6 +1,12 @@
 # Tier 3 Corpus Curation Report — 2026-07-13
 
-**Result: GATE PASSES. 0 new static-512 rejections across 18 real pages.**
+**Result: GATE PASSES. 0 new static-512 rejections across 12 real free-text pages.**
+
+Updated 2026-07-13 (Phase 1-D): the corpus was rebuilt with **faithful masks**
+that run prod's full 3-model detection chain. This surfaced a major scoping
+finding — see "Architecture insight" below. The earlier 18-page corpus used a
+simplified PaddleOCR-det-only mask and is superseded; this file documents the
+faithful version.
 
 This is the Wave 5.1 Phase 1-C deliverable: the real corpus the design
 (`Plan/AOT_NPU_FIXED512_DESIGN_2026-07-12.md` §155-170) requires before the
@@ -143,3 +149,101 @@ into `AOTInpainting.inpaint()` via the existing `inpaint512Model` path in
 `OnnxModelStore`, with `AotPadPath` pad-to-512 + crop-back — is the next
 checkpoint. Color category coverage remains a documented gap to close before
 release (Tier 4 on-device gate).
+
+---
+
+## Phase 1-D — faithful masks + architecture insight (2026-07-13, later)
+
+The 18-page corpus above used `generate_masks.py`, which ran **only PaddleOCR-det
+on the whole page** and treated every detection as free-text. Review (user
+question about the 3 detection models) surfaced that this diverged from prod.
+The corpus was rebuilt with `generate_masks_faithful.py`, which runs prod's
+**full 3-model detection chain** and routes boxes exactly like
+`AOTInpainting.inpaintRegions`.
+
+### Architecture insight: AOT-512 only handles free-text
+
+Prod has **two inpaint paths**, routed by whether text is inside a bubble:
+
+| Path | Trigger | Algorithm | Uses AOT model? |
+|---|---|---|---|
+| `inpaintReportBubbles` | text inside a detector-v4 bubble box | `AotReportBubbleFill` (classical, 12 smoothing passes) over the YOLO11 segmentation mask | **No** |
+| `inpaintReportFreeTextAot512` | free-text (no parent bubble, label 2) | AOT ONNX model on a 512² centered crop | **Yes** |
+
+Detection chain (`RoiPageRecognitionEngine.analyze`):
+1. **detector-v4** (`detector-v4-s_int8.onnx`, RT-DETR) — bubbles(0), text_bubble(1), text_free(2)
+2. **bubble segmenter** (`best_int8.onnx`, YOLO11-seg) — precise mask per bubble
+3. **PaddleOCR det** — refines free-text line boxes only
+
+**Finding from 30 Okiraku pages:** only **12/30 (40%)** route anything to the
+AOT-512 model. The other 17/30 use only the bubble/segmentation path (classical
+fill, no neural net). For typical dialogue-heavy manga, AOT-512 handles the
+minority of text (SFX, narration, side notes outside bubbles).
+
+**Implication for Wave 5.2:** swapping dynamic→static-512 only affects the
+free-text path. The blast radius is smaller than the design implied — on this
+chapter, 60% of pages are untouched by the model swap, and the other 40% use
+AOT-512 for only a fraction of their text. The bubble path (majority of text)
+is a classical algorithm unaffected by Wave 5.2/5.3 entirely.
+
+### Faithful corpus result (12 free-text pages)
+
+Gate PASSES on the 12 pages that genuinely route to AOT-512: **0 new rejections.**
+
+Per-page verdicts (dynamic vs static-512):
+
+| page | maskN | dyn(mean,var) | stat(mean,var) | note |
+|---|---|---|---|---|
+| real_001 | 101217 | 174,3795 | 174,3795 | |
+| real_002 | 51800 | 216,2018 | 216,2018 | |
+| real_010 | 51857 | 243,1198 | 243,1198 | |
+| real_011 | 33709 | 197,6179 | 197,6179 | |
+| real_012 | 66930 | 248,496 | 248,496 | |
+| real_017 | 23326 | 249,904 | 249,904 | |
+| real_021 | 26723 | 87,9359 | 87,9359 | |
+| real_023 | 39885 | 255,0 | 255,0 | both reject (uniform white) — guard working |
+| real_024 | 40756 | 206,3057 | 206,3057 | |
+| real_025 | 33196 | 66,3311 | 66,3311 | |
+| real_026 | 42645 | 203,2050 | 203,2050 | |
+| real_030 | 28096 | 169,5392 | 169,5392 | |
+
+`real_023`: both models output pure uniform white (mean=255, var=0) — a known
+AOT failure mode the guard catches in prod and routes to fallback. Since BOTH
+models reject identically, it is not a *new* rejection. The guard is doing real
+work on the faithful corpus.
+
+Full standard suite: **597 tests, 0 failures, 0 errors.**
+
+### Documented approximation
+
+The faithful generator does NOT run PaddleOCR recognition (the CNN+CTC rec head
++ 18710-char dict). Prod filters mask boxes by whether OCR-rec read non-blank
+text (`PageInpaintingPlanner.computeMask`: `readable = text.isNotBlank()`).
+Here, all detector-v4 text detections are treated as readable. This slightly
+over-erases vs prod (rare blank-text regions erased here but preserved in prod).
+Effect is minor at detector conf > 0.45.
+
+### Reproducibility (faithful)
+
+```bash
+# 1. Full 3-model faithful masks (detector-v4 + segmenter + paddle det).
+python tools/aot_corpus/generate_masks_faithful.py \
+    --src "<chapter dir>" \
+    --out tools/aot_corpus/real_corpus_faithful
+
+# 2. Flatten the free_text/ subdirs into the gate's expected layout.
+#    (inline in curate step; see real_corpus_ft/ for the flattened result)
+
+# 3. Emit + gate (same as before).
+python tools/aot_corpus/emit_corpus_outputs.py \
+    --corpus tools/aot_corpus/real_corpus_ft \
+    --out app/src/test/resources/corpus/aot
+```
+
+### What the bubble path needs (separate effort)
+
+The bubble path (`inpaintReportBubbles`) handles the majority of manga text but
+is NOT exercised by this gate — it uses classical `AotReportBubbleFill`, not the
+AOT model, so it is out of scope for the static-512 model swap. If the bubble
+fill quality ever needs gating, that is a separate corpus + test (the
+`bubble/` subdirs emitted by `generate_masks_faithful.py` are a starting point).

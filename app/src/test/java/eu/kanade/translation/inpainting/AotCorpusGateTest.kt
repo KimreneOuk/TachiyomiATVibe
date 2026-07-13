@@ -156,11 +156,13 @@ class AotCorpusGateTest {
 
     private companion object {
         const val MODEL_INPUT_SIZE = 512
-        // Real corpus: 18 Okiraku pages across 6 categories (color deferred,
-        // see tools/aot_corpus/CURATION_REPORT.md). Each page is a 512x512
-        // centered crop produced by generate_masks.py (faithful to
-        // AotBoxGeometry.centeredReportCrop); small-pages entries are
-        // downscaled below 512 then upscaled by emit_corpus_outputs.py.
-        const val EXPECTED_CORPUS_SIZE = 18
+        // Faithful free-text corpus: 12 pages that actually route to the AOT-512
+        // path in prod (free-text boxes, no parent bubble). Produced by
+        // generate_masks_faithful.py which runs detector-v4 + bubble segmenter
+        // + paddle det and routes exactly like AOTInpainting.inpaintRegions.
+        // The other 18/30 pages in the source chapter use only the bubble path
+        // (inpaintReportBubbles, classical fill - no AOT model) and are not
+        // AOT-512 inputs. See tools/aot_corpus/CURATION_REPORT.md.
+        const val EXPECTED_CORPUS_SIZE = 12
     }
 }
