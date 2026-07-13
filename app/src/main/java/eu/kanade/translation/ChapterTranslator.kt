@@ -227,8 +227,10 @@ class ChapterTranslator(
         try { pipeline.forceReleaseNativeBuffers() } catch (_: Exception) {}
         when {
             level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
+                // ComponentCallbacks2 can arrive while an uncancellable native run
+                // is active. Cancel work and drain guarded pools only; session close
+                // remains owned by normal lifecycle teardown under its permit/guard.
                 stop("memory pressure")
-                pipeline.closeEngines()
                 clearAllReaderPageStreams()
             }
             level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {

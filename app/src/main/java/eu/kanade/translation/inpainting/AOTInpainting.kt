@@ -147,6 +147,9 @@ class AOTInpainting {
 
     fun isInitialized(): Boolean = fixedSession != null || dynamicSession != null
 
+    private fun neuralSessionCount(): Int =
+        (if (fixedSession != null) 1 else 0) + (if (dynamicSession != null) 1 else 0)
+
     fun inpaintRegions(
         image: Bitmap,
         boxes: List<IntArray>,
@@ -366,15 +369,34 @@ class AOTInpainting {
             ?: return image
         val side = crop[2] - crop[0]
         if (side <= 0 || crop[3] - crop[1] != side) return image
-        if (!TranslationMemoryBudget.canRunNeuralInpaint(image.width, image.height, side, side)) {
+        val memoryDecision = TranslationMemoryBudget.neuralInpaintDecision(
+            pageWidth = image.width,
+            pageHeight = image.height,
+            cropWidth = side,
+            cropHeight = side,
+            sessionCount = neuralSessionCount(),
+        )
+        if (!memoryDecision.canRun) {
             TranslationMemoryBudget.logSnapshot(
                 tag = "skip_report_aot",
                 width = image.width,
                 height = image.height,
-                extra = "route=push_pull crop=${side}x$side boxes=${boxes.size}",
+                extra = "route=push_pull neuralMode=${memoryDecision.mode} " +
+                    "sessions=${memoryDecision.sessionCount} " +
+                    "nativeSystemReserve=${memoryDecision.nativeSystemReserveBytes / (1024L * 1024L)}MiB " +
+                    "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB " +
+                    "reason=${memoryDecision.reason} crop=${side}x$side boxes=${boxes.size}",
             )
             return inpaintReportFreeTextFast(image, boxes)
         }
+        TranslationMemoryBudget.logSnapshot(
+            tag = "run_report_aot",
+            width = image.width,
+            height = image.height,
+            extra = "neuralMode=${memoryDecision.mode} sessions=${memoryDecision.sessionCount} " +
+                "nativeSystemReserve=${memoryDecision.nativeSystemReserveBytes / (1024L * 1024L)}MiB " +
+                "sysHeadroom=${memoryDecision.systemHeadroomBytes?.div(1024L * 1024L)}MiB crop=${side}x$side",
+        )
         val localBoxes = boxes.mapNotNull { AotBoxGeometry.localizeBox(it, crop[0], crop[1], side, side) }
         val maskBytes = BubbleMaskBuilder.buildFixedPillMask(localBoxes, side, side, REPORT_FREE_TEXT_PAD, REPORT_FREE_TEXT_DILATE)
         if (maskBytes.none { it != 0.toByte() }) return image
@@ -913,19 +935,17 @@ class AOTInpainting {
 
     fun close() {
         bubbleCleaner.clearWorkingBuffers()
-        try {
-            fixedSession?.close()
-        } catch (error: Throwable) {
-            logcat(LogPriority.ERROR, error) { "[inpaint] route=fixed close=failed" }
-        } finally {
-            fixedSession = null
-        }
-        try {
-            dynamicSession?.close()
-        } catch (error: Throwable) {
-            logcat(LogPriority.ERROR, error) { "[inpaint] route=dynamic close=failed" }
-        } finally {
-            dynamicSession = null
+        val fixed = fixedSession
+        val dynamic = dynamicSession
+        // Detach first so repeated/concurrent lifecycle teardown cannot close a
+        // native handle twice. Each distinct session is still attempted when its
+        // sibling close fails.
+        fixedSession = null
+        dynamicSession = null
+        AotSessionLifecycle.closeIndependently(fixed, dynamic) { failure ->
+            logcat(LogPriority.ERROR, failure.error) {
+                "[inpaint] route=${failure.route} close=failed"
+            }
         }
         clearScratch()
         imgInputPool.clear()
