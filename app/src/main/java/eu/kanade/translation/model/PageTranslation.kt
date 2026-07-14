@@ -32,6 +32,17 @@ data class PageTranslation(
     // stable, so UI dedup must not key on the name alone.
     var inpaintRevision: Int = 0,
     /**
+     * The inpainting mode name ("QUALITY" / "FAST") that produced the current
+     * cleaned image, or null for pages persisted before this field existed.
+     *
+     * Unlike [inpaintRevision] (which tracks mask-logic schema changes, not the
+     * user-selected mode), this lets a FAST->QUALITY switch invalidate stale
+     * FAST cleaned output: the resume gate compares it to the current preference
+     * and forces a re-inpaint on mismatch. Null (legacy) is treated as a match
+     * so existing chapters are not mass re-translated on the first QUALITY open.
+     */
+    var inpaintingModeUsed: String? = null,
+    /**
      * TachiyomiAT: SERIALIZABLE inpaint mask captured at OCR time.
      *
      * This is the durable record of every region the inpainter must erase: the

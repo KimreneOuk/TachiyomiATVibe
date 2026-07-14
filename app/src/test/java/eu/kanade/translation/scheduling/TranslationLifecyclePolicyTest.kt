@@ -132,6 +132,51 @@ class TranslationLifecyclePolicyTest {
         TranslationLifecyclePolicy.nextStage(full, cleanedFileValid = false) shouldBe TranslationLifecyclePolicy.NextStage.FULL
     }
 
+    @Test
+    fun `mode mismatch downgrades a rendered page from render to inpaint`() {
+        // A page cleaned under FAST that the user now wants under QUALITY must
+        // re-inpaint instead of resuming render from the stale FAST output.
+        val rendered = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            inpaintingModeUsed = "FAST"
+            renderStatus = StageStatus.PENDING
+            inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 1, 1, 2))
+        }
+        TranslationLifecyclePolicy.nextStage(rendered, cleanedFileValid = true, inpaintModeMatches = true) shouldBe
+            TranslationLifecyclePolicy.NextStage.RENDER
+        TranslationLifecyclePolicy.nextStage(rendered, cleanedFileValid = true, inpaintModeMatches = false) shouldBe
+            TranslationLifecyclePolicy.NextStage.INPAINT
+    }
+
+    @Test
+    fun `mode mismatch downgrades a fully rendered page from skip to inpaint`() {
+        val done = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            inpaintingModeUsed = "FAST"
+            renderStatus = StageStatus.READY
+            inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 1, 1, 2))
+        }
+        TranslationLifecyclePolicy.nextStage(done, cleanedFileValid = true, inpaintModeMatches = true) shouldBe
+            TranslationLifecyclePolicy.NextStage.SKIP
+        TranslationLifecyclePolicy.nextStage(done, cleanedFileValid = true, inpaintModeMatches = false) shouldBe
+            TranslationLifecyclePolicy.NextStage.INPAINT
+    }
+
+    @Test
+    fun `legacy null inpaintingModeUsed is treated as a mode match`() {
+        // Pre-existing chapters (no recorded mode) must not be mass re-translated.
+        val done = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            inpaintingModeUsed = null
+            renderStatus = StageStatus.READY
+        }
+        TranslationLifecyclePolicy.nextStage(done, cleanedFileValid = true) shouldBe
+            TranslationLifecyclePolicy.NextStage.SKIP
+    }
+
     private fun translatedPage(): PageTranslation {
         return PageTranslation(
             blocks = mutableListOf(

@@ -23,12 +23,16 @@ internal object BatchResumeGateDecider {
 
     internal enum class Decision { SKIP_ALL, INPAINT_ONLY, FULL }
 
-    internal fun decide(page: PageTranslation?, cleanedFileValid: Boolean = true): Decision {
+    internal fun decide(
+        page: PageTranslation?,
+        cleanedFileValid: Boolean = true,
+        inpaintModeMatches: Boolean = true,
+    ): Decision {
         // A RUNNING state at batch entry is a stranded/in-flight marker from a
         // previous attempt; the batch must rebuild that page rather than
         // treating it as a completed resume candidate.
         if (page?.isStageRunning == true && page.ocrStatus != StageStatus.READY) return Decision.FULL
-        return when (TranslationLifecyclePolicy.nextStage(page, cleanedFileValid)) {
+        return when (TranslationLifecyclePolicy.nextStage(page, cleanedFileValid, inpaintModeMatches)) {
             TranslationLifecyclePolicy.NextStage.SKIP,
             TranslationLifecyclePolicy.NextStage.RENDER -> Decision.SKIP_ALL
             TranslationLifecyclePolicy.NextStage.INPAINT -> Decision.INPAINT_ONLY

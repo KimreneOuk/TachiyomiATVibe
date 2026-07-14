@@ -78,14 +78,23 @@ object TranslationLifecyclePolicy {
      * Chooses the minimum safe stage to resume. Physical file validation is
      * supplied by the caller because this pure policy must not perform storage
      * I/O; an invalid/missing file should be passed as false.
+     *
+     * [inpaintModeMatches] is likewise caller-supplied: true when the page's
+     * [PageTranslation.inpaintingModeUsed] matches the current preference (or is
+     * null/legacy). A FAST->QUALITY switch passes false so a stale FAST cleaned
+     * image is re-inpainted under the new mode instead of being served as-is.
      */
-    fun nextStage(page: PageTranslation?, cleanedFileValid: Boolean): NextStage {
+    fun nextStage(
+        page: PageTranslation?,
+        cleanedFileValid: Boolean,
+        inpaintModeMatches: Boolean = true,
+    ): NextStage {
         if (page == null) return NextStage.FULL
-        if (page.hasRenderedResult && cleanedFileValid) return NextStage.SKIP
+        if (page.hasRenderedResult && cleanedFileValid && inpaintModeMatches) return NextStage.SKIP
         if (page.hasExhaustedRetries || page.isTextlessTerminal) {
             return NextStage.SKIP
         }
-        if (page.isCleanedImageReady && cleanedFileValid &&
+        if (page.isCleanedImageReady && cleanedFileValid && inpaintModeMatches &&
             (page.hasRecognizedTranslation ||
                 (page.ocrStatus == StageStatus.READY && page.hasCurrentInpaintMask))
         ) {

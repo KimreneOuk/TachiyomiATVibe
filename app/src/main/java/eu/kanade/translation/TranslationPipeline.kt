@@ -867,7 +867,15 @@ class TranslationPipeline(
         val aborted = AtomicBoolean(false)
 
         suspend fun resumeGate(page: PageTranslation?): BatchResumeGate {
-            val decision = BatchResumeGateDecider.decide(page)
+            // Null inpaintingModeUsed = legacy page persisted before this field; treat
+            // as a match so existing chapters are not mass re-translated on first open.
+            val desiredMode = inpaintingModeFromPref().name
+            val inpaintModeMatches = page?.inpaintingModeUsed == null || page.inpaintingModeUsed == desiredMode
+            val decision = BatchResumeGateDecider.decide(
+                page,
+                cleanedFileValid = true,
+                inpaintModeMatches = inpaintModeMatches,
+            )
             if (decision == BatchResumeGateDecider.Decision.SKIP_ALL && page?.cleanedImageName != null) {
                 val physicallyPresent = withContext(Dispatchers.IO) {
                     provider.findPageCleanedImage(
@@ -887,6 +895,12 @@ class TranslationPipeline(
                     } else {
                         BatchResumeGate.FULL
                     }
+                }
+            }
+            if (!inpaintModeMatches) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT resume re-inpainting for mode change: pageKey=${page?.sourceFileName} " +
+                        "was=${page?.inpaintingModeUsed} now=$desiredMode"
                 }
             }
             return when (decision) {
@@ -1241,6 +1255,7 @@ class TranslationPipeline(
                                         latest.hasCurrentInpaintResult
                                     if (hasDurableCleaned) {
                                         target.cleanedImageName = latest!!.cleanedImageName
+                                        target.inpaintingModeUsed = latest.inpaintingModeUsed
                                         target.inpaintStatus = StageStatus.READY
                                         target.cleanedBitmap = null
                                     } else {
@@ -1689,7 +1704,13 @@ class TranslationPipeline(
             }
             val resumeFromTranslatedBlocks = resumeTranslation
                 ?.takeIf { it.hasRecognizedTranslation }
-            if (resumeFromTranslatedBlocks?.isCleanedImageReady == true) {
+            // A cleaned image is only safe to resume from when the mode that
+            // produced it matches the current preference (a FAST->QUALITY switch
+            // must re-inpaint) and its file is still on disk. Null mode = legacy.
+            val desiredModeName = inpaintingModeFromPref().name
+            val modeMatches = resumeFromTranslatedBlocks?.inpaintingModeUsed == null ||
+                resumeFromTranslatedBlocks.inpaintingModeUsed == desiredModeName
+            if (resumeFromTranslatedBlocks?.isCleanedImageReady == true && modeMatches) {
                 val cleanedBitmap = loadPersistedCleanedBitmap(
                     manga,
                     chapter,
@@ -1712,6 +1733,11 @@ class TranslationPipeline(
                         successMessageSuffix = " (resume cleaned)",
                     )
                     return null
+                }
+            } else if (resumeFromTranslatedBlocks?.isCleanedImageReady == true && !modeMatches) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT single-page resume re-inpainting for mode change: pageKey=$pageKey " +
+                        "was=${resumeFromTranslatedBlocks.inpaintingModeUsed} now=$desiredModeName"
                 }
             }
 
@@ -2206,6 +2232,7 @@ class TranslationPipeline(
 
             pageTranslation.cleanedImageName = cleanedFileName
             pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            pageTranslation.inpaintingModeUsed = currentInpaintingMode.name
             pageTranslation.inpaintStatus = StageStatus.READY
             pageTranslation.errorMessage = null
             if (previousName != null && previousName != cleanedFileName) {
@@ -2450,6 +2477,7 @@ class TranslationPipeline(
                     s
                 }
                 pageTranslation.cleanedBitmap = scaledCleaned
+                pageTranslation.inpaintingModeUsed = currentInpaintingMode.name
                 pageTranslation.inpaintStatus = StageStatus.READY
                 pageTranslation.errorMessage = null
             }
