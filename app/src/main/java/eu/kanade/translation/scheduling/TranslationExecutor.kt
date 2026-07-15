@@ -10,11 +10,10 @@ import java.io.InputStream
  * depends on, decoupled from the concrete executor.
  *
  * Today this is satisfied by [eu.kanade.translation.ChapterTranslator], which
- * owns the decode → OCR → translate → inpaint → render pipeline. After the
- * pipeline extraction it will be satisfied by
- * [eu.kanade.translation.TranslationPipeline]. Either way the scheduler only
+ * delegates to [eu.kanade.translation.TranslationPipeline]'s
+ * decode → OCR → translate → inpaint → render pipeline. The scheduler only
  * cares that the executor runs one page to completion (or failure) under its
- * own single permit, with stage-resume + watchdog semantics already handled.
+ * own single permit, with stage-resume + native-run quarantine already handled.
  *
  * The `force` flag: `false` resumes from the latest persisted stage (no
  * re-OCR when valid blocks exist, no re-translate when blocks are translated,

@@ -42,7 +42,6 @@ data class TranslationProgressSnapshot(
     val totalPages: Int,
     val activePage: Int,
     val activePageKey: String?,
-    /** All simultaneously active pipeline stages. UI must render this set. */
     val activeStages: Set<TranslationProgressStage> = emptySet(),
     val queuedCount: Int,
     val failedCount: Int,

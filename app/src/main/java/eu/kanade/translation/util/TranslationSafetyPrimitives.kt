@@ -8,7 +8,7 @@ package eu.kanade.translation.util
  *
  * Each helper encodes ONE invariant. The production call sites forward to these
  * so a future edit that reintroduces the bug fails the test here, not just on a
- * device SIGSEGV / deadlocked permit / swallowed watchdog callback.
+ * device SIGSEGV.
  *
  * Naming and style mirror [ShortHash]: a small `object` of pure functions in
  * `eu.kanade.translation.util`, tested in the same package under `app/src/test`.
@@ -52,59 +52,6 @@ object TranslationSafetyPrimitives {
         return DrainOutcome.Drained(drained)
     }
 
-    /**
-     * P0-3 (clear-at-top). Clears the dedup key set BEFORE the caller attempts
-     * to acquire the translator permit. The invariant: even if the permit is
-     * currently held by an abandoning worker (so [acquirePermit] below returns
-     * false and closeEngines returns early), future retries must not inherit
-     * the abandoned worker's stale keys — otherwise the dedup gate
-     * (`if (!keys.add(pageKey)) return`) silently drops every retry of every
-     * page that worker touched, and translation stops working entirely.
-     *
-     * Pure: takes the key set by reference and an [acquirePermit] callback that
-     * returns true if the permit was acquired (and the caller should proceed
-     * with teardown), false if it was held. The clear runs unconditionally
-     * before the callback — the load-bearing property.
-     *
-     * Returns [PermitOutcome.PermitHeld] when [acquirePermit] returned false
-     * (keys still cleared), or [PermitOutcome.PermitAcquired] otherwise.
-     */
-    fun clearKeysBeforePermitAcquire(
-        keys: MutableSet<String>,
-        acquirePermit: () -> Boolean,
-    ): PermitOutcome {
-        keys.clear()
-        return if (acquirePermit()) PermitOutcome.PermitAcquired else PermitOutcome.PermitHeld
-    }
-
-    /**
-     * P0-4 (watchdog callback isolation). Runs each [WatchdogStep] in order,
-     * catching every Throwable from each so a throwing step NEVER prevents the
-     * later ones from running. This is the invariant that keeps a misbehaving
-     * `onPageStuck` listener from swallowing the `onForceRelease` that clears
-     * `inFlightPageKeys` and releases the permit — without it, one bad callback
-     * deadlocks ALL translation for the rest of the process.
-     *
-     * Pure: takes the steps as data and returns what ran. Production builds the
-     * step list from its `onTimeout` / `onPageStuck` / `onForceRelease`
-     * callbacks. A step that throws is recorded in [WatchdogOutcome.failures]
-     * but does not abort the chain. The step action is `suspend` so the
-     * `onTimeout` callback (which suspends) fits without an extra wrapper.
-     */
-    suspend fun runGuardedWatchdogChain(
-        vararg steps: WatchdogStep,
-    ): WatchdogOutcome {
-        val failures = mutableListOf<Throwable>()
-        for (step in steps) {
-            try {
-                step.action()
-            } catch (t: Throwable) {
-                failures += t
-            }
-        }
-        return WatchdogOutcome(ran = steps.size, failures = failures)
-    }
-
     /** Engine whose native buffers can be force-released under memory pressure. */
     fun interface ForceReleasable {
         fun forceReleaseNativeBuffers()
@@ -116,17 +63,4 @@ object TranslationSafetyPrimitives {
         /** Lock was free; [count] children were drained. */
         data class Drained(val count: Int) : DrainOutcome
     }
-
-    sealed interface PermitOutcome {
-        /** Keys cleared; permit was acquired (caller proceeds with teardown). */
-        data object PermitAcquired : PermitOutcome
-        /** Keys cleared; permit was held by an abandoning worker (caller returns). */
-        data object PermitHeld : PermitOutcome
-    }
-
-    /** One isolated callback in the watchdog force-release chain. */
-    class WatchdogStep(val name: String, val action: suspend () -> Unit)
-
-    /** Result of running the watchdog chain; [failures] is non-empty if any step threw. */
-    data class WatchdogOutcome(val ran: Int, val failures: List<Throwable>)
 }

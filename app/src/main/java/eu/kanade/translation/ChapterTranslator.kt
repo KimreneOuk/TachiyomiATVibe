@@ -325,7 +325,8 @@ class ChapterTranslator(
      * [TranslationManager.deleteTranslation] deletes files. Plain
      * [cancelTranslatorJob] stays non-blocking so pause/stop/clearQueue keep
      * their behaviour. On timeout this returns anyway; the defunct-store guard
-     * rejects subsequent writes and the permit watchdog force-releases the native buffer.
+     * rejects subsequent writes and NativeRunQuarantine invalidates the timed-out
+     * native generation.
      */
     suspend fun cancelTranslatorJobAndJoin() {
         val job = translationJob ?: return
@@ -335,7 +336,7 @@ class ChapterTranslator(
             logcat(LogPriority.WARN) {
                 "TachiyomiAT batch translator job did not unwind within " +
                     "$BATCH_JOIN_TIMEOUT_MS ms on delete; proceeding (defunct guard + " +
-                    "permit watchdog will neutralize any late write)"
+                    "native-run quarantine will neutralize any late write)"
             }
         }
     }

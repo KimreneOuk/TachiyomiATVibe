@@ -176,7 +176,7 @@ class TranslationPipeline(
          * Approximate byte ceiling for the held cleaned-bitmap registry in the
          * 3-lane batch pipeline (~48 MB; a worst-case webtoon long-strip page).
          * Pages that would push the registry past this spill to disk (their
-         * .cleaned.png is already durable at inpaint) and reload on render —
+         * versioned .cleaned.jpg is already durable at inpaint) and reload on render —
          * today's behavior. Keeps peak held memory provable against the ceiling
          * regardless of page or chunk size.
          */
@@ -756,7 +756,7 @@ class TranslationPipeline(
      *
      * Memory model: one page bitmap is alive at a time (recycled after analyze,
      * re-decoded for inpaint, recycled after inpaint). Stage 2 persists each
-     * cleaned image to disk (.cleaned.png) and releases the in-memory cleaned
+     * cleaned image to disk (.cleaned.jpg) and releases the in-memory cleaned
      * bitmap immediately — stage 3 reloads one at a time — so the batch holds at
      * most one cleaned bitmap at any instant regardless of chapter length.
      * (Previously stage 2 kept every cleaned bitmap live across the whole chapter
@@ -826,7 +826,7 @@ class TranslationPipeline(
 
         // Held-cleaned-bitmap registry: render reuses the in-memory bitmap instead of
         // reloading from disk. Bounded by BOTH a byte ceiling and a count cap; a page
-        // exceeding either spills (its .cleaned.png is already durable, so the bitmap
+        // exceeding either spills (its .cleaned.jpg is already durable, so the bitmap
         // recycles immediately and render reloads it).
         val heldBitmapBytes = AtomicLong(0L)
         val countSlots = Semaphore(HELD_BITMAP_MAX_COUNT)
@@ -918,7 +918,7 @@ class TranslationPipeline(
                     return@withLock
                 }
                 // READY/PARTIAL -> render. Consume the held bitmap on the happy path
-                // (no disk reload); spill/SKIP_ALL pages reload .cleaned.png instead.
+                // (no disk reload); spill/SKIP_ALL pages reload .cleaned.jpg instead.
                 val held = bitmapRegistry.remove(pageKey)
                 if (held != null) {
                     heldBitmapBytes.addAndGet(-held.byteCount.toLong())
