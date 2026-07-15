@@ -1,6 +1,7 @@
 package eu.kanade.translation.model
 
 import eu.kanade.translation.ChapterTranslationStore
+import io.kotest.matchers.collections.shouldContain
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
@@ -63,7 +64,7 @@ class TranslationProgressSnapshotTest {
             TranslationProgressStage.OCR,
         )
         snapshot.activePageKey shouldBe "002.jpg"
-        snapshot.activeStage shouldBe TranslationProgressStage.OCR
+        snapshot.activeStages shouldContain TranslationProgressStage.OCR
     }
 
     @Test
@@ -135,7 +136,7 @@ class TranslationProgressSnapshotTest {
         snapshot.failedCount shouldBe 1
         snapshot.donePages shouldBe 2
         snapshot.activePage shouldBe 1
-        snapshot.activeStage shouldBe TranslationProgressStage.OCR
+        snapshot.activeStages shouldContain TranslationProgressStage.OCR
         // Counts are per stage: READY, FAILED, and SKIPPED are processed.
         snapshot.doneStages shouldBe 11
         snapshot.totalStages shouldBe 24

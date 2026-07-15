@@ -42,10 +42,8 @@ data class TranslationProgressSnapshot(
     val totalPages: Int,
     val activePage: Int,
     val activePageKey: String?,
-    /** All simultaneously active pipeline stages. UI must render this rather than [activeStage]. */
+    /** All simultaneously active pipeline stages. UI must render this set. */
     val activeStages: Set<TranslationProgressStage> = emptySet(),
-    /** Deprecated compatibility projection. Do not use for presentation. */
-    val activeStage: TranslationProgressStage? = activeStages.firstOrNull(),
     val queuedCount: Int,
     val failedCount: Int,
     val pages: List<Page>,
