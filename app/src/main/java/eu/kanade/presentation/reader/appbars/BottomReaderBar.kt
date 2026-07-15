@@ -23,6 +23,8 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBatchPhase
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -40,6 +42,7 @@ fun BottomReaderBar(
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     translationCurrentPage: Int = 0,
+    translationBatchProgress: TranslationProgressSnapshot? = null,
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: while translation is running the icon is disabled so repeated
     // taps can't pile up overlapping requests behind the singleton translator
@@ -106,7 +109,23 @@ fun BottomReaderBar(
             }
         }
 
-        if (translationState == Translation.State.TRANSLATING && translationProgress.second > 0) {
+        val revision = translationBatchProgress?.revision
+        val revisionText = when (translationBatchProgress?.batchPhase) {
+            TranslationBatchPhase.REVISING -> stringResource(
+                ATMR.strings.reader_translation_revision_progress,
+                revision?.completedBlocks ?: 0,
+                revision?.totalBlocks ?: 0,
+            )
+            TranslationBatchPhase.FINALIZING -> stringResource(ATMR.strings.reader_translation_revision_finalizing)
+            else -> null
+        }
+        if (revisionText != null) {
+            Text(
+                text = revisionText,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        } else if (translationState == Translation.State.TRANSLATING && translationProgress.second > 0) {
             // TachiyomiAT: prefer the page currently being translated so the
             // label matches the page the spinner animates on. Fall back to the
             // completed-count string when no specific page is RUNNING (e.g. a

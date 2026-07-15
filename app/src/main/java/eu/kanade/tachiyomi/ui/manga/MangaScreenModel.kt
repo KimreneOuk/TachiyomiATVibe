@@ -551,7 +551,9 @@ class MangaScreenModel(
 
     private fun stopTranslationProgress(chapterId: Long) {
         translationProgressJobs.remove(chapterId)?.cancel()
-        updateTranslationProgress(chapterId, null)
+        // Keep the terminal snapshot in the open progress sheet so the user can
+        // see whether automatic Pass 2 completed or failed after the last page
+        // rendered. A later batch replaces it when its tracker emits again.
     }
 
     private fun updateTranslationProgress(chapterId: Long, progress: TranslationProgressSnapshot?) {

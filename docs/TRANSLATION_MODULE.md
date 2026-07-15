@@ -11,7 +11,7 @@
 
 ```
 translation/
-├─ ChapterTranslator.kt          Orchestrates the 5-stage pipeline for one chapter
+├─ ChapterTranslator.kt          Orchestrates staged, streaming chapter work
 ├─ ChapterTranslationStore.kt    Per-chapter JSON store of page translation states
 ├─ TranslationManager.kt         Central coordinator: jobs, auto-prefetch, cancel, lifecycle
 ├─ TranslationPipeline.kt        Singleton pipeline: engines, decode, persist, OOM recovery
@@ -83,14 +83,14 @@ translation/
 ├─ translator/
 │  ├─ AiModelFetcher.kt          ★ PURE parseOpenAiModels/parseGeminiModels/normalizeBaseUrl
 │  ├─ AiTranslatorKind.kt        AI translator enum (Gemini/DeepSeek/OpenRouter/LM Studio)
-│  ├─ DeepSeekTranslator.kt      DeepSeek adapter (delegates parsing to NumberedLineResponseParser)
+│  ├─ DeepSeekTranslator.kt      DeepSeek adapter (pipe-delimited ID/status protocol)
 │  ├─ GeminiTranslator.kt        Gemini adapter
 │  ├─ DeepLApi.kt                DeepL endpoint/auth helper (Free vs Pro host from `:fx` key suffix)
 │  ├─ DeepLTranslator.kt         DeepL adapter
 │  ├─ GoogleTranslator.kt        Google Translate adapter
-│  ├─ LmStudioTranslator.kt      LM Studio adapter (delegates parsing to NumberedLineResponseParser)
+│  ├─ LmStudioTranslator.kt      LM Studio adapter (pipe-delimited ID/status protocol)
 │  ├─ MLKitTranslator.kt         On-device ML Kit translator
-│  ├─ NumberedLineResponseParser.kt ★ PURE STRICT `[index] text` parser (DeepSeek/LM Studio); no positional fallback, rejects out-of-range/dup/blank/CJK-leak
+│  ├─ NumberedLineResponseParser.kt ★ PURE legacy `[index] text` parser; retained for its standalone contract, not the active AI-provider protocol
 │  ├─ OcrArtifactSanitizer.kt    ★ PURE OCR misread (N°/№/Ｎ０) stripper
 │  ├─ OpenRouterTranslator.kt    OpenRouter adapter
 │  ├─ StandardTranslatorKind.kt  Standard translator enum (ML Kit/Google/DeepL)
@@ -98,6 +98,7 @@ translation/
 │  ├─ TextTranslatorLanguage.kt  Target-language enum
 │  ├─ TranslationBlockFilters.kt ★ PURE watermark (RTMTH) block removal
 │  ├─ TranslationBlockValidation.kt ★ PURE post-translate validation (blank/source-equal → PARTIAL/FAILED; all→READY)
+│  ├─ TranslationPrompts.kt         Shared `bN|Text|[STATUS]` prompt and response parser
 │  └─ TranslationEngineBuilder.kt Resolves active translator from preferences
 │
 └─ util/
@@ -117,7 +118,7 @@ each now has a single tested source of truth:
 
 | What | Was duplicated in | Now lives in |
 |------|-------------------|--------------|
-| `[index] text` LLM response parsing | DeepSeekTranslator, LmStudioTranslator | `NumberedLineResponseParser` |
+| `bN|Text|[STATUS]` AI response parsing | all four AI translators | `TranslationPrompts` |
 | OCR artifact (N°/№/Ｎ０) stripping | DeepSeekTranslator (inline) | `OcrArtifactSanitizer` |
 | bbox IoU / intersection / area + geometric-dedupe | OnnxPageTextDetector, RoiPageRecognitionEngine | `BoxGeometry` (+ `DedupThresholds`) |
 | Mask building / dilation / feathering | SmartBubbleTextCleaner (private) | `BubbleMaskBuilder` |
@@ -406,22 +407,20 @@ batch that somehow lost its mask is visible. `TranslationBlockValidation` writes
 a `"Translation incomplete: X/Y blocks translated"` reason on FAILED pages and a
 `"Translation partial: X/Y blocks translated"` reason on PARTIAL pages.
 
-### 15. Strict no-fallback policy (`NumberedLineResponseParser`, `PageTextRenderer`, config resolvers, `MLKitTranslator`, `PageInpaintingEngine`, reader UI)
+### 15. Strict no-fallback policy (AI output validation, `PageTextRenderer`, config resolvers, `MLKitTranslator`, `PageInpaintingEngine`, reader UI)
 "No fallback" means nothing is ever silently substituted: not source text for a
 blank translation (contract #14b), not positional guesses for malformed model
 output, not vertical layout for a stray CJK glyph, not a default language/engine/
 inpaint mode for an invalid or unavailable config, and not a stale error message
 for a page that produced output or was deliberately stopped.
 
-**(a) The numbered-line parser never guesses.** `NumberedLineResponseParser.parse`
-matches `^[index] text$` lines and rejects (drops) any entry that: has no
-`[index]` prefix, has an index outside `[0, expectedCount)`, is a duplicate index
-(first wins), is blank, or — when `targetLang` is a non-CJK language — contains
-CJK characters (source-script leakage guard, e.g. a leaked `(笑)` in an English
-translation). The old positional fallback that assigned unnumbered prose lines
-to `0, 1, 2, ...` is GONE: a model that ignores the format contributes nothing,
-every block stays blank, and the page is PARTIAL/FAILED by validation. Gemini/
-OpenRouter are JSON-protocol and unaffected.
+**(a) Active AI output is ID-mapped pipe text.** All four AI adapters share
+`TranslationPrompts`: Pass 1 expects `bN|Translated Text|[OK]` or
+`bN|Translated Text|[FLAG]`; Pass 2 expects `bN|Corrected Text`. The parser
+ignores malformed lines instead of assigning output positionally, and the
+post-translation validator leaves missing or blank blocks partial/failed.
+`NumberedLineResponseParser` still has a strict standalone `[index] text`
+contract and tests, but it is not the active provider protocol.
 
 **(b) Vertical layout is majority-CJK only.** `PageTextRenderer` renders a block
 vertical only when CJK characters are the MAJORITY (>50%) of its non-whitespace
@@ -822,17 +821,37 @@ next page you'll read is ready first. `Chapter.lastPageRead` (already carried on
 the `Translation`) seeds the split. The helper is pure + unit-tested
 (`ResumeOrderingTest`).
 
-### Three stages (`TranslationPipeline.translateBatch`)
-1. **DETECT + OCR batch** — `analyzePage` (split from `processSinglePage`) for
-   each page, serialized under `translatorPermit`. One page's bitmap/tensor set
-   is alive at a time. Persists `ocrStatus=READY` + blocks per page (resumable —
-   pages already analyzed are skipped).
-2. **INPAINT ‖ TRANSLATE** — for each analyzed page, inpaint (re-decoded bitmap,
-   serialized under the permit) runs concurrently with `textTranslator.translatePage`
-   (HTTP-only, no permit). HTTP overlaps ONNX — free parallelism, no extra peak
-   memory. Both are awaited before render.
-3. **RENDER** — for each page with translated text + a cleaned image, render
-   translated text onto the cleaned bitmap (Canvas only, no permit) and persist.
+### Streaming first pass (`TranslationPipeline.translateBatch`)
+Batch work is staged by responsibility but not blocked on a whole-chapter OCR
+barrier. OCR/analyze publishes each page into the inpaint and AI translation
+lanes as it becomes available. Inpainting is serialized under `translatorPermit`;
+AI chunk requests run through `TranslationContextChunkPlanner`; both results are
+persisted into the shared store and the reader can display a completed page as
+soon as its cleaned image and first-pass translation are ready.
+
+The first pass uses the shared pipe-delimited AI protocol:
+`bN|Translated Text|[OK]` or `bN|Translated Text|[FLAG]`. The `bN` identifier is
+request-local; it is not a persisted region identity. A flagged first-pass draft
+is still displayed, so early reading does not wait for revision.
+
+### Delayed automatic revision
+After the first-pass batch work reaches its barrier, the AI path automatically
+starts Pass 2. It selects nonblank `[FLAG]` blocks that the user has not edited,
+sends them in revision chunks, and applies each returned `bN|Corrected Text`
+incrementally. A successful correction updates the shared store and refreshes
+the live overlay while the reader remains usable. Standard translators do not
+run this AI revision pass.
+
+Revision is a distinct live batch phase. `TranslationProgressSnapshot` exposes
+`TranslationBatchPhase` (`FIRST_PASS`, `REVISING`, `FINALIZING`, `FINISHED`) and
+`RevisionProgress` (`totalBlocks`, `completedBlocks`, `failedBlocks`,
+`skippedBlocks`, `userEditedBlocks`, `activePageKey`, and `activeChunkBlocks`).
+The manga progress
+sheet and reader translation settings sheet consume that same snapshot. “First
+pass complete” therefore means pages are readable, not that the batch is fully
+finished; final completion is published only after the automatic revision phase
+finishes or records its failures. Revision progress is live-only and is not
+persisted for resume.
 
 ### Memory model
 **Re-decode per stage**: the page bitmap is recycled after analyze and re-decoded
@@ -843,10 +862,10 @@ honors the 6GB / 20-30% heap constraint. Translation (HTTP) and render (Canvas)
 need no ONNX permit and overlap the inpaint serial loop.
 
 **Cleaned bitmaps are per-page, not accumulated.** `inpaintPage` persists each
-cleaned image to disk (`.cleaned.png`, setting `cleanedImageName`) and stage 2
-then recycles the in-memory `cleanedBitmap` immediately — it never carries it
-into the `inpainted` map. Stage 3 reloads each cleaned image from disk one at a
-time via `loadPersistedCleanedBitmap` (the same helper the reader's
+cleaned image to disk (`.cleaned.png`, setting `cleanedImageName`) and the inpaint
+lane then recycles the in-memory `cleanedBitmap` immediately — it never carries it
+into an in-memory chapter-wide map. The render lane reloads each cleaned image
+from disk one at a time via `loadPersistedCleanedBitmap` (the same helper the reader's
 `resumeInpaintAndRender` uses). The batch therefore holds **at most one cleaned
 bitmap at any instant** regardless of chapter length. (Previously stage 2 kept
 every cleaned bitmap live across the whole chapter until stage 3 released them
@@ -880,8 +899,15 @@ live flow. If the manga screen subscribes while the chapter is only queued, it
 emits an empty snapshot first, then switches to the store-backed snapshot once
 the translator registers the active store. `TranslationProgressSnapshot.compute`
 derives per-page stages from `PageTranslation` statuses and counts failed pages
-as completed for batch-progress convergence. Pure + unit-tested
+as completed for first-pass batch-progress convergence. The snapshot also
+exposes the live batch phase and revision counters, so an already-rendered
+chapter cannot be mistaken for a fully finished AI batch. Pure + unit-tested
 (`TranslationProgressSnapshotTest`).
+
+The manga progress sheet and reader translation status use the same live
+snapshot. Their phase copy should make the distinction explicit, for example
+“Translating and rendering pages: 18/24”, “Revising flagged text: 7/12”, and
+“Revision complete” or “3 revisions failed”.
 
 ### Reader ownership while pre-translation runs
 Reader auto/manual translation uses the same active chapter store as batch
@@ -897,8 +923,8 @@ translation disable path call `cancelAllPageTranslations(cancelBatchQueue =
 true)`, which also clears the chapter batch queue.
 
 ### AI 8k context budget (`TranslationContextChunkPlanner`)
-AI_MODEL batch pre-translation now translates ordered multi-page chunks after
-OCR instead of calling `translatePage` once per page. The hard budget is
+AI_MODEL batch pre-translation translates ordered multi-page chunks as OCR makes
+pages available instead of calling `translatePage` once per page. The hard budget is
 `MAX_CONTEXT_TOKENS = 8192` with `SAFETY_MARGIN = 512`; token estimates are
 conservative, treating CJK characters as one token and Latin runs as roughly
 four characters per token. The user `translationAiOutputTokens` preference is
@@ -912,19 +938,21 @@ cannot fit even with no rolling context and the minimum output reserve, the page
 is marked failed with a context-budget error instead of sending an oversized AI
 request.
 
-AI providers implement `ContextualTextTranslator`. DeepSeek/LM Studio keep the
-numbered-line protocol, while OpenRouter/Gemini keep the JSON page-key protocol.
-Both protocols preserve page keys and block counts as much as the provider
-allows, remove watermark blocks via `TranslationBlockFilters`, and log response
-length mismatches so bad AI output is visible. Pure chunk-budget tests live in
-`TranslationContextChunkPlannerTest`; numbered parser mismatch/gap behavior is
-covered by `NumberedLineResponseParserTest`.
+AI providers implement `ContextualTextTranslator` and share the same
+pipe-delimited `TranslationPrompts` protocol. Each request carries local block
+IDs, and providers remove watermark blocks via `TranslationBlockFilters` and
+log response length mismatches so bad AI output is visible. Pure chunk-budget
+tests live in `TranslationContextChunkPlannerTest`; prompt-format and status
+parsing coverage lives in `TranslationPromptsTest`. The standalone
+`NumberedLineResponseParserTest` covers a retained legacy parser, not the active
+provider path.
 
 ---
 
 | Test | Guards |
 |------|--------|
-| `translator/NumberedLineResponseParserTest` | `[index] text` strict parse: in-order/sparse/gaps preserved; rejects unnumbered prose (NO positional fallback), out-of-range index, duplicate index (first wins), blank value, CJK-leakage when targetLang is non-CJK; CJK-target & null-targetLang bypass the leakage check |
+| `translator/TranslationPromptsTest` | ID-mapped source lines, pipe-delimited Pass 1/Pass 2 prompt contracts, status parsing, language guidance, and rolling/glossary context |
+| `translator/NumberedLineResponseParserTest` | Retained legacy `[index] text` parser contract; not used by current AI adapters |
 | `translator/OcrArtifactSanitizerTest` | N°/Nº/№/Ｎ０/N⁰ strip (before-punct / inline / leading / end-of-string), space collapse, glued-word limitation |
 | `translator/TranslationBlockFiltersTest` | RTMTH watermark removal (case-insensitive, multi-page, embedded) |
 | `translator/AiModelFetcherParseTest` | OpenAI `data[].id` + Gemini model filtering/prefix-strip, kotlinx Json, JSON-null id guard |
@@ -1007,10 +1035,9 @@ OpenRouter / DeepSeek / LM Studio share the same `choices[0].message.content`
 → parse flow with near-identical OkHttp setup, 60s timeouts, `close()` body
 (evict pool + shutdown dispatcher), and `response.body` shape-checking. Gemini
 is the odd one (Google SDK, not raw HTTP). A future `OpenAiChatTranslator` base
-could fold the three OpenAI-shape adapters together; DeepSeek/LM Studio already
-share `NumberedLineResponseParser`, OpenRouter + Gemini share the JSON-object
-shape. Watch: the `sanitizeOcrArtifacts` step is currently DeepSeek-only — if the
-others start emitting の-misreads, route them through `OcrArtifactSanitizer` too.
+could fold the three OpenAI-shape adapters together; all four AI providers share
+the pipe-delimited `TranslationPrompts` contract. `OcrArtifactSanitizer` is a
+defensive compatibility step for model output, not a separate provider protocol.
 
 ### 3. Pre-existing lint debt (LOW effort, LOW payoff, mechanical)
 

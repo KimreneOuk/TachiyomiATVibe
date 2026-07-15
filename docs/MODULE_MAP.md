@@ -85,8 +85,8 @@ eu.kanade.tachiyomi/
 │   ├── rendering/                 # Text rendering + RenderColorEstimator (pure colorPolicy)
 │   ├── runtime/onnx/              # ONNX runtime & model management
 │   ├── scheduling/                # Job lifecycle, executor, stream registry, lifecycle policy
-│   ├── translator/                # AI/API translators + shared parsers (NumberedLineResponseParser,
-│   │                              #   OcrArtifactSanitizer) + engine kinds + AiModelFetcher
+│   ├── translator/                # AI/API translators + shared prompt parser
+│   │                              #   (TranslationPrompts, OcrArtifactSanitizer) + engine kinds
 │   └── util/                      # Task extensions, memory budget, ShortHash (FNV digest)
 ├── ui/                            # Legacy/activity-based UI
 │   ├── base/                      # BaseActivity, delegates

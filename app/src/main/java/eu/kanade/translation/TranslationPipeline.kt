@@ -1099,20 +1099,19 @@ class TranslationPipeline(
                     }
                 }
                 // Accumulate this chunk's translated pairs into the chapter glossary and
-                // persist it. Log [SPEECH] tag coverage so a regression to a non-parenting
-                // recognition engine (leaving every block untagged) stays visible.
-                var tagged = 0
-                var untagged = 0
+                // persist it. Keep the metric tied to the current pipe-delimited protocol;
+                // legacy speech-role tags are no longer part of the prompt contract.
+                var translatedPairs = 0
                 contextualChunk.pages.values.forEach { page ->
                     page.blocks.forEach { b ->
                         glossaryStats.add(b.text, b.translation)
-                        if (b.parentWidth > 0f && b.parentHeight > 0f) tagged++ else untagged++
+                        if (b.translation.isNotBlank()) translatedPairs++
                     }
                 }
                 val newGlossary = glossaryStats.build()
                 store.updateGlossary(newGlossary)
                 logcat(LogPriority.INFO) {
-                    "TachiyomiAT batch stage2-AI chunk: tag-coverage tagged=$tagged untagged=$untagged " +
+                    "TachiyomiAT batch stage2-AI chunk: translatedPairs=$translatedPairs " +
                         "glossaryEntries=${newGlossary.size}"
                 }
                 completedPages.forEach { pk ->
@@ -1456,27 +1455,46 @@ class TranslationPipeline(
             return
         }
         logcat(LogPriority.INFO) {
-            "TachiyomiAT batch DONE chapter=${chapter.name} pages=${orderedStreams.size}"
+            "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
         }
 
         if (isAi && contextualTranslator != null) {
             data class ReviseBlockRef(val pageKey: String, val originalBlock: TranslationBlock)
             val blocksToRevise = mutableListOf<ReviseBlockRef>()
+            var skippedRevisionBlocks = 0
+            var userEditedRevisionBlocks = 0
             store.state.value.forEach { (pageKey, pageTranslation) ->
                 pageTranslation.blocks.forEach { block ->
-                    if (block.needsRevision && block.userEditedAt == null && block.text.isNotBlank()) {
-                        blocksToRevise.add(ReviseBlockRef(pageKey, block))
+                    if (block.needsRevision) {
+                        if (block.userEditedAt == null && block.text.isNotBlank()) {
+                            blocksToRevise.add(ReviseBlockRef(pageKey, block))
+                        } else {
+                            skippedRevisionBlocks++
+                            if (block.userEditedAt != null) userEditedRevisionBlocks++
+                        }
                     }
                 }
             }
 
+            tracker?.beginRevision(
+                totalBlocks = blocksToRevise.size,
+                skippedBlocks = skippedRevisionBlocks,
+                userEditedBlocks = userEditedRevisionBlocks,
+            )
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT Pass 2 START chapter=${chapter.name} " +
+                    "eligible=${blocksToRevise.size} skipped=$skippedRevisionBlocks " +
+                    "userEdited=$userEditedRevisionBlocks"
+            }
+
             if (blocksToRevise.isNotEmpty()) {
                 val chunkedBlocks = blocksToRevise.chunked(20)
-                for (chunk in chunkedBlocks) {
+                for ((chunkIndex, chunk) in chunkedBlocks.withIndex()) {
                     coroutineContext.ensureActive()
+                    val refsGrouped = chunk.groupBy { it.pageKey }
+                    tracker?.markRevisionChunkRunning(refsGrouped.keys, chunk.size)
                     try {
                         val tempMap = LinkedHashMap<String, PageTranslation>()
-                        val refsGrouped = chunk.groupBy { it.pageKey }
                         refsGrouped.forEach { (pageKey, refs) ->
                             val originalPage = store.state.value[pageKey]
                             if (originalPage != null) {
@@ -1499,6 +1517,7 @@ class TranslationPipeline(
 
                         contextualTranslator.translateContextual(contextChunk, isPass2 = true)
 
+                        val resolvableRefs = chunk.count { tempMap.containsKey(it.pageKey) }
                         tempMap.keys.forEach { pageKey ->
                             store.updatePage(pageKey) { existing ->
                                 val page = existing ?: PageTranslation(sourceFileName = pageKey)
@@ -1529,13 +1548,27 @@ class TranslationPipeline(
                                 tryRender(pageKey)
                             }
                         }
+                        tracker?.markRevisionChunkCompleted(resolvableRefs)
+                        if (resolvableRefs < chunk.size) {
+                            tracker?.markRevisionChunkFailed(chunk.size - resolvableRefs)
+                        }
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT Pass 2 chunk ${chunkIndex + 1}/${chunkedBlocks.size} complete " +
+                                "chapter=${chapter.name} revised=$resolvableRefs failed=${chunk.size - resolvableRefs}"
+                        }
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        logcat(LogPriority.ERROR, e) { "TachiyomiAT Pass 2 revision chunk failed" }
+                        tracker?.markRevisionChunkFailed(chunk.size)
+                        logcat(LogPriority.ERROR, e) {
+                            "TachiyomiAT Pass 2 chunk ${chunkIndex + 1}/${chunkedBlocks.size} failed " +
+                                "chapter=${chapter.name} blocks=${chunk.size}"
+                        }
                     }
                 }
             }
         }
+
+        tracker?.markRevisionFinished()
 
         val pageMap = store.state.value
         val reconciliation = BatchProgressReconciler.reconcile(
@@ -1556,6 +1589,14 @@ class TranslationPipeline(
             }
         }
         store.flush()
+        val revision = tracker?.snapshot?.value?.revision
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} " +
+                "revisionCompleted=${revision?.completedBlocks ?: 0} " +
+                "revisionFailed=${revision?.failedBlocks ?: 0} " +
+                "revisionSkipped=${revision?.skippedBlocks ?: 0} " +
+                "revisionUserEdited=${revision?.userEditedBlocks ?: 0}"
+        }
     }
 
     private suspend fun translateAiChunkWithAdaptiveRetry(

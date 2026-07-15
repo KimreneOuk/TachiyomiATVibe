@@ -73,9 +73,9 @@ class OcrArtifactSanitizerTest {
     }
 
     @Test
-    fun `a leading SPEECH role-tag echoed by the model is stripped`() {
-        // The [SPEECH] tag is input-only metadata; if a model echoes it at the
-        // start of a translation, it must be removed before render.
+    fun `a leading legacy SPEECH role-tag echoed by the model is stripped`() {
+        // Current prompts do not emit this tag, but defensive cleanup keeps old
+        // prompt packets or model echoes from reaching the renderer.
         OcrArtifactSanitizer.sanitize("[SPEECH] I'm going.") shouldBe "I'm going."
     }
 

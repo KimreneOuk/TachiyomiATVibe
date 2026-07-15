@@ -16,6 +16,7 @@ class TranslationProgressSnapshotTest {
         snapshot.donePages shouldBe 0
         snapshot.totalPages shouldBe 0
         snapshot.fraction shouldBe 0f
+        snapshot.batchPhase shouldBe TranslationBatchPhase.IDLE
     }
 
     @Test
@@ -188,6 +189,17 @@ class TranslationProgressSnapshotTest {
         )
 
         snapshot.partialPages shouldBe 1
+    }
+
+    @Test
+    fun `computed translating snapshot starts in first pass`() {
+        val snapshot = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATING,
+            pageMap = mapOf("001.jpg" to PageTranslation()),
+        )
+
+        snapshot.batchPhase shouldBe TranslationBatchPhase.FIRST_PASS
     }
 
     @Test

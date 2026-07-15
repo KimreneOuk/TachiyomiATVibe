@@ -1,23 +1,34 @@
 # Translation Quality and AOT Progress
 
-Last updated: 2026-07-13
+Last updated: 2026-07-15
 
 ## Current state
 
-- Branch: `fix/translation-race-p0-quality`
-- Worktree: clean after the progress tracker commit
-- Base: `Quality-Improvement`
-- Latest implementation commit before this tracker: `70fbeec feat(translation): add fixed-512 AOT model staging`
-- Standard unit tests: passing
-- Current production inpainting path: dynamic-shape CPU/XNNPACK AOT model
-- Fixed-512 and NNAPI paths: prepared only where explicitly noted below; not enabled in production
+- Branch: `fix-translation-pipeline`
+- HEAD: `afb931e Fix translation pipeline markdown formatting, implement 2-pass workflow, and remove legacy SPEECH_TAG`
+- Worktree: observable revision implementation and documentation cleanup are complete; changes are unstaged
+- Focus: pipe-delimited AI prompts, streaming first-pass batch translation, and observable delayed automatic Pass 2 revision
+- Standard unit tests: attempted with the Android Studio JDK, but the focused Gradle run exceeded the tool timeout before reporting a result
 
-The authoritative implementation plan is:
+The detailed AOT wave history below is historical context. The two plan files
+that originally drove it are no longer present on this branch; live code and
+current `docs/`/`Plan/active/` notes are authoritative.
 
-- `Plan/MASTER_IMPLEMENTATION_PLAN_2026-07-12.md`
-- `Plan/AOT_NPU_FIXED512_DESIGN_2026-07-12.md`
+### Translation batch observability
 
-## Wave status
+- First-pass OCR, inpainting, AI translation, and rendering are streamed, so
+  readable pages can appear before the chapter finishes.
+- AI Pass 2 starts automatically after the first-pass batch barrier. It revises
+  eligible flagged blocks in chunks and refreshes the shared reader overlay as
+  corrections arrive.
+- The progress snapshot distinguishes first-pass work from revision work and
+  reports revision totals, completed/failed work, skipped/user-edited blocks,
+  and the active revision page.
+  Revision progress is live-only; it is not persisted as resume state.
+- “First pass complete” means the chapter is readable. Final batch completion is
+  reported only after automatic revision finishes or records its failures.
+
+## Historical AOT wave status
 
 ### Baseline and documentation — complete
 
@@ -114,7 +125,7 @@ Required devices:
 
 Each must be tested for model recopying, crashes, OOMs, stalls, fallback behavior, and visual quality.
 
-## Validation history
+## Historical validation
 
 The reliable command for this repository is:
 
@@ -123,7 +134,8 @@ $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr'
 .\gradlew.bat :app:testStandardDebugUnitTest --no-daemon
 ```
 
-Latest result: `BUILD SUCCESSFUL`, 570 test cases pass.
+The historical results below are not current validation. Re-run the focused
+translation tests and the standard suite before treating any count as current.
 
 The Dev flavor remains unavailable on this machine because `app/src/devDebug/google-services.json` is missing. Use the Standard flavor for local verification.
 

@@ -24,13 +24,11 @@ class TranslationPromptsTest {
     )
 
     @Test
-    fun `in-bubble blocks are tagged SPEECH, free-text blocks are not`() {
+    fun `id-mapped source lines contain only the id and source text`() {
         with(TranslationPrompts) {
-            block("こんにちは", inBubble = true).isInsideBubble() shouldBe true
-            block("三年後", inBubble = false).isInsideBubble() shouldBe false
-
-            idMappedSourceLine("b0", block("こんにちは", inBubble = true)) shouldBe "b0|[SPEECH] こんにちは"
+            idMappedSourceLine("b0", block("こんにちは", inBubble = true)) shouldBe "b0|こんにちは"
             idMappedSourceLine("b1", block("三年後", inBubble = false)) shouldBe "b1|三年後"
+            idMappedSourceLine("b2", block("第一行\n第二行", inBubble = false)) shouldBe "b2|第一行 第二行"
         }
     }
 
@@ -111,9 +109,6 @@ class TranslationPromptsTest {
         pass1 shouldContain "POINT OF VIEW"
         pass1 shouldContain "pro-drop"
         pass1 shouldContain "first-person"
-        pass1 shouldContain "[SPEECH]"
-        pass1 shouldContain "METADATA, NOT TEXT"
-        pass1 shouldContain "ONLY"
         pass1 shouldContain "ID|Translated Text|[STATUS]"
 
         pass2 shouldContain "Japanese"
@@ -124,14 +119,15 @@ class TranslationPromptsTest {
     }
 
     @Test
-    fun `prompts never instruct the model to echo the SPEECH tag`() {
+    fun `pass 1 prompt requires status-bearing pipe-delimited output`() {
         val prompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.CHINESE,
             TextTranslatorLanguage.ENGLISH,
         )
-        // The few-shot source side shows the tag, but the instruction forbids
-        // including it in output — guard against an accidental flip of that rule.
-        prompt shouldContain "NEVER include"
+        prompt shouldContain "[FLAG]"
+        prompt shouldContain "[OK]"
+        prompt shouldContain "Output ONLY these lines"
+        prompt shouldNotContain "[SPEECH]"
     }
 
     @Test

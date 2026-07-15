@@ -79,6 +79,9 @@
     <string name="reader_translation_stage_failed">Failed</string>
     <string name="reader_translation_stage_queued">Queued</string>
     <string name="reader_translation_page">Page %1$d</string>
+    <string name="reader_translation_revision_progress">Revising flagged text: %1$d/%2$d</string>
+    <string name="reader_translation_revision_finalizing">Finishing translation updates</string>
+    <string name="reader_translation_revision_failed">%1$d revisions failed</string>
 
     <!-- TachiyomiAT: per-page original/translated compare handle -->
     <string name="reader_compare_handle">Compare original and translated</string>
@@ -106,10 +109,15 @@
     <string name="manga_batch_stage_ocr">OCR/Detection</string>
     <string name="manga_batch_stage_translate">Translation</string>
     <string name="manga_batch_stage_inpaint">Cleaning</string>
-    <string name="manga_batch_stage_render">Canvas Render</string>
+    <string name="manga_batch_stage_render">Render</string>
     <string name="manga_batch_stage_count">%1$d/%2$d</string>
     <string name="manga_batch_partial">Partial pages: %1$d</string>
     <string name="manga_batch_aborted">Batch aborted: %1$s</string>
     <string name="manga_batch_failures">Failures</string>
     <string name="manga_batch_failure_group">• %1$s (pages: %2$s)</string>
+    <string name="manga_batch_first_pass">Translating and rendering pages: %1$d/%2$d</string>
+    <string name="manga_batch_revision_progress">Revising flagged text: %1$d/%2$d</string>
+    <string name="manga_batch_revision_complete">Revision complete</string>
+    <string name="manga_batch_revision_failed">%1$d revisions failed</string>
+    <string name="manga_batch_finalizing">Finishing translation updates</string>
 </resources>

@@ -6,6 +6,8 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.RevisionProgress
+import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
@@ -33,6 +35,8 @@ class TranslationBatchProgressTracker(
     private var tickJob: Job? = null
     private var batchStartTime = System.currentTimeMillis()
     private var finished = false
+    private var batchPhase = TranslationBatchPhase.FIRST_PASS
+    private var revisionProgress = RevisionProgress()
     private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
 
     private fun computeSnapshotFor(
@@ -49,6 +53,8 @@ class TranslationBatchProgressTracker(
         forcedDoneCount = forcedDoneCount,
         indexResolver = indexResolver,
         permitHolderPageKey = permitHolderResolver?.invoke(),
+        batchPhase = batchPhase,
+        revision = revisionProgress,
     )
 
     init {
@@ -57,17 +63,79 @@ class TranslationBatchProgressTracker(
     }
 
     private fun emptySnapshot(): TranslationProgressSnapshot {
-        return TranslationProgressSnapshot.empty(chapterId, Translation.State.TRANSLATING)
+        return TranslationProgressSnapshot.empty(chapterId, Translation.State.TRANSLATING).copy(
+            batchPhase = batchPhase,
+            revision = revisionProgress,
+        )
     }
 
     fun rebuildFromStore() {
         if (finished) return
-            val pageMap = store.state.value
+        val pageMap = store.state.value
         if (pageMap.isEmpty()) {
             _snapshot.value = emptySnapshot()
             return
         }
         _snapshot.value = computeSnapshotFor(pageMap, Translation.State.TRANSLATING)
+    }
+
+    fun beginRevision(
+        totalBlocks: Int,
+        skippedBlocks: Int = 0,
+        userEditedBlocks: Int = 0,
+    ) {
+        if (finished) return
+        batchPhase = if (totalBlocks > 0) {
+            TranslationBatchPhase.REVISING
+        } else {
+            TranslationBatchPhase.FINALIZING
+        }
+        revisionProgress = RevisionProgress(
+            totalBlocks = totalBlocks,
+            skippedBlocks = skippedBlocks,
+            userEditedBlocks = userEditedBlocks,
+        )
+        rebuildFromStore()
+    }
+
+    fun markRevisionChunkRunning(pageKeys: Collection<String>, blockCount: Int) {
+        if (finished || batchPhase != TranslationBatchPhase.REVISING) return
+        revisionProgress = revisionProgress.copy(
+            activePageKey = pageKeys.firstOrNull(),
+            activeChunkBlocks = blockCount,
+        )
+        rebuildFromStore()
+    }
+
+    fun markRevisionChunkCompleted(completedBlocks: Int) {
+        if (finished) return
+        val remaining = (revisionProgress.totalBlocks -
+            revisionProgress.completedBlocks - revisionProgress.failedBlocks).coerceAtLeast(0)
+        revisionProgress = revisionProgress.copy(
+            completedBlocks = revisionProgress.completedBlocks + completedBlocks.coerceAtMost(remaining),
+            activePageKey = null,
+            activeChunkBlocks = 0,
+        )
+        rebuildFromStore()
+    }
+
+    fun markRevisionChunkFailed(failedBlocks: Int) {
+        if (finished) return
+        val remaining = (revisionProgress.totalBlocks -
+            revisionProgress.completedBlocks - revisionProgress.failedBlocks).coerceAtLeast(0)
+        revisionProgress = revisionProgress.copy(
+            failedBlocks = revisionProgress.failedBlocks + failedBlocks.coerceAtMost(remaining),
+            activePageKey = null,
+            activeChunkBlocks = 0,
+        )
+        rebuildFromStore()
+    }
+
+    fun markRevisionFinished() {
+        if (finished) return
+        batchPhase = TranslationBatchPhase.FINALIZING
+        revisionProgress = revisionProgress.copy(activePageKey = null, activeChunkBlocks = 0)
+        rebuildFromStore()
     }
 
     suspend fun markOcrRunning(pageKey: String) {
@@ -153,6 +221,8 @@ class TranslationBatchProgressTracker(
     fun finish(result: ReconciliationResult) {
         finished = true
         tickJob?.cancel()
+        batchPhase = TranslationBatchPhase.FINISHED
+        revisionProgress = revisionProgress.copy(activePageKey = null, activeChunkBlocks = 0)
         val pageMap = store.state.value
         val snapshot = computeSnapshotFor(
             pageMap = pageMap,
@@ -167,6 +237,8 @@ class TranslationBatchProgressTracker(
     suspend fun abort(remainingPageKeys: Set<String>, reason: String) {
         finished = true
         tickJob?.cancel()
+        batchPhase = TranslationBatchPhase.FINISHED
+        revisionProgress = revisionProgress.copy(activePageKey = null, activeChunkBlocks = 0)
         remainingPageKeys.forEach { pageKey ->
             store.updatePage(pageKey) { existing ->
                 (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
@@ -220,9 +292,18 @@ class TranslationBatchProgressTracker(
             forcedDoneCount: Int = -1,
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
+            batchPhase: TranslationBatchPhase = when (chapterState) {
+                Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
+                Translation.State.TRANSLATED -> TranslationBatchPhase.FINISHED
+                else -> TranslationBatchPhase.IDLE
+            },
+            revision: RevisionProgress = RevisionProgress(),
         ): TranslationProgressSnapshot {
             if (pageMap.isEmpty()) {
-                return TranslationProgressSnapshot.empty(0, chapterState)
+                return TranslationProgressSnapshot.empty(0, chapterState).copy(
+                    batchPhase = batchPhase,
+                    revision = revision,
+                )
             }
 
             val rows = pageMap.entries
@@ -292,6 +373,8 @@ class TranslationBatchProgressTracker(
                 elapsedMs = elapsedMs,
                 aborted = false,
                 abortedReason = null,
+                batchPhase = batchPhase,
+                revision = revision,
             )
         }
 

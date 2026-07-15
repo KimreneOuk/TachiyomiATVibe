@@ -32,6 +32,8 @@ import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidge
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.model.TranslationBatchPhase
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.translator.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.StandardTranslatorKind
@@ -84,6 +86,7 @@ fun TranslationSettingsSheet(
     queue: ImmutableList<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo> = persistentListOf(),
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     translationCurrentPage: Int = 0,
+    translationBatchProgress: TranslationProgressSnapshot? = null,
 ) {
     var showAdvanced by remember { mutableStateOf(false) }
 
@@ -107,6 +110,7 @@ fun TranslationSettingsSheet(
                 queue = queue,
                 translationProgress = translationProgress,
                 translationCurrentPage = translationCurrentPage,
+                translationBatchProgress = translationBatchProgress,
             )
             StopAllSection(onStopAllTranslation)
             LanguagesSection(
@@ -175,11 +179,13 @@ private fun ColumnScope.QueueSection(
     queue: ImmutableList<eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo>,
     translationProgress: Pair<Int, Int>,
     translationCurrentPage: Int,
+    translationBatchProgress: TranslationProgressSnapshot?,
 ) {
     val (done, total) = translationProgress
     val queued = queue.count {
         it.stage != eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.DONE
     }
+    val revision = translationBatchProgress?.revision
     val summary = when {
         total == 0 && queue.isEmpty() ->
             stringResource(ATMR.strings.reader_translation_queue_idle)
@@ -197,6 +203,44 @@ private fun ColumnScope.QueueSection(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
     )
+
+    when (translationBatchProgress?.batchPhase) {
+        TranslationBatchPhase.REVISING -> Text(
+            text = stringResource(
+                ATMR.strings.reader_translation_revision_progress,
+                revision?.completedBlocks ?: 0,
+                revision?.totalBlocks ?: 0,
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+        )
+        TranslationBatchPhase.FINALIZING -> Text(
+            text = stringResource(ATMR.strings.reader_translation_revision_finalizing),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+        )
+        TranslationBatchPhase.FINISHED -> when {
+            (revision?.failedBlocks ?: 0) > 0 -> Text(
+                text = stringResource(
+                    ATMR.strings.reader_translation_revision_failed,
+                    revision?.failedBlocks ?: 0,
+                ),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+            )
+            (revision?.totalBlocks ?: 0) > 0 -> Text(
+                text = stringResource(ATMR.strings.manga_batch_revision_complete),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
+            )
+            else -> Unit
+        }
+        else -> Unit
+    }
 
     if (queue.isEmpty()) return
 

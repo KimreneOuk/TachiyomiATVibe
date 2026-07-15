@@ -150,7 +150,7 @@ The automatic translation system is the defining feature of this fork:
 - `eu.kanade.translation.TranslationManager` — manages translation jobs, auto-prefetch, cancellation
 - `eu.kanade.translation.detection.OnnxPageTextDetector` — text region detection via ONNX
 - `eu.kanade.translation.ocr.*` — OCR engines (PaddleOCR v6, MangaOCR, ML Kit)
-- `eu.kanade.translation.translator.*` — text translators (Gemini, DeepSeek, DeepL, Google, OpenRouter, LM Studio, ML Kit) + shared pure helpers (`NumberedLineResponseParser`, `OcrArtifactSanitizer`, `AiModelFetcher`)
+- `eu.kanade.translation.translator.*` — text translators (Gemini, DeepSeek, DeepL, Google, OpenRouter, LM Studio, ML Kit) + shared pure helpers (`TranslationPrompts`, `OcrArtifactSanitizer`, `AiModelFetcher`)
 - `eu.kanade.translation.inpainting.AOTInpainting` — AOT-based bubble cleaning; mask/morphology math in `BubbleMaskBuilder`
 - `eu.kanade.translation.recognition.BoxGeometry` — shared bbox IoU / geometric-dedupe used by both the detector and OCR stages
 - `eu.kanade.translation.rendering.PageTextRenderer` — renders translated text; color policy in `RenderColorEstimator`

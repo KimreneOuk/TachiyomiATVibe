@@ -4,6 +4,7 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.TranslationProgressStage
 import io.kotest.matchers.shouldBe
@@ -168,6 +169,50 @@ class TranslationBatchProgressTrackerTest {
         reconciled.activeStage shouldBe expected.activeStage
 
         tracker.close()
+    }
+
+    @Test
+    fun `revision lifecycle is visible and counts complete and failed blocks`() = runTest {
+        val store = ChapterTranslationStore(null, null)
+        val tracker = TranslationBatchProgressTracker(
+            chapterId = 7L,
+            store = store,
+            orderedPageKeys = listOf("001.jpg", "002.jpg"),
+            scope = this,
+        )
+
+        store.preRegisterPages(listOf("001.jpg", "002.jpg"))
+        tracker.beginRevision(totalBlocks = 3, skippedBlocks = 1, userEditedBlocks = 1)
+        tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.REVISING
+        tracker.snapshot.value.revision.totalBlocks shouldBe 3
+        tracker.snapshot.value.revision.skippedBlocks shouldBe 1
+        tracker.snapshot.value.revision.userEditedBlocks shouldBe 1
+
+        tracker.markRevisionChunkRunning(listOf("001.jpg", "002.jpg"), blockCount = 2)
+        tracker.snapshot.value.revision.activePageKey shouldBe "001.jpg"
+        tracker.snapshot.value.revision.activeChunkBlocks shouldBe 2
+
+        tracker.markRevisionChunkCompleted(completedBlocks = 2)
+        tracker.markRevisionChunkFailed(failedBlocks = 1)
+        tracker.snapshot.value.revision.completedBlocks shouldBe 2
+        tracker.snapshot.value.revision.failedBlocks shouldBe 1
+        tracker.snapshot.value.revision.activePageKey shouldBe null
+
+        tracker.markRevisionFinished()
+        tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.FINALIZING
+
+        tracker.finish(
+            ReconciliationResult(
+                chapterStatus = Translation.State.TRANSLATED,
+                strandedPages = emptyMap(),
+                doneCount = 2,
+                failedCount = 0,
+                partialCount = 0,
+            ),
+        )
+        tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.FINISHED
+        tracker.snapshot.value.revision.completedBlocks shouldBe 2
+        tracker.snapshot.value.revision.failedBlocks shouldBe 1
     }
 
     private fun block() = TranslationBlock(

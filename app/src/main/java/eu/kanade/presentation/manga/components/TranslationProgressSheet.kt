@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.translation.batch.BatchPhase
 import eu.kanade.translation.model.StageCount
+import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import tachiyomi.i18n.MR
@@ -84,16 +85,35 @@ fun TranslationProgressSheet(
                 style = MaterialTheme.typography.bodyMedium,
             )
 
-            val activeText = when {
-                snapshot.totalPages == 0 -> stringResource(ATMR.strings.manga_translation_no_progress)
-                snapshot.activeStage != null && snapshot.activePage > 0 ->
-                    stringResource(
-                        ATMR.strings.manga_translation_active,
-                        snapshot.activePage,
-                        stageLabel(snapshot.activeStage),
+            val activeText = when (snapshot.batchPhase) {
+                TranslationBatchPhase.FIRST_PASS -> when {
+                    snapshot.totalPages == 0 -> stringResource(ATMR.strings.manga_translation_no_progress)
+                    snapshot.activeStage != null && snapshot.activePage > 0 ->
+                        stringResource(
+                            ATMR.strings.manga_translation_active,
+                            snapshot.activePage,
+                            stageLabel(snapshot.activeStage),
+                        )
+                    else -> stringResource(
+                        ATMR.strings.manga_batch_first_pass,
+                        snapshot.donePages,
+                        snapshot.totalPages,
                     )
-                snapshot.failedCount > 0 -> stringResource(ATMR.strings.reader_translation_stage_failed)
-                else -> stringResource(ATMR.strings.reader_translation_stage_done)
+                }
+                TranslationBatchPhase.REVISING -> stringResource(
+                    ATMR.strings.manga_batch_revision_progress,
+                    snapshot.revision.completedBlocks,
+                    snapshot.revision.totalBlocks,
+                )
+                TranslationBatchPhase.FINALIZING -> stringResource(ATMR.strings.manga_batch_finalizing)
+                TranslationBatchPhase.FINISHED -> if (snapshot.revision.failedBlocks > 0) {
+                    stringResource(ATMR.strings.manga_batch_revision_failed, snapshot.revision.failedBlocks)
+                } else if (snapshot.revision.totalBlocks > 0) {
+                    stringResource(ATMR.strings.manga_batch_revision_complete)
+                } else {
+                    stringResource(ATMR.strings.reader_translation_stage_done)
+                }
+                TranslationBatchPhase.IDLE -> stringResource(ATMR.strings.manga_translation_no_progress)
             }
             Text(
                 text = activeText,

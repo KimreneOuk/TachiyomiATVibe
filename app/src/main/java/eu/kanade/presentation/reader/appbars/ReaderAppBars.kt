@@ -28,6 +28,7 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.pager.R2LPagerViewer
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import kotlinx.collections.immutable.persistentListOf
 import tachiyomi.i18n.MR
 import tachiyomi.presentation.core.components.material.padding
@@ -69,6 +70,7 @@ fun ReaderAppBars(
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     translationCurrentPage: Int = 0,
+    translationBatchProgress: TranslationProgressSnapshot? = null,
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: forwarded to BottomReaderBar to disable the translate icon
     // while work is running.
@@ -198,6 +200,7 @@ fun ReaderAppBars(
                     translationState = translationState,
                     translationProgress = translationProgress,
                     translationCurrentPage = translationCurrentPage,
+                    translationBatchProgress = translationBatchProgress,
                     onClickTranslate = onClickTranslate,
                     translateEnabled = translateEnabled,
                 )

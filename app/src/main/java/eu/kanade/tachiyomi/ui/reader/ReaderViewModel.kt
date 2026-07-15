@@ -56,6 +56,7 @@ import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CancellationException
@@ -75,6 +76,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
@@ -320,6 +322,7 @@ class ReaderViewModel @JvmOverloads constructor(
     val eventFlow = eventChannel.receiveAsFlow()
 
     private var translationStoreJob: kotlinx.coroutines.Job? = null
+    private var translationBatchProgressJob: kotlinx.coroutines.Job? = null
     private var translationStateJob: kotlinx.coroutines.Job? = null
     // TachiyomiAT: dedup token for handleAutoTranslation. On chapter load, BOTH
     // the landing-page path (loadChapter) AND the auto-toggle/enable collectors
@@ -779,6 +782,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // translatorPermit) after the reader closes, leaking work and memory
         // across reader sessions.
         translationStoreJob?.cancel()
+        translationBatchProgressJob?.cancel()
         translationStateJob?.cancel()
         translationManager.stopReaderTranslations("reader closed")
     }
@@ -1666,6 +1670,7 @@ class ReaderViewModel @JvmOverloads constructor(
         @IntRange(from = -100, to = 100) val brightnessOverlayValue: Int = 0,
         val translationState: Translation.State = Translation.State.NOT_TRANSLATED,
         val translationProgress: Pair<Int, Int> = Pair(0, 0),
+        val translationBatchProgress: TranslationProgressSnapshot? = null,
         // TachiyomiAT: 1-based index of the page currently being translated (the
         // lowest-index page with a RUNNING stage), or 0 when none. The bottom bar
         // uses this so "Translating page N of M" tracks the page the spinner is
@@ -2243,6 +2248,7 @@ class ReaderViewModel @JvmOverloads constructor(
 
     fun observeLiveTranslationStore() {
         translationStoreJob?.cancel()
+        translationBatchProgressJob?.cancel()
         val manga = manga ?: return
         val chapter = getCurrentChapter()?.chapter ?: return
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
@@ -2258,6 +2264,11 @@ class ReaderViewModel @JvmOverloads constructor(
             chapter.id!!, chapter.name, chapter.scanlator, manga.title, source,
         ) ?: return
         val storeState = store.state
+        translationBatchProgressJob = viewModelScope.launchIO {
+            translationManager.observeBatchProgress(chapter.id!!).collect { progress ->
+                mutableState.update { it.copy(translationBatchProgress = progress) }
+            }
+        }
         translationStoreJob = viewModelScope.launchIO {
             // TachiyomiAT: heal stranded RUNNING/PENDING pages left behind by a
             // prior crash, an OOM-kill, or the native-code permit leak this build

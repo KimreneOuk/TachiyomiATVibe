@@ -6,7 +6,6 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
-import io.kotest.matchers.string.shouldNotContain
 import org.junit.jupiter.api.Test
 
 class TranslationContextChunkPlannerTest {
@@ -258,24 +257,20 @@ class TranslationContextChunkPlannerTest {
         return PageTranslation(blocks = mutableListOf(block(text)))
     }
 
-    private fun blockInBubble(text: String, translation: String): TranslationBlock =
-        blockWith(text, translation).copy(parentWidth = 40f, parentHeight = 40f)
-
     @Test
-    fun `updateRollingContext tags in-bubble blocks as SPEECH on the source side`() {
+    fun `updateRollingContext keeps plain source and translation pairs`() {
         val page = PageTranslation(
             blocks = mutableListOf(
-                blockInBubble("行く", "I'm going."),
+                blockWith("行く", "I'm going.").copy(parentWidth = 40f, parentHeight = 40f),
                 blockWith("三年後、東京。", "Three years later, Tokyo."),
             ),
         )
 
         val out = TranslationContextChunkPlanner.updateRollingContext("", mapOf("001.jpg" to page))
 
-        out shouldContain "[SPEECH] 行く => I'm going."
+        out shouldContain "行く => I'm going."
         out shouldContain "三年後、東京。 => Three years later, Tokyo."
-        // Free text (no parent bubble) is NOT tagged.
-        out shouldNotContain "[SPEECH] 三年後"
+        out.contains("[SPEECH]") shouldBe false
     }
 
     @Test

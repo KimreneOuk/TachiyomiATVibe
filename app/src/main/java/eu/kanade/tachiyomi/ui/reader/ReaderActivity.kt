@@ -480,6 +480,7 @@ class ReaderActivity : BaseActivity() {
                 it.translationProgress
             }.collectAsState(initial = Pair(0, 0))
             val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
+            val translationBatchProgress by viewModel.state.map { it.translationBatchProgress }.collectAsState(initial = null)
             // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
             val translationQueue by viewModel.translationQueueState.collectAsState()
             val translationSettingsState by viewModel.translationSettingsState.collectAsState()
@@ -561,6 +562,7 @@ class ReaderActivity : BaseActivity() {
                 translationState = translationState,
                 translationProgress = translationProgress,
                 translationCurrentPage = translationCurrentPage,
+                translationBatchProgress = translationBatchProgress,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
                 // TachiyomiAT: the translate control is ALWAYS tappable, even while
                 // translation is running. While busy it shows a spinner, but tapping it
@@ -628,6 +630,7 @@ class ReaderActivity : BaseActivity() {
                         queue = translationQueue,
                         translationProgress = translationProgress,
                         translationCurrentPage = translationCurrentPage,
+                        translationBatchProgress = translationBatchProgress,
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

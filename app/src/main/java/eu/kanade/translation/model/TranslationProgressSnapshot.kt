@@ -13,6 +13,28 @@ data class StageCount(
     val total: Int,
 )
 
+enum class TranslationBatchPhase {
+    IDLE,
+    FIRST_PASS,
+    REVISING,
+    FINALIZING,
+    FINISHED,
+}
+
+@Immutable
+data class RevisionProgress(
+    val totalBlocks: Int = 0,
+    val completedBlocks: Int = 0,
+    val failedBlocks: Int = 0,
+    val skippedBlocks: Int = 0,
+    val userEditedBlocks: Int = 0,
+    val activePageKey: String? = null,
+    val activeChunkBlocks: Int = 0,
+) {
+    val isActive: Boolean
+        get() = totalBlocks > 0 && completedBlocks + failedBlocks < totalBlocks
+}
+
 /**
  * Rich per-chapter batch progress for pre-translation UI.
  *
@@ -40,6 +62,8 @@ data class TranslationProgressSnapshot(
     val elapsedMs: Long = 0L,
     val aborted: Boolean = false,
     val abortedReason: String? = null,
+    val batchPhase: TranslationBatchPhase = TranslationBatchPhase.IDLE,
+    val revision: RevisionProgress = RevisionProgress(),
 ) {
     val fraction: Float
         get() = if (totalStages > 0) (doneStages.toFloat() / totalStages).coerceIn(0f, 1f) else 0f
@@ -70,6 +94,7 @@ data class TranslationProgressSnapshot(
                 pages = emptyList(),
                 doneStages = 0,
                 totalStages = 0,
+                batchPhase = TranslationBatchPhase.IDLE,
             )
 
         fun compute(
@@ -78,8 +103,19 @@ data class TranslationProgressSnapshot(
             pageMap: Map<String, PageTranslation>?,
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
+            batchPhase: TranslationBatchPhase = when (state) {
+                Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
+                Translation.State.TRANSLATED -> TranslationBatchPhase.FINISHED
+                else -> TranslationBatchPhase.IDLE
+            },
+            revision: RevisionProgress = RevisionProgress(),
         ): TranslationProgressSnapshot {
-            if (pageMap.isNullOrEmpty()) return empty(chapterId, state)
+            if (pageMap.isNullOrEmpty()) {
+                return empty(chapterId, state).copy(
+                    batchPhase = batchPhase,
+                    revision = revision,
+                )
+            }
 
             val rows = pageMap.entries
                 .mapIndexed { insertionOrder, (pageKey, page) ->
@@ -146,6 +182,8 @@ data class TranslationProgressSnapshot(
                 partialPages = partial,
                 groupedFailures = groupedFailures,
                 elapsedMs = System.currentTimeMillis(),
+                batchPhase = batchPhase,
+                revision = revision,
             )
         }
 

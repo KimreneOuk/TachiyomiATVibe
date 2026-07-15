@@ -2,26 +2,42 @@
 
 ## Project
 
-Kotlin Android manga/manhwa/manhua reader with ONNX translation.
+- Kotlin Android manga/manhwa/manhua reader.
+- Translation uses OCR, ONNX recognition/inpainting, AI/API translators, and
+  live or persisted rendering.
+- Optimize for correctness, bounded memory, performance, and low-end devices
+  with at least 6 GB RAM.
 
-**Goals:** Correctness, Performance, Memory efficiency, Low-end device support (6 GB RAM minimum)
+## Source of truth
 
----
+1. Live code and tests.
+2. Current architecture/workflow docs under `docs/`.
+3. Active task notes under `Plan/active/`.
+4. Comments and historical notes, after verifying them against code.
 
-## Workflow
+Comments are hypotheses, not behavior. A stale comment is a defect: update it,
+mark it historical, or remove it when the code changes.
 
-1. **Planning & Investigation** → [`@file:planning.md`](docs/project_context/planning.md)
-2. **Implementation** → [`@file:implementing.md`](docs/project_context/implementing.md)
-3. **Artifact organization** → [`@file:knowledge_base.md`](docs/project_context/knowledge_base.md)
+## Required workflow
 
-## Autonomy Policy
+1. Read `docs/project_context/planning.md`, `implementing.md`, or
+   `knowledge_base.md` when the task touches that workflow.
+2. Use fast codebase search (`rg`) to locate symbols and trace dependencies.
+3. Read relevant docs, entry points, tests, and dependencies before editing.
+4. State the observed behavior, scope, constraints, and success criteria.
+5. Make and challenge a small implementation plan before editing.
+6. Make the smallest safe change that follows existing patterns.
+7. Add or update regression coverage for changed behavior.
+8. Update current user-facing or architectural documentation in the same
+   change. Do not scatter task notes through module directories.
+9. Review the final diff and report exactly what was verified.
 
-Proceed automatically for low-risk, reversible work. For normal bugs and
-features, inspect the evidence, create and internally challenge a plan,
-implement the smallest defensible change, add regression coverage, run
-targeted validation, and update the relevant handoff.
+## Autonomy and approval
 
-Require user approval before:
+Proceed without approval for inspection, test discovery, focused tests, normal
+bug fixes, routine documentation, and reversible local changes.
+
+Ask before:
 
 - architecture rewrites or broad cross-module refactors;
 - database migrations, public API changes, or dependency replacement;
@@ -29,148 +45,42 @@ Require user approval before:
 - materially ambiguous behavior or scope expansion;
 - changes that cannot be safely validated with available tests.
 
-Do not request approval for file inspection, test discovery, targeted test
-creation, safe local validation, or routine documentation updates.
+For large work, use checkpoints: baseline, isolated change, validation, and
+diff review. Delegate only work that can run meaningfully in parallel.
 
-For large work, use checkpoints: establish a baseline, implement an isolated
-part, validate it, then review the diff before continuing. Report unexpected
-findings when they change the plan or the next checkpoint.
+## Change rules
 
-## Knowledge Base Organization
+- Prefer self-documenting code.
+- Do not add comments that merely restate code.
+- Add comments/KDoc only for intent, tradeoffs, memory/performance limits,
+  non-obvious behavior, or algorithm details.
+- Preserve unrelated work in a dirty worktree.
+- Fix causes; do not suppress errors or warnings without understanding them.
+- Never claim a build, test, or compile result that was not run successfully.
 
-Every substantial task must leave its reasoning in the repository. Use the
-routing rules in [`docs/project_context/knowledge_base.md`](docs/project_context/knowledge_base.md).
-New task material belongs in a dated subfolder under `Plan/active/`; stable
-architecture and workflow knowledge belongs under `docs/`. Do not create a
-second competing folder or scatter task notes through module directories.
+## Knowledge base
 
-If the user returns brainstorming from an external AI, preserve it in the
-task's `external/brainstorm_inbox.md`, verify it against the codebase, and
-update the active design or handoff without requiring a detailed follow-up
-instruction.
+- Substantial task reasoning belongs in a dated `Plan/active/` subfolder.
+- Stable architecture and workflow knowledge belongs under `docs/`.
+- Preserve an explicitly supplied external brainstorming packet in its existing
+  `external/` location, verify it against code, and update the active design or
+  handoff. Do not create external files during ordinary investigation.
 
-Create the `external/` files only when the user explicitly asks for an
-external brainstorming packet or context package. Do not create them during
-ordinary investigation.
+## Validation checklist
 
----
+- [ ] Referenced symbols, imports, paths, and APIs exist.
+- [ ] The smallest relevant test or check was run.
+- [ ] Changed behavior has regression coverage where practical.
+- [ ] Documentation and comments match the live implementation.
+- [ ] Unperformed validation and environment limits are explicit.
+- [ ] Final report lists modified files, tests, validation, risks, and follow-up.
 
-## Principles
+## Completion report
 
-- **Documentation First** – Read relevant docs before changes
-- **Never Guess** – Read implementations; trace dependencies
-  - Use codebase search (index available) for faster exploration, this ensure you can get faster result and know where the code exist in which files.
-  - **Comments describe intent; code is the source of truth.** When the two disagree, the code wins and the comment is stale. Treat a comment as a *hypothesis* to verify against the live code path, never as evidence. This codebase has shipped comments that contradicted the running behavior (e.g. a "translation ONNX sessions are CPU-only" comment while the live path requested NNAPI; a "NPU outputs black shapes" comment describing a past failure as if it were current). Acting on such comments without verifying caused wrong recommendations. Before relying on a comment's claim — about behavior, configuration, performance, or a "deliberate decision" — confirm it against the actual call sites, dependencies, and runtime path. If a comment's claim cannot be backed by code, flag the comment as stale and treat the code as authoritative.
-- **Smallest Safe Change** – Only change what's necessary
-- **Architecture Consistency** – Follow existing patterns; consider performance/memory
-- **Test-Driven** – Test before/alongside implementation changes
+Report:
 
----
-
-## Rules
-
-- Update docs when public behavior, architecture, or user-visible behavior changes
-- Prefer self-documenting code
-- Do not create unrelated documentation or comments
-
----
-
-Do not add comments that simply restate what the code does.
-
-Only add comments when they explain:
-
-* Why a decision was made
-* Performance considerations
-* Memory constraints
-* Non-obvious behavior
-* Algorithm details
-
-Remove or update comments that become inaccurate. A stale comment is a defect, not a cosmetic issue: a comment claiming behavior the code no longer does will mislead the next reader (human or agent) into wrong decisions. When you change behavior, update the comment in the same change. When you find a comment that contradicts the code, fix it (reword to match, mark as historical, or delete) rather than leaving it.
-
-Public APIs and complex algorithms may use concise KDoc when it improves understanding.
-
----
-
-## Validation
-
-Before finishing:
-
-1. Verify referenced symbols exist.
-2. Verify imports, paths, and APIs are correct.
-3. Run the smallest relevant validation available.
-4. Clearly report any validation not performed.
-
-Do not claim code compiles, tests pass, or builds succeed unless verified.
-
----
-
-## Error Handling
-
-Never suppress errors or warnings without understanding the root cause.
-
-Fix causes rather than hiding symptoms.
-
-Maintain visibility into failures.
-
----
-
-## Agent Delegation
-
-Use additional agents only when work can be meaningfully performed in parallel.
-
-Examples:
-
-* Implementation
-* Tests
-* Documentation
-* Independent subsystem investigations
-
-Do not spawn additional agents for:
-
-* Small single-file edits
-* Simple renames
-* Small documentation updates
-* Narrow localized changes
-
-Prefer one agent whenever practical.
-
----
-
-## Communication Style
-
-Work silently during routine investigation and implementation.
-
-Communicate when:
-
-* Presenting findings
-* Explaining decisions
-* Proposing a plan
-* Reporting results
-* Clarifying ambiguity
-
-Keep responses concise and purposeful.
-
----
-
-## Completion Report
-
-At completion, report:
-
-* Files modified
-* Tests added or updated
-* Validation performed
-* Validation not performed
-* Any risks, assumptions, or follow-up work
-
----
-
-## Core Principles
-
-* Documentation-driven development
-* Test-driven behavior changes
-* Performance-first mindset
-* Memory-conscious design
-* Understand before changing
-* Verify before claiming
-* Smallest safe change
-* No guessing
+- files modified;
+- tests added or updated;
+- validation performed;
+- validation not performed;
+- assumptions, risks, and follow-up work.
