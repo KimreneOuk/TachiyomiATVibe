@@ -339,6 +339,7 @@ class PagerPageHolder(
             page.showTranslatedImage = showTranslations && page.translatedStream != null
         }
         val streamFn = page.stream ?: return
+        prepareTranslationImage(page.showTranslatedImage)
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (page.showTranslatedImage) {
@@ -420,39 +421,30 @@ class PagerPageHolder(
             lastShownImageName == null
         }
 
-        when {
-            isBeingTranslated -> {
-                showProcessingOverlay(true)
-                setTranslating(true)
+        if (wantTranslated) {
+            if (!alreadyShowingCorrectImage) {
+                page.showTranslatedImage = true
+                showProcessingOverlay(false)
+                loadJob?.cancel()
+                loadJob = holderScope.launch { setImage() }
             }
-            wantTranslated -> {
-                if (alreadyShowingCorrectImage) {
-                    showProcessingOverlay(false)
-                    showTranslateButton(translationEnabled)
-                    setTranslating(false)
-                } else {
-                    page.showTranslatedImage = true
-                    showProcessingOverlay(false)
-                    showTranslateButton(translationEnabled)
-                    setTranslating(false)
-                    loadJob?.cancel()
-                    loadJob = holderScope.launch { setImage() }
-                }
+        } else {
+            if (!alreadyShowingCorrectImage) {
+                page.showTranslatedImage = false
+                showProcessingOverlay(false)
+                loadJob?.cancel()
+                loadJob = holderScope.launch { setImage() }
             }
-            else -> {
-                if (alreadyShowingCorrectImage) {
-                    showProcessingOverlay(false)
-                    showTranslateButton(translationEnabled)
-                    setTranslating(false)
-                } else {
-                    page.showTranslatedImage = false
-                    showProcessingOverlay(false)
-                    showTranslateButton(translationEnabled)
-                    setTranslating(false)
-                    loadJob?.cancel()
-                    loadJob = holderScope.launch { setImage() }
-                }
-            }
+        }
+
+        if (isBeingTranslated) {
+            showProcessingOverlay(true)
+            showTranslateButton(false)
+            setTranslating(true)
+        } else {
+            showProcessingOverlay(false)
+            showTranslateButton(translationEnabled)
+            setTranslating(false)
         }
         // Remember the image name we're now showing so the next
         // refreshTranslation() can short-circuit if nothing changed. When showing
@@ -472,6 +464,7 @@ class PagerPageHolder(
         }
         showTranslationError(errorMsg)
 
+        prepareTranslationImage(page.showTranslatedImage)
         val wantOverlay = page.showTranslatedImage && translation?.shouldShowTranslationOverlay == true
         val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
         val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0

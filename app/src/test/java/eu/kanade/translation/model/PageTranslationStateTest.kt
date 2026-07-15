@@ -394,6 +394,25 @@ class PageTranslationStateTest {
     }
 
     @Test
+    fun `cleaned image can be displayed before translated overlay is ready`() {
+        val page = translatedPage().apply {
+            cleanedImageName = "001.cleaned.png"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            renderStatus = StageStatus.PENDING
+        }
+
+        page.displayImageName shouldBe "001.cleaned.png"
+        page.isCleanedImageReady shouldBe true
+        page.shouldShowTranslationOverlay shouldBe false
+        page.lifecycle shouldBe PageLifecycle.NeedsRender
+
+        page.renderStatus = StageStatus.READY
+
+        page.shouldShowTranslationOverlay shouldBe true
+        page.lifecycle shouldBe PageLifecycle.Done
+    }
+
+    @Test
     fun `overlay requires valid translation and render readiness`() {
         val page = translatedPage().apply {
             cleanedImageName = "001.cleaned.jpg"

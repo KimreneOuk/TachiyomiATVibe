@@ -19,16 +19,14 @@ class OnnxBubbleSegmenter {
     private var session: OrtSession? = null
 
     fun initialize(modelFile: File) {
-        val options = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
-        try {
-            session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, options)
-            val current = requireNotNull(session)
-            require(current.inputNames == setOf("images")) { "Bubble segmenter input contract changed: ${current.inputNames}" }
-            require(current.outputNames.size == 2) { "Bubble segmenter expected two outputs, got ${current.outputNames}" }
-            logcat(LogPriority.INFO) { "Bubble segmenter initialized: inputs=${current.inputNames} outputs=${current.outputNames}" }
-        } finally {
-            options.close()
-        }
+        session = OnnxRuntimeProvider.createSessionWithFallback(
+            modelFile.absolutePath,
+            useAccelerator = true,
+        )
+        val current = requireNotNull(session)
+        require(current.inputNames == setOf("images")) { "Bubble segmenter input contract changed: ${current.inputNames}" }
+        require(current.outputNames.size == 2) { "Bubble segmenter expected two outputs, got ${current.outputNames}" }
+        logcat(LogPriority.INFO) { "Bubble segmenter initialized: inputs=${current.inputNames} outputs=${current.outputNames}" }
     }
 
     fun segment(bitmap: Bitmap): List<BubbleSegmentationDecoder.Mask> {

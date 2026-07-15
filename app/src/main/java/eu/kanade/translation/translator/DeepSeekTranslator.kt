@@ -25,47 +25,68 @@ class DeepSeekTranslator(
 ) : OpenAiCompatibleTranslator() {
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-        translateInternal(pages, rollingContext = "", glossary = "", outputTokenLimit = maxOutputToken)
+        val linkedPages = LinkedHashMap(pages)
+        val blockCount = linkedPages.values.sumOf { it.blocks.size }
+        val chunk = TranslationContextChunk(
+            pages = linkedPages,
+            blockCount = blockCount,
+            rollingContext = "",
+            glossary = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = maxOutputToken
+        )
+        translateContextual(chunk, isPass2 = false)
     }
 
-    override suspend fun translateContextual(chunk: TranslationContextChunk) {
-        translateInternal(chunk.pages, chunk.rollingContext, chunk.glossary, chunk.maxOutputTokens)
-    }
-
-    private suspend fun translateInternal(
-        pages: MutableMap<String, PageTranslation>,
-        rollingContext: String,
-        glossary: String,
-        outputTokenLimit: Int,
-    ) {
+    override suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean) {
         if (apiKey.isBlank()) {
             throw IllegalArgumentException("DeepSeek API key is required")
         }
 
-        val flatBlocks = mutableListOf<Pair<TranslationBlock, String>>()
-        for ((_, page) in pages) {
+        val blocksToTranslate = mutableListOf<TranslationBlock>()
+        for (page in chunk.pages.values) {
             for (block in page.blocks) {
-                if (block.text.isNotBlank()) {
-                    flatBlocks.add(Pair(block, block.text))
+                val isNonBlank = block.text.isNotBlank()
+                val shouldTranslate = if (isPass2) {
+                    isNonBlank && block.needsRevision && block.userEditedAt == null
+                } else {
+                    isNonBlank
+                }
+                if (shouldTranslate) {
+                    blocksToTranslate.add(block)
                 }
             }
         }
 
-        if (flatBlocks.isEmpty()) return
+        if (blocksToTranslate.isEmpty()) {
+            return
+        }
+
+        val idToBlock = blocksToTranslate.mapIndexed { index, block -> "b$index" to block }.toMap()
 
         try {
-            val textBlocksStr = flatBlocks.mapIndexed { index, (block, _) ->
-                TranslationPrompts.numberedSourceLine(index, block)
-            }.joinToString("\n")
-            val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, glossary)
+            val systemPrompt = if (isPass2) {
+                TranslationPrompts.pass2SystemPrompt(fromLang, toLang)
+            } else {
+                TranslationPrompts.pass1SystemPrompt(fromLang, toLang)
+            }
 
-            val systemPrompt = TranslationPrompts.numberedSystemPrompt(fromLang, toLang)
+            val contextPrefix = TranslationPrompts.contextPrefix(chunk.rollingContext, chunk.glossary)
+            val promptLines = blocksToTranslate.mapIndexed { index, block ->
+                val id = "b$index"
+                if (isPass2) {
+                    "$id|Source: ${block.text} | Draft: ${block.translation}"
+                } else {
+                    TranslationPrompts.idMappedSourceLine(id, block)
+                }
+            }
+            val promptBody = promptLines.joinToString("\n")
+            val finalPrompt = if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
 
-            val mediaType = "application/json; charset=utf-8".toMediaType()
             val jsonObject = buildJsonObject {
                 put("model", if (modelName.isBlank()) "deepseek-chat" else modelName)
                 put("temperature", temperature)
-                put("max_tokens", outputTokenLimit)
+                put("max_tokens", chunk.maxOutputTokens)
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "system")
@@ -73,11 +94,7 @@ class DeepSeekTranslator(
                     }
                     addJsonObject {
                         put("role", "user")
-                        put(
-                            "content",
-                            contextPrefix +
-                                "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
-                        )
+                        put("content", finalPrompt)
                     }
                 }
             }.toString()
@@ -88,22 +105,21 @@ class DeepSeekTranslator(
                 payloadJson = jsonObject,
             )
 
-            val parsedTranslations = NumberedLineResponseParser.parse(
-                raw = rawOutput,
-                expectedCount = flatBlocks.size,
-                targetLang = toLang,
-            )
-
-            // TachiyomiAT: never fall back to source text on a blank/missing line.
-            // An empty translation lets the batch validation gate mark the block
-            // PARTIAL/FAILED instead of silently passing OCR off as a translation.
-            flatBlocks.forEachIndexed { index, (block, _) ->
-                val translated = parsedTranslations[index] ?: ""
-                if (translated.isNotBlank()) {
-                    block.translation = OcrArtifactSanitizer.sanitize(translated)
+            val lines = rawOutput.split("\n")
+            for (line in lines) {
+                val parsed = TranslationPrompts.parseLine(line) ?: continue
+                val block = idToBlock[parsed.id] ?: continue
+                if (block.userEditedAt != null) {
+                    continue
+                }
+                block.translation = OcrArtifactSanitizer.sanitize(parsed.text)
+                block.needsRevision = if (isPass2) {
+                    false
+                } else {
+                    parsed.needsRevision ?: false
                 }
             }
-            TranslationBlockFilters.removeWatermarkBlocks(pages)
+            TranslationBlockFilters.removeWatermarkBlocks(chunk.pages)
         } catch (e: Exception) {
             logcat { "DeepSeek Translation Error : ${e.stackTraceToString()}" }
             throw e

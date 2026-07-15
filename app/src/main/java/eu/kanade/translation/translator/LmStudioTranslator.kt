@@ -28,19 +28,20 @@ class LmStudioTranslator(
     private val normalizedBaseUrl = AiModelFetcher.normalizeBaseUrl(baseUrl)
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-        translateInternal(pages, rollingContext = "", glossary = "", outputTokenLimit = maxOutputToken)
+        val linkedPages = LinkedHashMap(pages)
+        val blockCount = linkedPages.values.sumOf { it.blocks.size }
+        val chunk = TranslationContextChunk(
+            pages = linkedPages,
+            blockCount = blockCount,
+            rollingContext = "",
+            glossary = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = maxOutputToken
+        )
+        translateContextual(chunk, isPass2 = false)
     }
 
-    override suspend fun translateContextual(chunk: TranslationContextChunk) {
-        translateInternal(chunk.pages, chunk.rollingContext, chunk.glossary, chunk.maxOutputTokens)
-    }
-
-    private suspend fun translateInternal(
-        pages: MutableMap<String, PageTranslation>,
-        rollingContext: String,
-        glossary: String,
-        outputTokenLimit: Int,
-    ) {
+    override suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean) {
         if (normalizedBaseUrl.isBlank()) {
             throw IllegalArgumentException("LM Studio base URL is required")
         }
@@ -48,36 +49,54 @@ class LmStudioTranslator(
             throw IllegalArgumentException("LM Studio model is required")
         }
 
-        val flatBlocks = mutableListOf<Pair<TranslationBlock, String>>()
-        for ((_, page) in pages) {
+        val blocksToTranslate = mutableListOf<TranslationBlock>()
+        for (page in chunk.pages.values) {
             for (block in page.blocks) {
-                if (block.text.isNotBlank()) {
-                    flatBlocks.add(block to block.text)
+                val isNonBlank = block.text.isNotBlank()
+                val shouldTranslate = if (isPass2) {
+                    isNonBlank && block.needsRevision && block.userEditedAt == null
+                } else {
+                    isNonBlank
+                }
+                if (shouldTranslate) {
+                    blocksToTranslate.add(block)
                 }
             }
         }
 
-        if (flatBlocks.isEmpty()) return
+        if (blocksToTranslate.isEmpty()) {
+            return
+        }
+
+        val idToBlock = blocksToTranslate.mapIndexed { index, block -> "b$index" to block }.toMap()
 
         try {
-            val textBlocksStr = flatBlocks.mapIndexed { index, (block, _) ->
-                TranslationPrompts.numberedSourceLine(index, block)
-            }.joinToString("\n")
-            val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, glossary)
-
-            val systemPrompt = TranslationPrompts.numberedSystemPrompt(fromLang, toLang)
-
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            logcat(LogPriority.INFO) {
-                "LM Studio request: pages=${pages.size} blocks=${flatBlocks.size} " +
-                    "promptTokens=${TranslationContextChunkPlanner.estimateTokens(contextPrefix + textBlocksStr)} " +
-                    "chunkPromptTokens=${if (rollingContext.isBlank()) -1 else TranslationContextChunkPlanner.estimateTokens(rollingContext)} " +
-                    "maxOutput=$outputTokenLimit"
+            val systemPrompt = if (isPass2) {
+                TranslationPrompts.pass2SystemPrompt(fromLang, toLang)
+            } else {
+                TranslationPrompts.pass1SystemPrompt(fromLang, toLang)
             }
+
+            val contextPrefix = TranslationPrompts.contextPrefix(chunk.rollingContext, chunk.glossary)
+            val promptLines = blocksToTranslate.mapIndexed { index, block ->
+                val id = "b$index"
+                if (isPass2) {
+                    "$id|Source: ${block.text} | Draft: ${block.translation}"
+                } else {
+                    TranslationPrompts.idMappedSourceLine(id, block)
+                }
+            }
+            val promptBody = promptLines.joinToString("\n")
+            val finalPrompt = if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
+
+            logcat(LogPriority.INFO) {
+                "LM Studio request: pages=${chunk.pages.size} blocks=${blocksToTranslate.size} isPass2=$isPass2"
+            }
+
             val jsonObject = buildJsonObject {
                 put("model", modelName)
                 put("temperature", temperature)
-                put("max_tokens", outputTokenLimit)
+                put("max_tokens", chunk.maxOutputTokens)
                 putJsonArray("messages") {
                     addJsonObject {
                         put("role", "system")
@@ -85,11 +104,7 @@ class LmStudioTranslator(
                     }
                     addJsonObject {
                         put("role", "user")
-                        put(
-                            "content",
-                            contextPrefix +
-                                "Translate these ${fromLang.label} text blocks to ${toLang.label}:\n\n$textBlocksStr",
-                        )
+                        put("content", finalPrompt)
                     }
                 }
             }.toString()
@@ -100,35 +115,21 @@ class LmStudioTranslator(
                 payloadJson = jsonObject,
             )
 
-            val parsedTranslations = NumberedLineResponseParser.parse(
-                raw = rawOutput,
-                expectedCount = flatBlocks.size,
-                targetLang = toLang,
-            )
-            // Log parse yield: a common failure mode is the model ignoring the [index] format AND
-            // the positional fallback (e.g. returning one prose paragraph), so parse yields 0 entries.
-            val parsedCount = parsedTranslations.count { (_, v) -> v.isNotBlank() }
-            logcat(LogPriority.INFO) {
-                "LM Studio parse: requested=${flatBlocks.size} parsed=$parsedCount " +
-                    "contentFirstLine=${rawOutput.lineSequence().firstOrNull()?.take(80)}"
-            }
-            if (parsedCount < flatBlocks.size) {
-                val missingCount = flatBlocks.size - parsedCount
-                logcat(LogPriority.WARN) {
-                    "LM Studio response parsed $parsedCount/${flatBlocks.size} translations; " +
-                        "remainingMissing=$missingCount. The batch pipeline will retry missing blocks " +
-                        "with smaller requests when possible."
+            val lines = rawOutput.split("\n")
+            for (line in lines) {
+                val parsed = TranslationPrompts.parseLine(line) ?: continue
+                val block = idToBlock[parsed.id] ?: continue
+                if (block.userEditedAt != null) {
+                    continue
+                }
+                block.translation = OcrArtifactSanitizer.sanitize(parsed.text)
+                block.needsRevision = if (isPass2) {
+                    false
+                } else {
+                    parsed.needsRevision ?: false
                 }
             }
-            // Never fall back to source text on a blank/missing line: a blank translation lets the
-            // validation gate mark the block/page PARTIAL/FAILED instead of rendering OCR as a translation.
-            flatBlocks.forEachIndexed { index, (block, _) ->
-                val translated = parsedTranslations[index]
-                if (!translated.isNullOrBlank()) {
-                    block.translation = OcrArtifactSanitizer.sanitize(translated)
-                }
-            }
-            TranslationBlockFilters.removeWatermarkBlocks(pages)
+            TranslationBlockFilters.removeWatermarkBlocks(chunk.pages)
         } catch (e: Exception) {
             logcat { "LM Studio Translation Error : ${e.stackTraceToString()}" }
             throw e

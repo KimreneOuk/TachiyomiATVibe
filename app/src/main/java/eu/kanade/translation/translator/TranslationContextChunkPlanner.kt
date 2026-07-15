@@ -120,13 +120,7 @@ object TranslationContextChunkPlanner {
                     if (text.isBlank() || translation.isBlank() || translation == text) {
                         null
                     } else {
-                        // Tag in-bubble source lines so rolling context carries speaker continuity across chunk boundaries.
-                        val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
-                            "[${TranslationPrompts.SPEECH_TAG}] "
-                        } else {
-                            ""
-                        }
-                        "$tag$text => $translation"
+                        "$text => $translation"
                     }
                 }
             }
@@ -149,12 +143,7 @@ object TranslationContextChunkPlanner {
             page.blocks.mapNotNull { block ->
                 val text = block.text.trim()
                 if (text.isBlank()) null else {
-                    val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
-                        "[${TranslationPrompts.SPEECH_TAG}] "
-                    } else {
-                        ""
-                    }
-                    "$tag$text"
+                    "$text"
                 }
             }
         }
@@ -175,12 +164,7 @@ object TranslationContextChunkPlanner {
                 if (text.isBlank() || translation.isBlank() || translation == text) {
                     null
                 } else {
-                    val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
-                        "[${TranslationPrompts.SPEECH_TAG}] "
-                    } else {
-                        ""
-                    }
-                    "$tag$text => $translation"
+                    "$text => $translation"
                 }
             }
         }
@@ -307,7 +291,7 @@ data class TranslationContextChunk(
 )
 
 interface ContextualTextTranslator : TextTranslator {
-    suspend fun translateContextual(chunk: TranslationContextChunk)
+    suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean = false)
     
     /** Prompts the underlying model directly (used for glossary generation and summarization). */
     suspend fun promptText(prompt: String): String

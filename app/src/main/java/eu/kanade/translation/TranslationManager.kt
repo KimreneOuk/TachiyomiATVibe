@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
@@ -214,6 +215,33 @@ class TranslationManager(
         if (translation != null) return translation.status
         if (isChapterTranslated(chapterName, scanlator, title, sourceId)) return Translation.State.TRANSLATED
         return Translation.State.NOT_TRANSLATED
+    }
+
+    fun observeChapterTranslationStatus(
+        chapterId: Long,
+        chapterName: String,
+        scanlator: String?,
+        title: String,
+        sourceId: Long
+    ): Flow<Translation.State> {
+        val queueStatusFlow = queueState.map { queue ->
+            queue.find { it.chapter.id == chapterId }?.status
+        }.distinctUntilChanged()
+
+        val activeStoreStateFlow = _activeStoreMap.flatMapLatest { map ->
+            val store = map[chapterId]
+            if (store != null) {
+                store.state.map {
+                    getChapterTranslationStatus(chapterId, chapterName, scanlator, title, sourceId)
+                }
+            } else {
+                kotlinx.coroutines.flow.flowOf(null)
+            }
+        }.distinctUntilChanged()
+
+        return kotlinx.coroutines.flow.combine(queueStatusFlow, activeStoreStateFlow) { qStatus, diskStatus ->
+            qStatus ?: diskStatus ?: getChapterTranslationStatus(chapterId, chapterName, scanlator, title, sourceId)
+        }.distinctUntilChanged()
     }
 
     fun isChapterTranslated(

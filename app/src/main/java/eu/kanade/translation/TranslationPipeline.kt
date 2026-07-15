@@ -15,6 +15,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.RenderQuality
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasRecognizedTranslation
@@ -649,9 +650,10 @@ class TranslationPipeline(
      * Translates a single page identified by [pageKey] within [chapter] of [manga].
      *
      * Phase ONNX (under the permit): setup, decode, recognize (OCR+inpaint), persist
-     * .cleaned. Phase HTTP+Render (outside the permit): cooperative cancel check,
-     * textTranslator.translatePage, Canvas render, persist rendered. Splitting the
-     * permit-held ONNX work from the network-bound HTTP translate lets the next
+     * .cleaned. Phase translation/render-metadata (outside the permit): cooperative
+     * cancel check, textTranslator.translatePage, color estimation, and page-state
+     * persistence. The reader draws translated text live over the cleaned image.
+     * Splitting the permit-held ONNX work from the network-bound HTTP translate lets the next
      * prefetch page's ONNX overlap this page's network call — the same asymmetry
      * benefit the batch path already derives.
      */
@@ -794,8 +796,8 @@ class TranslationPipeline(
      *      textTranslator.translatePage (HTTP-only, no permit). The HTTP work
      *      overlaps the ONNX work — free parallelism, no extra peak memory.
      *   3. RENDER               — for each page with translated text + a cleaned
-     *      image, render translated text onto the cleaned bitmap (Canvas only,
-     *      no permit) and persist.
+     *      image, recompute render colors and persist page state. The reader
+     *      draws translated text live over the cleaned image.
      *
      * Memory model: one page bitmap is alive at a time (recycled after analyze,
      * re-decoded for inpaint, recycled after inpaint). Stage 2 persists each
@@ -1455,6 +1457,84 @@ class TranslationPipeline(
         }
         logcat(LogPriority.INFO) {
             "TachiyomiAT batch DONE chapter=${chapter.name} pages=${orderedStreams.size}"
+        }
+
+        if (isAi && contextualTranslator != null) {
+            data class ReviseBlockRef(val pageKey: String, val originalBlock: TranslationBlock)
+            val blocksToRevise = mutableListOf<ReviseBlockRef>()
+            store.state.value.forEach { (pageKey, pageTranslation) ->
+                pageTranslation.blocks.forEach { block ->
+                    if (block.needsRevision && block.userEditedAt == null && block.text.isNotBlank()) {
+                        blocksToRevise.add(ReviseBlockRef(pageKey, block))
+                    }
+                }
+            }
+
+            if (blocksToRevise.isNotEmpty()) {
+                val chunkedBlocks = blocksToRevise.chunked(20)
+                for (chunk in chunkedBlocks) {
+                    coroutineContext.ensureActive()
+                    try {
+                        val tempMap = LinkedHashMap<String, PageTranslation>()
+                        val refsGrouped = chunk.groupBy { it.pageKey }
+                        refsGrouped.forEach { (pageKey, refs) ->
+                            val originalPage = store.state.value[pageKey]
+                            if (originalPage != null) {
+                                val blockCopies = refs.map { it.originalBlock.copy() }.toMutableList()
+                                val pageCopy = originalPage.copy(blocks = blockCopies)
+                                tempMap[pageKey] = pageCopy
+                            }
+                        }
+
+                        val estimatedPromptTokens = TranslationContextChunkPlanner.PROMPT_OVERHEAD_TOKENS +
+                            chunk.sumOf { TranslationContextChunkPlanner.estimateTokens(it.originalBlock.text) }
+
+                        val contextChunk = TranslationContextChunk(
+                            pages = tempMap,
+                            blockCount = chunk.size,
+                            rollingContext = "",
+                            estimatedPromptTokens = estimatedPromptTokens,
+                            maxOutputTokens = requestedOutputTokens,
+                        )
+
+                        contextualTranslator.translateContextual(contextChunk, isPass2 = true)
+
+                        tempMap.keys.forEach { pageKey ->
+                            store.updatePage(pageKey) { existing ->
+                                val page = existing ?: PageTranslation(sourceFileName = pageKey)
+                                val pageCopy = tempMap[pageKey]
+                                if (pageCopy != null) {
+                                    val refsForPage = refsGrouped[pageKey] ?: emptyList()
+                                    refsForPage.forEach { ref ->
+                                        val copyBlock = pageCopy.blocks.find { cb ->
+                                            cb.x == ref.originalBlock.x && cb.y == ref.originalBlock.y && cb.width == ref.originalBlock.width && cb.height == ref.originalBlock.height && cb.text == ref.originalBlock.text
+                                        }
+                                        val liveBlock = page.blocks.find { b ->
+                                            b.x == ref.originalBlock.x && b.y == ref.originalBlock.y && b.width == ref.originalBlock.width && b.height == ref.originalBlock.height && b.text == ref.originalBlock.text
+                                        }
+                                        if (liveBlock != null) {
+                                            if (copyBlock != null) {
+                                                liveBlock.translation = copyBlock.translation
+                                            }
+                                            liveBlock.needsRevision = false
+                                        }
+                                    }
+                                    page.translationStatus = StageStatus.READY
+                                }
+                                page
+                            }
+                            val pageFromStore = store.state.value[pageKey]
+                            if (pageFromStore != null) {
+                                translationRegistry[pageKey] = pageFromStore
+                                tryRender(pageKey)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        logcat(LogPriority.ERROR, e) { "TachiyomiAT Pass 2 revision chunk failed" }
+                    }
+                }
+            }
         }
 
         val pageMap = store.state.value

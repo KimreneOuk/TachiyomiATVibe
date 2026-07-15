@@ -12,11 +12,64 @@ object OnnxRuntimeProvider {
         OrtEnvironment.getEnvironment()
     }
 
-    /** Dedicated options for the fixed AOT baseline. Registration failures are fatal. */
+    /**
+     * Create an ORT session, retrying on CPU if the requested execution provider
+     * fails during graph compilation (e.g. NNAPI rejects a Split op in the model).
+     * EP registration failures are caught inside [createSessionOptions], but graph
+     * compilation happens in createSession itself and can throw ORT_FAIL for ops
+     * the EP cannot handle. This wrapper catches that and falls back to plain CPU
+     * so a single incompatible op never bricks the whole engine.
+     */
+    fun createSessionWithFallback(
+        modelPath: String,
+        useAccelerator: Boolean = false,
+        useXnnpack: Boolean = false,
+        disableIntraOpSpinning: Boolean = false,
+    ): OrtSession {
+        val opts = createSessionOptions(useAccelerator, useXnnpack, disableIntraOpSpinning)
+        return try {
+            environment.createSession(modelPath, opts)
+        } catch (error: Throwable) {
+            try { opts.close() } catch (_: Throwable) {}
+            val ep = when {
+                useAccelerator -> "NNAPI"
+                useXnnpack -> "XNNPACK"
+                else -> "CPU"
+            }
+            logcat(LogPriority.ERROR, error) {
+                "Session creation with $ep failed (graph compile); retrying on CPU only"
+            }
+            val cpuOpts = createSessionOptions(
+                useAccelerator = false,
+                useXnnpack = false,
+                disableIntraOpSpinning = disableIntraOpSpinning,
+            )
+            try {
+                environment.createSession(modelPath, cpuOpts)
+            } finally {
+                cpuOpts.close()
+            }
+        } finally {
+            try { opts.close() } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * Dedicated options for the fixed AOT baseline. XNNPACK is preferred but NOT
+     * required: the onnxruntime-android-qnn artifact does not compile XNNPACK,
+     * so a fatal requirement would break all AOT inpainting on that build. A
+     * registration failure logs loudly and falls back to the default CPU EP.
+     */
     fun createRequiredXnnpackSessionOptions(): OrtSession.SessionOptions =
         configureOwnedAotOptions { options ->
-            options.addXnnpack(java.util.HashMap<String, String>())
-            logcat(LogPriority.INFO) { "ONNX fixed AOT options provider=XNNPACK required=true" }
+            try {
+                options.addXnnpack(java.util.HashMap<String, String>())
+                logcat(LogPriority.INFO) { "ONNX fixed AOT options provider=XNNPACK registered=true" }
+            } catch (error: Throwable) {
+                logcat(LogPriority.WARN, error) {
+                    "ONNX fixed AOT options provider=XNNPACK registered=false fallback=CPU (XNNPACK not in this build)"
+                }
+            }
         }
 
     /**

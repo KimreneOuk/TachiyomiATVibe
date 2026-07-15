@@ -5,6 +5,7 @@ data class PageView(
     val lifecycle: PageLifecycle,
     val overlay: OverlayState,
     val errorMessage: String?,
+    val translationReady: Boolean,
 ) {
     enum class OverlayState {
         Idle,
@@ -20,6 +21,7 @@ fun PageTranslation?.toPageView(): PageView {
             lifecycle = PageLifecycle.Pending,
             overlay = PageView.OverlayState.Idle,
             errorMessage = null,
+            translationReady = false,
         )
     }
     val imageName = displayImageName
@@ -33,5 +35,6 @@ fun PageTranslation?.toPageView(): PageView {
         lifecycle = lifecycle,
         overlay = overlay,
         errorMessage = errorMessage,
+        translationReady = isTranslationDisplayReady,
     )
 }

@@ -129,28 +129,39 @@ open class ReaderPageImageView @JvmOverloads constructor(
     open fun onImageLoaded() {
         onImageLoaded?.invoke()
         background = pageBackground
+        translationImageReady = translationImageSelected
+        if (!translationImageSelected) {
+            translationOverlay?.isVisible = false
+        }
         // TachiyomiAT: the image just decoded, so its on-screen rect is now
         // known — re-pin the translate button onto the image (not the holder).
         relayoutTranslateButton()
-        // TachiyomiAT: re-bind the overlay against the now-created/ready
-        // pageView. On a fresh holder, setTranslationBlocks() ran (from
-        // refreshTranslation() via observePageView) BEFORE the SSIV existed,
-        // so the overlay captured a null imageView. Now pageView is live and
-        // ready, re-issue the bind so the overlay has a valid coordinate-mapping
-        // target before the invalidate() below triggers a redraw.
-        if (pendingTranslationBlocks.isNotEmpty()) {
-            translationOverlay?.bind(
-                pageView as? SubsamplingScaleImageView,
-                pendingTranslationBlocks,
-                pendingPageWidth,
-                pendingPageHeight,
-            )
+        // Bind only after the selected image has decoded. This prevents cached
+        // translated blocks from drawing over a newly selected original image.
+        if (translationImageReady && pendingTranslationBlocks.isNotEmpty()) {
+            val imageView = pageView as? SubsamplingScaleImageView
+            if (imageView != null) {
+                ensureTranslationOverlay()
+                translationOverlay?.isVisible = true
+                translationOverlay?.bind(
+                    imageView,
+                    pendingTranslationBlocks,
+                    pendingPageWidth,
+                    pendingPageHeight,
+                )
+            }
         }
         translationOverlay?.onImageTransformChanged()
     }
 
     @CallSuper
     open fun onImageLoadError() {
+        translationImageReady = false
+        pendingTranslationBlocks = emptyList()
+        pendingPageWidth = 0
+        pendingPageHeight = 0
+        translationOverlay?.bind(null, emptyList(), 0, 0)
+        translationOverlay?.isVisible = false
         onImageLoadError?.invoke()
     }
 
@@ -199,13 +210,13 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     // TachiyomiAT: renders translated text over the image
     private var translationOverlay: TranslationOverlayView? = null
+    private var translationImageSelected = false
+    private var translationImageReady = false
 
     // TachiyomiAT: last translation blocks passed to [setTranslationBlocks].
-    // Cached so [onImageLoaded] can re-bind the overlay against the now-live
-    // pageView: on a fresh holder, [refreshTranslation] runs (via the
-    // observePageView StateFlow re-emission) BEFORE [setImage] has created the
-    // SSIV, so the overlay captures a null imageView and never draws. Re-binding
-    // here once the image is decoded gives the overlay a valid coordinate target.
+    // Cached until the selected image has decoded, then bound against the live
+    // SSIV. Keeping this separate from the image lifecycle prevents a stale
+    // overlay from surviving an original/translated image swap.
     private var pendingTranslationBlocks: List<eu.kanade.translation.model.TranslationBlock> = emptyList()
     private var pendingPageWidth = 0
     private var pendingPageHeight = 0
@@ -219,14 +230,30 @@ open class ReaderPageImageView @JvmOverloads constructor(
         restoreOverlayOrder()
     }
 
+    fun prepareTranslationImage(selected: Boolean) {
+        if (translationImageSelected == selected) return
+        translationImageSelected = selected
+        translationImageReady = false
+        translationOverlay?.isVisible = false
+        if (!selected) {
+            pendingTranslationBlocks = emptyList()
+            pendingPageWidth = 0
+            pendingPageHeight = 0
+            translationOverlay?.clear()
+        }
+    }
+
     fun setTranslationBlocks(blocks: List<eu.kanade.translation.model.TranslationBlock>, pageWidth: Int, pageHeight: Int) {
         pendingTranslationBlocks = blocks
         pendingPageWidth = pageWidth
         pendingPageHeight = pageHeight
-        if (blocks.isNotEmpty()) {
-            ensureTranslationOverlay()
-            translationOverlay?.isVisible = true
-            translationOverlay?.bind(pageView as? SubsamplingScaleImageView, blocks, pageWidth, pageHeight)
+        if (blocks.isNotEmpty() && translationImageReady) {
+            val imageView = pageView as? SubsamplingScaleImageView
+            if (imageView != null) {
+                ensureTranslationOverlay()
+                translationOverlay?.isVisible = true
+                translationOverlay?.bind(imageView, blocks, pageWidth, pageHeight)
+            }
         } else {
             translationOverlay?.isVisible = false
             translationOverlay?.clear()
@@ -445,22 +472,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
      */
     private fun restoreOverlayOrder() {
         // Overlay goes above the pageView
-        translationOverlay?.let { if (it.isVisible) it.bringToFront() }
+        translationOverlay?.bringToFront()
         // Button: must always be on top so it can receive taps.
-        translateButton?.let { btn ->
-            if (btn.isVisible) btn.bringToFront()
-        }
+        translateButton?.bringToFront()
         // Processing overlay: the scrim dims the image, the spinner gives
-        // progress feedback, and the error text surfaces failures. If any is
-        // visible, bring them to the very front.
-        val scrimVisible = processingScrim?.isVisible == true
-        val indicatorVisible = processingIndicator?.isVisible == true
-        val errorVisible = errorText?.isVisible == true
-        if (scrimVisible || indicatorVisible || errorVisible) {
-            processingScrim?.bringToFront()
-            processingIndicator?.bringToFront()
-            errorText?.bringToFront()
-        }
+        // progress feedback, and the error text surfaces failures.
+        processingScrim?.bringToFront()
+        processingIndicator?.bringToFront()
+        errorText?.bringToFront()
     }
 
     /**
@@ -627,6 +646,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun setImage(drawable: Drawable, config: Config) {
+        translationImageReady = false
+        translationOverlay?.isVisible = false
         this.config = config
         if (drawable is Animatable) {
             prepareAnimatedImageView()
@@ -645,6 +666,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config) {
+        translationImageReady = false
+        translationOverlay?.isVisible = false
         this.config = config
         if (isAnimated) {
             prepareAnimatedImageView()
@@ -658,12 +681,21 @@ open class ReaderPageImageView @JvmOverloads constructor(
         restoreOverlayOrder()
     }
 
-    fun recycle() = pageView?.let {
-        when (it) {
-            is SubsamplingScaleImageView -> it.recycle()
-            is AppCompatImageView -> it.dispose()
+    fun recycle() {
+        translationImageSelected = false
+        translationImageReady = false
+        pendingTranslationBlocks = emptyList()
+        pendingPageWidth = 0
+        pendingPageHeight = 0
+        translationOverlay?.isVisible = false
+        translationOverlay?.clear()
+        pageView?.let {
+            when (it) {
+                is SubsamplingScaleImageView -> it.recycle()
+                is AppCompatImageView -> it.dispose()
+            }
+            it.isVisible = false
         }
-        it.isVisible = false
     }
 
     /**

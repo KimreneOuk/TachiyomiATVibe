@@ -67,18 +67,13 @@ class PaddleOcrV6DetEngine : Closeable {
             "PaddleOCR v6 det init: model=${modelFile.absolutePath} " +
                 "(${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
-        try {
-            session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
-            inputName = session?.inputNames?.firstOrNull() ?: "x"
-            logcat(LogPriority.INFO) {
-                "PaddleOCR v6 det loaded (inputs=${session?.inputNames}, outputs=${session?.outputNames})"
-            }
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "PaddleOCR v6 det session init failed" }
-            throw e
-        } finally {
-            opts.close()
+        session = OnnxRuntimeProvider.createSessionWithFallback(
+            modelFile.absolutePath,
+            useAccelerator = true,
+        )
+        inputName = session?.inputNames?.firstOrNull() ?: "x"
+        logcat(LogPriority.INFO) {
+            "PaddleOCR v6 det loaded (inputs=${session?.inputNames}, outputs=${session?.outputNames})"
         }
     }
 

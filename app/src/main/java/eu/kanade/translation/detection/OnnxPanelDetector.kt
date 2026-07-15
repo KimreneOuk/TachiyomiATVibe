@@ -54,15 +54,10 @@ class OnnxPanelDetector {
             "PanelDetector init: ${modelFile.absolutePath} " +
                 "(${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
-        try {
-            session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "PanelDetector init: session FAILED for ${modelFile.absolutePath}" }
-            throw e
-        } finally {
-            opts.close()
-        }
+        session = OnnxRuntimeProvider.createSessionWithFallback(
+            modelFile.absolutePath,
+            useAccelerator = true,
+        )
         logcat(LogPriority.INFO) {
             "PanelDetector session created from ${modelFile.name} " +
                 "inputs=${session?.inputNames} outputs=${session?.outputNames}"

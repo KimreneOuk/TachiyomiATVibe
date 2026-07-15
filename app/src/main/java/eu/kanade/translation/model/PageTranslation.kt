@@ -269,4 +269,6 @@ data class TranslationBlock(
      * (Interior Median Solid Fill) and the layout planner (Symmetrical Growth).
      */
     val segmentationMask: eu.kanade.translation.segmentation.BubbleMaskRle? = null,
+    var needsRevision: Boolean = false,
+    var userEditedAt: Long? = null,
 )

@@ -297,6 +297,7 @@ class WebtoonPageHolder(
             boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
         }
         val streamFn = boundPage.stream ?: return
+        frame.prepareTranslationImage(boundPage.showTranslatedImage)
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (boundPage.showTranslatedImage) {

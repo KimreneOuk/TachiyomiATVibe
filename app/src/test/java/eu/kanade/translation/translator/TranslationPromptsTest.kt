@@ -2,6 +2,7 @@ package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.translator.TranslationPrompts.ParsedLine
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.string.shouldNotContain
@@ -28,11 +29,8 @@ class TranslationPromptsTest {
             block("こんにちは", inBubble = true).isInsideBubble() shouldBe true
             block("三年後", inBubble = false).isInsideBubble() shouldBe false
 
-            numberedSourceLine(0, block("こんにちは", inBubble = true)) shouldBe "[0] [SPEECH] こんにちは"
-            numberedSourceLine(1, block("三年後", inBubble = false)) shouldBe "[1] 三年後"
-
-            jsonSourceValue(block("こんにちは", inBubble = true)) shouldBe "[SPEECH] こんにちは"
-            jsonSourceValue(block("三年後", inBubble = false)) shouldBe "三年後"
+            idMappedSourceLine("b0", block("こんにちは", inBubble = true)) shouldBe "b0|[SPEECH] こんにちは"
+            idMappedSourceLine("b1", block("三年後", inBubble = false)) shouldBe "b1|三年後"
         }
     }
 
@@ -68,7 +66,7 @@ class TranslationPromptsTest {
     @Test
     fun `pro-drop guidance is emitted only for pro-drop source languages`() {
         // Japanese (pro-drop) -> guidance present.
-        val jaPrompt = TranslationPrompts.numberedSystemPrompt(
+        val jaPrompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
@@ -76,7 +74,7 @@ class TranslationPromptsTest {
 
         // German (non-pro-drop) -> guidance absent, so the model doesn't invent
         // omitted subjects that aren't there in the source.
-        val dePrompt = TranslationPrompts.numberedSystemPrompt(
+        val dePrompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.GERMAN,
             TextTranslatorLanguage.ENGLISH,
         )
@@ -102,34 +100,49 @@ class TranslationPromptsTest {
     }
 
     @Test
-    fun `numbered and json system prompts carry the POV, pro-drop, and SPEECH guidance`() {
+    fun `pass 1 and pass 2 system prompts carry relevant instructions`() {
         val from = TextRecognizerLanguage.JAPANESE
         val to = TextTranslatorLanguage.ENGLISH
-        val numbered = TranslationPrompts.numberedSystemPrompt(from, to)
-        val json = TranslationPrompts.jsonSystemPrompt(from, to)
+        val pass1 = TranslationPrompts.pass1SystemPrompt(from, to)
+        val pass2 = TranslationPrompts.pass2SystemPrompt(from, to)
 
-        for (prompt in listOf(numbered, json)) {
-            prompt shouldContain "Japanese"
-            prompt shouldContain "English"
-            prompt shouldContain "POINT OF VIEW"
-            prompt shouldContain "pro-drop"
-            prompt shouldContain "first-person"
-            prompt shouldContain "[SPEECH]"
-            prompt shouldContain "METADATA, NOT TEXT"
-            prompt shouldContain "ONLY"
-        }
-        numbered shouldContain "[index] translation"
-        json shouldContain "JSON object"
+        pass1 shouldContain "Japanese"
+        pass1 shouldContain "English"
+        pass1 shouldContain "POINT OF VIEW"
+        pass1 shouldContain "pro-drop"
+        pass1 shouldContain "first-person"
+        pass1 shouldContain "[SPEECH]"
+        pass1 shouldContain "METADATA, NOT TEXT"
+        pass1 shouldContain "ONLY"
+        pass1 shouldContain "ID|Translated Text|[STATUS]"
+
+        pass2 shouldContain "Japanese"
+        pass2 shouldContain "English"
+        pass2 shouldContain "Source:"
+        pass2 shouldContain "Draft:"
+        pass2 shouldContain "ID|Corrected Text"
     }
 
     @Test
     fun `prompts never instruct the model to echo the SPEECH tag`() {
-        val prompt = TranslationPrompts.numberedSystemPrompt(
+        val prompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.CHINESE,
             TextTranslatorLanguage.ENGLISH,
         )
         // The few-shot source side shows the tag, but the instruction forbids
         // including it in output — guard against an accidental flip of that rule.
         prompt shouldContain "NEVER include"
+    }
+
+    @Test
+    fun `parseLine parses different format variations correctly`() {
+        with(TranslationPrompts) {
+            parseLine("b0|I'm going.|[OK]") shouldBe ParsedLine("b0", "I'm going.", false)
+            parseLine("b1| That day, I met him. | [FLAG] ") shouldBe ParsedLine("b1", "That day, I met him.", true)
+            parseLine("b2|Three years later — Tokyo.|") shouldBe ParsedLine("b2", "Three years later — Tokyo.", null)
+            parseLine("b3 | He said he wouldn't come.") shouldBe ParsedLine("b3", "He said he wouldn't come.", null)
+            parseLine("b4|Who is it?|[FLAG]") shouldBe ParsedLine("b4", "Who is it?", true)
+            parseLine("invalid") shouldBe null
+        }
     }
 }
