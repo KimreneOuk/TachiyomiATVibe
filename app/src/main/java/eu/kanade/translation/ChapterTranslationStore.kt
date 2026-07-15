@@ -3,7 +3,10 @@ package eu.kanade.translation
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.blockFingerprints
+import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import kotlinx.collections.immutable.PersistentMap
@@ -16,6 +19,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -38,8 +45,36 @@ class ChapterTranslationStore(
     private val mutex = Mutex()
     private var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
+    @Volatile
+    private var generation = 0L
+    private var nextPageVersion = 0L
 
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
+
+    data class PageSnapshot(
+        val page: PageTranslation?,
+        val generation: Long,
+        val pageVersion: Long,
+        val blockFingerprints: List<String>,
+    )
+
+    data class PatchPrecondition(
+        val generation: Long,
+        val pageVersion: Long,
+        val blockFingerprints: List<String>? = null,
+    )
+
+    sealed interface PatchResult {
+        data class Accepted(val snapshot: PageSnapshot) : PatchResult
+        data class Rejected(val reason: String) : PatchResult
+    }
+
+    private class GenerationContext(
+        val store: ChapterTranslationStore,
+        val generation: Long,
+    ) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<GenerationContext>
+    }
 
     // TachiyomiAT: chapter-level term→target glossary for cross-chunk translator
     // continuity. Persisted to sibling JSON (additive; failure degrades to empty).
@@ -65,6 +100,8 @@ class ChapterTranslationStore(
 
     fun markDefunct() {
         defunct = true
+        generation++
+        logcat(LogPriority.WARN) { "TachiyomiAT store marked defunct: generation=$generation" }
     }
 
     val isDefunct: Boolean
@@ -74,30 +111,115 @@ class ChapterTranslationStore(
         private set
 
     init {
-        pages = initialPages.toPersistentMap()
+        initialPages.forEach { (pageKey, page) ->
+            val version = nextVersion()
+            pages = pages.put(pageKey, page.detachedCopy().apply {
+                sourceFileName = sourceFileName ?: pageKey
+                runGeneration = generation
+                pageVersion = version
+            })
+        }
         _state.value = snapshotPages()
+    }
+
+    suspend fun snapshot(pageKey: String): PageSnapshot = mutex.withLock {
+        snapshotLocked(pageKey)
+    }
+
+    suspend fun beginGeneration(reason: String): Long = mutex.withLock {
+        generation++
+        logcat(LogPriority.INFO) { "TachiyomiAT store generation advanced: generation=$generation reason=$reason" }
+        generation
+    }
+
+    suspend fun invalidateGeneration(reason: String): Long = beginGeneration(reason)
+
+    suspend fun <T> withGeneration(generation: Long, block: suspend () -> T): T =
+        withContext(GenerationContext(this, generation)) { block() }
+
+    suspend fun patchPage(
+        pageKey: String,
+        expected: PatchPrecondition,
+        description: String,
+        patch: (PageTranslation?) -> PageTranslation,
+    ): PatchResult {
+        if (defunct) return rejected(pageKey, description, "store is defunct")
+        return mutex.withLock {
+            val current = pages[pageKey]
+            val rejection = when {
+                expected.generation != generation -> "generation expected=${expected.generation} actual=$generation"
+                expected.pageVersion != (current?.pageVersion ?: 0L) ->
+                    "pageVersion expected=${expected.pageVersion} actual=${current?.pageVersion ?: 0L}"
+                expected.blockFingerprints != null && expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
+                    "block fingerprint changed"
+                else -> null
+            }
+            if (rejection != null) {
+                rejected(pageKey, description, rejection)
+            } else {
+                val candidate = try {
+                    patch(current?.detachedCopy())
+                } catch (failure: IllegalArgumentException) {
+                    return@withLock rejected(
+                        pageKey,
+                        description,
+                        failure.message ?: failure::class.java.simpleName,
+                    )
+                } catch (failure: IllegalStateException) {
+                    return@withLock rejected(
+                        pageKey,
+                        description,
+                        failure.message ?: failure::class.java.simpleName,
+                    )
+                }
+                val updated = ownedPage(pageKey, candidate)
+                pages = pages.put(pageKey, updated)
+                publishLocked(current, updated)
+                PatchResult.Accepted(snapshotLocked(pageKey))
+            }
+        }
+    }
+
+    suspend fun patchBlock(
+        pageKey: String,
+        blockIndex: Int,
+        expected: PatchPrecondition,
+        expectedBlockFingerprint: String,
+        expectedTranslation: String? = null,
+        expectedUserEditedAt: Long? = null,
+        description: String,
+        patch: (eu.kanade.translation.model.TranslationBlock) -> eu.kanade.translation.model.TranslationBlock,
+    ): PatchResult = patchPage(pageKey, expected, description) { page ->
+        requireNotNull(page) { "page missing" }
+        val current = page.blocks.getOrNull(blockIndex)
+            ?: throw IllegalStateException("block index $blockIndex missing")
+        check(current.stableFingerprint() == expectedBlockFingerprint) { "block fingerprint changed" }
+        if (expectedTranslation != null) check(current.translation == expectedTranslation) { "block translation changed" }
+        check(current.userEditedAt == expectedUserEditedAt) { "block edit timestamp changed" }
+        page.apply { blocks[blockIndex] = patch(current.detachedCopy()).detachedCopy() }
     }
 
     suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
         if (defunct) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT store updatePage rejected: store is defunct pageKey=$pageKey"
-            }
+            rejected(pageKey, "updatePage", "store is defunct")
             return
         }
+        val context = currentCoroutineContext()[GenerationContext]
         mutex.withLock {
+            if (context?.store === this && context.generation != generation) {
+                rejected(
+                    pageKey,
+                    "updatePage",
+                    "generation expected=${context.generation} actual=$generation",
+                )
+                return@withLock
+            }
             val previous = pages[pageKey]
-            val updated = update(pages[pageKey]).apply {
-                sourceFileName = sourceFileName ?: pageKey
-                updatedAt = System.currentTimeMillis()
-            }
+            // Legacy callers receive detached input; the store always adopts a
+            // second detached copy so neither input nor returned objects remain live.
+            val updated = ownedPage(pageKey, update(previous?.detachedCopy()))
             pages = pages.put(pageKey, updated)
-            if (shouldPersistUpdate(previous, updated)) {
-                schedulePersist()
-            }
-            // Snapshot copy so MutableStateFlow always emits — even when callers
-            // mutate a previously emitted PageTranslation in place.
-            _state.value = snapshotPages()
+            publishLocked(previous, updated)
         }
     }
 
@@ -120,7 +242,10 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
-            pages = updatedPages.toPersistentMap()
+            pages = persistentMapOf()
+            updatedPages.forEach { (pageKey, page) ->
+                pages = pages.put(pageKey, ownedPage(pageKey, page))
+            }
             dirty = false
             persistLocked()
             _state.value = snapshotPages()
@@ -146,7 +271,7 @@ class ChapterTranslationStore(
             var changed = false
             pageKeys.forEach { pageKey ->
                 if (!pages.containsKey(pageKey)) {
-                    pages = pages.put(pageKey, PageTranslation(sourceFileName = pageKey))
+                    pages = pages.put(pageKey, ownedPage(pageKey, PageTranslation(sourceFileName = pageKey)))
                     changed = true
                 }
             }
@@ -170,6 +295,10 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
+            generation++
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT store generation invalidated: generation=$generation reason=${reason ?: "clear transient queue"}"
+            }
             var changed = false
             val now = System.currentTimeMillis()
             pages = pages.mapValues { (_, page) ->
@@ -177,13 +306,16 @@ class ChapterTranslationStore(
                     page
                 } else {
                     changed = true
-                    page.copy(
-                        ocrStatus = page.ocrStatus.cancelIfTransient(),
-                        translationStatus = page.translationStatus.cancelIfTransient(),
-                        inpaintStatus = page.inpaintStatus.cancelIfTransient(),
-                        renderStatus = page.renderStatus.cancelIfTransient(),
-                        errorMessage = reason,
-                        updatedAt = now,
+                    ownedPage(
+                        page.sourceFileName.orEmpty(),
+                        page.copy(
+                            ocrStatus = page.ocrStatus.cancelIfTransient(),
+                            translationStatus = page.translationStatus.cancelIfTransient(),
+                            inpaintStatus = page.inpaintStatus.cancelIfTransient(),
+                            renderStatus = page.renderStatus.cancelIfTransient(),
+                            errorMessage = reason,
+                            updatedAt = now,
+                        ),
                     )
                 }
             }.toPersistentMap()
@@ -195,10 +327,43 @@ class ChapterTranslationStore(
         }
     }
 
-    private fun snapshotPages(): Map<String, PageTranslation> =
-        pages.entries.associate { (key, page) -> key to page.copy() }
+    private fun nextVersion(): Long = ++nextPageVersion
 
-    fun glossarySnapshot(): Map<String, String> = glossary
+    private fun ownedPage(pageKey: String, candidate: PageTranslation): PageTranslation =
+        candidate.detachedCopy().apply {
+            sourceFileName = sourceFileName ?: pageKey
+            updatedAt = System.currentTimeMillis()
+            runGeneration = generation
+            pageVersion = nextVersion()
+        }
+
+    private fun publishLocked(previous: PageTranslation?, updated: PageTranslation) {
+        if (shouldPersistUpdate(previous, updated)) schedulePersist()
+        _state.value = snapshotPages()
+    }
+
+    private fun snapshotLocked(pageKey: String): PageSnapshot {
+        val page = pages[pageKey]
+        return PageSnapshot(
+            page = page?.detachedCopy(),
+            generation = generation,
+            pageVersion = page?.pageVersion ?: 0L,
+            blockFingerprints = page?.blockFingerprints().orEmpty(),
+        )
+    }
+
+    private fun rejected(pageKey: String, description: String, reason: String): PatchResult.Rejected {
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT store patch rejected: pageKey=$pageKey generation=$generation " +
+                "operation=$description reason=$reason"
+        }
+        return PatchResult.Rejected(reason)
+    }
+
+    private fun snapshotPages(): Map<String, PageTranslation> =
+        pages.entries.associate { (key, page) -> key to page.detachedCopy() }
+
+    fun glossarySnapshot(): Map<String, String> = glossary.toMap()
 
     /**
      * All translated (source => target) pairs in the chapter so far — used to

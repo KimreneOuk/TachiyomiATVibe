@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TranslationBlock
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -64,15 +65,7 @@ class TranslationSchedulerCancellationTest {
             translationFile = null,
             fileCreator = null,
             initialPages = mapOf(
-                pageKey to PageTranslation(
-                    sourceFileName = pageKey,
-                    cleanedImageName = "page-finished.cleaned.png",
-                    decodeSampleSize = 1,
-                    ocrStatus = StageStatus.READY,
-                    translationStatus = StageStatus.READY,
-                    inpaintStatus = StageStatus.READY,
-                    renderStatus = StageStatus.READY,
-                ),
+                pageKey to translatedRenderedPage(pageKey),
             ),
         )
         val scheduler = TranslationScheduler(
@@ -138,6 +131,30 @@ class TranslationSchedulerCancellationTest {
             scheduler.close()
         }
     }
+
+    private fun translatedRenderedPage(pageKey: String) = PageTranslation(
+        sourceFileName = pageKey,
+        cleanedImageName = "page-finished.cleaned.png",
+        inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+        decodeSampleSize = 1,
+        ocrStatus = StageStatus.READY,
+        translationStatus = StageStatus.READY,
+        inpaintStatus = StageStatus.READY,
+        renderStatus = StageStatus.READY,
+        blocks = mutableListOf(
+            TranslationBlock(
+                text = "source",
+                translation = "target",
+                width = 10f,
+                height = 10f,
+                x = 0f,
+                y = 0f,
+                symHeight = 1f,
+                symWidth = 1f,
+                angle = 0f,
+            ),
+        ),
+    )
 
     private object NoOpTranslationExecutor : TranslationExecutor {
         override suspend fun translateSinglePage(

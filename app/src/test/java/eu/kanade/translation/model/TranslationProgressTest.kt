@@ -30,7 +30,9 @@ class TranslationProgressTest {
         val pages = mapOf(
             "1" to PageTranslation(
                 ocrStatus = StageStatus.READY,
-                inpaintStatus = StageStatus.READY,
+                translationStatus = StageStatus.SKIPPED,
+                inpaintStatus = StageStatus.SKIPPED,
+                renderStatus = StageStatus.SKIPPED,
             ),
         )
         TranslationProgress.compute(pages) shouldBe (1 to 1)

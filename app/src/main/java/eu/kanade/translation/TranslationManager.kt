@@ -104,9 +104,8 @@ class TranslationManager(
         // now happens only on chapter change / reader exit (cancelPageTranslations /
         // cancelAllPageTranslations callers).
 
-        // Permit-watchdog: when a worker is stuck in uncancellable native/HTTP code the
-        // watchdog force-releases the permit and calls this; we evict the dead job so the
-        // dedup in translatePage does not drop every future retry of that page forever.
+        // Native quarantine reports timeout only after the underlying call exits;
+        // evict the stale job so a subsequent request can be admitted safely.
         pipeline.onPageStuck = { chapterId, pageKey ->
             if (chapterId != null && pageKey.isNotEmpty()) {
                 scheduler.markPageJobStuck(chapterId, pageKey)

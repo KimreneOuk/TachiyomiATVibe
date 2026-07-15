@@ -29,15 +29,15 @@ class TranslationBatchProgressTracker(
     private val scope: CoroutineScope,
     private val permitHolderResolver: (() -> String?)? = null,
 ) {
-    private val _snapshot = MutableStateFlow(emptySnapshot())
-    val snapshot: StateFlow<TranslationProgressSnapshot> = _snapshot.asStateFlow()
-
     private var tickJob: Job? = null
     private var batchStartTime = System.currentTimeMillis()
     private var finished = false
     private var batchPhase = TranslationBatchPhase.FIRST_PASS
     private var revisionProgress = RevisionProgress()
     private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
+
+    private val _snapshot = MutableStateFlow(emptySnapshot())
+    val snapshot: StateFlow<TranslationProgressSnapshot> = _snapshot.asStateFlow()
 
     private fun computeSnapshotFor(
         pageMap: Map<String, PageTranslation>,

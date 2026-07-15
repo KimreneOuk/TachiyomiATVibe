@@ -21,7 +21,8 @@ object BatchProgressReconciler {
         pageMap: Map<String, PageTranslation>,
         orderedKeys: List<String>,
     ): ReconciliationResult {
-        if (pageMap.isEmpty()) {
+        val expectedKeys = orderedKeys.distinct()
+        if (pageMap.isEmpty() && expectedKeys.isEmpty()) {
             return ReconciliationResult(
                 chapterStatus = Translation.State.ERROR,
                 strandedPages = emptyMap(),
@@ -34,7 +35,13 @@ object BatchProgressReconciler {
         var failedCount = 0
         var partialCount = 0
 
-        for ((pageKey, page) in pageMap) {
+        for (pageKey in expectedKeys) {
+            val page = pageMap[pageKey]
+            if (page == null) {
+                strandedPages[pageKey] = "Translation incomplete — expected page is missing"
+                failedCount++
+                continue
+            }
             if (page.hasRenderedResult || page.isTextlessTerminal) {
                 doneCount++
             } else if (page.isStageFailed) {

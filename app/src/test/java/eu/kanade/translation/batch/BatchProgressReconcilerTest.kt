@@ -16,10 +16,19 @@ class BatchProgressReconcilerTest {
     }
 
     @Test
+    fun `empty page map reports each expected page as stranded`() {
+        val result = BatchProgressReconciler.reconcile(emptyMap(), listOf("001.jpg", "002.jpg"))
+
+        result.chapterStatus shouldBe Translation.State.ERROR
+        result.strandedPages.keys shouldBe setOf("001.jpg", "002.jpg")
+        result.failedCount shouldBe 2
+    }
+
+    @Test
     fun `all pages rendered is TRANSLATED`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png", inpaintStatus = StageStatus.READY),
-            "002.jpg" to PageTranslation(cleanedImageName = "002.cleaned.png", inpaintStatus = StageStatus.READY),
+            "001.jpg" to terminalTextlessPage(),
+            "002.jpg" to terminalTextlessPage(),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
         result.chapterStatus shouldBe Translation.State.TRANSLATED
@@ -31,7 +40,7 @@ class BatchProgressReconcilerTest {
     @Test
     fun `a failed page makes chapter ERROR`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png", inpaintStatus = StageStatus.READY),
+            "001.jpg" to terminalTextlessPage(),
             "002.jpg" to PageTranslation(ocrStatus = StageStatus.FAILED, errorMessage = "OOM"),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
@@ -42,7 +51,7 @@ class BatchProgressReconcilerTest {
     @Test
     fun `stranded RUNNING page without output is flipped to FAILED`() {
         val pages = linkedMapOf(
-            "001.jpg" to PageTranslation(cleanedImageName = "001.cleaned.png", inpaintStatus = StageStatus.READY),
+            "001.jpg" to terminalTextlessPage(),
             "002.jpg" to PageTranslation(ocrStatus = StageStatus.RUNNING),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
@@ -57,7 +66,9 @@ class BatchProgressReconcilerTest {
             "001.jpg" to PageTranslation(
                 ocrStatus = StageStatus.READY,
                 blocks = mutableListOf(),
-                inpaintStatus = StageStatus.READY,
+                translationStatus = StageStatus.SKIPPED,
+                inpaintStatus = StageStatus.SKIPPED,
+                renderStatus = StageStatus.SKIPPED,
             ),
         )
         val result = BatchProgressReconciler.reconcile(pages, pages.keys.toList())
@@ -65,6 +76,13 @@ class BatchProgressReconcilerTest {
         result.doneCount shouldBe 1
         result.failedCount shouldBe 0
     }
+
+    private fun terminalTextlessPage() = PageTranslation(
+        ocrStatus = StageStatus.READY,
+        translationStatus = StageStatus.SKIPPED,
+        inpaintStatus = StageStatus.SKIPPED,
+        renderStatus = StageStatus.SKIPPED,
+    )
 
     @Test
     fun `PENDING page without output is stranded`() {

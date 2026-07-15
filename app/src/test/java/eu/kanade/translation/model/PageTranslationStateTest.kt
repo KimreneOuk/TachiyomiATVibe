@@ -356,7 +356,9 @@ class PageTranslationStateTest {
         val page = PageTranslation(
             blocks = mutableListOf(),
             ocrStatus = StageStatus.READY,
-            inpaintStatus = StageStatus.READY,
+            translationStatus = StageStatus.SKIPPED,
+            inpaintStatus = StageStatus.SKIPPED,
+            renderStatus = StageStatus.SKIPPED,
         )
 
         page.isTextlessTerminal shouldBe true
@@ -394,14 +396,14 @@ class PageTranslationStateTest {
     }
 
     @Test
-    fun `cleaned image can be displayed before translated overlay is ready`() {
+    fun `cleaned image stays hidden before translated overlay is ready`() {
         val page = translatedPage().apply {
             cleanedImageName = "001.cleaned.png"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
             renderStatus = StageStatus.PENDING
         }
 
-        page.displayImageName shouldBe "001.cleaned.png"
+        page.displayImageName shouldBe null
         page.isCleanedImageReady shouldBe true
         page.shouldShowTranslationOverlay shouldBe false
         page.lifecycle shouldBe PageLifecycle.NeedsRender

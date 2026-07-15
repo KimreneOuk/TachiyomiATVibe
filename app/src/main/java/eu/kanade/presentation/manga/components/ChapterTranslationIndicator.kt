@@ -127,7 +127,14 @@ private fun TranslatingIndicator(
         val strokeColor = MaterialTheme.colorScheme.onSurfaceVariant
         // TachiyomiAT: stage-based progress fraction
         val isDeterminate = snapshot != null && snapshot.totalStages > 0
-        val progressFraction = if (isDeterminate) snapshot!!.fraction else 0f
+        val isRevising = snapshot?.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.REVISING
+        val progressFraction = when {
+            isRevising && snapshot!!.revision.totalBlocks > 0 -> {
+                snapshot.revision.completedBlocks.toFloat() / snapshot.revision.totalBlocks
+            }
+            isDeterminate -> snapshot!!.fraction
+            else -> 0f
+        }
 
         CircularProgressIndicator(
             progress = { if (isDeterminate) progressFraction else 0f },
@@ -154,8 +161,12 @@ private fun TranslatingIndicator(
             tint = strokeColor,
         )
         // TachiyomiAT: stage-based percentage label under the icon
-        if (isDeterminate) {
-            val percentageText = "${(progressFraction * 100).toInt()}%"
+        if (isDeterminate || isRevising) {
+            val percentageText = if (isRevising) {
+                "Rev ${(progressFraction * 100).toInt()}%"
+            } else {
+                "${(progressFraction * 100).toInt()}%"
+            }
             Text(
                 text = percentageText,
                 modifier = Modifier

@@ -6,16 +6,9 @@ import com.google.ai.client.generativeai.type.HarmCategory
 import com.google.ai.client.generativeai.type.SafetySetting
 import com.google.ai.client.generativeai.type.content
 import com.google.ai.client.generativeai.type.generationConfig
-import com.google.android.gms.tasks.Tasks
-import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.TranslatorOptions
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import logcat.logcat
-import org.json.JSONObject
 
 class GeminiTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -41,26 +34,20 @@ class GeminiTranslator(
     }
 
     override suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean) {
-        val blocksToTranslate = mutableListOf<TranslationBlock>()
-        for (page in chunk.pages.values) {
-            for (block in page.blocks) {
-                val isNonBlank = block.text.isNotBlank()
-                val shouldTranslate = if (isPass2) {
-                    isNonBlank && block.needsRevision && block.userEditedAt == null
-                } else {
-                    isNonBlank
-                }
-                if (shouldTranslate) {
-                    blocksToTranslate.add(block)
-                }
-            }
-        }
+        // Delegate to the structured path then apply accepted results in place so
+        // legacy callers that read block.translation directly keep working.
+        val batch = translateContextualStructured(chunk, isPass2)
+        applyBatchToChunk(chunk, batch, isPass2)
+    }
 
-        if (blocksToTranslate.isEmpty()) {
-            return
+    override suspend fun translateContextualStructured(
+        chunk: TranslationContextChunk,
+        isPass2: Boolean,
+    ): ContextualTranslationBatch {
+        val request = ContextualRequestBuilder.build(chunk, isPass2, fromLang, toLang)
+        if (request.promptLines.isEmpty()) {
+            return ContextualRequestBuilder.toBatch(request, emptyList(), isPass2)
         }
-
-        val idToBlock = blocksToTranslate.mapIndexed { index, block -> "b$index" to block }.toMap()
 
         try {
             val systemPrompt = if (isPass2) {
@@ -70,15 +57,7 @@ class GeminiTranslator(
             }
 
             val contextPrefix = TranslationPrompts.contextPrefix(chunk.rollingContext, chunk.glossary)
-            val promptLines = blocksToTranslate.mapIndexed { index, block ->
-                val id = "b$index"
-                if (isPass2) {
-                    "$id|Source: ${block.text} | Draft: ${block.translation}"
-                } else {
-                    TranslationPrompts.idMappedSourceLine(id, block)
-                }
-            }
-            val promptBody = promptLines.joinToString("\n")
+            val promptBody = request.promptLines.joinToString("\n")
             val finalPrompt = if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
 
             val activeModel = GenerativeModel(
@@ -110,20 +89,8 @@ class GeminiTranslator(
             }
 
             val lines = responseText.split("\n")
-            for (line in lines) {
-                val parsed = TranslationPrompts.parseLine(line) ?: continue
-                val block = idToBlock[parsed.id] ?: continue
-                if (block.userEditedAt != null) {
-                    continue
-                }
-                block.translation = OcrArtifactSanitizer.sanitize(parsed.text)
-                block.needsRevision = if (isPass2) {
-                    false
-                } else {
-                    parsed.needsRevision ?: false
-                }
-            }
-            TranslationBlockFilters.removeWatermarkBlocks(chunk.pages)
+            val parsed = ContextualResponseParser.parse(lines, request.idMap, isPass2)
+            return ContextualRequestBuilder.toBatch(request, parsed, isPass2)
         } catch (e: Exception) {
             logcat { "Image Translation Error : ${e.stackTraceToString()}" }
             throw e

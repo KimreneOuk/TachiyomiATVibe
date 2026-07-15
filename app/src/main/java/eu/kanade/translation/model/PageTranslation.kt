@@ -24,6 +24,10 @@ data class PageTranslation(
     var errorMessage: String? = null,
     var updatedAt: Long = 0L,
     var sourceFileName: String? = null,
+    // Defaults preserve compatibility with translation JSON written before
+    // generation/version race preconditions were introduced.
+    var runGeneration: Long = 0L,
+    var pageVersion: Long = 0L,
     // Persisted raw per-failure count for diagnostics/back-compat. Do NOT gate
     // exhaustion on this: a single attempt can fail multiple cascading stages
     // (inpaint→render) and double-count. hasExhaustedRetries keys off attemptCount.
@@ -163,6 +167,7 @@ object StageStatus {
     const val READY = "READY"
     const val FAILED = "FAILED"
     const val CANCELLED = "CANCELLED"
+    const val SKIPPED = "SKIPPED"
     /**
      * TachiyomiAT: the translate stage produced SOME valid translations AND
      * some missing/rejected ones, but NOT zero. Distinct from READY (all

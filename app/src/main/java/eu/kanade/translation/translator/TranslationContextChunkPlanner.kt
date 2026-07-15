@@ -292,7 +292,20 @@ data class TranslationContextChunk(
 
 interface ContextualTextTranslator : TextTranslator {
     suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean = false)
-    
+
+    /**
+     * TachiyomiAT: structured-result variant. Returns per-id results keyed by
+     * the request's anchored block ids (e.g. `p0_b3` for Pass 2, `b0` for
+     * Pass 1) WITHOUT mutating any block. The merge layer applies only accepted
+     * results after re-checking preconditions. Default implementation falls back
+     * to the mutating path and reports no results, so legacy providers keep
+     * working until upgraded; structured providers override this.
+     */
+    suspend fun translateContextualStructured(
+        chunk: TranslationContextChunk,
+        isPass2: Boolean,
+    ): ContextualTranslationBatch = ContextualTranslationBatch.EMPTY
+
     /** Prompts the underlying model directly (used for glossary generation and summarization). */
     suspend fun promptText(prompt: String): String
 }

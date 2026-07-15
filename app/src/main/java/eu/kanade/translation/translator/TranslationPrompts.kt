@@ -16,13 +16,19 @@ object TranslationPrompts {
 
     data class ParsedLine(val id: String, val text: String, val needsRevision: Boolean?)
 
+    /**
+     * TachiyomiAT: the id may be a Pass-1 per-chunk index `b\d+` OR a Pass-2
+     * anchored page-scoped id `p\d+_b\d+`. The pattern accepts both so the same
+     * parser serves every provider and both passes (Checkpoint 2 §4).
+     */
+    private val lineIdRegex: Regex = Regex("""\b(p\d+_b\d+|b\d+)[^\w]*(.*)""")
+
     fun parseLine(line: String): ParsedLine? {
         val cleanLine = line.trim(' ', '\t', '\r', '\n', '`', '*')
-        val regex = Regex("""\b(b\d+)[^\w]*(.*)""")
-        val match = regex.find(cleanLine) ?: return null
+        val match = lineIdRegex.find(cleanLine) ?: return null
         val id = match.groupValues[1]
         var content = match.groupValues[2].trim()
-        
+
         var needsRevision: Boolean? = null
         if (content.contains("[FLAG]")) {
             needsRevision = true
@@ -31,7 +37,7 @@ object TranslationPrompts {
             needsRevision = false
             content = content.replace("[OK]", "")
         }
-        
+
         content = content.trim().removePrefix("|").removeSuffix("|").trim()
         return ParsedLine(id, content, needsRevision)
     }

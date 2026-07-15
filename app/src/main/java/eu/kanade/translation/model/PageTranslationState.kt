@@ -18,7 +18,7 @@ sealed interface PageLifecycle {
 }
 
 val PageTranslation.displayImageName: String?
-    get() = cleanedImageName?.takeIf { isCleanedImageReady && (blocks.isNotEmpty() || decodeSampleSize <= 1) }
+    get() = cleanedImageName?.takeIf { isTranslationDisplayReady }
 
 val PageTranslation.hasCurrentInpaintResult: Boolean
     get() = blocks.isEmpty() || inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
@@ -71,10 +71,7 @@ val PageTranslation.hasCurrentInpaintMask: Boolean
     get() = blocks.isEmpty() || inpaintMaskBoxes.isNotEmpty()
 
 val PageTranslation.hasRenderedResult: Boolean
-    get() = when {
-        blocks.isEmpty() -> isCleanedImageReady && decodeSampleSize <= 1
-        else -> isTranslationDisplayReady
-    }
+    get() = isTranslationDisplayReady
 
 val PageTranslation.isStageRunning: Boolean
     get() = ocrStatus == StageStatus.RUNNING ||
@@ -167,8 +164,9 @@ fun PageTranslation.resetAttemptCharge() {
 val PageTranslation.isTextlessTerminal: Boolean
     get() = ocrStatus == StageStatus.READY &&
         blocks.isEmpty() &&
-        inpaintStatus != StageStatus.PENDING &&
-        inpaintStatus != StageStatus.RUNNING
+        translationStatus == StageStatus.SKIPPED &&
+        renderStatus == StageStatus.SKIPPED &&
+        (inpaintStatus == StageStatus.SKIPPED || inpaintStatus == StageStatus.READY)
 
 val PageTranslation.hasRecognizedTranslation: Boolean
     get() = ocrStatus == StageStatus.READY &&

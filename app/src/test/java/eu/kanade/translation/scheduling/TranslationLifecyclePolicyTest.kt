@@ -74,7 +74,9 @@ class TranslationLifecyclePolicyTest {
         // inpaintStatus=PENDING so it is NOT terminal.
         val textless = PageTranslation(
             ocrStatus = StageStatus.READY,
-            inpaintStatus = StageStatus.READY,
+            translationStatus = StageStatus.SKIPPED,
+            inpaintStatus = StageStatus.SKIPPED,
+            renderStatus = StageStatus.SKIPPED,
             blocks = mutableListOf(),
         )
 
