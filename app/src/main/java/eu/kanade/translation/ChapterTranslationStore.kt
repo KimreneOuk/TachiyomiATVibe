@@ -83,6 +83,7 @@ class ChapterTranslationStore(
 
     private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var dirty = false
+    private var glossaryDirty = false
     private var persistJob: Job? = null
 
     /**
@@ -386,8 +387,11 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
-            glossary = updated
-            persistGlossaryLocked()
+            if (glossary != updated) {
+                glossary = updated.toMap()
+                glossaryDirty = true
+                schedulePersist(markPageDirty = false)
+            }
         }
     }
 
@@ -402,16 +406,20 @@ class ChapterTranslationStore(
         }
     }
 
-    private fun persistGlossaryLocked() {
-        val file = ensureGlossaryFile() ?: return
+    private fun persistGlossaryLocked(): Boolean {
+        val file = ensureGlossaryFile()
+        if (file == null) {
+            logcat(LogPriority.ERROR) { "TachiyomiAT glossary persistence failed: reason=file unavailable" }
+            return false
+        }
         val snapshot = glossary
-        runCatching {
+        return runCatching {
             file.openOutputStream().use { output ->
                 Json.encodeToStream(snapshot, output)
             }
-        }.onFailure { e ->
-            logcat(LogPriority.WARN, e) { "Failed to persist glossary; in-memory state retained" }
-        }
+        }.onFailure { error ->
+            logcat(LogPriority.ERROR, error) { "TachiyomiAT glossary persistence failed: reason=write error" }
+        }.isSuccess
     }
 
     private fun glossaryName(tf: UniFile): String =
@@ -557,28 +565,58 @@ class ChapterTranslationStore(
 
     suspend fun flush() {
         mutex.withLock {
-            if (dirty) {
-                dirty = false
-                persistLocked()
-            }
+            flushDirtyLocked()
         }
     }
 
-    fun close() {
+    private fun flushDirtyLocked() {
+        if (dirty) {
+            dirty = false
+            persistLocked()
+        }
+        if (glossaryDirty) {
+            // Keep dirty on failure so a later completion/close flush can retry.
+            if (persistGlossaryLocked()) glossaryDirty = false
+        }
+    }
+
+    suspend fun readSummary(): ChapterTranslationSummary? = mutex.withLock {
+        translationFile?.let(::ChapterTranslationSummaryStore)?.read()
+    }
+
+    /** Publishes the completion sidecar only after the page snapshot is durable. */
+    suspend fun publishSummary(summary: ChapterTranslationSummary): Boolean = mutex.withLock {
+        flushDirtyLocked()
+        if (translationFile == null) {
+            translationFile = fileCreator?.invoke()
+        }
+        val file = translationFile
+        if (file == null) {
+            logcat(LogPriority.ERROR) { "TachiyomiAT chapter summary publication failed: reason=translation file unavailable" }
+            return@withLock false
+        }
+        ChapterTranslationSummaryStore(file).publish(summary)
+    }
+
+    suspend fun closeAndFlush() {
+        mutex.withLock { flushDirtyLocked() }
         persistScope.cancel()
     }
 
-    private fun schedulePersist() {
-        if (dirty) return
-        dirty = true
+    fun close() {
+        persistScope.launch {
+            mutex.withLock { flushDirtyLocked() }
+        }.invokeOnCompletion {
+            persistScope.cancel()
+        }
+    }
+
+    private fun schedulePersist(markPageDirty: Boolean = true) {
+        if (markPageDirty) dirty = true
+        if (persistJob?.isActive == true) return
         persistJob = persistScope.launch {
             delay(PERSIST_DEBOUNCE_MS)
-            mutex.withLock {
-                if (dirty) {
-                    dirty = false
-                    persistLocked()
-                }
-            }
+            mutex.withLock { flushDirtyLocked() }
             persistJob = null
         }
     }

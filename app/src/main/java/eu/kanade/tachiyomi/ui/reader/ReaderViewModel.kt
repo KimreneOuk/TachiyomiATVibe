@@ -150,19 +150,15 @@ class ReaderViewModel @JvmOverloads constructor(
     private val mutableState = MutableStateFlow(State())
     val state = mutableState.asStateFlow()
 
-    /**
-     * TachiyomiAT: read-only view of the current chapter's translation queue,
-     * derived from the live [translationManager.activeStoreState]. Each entry is
-     * one page that is (or was) being processed, with its 1-based index and the
-     * stage it's currently in. Consumed by the reader translation settings sheet
-     * so the user can see exactly what is queued/running/done/failed while a run
-     * is in progress — and decide whether to Stop. Exposed as its own StateFlow
-     * (rather than a field on [State]) so a per-page list update doesn't force a
-     * recompose of the whole reader.
-     */
+    /** The queue is selected by the current chapter ID; no other chapter may replace it. */
     val translationQueueState: kotlinx.coroutines.flow.StateFlow<ImmutableList<QueuedPageInfo>> =
-        translationManager.activeStoreState
-                .map { pages -> buildQueuedPageInfo(pages, currentPageIndexResolver()).toImmutableList() }
+        state
+            .map { it.currentChapter?.chapter?.id }
+            .distinctUntilChanged()
+            .flatMapLatest { chapterId ->
+                translationManager.selectActiveStore(chapterId ?: -1L)
+                    .map { pages -> buildQueuedPageInfo(pages, currentPageIndexResolver()).toImmutableList() }
+            }
             .distinctUntilChanged()
             .stateIn(
                 viewModelScope,

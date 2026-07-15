@@ -93,4 +93,67 @@ class BatchProgressReconcilerTest {
         result.chapterStatus shouldBe Translation.State.ERROR
         result.strandedPages.containsKey("001.jpg") shouldBe true
     }
+
+    @Test
+    fun `ordered expected key missing from map is one stranded failure`() {
+        val result = BatchProgressReconciler.reconcile(
+            pageMap = mapOf("001.jpg" to terminalTextlessPage()),
+            orderedKeys = listOf("001.jpg", "002.jpg"),
+        )
+
+        result.strandedPages shouldBe mapOf("002.jpg" to "Translation incomplete — expected page is missing")
+        result.doneCount shouldBe 1
+        result.failedCount shouldBe 1
+    }
+
+    @Test
+    fun `unexpected key is reported without inflating expected work`() {
+        val result = BatchProgressReconciler.reconcile(
+            pageMap = mapOf(
+                "001.jpg" to terminalTextlessPage(),
+                "unexpected.jpg" to PageTranslation(ocrStatus = StageStatus.FAILED),
+            ),
+            orderedKeys = listOf("001.jpg"),
+        )
+
+        result.chapterStatus shouldBe Translation.State.TRANSLATED
+        result.doneCount shouldBe 1
+        result.failedCount shouldBe 0
+        result.unexpectedPageKeys shouldBe setOf("unexpected.jpg")
+    }
+
+    @Test
+    fun `partial readable draft and unresolved revision yield warnings but hard failure yields error`() {
+        val warning = BatchProgressReconciler.reconcile(
+            pageMap = mapOf(
+                "001.jpg" to PageTranslation(
+                    ocrStatus = StageStatus.READY,
+                    translationStatus = StageStatus.PARTIAL,
+                    blocks = mutableListOf(block(needsRevision = true)),
+                ),
+            ),
+            orderedKeys = listOf("001.jpg"),
+        )
+        val error = BatchProgressReconciler.reconcile(
+            pageMap = mapOf("001.jpg" to PageTranslation(renderStatus = StageStatus.FAILED)),
+            orderedKeys = listOf("001.jpg"),
+        )
+
+        warning.chapterStatus shouldBe Translation.State.READY_WITH_WARNINGS
+        warning.unresolvedRevisionCount shouldBe 1
+        error.chapterStatus shouldBe Translation.State.ERROR
+    }
+
+    private fun block(needsRevision: Boolean) = eu.kanade.translation.model.TranslationBlock(
+        text = "源",
+        translation = "draft",
+        width = 1f,
+        height = 1f,
+        x = 0f,
+        y = 0f,
+        symHeight = 1f,
+        symWidth = 1f,
+        angle = 0f,
+        needsRevision = needsRevision,
+    )
 }

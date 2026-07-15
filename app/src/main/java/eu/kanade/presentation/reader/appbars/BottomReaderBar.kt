@@ -93,7 +93,7 @@ fun BottomReaderBar(
                         strokeWidth = 2.dp,
                     )
                 }
-                Translation.State.TRANSLATED -> {
+                Translation.State.TRANSLATED, Translation.State.READY_WITH_WARNINGS -> {
                     Icon(
                         painter = painterResource(R.drawable.ic_translate_circle_filled),
                         contentDescription = stringResource(ATMR.strings.reader_translate),

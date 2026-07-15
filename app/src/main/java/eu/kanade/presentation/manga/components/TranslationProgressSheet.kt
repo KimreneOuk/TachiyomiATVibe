@@ -88,11 +88,11 @@ fun TranslationProgressSheet(
             val activeText = when (snapshot.batchPhase) {
                 TranslationBatchPhase.FIRST_PASS -> when {
                     snapshot.totalPages == 0 -> stringResource(ATMR.strings.manga_translation_no_progress)
-                    snapshot.activeStage != null && snapshot.activePage > 0 ->
+                    snapshot.activeStages.isNotEmpty() && snapshot.activePage > 0 ->
                         stringResource(
                             ATMR.strings.manga_translation_active,
                             snapshot.activePage,
-                            stageLabel(snapshot.activeStage),
+                            activeStagesLabel(snapshot.activeStages),
                         )
                     else -> stringResource(
                         ATMR.strings.manga_batch_first_pass,
@@ -102,7 +102,7 @@ fun TranslationProgressSheet(
                 }
                 TranslationBatchPhase.REVISING -> stringResource(
                     ATMR.strings.manga_batch_revision_progress,
-                    snapshot.revision.completedBlocks,
+                    snapshot.revision.processedBlocks,
                     snapshot.revision.totalBlocks,
                 )
                 TranslationBatchPhase.FINALIZING -> stringResource(ATMR.strings.manga_batch_finalizing)
@@ -120,6 +120,18 @@ fun TranslationProgressSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            if (snapshot.revision.skippedBlocks > 0 || snapshot.revision.userEditedBlocks > 0) {
+                Text(
+                    text = stringResource(
+                        ATMR.strings.manga_batch_revision_excluded,
+                        snapshot.revision.skippedBlocks,
+                        snapshot.revision.userEditedBlocks,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             if (snapshot.partialPages > 0) {
                 Text(
@@ -170,8 +182,10 @@ fun TranslationProgressSheet(
                 TextButton(onClick = onDismissRequest) {
                     Text(text = stringResource(MR.strings.action_close))
                 }
-                Button(onClick = onCancel) {
-                    Text(text = stringResource(MR.strings.action_cancel))
+                if (snapshot.batchPhase != TranslationBatchPhase.FINISHED) {
+                    Button(onClick = onCancel) {
+                        Text(text = stringResource(MR.strings.action_cancel))
+                    }
                 }
             }
         }
@@ -182,7 +196,7 @@ fun TranslationProgressSheet(
 private fun StageRow(label: String, count: StageCount?) {
     if (count == null || count.total == 0) return
     val stageFraction = if (count.total > 0) {
-        count.done.toFloat() / count.total
+        count.processed.toFloat() / count.total
     } else 0f
     val animatedFraction by animateFloatAsState(
         targetValue = stageFraction.coerceIn(0f, 1f),
@@ -205,11 +219,24 @@ private fun StageRow(label: String, count: StageCount?) {
                 .padding(horizontal = MaterialTheme.padding.small),
         )
         Text(
-            text = stringResource(ATMR.strings.manga_batch_stage_count, count.done, count.total),
+            text = stringResource(
+                ATMR.strings.manga_batch_stage_count,
+                count.succeeded,
+                count.failed,
+                count.skipped,
+                count.processed,
+                count.total,
+            ),
             style = MaterialTheme.typography.bodySmall,
             color = if (count.failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+@Composable
+private fun activeStagesLabel(stages: Set<TranslationProgressStage>): String {
+    val labels = stages.sortedBy { it.ordinal }.map { stageLabel(it) }
+    return labels.joinToString(stringResource(ATMR.strings.manga_translation_stage_separator))
 }
 
 @Composable

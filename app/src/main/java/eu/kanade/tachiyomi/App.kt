@@ -66,6 +66,7 @@ import tachiyomi.presentation.widget.WidgetManager
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
+import eu.kanade.translation.TranslationManager
 import java.security.Security
 
 class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factory {
@@ -205,6 +206,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             decoderCoroutineContext(Dispatchers.IO.limitedParallelism(3))
         }
             .build()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        eu.kanade.translation.forwardTranslationMemoryPressure(level) {
+            Injekt.get<TranslationManager>().onMemoryPressure(it)
+        }
     }
 
     override fun onStart(owner: LifecycleOwner) {

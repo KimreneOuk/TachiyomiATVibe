@@ -37,6 +37,11 @@ data class Translation(
         TRANSLATING(2),
         TRANSLATED(3),
         ERROR(4),
+        /**
+         * The chapter is readable, but one or more drafts remain partial or need review.
+         * Kept distinct from [TRANSLATED] so callers can offer retry/review without hiding it.
+         */
+        READY_WITH_WARNINGS(5),
     }
 
     companion object {

@@ -13,6 +13,7 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.model.shouldSkipAutoScheduling
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
@@ -27,7 +28,6 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -46,8 +46,6 @@ import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
@@ -82,9 +80,9 @@ class TranslationManager(
     val scheduler = eu.kanade.translation.scheduling.TranslationScheduler(
         executor = pipeline,
         storeResolver = eu.kanade.translation.scheduling.TranslationStoreResolver { chapterId ->
-            activeTranslationStores[chapterId]
+            activeStores.get(chapterId)
         },
-        immediateStoreResolver = { chapterId -> activeTranslationStores[chapterId] },
+        immediateStoreResolver = { chapterId -> activeStores.get(chapterId) },
     )
 
     init {
@@ -130,20 +128,10 @@ class TranslationManager(
         scheduler.markPageJobStuck(chapterId, pageKey)
     }
 
-    private val activeTranslationStores = java.util.concurrent.ConcurrentHashMap<Long, ChapterTranslationStore>()
-    private val activeStoreJobs = java.util.concurrent.ConcurrentHashMap<Long, Job>()
-    private val _activeStoreMap = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
-    private val _activeStoreState = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
-    val activeStoreState: StateFlow<Map<String, PageTranslation>> = _activeStoreState.asStateFlow()
+    private val activeStores = ActiveChapterStoreRegistry()
+    private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
 
-    private val batchTrackers = java.util.concurrent.ConcurrentHashMap<Long, TranslationBatchProgressTracker>()
-    private val _batchTrackerMap = MutableStateFlow<Map<Long, TranslationBatchProgressTracker>>(emptyMap())
-
-    /**
-     * Separate scope for per-chapter store collectors (the `_activeStoreState` fan-in) so
-     * cancelling translation jobs never tears down a collector the reader observes.
-     * SupervisorJob so one chapter's failure does not cancel another's.
-     */
+    /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
     private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val isRunning: Boolean
@@ -212,8 +200,20 @@ class TranslationManager(
     ): Translation.State {
         val translation = getQueuedTranslationOrNull(chapterId)
         if (translation != null) return translation.status
-        if (isChapterTranslated(chapterName, scanlator, title, sourceId)) return Translation.State.TRANSLATED
-        return Translation.State.NOT_TRANSLATED
+        activeStores.get(chapterId)?.let { store ->
+            val pages = store.state.value
+            if (pages.values.any { it.hasRenderedResult || it.hasRecognizedTranslation }) {
+                val summary = kotlinx.coroutines.runBlocking(Dispatchers.IO) { store.readSummary() }
+                return when {
+                    summary == null || summary.expectedPageCount != pages.size -> Translation.State.READY_WITH_WARNINGS
+                    summary.outcome() == Translation.State.TRANSLATED && summary.unresolvedRevisionCount == 0 -> Translation.State.TRANSLATED
+                    summary.outcome() == Translation.State.ERROR -> Translation.State.ERROR
+                    else -> Translation.State.READY_WITH_WARNINGS
+                }
+            }
+        }
+        return persistedChapterStatus(chapterName, scanlator, title, sourceId)
+            ?: Translation.State.NOT_TRANSLATED
     }
 
     fun observeChapterTranslationStatus(
@@ -227,7 +227,7 @@ class TranslationManager(
             queue.find { it.chapter.id == chapterId }?.status
         }.distinctUntilChanged()
 
-        val activeStoreStateFlow = _activeStoreMap.flatMapLatest { map ->
+        val activeStoreStateFlow = activeStores.snapshots.flatMapLatest { map ->
             val store = map[chapterId]
             if (store != null) {
                 store.state.map {
@@ -243,33 +243,59 @@ class TranslationManager(
         }.distinctUntilChanged()
     }
 
+    /** True when persisted output is readable, including a retry/review-ready warning outcome. */
     fun isChapterTranslated(
         chapterName: String,
         chapterScanlator: String?,
         mangaTitle: String,
         sourceId: Long,
-    ): Boolean = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-        val source = sourceManager.get(sourceId);
-        if (source == null) return@runBlocking false
+    ): Boolean = persistedChapterStatus(chapterName, chapterScanlator, mangaTitle, sourceId)
+        .let { it == Translation.State.TRANSLATED || it == Translation.State.READY_WITH_WARNINGS }
+
+    private fun persistedChapterStatus(
+        chapterName: String,
+        chapterScanlator: String?,
+        mangaTitle: String,
+        sourceId: Long,
+    ): Translation.State? = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+        val source = sourceManager.get(sourceId) ?: return@runBlocking null
         val file = provider.findTranslationFile(chapterName, chapterScanlator, mangaTitle, source)
-            ?: return@runBlocking false
-        // Existence alone is NOT enough: opening a chapter creates an empty translation file so
-        // reader and translator share a store. Treat empty/blank files as not-translated to avoid
-        // a false TRANSLATED state; a truly-translated chapter has a non-trivial page map.
-        if (!file.exists() || file.length() <= 2L) return@runBlocking false
+            ?: return@runBlocking null
+        if (!file.exists() || file.length() <= 2L) return@runBlocking null
         try {
             val pages = Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
-            // Counts as translated ONLY when a page produced real output — a rendered image
-            // (hasRenderedResult) or recognized text blocks READY to translate (hasRecognizedTranslation).
-            // Reusing the same helpers the reader treats as Done/NeedsRender keeps this consistent
-            // with the live UI. Previously `pages.isNotEmpty()`, which counted a single placeholder
-            // page (written by the stranded-page sweep on chapter open or by failed/aborted
-            // translations) as fully translated forever — a false-positive now closed.
-            pages.values.any { it.hasRenderedResult || it.hasRecognizedTranslation }
+            val readable = pages.values.any { it.hasRenderedResult || it.hasRecognizedTranslation }
+            if (!readable) return@runBlocking null
+
+            val summary = ChapterTranslationSummaryStore(file).read()
+            // Page JSON predates the sidecar. It remains reader-available but can never
+            // prove full completion until a full batch creates a compatible summary.
+            if (summary == null) return@runBlocking Translation.State.READY_WITH_WARNINGS
+            if (summary.expectedPageCount != pages.size) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName " +
+                        "reason=expected-count mismatch expected=${summary.expectedPageCount} actual=${pages.size}"
+                }
+                return@runBlocking Translation.State.READY_WITH_WARNINGS
+            }
+            when (summary.outcome()) {
+                Translation.State.TRANSLATED -> if (summary.unresolvedRevisionCount == 0) {
+                    Translation.State.TRANSLATED
+                } else {
+                    Translation.State.READY_WITH_WARNINGS
+                }
+                Translation.State.READY_WITH_WARNINGS -> Translation.State.READY_WITH_WARNINGS
+                Translation.State.ERROR -> Translation.State.ERROR
+                else -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName reason=invalid terminal outcome"
+                    }
+                    Translation.State.READY_WITH_WARNINGS
+                }
+            }
         } catch (e: Exception) {
-            // Corrupt/empty file isn't a translation; getChapterTranslation(file) deletes it on read.
             logcat(LogPriority.WARN, e) { "Translation file for $chapterName unreadable; treating as not translated" }
-            false
+            null
         }
     }
     fun getChapterTranslation(
@@ -311,34 +337,14 @@ class TranslationManager(
     }
 
     fun registerActiveTranslationStore(chapterId: Long, store: ChapterTranslationStore) {
-        synchronized(activeTranslationStores) {
-            // Keep the existing instance if already registered so the reader's captured StateFlow keeps observing the same object.
-            if (activeTranslationStores[chapterId] === store) return
-            activeTranslationStores[chapterId] = store
-            _activeStoreMap.value = activeTranslationStores.toMap()
-            // Track the collector Job on the manager's own scope (not GlobalScope, which leaked per chapter across navigations) so unregister can cancel it.
-            activeStoreJobs[chapterId]?.cancel()
-            activeStoreJobs[chapterId] = storeScope.launch {
-                store.state.collect { pages ->
-                    _activeStoreState.value = pages
-                }
-            }
-        }
+        // Keep the existing instance if already registered so a reader keeps observing the same object.
+        activeStores.register(chapterId, store)
     }
 
     fun unregisterActiveTranslationStore(chapterId: Long) {
-        synchronized(activeTranslationStores) {
-            activeStoreJobs.remove(chapterId)?.cancel()
-            // Mark the evicted store defunct BEFORE removing it from the registry. A worker still
-            // holding a reference (e.g. mid-uncancellable ONNX when cancel() was requested) has its
-            // late writes rejected by the defunct guard instead of recreating the deleted file or
-            // stranding a page at RUNNING on a store the reader no longer observes.
-            activeTranslationStores.remove(chapterId)?.markDefunct()
-            _activeStoreMap.value = activeTranslationStores.toMap()
-            if (activeTranslationStores.isEmpty()) {
-                _activeStoreState.value = emptyMap()
-            }
-        }
+        // Mark the evicted store defunct BEFORE removing it from the registry. A worker still
+        // holding a reference has late writes rejected rather than recreating deleted output.
+        activeStores.remove(chapterId)?.markDefunct()
     }
 
     /**
@@ -355,8 +361,8 @@ class TranslationManager(
         mangaTitle: String,
         source: Source,
     ): ChapterTranslationStore? = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-        synchronized(activeTranslationStores) {
-            activeTranslationStores[chapterId]?.let { return@runBlocking it }
+        synchronized(activeStores) {
+            activeStores.get(chapterId)?.let { return@runBlocking it }
             val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
             val store = if (file != null && file.exists()) {
                 ChapterTranslationStore.open(file)
@@ -405,37 +411,40 @@ class TranslationManager(
     fun cancelAutoTranslations(chapterId: Long? = null): Boolean =
         scheduler.cancelAutoTranslations(chapterId)
 
-    fun observeActiveStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? {
-        return activeTranslationStores[chapterId]?.state
-    }
+    fun observeActiveStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? = activeStores.observe(chapterId)
+
+    /**
+     * Chapter-keyed active page source for reader state. Unlike a global active-store stream,
+     * this never emits another chapter's pages and becomes empty when this chapter is removed.
+     */
+    fun selectActiveStore(chapterId: Long): Flow<Map<String, PageTranslation>> = activeStores.select(chapterId)
 
     fun createBatchTracker(
         chapterId: Long,
         store: ChapterTranslationStore,
         orderedPageKeys: List<String>,
     ): TranslationBatchProgressTracker {
-        disposeBatchTracker(chapterId)
         val tracker = TranslationBatchProgressTracker(
             chapterId = chapterId,
             store = store,
             orderedPageKeys = orderedPageKeys,
             scope = storeScope,
             permitHolderResolver = { pipeline.permitHolderPageKeySnapshot() },
+            onTerminalSnapshot = { snapshot ->
+                batchTrackerRegistry.complete(chapterId, snapshot)
+            },
         )
-        batchTrackers[chapterId] = tracker
-        _batchTrackerMap.value = batchTrackers.toMap()
+        batchTrackerRegistry.replace(chapterId, tracker)
         return tracker
     }
 
     fun disposeBatchTracker(chapterId: Long) {
-        val removed = batchTrackers.remove(chapterId)
-        if (removed != null) {
-            removed.close()
-            _batchTrackerMap.value = batchTrackers.toMap()
-        }
+        batchTrackerRegistry.dispose(chapterId)
     }
 
-    fun getBatchTracker(chapterId: Long): TranslationBatchProgressTracker? = batchTrackers[chapterId]
+    internal fun terminalSnapshotCacheSize(): Int = batchTrackerRegistry.terminalSnapshotCacheSize()
+
+    fun getBatchTracker(chapterId: Long): TranslationBatchProgressTracker? = batchTrackerRegistry.getLive(chapterId)
 
     /**
      * Live batch progress for [chapterId]: emits from the tracker's snapshot StateFlow when a
@@ -443,22 +452,27 @@ class TranslationManager(
      * tracker is created or disposed.
      */
     fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
-        return _batchTrackerMap
+        return batchTrackerRegistry.live
             .flatMapLatest { trackers ->
                 val tracker = trackers[chapterId]
                 if (tracker != null) {
                     tracker.snapshot
                 } else {
-                    val state = getQueuedTranslationOrNull(chapterId)?.status
-                        ?: Translation.State.NOT_TRANSLATED
-                    flowOf(
-                        TranslationProgressSnapshot.compute(
-                            chapterId = chapterId,
-                            state = state,
-                            pageMap = activeTranslationStores[chapterId]?.state?.value,
-                            permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
+                    val terminal = batchTrackerRegistry.terminal.value[chapterId]
+                    if (terminal != null) {
+                        flowOf(terminal)
+                    } else {
+                        val state = getQueuedTranslationOrNull(chapterId)?.status
+                            ?: Translation.State.NOT_TRANSLATED
+                        flowOf(
+                            TranslationProgressSnapshot.compute(
+                                chapterId = chapterId,
+                                state = state,
+                                pageMap = activeStores.get(chapterId)?.state?.value,
+                                permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
+                            )
                         )
-                    )
+                    }
                 }
             }
             .distinctUntilChanged()
@@ -470,7 +484,7 @@ class TranslationManager(
      * store's page-count progress; empty when no active store exists (no batch in flight).
      */
     fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
-        return _activeStoreMap
+        return activeStores.snapshots
             .flatMapLatest { stores ->
                 val state = getQueuedTranslationOrNull(chapterId)?.status ?: Translation.State.NOT_TRANSLATED
                 val store = stores[chapterId]
@@ -530,7 +544,7 @@ class TranslationManager(
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
         
-        val activeStore = activeTranslationStores[chapterId]
+        val activeStore = activeStores.get(chapterId)
         val persistedCleanedName = activeStore?.state?.value?.get(pageKey)?.cleanedImageName
         if (activeStore != null) {
             activeStore.deletePage(pageKey)
@@ -630,7 +644,7 @@ class TranslationManager(
             return
         }
         disposeBatchTracker(chapterId)
-        activeTranslationStores[chapterId]?.clearTransientQueuePages("Translation cancelled")
+        activeStores.get(chapterId)?.clearTransientQueuePages("Translation cancelled")
         // Evict the store on chapter exit; the reader re-opens it via observeLiveTranslationStore on the next loadChapter.
         unregisterActiveTranslationStore(chapterId)
     }
@@ -643,9 +657,9 @@ class TranslationManager(
      */
     fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) {
         scheduler.cancelAllPageTranslations()
-        val chapterIdsToEvict = activeTranslationStores.keys
+        val chapterIdsToEvict = activeStores.chapterIds()
             .filter { cancelBatchQueue || !isBatchTranslationActive(it) }
-        val stores = chapterIdsToEvict.mapNotNull { activeTranslationStores[it] }
+        val stores = chapterIdsToEvict.mapNotNull { activeStores.get(it) }
         if (stores.isNotEmpty()) {
             storeScope.launch {
                 stores.forEach { store ->

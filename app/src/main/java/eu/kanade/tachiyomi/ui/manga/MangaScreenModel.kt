@@ -51,9 +51,9 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.sample
-import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -540,7 +540,15 @@ class MangaScreenModel(
         if (translationProgressJobs[chapterId]?.isActive == true) return
         translationProgressJobs[chapterId] = screenModelScope.launchIO {
             translationManager.observeBatchProgress(chapterId)
-                .sample(200.milliseconds)
+                // Sample nonterminal updates, but deliver terminal snapshots immediately.
+                .transformLatest { progress ->
+                    if (progress.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.FINISHED) {
+                        emit(progress)
+                    } else {
+                        delay(200)
+                        emit(progress)
+                    }
+                }
                 .catch { error -> logcat(LogPriority.ERROR, error) }
                 .flowWithLifecycle(lifecycle)
                 .collect { progress ->

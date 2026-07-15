@@ -136,9 +136,10 @@ class TranslationProgressSnapshotTest {
         snapshot.donePages shouldBe 2
         snapshot.activePage shouldBe 1
         snapshot.activeStage shouldBe TranslationProgressStage.OCR
-        snapshot.doneStages shouldBe 14
+        // Counts are per stage: READY, FAILED, and SKIPPED are processed.
+        snapshot.doneStages shouldBe 11
         snapshot.totalStages shouldBe 24
-        snapshot.fraction shouldBe (14f / 24f)
+        snapshot.fraction shouldBe (11f / 24f)
     }
 
     @Test

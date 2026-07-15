@@ -2,17 +2,22 @@ package eu.kanade.translation.batch
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageCancelled
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.hasRenderedResult
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 
 data class ReconciliationResult(
     val chapterStatus: Translation.State,
     val strandedPages: Map<String, String>,
+    val unexpectedPageKeys: Set<String>,
     val doneCount: Int,
     val failedCount: Int,
     val partialCount: Int,
+    val unresolvedRevisionCount: Int,
 )
 
 object BatchProgressReconciler {
@@ -22,18 +27,29 @@ object BatchProgressReconciler {
         orderedKeys: List<String>,
     ): ReconciliationResult {
         val expectedKeys = orderedKeys.distinct()
-        if (pageMap.isEmpty() && expectedKeys.isEmpty()) {
+        val unexpectedPageKeys = pageMap.keys - expectedKeys.toSet()
+        unexpectedPageKeys.forEach { pageKey ->
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT batch reconciliation unexpected page: pageKey=$pageKey reason=not in authoritative ordered keys"
+            }
+        }
+        if (expectedKeys.isEmpty()) {
             return ReconciliationResult(
                 chapterStatus = Translation.State.ERROR,
                 strandedPages = emptyMap(),
-                doneCount = 0, failedCount = 0, partialCount = 0,
+                unexpectedPageKeys = unexpectedPageKeys,
+                doneCount = 0,
+                failedCount = 0,
+                partialCount = 0,
+                unresolvedRevisionCount = 0,
             )
         }
 
-        val strandedPages = mutableMapOf<String, String>()
+        val strandedPages = linkedMapOf<String, String>()
         var doneCount = 0
         var failedCount = 0
         var partialCount = 0
+        var unresolvedRevisionCount = 0
 
         for (pageKey in expectedKeys) {
             val page = pageMap[pageKey]
@@ -42,33 +58,39 @@ object BatchProgressReconciler {
                 failedCount++
                 continue
             }
-            if (page.hasRenderedResult || page.isTextlessTerminal) {
-                doneCount++
-            } else if (page.isStageFailed) {
-                failedCount++
-            } else if (page.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL && page.renderStatus == eu.kanade.translation.model.StageStatus.READY) {
-                partialCount++
-            } else if (page.isStageRunning || page.isNonTerminalWithoutOutput()) {
-                strandedPages[pageKey] = "Translation incomplete — page was left in a non-terminal state"
-                failedCount++
-            } else {
-                doneCount++
+            unresolvedRevisionCount += page.blocks.count { it.needsRevision }
+            when {
+                page.isStageFailed -> failedCount++
+                page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
+                page.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL -> {
+                    partialCount++
+                    doneCount++
+                }
+                page.isStageCancelled || page.isStageRunning || page.isNonTerminalWithoutOutput() -> {
+                    strandedPages[pageKey] = "Translation incomplete — page was left cancelled or non-terminal"
+                    failedCount++
+                }
+                else -> {
+                    strandedPages[pageKey] = "Translation incomplete — expected page has no readable terminal output"
+                    failedCount++
+                }
             }
         }
 
-        val hasFailedOrStranded = failedCount > 0 || strandedPages.isNotEmpty()
-        val chapterStatus = if (hasFailedOrStranded) {
-            Translation.State.ERROR
-        } else {
-            Translation.State.TRANSLATED
+        val chapterStatus = when {
+            failedCount > 0 -> Translation.State.ERROR
+            partialCount > 0 || unresolvedRevisionCount > 0 -> Translation.State.READY_WITH_WARNINGS
+            else -> Translation.State.TRANSLATED
         }
 
         return ReconciliationResult(
             chapterStatus = chapterStatus,
             strandedPages = strandedPages,
+            unexpectedPageKeys = unexpectedPageKeys,
             doneCount = doneCount,
             failedCount = failedCount,
             partialCount = partialCount,
+            unresolvedRevisionCount = unresolvedRevisionCount,
         )
     }
 

@@ -65,7 +65,7 @@ fun ChapterTranslationIndicator(
             onClick = onClick,
             snapshot = translationProgressProvider(),
         )
-        Translation.State.TRANSLATED -> TranslatedIndicator(
+        Translation.State.TRANSLATED, Translation.State.READY_WITH_WARNINGS -> TranslatedIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
@@ -130,7 +130,7 @@ private fun TranslatingIndicator(
         val isRevising = snapshot?.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.REVISING
         val progressFraction = when {
             isRevising && snapshot!!.revision.totalBlocks > 0 -> {
-                snapshot.revision.completedBlocks.toFloat() / snapshot.revision.totalBlocks
+                snapshot.revision.fraction
             }
             isDeterminate -> snapshot!!.fraction
             else -> 0f
@@ -163,7 +163,7 @@ private fun TranslatingIndicator(
         // TachiyomiAT: stage-based percentage label under the icon
         if (isDeterminate || isRevising) {
             val percentageText = if (isRevising) {
-                "Rev ${(progressFraction * 100).toInt()}%"
+                stringResource(ATMR.strings.manga_batch_revision_percent, (progressFraction * 100).toInt())
             } else {
                 "${(progressFraction * 100).toInt()}%"
             }

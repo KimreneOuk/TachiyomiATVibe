@@ -295,7 +295,9 @@ class ChapterTranslator(
     private fun CoroutineScope.launchTranslationJob(translation: Translation) = launchIO {
         try {
             translateChapter(translation)
-            if (translation.status == Translation.State.TRANSLATED) {
+            if (translation.status == Translation.State.TRANSLATED ||
+                translation.status == Translation.State.READY_WITH_WARNINGS
+            ) {
                 removeFromQueue(translation)
             }
             if (areAllTranslationsFinished()) {
@@ -375,6 +377,8 @@ class ChapterTranslator(
 
     private suspend fun translateChapterInternal(translation: Translation) {
         var store: ChapterTranslationStore? = null
+        var tracker: eu.kanade.translation.batch.TranslationBatchProgressTracker? = null
+        var batchOrderedPageKeys: List<String> = emptyList()
         try {
             // Prefer the shared active store from TranslationManager so the reader
             // observes the same instance the pipeline writes to.
@@ -453,9 +457,10 @@ class ChapterTranslator(
                 val resumeIndex = translation.chapter.lastPageRead.toInt()
                 val orderedStreams = eu.kanade.translation.util.ResumeOrdering
                     .forwardFirstThenBackfill(streams, resumeIndex)
-                store.preRegisterPages(orderedStreams.map { it.first })
+                batchOrderedPageKeys = orderedStreams.map { it.first }
+                store.preRegisterPages(batchOrderedPageKeys)
                 val chapterId = translation.chapter.id
-                val tracker = if (chapterId != null) {
+                tracker = if (chapterId != null) {
                     pipeline.batchTrackerFactory?.invoke(chapterId, store, orderedStreams.map { it.first })
                 } else null
                 if (translationJob?.isActive != true) {
@@ -479,11 +484,25 @@ class ChapterTranslator(
             val pageStates = store.state.value
             val reconciliation = eu.kanade.translation.batch.BatchProgressReconciler.reconcile(
                 pageMap = pageStates,
-                orderedKeys = pageStates.keys.toList(),
+                orderedKeys = batchOrderedPageKeys,
             )
-            translation.status = reconciliation.chapterStatus
+            translation.status = if (
+                reconciliation.chapterStatus == Translation.State.TRANSLATED &&
+                store.readSummary() == null
+            ) {
+                logcat(LogPriority.ERROR) {
+                    "TachiyomiAT batch cannot certify completion: chapter=${translation.chapter.name} reason=summary sidecar unavailable"
+                }
+                Translation.State.READY_WITH_WARNINGS
+            } else {
+                reconciliation.chapterStatus
+            }
         } catch (error: Throwable) {
-            if (error is CancellationException) throw error
+            if (error is CancellationException) {
+                tracker?.abort(batchOrderedPageKeys.toSet(), "Batch cancelled")
+                store?.flush()
+                throw error
+            }
             BitmapPool.releaseAll()
             translation.status = Translation.State.ERROR
             logcat(LogPriority.ERROR, error)

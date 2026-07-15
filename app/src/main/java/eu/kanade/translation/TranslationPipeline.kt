@@ -1392,6 +1392,8 @@ class TranslationPipeline(
                     p.translationStatus = StageStatus.SKIPPED
                     p.renderStatus = StageStatus.SKIPPED
                     store.updatePage(pageKey) { p }
+                    tracker?.markTranslateSkipped(pageKey)
+                    tracker?.markRenderSkipped(pageKey)
                     recycleHeld(pageKey)
                     translationRegistry.remove(pageKey)
                     return
@@ -1709,16 +1711,16 @@ class TranslationPipeline(
 
         tracker?.markRevisionFinished()
 
-        val pageMap = store.state.value
         val reconciliation = BatchProgressReconciler.reconcile(
-            pageMap = pageMap,
+            pageMap = store.state.value,
             orderedKeys = orderedStreams.map { it.first },
         )
-        if (tracker != null) {
-            tracker.finish(reconciliation)
-        }
-        // Mark stranded pages FAILED so the store reflects reality for the caller.
+        // Persist every expected stranded page before emitting terminal progress. This
+        // ensures callers that observe the terminal state can also inspect retryable failures.
         reconciliation.strandedPages.forEach { (pageKey, reason) ->
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT batch stranded page: chapter=${chapter.name} pageKey=$pageKey reason=$reason"
+            }
             store.updatePage(pageKey) { existing ->
                 (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
                     ocrStatus = StageStatus.FAILED
@@ -1728,6 +1730,20 @@ class TranslationPipeline(
             }
         }
         store.flush()
+        val summaryPublished = store.publishSummary(
+            ChapterTranslationSummary(
+                expectedPageCount = orderedStreams.map { it.first }.distinct().size,
+                terminalOutcome = reconciliation.chapterStatus.value,
+                unresolvedRevisionCount = reconciliation.unresolvedRevisionCount,
+                updatedAtMillis = System.currentTimeMillis(),
+            ),
+        )
+        if (!summaryPublished) {
+            logcat(LogPriority.ERROR) {
+                "TachiyomiAT batch terminal summary unavailable: chapter=${chapter.name} reason=sidecar publication failed"
+            }
+        }
+        tracker?.finish(reconciliation)
         val revision = tracker?.snapshot?.value?.revision
         logcat(LogPriority.INFO) {
             "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} " +

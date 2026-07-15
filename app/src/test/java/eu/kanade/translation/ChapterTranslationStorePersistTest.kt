@@ -227,6 +227,47 @@ class ChapterTranslationStorePersistTest {
     }
 
     @Test
+    fun `summary sidecar round trips and replaces the prior atomic publication`() {
+        val tempDir = createTempDir()
+        try {
+            val target = File(tempDir, "chapter.json")
+            target.writeText("{}")
+            val summaryTarget = File(tempDir, "chapter.summary.json")
+            val parent = mockk<UniFile>()
+            val pageFile = mockk<UniFile>()
+            every { pageFile.name } returns "chapter.json"
+            every { pageFile.parentFile } returns parent
+            every { parent.findFile("chapter.summary.json") } answers {
+                if (summaryTarget.exists()) mockSummaryFile(summaryTarget) else null
+            }
+            every { parent.createFile("chapter.summary.json.tmp") } answers {
+                mockSummaryFile(File(tempDir, "chapter.summary.json.tmp"))
+            }
+
+            val summaries = ChapterTranslationSummaryStore(pageFile)
+            val first = ChapterTranslationSummary(
+                expectedPageCount = 2,
+                terminalOutcome = eu.kanade.translation.model.Translation.State.TRANSLATED.value,
+                unresolvedRevisionCount = 0,
+                updatedAtMillis = 1,
+            )
+            val replacement = first.copy(
+                terminalOutcome = eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS.value,
+                unresolvedRevisionCount = 1,
+                updatedAtMillis = 2,
+            )
+
+            summaries.publish(first) shouldBe true
+            summaries.read() shouldBe first
+            summaries.publish(replacement) shouldBe true
+            summaries.read() shouldBe replacement
+            File(tempDir, "chapter.summary.json.tmp").exists() shouldBe false
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `preRegisterPages_doesNotPersistUntilDurableChange`() = runTest {
         val store = ChapterTranslationStore(
             translationFile = null,
@@ -264,6 +305,17 @@ class ChapterTranslationStorePersistTest {
         store.state.value["p3"]?.blocks shouldBe emptyList()
         store.state.value["p3"]?.ocrStatus shouldBe StageStatus.CANCELLED
         store.persistCount shouldBe 1
+    }
+
+    private fun mockSummaryFile(file: File): UniFile = mockk<UniFile>().also { uniFile ->
+        every { uniFile.name } answers { file.name }
+        every { uniFile.exists() } answers { file.exists() }
+        every { uniFile.openInputStream() } answers { file.inputStream() }
+        every { uniFile.openOutputStream() } answers { file.outputStream() }
+        every { uniFile.delete() } answers { file.delete(); true }
+        every { uniFile.renameTo("chapter.summary.json") } answers {
+            file.renameTo(File(file.parentFile, "chapter.summary.json"))
+        }
     }
 
     /** Minimal block satisfying the non-default TranslationBlock geometry args. */

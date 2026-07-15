@@ -274,11 +274,6 @@ class ReaderActivity : BaseActivity() {
         super.onPause()
     }
 
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        viewModel.onMemoryPressure(level)
-    }
-
     /**
      * Set menu visibility again on activity resume to apply immersive mode again if needed.
      * Helps with rotations.
