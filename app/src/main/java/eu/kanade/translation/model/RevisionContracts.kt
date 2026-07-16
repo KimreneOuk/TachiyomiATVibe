@@ -24,7 +24,6 @@ data class RevisionPreflightResult(
     val token: RevisionPreflightToken,
     val eligibleTargetCount: Int,
     val estimatedRequestGroups: Int,
-    val requiresLegacyLanguage: Boolean,
 )
 
 @Serializable

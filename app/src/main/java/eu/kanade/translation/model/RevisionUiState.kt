@@ -18,20 +18,15 @@ import androidx.compose.runtime.Immutable
 /**
  * One-line summary of a rejection, tagged with the typed reason so the UI can
  * render the localized message and decide whether to offer a setup/settings
- * navigation action (e.g. for [RevisionRejectionReason.NO_REVIEWER_CONFIGURED]
- * and [RevisionRejectionReason.LEGACY_LANGUAGE_REQUIRED]).
+ * navigation action (for [RevisionRejectionReason.NO_REVIEWER_CONFIGURED]).
  */
 @Immutable
 data class RevisionRejectionState(
     val reason: RevisionRejectionReason,
     val messageArgs: List<String> = emptyList(),
 ) {
-    /**
-     * True when the rejection is recoverable by navigating to translation
-     * settings (no reviewer configured, or language metadata missing).
-     */
-    val offersSettingsNav: Boolean get() = reason == RevisionRejectionReason.NO_REVIEWER_CONFIGURED ||
-        reason == RevisionRejectionReason.LEGACY_LANGUAGE_REQUIRED
+    /** True when reviewer setup in translation settings can recover the rejection. */
+    val offersSettingsNav: Boolean get() = reason == RevisionRejectionReason.NO_REVIEWER_CONFIGURED
 }
 
 /**
@@ -48,8 +43,8 @@ data class RevisionReviewerSelection(
 
 /**
  * State surfaced by the shared confirm composable. A preflight either yields a
- * [Ready] confirmation (confirm enabled when no legacy language is required) or
- * a [Rejected] reason. [Idle] is the initial state before the first preflight.
+ * confirmable [Ready] state or a [Rejected] reason. [Idle] is the initial state
+ * before the first preflight.
  */
 sealed interface RevisionConfirmState {
 
@@ -61,12 +56,7 @@ sealed interface RevisionConfirmState {
         val confirmation: RevisionConfirmation,
         val reviewerOptions: List<RevisionReviewerOption>,
         val selection: RevisionReviewerSelection,
-        /**
-         * False only while legacy language fields still need to be selected;
-         * the backend already rejects legacy chapters so this stays true for a
-         * Ready outcome but is kept explicit so the UI guard mirrors the
-         * manager.
-         */
+        /** Mirrors backend admission; a Ready confirmation is always actionable. */
         val canConfirm: Boolean,
     ) : RevisionConfirmState
 
@@ -151,7 +141,7 @@ fun RevisionPreflightOutcome.toConfirmState(
             confirmation = confirmation,
             reviewerOptions = reviewerOptions,
             selection = selection,
-            canConfirm = !confirmation.requiresLegacyLanguage,
+            canConfirm = true,
         )
     }
     is RevisionPreflightOutcome.Rejected -> RevisionConfirmState.Rejected(

@@ -280,7 +280,6 @@ class TranslationManager(
             token = token,
             eligibleTargetCount = plan.allTargets.size,
             estimatedRequestGroups = plan.groups.size,
-            requiresLegacyLanguage = false,
         )
     }
 
@@ -466,7 +465,6 @@ class TranslationManager(
             reviewerOptions = revisionReviewerOptions().toImmutableList(),
             persistedSourceLanguage = translationPreferences.translateFromLanguage().get(),
             persistedTargetLanguage = translationPreferences.translateToLanguage().get(),
-            requiresLegacyLanguage = summary == null,
         )
     }
 
@@ -485,25 +483,35 @@ class TranslationManager(
         reviewerModel: String,
     ): RevisionPreflightOutcome {
         if (isBatchTranslationActive(chapterId)) {
+            logcat(LogPriority.WARN) { "Revision preflight rejected: ACTIVE_BATCH (chapter=$chapterId)" }
             return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.ACTIVE_BATCH)
         }
         if (isRevisionActive(chapterId)) {
+            logcat(LogPriority.WARN) { "Revision preflight rejected: REVISION_ACTIVE (chapter=$chapterId)" }
             return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.REVISION_ACTIVE)
         }
         val options = revisionReviewerOptions()
         if (options.none { it.engine == reviewerEngine && it.model == reviewerModel }) {
+            logcat(LogPriority.WARN) {
+                "Revision preflight rejected: NO_REVIEWER_CONFIGURED (chapter=$chapterId, " +
+                    "reviewer=$reviewerEngine/$reviewerModel, configuredOptions=${options.map { "${it.engine}/${it.model}" }})"
+            }
             return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.NO_REVIEWER_CONFIGURED)
         }
         val preflight = getRevisionPreflight(chapterId, scope, reviewerEngine, reviewerModel)
-            ?: return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.CHAPTER_DELETED)
+            ?: run {
+                logcat(LogPriority.WARN) { "Revision preflight rejected: CHAPTER_DELETED/no store (chapter=$chapterId)" }
+                return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.CHAPTER_DELETED)
+            }
         if (preflight.eligibleTargetCount == 0) {
+            logcat(LogPriority.WARN) { "Revision preflight rejected: NO_TARGETS (chapter=$chapterId, scope=$scope)" }
             return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.NO_TARGETS)
         }
+        // Chapter summaries do not carry a language pair. Both fresh and legacy
+        // stores therefore use the current translation preferences, which are
+        // also captured in the preflight token. A missing sidecar must not make
+        // standalone review impossible when the store still has targets.
         val eligibility = snapshotRevisionEligibility(chapterId)
-        val requiresLegacyLanguage = eligibility?.requiresLegacyLanguage ?: true
-        if (requiresLegacyLanguage) {
-            return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.LEGACY_LANGUAGE_REQUIRED)
-        }
         val kind = eu.kanade.translation.translator.AiTranslatorKind.entries.first { it.engine == reviewerEngine }
         val confirmation = RevisionConfirmation(
             chapterName = chapterName,
@@ -518,7 +526,6 @@ class TranslationManager(
             targetCount = preflight.eligibleTargetCount,
             exclusionCount = eligibility?.userEditedExclusions ?: 0,
             estimatedRequestGroups = preflight.estimatedRequestGroups,
-            requiresLegacyLanguage = requiresLegacyLanguage,
             partialWarning = eligibility?.isPartial ?: false,
         )
         return RevisionPreflightOutcome.Ready(chapterId, confirmation)

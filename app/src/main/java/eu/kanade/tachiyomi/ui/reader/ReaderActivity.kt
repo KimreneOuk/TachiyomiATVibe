@@ -645,6 +645,10 @@ class ReaderActivity : BaseActivity() {
                         onReview = { viewModel.startRevisionPreflight() },
                         onCancelRevision = { viewModel.cancelRevision() },
                         onViewLastReview = { viewModel.showRevisionResult() },
+                        reviewerAuto = translationSettingsState.reviewerAuto,
+                        reviewerEngine = translationSettingsState.reviewerEngine,
+                        onReviewerAutoChange = { viewModel.setRevisionReviewerAuto(it) },
+                        onReviewerEngineChange = { viewModel.setRevisionReviewerEngine(it) },
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

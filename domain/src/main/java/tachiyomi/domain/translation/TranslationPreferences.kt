@@ -200,8 +200,22 @@ class TranslationPreferences(
      * selected contextual provider. The reviewer reuses each provider's existing
      * API key / base URL preference, so this only stores the engine choice; the
      * reviewer model is the selected engine's [translationAiModel].
+     *
+     * Only consulted when [revisionReviewerAuto] is false. An explicit pick from
+     * the reviewer picker also flips Auto off.
      */
     fun revisionReviewerEngine() = preferenceStore.getEnum("revision_reviewer_engine", AiEngine.GEMINI)
+
+    /**
+     * When true (default), the revision reviewer follows the Pass-1 translation
+     * engine: the AI provider used for translation is also used for review, and
+     * when translation is a non-AI (Standard) engine — or the AI provider has no
+     * credential — the first configured AI provider is used instead. This keeps
+     * the common case from rejecting with NO_REVIEWER_CONFIGURED just because the
+     * persisted reviewer default (Gemini) lacks a key. When false, the explicit
+     * [revisionReviewerEngine] is used as-is.
+     */
+    fun revisionReviewerAuto() = preferenceStore.getBoolean("revision_reviewer_auto", true)
 
     /**
      * TachiyomiAT: opt-in verbose logging for the translation pipeline. When on,

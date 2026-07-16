@@ -46,8 +46,6 @@ data class ChapterRevisionEligibility(
     val reviewerOptions: ImmutableList<RevisionReviewerOption>,
     val persistedSourceLanguage: String,
     val persistedTargetLanguage: String,
-    /** True when language metadata is absent/legacy and the user must confirm it. */
-    val requiresLegacyLanguage: Boolean,
 ) {
     /** A contextual reviewer with credentials is configured. */
     val hasReviewer: Boolean get() = reviewerOptions.isNotEmpty()
@@ -63,7 +61,6 @@ enum class RevisionRejectionReason {
     ACTIVE_BATCH,
     REVISION_ACTIVE,
     CHAPTER_DELETED,
-    LEGACY_LANGUAGE_REQUIRED,
 }
 
 /**
@@ -87,7 +84,6 @@ data class RevisionConfirmation(
     val targetCount: Int,
     val exclusionCount: Int,
     val estimatedRequestGroups: Int,
-    val requiresLegacyLanguage: Boolean,
     /** Warn (do not reject) when only part of the chapter is translated. */
     val partialWarning: Boolean,
 )

@@ -97,6 +97,13 @@ fun TranslationSettingsSheet(
     onReview: () -> Unit = {},
     onCancelRevision: () -> Unit = {},
     onViewLastReview: () -> Unit = {},
+    // TachiyomiAT: standalone-revision reviewer configuration. Exposed in the
+    // sheet so the in-reader recovery path ("Configure a reviewer") lands on a
+    // real control instead of looping back to the same sheet.
+    reviewerAuto: Boolean = true,
+    reviewerEngine: AiEngine = AiEngine.GEMINI,
+    onReviewerAutoChange: (Boolean) -> Unit = {},
+    onReviewerEngineChange: (AiEngine) -> Unit = {},
 ) {
     var showAdvanced by remember { mutableStateOf(false) }
 
@@ -168,6 +175,12 @@ fun TranslationSettingsSheet(
                     onTranslationAiBaseUrlChange = onTranslationAiBaseUrlChange,
                     onTranslationAiModelChange = onTranslationAiModelChange,
                     onFetchAiModels = onFetchAiModels,
+                )
+                ReviewerConfigSection(
+                    reviewerAuto = reviewerAuto,
+                    reviewerEngine = reviewerEngine,
+                    onReviewerAutoChange = onReviewerAutoChange,
+                    onReviewerEngineChange = onReviewerEngineChange,
                 )
             }
         }
@@ -557,6 +570,38 @@ private fun ColumnScope.EngineSection(
             onTranslationAiBaseUrlChange = onTranslationAiBaseUrlChange,
             onTranslationAiModelChange = onTranslationAiModelChange,
             onFetchAiModels = onFetchAiModels,
+        )
+    }
+}
+
+/**
+ * TachiyomiAT: standalone-revision reviewer configuration row. The Auto toggle
+ * follows the Pass-1 translation engine (default); turning it off reveals the
+ * explicit provider picker. The provider reuses its translation API key and
+ * model, so only the engine choice is stored here. Mirrors the main Settings
+ * reviewer group so the reader recovery path lands on a real control.
+ */
+@Composable
+private fun ColumnScope.ReviewerConfigSection(
+    reviewerAuto: Boolean,
+    reviewerEngine: AiEngine,
+    onReviewerAutoChange: (Boolean) -> Unit,
+    onReviewerEngineChange: (AiEngine) -> Unit,
+) {
+    SwitchPreferenceWidget(
+        title = stringResource(ATMR.strings.pref_revision_reviewer_auto),
+        subtitle = stringResource(ATMR.strings.pref_revision_reviewer_auto_summary),
+        checked = reviewerAuto,
+        onCheckedChanged = onReviewerAutoChange,
+    )
+
+    if (!reviewerAuto) {
+        val providers = AiTranslatorKind.entries.associate { it.engine to it.label }.toImmutableMap()
+        EngineListRow(
+            title = stringResource(ATMR.strings.pref_revision_reviewer_engine),
+            entries = providers,
+            value = reviewerEngine,
+            onValueChange = onReviewerEngineChange,
         )
     }
 }

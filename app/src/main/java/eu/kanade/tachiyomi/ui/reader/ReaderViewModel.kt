@@ -69,6 +69,7 @@ import eu.kanade.translation.model.RevisionResultState
 import eu.kanade.translation.model.RevisionReviewerOption
 import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.defaultScope
+import eu.kanade.translation.model.resolveEffectiveReviewerEngine
 import eu.kanade.translation.model.toConfirmState
 import eu.kanade.translation.model.toResultState
 import eu.kanade.translation.model.withReviewerPicked
@@ -204,8 +205,12 @@ class ReaderViewModel @JvmOverloads constructor(
                 translationPreferences.translationDeeplApiKey().changes(),
                 translationPreferences.translationAiEngine().changes(),
             ) { a, b, c, d -> Quad(a, b, c, d) },
-            aiModelFetchState
-        ) { q, fetchState -> Pair(q, fetchState) },
+            aiModelFetchState,
+            combine(
+                translationPreferences.revisionReviewerAuto().changes(),
+                translationPreferences.revisionReviewerEngine().changes(),
+            ) { auto, engine -> auto to engine },
+        ) { q, fetchState, reviewer -> Triple(q, fetchState, reviewer) },
         translationPreferences.translateFromLanguage().changes().flatMapLatest { fromValue ->
             val language = TextRecognizerLanguage.entries.firstOrNull { it.name == fromValue } ?: TextRecognizerLanguage.CHINESE
             val ocrPref = OcrModelCatalog.preferenceFor(translationPreferences, language)
@@ -226,7 +231,8 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     ) { part1, part2, ocrInfo, aiSubPrefs ->
         val (q1, q2) = part1
-        val (q3, fetchState) = part2
+        val (q3, fetchState, reviewer) = part2
+        val (reviewerAuto, reviewerEngine) = reviewer
         val (ocrModel, ocrModelEntries) = ocrInfo
         
         val recentLangsFrom = TranslationPreferences.decodeRecentLanguages(q2.a).toImmutableList()
@@ -253,6 +259,8 @@ class ReaderViewModel @JvmOverloads constructor(
             aiModel = aiSubPrefs.model,
             aiRecentModels = recentAiModels,
             aiModelFetchState = fetchState,
+            reviewerAuto = reviewerAuto,
+            reviewerEngine = reviewerEngine,
         )
     }.stateIn(
         viewModelScope,
@@ -1550,7 +1558,21 @@ class ReaderViewModel @JvmOverloads constructor(
         val resolvedScope = scope ?: defaultScope(revisionEligibility)
         mutableState.update { it.copy(dialog = Dialog.RevisionConfirm(RevisionConfirmState.Idle)) }
         viewModelScope.launch {
-            val engine = revisionReviewerEngine()
+            // Resolve the reviewer engine: in Auto mode it follows the Pass-1
+            // translation engine (falling back to the first configured provider
+            // when Pass-1 is non-AI or its provider lacks a credential); in
+            // explicit mode it is the persisted reviewer engine. This keeps the
+            // common case from rejecting with NO_REVIEWER_CONFIGURED just
+            // because the persisted default (Gemini) has no key.
+            val reviewerOptions = revisionEligibility?.reviewerOptions
+                ?: translationManager.revisionReviewerOptions()
+            val engine = resolveEffectiveReviewerEngine(
+                auto = translationPreferences.revisionReviewerAuto().get(),
+                pass1Category = translationPreferences.translationEngineCategory().get(),
+                pass1AiEngine = translationPreferences.translationAiEngine().get(),
+                configuredOptions = reviewerOptions,
+                persistedEngine = revisionReviewerEngine(),
+            )
             val model = translationPreferences.translationAiModel(engine).get()
             val outcome = translationManager.runRevisionPreflight(
                 chapterId = chapterId,
@@ -1559,18 +1581,31 @@ class ReaderViewModel @JvmOverloads constructor(
                 reviewerEngine = engine,
                 reviewerModel = model,
             )
-            val reviewerOptions = revisionEligibility?.reviewerOptions
-                ?: translationManager.revisionReviewerOptions()
             val state = outcome.toConfirmState(reviewerOptions, engine)
             mutableState.update { it.copy(dialog = Dialog.RevisionConfirm(state)) }
             manga // referenced to keep the captured manga for the start path
         }
     }
 
-    /** Persists the picked reviewer engine and updates the confirm selection. */
+    /**
+     * Persists the picked reviewer engine and updates the confirm selection. An
+     * explicit pick disables Auto mode so the chosen provider is honored instead
+     * of the Pass-1-derived default.
+     */
     fun pickRevisionReviewer(option: RevisionReviewerOption) {
+        translationPreferences.revisionReviewerAuto().set(false)
         translationPreferences.revisionReviewerEngine().set(option.engine)
         updateRevisionConfirmState { state -> state.withReviewerPicked(option) }
+    }
+
+    /** Sets Auto reviewer mode (true = follow the Pass-1 translation engine). */
+    fun setRevisionReviewerAuto(auto: Boolean) {
+        translationPreferences.revisionReviewerAuto().set(auto)
+    }
+
+    /** Sets the explicit reviewer provider (used when Auto is off). */
+    fun setRevisionReviewerEngine(engine: AiEngine) {
+        translationPreferences.revisionReviewerEngine().set(engine)
     }
 
     /** Updates scope and re-runs preflight so counts reflect the new scope. */
@@ -2674,6 +2709,8 @@ data class TranslationSettingsState(
     val aiModel: String = "",
     val aiRecentModels: ImmutableList<String> = persistentListOf(),
     val aiModelFetchState: AiModelListState = AiModelListState.Idle,
+    val reviewerAuto: Boolean = true,
+    val reviewerEngine: AiEngine = AiEngine.GEMINI,
 )
 
 private data class AiSubPrefs(

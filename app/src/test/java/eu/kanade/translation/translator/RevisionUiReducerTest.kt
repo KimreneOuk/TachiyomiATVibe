@@ -48,7 +48,6 @@ class RevisionUiReducerTest {
 
     private fun confirmation(
         scope: RevisionScope = RevisionScope.FLAGGED,
-        requiresLegacyLanguage: Boolean = false,
         partialWarning: Boolean = false,
         reviewer: RevisionReviewerOption = gemini,
     ) = RevisionConfirmation(
@@ -64,7 +63,6 @@ class RevisionUiReducerTest {
         targetCount = 5,
         exclusionCount = 1,
         estimatedRequestGroups = 2,
-        requiresLegacyLanguage = requiresLegacyLanguage,
         partialWarning = partialWarning,
     )
 
@@ -74,7 +72,6 @@ class RevisionUiReducerTest {
         translatedPages: Int = 10,
         expectedPages: Int? = 10,
         reviewerOptions: List<RevisionReviewerOption> = configuredOptions,
-        requiresLegacyLanguage: Boolean = false,
     ) = ChapterRevisionEligibility(
         chapterId = 1L,
         translatedPages = translatedPages,
@@ -85,16 +82,15 @@ class RevisionUiReducerTest {
         reviewerOptions = reviewerOptions.toImmutableListCompat(),
         persistedSourceLanguage = "JAPANESE",
         persistedTargetLanguage = "ENGLISH",
-        requiresLegacyLanguage = requiresLegacyLanguage,
     )
 
     // ----- Preflight outcome -> confirm state -----
 
     @Test
-    fun `Ready outcome yields Ready state and confirm is enabled when not legacy`() {
+    fun `Ready outcome yields an enabled confirm action`() {
         val outcome = RevisionPreflightOutcome.Ready(
             chapterId = 1L,
-            confirmation = confirmation(requiresLegacyLanguage = false),
+            confirmation = confirmation(),
         )
         val state = outcome.toConfirmState(configuredOptions, persistedEngine = AiEngine.GEMINI)
 
@@ -103,19 +99,6 @@ class RevisionUiReducerTest {
         ready.selection.engine shouldBe AiEngine.GEMINI
         ready.selection.model shouldBe "gemini-1.5-pro"
         ready.confirmation.targetCount shouldBe 5
-    }
-
-    @Test
-    fun `Ready outcome with legacy language keeps confirm disabled`() {
-        val outcome = RevisionPreflightOutcome.Ready(
-            chapterId = 1L,
-            confirmation = confirmation(requiresLegacyLanguage = true),
-        )
-        val state = outcome.toConfirmState(configuredOptions, persistedEngine = AiEngine.GEMINI)
-
-        val ready = state.shouldBeInstanceOf<eu.kanade.translation.model.RevisionConfirmState.Ready>()
-        ready.canConfirm shouldBe false
-        ready.confirmation.requiresLegacyLanguage shouldBe true
     }
 
     @Test
@@ -154,18 +137,6 @@ class RevisionUiReducerTest {
 
         val rejected = state.shouldBeInstanceOf<eu.kanade.translation.model.RevisionConfirmState.Rejected>()
         rejected.rejection.reason shouldBe RevisionRejectionReason.NO_REVIEWER_CONFIGURED
-        rejected.rejection.offersSettingsNav shouldBe true
-    }
-
-    @Test
-    fun `Rejected LEGACY_LANGUAGE_REQUIRED offers settings nav`() {
-        val outcome = RevisionPreflightOutcome.Rejected(
-            chapterId = 1L,
-            reason = RevisionRejectionReason.LEGACY_LANGUAGE_REQUIRED,
-        )
-        val state = outcome.toConfirmState(configuredOptions, persistedEngine = AiEngine.GEMINI)
-
-        val rejected = state.shouldBeInstanceOf<eu.kanade.translation.model.RevisionConfirmState.Rejected>()
         rejected.rejection.offersSettingsNav shouldBe true
     }
 
@@ -412,9 +383,10 @@ class RevisionUiReducerTest {
     }
 
     @Test
-    fun `Legacy chapter eligibility sets requiresLegacyLanguage`() {
-        val e = eligibility(requiresLegacyLanguage = true)
-        e.requiresLegacyLanguage shouldBe true
+    fun `Eligibility keeps the persisted language pair for legacy and fresh chapters`() {
+        val e = eligibility()
+        e.persistedSourceLanguage shouldBe "JAPANESE"
+        e.persistedTargetLanguage shouldBe "ENGLISH"
     }
 
     @Test

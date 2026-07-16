@@ -55,6 +55,7 @@ import eu.kanade.translation.model.RevisionPreflightOutcome
 import eu.kanade.translation.model.RevisionReviewerOption
 import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.defaultScope
+import eu.kanade.translation.model.resolveEffectiveReviewerEngine
 import eu.kanade.translation.model.toConfirmState
 import eu.kanade.translation.model.toResultState
 import eu.kanade.translation.model.withReviewerPicked
@@ -104,6 +105,7 @@ import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.source.local.isLocal
@@ -988,7 +990,19 @@ class MangaScreenModel(
         // scope/reviewer surface immediately.
         updateSuccessState { it.copy(dialog = Dialog.RevisionConfirm(item, RevisionConfirmState.Idle)) }
         screenModelScope.launch {
-            val engine = revisionReviewerEngine()
+            // Resolve the reviewer engine: Auto follows the Pass-1 translation
+            // engine (with a configured-provider fallback when Pass-1 is non-AI
+            // or its provider lacks a credential); explicit honors the persisted
+            // reviewer engine. Mirrors the reader path.
+            val reviewerOptions = item.revisionEligibility?.reviewerOptions
+                ?: translationManager.revisionReviewerOptions()
+            val engine = resolveEffectiveReviewerEngine(
+                auto = translationPreferences.revisionReviewerAuto().get(),
+                pass1Category = translationPreferences.translationEngineCategory().get(),
+                pass1AiEngine = translationPreferences.translationAiEngine().get(),
+                configuredOptions = reviewerOptions,
+                persistedEngine = revisionReviewerEngine(),
+            )
             val model = translationPreferences.translationAiModel(engine).get()
             val outcome = translationManager.runRevisionPreflight(
                 chapterId = chapterId,
@@ -997,8 +1011,6 @@ class MangaScreenModel(
                 reviewerEngine = engine,
                 reviewerModel = model,
             )
-            val reviewerOptions = item.revisionEligibility?.reviewerOptions
-                ?: translationManager.revisionReviewerOptions()
             val state = outcome.toConfirmState(reviewerOptions, engine)
             updateSuccessState { it.copy(dialog = Dialog.RevisionConfirm(item, state)) }
             // Keep eligibility fresh for this chapter so the next REVIEW reflects
@@ -1029,6 +1041,8 @@ class MangaScreenModel(
      * next preflight, matching the manager's identity check.
      */
     fun pickRevisionReviewer(item: ChapterList.Item, option: RevisionReviewerOption) {
+        // An explicit pick disables Auto so the chosen provider is honored.
+        translationPreferences.revisionReviewerAuto().set(false)
         translationPreferences.revisionReviewerEngine().set(option.engine)
         updateRevisionConfirmState(item) { state -> state.withReviewerPicked(option) }
     }

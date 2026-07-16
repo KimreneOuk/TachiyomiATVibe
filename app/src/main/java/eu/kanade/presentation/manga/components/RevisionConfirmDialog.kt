@@ -133,10 +133,6 @@ private fun ColumnScope.ReadyBody(
     if (confirmation.partialWarning) {
         WarningText(text = stringResource(ATMR.strings.revision_partial_warning))
     }
-    if (confirmation.requiresLegacyLanguage) {
-        WarningText(text = stringResource(ATMR.strings.revision_legacy_language_warning))
-    }
-
     InfoRow(
         label = stringResource(ATMR.strings.revision_coverage),
         value = stringResource(
@@ -223,7 +219,6 @@ private fun ColumnScope.RejectedBody(
         RevisionRejectionReason.ACTIVE_BATCH -> ATMR.strings.revision_rejection_active_batch
         RevisionRejectionReason.REVISION_ACTIVE -> ATMR.strings.revision_rejection_revision_active
         RevisionRejectionReason.CHAPTER_DELETED -> ATMR.strings.revision_rejection_chapter_deleted
-        RevisionRejectionReason.LEGACY_LANGUAGE_REQUIRED -> ATMR.strings.revision_rejection_legacy_language_required
     }
     Text(
         text = stringResource(messageRes),
