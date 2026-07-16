@@ -1,5 +1,10 @@
 # Translation Pipeline Correctness and Performance Plan
 
+> Status: Superseded on 2026-07-16 by
+> `Plan/active/2026-07-16-unified-translation-pipeline/`. This file is retained
+> as the historical plan for commits `e868323` and `7853d9a`; do not implement
+> its scheduling model.
+
 ## Summary
 
 - Pass 2 is wired for AI batch translation and awaited before completion, but it falsely counts missing responses as successful, clears revision flags without valid corrections, and can overwrite concurrent edits.
