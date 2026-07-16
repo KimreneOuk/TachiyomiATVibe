@@ -93,9 +93,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import eu.kanade.translation.batch.BatchCoordinator
 import eu.kanade.translation.batch.NativeLaneWorker
-import eu.kanade.translation.batch.OcrResultHandle
+import eu.kanade.translation.batch.PageKey
+import eu.kanade.translation.batch.OcrReadyPageRef
 import eu.kanade.translation.batch.RenderJoinWorker
-import eu.kanade.translation.batch.TranslationWorkItem
 import eu.kanade.translation.batch.TranslatorLaneWorker
 import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.BatchOomPolicy
@@ -1150,20 +1150,9 @@ class TranslationPipeline(
         // AFTER OCR persistence and BEFORE inpaint completes.
         val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
 
-        // The native adapter stores the live decoded bitmap + OCR state in the handle
-        // so it survives across the OCR -> (offer) -> inpaint split without holding a
-        // native permit across the channel offer. [releaseNativeResources] recycles the
-        // bitmap and pooled native memory, and is invoked by the coordinator AFTER
-        // inpaint and BEFORE any suspending channel send (backpressure path).
-        class BatchOcrHandle(
-            override val item: TranslationWorkItem,
-            var decoded: DecodedPage?,
-            var target: PageTranslation?,
-        ) : OcrResultHandle
-
         val streamsByKey = LinkedHashMap(orderedStreams.toMap())
         val nativeWorker = object : NativeLaneWorker {
-            override suspend fun runOcr(pageKey: String, pageIndex: Int): OcrResultHandle? {
+            override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
                 coroutineContext.ensureActive()
                 if (aborted.get()) return null
                 val streamFn = streamsByKey[pageKey] ?: return null
@@ -1174,11 +1163,7 @@ class TranslationPipeline(
                     val p = existing!!
                     translationRegistry[pageKey] = p
                     tryRender(pageKey)
-                    return BatchOcrHandle(
-                        TranslationWorkItem(pageKey, pageIndex, p.detachedCopy(), skipInpaint = true),
-                        decoded = null,
-                        target = p,
-                    )
+                    return null // Skip all, no translation needed
                 }
                 var producedTarget: PageTranslation? = null
                 var producedDecoded: DecodedPage? = null
@@ -1253,27 +1238,32 @@ class TranslationPipeline(
                     }
                 }
                 val target = producedTarget ?: return null
-                return BatchOcrHandle(
-                    TranslationWorkItem(pageKey, pageIndex, target.detachedCopy(), skipInpaint = false),
-                    decoded = producedDecoded,
-                    target = target,
+                
+                // Recycle bitmap immediately for OCR-first barrier (Checkpoint 3)
+                if (producedDecoded != null) {
+                    try { producedDecoded!!.bitmap.recycle() } catch (_: Exception) {}
+                }
+                BitmapPool.releaseAll()
+                try { recognitionEngine.reclaimPooledMemory() } catch (_: Exception) {}
+
+                return OcrReadyPageRef(
+                    pageKey = pageKey,
+                    pageIndex = pageIndex,
+                    generation = 0L,
+                    blockFingerprints = emptyList()
                 )
             }
 
-            override suspend fun runInpaint(handle: OcrResultHandle) {
-                val h = handle as BatchOcrHandle
-                if (h.item.skipInpaint) return
-                val pageKey = h.item.pageKey
-                val decoded = h.decoded ?: return
-                val target = h.target ?: return
+            override suspend fun runInpaintStage(pageKey: String) {
+                val streamFn = streamsByKey[pageKey] ?: return
+                val latest = store.state.value[pageKey] ?: return
+                val target = translationRegistry[pageKey] ?: latest
                 // SKIP_ALL-resume durable cleaned image shortcut: keep existing result.
-                val latest = store.state.value[pageKey]
-                val hasDurableCleaned = latest != null &&
-                    latest.cleanedImageName != null &&
+                val hasDurableCleaned = latest.cleanedImageName != null &&
                     latest.inpaintStatus == StageStatus.READY &&
                     latest.hasCurrentInpaintResult
                 if (hasDurableCleaned) {
-                    target.cleanedImageName = latest!!.cleanedImageName
+                    target.cleanedImageName = latest.cleanedImageName
                     target.inpaintingModeUsed = latest.inpaintingModeUsed
                     target.inpaintStatus = StageStatus.READY
                     target.cleanedBitmap = null
@@ -1286,8 +1276,14 @@ class TranslationPipeline(
                     pageKey = pageKey,
                     onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                 ) {
+                    var decoded: DecodedPage? = null
                     try {
                         tracker?.markInpaintRunning(pageKey)
+                        decoded = decodePageBitmapForTranslation(pageKey, streamFn)
+                        if (decoded == null) {
+                            tracker?.markInpaintFailed(pageKey, "Null bitmap on re-decode")
+                            return@withNativeLane
+                        }
                         preflightInpaintGate(decoded.bitmap, pageKey)
                         inpaintPage(pageKey, decoded.bitmap, target, store)
                         if (target.inpaintStatus == StageStatus.FAILED &&
@@ -1308,6 +1304,12 @@ class TranslationPipeline(
                         target.inpaintStatus = StageStatus.FAILED
                         target.errorMessage = deferred.message
                         tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
+                    } finally {
+                        if (decoded != null) {
+                            try { decoded.bitmap.recycle() } catch (_: Exception) {}
+                        }
+                        BitmapPool.releaseAll()
+                        try { recognitionEngine.reclaimPooledMemory() } catch (_: Exception) {}
                     }
                 }
                 // Persist the cleaned bitmap off the native permit (matches the prior
@@ -1327,21 +1329,6 @@ class TranslationPipeline(
                 target.cleanedBitmap = null
             }
 
-            override fun releaseNativeResources(pageKey: String) {
-                // Recycle the decoded bitmap + pooled native memory. Called by the
-                // coordinator AFTER inpaint and BEFORE any suspending channel send so
-                // a full bounded channel never suspends while a bitmap + native permit
-                // is retained (Checkpoint 2 §1 backpressure invariant).
-                val reg = translationRegistry[pageKey]
-                reg?.let { target ->
-                    if (target.cleanedBitmap != null) {
-                        try { target.cleanedBitmap?.recycle() } catch (_: Exception) {}
-                        target.cleanedBitmap = null
-                    }
-                }
-                BitmapPool.releaseAll()
-                try { recognitionEngine.reclaimPooledMemory() } catch (_: Exception) {}
-            }
         }
 
         // The translator lane owns the streaming AI chunk planner (contextual path) or
@@ -1380,11 +1367,11 @@ class TranslationPipeline(
                 null
             }
 
-            override suspend fun translate(item: TranslationWorkItem) {
-                val pageKey = item.pageKey
-                val p = translationRegistry[pageKey] ?: item.translation.detachedCopy().also {
+            override suspend fun translate(ref: OcrReadyPageRef) {
+                val pageKey = ref.pageKey
+                val p = translationRegistry[pageKey] ?: store.state.value[pageKey]?.detachedCopy()?.also {
                     translationRegistry[pageKey] = it
-                }
+                } ?: return
                 p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang)
                 translationRegistry[pageKey] = p
                 val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
@@ -1464,7 +1451,6 @@ class TranslationPipeline(
             nativeWorker = nativeWorker,
             translatorWorker = translatorWorker,
             renderJoin = renderJoin,
-            channelCapacity = BatchCoordinator.DEFAULT_CHANNEL_CAPACITY,
         )
 
         try {

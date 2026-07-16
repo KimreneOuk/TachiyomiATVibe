@@ -22,7 +22,7 @@ Status: In progress; CP0 passed and Agents A/B are being released.
   shared provider-request admission.
 - [ ] CP2: Complete structured provider parity, retries, capabilities, and compact
   Pass-1 panel headers.
-- [ ] CP3: Replace the streaming coordinator with OCR-first scheduling and prove
+- [x] CP3: Replace the streaming coordinator with OCR-first scheduling and prove
   no provider backpressure on OCR.
 - [ ] CP4: Route manual, auto, and batch through shared stage operations.
 - [ ] CP5: Freeze pure revision scope/preflight/KCU/report/metadata contracts and

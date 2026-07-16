@@ -451,3 +451,10 @@ Unexpected findings:
 Risks remaining:
 Next checkpoint still valid: yes/no, with reason
 ```
+
+Checkpoint: 3
+Files changed: app/src/main/java/eu/kanade/translation/batch/BatchCoordinator.kt, app/src/main/java/eu/kanade/translation/batch/BatchCoordinatorInterfaces.kt, app/src/main/java/eu/kanade/translation/TranslationPipeline.kt, app/src/test/java/eu/kanade/translation/batch/BatchCoordinatorTest.kt, app/src/test/java/eu/kanade/translation/batch/BatchCoordinatorWiredTest.kt
+Tests/validation run: :app:testStandardDebugUnitTest (BatchCoordinatorTest, BatchCoordinatorWiredTest)
+Unexpected findings: The previous coordinator queued translation before the OCR barrier. Fixing this required accumulating items in remoteRefs and only pushing them to the queue after all OCR jobs complete.
+Risks remaining: None related to coordinator.
+Next checkpoint still valid: yes, Manual/auto/batch stage parity is next.
