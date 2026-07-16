@@ -9,6 +9,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
+import eu.kanade.translation.model.TranslationBlock
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
@@ -198,6 +199,210 @@ class ChapterTranslationStore(
         if (expectedTranslation != null) check(current.translation == expectedTranslation) { "block translation changed" }
         check(current.userEditedAt == expectedUserEditedAt) { "block edit timestamp changed" }
         page.apply { blocks[blockIndex] = patch(current.detachedCopy()).detachedCopy() }
+    }
+
+    /** Apply a stage patch while checking only the identities owned by that stage. */
+    suspend fun applyStagePatch(
+        patch: StagePatch,
+        description: String,
+    ): StagePatchResult {
+        if (defunct) return rejectedStage(patch.pageKey, description, "store is defunct")
+        return mutex.withLock {
+            val current = pages[patch.pageKey]
+            when (patch) {
+                is StagePatch.Translation -> mergeTranslationLocked(current, patch.value, description)
+                is StagePatch.Inpaint -> mergeInpaintLocked(current, patch.value, description)
+                is StagePatch.Render -> mergeRenderLocked(current, patch.value, description)
+                is StagePatch.Revision -> mergeRevisionLocked(current, patch.value, description)
+            }
+        }
+    }
+
+    suspend fun mergeTranslation(
+        patch: TranslationStagePatch,
+        description: String = "translation stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Translation(patch), description)
+
+    suspend fun mergeInpaint(
+        patch: InpaintStagePatch,
+        description: String = "inpaint stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Inpaint(patch), description)
+
+    suspend fun mergeRender(
+        patch: RenderStagePatch,
+        description: String = "render stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Render(patch), description)
+
+    suspend fun mergeRevision(
+        patch: RevisionStagePatch,
+        description: String = "revision stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Revision(patch), description)
+
+    private fun mergeTranslationLocked(
+        current: PageTranslation?,
+        patch: TranslationStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val identityRejection = stageIdentityRejection(current, patch.generation)
+            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, patch.expectedSourceTexts)
+        if (identityRejection != null) {
+            return rejectedStage(patch.pageKey, description, identityRejection)
+        }
+        val page = current!!.detachedCopy()
+        val applied = mutableListOf<Int>()
+        val rejectedTargets = mutableListOf<String>()
+        patch.blocks.forEach { target ->
+            val block = page.blocks.getOrNull(target.blockIndex)
+            val rejection = when {
+                block == null -> "block index ${target.blockIndex} missing"
+                block.ocrFingerprint() != target.expectedOcrFingerprint ->
+                    "block ${target.blockIndex} OCR identity changed"
+                block.text != target.expectedSourceText ->
+                    "block ${target.blockIndex} source changed"
+                block.translation != target.expectedTranslation ->
+                    "block ${target.blockIndex} translation changed"
+                block.userEditedAt != target.expectedUserEditedAt ->
+                    "block ${target.blockIndex} user edit changed"
+                block.needsRevision != target.expectedNeedsRevision ->
+                    "block ${target.blockIndex} revision flag changed"
+                else -> null
+            }
+            if (rejection != null) {
+                rejectedTargets += rejection
+            } else {
+                block!!.translation = target.translation
+                block.needsRevision = target.needsRevision
+                applied += target.blockIndex
+            }
+        }
+        if (applied.isEmpty()) {
+            return rejectedStage(
+                patch.pageKey,
+                description,
+                rejectedTargets.firstOrNull() ?: "no translation targets",
+            )
+        }
+        page.translationStatus = patch.translationStatus
+        page.errorMessage = patch.errorMessage
+        val updated = ownedPage(patch.pageKey, page)
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), applied)
+    }
+
+    private fun mergeInpaintLocked(
+        current: PageTranslation?,
+        patch: InpaintStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val rejection = stageIdentityRejection(current, patch.generation)
+            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, null)
+            ?: current?.takeUnless { it.inpaintMaskFingerprint() == patch.expectedMaskFingerprint }
+                ?.let { "inpaint mask identity changed" }
+        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
+
+        val updated = ownedPage(patch.pageKey, current!!.detachedCopy().apply {
+            cleanedImageName = patch.cleanedImageName
+            inpaintRevision = patch.inpaintRevision
+            inpaintingModeUsed = patch.inpaintingModeUsed
+            inpaintStatus = patch.inpaintStatus
+            errorMessage = patch.errorMessage
+        })
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey))
+    }
+
+    private fun mergeRenderLocked(
+        current: PageTranslation?,
+        patch: RenderStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val rejection = stageIdentityRejection(current, patch.generation)
+            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, null)
+            ?: current?.takeUnless { it.cleanedImageName == patch.expectedCleanedImageName }
+                ?.let { "cleaned image identity changed" }
+            ?: current?.takeUnless { it.inpaintRevision == patch.expectedInpaintRevision }
+                ?.let { "inpaint revision changed" }
+        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
+
+        val page = current!!.detachedCopy()
+        patch.blocks.forEach { target ->
+            val block = page.blocks.getOrNull(target.blockIndex)
+            if (block == null) {
+                return rejectedStage(patch.pageKey, description, "block index ${target.blockIndex} missing")
+            }
+            if (block.stableFingerprint() != target.expectedBlockFingerprint) {
+                return rejectedStage(patch.pageKey, description, "render block identity changed")
+            }
+        }
+        patch.blocks.forEach { target ->
+            val block = page.blocks[target.blockIndex]
+            block.textColor = target.textColor
+            block.strokeColor = target.strokeColor
+            block.strokeWidth = target.strokeWidth
+        }
+        page.renderStatus = patch.renderStatus
+        page.errorMessage = patch.errorMessage
+        val updated = ownedPage(patch.pageKey, page)
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), patch.blocks.map { it.blockIndex })
+    }
+
+    private fun mergeRevisionLocked(
+        current: PageTranslation?,
+        patch: RevisionStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val rejection = stageIdentityRejection(current, patch.generation)
+            ?: current?.blocks?.getOrNull(patch.blockIndex)?.let { block ->
+                when {
+                    block.stableFingerprint() != patch.expectedBlockFingerprint -> "revision block identity changed"
+                    block.text != patch.expectedSourceText -> "revision source changed"
+                    block.translation != patch.expectedDraft -> "revision draft changed"
+                    block.needsRevision != patch.expectedNeedsRevision -> "revision flag changed"
+                    block.userEditedAt != patch.expectedUserEditedAt -> "revision user edit changed"
+                    patch.replacementTranslation != null && patch.replacementTranslation.isBlank() ->
+                        "blank revision replacement"
+                    else -> null
+                }
+            } ?: "block index ${patch.blockIndex} missing"
+        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
+
+        val updated = ownedPage(patch.pageKey, current!!.detachedCopy().apply {
+            val block = blocks[patch.blockIndex]
+            patch.replacementTranslation?.let { block.translation = it }
+            block.needsRevision = patch.needsRevision
+        })
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), listOf(patch.blockIndex))
+    }
+
+    private fun stageIdentityRejection(page: PageTranslation?, expectedGeneration: Long): String? = when {
+        expectedGeneration != generation -> "generation expected=$expectedGeneration actual=$generation"
+        page == null -> "page missing"
+        else -> null
+    }
+
+    private fun ocrIdentityRejection(
+        page: PageTranslation?,
+        expectedFingerprints: List<String>,
+        expectedSources: List<String>?,
+    ): String? = when {
+        page == null -> "page missing"
+        page.ocrBlockFingerprints() != expectedFingerprints -> "OCR block identity changed"
+        expectedSources != null && page.blocks.map { it.text } != expectedSources -> "OCR source changed"
+        else -> null
+    }
+
+    private fun rejectedStage(pageKey: String, description: String, reason: String): StagePatchResult.Rejected {
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT stage patch rejected: pageKey=$pageKey generation=$generation " +
+                "operation=$description reason=$reason"
+        }
+        return StagePatchResult.Rejected(reason)
     }
 
     suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
