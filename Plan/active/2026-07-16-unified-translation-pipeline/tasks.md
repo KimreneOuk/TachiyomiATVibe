@@ -27,16 +27,18 @@ Status: In progress; CP0 passed and Agents A/B are being released.
 - [x] CP4: Route manual, auto, and batch through shared stage operations.
 - [x] CP5: Freeze pure revision scope/preflight/KCU/report/metadata contracts and
   their race-safe tests.
-- [ ] CP6: Implement standalone manager-owned revision and decouple it from batch
+- [x] CP6: Implement standalone manager-owned revision and decouple it from batch
   terminal state.
-- [ ] CP7: Add manga/reader preflight, confirmation, progress, cancellation, and
+- [x] CP7: Add manga/reader preflight, confirmation, progress, cancellation, and
   result UI using only immutable manager contracts.
-- [ ] CP8: Correct reader/app lifecycle and critical-memory ownership for batch
+- [x] CP8: Correct reader/app lifecycle and critical-memory ownership for batch
   and revision.
-- [ ] CP9: Align progress, remove dead streaming paths, update stable docs, and
+- [x] CP9: Align progress, remove dead streaming paths, update stable docs, and
   verify no stale behavior claims remain.
-- [ ] CP10: Run full JVM validation, diff review, independent review, and device
-  memory/lifecycle/provider gates.
+- [~] CP10: Run full JVM validation, diff review, independent review, and device
+  memory/lifecycle/provider gates. (Automated JVM suite + diff check + independent
+  review COMPLETE and passing; device memory/lifecycle/provider gates DEFERRED to
+  on-phone testing by the user — emulator environment unavailable in this session.)
 
 ## Agent work packages
 

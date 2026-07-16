@@ -87,6 +87,16 @@ fun TranslationSettingsSheet(
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     translationCurrentPage: Int = 0,
     translationBatchProgress: TranslationProgressSnapshot? = null,
+    // TachiyomiAT CP7: standalone revision affordances. reviewAvailable drives
+    // the "Review this chapter" row; revisionActive swaps it for a cancel
+    // action; onReview/onCancelRevision/onViewLastReview are wired by the
+    // activity to the view-model.
+    reviewAvailable: Boolean = false,
+    revisionActive: Boolean = false,
+    hasRevisionReport: Boolean = false,
+    onReview: () -> Unit = {},
+    onCancelRevision: () -> Unit = {},
+    onViewLastReview: () -> Unit = {},
 ) {
     var showAdvanced by remember { mutableStateOf(false) }
 
@@ -113,6 +123,14 @@ fun TranslationSettingsSheet(
                 translationBatchProgress = translationBatchProgress,
             )
             StopAllSection(onStopAllTranslation)
+            ReviewSection(
+                reviewAvailable = reviewAvailable,
+                revisionActive = revisionActive,
+                hasRevisionReport = hasRevisionReport,
+                onReview = onReview,
+                onCancelRevision = onCancelRevision,
+                onViewLastReview = onViewLastReview,
+            )
             LanguagesSection(
                 translateFromLanguage = state.translateFromLanguage,
                 translateToLanguage = state.translateToLanguage,
@@ -163,6 +181,41 @@ private fun ColumnScope.StopAllSection(onStopAllTranslation: () -> Unit) {
         subtitle = stringResource(ATMR.strings.reader_translation_stop_all_summary),
         onPreferenceClick = { onStopAllTranslation() },
     )
+}
+
+/**
+ * TachiyomiAT CP7: standalone revision affordances on the reader translation
+ * sheet. While a revision is active, the row becomes a cancel action; otherwise
+ * it offers "Review this chapter" (when eligibility exists) and "View last
+ * review" (when a durable report exists). Mirrors the manga surface so both
+ * dispatch the same manager request.
+ */
+@Composable
+private fun ColumnScope.ReviewSection(
+    reviewAvailable: Boolean,
+    revisionActive: Boolean,
+    hasRevisionReport: Boolean,
+    onReview: () -> Unit,
+    onCancelRevision: () -> Unit,
+    onViewLastReview: () -> Unit,
+) {
+    if (revisionActive) {
+        TextPreferenceWidget(
+            title = stringResource(ATMR.strings.revision_cancel),
+            onPreferenceClick = { onCancelRevision() },
+        )
+    } else if (reviewAvailable) {
+        TextPreferenceWidget(
+            title = stringResource(ATMR.strings.reader_translation_review_chapter),
+            onPreferenceClick = { onReview() },
+        )
+    }
+    if (hasRevisionReport) {
+        TextPreferenceWidget(
+            title = stringResource(ATMR.strings.revision_view_last),
+            onPreferenceClick = { onViewLastReview() },
+        )
+    }
 }
 
 /**

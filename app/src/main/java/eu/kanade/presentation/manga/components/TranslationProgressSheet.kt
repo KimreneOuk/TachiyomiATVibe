@@ -4,6 +4,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -37,6 +38,10 @@ fun TranslationProgressSheet(
     snapshot: TranslationProgressSnapshot,
     onDismissRequest: () -> Unit,
     onCancel: () -> Unit,
+    // TachiyomiAT CP7: when the batch is terminal and revision produced
+    // blocks, the caller may offer a "View full report" affordance that opens
+    // the shared revision result sheet/dialog. Null hides the action.
+    onViewReport: (() -> Unit)? = null,
 ) {
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
         Column(
@@ -179,6 +184,17 @@ fun TranslationProgressSheet(
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (onViewReport != null &&
+                    snapshot.batchPhase == TranslationBatchPhase.FINISHED &&
+                    snapshot.revision.totalBlocks > 0
+                ) {
+                    TextButton(onClick = {
+                        onViewReport()
+                    }) {
+                        Text(text = stringResource(ATMR.strings.revision_view_report))
+                    }
+                }
+                Spacer(Modifier.weight(1f))
                 TextButton(onClick = onDismissRequest) {
                     Text(text = stringResource(MR.strings.action_close))
                 }

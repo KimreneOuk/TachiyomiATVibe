@@ -802,6 +802,9 @@ private fun LazyListScope.sharedChapterItems(
                     // TachiyomiAT
                     translationStateProvider = { item.translationState },
                     translationProgressProvider = { item.translationProgress },
+                    // TachiyomiAT CP7: REVIEW appears whenever the manager
+                    // derived eligibility (independent of aggregate state).
+                    reviewAvailableProvider = { item.revisionEligibility != null },
                     downloadProgressProvider = { item.downloadProgress },
                     chapterSwipeStartAction = chapterSwipeStartAction,
                     chapterSwipeEndAction = chapterSwipeEndAction,

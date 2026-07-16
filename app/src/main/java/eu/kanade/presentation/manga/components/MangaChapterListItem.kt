@@ -62,6 +62,9 @@ fun MangaChapterListItem(
     translationStateProvider: () -> Translation.State,
     // TachiyomiAT: batch translation progress for the indicator.
     translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
+    // TachiyomiAT CP7: exposes the standalone REVIEW action when the manager
+    // derived eligibility for this chapter.
+    reviewAvailableProvider: () -> Boolean = { false },
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
@@ -185,6 +188,7 @@ fun MangaChapterListItem(
                     modifier = Modifier.padding(start = 4.dp),
                     translationStateProvider = translationStateProvider,
                     translationProgressProvider = translationProgressProvider,
+                    reviewAvailableProvider = reviewAvailableProvider,
                     onClick = { onTranslationClick?.invoke(it) },
                 )
             }

@@ -194,6 +194,16 @@ class TranslationPreferences(
     fun translationAiOutputTokens() = preferenceStore.getString("translation_ai_output_tokens", "8192")
 
     /**
+     * Last-selected standalone revision reviewer provider. Decoupled from the
+     * active translation engine ([translationAiEngine]) so a draft produced by a
+     * Standard translator (Google/DeepL/ML Kit) can be reviewed by an explicitly
+     * selected contextual provider. The reviewer reuses each provider's existing
+     * API key / base URL preference, so this only stores the engine choice; the
+     * reviewer model is the selected engine's [translationAiModel].
+     */
+    fun revisionReviewerEngine() = preferenceStore.getEnum("revision_reviewer_engine", AiEngine.GEMINI)
+
+    /**
      * TachiyomiAT: opt-in verbose logging for the translation pipeline. When on,
      * the OCR/inpaint/translate/render stages emit per-stage and per-ROI INFO
      * logs to logcat, plus heap snapshots. When off (default), only ERROR-level

@@ -180,7 +180,7 @@ object RevisionMerger {
                 return reject(chapterId, chapterName, livePageKey, anchorId, "draft changed (stale)")
             liveFingerprint != expectedPrecondition.fingerprint ->
                 return reject(chapterId, chapterName, livePageKey, anchorId, "fingerprint changed (stale)")
-            !liveBlock.needsRevision ->
+            expectedPrecondition.needsRevision && !liveBlock.needsRevision ->
                 return reject(chapterId, chapterName, livePageKey, anchorId, "flag already cleared")
         }
         // All preconditions match: apply the correction.

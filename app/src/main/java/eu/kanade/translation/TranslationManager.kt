@@ -52,6 +52,24 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import eu.kanade.translation.model.RevisionScope
+import eu.kanade.translation.model.RevisionPreflightResult
+import eu.kanade.translation.model.RevisionPreflightToken
+import eu.kanade.translation.model.RevisionReport
+import eu.kanade.translation.model.ChapterRevisionEligibility
+import eu.kanade.translation.model.RevisionConfirmation
+import eu.kanade.translation.model.RevisionPreflightOutcome
+import eu.kanade.translation.model.RevisionReviewerOption
+import eu.kanade.translation.model.RevisionRejectionReason
+import tachiyomi.domain.translation.AiEngine
+import kotlinx.collections.immutable.toImmutableList
+import eu.kanade.translation.ChapterTranslationSummary
+import eu.kanade.translation.model.detachedCopy
+import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
+import eu.kanade.translation.batch.BatchProgressReconciler
+import eu.kanade.translation.translator.RevisionPlanner
+import eu.kanade.translation.translator.RevisionDriver
+
 
 class TranslationManager(
     private val context: Context,
@@ -144,7 +162,14 @@ class TranslationManager(
         get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
 
     fun stopReaderTranslations(reason: String) {
-        cancelAllPageTranslations(cancelBatchQueue = false)
+        // CP8: the reader going background/close is a UI-lifecycle event, NOT process
+        // ownership. Batch queue and standalone revisions must survive it (they are
+        // owned by the application-scope translator/storeScope, not the reader). So
+        // cancel only the reader-owned in-flight single-page jobs; leave the batch
+        // queue and activeRevisionJobs intact. Foreground-resume / a fresh reader
+        // session re-attaches; user explicit Stop/Disable still cancels everything
+        // (those paths call cancelAllPageTranslations with cancelRevisions = true).
+        cancelAllPageTranslations(cancelBatchQueue = false, cancelRevisions = false)
         if (!isAnyBatchTranslationActive) {
             translatorStop(reason, closeEngines = false)
         }
@@ -154,10 +179,40 @@ class TranslationManager(
     fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 
     fun onMemoryPressure(level: Int) {
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+        // CP8: classify the trim level once and act on the ownership class, not the
+        // raw numeric level. The previous `level >= TRIM_MEMORY_RUNNING_LOW` check
+        // over-matched: TRIM_MEMORY_UI_HIDDEN(20)/BACKGROUND(40)/MODERATE(60) all
+        // exceed RUNNING_LOW(15) numerically, so a benign app-background trim
+        // cancelled in-flight page work on every background trip. Now only a true
+        // foreground memory crunch (Critical) cancels page jobs and stops a
+        // standalone revision terminally; Benign just releases pooled caches.
+        val pressureClass = MemoryPressurePolicy.classify(level)
+        translator.onMemoryPressure(level, pressureClass)
+        if (pressureClass == MemoryPressureClass.Critical) {
             scheduler.cancelAllPageTranslations()
+            // Revision stops terminally under critical pressure and does NOT auto-replay:
+            // a possibly-billed provider request must not be re-issued after a memory kill.
+            // The committed patches remain and the report (if any) is whatever landed
+            // before the cancellation. The user can re-run explicitly.
+            activeRevisionJobs.keys.toList().forEach { cancelRevision(it) }
         }
-        translator.onMemoryPressure(level)
+    }
+
+    /**
+     * CP8: called from reader foreground-resume. If critical memory pressure had
+     * requeued the batch translator's in-flight pages (translator.memoryRequeued),
+     * restart the batch worker exactly once when the queue still has pending work
+     * and is not already running. Clears the requeue flag so a subsequent resume
+     * does not double-start. Returns true iff a restart was actually issued.
+     */
+    fun consumeMemoryRequeueRestart(): Boolean {
+        if (!translator.memoryRequeued) return false
+        translator.memoryRequeued = false
+        if (!translator.isRunning && queueState.value.isNotEmpty()) {
+            translator.start()
+            return true
+        }
+        return false
     }
 
     fun startTranslation() {
@@ -186,7 +241,295 @@ class TranslationManager(
         }
     }
 
+    private val activeRevisionJobs = java.util.concurrent.ConcurrentHashMap<Long, Job>()
+
+    fun isRevisionActive(chapterId: Long): Boolean {
+        return activeRevisionJobs.containsKey(chapterId)
+    }
+
+    fun getRevisionPreflight(
+        chapterId: Long,
+        scope: RevisionScope,
+        reviewerEngine: AiEngine,
+        reviewerModel: String,
+    ): RevisionPreflightResult? {
+        val store = activeStores.get(chapterId) ?: return null
+        val liveState = store.state.value
+        val orderedPageKeys = liveState.keys.sortedWith { f1, f2 -> f1.compareToCaseInsensitiveNaturalOrder(f2) }
+        val orderedPages = LinkedHashMap<String, PageTranslation>()
+        orderedPageKeys.forEach { pk -> liveState[pk]?.let { orderedPages[pk] = it.detachedCopy() } }
+        val glossary = store.glossarySnapshot()
+        val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
+            ?: 512
+        val plan = RevisionPlanner.plan(
+            orderedPages = orderedPages,
+            chapterGlossary = glossary,
+            requestedOutputTokens = requestedOutputTokens,
+            scope = scope,
+        )
+        val token = RevisionPreflightToken(
+            chapterId = chapterId,
+            storeGeneration = store.state.value.values.sumOf { it.updatedAt },
+            scope = scope,
+            orderedTargetFingerprints = plan.allTargets.map { "${it.pageKey}:${it.blockIndex}" },
+            sourceLanguage = translationPreferences.translateFromLanguage().get(),
+            targetLanguage = translationPreferences.translateToLanguage().get(),
+            reviewerConfigFingerprint = "${reviewerEngine.name}/$reviewerModel",
+        )
+        return RevisionPreflightResult(
+            token = token,
+            eligibleTargetCount = plan.allTargets.size,
+            estimatedRequestGroups = plan.groups.size,
+            requiresLegacyLanguage = false,
+        )
+    }
+
+    fun startRevision(
+        manga: Manga,
+        chapter: Chapter,
+        scope: RevisionScope,
+        reviewerEngine: AiEngine,
+        reviewerModel: String,
+    ): Flow<TranslationProgressSnapshot>? {
+        val chapterId = chapter.id ?: return null
+        if (isBatchTranslationActive(chapterId)) {
+            logcat(LogPriority.WARN) { "Cannot start revision for chapter $chapterId: batch translation is active" }
+            return null
+        }
+
+        scheduler.cancelAutoTranslations(chapterId)
+
+        synchronized(activeRevisionJobs) {
+            if (activeRevisionJobs.containsKey(chapterId)) {
+                return getBatchTracker(chapterId)?.snapshot
+            }
+
+            val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+            val store = openOrCreateActiveChapterTranslationStore(
+                chapterId, chapter.name, chapter.scanlator, manga.title, source
+            ) ?: return null
+
+            val orderedPageKeys = store.state.value.keys.sortedWith { f1, f2 -> f1.compareToCaseInsensitiveNaturalOrder(f2) }
+            val tracker = createBatchTracker(chapterId, store, orderedPageKeys)
+
+            val job = storeScope.launch {
+                try {
+                    val translatorEngine = pipeline.getContextualTranslator(reviewerEngine, reviewerModel)
+                        ?: throw IllegalStateException("Reviewer model not available: ${reviewerEngine.name}/$reviewerModel")
+
+                    val listener = object : RevisionDriver.ProgressListener {
+                        override fun onBegin(totalBlocks: Int, skippedBlocks: Int, userEditedBlocks: Int, groupsCount: Int) {
+                            tracker.beginRevision(totalBlocks, skippedBlocks, userEditedBlocks)
+                        }
+                        override fun onGroupStart(pageKeys: Set<String>, groupTargetsCount: Int) {
+                            tracker.markRevisionChunkRunning(pageKeys, groupTargetsCount)
+                        }
+                        override fun onGroupComplete(appliedCount: Int, failedCount: Int) {
+                            tracker.markRevisionChunkCompleted(appliedCount)
+                            if (failedCount > 0) tracker.markRevisionChunkFailed(failedCount)
+                        }
+                        override fun onOverBudget(pageKey: String, blockIndex: Int, estimatedTokens: Int, maxPromptTokens: Int) {
+                            tracker.markRevisionChunkFailed(1)
+                        }
+                        override fun onFinished() {
+                            tracker.markRevisionFinished()
+                        }
+                    }
+
+                    val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
+                        ?: 512
+
+                    val report = RevisionDriver.runRevision(
+                        store = store,
+                        contextualTranslator = translatorEngine,
+                        scope = scope,
+                        requestedOutputTokens = requestedOutputTokens,
+                        chapterId = chapterId,
+                        chapterName = chapter.name,
+                        listener = listener,
+                        onPageUpdated = { pageKey ->
+                            pipeline.tryRenderStandalone(manga, chapter, source, pageKey, store)
+                        }
+                    )
+
+                    val reconciliation = BatchProgressReconciler.reconcile(
+                        pageMap = store.state.value,
+                        orderedKeys = orderedPageKeys,
+                    )
+
+                    store.publishSummary(
+                        ChapterTranslationSummary(
+                            expectedPageCount = orderedPageKeys.size,
+                            terminalOutcome = reconciliation.chapterStatus.value,
+                            unresolvedRevisionCount = reconciliation.unresolvedRevisionCount,
+                            updatedAtMillis = System.currentTimeMillis(),
+                            latestRevisionReport = report,
+                        )
+                    )
+                    store.flush()
+                    tracker.finish(reconciliation)
+                } catch (e: CancellationException) {
+                    tracker.abort(emptySet(), "Revision cancelled")
+                    throw e
+                } catch (e: Exception) {
+                    logcat(LogPriority.ERROR, e) { "Revision job failed: chapter=${chapter.name}" }
+                    tracker.abort(emptySet(), e.message ?: "Unknown error")
+                } finally {
+                    synchronized(activeRevisionJobs) {
+                        activeRevisionJobs.remove(chapterId)
+                    }
+                }
+            }
+
+            activeRevisionJobs[chapterId] = job
+            return tracker.snapshot
+        }
+    }
+
+    fun cancelRevision(chapterId: Long) {
+        activeRevisionJobs[chapterId]?.cancel()
+    }
+
+    /**
+     * Latest bounded revision report for a chapter, read from the durable summary
+     * sidecar without any image decode. Null when no run completed yet, or when
+     * the store was deleted/purged. UI consumes this for the terminal result sheet
+     * and "View last review"; it carries only K/C/U totals and accepted changes.
+     */
+    suspend fun getLatestRevisionReport(chapterId: Long): RevisionReport? {
+        return activeStores.get(chapterId)?.readSummary()?.latestRevisionReport
+    }
+
+    /**
+     * CP7 pure UI communication: the configured contextual reviewers the user may
+     * pick for standalone revision. A provider appears only when it has a
+     * non-blank credential (API key, or LM Studio base URL) AND a non-blank model.
+     * The list is the single source of truth for the reviewer picker; the UI never
+     * infers capability or reads credentials.
+     */
+    fun revisionReviewerOptions(): List<RevisionReviewerOption> {
+        return eu.kanade.translation.translator.AiTranslatorKind.entries.mapNotNull { kind ->
+            val engine = kind.engine
+            val model = translationPreferences.translationAiModel(engine).get()
+            if (model.isBlank()) return@mapNotNull null
+            val configured = if (engine == tachiyomi.domain.translation.AiEngine.LMSTUDIO) {
+                translationPreferences.translationAiBaseUrlLmStudio().get().isNotBlank()
+            } else {
+                translationPreferences.translationAiApiKey(engine).get().isNotBlank()
+            }
+            if (!configured) return@mapNotNull null
+            RevisionReviewerOption(
+                engine = engine,
+                model = model,
+                displayLabel = "${kind.label} · $model",
+            )
+        }
+    }
+
+    /**
+     * CP7 pure UI communication: manager-derived revision eligibility for one
+     * chapter, computed from durable store state without image decode. Returns
+     * null when the chapter has no store, so the UI hides the REVIEW action.
+     *
+     * Counts are backend-owned: flaggedTargets, allTranslatedTargets, and
+     * userEditedExclusions are computed here so the UI never computes them.
+     */
+    suspend fun snapshotRevisionEligibility(chapterId: Long): ChapterRevisionEligibility? {
+        val store = activeStores.get(chapterId) ?: return null
+        val summary = store.readSummary()
+        val liveState = store.state.value
+        val translatedPages = liveState.values.count { it.hasRecognizedTranslation }
+        val expectedPages = summary?.expectedPageCount
+
+        var flagged = 0
+        var allTranslated = 0
+        var userEdited = 0
+        liveState.values.forEach { page ->
+            page.blocks.forEach { block ->
+                val userTouched = block.userEditedAt != null
+                val nonBlank = block.text.isNotBlank() && block.translation.isNotBlank()
+                if (userTouched && nonBlank) userEdited++
+                if (nonBlank) {
+                    allTranslated++
+                    if (block.needsRevision) flagged++
+                }
+            }
+        }
+
+        return ChapterRevisionEligibility(
+            chapterId = chapterId,
+            translatedPages = translatedPages,
+            expectedPages = expectedPages,
+            flaggedTargets = flagged,
+            allTranslatedTargets = allTranslated,
+            userEditedExclusions = userEdited,
+            reviewerOptions = revisionReviewerOptions().toImmutableList(),
+            persistedSourceLanguage = translationPreferences.translateFromLanguage().get(),
+            persistedTargetLanguage = translationPreferences.translateToLanguage().get(),
+            requiresLegacyLanguage = summary == null,
+        )
+    }
+
+    /**
+     * CP7 pure UI communication: runs preflight for a candidate reviewer/scope and
+     * returns a typed [RevisionPreflightOutcome]. Re-validates active-batch and
+     * active-revision admission so the UI can show a rejection reason without
+     * dispatching a start. The opaque token lives backend-side and is re-checked
+     * at [startRevision]; this method never trusts displayed state for approval.
+     */
+    suspend fun runRevisionPreflight(
+        chapterId: Long,
+        chapterName: String,
+        scope: RevisionScope,
+        reviewerEngine: tachiyomi.domain.translation.AiEngine,
+        reviewerModel: String,
+    ): RevisionPreflightOutcome {
+        if (isBatchTranslationActive(chapterId)) {
+            return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.ACTIVE_BATCH)
+        }
+        if (isRevisionActive(chapterId)) {
+            return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.REVISION_ACTIVE)
+        }
+        val options = revisionReviewerOptions()
+        if (options.none { it.engine == reviewerEngine && it.model == reviewerModel }) {
+            return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.NO_REVIEWER_CONFIGURED)
+        }
+        val preflight = getRevisionPreflight(chapterId, scope, reviewerEngine, reviewerModel)
+            ?: return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.CHAPTER_DELETED)
+        if (preflight.eligibleTargetCount == 0) {
+            return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.NO_TARGETS)
+        }
+        val eligibility = snapshotRevisionEligibility(chapterId)
+        val requiresLegacyLanguage = eligibility?.requiresLegacyLanguage ?: true
+        if (requiresLegacyLanguage) {
+            return RevisionPreflightOutcome.Rejected(chapterId, RevisionRejectionReason.LEGACY_LANGUAGE_REQUIRED)
+        }
+        val kind = eu.kanade.translation.translator.AiTranslatorKind.entries.first { it.engine == reviewerEngine }
+        val confirmation = RevisionConfirmation(
+            chapterName = chapterName,
+            scope = scope,
+            reviewerLabel = "${kind.label} · $reviewerModel",
+            reviewerEngine = reviewerEngine,
+            reviewerModel = reviewerModel,
+            sourceLanguage = eligibility?.persistedSourceLanguage ?: translationPreferences.translateFromLanguage().get(),
+            targetLanguage = eligibility?.persistedTargetLanguage ?: translationPreferences.translateToLanguage().get(),
+            translatedPages = eligibility?.translatedPages ?: 0,
+            expectedPages = eligibility?.expectedPages,
+            targetCount = preflight.eligibleTargetCount,
+            exclusionCount = eligibility?.userEditedExclusions ?: 0,
+            estimatedRequestGroups = preflight.estimatedRequestGroups,
+            requiresLegacyLanguage = requiresLegacyLanguage,
+            partialWarning = eligibility?.isPartial ?: false,
+        )
+        return RevisionPreflightOutcome.Ready(chapterId, confirmation)
+    }
+
     fun translateChapter(manga: Manga, chapters: Chapter) {
+        val chapterId = chapters.id ?: return
+        if (activeRevisionJobs.containsKey(chapterId)) {
+            logcat(LogPriority.WARN) { "Cannot queue batch translation for chapter $chapterId: revision is active" }
+            return
+        }
         translator.queueChapter(manga, chapters);
         startTranslation();
     }
@@ -535,6 +878,16 @@ class TranslationManager(
         streamRegistry.clearChapter(source.id, manga.id, chapterId)
         val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
         file?.delete()
+        // CP9: purge the bounded summary sidecar alongside the translation JSON. The summary
+        // carries latestRevisionReport (CP5 bounded report); leaving it orphaned on disk would
+        // let a future store open for the same chapter read a stale report from a deleted run.
+        // deleteManga already removes the whole manga directory so the sidecar goes with it;
+        // this per-chapter path previously only deleted the translation JSON + companion images.
+        // Same lookup ChapterTranslationSummaryStore.findSummaryFile() uses (parent + summaryFileName).
+        file?.let { nonNullFile ->
+            val name = nonNullFile.name ?: return@let
+            nonNullFile.parentFile?.findFile(ChapterTranslationSummaryStore.summaryFileName(name))?.delete()
+        }
         provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
     }
 
@@ -639,6 +992,7 @@ class TranslationManager(
      * single permit. Job cancellation is delegated to the scheduler; store eviction is manager-owned.
      */
     suspend fun cancelPageTranslations(chapterId: Long) {
+        cancelRevision(chapterId)
         scheduler.cancelPageTranslations(chapterId)
         if (isBatchTranslationActive(chapterId)) {
             return
@@ -654,9 +1008,18 @@ class TranslationManager(
      * when the reader is destroyed or the master toggle is switched off, so no orphaned work
      * keeps running and no collector outlives the session. Job cancellation is delegated to the
      * scheduler; store eviction + chapter queue clearing are manager-owned.
+     *
+     * CP8: [cancelRevisions] gates whether standalone revision jobs are also cancelled.
+     * User-initiated Stop-all / translation-disable pass `cancelRevisions = true` (default):
+     * the user explicitly wants all work gone. The reader background/close path
+     * ([stopReaderTranslations]) passes `cancelRevisions = false` so a standalone revision
+     * survives UI lifecycle events — it is process-owned, not reader-owned.
      */
-    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) {
+    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false, cancelRevisions: Boolean = true) {
         scheduler.cancelAllPageTranslations()
+        if (cancelRevisions) {
+            activeRevisionJobs.keys.toList().forEach { cancelRevision(it) }
+        }
         val chapterIdsToEvict = activeStores.chapterIds()
             .filter { cancelBatchQueue || !isBatchTranslationActive(it) }
         val stores = chapterIdsToEvict.mapNotNull { activeStores.get(it) }

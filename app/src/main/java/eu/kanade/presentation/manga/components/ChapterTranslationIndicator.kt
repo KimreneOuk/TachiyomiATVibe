@@ -42,6 +42,8 @@ enum class ChapterTranslationAction {
     DETAILS,
     CANCEL,
     DELETE,
+    // TachiyomiAT CP7: standalone revision (review) of already-translated text.
+    REVIEW,
 }
 
 @Composable
@@ -51,6 +53,11 @@ fun ChapterTranslationIndicator(
     onClick: (ChapterTranslationAction) -> Unit,
     // TachiyomiAT: batch translation progress snapshot for the indicator.
     translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
+    // TachiyomiAT CP7: exposes the standalone REVIEW action when the manager
+    // derived eligibility for this chapter. Independent of aggregate
+    // [Translation.State] and downloaded-image state (text-only review needs no
+    // download).
+    reviewAvailableProvider: () -> Boolean = { false },
     modifier: Modifier = Modifier,
 ) {
     when (val translationState = translationStateProvider()) {
@@ -69,6 +76,7 @@ fun ChapterTranslationIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
+            reviewAvailable = reviewAvailableProvider(),
         )
         Translation.State.ERROR -> ErrorIndicator(
             enabled = enabled,
@@ -185,6 +193,8 @@ private fun TranslatedIndicator(
     enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: (ChapterTranslationAction) -> Unit,
+    // TachiyomiAT CP7: renders REVIEW when manager-derived eligibility exists.
+    reviewAvailable: Boolean = false,
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
@@ -205,6 +215,15 @@ private fun TranslatedIndicator(
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
+            if (reviewAvailable) {
+                DropdownMenuItem(
+                    text = { Text(text = stringResource(ATMR.strings.manga_translate_review)) },
+                    onClick = {
+                        onClick(ChapterTranslationAction.REVIEW)
+                        isMenuExpanded = false
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(text = stringResource(ATMR.strings.manga_translate)) },
                 onClick = {

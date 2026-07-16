@@ -40,6 +40,11 @@ import eu.kanade.translation.translator.TranslationContextChunk
 import eu.kanade.translation.translator.StreamingChunkPlanner
 import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.translator.TranslationBlockValidation
+import eu.kanade.translation.translator.AiTranslatorKind
+import eu.kanade.translation.translator.GeminiTranslator
+import eu.kanade.translation.translator.OpenRouterTranslator
+import eu.kanade.translation.translator.DeepSeekTranslator
+import eu.kanade.translation.translator.StandardTranslatorKind
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
@@ -81,6 +86,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -1527,175 +1533,7 @@ class TranslationPipeline(
             "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
         }
 
-        // ---- TachiyomiAT Checkpoint 2 integration: Pass 2 (revision) ----
-        // Replaces the legacy in-place revision merge. The new path uses the pure
-        // [RevisionPlanner] (reading order, <=20 targets, strict token budget,
-        // glossary + nearby dialogue, output-targets-only) and the strict
-        // [RevisionMerger] (precondition re-check, log/account rejects, re-validate,
-        // NEVER force READY). Accepted corrections are committed through the store's
-        // atomic patch API ([ChapterTranslationStore.patchBlock]) with generation /
-        // page-version / fingerprint / draft / needsRevision / userEditedAt
-        // preconditions, so a stale, edited, or concurrently-cleared block is rejected
-        // and its draft + flag retained — no silent fallback. Every rejection/late
-        // result/over-budget target/request failure is logged with chapter/page/reason.
-        if (isAi && contextualTranslator != null) {
-            // Reading-order snapshot of the live chapter pages for planning + merge.
-            val orderedPageKeys = orderedStreams.map { it.first }
-            val orderedPages = LinkedHashMap<String, PageTranslation>()
-            val liveState = store.state.value
-            orderedPageKeys.forEach { pk -> liveState[pk]?.let { orderedPages[pk] = it.detachedCopy() } }
 
-            val chapterGlossary = store.glossarySnapshot()
-            val revisionPlan = RevisionPlanner.plan(
-                orderedPages = orderedPages,
-                chapterGlossary = chapterGlossary,
-                requestedOutputTokens = requestedOutputTokens,
-            )
-            val totalTargets = revisionPlan.allTargets.size
-            val skippedRevisionBlocks = orderedPages.values.sumOf { page ->
-                page.blocks.count { it.needsRevision && (it.userEditedAt != null || it.text.isBlank()) }
-            }
-            val userEditedRevisionBlocks = orderedPages.values.sumOf { page ->
-                page.blocks.count { it.needsRevision && it.userEditedAt != null }
-            }
-            tracker?.beginRevision(
-                totalBlocks = totalTargets,
-                skippedBlocks = skippedRevisionBlocks,
-                userEditedBlocks = userEditedRevisionBlocks,
-            )
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT Pass 2 START chapter=${chapter.name} " +
-                    "eligible=$totalTargets skipped=$skippedRevisionBlocks " +
-                    "userEdited=$userEditedRevisionBlocks groups=${revisionPlan.groups.size} " +
-                    "overBudget=${revisionPlan.overBudget.size}"
-            }
-            // Over-budget targets cannot be sent (their own prompt exceeds the cap).
-            // Report + log each so progress accounting is exact (no silent drop).
-            revisionPlan.overBudget.forEach { ob ->
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT revision over-budget target retained: " +
-                        "chapter=${chapter.name} pageKey=${ob.target.pageKey} " +
-                        "blockIndex=${ob.target.blockIndex} " +
-                        "estimatedTokens=${ob.estimatedTokens} maxPromptTokens=${ob.maxPromptTokens}"
-                }
-                tracker?.markRevisionChunkFailed(1)
-            }
-
-            revisionPlan.groups.forEachIndexed { groupIndex, group ->
-                coroutineContext.ensureActive()
-                val refsGrouped = group.targets.groupBy { it.pageKey }
-                tracker?.markRevisionChunkRunning(refsGrouped.keys, group.targets.size)
-                // Re-snapshot the live store for THIS group. Earlier groups may have
-                // committed patchBlock corrections (bumping page versions), so a fresh
-                // read keeps the chunk, the merge snapshot, and the patch preconditions
-                // consistent with the current store generation / page versions.
-                val groupLiveState = store.state.value
-                // Build a TranslationContextChunk carrying ONLY this group's flagged
-                // targets (output ids) plus nearby non-target dialogue (context-only).
-                // The chunk's pages are detached copies so the structured request does
-                // not mutate the live store state; the merge layer re-checks preconditions
-                // against the live blocks before committing anything.
-                //
-                // Critically, the request builder derives eligibility from
-                // `block.needsRevision && block.userEditedAt == null`, so a page that has
-                // OTHER flagged blocks (belonging to a different group, or skipped) must
-                // NOT appear eligible here. We therefore rebuild each page so that ONLY
-                // this group's target blocks keep needsRevision=true; every other block is
-                // downgraded to context (needsRevision=false) so the anchored-id map lines
-                // up 1:1 with this group's targets in reading order.
-                val groupTargetKeys = group.targets.map { it.pageKey to it.blockIndex }.toHashSet()
-                val chunkPages = LinkedHashMap<String, PageTranslation>()
-                group.targets.map { it.pageKey }.distinct().forEach { pageKey ->
-                    val livePage = groupLiveState[pageKey] ?: return@forEach
-                    val rebuiltBlocks = livePage.blocks.mapIndexed { idx, block ->
-                        if ((pageKey to idx) in groupTargetKeys) block.detachedCopy()
-                        else block.detachedCopy().copy(needsRevision = false)
-                    }.toMutableList()
-                    chunkPages[pageKey] = livePage.copy(blocks = rebuiltBlocks)
-                }
-                val contextChunk = TranslationContextChunk(
-                    pages = chunkPages,
-                    blockCount = group.targets.size,
-                    rollingContext = "",
-                    glossary = ChapterGlossaryBuilder.formatGlossary(group.chapterGlossary),
-                    estimatedPromptTokens = group.estimatedPromptTokens,
-                    maxOutputTokens = group.maxOutputTokens,
-                )
-
-                var appliedCount = 0
-                var failedCount = 0
-                var batch: ContextualTranslationBatch? = null
-                try {
-                    batch = contextualTranslator.translateContextualStructured(contextChunk, isPass2 = true)
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    // Request failure: every target in this group is accounted failed;
-                    // flags + drafts are left intact (no mutation). Logged with context.
-                    failedCount = group.targets.size
-                    logcat(LogPriority.ERROR, e) {
-                        "TachiyomiAT Pass 2 group ${groupIndex + 1}/${revisionPlan.groups.size} request failed " +
-                            "chapter=${chapter.name} pageKeys=${refsGrouped.keys} targets=${group.targets.size} " +
-                            "reason=${e.message ?: e::class.java.simpleName}"
-                    }
-                    tracker?.markRevisionChunkFailed(group.targets.size)
-                    return@forEachIndexed
-                }
-
-                // Run the strict merge on a detached live snapshot so the merge layer's
-                // precondition checks compare against the blocks captured at request time.
-                // The merger does NOT mutate the live store; it logs every rejection
-                // (missing/blank/malformed/duplicate/stale/edited) and mutates only the
-                // detached `mergeLive` copies for accepted corrections.
-                val mergeLive = RevisionCommitter.mergeLiveSnapshot(
-                    store, group.targets.map { it.pageKey }.distinct(),
-                )
-                val mergeResult = RevisionMerger.merge(
-                    livePages = mergeLive,
-                    batch = batch,
-                    requestTargets = group.targets,
-                    chapterId = chapter.id,
-                    chapterName = chapter.name,
-                )
-
-                // Commit accepted corrections through the store's atomic patch API and
-                // re-validate touched pages (NEVER force READY). Delegated to
-                // [RevisionCommitter] so the strict-commit + re-validate behavior is
-                // unit-testable; every rejected patch / retained target is logged with
-                // chapter/page/reason (no silent fallback).
-                val orderedAnchorIds = RevisionCommitter.orderedAnchorIds(batch)
-                val commitOutcome = RevisionCommitter.commit(
-                    store = store,
-                    mergeLive = mergeLive,
-                    groupTargets = group.targets,
-                    batch = batch,
-                    orderedAnchorIds = orderedAnchorIds,
-                    mergeResult = mergeResult,
-                    chapterId = chapter.id,
-                    chapterName = chapter.name,
-                )
-                appliedCount = commitOutcome.appliedCount
-                failedCount += commitOutcome.failedCount
-
-                // Re-render touched pages whose status was (re)derived by the committer.
-                commitOutcome.touchedPages.forEach { pageKey ->
-                    val refreshed = store.state.value[pageKey]
-                    if (refreshed != null) {
-                        translationRegistry[pageKey] = refreshed
-                        tryRender(pageKey)
-                    }
-                }
-
-                tracker?.markRevisionChunkCompleted(appliedCount)
-                if (failedCount > 0) tracker?.markRevisionChunkFailed(failedCount)
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT Pass 2 group ${groupIndex + 1}/${revisionPlan.groups.size} complete " +
-                        "chapter=${chapter.name} revised=$appliedCount failed=$failedCount " +
-                        "targets=${group.targets.size}"
-                }
-            }
-        }
-
-        tracker?.markRevisionFinished()
 
         val reconciliation = BatchProgressReconciler.reconcile(
             pageMap = store.state.value,
@@ -2496,6 +2334,78 @@ class TranslationPipeline(
             null
         }
     }
+
+    suspend fun tryRenderStandalone(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        store: ChapterTranslationStore,
+    ) {
+        val page = store.state.value[pageKey] ?: return
+        if (page.translationStatus != StageStatus.READY && page.translationStatus != StageStatus.PARTIAL) {
+            return
+        }
+        val cleanedName = page.cleanedImageName ?: return
+        val bitmap = loadPersistedCleanedBitmap(manga, chapter, source, cleanedName) ?: return
+        try {
+            store.updatePage(pageKey) { existing ->
+                (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
+                    renderStatus = StageStatus.RUNNING
+                }
+            }
+            RenderColorEstimator.recomputeFor(bitmap, page.blocks)
+            store.updatePage(pageKey) { existing ->
+                (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
+                    renderStatus = StageStatus.READY
+                    blocks.forEachIndexed { index, b ->
+                        if (index < page.blocks.size) {
+                            b.textColor = page.blocks[index].textColor
+                            b.strokeColor = page.blocks[index].strokeColor
+                        }
+                    }
+                    updatedAt = System.currentTimeMillis()
+                }
+            }
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            store.updatePage(pageKey) { existing ->
+                (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
+                    renderStatus = StageStatus.FAILED
+                    errorMessage = e.message
+                }
+            }
+            logcat(LogPriority.ERROR, e) { "Failed to render standalone page $pageKey" }
+        } finally {
+            try { bitmap.recycle() } catch (_: Exception) {}
+        }
+    }
+
+    suspend fun getContextualTranslator(engine: AiEngine, model: String): ContextualTextTranslator? {
+        val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
+        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+
+        val kind = AiTranslatorKind.entries.firstOrNull { it.engine == engine } ?: return null
+        val apiKey = translationPreferences.translationAiApiKey(engine).get()
+        val maxOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull() ?: 8192
+        val temperature = translationPreferences.translationAiTemperature().get().toFloatOrNull() ?: 0.3f
+
+        val translator = when (kind) {
+            AiTranslatorKind.GEMINI -> GeminiTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
+            AiTranslatorKind.OPENROUTER -> OpenRouterTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
+            AiTranslatorKind.DEEPSEEK -> DeepSeekTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
+            AiTranslatorKind.LMSTUDIO -> LmStudioTranslator(
+                fromLang = fromLang,
+                toLang = toLang,
+                baseUrl = translationPreferences.translationAiBaseUrlLmStudio().get(),
+                modelName = model,
+                maxOutputToken = maxOutputTokens,
+                temperature = temperature,
+            )
+        }
+        return translator as? ContextualTextTranslator
+    }
+
 
     private suspend fun persistCleanedBitmap(
         pageTranslation: PageTranslation,

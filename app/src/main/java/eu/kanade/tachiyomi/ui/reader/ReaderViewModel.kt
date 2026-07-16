@@ -47,6 +47,8 @@ import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.TranslationPageId
 import eu.kanade.translation.TranslationPageRequest
 import eu.kanade.translation.TranslationWorkKind
+import eu.kanade.translation.MemoryPressureClass
+import eu.kanade.translation.MemoryPressurePolicy
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
@@ -59,6 +61,18 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+// TachiyomiAT CP7: standalone revision UI/UX contracts and pure reducer.
+import eu.kanade.translation.model.ChapterRevisionEligibility
+import eu.kanade.translation.model.RevisionConfirmState
+import eu.kanade.translation.model.RevisionConfirmation
+import eu.kanade.translation.model.RevisionResultState
+import eu.kanade.translation.model.RevisionReviewerOption
+import eu.kanade.translation.model.RevisionScope
+import eu.kanade.translation.model.defaultScope
+import eu.kanade.translation.model.toConfirmState
+import eu.kanade.translation.model.toResultState
+import eu.kanade.translation.model.withReviewerPicked
+import eu.kanade.translation.model.withScopeChanged
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -1492,6 +1506,137 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(dialog = Dialog.TranslationSettings) }
     }
 
+    // TachiyomiAT CP7: standalone revision (review) of the current chapter.
+    // The reader mirrors the manga flow: preflight -> shared confirm dialog ->
+    // manager start. The manager owns the job; closing the reader does not
+    // cancel it. Reviewer engine/model come from the injected
+    // [translationPreferences] (the manager does not expose the pref setter).
+    private var revisionEligibility: ChapterRevisionEligibility? = null
+
+    private fun revisionChapterId(): Long? = getCurrentChapter()?.chapter?.id
+
+    private fun revisionReviewerEngine(): AiEngine =
+        translationPreferences.revisionReviewerEngine().get()
+
+    /**
+     * Snapshots eligibility for the current chapter so the reader translation
+     * sheet can offer "Review this chapter" / "View last review". Cheap and
+     * idempotent; reads durable state.
+     */
+    suspend fun snapshotRevisionEligibility(): ChapterRevisionEligibility? {
+        val chapterId = revisionChapterId() ?: return null
+        val eligibility = translationManager.snapshotRevisionEligibility(chapterId)
+        revisionEligibility = eligibility
+        return eligibility
+    }
+
+    /** The current chapter name for revision result sheet headers. */
+    fun currentChapterName(): String = getCurrentChapter()?.chapter?.name.orEmpty()
+
+    /** True when an active revision is running for the current chapter. */
+    fun isRevisionActive(): Boolean = revisionChapterId()?.let {
+        translationManager.isRevisionActive(it)
+    } ?: false
+
+    /**
+     * Runs preflight for the current chapter with [scope] (default FLAGGED when
+     * flagged targets exist, else ALL_TRANSLATED) and opens the shared confirm
+     * dialog with the typed outcome.
+     */
+    fun startRevisionPreflight(scope: RevisionScope? = null) {
+        val chapterId = revisionChapterId() ?: return
+        val manga = manga ?: return
+        val chapter = getCurrentChapter()?.chapter ?: return
+        val resolvedScope = scope ?: defaultScope(revisionEligibility)
+        mutableState.update { it.copy(dialog = Dialog.RevisionConfirm(RevisionConfirmState.Idle)) }
+        viewModelScope.launch {
+            val engine = revisionReviewerEngine()
+            val model = translationPreferences.translationAiModel(engine).get()
+            val outcome = translationManager.runRevisionPreflight(
+                chapterId = chapterId,
+                chapterName = chapter.name,
+                scope = resolvedScope,
+                reviewerEngine = engine,
+                reviewerModel = model,
+            )
+            val reviewerOptions = revisionEligibility?.reviewerOptions
+                ?: translationManager.revisionReviewerOptions()
+            val state = outcome.toConfirmState(reviewerOptions, engine)
+            mutableState.update { it.copy(dialog = Dialog.RevisionConfirm(state)) }
+            manga // referenced to keep the captured manga for the start path
+        }
+    }
+
+    /** Persists the picked reviewer engine and updates the confirm selection. */
+    fun pickRevisionReviewer(option: RevisionReviewerOption) {
+        translationPreferences.revisionReviewerEngine().set(option.engine)
+        updateRevisionConfirmState { state -> state.withReviewerPicked(option) }
+    }
+
+    /** Updates scope and re-runs preflight so counts reflect the new scope. */
+    fun changeRevisionScope(scope: RevisionScope) {
+        updateRevisionConfirmState { state -> state.withScopeChanged(scope) }
+        startRevisionPreflight(scope = scope)
+    }
+
+    private inline fun updateRevisionConfirmState(
+        crossinline transform: (RevisionConfirmState) -> RevisionConfirmState,
+    ) {
+        mutableState.update { state ->
+            val dialog = state.dialog as? Dialog.RevisionConfirm ?: return@update state
+            state.copy(dialog = Dialog.RevisionConfirm(transform(dialog.state)))
+        }
+    }
+
+    /**
+     * Confirms and starts the revision. Sends only scope + reviewer + language
+     * to the manager. The UI guard mirrors the manager's active-job admission.
+     */
+    fun confirmStartRevision(confirmation: RevisionConfirmation) {
+        val manga = manga ?: return
+        val dbChapter = getCurrentChapter()?.chapter ?: return
+        val chapter = dbChapter.toDomainChapter() ?: return
+        val chapterId = chapter.id ?: return
+        if (translationManager.isRevisionActive(chapterId)) {
+            logcat(LogPriority.WARN) { "Revision already active for chapter $chapterId; ignoring duplicate confirm" }
+            return
+        }
+        val flow = translationManager.startRevision(
+            manga = manga,
+            chapter = chapter,
+            scope = confirmation.scope,
+            reviewerEngine = confirmation.reviewerEngine,
+            reviewerModel = confirmation.reviewerModel,
+        ) ?: run {
+            logcat(LogPriority.WARN) { "startRevision returned null for chapter $chapterId" }
+            return
+        }
+        closeDialog()
+        viewModelScope.launch { flow.collect { /* snapshot flows through observeBatchProgress */ } }
+    }
+
+    /** Cancels an active revision for the current chapter. */
+    fun cancelRevision() {
+        val chapterId = revisionChapterId() ?: return
+        translationManager.cancelRevision(chapterId)
+    }
+
+    /**
+     * Opens the terminal result sheet for the current chapter, loading the
+     * latest durable report.
+     */
+    fun showRevisionResult() {
+        val chapterId = revisionChapterId() ?: return
+        mutableState.update {
+            it.copy(dialog = Dialog.RevisionResult(RevisionResultState.Loading))
+        }
+        viewModelScope.launch {
+            val report = translationManager.getLatestRevisionReport(chapterId)
+            val state = report?.toResultState() ?: RevisionResultState.Missing
+            mutableState.update { it.copy(dialog = Dialog.RevisionResult(state)) }
+        }
+    }
+
     fun closeDialog() {
         mutableState.update { it.copy(dialog = null) }
     }
@@ -1700,19 +1845,25 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     /**
-     * TachiyomiAT: cancels all translation work tied to [chapter] so navigating
-     * away from it cannot leave orphaned jobs running on the singleton
-     * ChapterTranslator. Revokes in-flight single-page jobs, removes the chapter
-     * from the batch queue if present, and evicts the reader page streams its
-     * holders registered (those closures otherwise keep page bitmaps alive).
+     * TachiyomiAT: cancels reader-owned translation work tied to [chapter] so navigating
+     * away from it cannot leave orphaned single-page jobs running on the singleton
+     * ChapterTranslator. Revokes in-flight single-page jobs for this chapter and evicts
+     * the reader page streams its holders registered (those closures otherwise keep page
+     * bitmaps alive).
+     *
+     * CP8: this is a chapter-NAVIGATION teardown, NOT process ownership. It must NOT
+     * touch the batch queue: a chapter the reader is leaving may still be queued for
+     * background batch translation, and the batch entry is process-owned (it survives
+     * reader open/close/chapter-switch per the CP8 ownership contract). The previous
+     * code called cancelQueuedTranslation here, which dropped the departing chapter
+     * from the batch queue on every chapter switch. cancelPageTranslations already
+     * guards on isBatchTranslationActive (the shared store survives when the chapter
+     * is still queued), so the only thing removed here is the queue-cancel call.
      */
     private suspend fun cancelTranslationForChapter(chapter: ReaderChapter) {
         val manga = manga ?: return
         val chapterId = chapter.chapter.id ?: return
         translationManager.cancelPageTranslations(chapterId)
-        translationManager.getQueuedTranslationOrNull(chapterId)?.let {
-            translationManager.cancelQueuedTranslation(it)
-        }
         streamRegistry.clearChapter(
             sourceId = manga.source,
             mangaId = manga.id,
@@ -2131,6 +2282,12 @@ class ReaderViewModel @JvmOverloads constructor(
      * dispatch sites (onPageSelected / loadChapter), which all require both.
      */
     fun resumeTranslationsOnForeground() {
+        // CP8: if critical memory pressure had requeued the batch translator's in-flight
+        // pages (translator.memoryRequeued), restart the batch worker exactly once now
+        // that the user is back. This must run BEFORE the auto-translate gate below:
+        // auto-translate concerns the current reader page; the requeued batch may be a
+        // DIFFERENT chapter and must not be gated by whether auto-translate is on.
+        translationManager.consumeMemoryRequeueRestart()
         if (!translationPreferences.translationEnabled().get()) return
         if (!translationPreferences.autoTranslate().get()) return
         val chapter = getCurrentChapter() ?: return
@@ -2141,7 +2298,12 @@ class ReaderViewModel @JvmOverloads constructor(
 
     fun onMemoryPressure(level: Int) {
         translationManager.onMemoryPressure(level)
-        if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
+        // CP8: only reset the live display state under genuine foreground memory pressure.
+        // The previous `level >= TRIM_MEMORY_RUNNING_LOW` check fired on UI_HIDDEN(20)/
+        // BACKGROUND(40)/MODERATE(60) too (they all exceed RUNNING_LOW(15)), so every
+        // app-background trip blanked the translation indicator. Gate on the classified
+        // Critical class instead so a benign background trim leaves the display state alone.
+        if (MemoryPressurePolicy.classify(level) == MemoryPressureClass.Critical) {
             liveTranslationState = Translation.State.NOT_TRANSLATED
             recomputeTranslationState()
         }
@@ -2471,6 +2633,11 @@ class ReaderViewModel @JvmOverloads constructor(
         data object ReadingModeSelect : Dialog
         data object OrientationModeSelect : Dialog
         data class PageActions(val page: ReaderPage) : Dialog
+        // TachiyomiAT CP7: standalone revision confirmation + terminal result.
+        // Shares the same pure state types and composables as the manga screen
+        // so both surfaces dispatch one manager request and render one run.
+        data class RevisionConfirm(val state: RevisionConfirmState) : Dialog
+        data class RevisionResult(val state: RevisionResultState) : Dialog
     }
 
     sealed interface Event {
