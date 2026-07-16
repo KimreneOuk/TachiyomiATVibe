@@ -2,6 +2,7 @@ package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.RevisionScope
 
 /**
  * TachiyomiAT: pure revision planner. Builds bounded Pass-2 request groups from
@@ -78,8 +79,9 @@ object RevisionPlanner {
         requestedOutputTokens: Int,
         maxPromptTokens: Int = defaultMaxPromptTokens(),
         maxNearbyContextLines: Int = DEFAULT_NEARBY_CONTEXT_LINES,
+        scope: RevisionScope = RevisionScope.FLAGGED,
     ): Plan {
-        val targets = collectTargets(orderedPages)
+        val targets = collectTargets(orderedPages, scope)
         if (targets.isEmpty()) return Plan(emptyList(), emptyList(), emptyList())
 
         // Every revision target in the chapter is an OUTPUT id somewhere; none of
@@ -155,11 +157,11 @@ object RevisionPlanner {
     }
 
     /** Collect flagged targets in stable reading order. */
-    private fun collectTargets(orderedPages: LinkedHashMap<String, PageTranslation>): List<Target> {
+    private fun collectTargets(orderedPages: LinkedHashMap<String, PageTranslation>, scope: RevisionScope): List<Target> {
         val out = mutableListOf<Target>()
         for ((pageKey, page) in orderedPages) {
             for ((blockIndex, block) in page.blocks.withIndex()) {
-                if (!isRevisionTarget(block)) continue
+                if (!isRevisionTarget(block, scope)) continue
                 out += Target(pageKey, blockIndex, block)
             }
         }
@@ -198,8 +200,9 @@ object RevisionPlanner {
         return out
     }
 
-    private fun isRevisionTarget(block: TranslationBlock): Boolean =
-        block.needsRevision && block.userEditedAt == null && block.text.isNotBlank()
+    private fun isRevisionTarget(block: TranslationBlock, scope: RevisionScope): Boolean =
+        block.userEditedAt == null && block.text.isNotBlank() && block.translation.isNotBlank() &&
+            (scope == RevisionScope.ALL_TRANSLATED || block.needsRevision)
 
     /**
      * Per-target prompt token cost: anchored id overhead + "Source: ... | Draft:"

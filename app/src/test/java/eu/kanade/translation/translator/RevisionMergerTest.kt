@@ -21,8 +21,8 @@ class RevisionMergerTest {
         )
         val result = RevisionMerger.merge(live, batch, targets, chapterId = 1L, chapterName = "ch")
 
-        result.appliedCount shouldBe 1
-        result.retainedCount shouldBe 0
+        result.correctedCount shouldBe 1
+        result.keptCount shouldBe 0
         result.requestFailed shouldBe false
         live.getValue("p0").blocks[0].translation shouldBe "Corrected."
         (live.getValue("p0").blocks[0].needsRevision) shouldBe false
@@ -41,8 +41,8 @@ class RevisionMergerTest {
         val result = RevisionMerger.merge(live, batch, targets, 1L, "ch")
 
         result.appliedCount shouldBe 0
-        result.retainedCount shouldBe 1
-        result.retained[0].reason shouldContain "draft changed"
+        result.unresolvedCount shouldBe 1
+        result.unresolved[0].reason shouldContain "draft changed"
         live.getValue("p0").blocks[0].translation shouldBe "newDraft"
         (live.getValue("p0").blocks[0].needsRevision) shouldBe true
     }
@@ -59,7 +59,7 @@ class RevisionMergerTest {
         val result = RevisionMerger.merge(live, batch, targets, 1L, "ch")
 
         result.appliedCount shouldBe 0
-        result.retained[0].reason shouldContain "userEditedAt"
+        result.unresolved[0].reason shouldContain "userEditedAt"
         live.getValue("p0").blocks[0].needsRevision shouldBe true
     }
 
@@ -73,8 +73,8 @@ class RevisionMergerTest {
         val result = RevisionMerger.merge(live, batch, targets, 1L, "ch")
 
         result.appliedCount shouldBe 0
-        result.retainedCount shouldBe 1
-        result.retained[0].reason shouldContain "missing"
+        result.unresolvedCount shouldBe 1
+        result.unresolved[0].reason shouldContain "missing"
         live.getValue("p0").blocks[0].needsRevision shouldBe true
     }
 
@@ -87,7 +87,7 @@ class RevisionMergerTest {
         val result = RevisionMerger.merge(live, batch, targets, 1L, "ch")
 
         result.appliedCount shouldBe 0
-        result.retained[0].reason shouldContain "rejected"
+        result.unresolved[0].reason shouldContain "rejected"
         live.getValue("p0").blocks[0].needsRevision shouldBe true
     }
 
@@ -100,7 +100,7 @@ class RevisionMergerTest {
 
         result.requestFailed shouldBe true
         result.appliedCount shouldBe 0
-        result.retainedCount shouldBe 1
+        result.unresolvedCount shouldBe 1
         live.getValue("p0").blocks[0].needsRevision shouldBe true
     }
 
@@ -116,8 +116,8 @@ class RevisionMergerTest {
         )
         val result = RevisionMerger.merge(live, batch, targets, 1L, "ch")
 
-        result.appliedCount shouldBe 1
-        result.retainedCount shouldBe 1
+        result.correctedCount shouldBe 1
+        result.unresolvedCount shouldBe 1
         // The touched page status is PARTIAL (one block still untranslated).
         result.pageStatuses["p0"] shouldBe StageStatus.PARTIAL
         live.getValue("p0").translationStatus shouldBe StageStatus.PARTIAL
@@ -131,7 +131,7 @@ class RevisionMergerTest {
         )
         val result = RevisionMerger.merge(live, batch, targets, 1L, "ch")
 
-        result.appliedCount shouldBe 2
+        result.correctedCount shouldBe 2
         result.pageStatuses["p0"] shouldBe StageStatus.READY
     }
 
@@ -146,7 +146,7 @@ class RevisionMergerTest {
         val result = RevisionMerger.merge(live, batch, targets, 1L, "ch")
 
         result.appliedCount shouldBe 0
-        result.retained[0].reason shouldContain "fingerprint"
+        result.unresolved[0].reason shouldContain "fingerprint"
         live.getValue("p0").blocks[0].needsRevision shouldBe true
     }
 

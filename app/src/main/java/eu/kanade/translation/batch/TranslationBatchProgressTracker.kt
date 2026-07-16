@@ -138,7 +138,7 @@ class TranslationBatchProgressTracker(
                     previous.pagePhases[event.pageKey].orEmpty() + (event.phase to event.status.toStageStatus())
                 )),
             )
-            is TranslationBatchEvent.RevisionStarted -> previous.copy(batchPhase = if (event.totalBlocks > 0) TranslationBatchPhase.REVISING else TranslationBatchPhase.FINALIZING, revision = RevisionProgress(event.totalBlocks, skippedBlocks = event.skippedBlocks, userEditedBlocks = event.userEditedBlocks))
+            is TranslationBatchEvent.RevisionStarted -> previous.copy(batchPhase = if (event.totalBlocks > 0) TranslationBatchPhase.REVISING else TranslationBatchPhase.FINALIZING, revision = RevisionProgress(event.totalBlocks, keptBlocks = event.skippedBlocks, userEditedBlocks = event.userEditedBlocks))
             is TranslationBatchEvent.RevisionChunkRunning -> previous.copy(revision = previous.revision.copy(activePageKey = event.pageKeys.firstOrNull(), activeChunkBlocks = event.blockCount))
             is TranslationBatchEvent.RevisionChunkCompleted -> previous.copy(revision = previous.revision.advance(completed = event.completedBlocks))
             is TranslationBatchEvent.RevisionChunkFailed -> previous.copy(revision = previous.revision.advance(failed = event.failedBlocks))
@@ -160,7 +160,7 @@ class TranslationBatchProgressTracker(
             val remaining = (totalBlocks - processedBlocks).coerceAtLeast(0)
             val completedAdded = completed.coerceIn(0, remaining)
             val failedAdded = failed.coerceIn(0, remaining - completedAdded)
-            return copy(completedBlocks = completedBlocks + completedAdded, failedBlocks = failedBlocks + failedAdded, activePageKey = null, activeChunkBlocks = 0)
+            return copy(correctedBlocks = correctedBlocks + completedAdded, unresolvedBlocks = unresolvedBlocks + failedAdded, activePageKey = null, activeChunkBlocks = 0)
         }
 
         fun computeSnapshot(
