@@ -2427,6 +2427,30 @@ class TranslationPipeline(
                     "TachiyomiAT single-page late result rejected: chapter=${chapter.name} " +
                         "pageKey=$pageKey reason=${commit.reason}"
                 }
+            } else {
+                // CP4: Publish backward-compatible chapter summary after every accepted
+                // manual/auto commit so cold manga-screen eligibility discovery does not
+                // require a prior batch run. Published as READY_WITH_WARNINGS (partial
+                // chapter). Non-fatal if the sidecar write fails.
+                val pageCount = store.state.value.size
+                val unresolvedFlags = store.state.value.values.count { p ->
+                    p.blocks.any { b -> b.needsRevision && b.userEditedAt == null }
+                }
+                runCatching {
+                    store.publishSummary(
+                        ChapterTranslationSummary(
+                            expectedPageCount = pageCount.coerceAtLeast(1),
+                            terminalOutcome = eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS.value,
+                            unresolvedRevisionCount = unresolvedFlags,
+                            updatedAtMillis = System.currentTimeMillis(),
+                        ),
+                    )
+                }.onFailure { e ->
+                    logcat(LogPriority.WARN, e) {
+                        "TachiyomiAT single-page summary publication failed (non-fatal): " +
+                            "chapter=${chapter.name} pageKey=$pageKey"
+                    }
+                }
             }
         } finally {
             store.flush()
