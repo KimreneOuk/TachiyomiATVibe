@@ -29,19 +29,40 @@ object RevisionMerger {
 
     /** Per-target outcome of a merge attempt. */
     sealed interface TargetOutcome {
-        data class Applied(val pageKey: String, val blockIndex: Int) : TargetOutcome
-        data class Retained(val pageKey: String, val blockIndex: Int, val reason: String) : TargetOutcome
+        val pageKey: String
+        val blockIndex: Int
+
+        data class Kept(
+            override val pageKey: String,
+            override val blockIndex: Int,
+        ) : TargetOutcome
+
+        data class Corrected(
+            override val pageKey: String,
+            override val blockIndex: Int,
+            val beforeDraft: String,
+            val afterDraft: String,
+        ) : TargetOutcome
+
+        data class Unresolved(
+            override val pageKey: String,
+            override val blockIndex: Int,
+            val reason: String,
+        ) : TargetOutcome
     }
 
     data class MergeResult(
-        val applied: List<TargetOutcome.Applied>,
-        val retained: List<TargetOutcome.Retained>,
+        val kept: List<TargetOutcome.Kept>,
+        val corrected: List<TargetOutcome.Corrected>,
+        val unresolved: List<TargetOutcome.Unresolved>,
         val pageStatuses: Map<String, String>,
         /** True when the request itself failed (exception/null); flags untouched. */
         val requestFailed: Boolean,
     ) {
-        val appliedCount: Int get() = applied.size
-        val retainedCount: Int get() = retained.size
+        val keptCount: Int get() = kept.size
+        val correctedCount: Int get() = corrected.size
+        val unresolvedCount: Int get() = unresolved.size
+        val appliedCount: Int get() = keptCount + correctedCount
     }
 
     /**
@@ -64,8 +85,9 @@ object RevisionMerger {
         chapterId: Long?,
         chapterName: String,
     ): MergeResult {
-        val applied = mutableListOf<TargetOutcome.Applied>()
-        val retained = mutableListOf<TargetOutcome.Retained>()
+        val kept = mutableListOf<TargetOutcome.Kept>()
+        val corrected = mutableListOf<TargetOutcome.Corrected>()
+        val unresolved = mutableListOf<TargetOutcome.Unresolved>()
         val touchedPages = mutableSetOf<String>()
 
         // Map id -> target location for resolving results.
@@ -85,18 +107,18 @@ object RevisionMerger {
                 chapterId = chapterId,
                 chapterName = chapterName,
             )
-            if (outcome is TargetOutcome.Applied) {
-                applied += outcome
-                touchedPages += outcome.pageKey
-            } else {
-                retained += outcome as TargetOutcome.Retained
+            when (outcome) {
+                is TargetOutcome.Kept -> { kept += outcome; touchedPages += outcome.pageKey }
+                is TargetOutcome.Corrected -> { corrected += outcome; touchedPages += outcome.pageKey }
+                is TargetOutcome.Unresolved -> unresolved += outcome
             }
         }
 
-        val pageStatuses = derivePageStatuses(livePages, touchedPages, applied)
+        val pageStatuses = derivePageStatuses(livePages, touchedPages, kept.map { it.pageKey } + corrected.map { it.pageKey })
         return MergeResult(
-            applied = applied,
-            retained = retained,
+            kept = kept,
+            corrected = corrected,
+            unresolved = unresolved,
             pageStatuses = pageStatuses,
             requestFailed = batch == null,
         )
@@ -162,9 +184,17 @@ object RevisionMerger {
                 return reject(chapterId, chapterName, livePageKey, anchorId, "flag already cleared")
         }
         // All preconditions match: apply the correction.
-        liveBlock.translation = OcrArtifactSanitizer.sanitize(result.text)
-        liveBlock.needsRevision = false
-        return TargetOutcome.Applied(livePageKey, anchorIdToInt(anchorId))
+        val sanitizedText = OcrArtifactSanitizer.sanitize(result.text)
+        val beforeDraft = liveBlock.translation
+        val isKept = sanitizedText == beforeDraft
+        if (isKept) {
+            liveBlock.needsRevision = false
+            return TargetOutcome.Kept(livePageKey, anchorIdToInt(anchorId))
+        } else {
+            liveBlock.translation = sanitizedText
+            liveBlock.needsRevision = false
+            return TargetOutcome.Corrected(livePageKey, anchorIdToInt(anchorId), beforeDraft, sanitizedText)
+        }
     }
 
     private fun anchorIdToInt(anchorId: String): Int {
@@ -180,12 +210,12 @@ object RevisionMerger {
         pageKey: String,
         anchorId: String,
         reason: String,
-    ): TargetOutcome.Retained {
+    ): TargetOutcome.Unresolved {
         logcat(LogPriority.WARN) {
             "TachiyomiAT revision merge retained draft: chapterId=$chapterId chapter=$chapterName " +
                 "pageKey=$pageKey id=$anchorId reason=$reason"
         }
-        return TargetOutcome.Retained(pageKey, anchorIdToInt(anchorId), reason)
+        return TargetOutcome.Unresolved(pageKey, anchorIdToInt(anchorId), reason)
     }
 
     /**
@@ -197,12 +227,12 @@ object RevisionMerger {
     private fun derivePageStatuses(
         livePages: Map<String, PageTranslation>,
         touchedPages: Set<String>,
-        applied: List<TargetOutcome.Applied>,
+        appliedPagesList: List<String>,
     ): Map<String, String> {
         val statuses = LinkedHashMap<String, String>()
         // Only re-validate pages that actually received an applied correction;
         // untouched flagged pages keep their existing status + flag.
-        val appliedPages = applied.map { it.pageKey }.toSet()
+        val appliedPages = appliedPagesList.toSet()
         for (pageKey in touchedPages intersect appliedPages) {
             val page = livePages[pageKey] ?: continue
             statuses[pageKey] = TranslationBlockValidation.applyTo(page)

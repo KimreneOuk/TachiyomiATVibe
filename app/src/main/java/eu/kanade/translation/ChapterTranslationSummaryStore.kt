@@ -21,6 +21,7 @@ data class ChapterTranslationSummary(
     val terminalOutcome: Int,
     val unresolvedRevisionCount: Int,
     val updatedAtMillis: Long,
+    val latestRevisionReport: eu.kanade.translation.model.RevisionReport? = null,
 ) {
     fun outcome(): Translation.State? = Translation.State.entries.firstOrNull { it.value == terminalOutcome }
 

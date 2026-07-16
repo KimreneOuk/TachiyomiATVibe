@@ -32,11 +32,16 @@ import tachiyomi.core.common.util.system.logcat
 object RevisionCommitter {
 
     data class CommitOutcome(
-        val appliedCount: Int,
-        val failedCount: Int,
+        val keptCount: Int,
+        val correctedCount: Int,
+        val unresolvedCount: Int,
         /** Page keys whose status was (re)derived and should be re-rendered. */
         val touchedPages: Set<String>,
-    )
+    ) {
+        // Compatibility for TranslationPipeline
+        val appliedCount: Int get() = keptCount + correctedCount
+        val failedCount: Int get() = unresolvedCount
+    }
 
     /**
      * Commit [mergeResult] (produced by [RevisionMerger.merge] over [mergeLive])
@@ -55,26 +60,20 @@ object RevisionCommitter {
         mergeResult: RevisionMerger.MergeResult,
         chapterId: Long?,
         chapterName: String,
-    ): CommitOutcome {
-        var appliedCount = 0
-        var failedCount = 0
+        ): CommitOutcome {
+        var keptCount = 0
+        var correctedCount = 0
+        var unresolvedCount = mergeResult.unresolvedCount
         val touchedPages = linkedSetOf<String>()
 
-        groupTargets.forEachIndexed { targetIndex, target ->
-            val pageKey = target.pageKey
-            val blockIndex = target.blockIndex
-            val mergedBlock = mergeLive[pageKey]?.blocks?.getOrNull(blockIndex)
-            // The merger clears needsRevision ONLY for an accepted correction.
-            val wasApplied = mergedBlock != null && !mergedBlock.needsRevision &&
-                mergedBlock.translation != target.block.translation
-            if (!wasApplied) {
-                // Retained by the merge layer (reason already logged by RevisionMerger).
-                failedCount++
-                return@forEachIndexed
-            }
+        suspend fun doPatch(pageKey: String, blockIndex: Int, isKept: Boolean) {
+            val targetIndex = groupTargets.indexOfFirst { it.pageKey == pageKey && it.blockIndex == blockIndex }
+            if (targetIndex < 0) return
+            val target = groupTargets[targetIndex]
             val anchorId = orderedAnchorIds.getOrNull(targetIndex) ?: ""
             val precond = batch?.preconditions?.get(anchorId)
             val snapshot = store.snapshot(pageKey)
+            val mergedBlock = mergeLive[pageKey]?.blocks?.getOrNull(blockIndex)
             val patchResult = store.patchBlock(
                 pageKey = pageKey,
                 blockIndex = blockIndex,
@@ -95,17 +94,15 @@ object RevisionCommitter {
             }
             when (patchResult) {
                 is ChapterTranslationStore.PatchResult.Accepted -> {
-                    appliedCount++
+                    if (isKept) keptCount++ else correctedCount++
                     touchedPages += pageKey
                     logcat(LogPriority.INFO) {
-                        "TachiyomiAT revision patch applied: chapter=$chapterName " +
+                        "TachiyomiAT revision patch applied (kept=$isKept): chapter=$chapterName " +
                             "pageKey=$pageKey blockIndex=$blockIndex anchorId=$anchorId"
                     }
                 }
                 is ChapterTranslationStore.PatchResult.Rejected -> {
-                    // A late concurrent edit between the merge snapshot and the patch:
-                    // retain the draft + flag and account as failed.
-                    failedCount++
+                    unresolvedCount++
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT revision patch rejected: chapter=$chapterName " +
                             "pageKey=$pageKey blockIndex=$blockIndex anchorId=$anchorId " +
@@ -115,9 +112,13 @@ object RevisionCommitter {
             }
         }
 
-        // Re-run TranslationBlockValidation for each touched page to derive its
-        // READY/PARTIAL status from validation — NEVER force READY. A page with any
-        // untranslated block stays PARTIAL.
+        for (outcome in mergeResult.kept) {
+            doPatch(outcome.pageKey, outcome.blockIndex, isKept = true)
+        }
+        for (outcome in mergeResult.corrected) {
+            doPatch(outcome.pageKey, outcome.blockIndex, isKept = false)
+        }
+
         touchedPages.forEach { pageKey ->
             val current = store.state.value[pageKey] ?: return@forEach
             val validatedStatus = TranslationBlockValidation.applyTo(current)
@@ -129,7 +130,7 @@ object RevisionCommitter {
                 }
             }
         }
-        return CommitOutcome(appliedCount, failedCount, touchedPages)
+        return CommitOutcome(keptCount, correctedCount, unresolvedCount, touchedPages)
     }
 
     /**

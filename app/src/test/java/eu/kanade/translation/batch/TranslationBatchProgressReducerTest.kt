@@ -68,14 +68,14 @@ class TranslationBatchProgressReducerTest {
     fun `revision fraction processes completed and failed while retaining skipped edited`() {
         val revision = RevisionProgress(
             totalBlocks = 8,
-            completedBlocks = 3,
-            failedBlocks = 2,
-            skippedBlocks = 1,
+            correctedBlocks = 3,
+            unresolvedBlocks = 2,
+            keptBlocks = 1,
             userEditedBlocks = 1,
         )
-        revision.processedBlocks shouldBe 5
-        revision.fraction shouldBe 0.625f
-        revision.skippedBlocks shouldBe 1
+        revision.processedBlocks shouldBe 6
+        revision.fraction shouldBe 0.75f
+        revision.keptBlocks shouldBe 1
         revision.userEditedBlocks shouldBe 1
     }
 }

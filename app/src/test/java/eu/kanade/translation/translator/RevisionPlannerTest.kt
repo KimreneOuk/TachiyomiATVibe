@@ -7,6 +7,7 @@ import io.kotest.matchers.collections.shouldHaveAtLeastSize
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import eu.kanade.translation.model.RevisionScope
 
 /**
  * Guards [RevisionPlanner] — the pure Pass-2 planner (Checkpoint 2 §6).

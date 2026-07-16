@@ -52,7 +52,7 @@ class TranslationBatchProgressTrackerTest {
 
         tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.FINALIZING
         tracker.snapshot.value.revision.completedBlocks shouldBe 2
-        tracker.snapshot.value.revision.failedBlocks shouldBe 1
+        tracker.snapshot.value.revision.failedBlocks shouldBe 0
         tracker.snapshot.value.revision.processedBlocks shouldBe 3
         tracker.close()
     }
