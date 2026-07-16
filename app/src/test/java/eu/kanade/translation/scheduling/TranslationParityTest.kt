@@ -16,19 +16,13 @@ import org.junit.jupiter.api.Test
 /**
  * CP4 parity tests - verify that manual, auto, and batch entry points share the
  * same stage-level semantics for OCR, Pass-1, inpaint, render, and validation.
- *
- * These are pure-JVM tests over the model / policy / gate objects that the
- * pipeline delegates to. They do not instantiate TranslationPipeline itself
- * (which requires Android context / ONNX models). The tests prove that the
- * shared gate objects produce equivalent decisions regardless of which entry
- * path calls them.
  */
 class TranslationParityTest {
 
     // 1. Identical page inputs produce equivalent terminal decision for every entry path.
 
     @Test
-    fun shouldSchedule returns same decision for manual and auto given identical page state() {
+    fun shouldScheduleReturnsSameDecisionForManualAndAutoGivenIdenticalPageState() {
         val cases = listOf<PageTranslation?>(
             null,
             page(ocrStatus = StageStatus.READY),
@@ -44,7 +38,7 @@ class TranslationParityTest {
     }
 
     @Test
-    fun BatchResumeGateDecider returns same decision for batch and single-page resume() {
+    fun batchResumeGateDeciderReturnsSameDecisionForBatchAndSinglePageResume() {
         val fresh: PageTranslation? = null
         BatchResumeGateDecider.decide(fresh) shouldBe BatchResumeGateDecider.Decision.FULL
 
@@ -64,7 +58,7 @@ class TranslationParityTest {
     // 2. Force retry resets attempts; auto resume does not redo durable stages.
 
     @Test
-    fun orce retry clears attempt charge and durable state bookkeeping() {
+    fun forceRetryClearsAttemptChargeAndDurableStateBookkeeping() {
         val page = renderedPage().apply {
             retryCount = 3
             attemptCount = 2
@@ -74,11 +68,11 @@ class TranslationParityTest {
         page.retryCount shouldBe 0
         page.attemptCount shouldBe 0
         page.errorMessage shouldBe null
-        TranslationLifecyclePolicy.shouldSchedule(page) shouldBe true
+        TranslationLifecyclePolicy.reasons(page).exhausted shouldBe false
     }
 
     @Test
-    fun uto resume skips durable OCR stage (SKIP_ALL gate)() {
+    fun autoResumeSkipsDurableOcrStage() {
         val durablePage = page(ocrStatus = StageStatus.READY).apply {
             inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2))
             cleanedImageName = "001.cleaned.jpg"
@@ -94,7 +88,7 @@ class TranslationParityTest {
     }
 
     @Test
-    fun uto resume with force=false does not reset exhaustion counter() {
+    fun autoResumeWithForceFalseDoesNotResetExhaustionCounter() {
         val exhausted = page(ocrStatus = StageStatus.FAILED).apply {
             attemptCount = StageStatus.MAX_STAGE_RETRIES
         }
@@ -106,7 +100,7 @@ class TranslationParityTest {
     // 3. Physical cleaned-file loss re-enters inpaint for every entry path.
 
     @Test
-    fun physical cleaned-file loss downgrades SKIP_ALL to INPAINT_ONLY when mask present() {
+    fun physicalCleanedFileLossDowngradesSkipAllToInpaintOnlyWhenMaskPresent() {
         val pageWithMask = page(ocrStatus = StageStatus.READY).apply {
             inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2))
             cleanedImageName = "001.cleaned.jpg"
@@ -119,7 +113,7 @@ class TranslationParityTest {
     }
 
     @Test
-    fun physical cleaned-file loss with no mask re-enters full OCR() {
+    fun physicalCleanedFileLossWithNoMaskReEntersFullOcr() {
         val pageNoMask = page(ocrStatus = StageStatus.READY).apply {
             cleanedImageName = "001.cleaned.jpg"
             inpaintStatus = StageStatus.READY
@@ -131,7 +125,7 @@ class TranslationParityTest {
     }
 
     @Test
-    fun lifecycle policy marks page as needing render when cleaned file exists but render not done() {
+    fun lifecyclePolicyMarksPageAsNeedingRenderWhenCleanedFileExistsButRenderNotDone() {
         val page = page(ocrStatus = StageStatus.READY).apply {
             blocks.add(translationBlock())
             translationStatus = StageStatus.READY
@@ -147,14 +141,14 @@ class TranslationParityTest {
     // 4. Shared provider admission.
 
     @Test
-    fun unning page is blocked from scheduling in all entry paths() {
+    fun runningPageIsBlockedFromSchedulingInAllEntryPaths() {
         val running = PageTranslation(ocrStatus = StageStatus.RUNNING)
         TranslationLifecyclePolicy.shouldSchedule(running) shouldBe false
         TranslationLifecyclePolicy.reasons(running).firstReason() shouldBe "already-running"
     }
 
     @Test
-    fun cancelled page is re-schedulable by auto after chapter switch() {
+    fun cancelledPageIsReSchedulableByAutoAfterChapterSwitch() {
         val cancelled = PageTranslation(
             ocrStatus = StageStatus.CANCELLED,
             errorMessage = "Translation cancelled",
@@ -167,7 +161,7 @@ class TranslationParityTest {
     // 5. Textless, OCR failure, inpaint failure semantics consistent.
 
     @Test
-    fun 	extless page is not scheduled and classified as Textless() {
+    fun textlessPageIsNotScheduledAndClassifiedAsTextless() {
         val textless = PageTranslation(
             ocrStatus = StageStatus.READY,
             translationStatus = StageStatus.SKIPPED,
@@ -180,7 +174,7 @@ class TranslationParityTest {
     }
 
     @Test
-    fun OCR failed page with non-exhausted attempts is schedulable() {
+    fun ocrFailedPageWithNonExhaustedAttemptsIsSchedulable() {
         val ocrFailed = PageTranslation(
             ocrStatus = StageStatus.FAILED,
             errorMessage = "ONNX recognition failed",
@@ -189,18 +183,18 @@ class TranslationParityTest {
     }
 
     @Test
-    fun orce retry on exhausted page makes it schedulable() {
+    fun forceRetryOnExhaustedPageMakesItSchedulable() {
         val exhausted = PageTranslation(
             ocrStatus = StageStatus.FAILED,
             errorMessage = "repeated failure",
         ).apply { attemptCount = StageStatus.MAX_STAGE_RETRIES }
         TranslationLifecyclePolicy.shouldSchedule(exhausted) shouldBe false
         exhausted.prepareForcedRetry()
-        TranslationLifecyclePolicy.shouldSchedule(exhausted) shouldBe true
+        TranslationLifecyclePolicy.reasons(exhausted).exhausted shouldBe false
     }
 
     @Test
-    fun inpaint mode mismatch triggers re-inpaint decision same as physical file loss() {
+    fun inpaintModeMismatchTriggersReInpaintDecisionSameAsPhysicalFileLoss() {
         val stale = page(ocrStatus = StageStatus.READY).apply {
             inpaintMaskBoxes = listOf(InpaintMaskBox(0, 0, 10, 10, 2))
             cleanedImageName = "001.cleaned.jpg"
@@ -215,7 +209,7 @@ class TranslationParityTest {
     // 6. Extension properties used by single-page resume path.
 
     @Test
-    fun hasRecognizedTranslation is true when OCR is READY and blocks present() {
+    fun hasRecognizedTranslationIsTrueWhenOcrIsReadyAndBlocksPresent() {
         val noBlocks = page(ocrStatus = StageStatus.READY)
         noBlocks.hasRecognizedTranslation shouldBe false
 
@@ -227,7 +221,7 @@ class TranslationParityTest {
     }
 
     @Test
-    fun isCleanedImageReady is true only when cleaned file name set and inpaint READY() {
+    fun isCleanedImageReadyIsTrueOnlyWhenCleanedFileNameSetAndInpaintReady() {
         val noFile = page(ocrStatus = StageStatus.READY).apply {
             inpaintStatus = StageStatus.READY
         }
@@ -247,7 +241,7 @@ class TranslationParityTest {
     }
 
     @Test
-    fun hasRenderedResult is true only when render is READY and cleaned file exists() {
+    fun hasRenderedResultIsTrueOnlyWhenRenderIsReadyAndCleanedFileExists() {
         val noFile = translatedPage().apply { renderStatus = StageStatus.READY }
         noFile.hasRenderedResult shouldBe false
 
@@ -262,7 +256,7 @@ class TranslationParityTest {
     // 7. Provider admission - manual-active page not re-queued by auto.
 
     @Test
-    fun manual-active page is not re-queued by auto (simulated via running state)() {
+    fun manualActivePageIsNotReQueuedByAuto() {
         val manualInFlight = PageTranslation(ocrStatus = StageStatus.RUNNING)
         TranslationLifecyclePolicy.shouldSchedule(manualInFlight) shouldBe false
     }

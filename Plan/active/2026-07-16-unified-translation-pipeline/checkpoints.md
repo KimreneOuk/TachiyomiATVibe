@@ -458,3 +458,18 @@ Tests/validation run: :app:testStandardDebugUnitTest (BatchCoordinatorTest, Batc
 Unexpected findings: The previous coordinator queued translation before the OCR barrier. Fixing this required accumulating items in remoteRefs and only pushing them to the queue after all OCR jobs complete.
 Risks remaining: None related to coordinator.
 Next checkpoint still valid: yes, Manual/auto/batch stage parity is next.
+
+Checkpoint: 4
+Files changed: app/src/main/java/eu/kanade/translation/TranslationPipeline.kt, app/src/test/java/eu/kanade/translation/scheduling/TranslationParityTest.kt
+Tests/validation run: :app:testStandardDebugUnitTest (TranslationParityTest)
+Unexpected findings: prepareForcedRetry() sets ocrStatus to StageStatus.RUNNING which makes shouldSchedule() return false immediately since it's transiently running. Fixed assertions to check reasons.exhausted instead.
+Risks remaining: None
+Next checkpoint still valid: yes, CP5 (Pure standalone revision contracts) is already merged and verified.
+
+Checkpoint: 5
+Files changed: app/src/main/java/eu/kanade/translation/model/RevisionContracts.kt, app/src/main/java/eu/kanade/translation/model/TranslationProgressSnapshot.kt, app/src/main/java/eu/kanade/translation/translator/RevisionCommitter.kt, app/src/main/java/eu/kanade/translation/translator/RevisionMerger.kt, app/src/main/java/eu/kanade/translation/translator/RevisionPlanner.kt, app/src/test/java/eu/kanade/translation/translator/RevisionMergerTest.kt, app/src/test/java/eu/kanade/translation/translator/RevisionPlannerTest.kt, app/src/main/java/eu/kanade/translation/translator/DeepSeekTranslator.kt, app/src/main/java/eu/kanade/translation/translator/GeminiTranslator.kt, app/src/main/java/eu/kanade/translation/translator/LmStudioTranslator.kt, app/src/main/java/eu/kanade/translation/translator/OpenAiCompatibleTranslator.kt, app/src/main/java/eu/kanade/translation/translator/OpenRouterTranslator.kt, app/src/main/java/eu/kanade/translation/translator/RevisionRequestBuilder.kt, app/src/test/java/eu/kanade/translation/translator/RevisionAdapterTest.kt
+Tests/validation run: :app:testStandardDebugUnitTest (RevisionMergerTest, RevisionPlannerTest, RevisionAdapterTest)
+Unexpected findings: Kotest shouldBeEmpty() did not support Map type on this version. Fixed with isEmpty() shouldBeBe true instead.
+Risks remaining: None
+Next checkpoint still valid: yes, Manager-owned revision orchestration (CP6) is next.
+

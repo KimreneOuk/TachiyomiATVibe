@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.translator
+package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.stableFingerprint
@@ -70,7 +70,7 @@ class RevisionAdapterTest {
         request.orderedIds.shouldBeEmpty()
 
         val batch = RevisionRequestBuilder.toRevisionBatch(request, emptyList())
-        batch.idToBlockIndex.shouldBeEmpty()
+        batch.idToBlockIndex.isEmpty() shouldBe true
         batch.results.shouldBeEmpty()
         batch.isPass2 shouldBe true
     }
