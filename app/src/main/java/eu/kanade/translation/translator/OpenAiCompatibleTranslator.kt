@@ -1,4 +1,4 @@
-package eu.kanade.translation.translator
+﻿package eu.kanade.translation.translator
 
 import eu.kanade.tachiyomi.network.await
 import logcat.logcat
@@ -100,6 +100,44 @@ abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
         }
         val parsed = ContextualResponseParser.parse(rawOutput.lineSequence().toList(), request.idMap, isPass2)
         return ContextualRequestBuilder.toBatch(request, parsed, isPass2)
+    }
+
+    /**
+     * Pass-2 (revision) base implementation. Subclasses provide the URL, headers,
+     * and JSON payload builder via [buildRevisionPayload]. Returns a strict
+     * [ContextualTranslationBatch] (isPass2=true) — no [OK]/[FLAG] tag logic.
+     *
+     * Invariants:
+     *  - Empty group (no targets) returns [ContextualTranslationBatch.EMPTY] without a
+     *    network call.
+     *  - Missing / blank / malformed / duplicate / unknown ids produce REJECTED results
+     *    via [ContextualResponseParser] with isPass2=true.
+     *  - Network or API errors propagate to the caller so every target is accounted as
+     *    unresolved without silent fallback.
+     */
+    protected suspend fun parseRevisionCompletion(
+        group: RevisionPlanner.RequestGroup,
+        url: String,
+        headers: Map<String, String>,
+        logTag: String,
+        buildRevisionPayload: (systemPrompt: String, userMessage: String) -> String,
+    ): ContextualTranslationBatch {
+        val request = RevisionRequestBuilder.build(group)
+        if (request.promptLines.isEmpty()) return ContextualTranslationBatch.EMPTY
+
+        val systemPrompt = TranslationPrompts.pass2SystemPrompt(fromLang, toLang)
+        val userMessage = RevisionRequestBuilder.buildUserMessage(request)
+        val payloadJson = buildRevisionPayload(systemPrompt, userMessage)
+
+        val rawOutput = withTranslationRetry(logTag = logTag) {
+            postChatCompletion(url, headers, payloadJson)
+        }
+        val parsed = ContextualResponseParser.parse(
+            rawLines = rawOutput.lineSequence().toList(),
+            idMap = request.idMap,
+            isPass2 = true,
+        )
+        return RevisionRequestBuilder.toRevisionBatch(request, parsed)
     }
 
     override fun close() {

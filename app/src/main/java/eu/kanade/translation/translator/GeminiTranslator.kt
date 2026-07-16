@@ -1,4 +1,4 @@
-package eu.kanade.translation.translator
+﻿package eu.kanade.translation.translator
 
 import com.google.ai.client.generativeai.GenerativeModel
 import com.google.ai.client.generativeai.type.BlockThreshold
@@ -41,6 +41,62 @@ class GeminiTranslator(
         // legacy callers that read block.translation directly keep working.
         val batch = translateContextualStructured(chunk, isPass2)
         applyBatchToChunk(chunk, batch, isPass2)
+    }
+
+    /**
+     * Pass-2 (revision) adapter. Receives an already-planned [RevisionPlanner.RequestGroup]
+     * and returns a strict [ContextualTranslationBatch] (isPass2=true). Every result is
+     * K/C/U -- no [OK]/[FLAG] tag logic is applied here; the merge layer owns that.
+     *
+     * Invariants:
+     *  - Missing / blank / malformed / duplicate / unknown ids produce REJECTED results.
+     *  - Empty group (no targets) returns [ContextualTranslationBatch.EMPTY] without a
+     *    network call.
+     *  - A Gemini refusal / safety filter throws [GeminiEmptyResponseException] so the
+     *    caller can account all targets as unresolved without silent fallback.
+     */
+    suspend fun translateRevision(group: RevisionPlanner.RequestGroup): ContextualTranslationBatch {
+        val request = RevisionRequestBuilder.build(group)
+        if (request.promptLines.isEmpty()) return ContextualTranslationBatch.EMPTY
+
+        val systemPrompt = TranslationPrompts.pass2SystemPrompt(fromLang, toLang)
+        val userMessage = RevisionRequestBuilder.buildUserMessage(request)
+
+        try {
+            val activeModel = GenerativeModel(
+                modelName = modelName,
+                apiKey = apiKey,
+                generationConfig = generationConfig {
+                    topK = 30
+                    topP = 0.5f
+                    temperature = temp
+                    maxOutputTokens = request.maxOutputTokens
+                },
+                safetySettings = listOf(
+                    SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.NONE),
+                    SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.NONE),
+                    SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, BlockThreshold.NONE),
+                    SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.NONE),
+                ),
+                systemInstruction = content { text(systemPrompt) },
+            )
+            val response = activeModel.generateContent(userMessage)
+            val responseText = response.text
+            if (responseText.isNullOrBlank()) {
+                throw GeminiEmptyResponseException(
+                    "Gemini revision returned an empty response (refused, safety-filtered, or error).",
+                )
+            }
+            val parsed = ContextualResponseParser.parse(
+                rawLines = responseText.split("\n"),
+                idMap = request.idMap,
+                isPass2 = true,
+            )
+            return RevisionRequestBuilder.toRevisionBatch(request, parsed)
+        } catch (e: Exception) {
+            logcat { "Gemini translateRevision Error : ${e.stackTraceToString()}" }
+            throw e
+        }
     }
 
     override suspend fun translateContextualStructured(
