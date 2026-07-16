@@ -19,6 +19,9 @@ class GeminiTranslator(
     val temp: Float,
 ) : ContextualTextTranslator {
 
+    override val contextualCapability: ContextualTranslationCapability =
+        ContextualTranslationCapability.CONTEXTUAL_REVIEW
+
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
         val blockCount = linkedPages.values.sumOf { it.blocks.size }
