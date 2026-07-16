@@ -38,52 +38,18 @@ class DeepSeekTranslator(
         translateContextual(chunk, isPass2 = false)
     }
 
-    override suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean) {
+    override suspend fun translateContextualStructured(chunk: TranslationContextChunk, isPass2: Boolean): ContextualTranslationBatch {
         if (apiKey.isBlank()) {
             throw IllegalArgumentException("DeepSeek API key is required")
         }
-
-        val blocksToTranslate = mutableListOf<TranslationBlock>()
-        for (page in chunk.pages.values) {
-            for (block in page.blocks) {
-                val isNonBlank = block.text.isNotBlank()
-                val shouldTranslate = if (isPass2) {
-                    isNonBlank && block.needsRevision && block.userEditedAt == null
-                } else {
-                    isNonBlank
-                }
-                if (shouldTranslate) {
-                    blocksToTranslate.add(block)
-                }
-            }
-        }
-
-        if (blocksToTranslate.isEmpty()) {
-            return
-        }
-
-        val idToBlock = blocksToTranslate.mapIndexed { index, block -> "b$index" to block }.toMap()
-
-        try {
-            val systemPrompt = if (isPass2) {
-                TranslationPrompts.pass2SystemPrompt(fromLang, toLang)
-            } else {
-                TranslationPrompts.pass1SystemPrompt(fromLang, toLang)
-            }
-
-            val contextPrefix = TranslationPrompts.contextPrefix(chunk.rollingContext, chunk.glossary)
-            val promptLines = blocksToTranslate.mapIndexed { index, block ->
-                val id = "b$index"
-                if (isPass2) {
-                    "$id|Source: ${block.text} | Draft: ${block.translation}"
-                } else {
-                    TranslationPrompts.idMappedSourceLine(id, block)
-                }
-            }
-            val promptBody = promptLines.joinToString("\n")
-            val finalPrompt = if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
-
-            val jsonObject = buildJsonObject {
+        return parseContextualCompletion(
+            chunk = chunk,
+            isPass2 = isPass2,
+            url = "https://api.deepseek.com/chat/completions",
+            headers = mapOf("Authorization" to "Bearer $apiKey"),
+            logTag = "DeepSeekTranslator"
+        ) { systemPrompt, finalPrompt ->
+            buildJsonObject {
                 put("model", if (modelName.isBlank()) "deepseek-chat" else modelName)
                 put("temperature", temperature)
                 put("max_tokens", chunk.maxOutputTokens)
@@ -98,31 +64,6 @@ class DeepSeekTranslator(
                     }
                 }
             }.toString()
-
-            val rawOutput = postChatCompletion(
-                url = "https://api.deepseek.com/chat/completions",
-                headers = mapOf("Authorization" to "Bearer $apiKey"),
-                payloadJson = jsonObject,
-            )
-
-            val lines = rawOutput.split("\n")
-            for (line in lines) {
-                val parsed = TranslationPrompts.parseLine(line) ?: continue
-                val block = idToBlock[parsed.id] ?: continue
-                if (block.userEditedAt != null) {
-                    continue
-                }
-                block.translation = OcrArtifactSanitizer.sanitize(parsed.text)
-                block.needsRevision = if (isPass2) {
-                    false
-                } else {
-                    parsed.needsRevision ?: false
-                }
-            }
-            TranslationBlockFilters.removeWatermarkBlocks(chunk.pages)
-        } catch (e: Exception) {
-            logcat { "DeepSeek Translation Error : ${e.stackTraceToString()}" }
-            throw e
         }
     }
 

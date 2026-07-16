@@ -21,13 +21,12 @@ import eu.kanade.translation.model.stableFingerprint
 object ContextualRequestBuilder {
 
     data class Request(
-        val idMap: LinkedHashMap<String, AnchoredTargetKey>,
+        val idMap: Map<String, AnchoredTargetKey>,
         /** Ordered id list in the same order blocks are added (prompt line order). */
         val orderedIds: List<String>,
         val locations: Map<String, TargetLocation>,
         val preconditions: Map<String, TargetPrecondition>,
         val promptLines: List<String>,
-        val blocksById: Map<String, TranslationBlock>,
     )
 
     fun build(
@@ -41,7 +40,6 @@ object ContextualRequestBuilder {
         val locations = HashMap<String, TargetLocation>()
         val preconditions = HashMap<String, TargetPrecondition>()
         val promptLines = mutableListOf<String>()
-        val blocksById = HashMap<String, TranslationBlock>()
 
         val orderedPages = chunk.pages.entries.toList()
         for ((pageIndex, entry) in orderedPages.withIndex()) {
@@ -71,7 +69,6 @@ object ContextualRequestBuilder {
                     needsRevision = block.needsRevision,
                     userEditedAt = block.userEditedAt,
                 )
-                blocksById[id] = block
                 promptLines += if (isPass2) {
                     "$id|Source: ${block.text} | Draft: ${block.translation}"
                 } else {
@@ -87,7 +84,6 @@ object ContextualRequestBuilder {
             locations = locations,
             preconditions = preconditions,
             promptLines = promptLines,
-            blocksById = blocksById,
         )
     }
 
@@ -107,9 +103,9 @@ object ContextualRequestBuilder {
             request.locations[id]?.let { ordered[id] = it }
         }
         return ContextualTranslationBatch(
-            idToBlockIndex = ordered,
-            results = results,
-            preconditions = request.preconditions,
+            idToBlockIndex = ordered.toMap(),
+            results = results.toList(),
+            preconditions = request.preconditions.toMap(),
             isPass2 = isPass2,
         )
     }
