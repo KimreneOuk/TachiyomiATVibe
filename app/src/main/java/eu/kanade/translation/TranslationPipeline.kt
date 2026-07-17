@@ -1378,7 +1378,8 @@ class TranslationPipeline(
                 val p = translationRegistry[pageKey] ?: store.state.value[pageKey]?.detachedCopy()?.also {
                     translationRegistry[pageKey] = it
                 } ?: return
-                p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang)
+                val readingOrder = translationPreferences.translationReadingOrder().get()
+                p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
                 translationRegistry[pageKey] = p
                 val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
                 if (sourceBlocks == 0) {
@@ -2105,9 +2106,11 @@ class TranslationPipeline(
                     }
                 }
                 try {
+                    val readingOrder = translationPreferences.translationReadingOrder().get()
                     pageTranslation.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(
                         pageTranslation.blocks,
-                        fromLang
+                        fromLang,
+                        readingOrder
                     )
                     pageTranslation.translationStatus = StageStatus.RUNNING
                     runTranslate(pageTranslation)

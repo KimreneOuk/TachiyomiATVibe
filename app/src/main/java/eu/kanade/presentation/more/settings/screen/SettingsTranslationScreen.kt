@@ -29,6 +29,7 @@ import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
+import tachiyomi.domain.translation.TranslationReadingOrder
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.util.collectAsState
@@ -182,6 +183,15 @@ object SettingsTranslationScreen : SearchableSettings {
                         },
                     )
                 },
+                Preference.PreferenceItem.ListPreference(
+                    pref = translationPreferences.translationReadingOrder(),
+                    title = "Reading Direction (Panel Sorting)",
+                    entries = mapOf(
+                        TranslationReadingOrder.AUTO to "Auto (Based on language)",
+                        TranslationReadingOrder.RTL_MANGA to "Right-to-Left (Manga)",
+                        TranslationReadingOrder.LTR_COMIC to "Left-to-Right (Comic)"
+                    ).toImmutableMap(),
+                ),
             ),
         )
     }

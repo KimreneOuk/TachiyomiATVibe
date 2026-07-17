@@ -243,7 +243,7 @@ class TranslationPreferences(
      * once per instance, so changing this at runtime forces a recognition
      * rebuild (see the engine-rebuild gate in TranslationPipeline).
      */
-    fun translationReadingOrder() = preferenceStore.getEnum("translation_reading_order", TranslationReadingOrder.AUTO)
+    fun translationReadingOrder() = preferenceStore.getEnum("translation_reading_order", TranslationReadingOrder.RTL_MANGA)
 
     //endregion
 
