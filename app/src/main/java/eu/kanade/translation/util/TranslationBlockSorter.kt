@@ -6,12 +6,38 @@ import kotlin.math.abs
 
 object TranslationBlockSorter {
     /**
-     * Sorts translation blocks into a reading order (Top-to-Bottom, then Left-to-Right or Right-to-Left)
-     * based on the source language. Because complex panel layouts break strict 2D coordinate sorting,
-     * this provides a "best effort" sequential nudge for the AI.
+     * Sorts translation blocks into a reading order.
+     * Panel-aware: Groups by panelIndex (if OWNED) in ascending order.
+     * Unassigned blocks fall into a single trailing group.
+     * Within each group, it sorts Top-to-Bottom, then Left-to-Right or Right-to-Left.
      */
     fun sort(blocks: List<TranslationBlock>, fromLang: TextRecognizerLanguage): MutableList<TranslationBlock> {
         if (blocks.isEmpty()) return mutableListOf()
+
+        val panelGroups = mutableMapOf<Int, MutableList<TranslationBlock>>()
+        val unassigned = mutableListOf<TranslationBlock>()
+
+        for (block in blocks) {
+            if (block.panelAssignment == "owned" && block.panelIndex != null) {
+                panelGroups.getOrPut(block.panelIndex) { mutableListOf() }.add(block)
+            } else {
+                unassigned.add(block)
+            }
+        }
+
+        val result = mutableListOf<TranslationBlock>()
+        
+        panelGroups.keys.sorted().forEach { panelIdx ->
+            result.addAll(coordinateSort(panelGroups[panelIdx]!!, fromLang))
+        }
+        
+        result.addAll(coordinateSort(unassigned, fromLang))
+        
+        return result
+    }
+
+    private fun coordinateSort(blocks: List<TranslationBlock>, fromLang: TextRecognizerLanguage): List<TranslationBlock> {
+        if (blocks.isEmpty()) return emptyList()
 
         val topToBottom = blocks.sortedBy { it.y }
 
@@ -45,6 +71,6 @@ object TranslationBlockSorter {
             }
         }
 
-        return rows.flatten().toMutableList()
+        return rows.flatten()
     }
 }
