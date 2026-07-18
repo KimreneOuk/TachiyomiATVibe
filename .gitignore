@@ -31,6 +31,7 @@ logs/
 .kilo/
 .zcode/
 .agents/
+.superpowers/
 
 # Inpaint debug viewer: local-only dev tool, not a build dependency
 tools/inpaint-debug-viewer/

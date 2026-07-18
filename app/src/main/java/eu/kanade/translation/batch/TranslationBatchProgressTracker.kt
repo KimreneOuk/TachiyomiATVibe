@@ -301,7 +301,11 @@ class TranslationBatchProgressTracker(
                     it.stage ==
                         TranslationProgressStage.QUEUED
                 },
-                failed, rows, processedStages, pageMap.size * 4, stageCounts,
+                // TachiyomiAT: totalStages must track the live BatchPhase count.
+                // Was hardcoded `* 4`, which under-counted after BatchPhase.DISPLAY
+                // was added and inflated the fraction past 1.0 (one failed page
+                // across 5 phases = 5 processed / 4 total = 1.25).
+                failed, rows, processedStages, pageMap.size * BatchPhase.entries.size, stageCounts,
                 if (forcedPartialCount >=
                     0
                 ) {
