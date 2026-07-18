@@ -42,6 +42,7 @@ import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
+import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
 import eu.kanade.translation.TranslationManager
@@ -125,6 +126,7 @@ import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
+import tachiyomi.i18n.at.ATMR
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -545,7 +547,16 @@ class ReaderViewModel @JvmOverloads constructor(
                 } else {
                     lastAutoTranslateKey = ""
                     lastAutoTranslateAtMs = 0L
-                    getCurrentChapter()?.chapter?.id?.let { translationScheduler.cancelAutoTranslations(it) }
+                    val wasActive = getCurrentChapter()?.chapter?.id?.let {
+                        translationScheduler.cancelAutoTranslations(it)
+                    } ?: false
+                    // TachiyomiAT bug 4 fix: surface the cancellation so the user
+                    // sees the toggle had an effect; the dim clear (sync CANCELLED
+                    // write from B4 step 1) happens inside cancelAutoTranslations.
+                    if (wasActive) {
+                        val context = Injekt.get<Application>()
+                        context.toast(ATMR.strings.auto_translation_disabled_toast)
+                    }
                 }
             }
             .launchIn(viewModelScope)
@@ -576,6 +587,9 @@ class ReaderViewModel @JvmOverloads constructor(
                     liveTranslationState = Translation.State.NOT_TRANSLATED
                     lastEffectiveTranslationState = Translation.State.NOT_TRANSLATED
                     recomputeTranslationState()
+                    // TachiyomiAT bug 4 fix: tell the user the cancellation landed.
+                    val context = Injekt.get<Application>()
+                    context.toast(ATMR.strings.translation_cancelled_toast)
                 } else if (translationPreferences.autoTranslate().get()) {
                     translateCurrentPageForAuto()
                 }

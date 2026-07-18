@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.manga
 
+import android.app.Application
 import android.content.Context
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -106,6 +107,7 @@ import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.at.ATMR
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -879,6 +881,24 @@ class MangaScreenModel(
                 val activeTranslation = translationManager.getQueuedTranslationOrNull(item.chapter.id) ?: return
                 translationManager.cancelQueuedTranslation(activeTranslation)
                 updateTranslationState(activeTranslation.apply { status = Translation.State.NOT_TRANSLATED })
+                // TachiyomiAT bug 4 fix: confirm the cancellation visibly and
+                // offer Undo. The store-level dim clear is handled by
+                // cancelPageTranslations; this snackbar closes the loop on the
+                // user's tap. Undo re-queues via translateChapter, whose
+                // artifact scan (BatchResumeGateDecider) reuses READY work so
+                // no completed page is re-OCR'd.
+                val manga = successState?.manga
+                screenModelScope.launch {
+                    val context = Injekt.get<Application>()
+                    val result = snackbarHostState.showSnackbar(
+                        message = context.stringResource(ATMR.strings.batch_cancelled_toast),
+                        actionLabel = context.stringResource(ATMR.strings.translation_cancelled_undo),
+                        withDismissAction = true,
+                    )
+                    if (result == SnackbarResult.ActionPerformed && manga != null) {
+                        translationManager.translateChapter(manga, item.chapter)
+                    }
+                }
             }
 
             ChapterTranslationAction.DELETE -> {

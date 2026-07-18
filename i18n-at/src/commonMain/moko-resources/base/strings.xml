@@ -137,6 +137,11 @@
     <string name="manga_translate_conflict_title">Translation in progress</string>
     <string name="manga_translate_conflict_body">Chapter \"%1$s\" is still translating. Cancel it and start this chapter?</string>
     <string name="manga_translate_conflict_confirm">Cancel and start</string>
+    <!-- TachiyomiAT bug 4: toast + snackbar strings for translation cancellation. -->
+    <string name="translation_cancelled_toast">Translation cancelled</string>
+    <string name="auto_translation_disabled_toast">Auto translation disabled</string>
+    <string name="batch_cancelled_toast">Batch translation cancelled</string>
+    <string name="translation_cancelled_undo">Undo</string>
     <string name="reader_translation_review_chapter">Review this chapter</string>
     <string name="revision_confirm_title">Review translations</string>
     <string name="revision_scope_flagged">Flagged text only</string>
