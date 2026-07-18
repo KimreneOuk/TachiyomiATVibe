@@ -14,8 +14,9 @@ import eu.kanade.domain.manga.model.readerOrientation
 import eu.kanade.domain.manga.model.readingMode
 import eu.kanade.domain.track.interactor.TrackChapter
 import eu.kanade.domain.track.service.TrackPreferences
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
+import eu.kanade.presentation.more.settings.widget.AiModelListState
 import eu.kanade.tachiyomi.data.cache.ChapterCache
+import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.data.download.model.Download
@@ -33,7 +34,6 @@ import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
-import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.util.chapter.filterDownloaded
 import eu.kanade.tachiyomi.util.chapter.removeDuplicates
@@ -42,72 +42,65 @@ import eu.kanade.tachiyomi.util.lang.byteSize
 import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
-import eu.kanade.translation.TranslationManager
-import eu.kanade.translation.TranslationPipeline
-import eu.kanade.translation.TranslationPageId
-import eu.kanade.translation.TranslationPageRequest
-import eu.kanade.translation.TranslationWorkKind
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
-import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.lifecycle
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.PageIndexResolver
-import eu.kanade.translation.model.toPageView
-import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.scheduling.TranslationScheduler
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
-// TachiyomiAT CP7: standalone revision UI/UX contracts and pure reducer.
+import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.TranslationPageId
+import eu.kanade.translation.TranslationPageRequest
+import eu.kanade.translation.TranslationPipeline
+import eu.kanade.translation.TranslationWorkKind
 import eu.kanade.translation.model.ChapterRevisionEligibility
+import eu.kanade.translation.model.PageIndexResolver
+import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.RevisionConfirmState
 import eu.kanade.translation.model.RevisionConfirmation
 import eu.kanade.translation.model.RevisionResultState
 import eu.kanade.translation.model.RevisionReviewerOption
 import eu.kanade.translation.model.RevisionScope
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.defaultScope
+import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.resolveEffectiveReviewerEngine
+import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toConfirmState
+import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.toResultState
 import eu.kanade.translation.model.withReviewerPicked
 import eu.kanade.translation.model.withScopeChanged
+import eu.kanade.translation.ocr.OcrModelCatalog
+import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.scheduling.TranslationScheduler
+import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.translator.AiModelFetcher
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentMapOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flatMapLatest
-import kotlinx.collections.immutable.ImmutableList
-import kotlinx.collections.immutable.ImmutableMap
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.collections.immutable.persistentMapOf
-import kotlinx.collections.immutable.toImmutableList
-import kotlinx.collections.immutable.toImmutableMap
-import tachiyomi.domain.translation.AiEngine
-import tachiyomi.domain.translation.StandardEngine
-import tachiyomi.domain.translation.TranslationEngineCategory
-import tachiyomi.domain.translation.TranslationPreferences
-import tachiyomi.domain.translation.OcrModel
-import eu.kanade.presentation.more.settings.widget.AiModelListState
-import eu.kanade.translation.ocr.OcrModelCatalog
-import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.translator.AiModelFetcher
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import logcat.LogPriority
 import tachiyomi.core.common.preference.toggle
@@ -127,6 +120,11 @@ import tachiyomi.domain.history.model.HistoryUpdate
 import tachiyomi.domain.manga.interactor.GetManga
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.OcrModel
+import tachiyomi.domain.translation.StandardEngine
+import tachiyomi.domain.translation.TranslationEngineCategory
+import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -195,8 +193,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 translationPreferences.translationRecentLanguagesFrom().changes(),
                 translationPreferences.translateToLanguage().changes(),
                 translationPreferences.translationRecentLanguagesTo().changes(),
-                translationPreferences.translationInpaintingMode().changes()
-            ) { a, b, c, d -> Quad(a, b, c, d) }
+                translationPreferences.translationInpaintingMode().changes(),
+            ) { a, b, c, d -> Quad(a, b, c, d) },
         ) { q1, q2 -> Pair(q1, q2) },
         combine(
             combine(
@@ -228,13 +226,13 @@ class ReaderViewModel @JvmOverloads constructor(
             combine(apiKeyFlow, baseUrlFlow, modelFlow, recentModelsFlow) { apiKey, baseUrl, model, recentRaw ->
                 AiSubPrefs(apiKey, baseUrl, model, recentRaw)
             }
-        }
+        },
     ) { part1, part2, ocrInfo, aiSubPrefs ->
         val (q1, q2) = part1
         val (q3, fetchState, reviewer) = part2
         val (reviewerAuto, reviewerEngine) = reviewer
         val (ocrModel, ocrModelEntries) = ocrInfo
-        
+
         val recentLangsFrom = TranslationPreferences.decodeRecentLanguages(q2.a).toImmutableList()
         val recentLangsTo = TranslationPreferences.decodeRecentLanguages(q2.c).toImmutableList()
         val recentAiModels = TranslationPreferences.decodeRecentModels(aiSubPrefs.recentRaw).toImmutableList()
@@ -265,7 +263,7 @@ class ReaderViewModel @JvmOverloads constructor(
     }.stateIn(
         viewModelScope,
         kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
-        TranslationSettingsState()
+        TranslationSettingsState(),
     )
 
     /**
@@ -327,14 +325,15 @@ class ReaderViewModel @JvmOverloads constructor(
         if (pt.inpaintStatus == StageStatus.RUNNING) return QueueStage.INPAINT
         if (pt.ocrStatus == StageStatus.RUNNING) return QueueStage.OCR
         // Any FAILED stage with no result yet → Failed.
-        if (pt.ocrStatus == StageStatus.FAILED || pt.inpaintStatus == StageStatus.FAILED ||
-            pt.translationStatus == StageStatus.FAILED || pt.renderStatus == StageStatus.FAILED
+        if (pt.ocrStatus == StageStatus.FAILED ||
+            pt.inpaintStatus == StageStatus.FAILED ||
+            pt.translationStatus == StageStatus.FAILED ||
+            pt.renderStatus == StageStatus.FAILED
         ) {
             return QueueStage.FAILED
         }
         return null
     }
-
 
     private val eventChannel = Channel<Event>()
     val eventFlow = eventChannel.receiveAsFlow()
@@ -342,6 +341,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private var translationStoreJob: kotlinx.coroutines.Job? = null
     private var translationBatchProgressJob: kotlinx.coroutines.Job? = null
     private var translationStateJob: kotlinx.coroutines.Job? = null
+
     // TachiyomiAT: dedup token for handleAutoTranslation. On chapter load, BOTH
     // the landing-page path (loadChapter) AND the auto-toggle/enable collectors
     // can fire handleAutoTranslation for the SAME page within milliseconds.
@@ -349,6 +349,7 @@ class ReaderViewModel @JvmOverloads constructor(
     // rebuilding and submitting the same auto window twice on initial load.
     @Volatile
     private var lastAutoTranslateKey: String = ""
+
     @Volatile
     private var lastAutoTranslateAtMs: Long = 0L
 
@@ -736,7 +737,9 @@ class ReaderViewModel @JvmOverloads constructor(
             else -> null
         }
         if (page.translatedStream == null) {
-            page.showTranslatedImage = false
+            if (translation == null || !translation.shouldShowTranslationOverlay) {
+                page.showTranslatedImage = false
+            }
         }
     }
 
@@ -781,10 +784,13 @@ class ReaderViewModel @JvmOverloads constructor(
         } else {
             page.chapter.requestedPage
         }
-        return ReaderPageWarmWindow.contains(pageIndex, currentIndex, pages.lastIndex,
-            radius = ReaderPageWarmWindow.radiusFor(ReadingMode.fromPreference(getMangaReadingMode())))
+        return ReaderPageWarmWindow.contains(
+            pageIndex,
+            currentIndex,
+            pages.lastIndex,
+            radius = ReaderPageWarmWindow.radiusFor(ReadingMode.fromPreference(getMangaReadingMode())),
+        )
     }
-
 
     override fun onCleared() {
         val currentChapters = state.value.viewerChapters
@@ -892,7 +898,11 @@ class ReaderViewModel @JvmOverloads constructor(
                 val translationStatus = this@ReaderViewModel.manga?.let { m ->
                     val ch = newChapters.currChapter.chapter
                     translationManager.getChapterTranslationStatus(
-                        ch.id!!, ch.name, ch.scanlator, m.title, m.source,
+                        ch.id!!,
+                        ch.name,
+                        ch.scanlator,
+                        m.title,
+                        m.source,
                     )
                 } ?: Translation.State.NOT_TRANSLATED
 
@@ -1078,11 +1088,12 @@ class ReaderViewModel @JvmOverloads constructor(
             // no longer in viewerChapters writes results the reader will never
             // show and can race the cancellation the new loadChapter just issued.
             val active = state.value.viewerChapters
-            val stillActive = active != null && (
-                selectedChapter === active.currChapter ||
-                    selectedChapter === active.prevChapter ||
-                    selectedChapter === active.nextChapter
-                )
+            val stillActive = active != null &&
+                (
+                    selectedChapter === active.currChapter ||
+                        selectedChapter === active.prevChapter ||
+                        selectedChapter === active.nextChapter
+                    )
             if (stillActive) {
                 handleAutoTranslation(page)
             } else {
@@ -1866,8 +1877,27 @@ class ReaderViewModel @JvmOverloads constructor(
         val manga = manga ?: return
         val chapter = getCurrentChapter()?.chapter ?: return
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val domainChapter = chapter.toDomainChapter() ?: return
+        // TachiyomiAT bug 3 fix: surface a running same-source conflict before
+        // queueing. The reader does not host a confirmation dialog as rich as
+        // the manga screen's, so on conflict we cancel the old chapter outright
+        // (preserving its artifacts) and proceed. This matches the user's
+        // explicit "translate current chapter" intent in the reader, where the
+        // previous chapter is no longer visible anyway.
+        when (val preflight = translationManager.translateChapterPreflight(manga, domainChapter)) {
+            is eu.kanade.translation.model.ChapterQueuePreflight.NoConflict -> Unit
+            is eu.kanade.translation.model.ChapterQueuePreflight.RevisionBlocked -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT reader translate blocked: revision active for chapter=${domainChapter.id}"
+                }
+                return
+            }
+            is eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict -> {
+                translationManager.cancelRunningChapterForReplace(preflight.chapterId)
+            }
+        }
         viewModelScope.launchIO {
-            translationManager.translateChapter(manga, chapter.toDomainChapter()!!)
+            translationManager.translateChapter(manga, domainChapter)
             observeTranslationState()
         }
     }
@@ -1875,7 +1905,7 @@ class ReaderViewModel @JvmOverloads constructor(
     fun cancelCurrentChapterTranslation() {
         val chapter = getCurrentChapter()?.chapter ?: return
         translationManager.cancelQueuedTranslation(
-            translationManager.getQueuedTranslationOrNull(chapter.id!!) ?: return
+            translationManager.getQueuedTranslationOrNull(chapter.id!!) ?: return,
         )
     }
 
@@ -1981,27 +2011,74 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
-    fun deleteCurrentPageTranslation() {
+    fun resetTranslationData(preserveEdits: Boolean) {
         val manga = manga ?: return
         val page = state.value.currentPage as? ReaderPage ?: return
         val chapter = page.chapter.chapter
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
-        
+
         page.translatedStream = null
         page.translation = null
         page.showTranslatedImage = false
         page.translationToggled = false
-        
+
         val readerPages = setOf(page)
         eventChannel.trySend(Event.RefreshTranslationPages(readerPages))
         mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
-        
+
         viewModelScope.launchIO {
             val pageKey = resolvePageKey(page)
-            translationManager.deletePageTranslation(chapter.toDomainChapter()!!, manga, source, pageKey)
-            
+            translationManager.resetTranslationData(chapter.toDomainChapter()!!, manga, source, pageKey, preserveEdits)
             recomputeTranslationState()
         }
+    }
+
+    fun resetInpaintData() {
+        val manga = manga ?: return
+        val page = state.value.currentPage as? ReaderPage ?: return
+        val chapter = page.chapter.chapter
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+
+        page.translatedStream = null
+        page.translation = null
+        page.showTranslatedImage = false
+        page.translationToggled = false
+
+        val readerPages = setOf(page)
+        eventChannel.trySend(Event.RefreshTranslationPages(readerPages))
+        mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+
+        viewModelScope.launchIO {
+            val pageKey = resolvePageKey(page)
+            translationManager.resetInpaintData(chapter.toDomainChapter()!!, manga, source, pageKey)
+            recomputeTranslationState()
+        }
+    }
+
+    fun resetOcrData() {
+        val manga = manga ?: return
+        val page = state.value.currentPage as? ReaderPage ?: return
+        val chapter = page.chapter.chapter
+        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+
+        page.translatedStream = null
+        page.translation = null
+        page.showTranslatedImage = false
+        page.translationToggled = false
+
+        val readerPages = setOf(page)
+        eventChannel.trySend(Event.RefreshTranslationPages(readerPages))
+        mutableState.update { it.copy(translationRefreshToken = System.currentTimeMillis()) }
+
+        viewModelScope.launchIO {
+            val pageKey = resolvePageKey(page)
+            translationManager.resetOcrData(chapter.toDomainChapter()!!, manga, source, pageKey)
+            recomputeTranslationState()
+        }
+    }
+
+    fun resetEverything() {
+        resetOcrData()
     }
 
     fun translateSinglePage(page: ReaderPage, force: Boolean? = null) {
@@ -2037,12 +2114,13 @@ class ReaderViewModel @JvmOverloads constructor(
         // + MAX_STAGE_RETRIES + hasExhaustedRetries.
         val effectiveForce = force ?: run {
             val t = page.translation
-            t != null && (
-                t.ocrStatus == "FAILED" ||
-                    t.translationStatus == "FAILED" ||
-                    t.inpaintStatus == "FAILED" ||
-                    t.renderStatus == "FAILED"
-                )
+            t != null &&
+                (
+                    t.ocrStatus == "FAILED" ||
+                        t.translationStatus == "FAILED" ||
+                        t.inpaintStatus == "FAILED" ||
+                        t.renderStatus == "FAILED"
+                    )
         }
         logcat(LogPriority.INFO) {
             "TachiyomiAT manual translate page request: index=${page.index} pageKey=$pageKey " +
@@ -2063,7 +2141,10 @@ class ReaderViewModel @JvmOverloads constructor(
         // the guard is correct when a cross-chapter transition fires before
         // loadNewChapter completes.
         val pageChapterDownloaded = downloadManager.isChapterDownloaded(
-            chapter.name, chapter.scanlator, manga.title, manga.source,
+            chapter.name,
+            chapter.scanlator,
+            manga.title,
+            manga.source,
         )
         if (page.originalStream == null && !pageChapterDownloaded && page.imageUrl == null) {
             logcat(LogPriority.WARN) {
@@ -2267,7 +2348,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val aiEngine = translationPreferences.translationAiEngine().get()
         val key = translationPreferences.translationAiApiKey(aiEngine).get()
         val url = translationPreferences.translationAiBaseUrl(aiEngine)?.get().orEmpty()
-        
+
         aiModelFetchState.value = AiModelListState.Loading(if (aiEngine == AiEngine.LMSTUDIO) url else key)
         viewModelScope.launch {
             try {
@@ -2412,6 +2493,7 @@ class ReaderViewModel @JvmOverloads constructor(
             }
             store.updatePage(pageKey) { existing ->
                 val safe = existing ?: return@updatePage pt
+                if (safe.runGeneration != store.currentGeneration) return@updatePage safe
                 val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
                     safe.inpaintStatus == StageStatus.FAILED ||
                     safe.translationStatus == StageStatus.FAILED ||
@@ -2432,7 +2514,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
                         renderStatus = StageStatus.CANCELLED
                     }
-                    errorMessage = errorMessage ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
+                    errorMessage = activeError ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
                     updatedAt = System.currentTimeMillis()
                 }
             }
@@ -2454,7 +2536,11 @@ class ReaderViewModel @JvmOverloads constructor(
         // returns the exact same shared instance the translator resolves to,
         // so the reader observes the RUNNING write live.
         val store = translationManager.openOrCreateActiveChapterTranslationStore(
-            chapter.id!!, chapter.name, chapter.scanlator, manga.title, source,
+            chapter.id!!,
+            chapter.name,
+            chapter.scanlator,
+            manga.title,
+            source,
         ) ?: return
         val storeState = store.state
         translationBatchProgressJob = viewModelScope.launchIO {
@@ -2519,18 +2605,20 @@ class ReaderViewModel @JvmOverloads constructor(
                     // behind the opt-in translation_diagnostics pref so the hot
                     // path stays quiet unless the user is actively debugging.
                     if (translationDiagnosticsEnabled &&
-                        (updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                            updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                            updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                            updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                            updated.errorMessage != null)
+                        (
+                            updated.ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                                updated.inpaintStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                                updated.translationStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                                updated.renderStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                                updated.activeError != null
+                            )
                     ) {
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT live translation update: pageKey=$pageKey " +
                                 "ocr=${updated.ocrStatus} inpaint=${updated.inpaintStatus} " +
                                 "translate=${updated.translationStatus} render=${updated.renderStatus} " +
                                 "cleaned=${updated.cleanedImageName} " +
-                                "error=${updated.errorMessage}"
+                                "error=${updated.activeError}"
                         }
                     }
                     if (displayImageName != null || updated.isTextlessTerminal) translatedCount++
@@ -2625,15 +2713,18 @@ class ReaderViewModel @JvmOverloads constructor(
             .distinctUntilChanged()
             .onEach { updated ->
                 if (updated == null) {
-                    if (diag) logcat(LogPriority.WARN) {
-                        "[reader_translate_diag] store emitted NULL for pageKey=$pageKey (no matching entry)"
+                    if (diag) {
+                        logcat(LogPriority.WARN) {
+                            "[reader_translate_diag] store emitted NULL for pageKey=$pageKey (no matching entry)"
+                        }
                     }
                     return@onEach
                 }
                 val newlyFinished = updated.displayImageName != null && page.translatedStream == null
+                val wantsToShowOverlay = updated.shouldShowTranslationOverlay && !page.showTranslatedImage
                 page.translation = updated
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
-                if (newlyFinished && translationPreferences.translationEnabled().get()) {
+                if ((newlyFinished || wantsToShowOverlay) && translationPreferences.translationEnabled().get()) {
                     page.showTranslatedImage = true
                     eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
                 }
@@ -2668,6 +2759,7 @@ class ReaderViewModel @JvmOverloads constructor(
         data object ReadingModeSelect : Dialog
         data object OrientationModeSelect : Dialog
         data class PageActions(val page: ReaderPage) : Dialog
+
         // TachiyomiAT CP7: standalone revision confirmation + terminal result.
         // Shares the same pure state types and composables as the manga screen
         // so both surfaces dispatch one manager request and render one run.

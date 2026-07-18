@@ -127,6 +127,11 @@
     <!-- TachiyomiAT: standalone revision UI/UX (CP7). Manga and reader share
          one confirmation/result flow; the manager owns counts and the work. -->
     <string name="manga_translate_review">Review translations</string>
+    <!-- TachiyomiAT bug 3: another chapter of the same source is actively
+         translating when the user starts a new batch; confirm before cancelling. -->
+    <string name="manga_translate_conflict_title">Translation in progress</string>
+    <string name="manga_translate_conflict_body">Chapter \"%1$s\" is still translating. Cancel it and start this chapter?</string>
+    <string name="manga_translate_conflict_confirm">Cancel and start</string>
     <string name="reader_translation_review_chapter">Review this chapter</string>
     <string name="revision_confirm_title">Review translations</string>
     <string name="revision_scope_flagged">Flagged text only</string>

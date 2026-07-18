@@ -10,6 +10,7 @@ import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.ChapterRevisionEligibility
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -25,9 +26,12 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.findRunningSameSourceConflict
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.staleQueuedChaptersToEvict
 import eu.kanade.translation.model.toPageView
+import eu.kanade.translation.model.toQueuedChapterView
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.translator.RevisionDriver
 import eu.kanade.translation.translator.RevisionPlanner
@@ -531,8 +535,92 @@ class TranslationManager(
             logcat(LogPriority.WARN) { "Cannot queue batch translation for chapter $chapterId: revision is active" }
             return
         }
+        // TachiyomiAT bug 3 fix: an explicit Start Batch on a different chapter
+        // must not silently resume a previously queued/running chapter of the
+        // same source. The translator's launchTranslatorJob picks queue entries
+        // "first per source" in insertion order, so a stale queued chapter would
+        // run before the one the user just requested. Evict stale QUEUE entries
+        // (artifacts preserved via the store) before queuing the new one.
+        // Running conflicts are reported separately via [translateChapterPreflight]
+        // so the UI can confirm cancellation of in-flight work.
+        evictStaleQueuedChapters(chapterId, manga.source)
         translator.queueChapter(manga, chapters)
         startTranslation()
+    }
+
+    /**
+     * TachiyomiAT bug 3 fix: preflight check for an explicit Start Batch action.
+     * Returns the running conflict (if any) so the UI can ask the user before
+     * cancelling in-flight work on a different chapter of the same source.
+     *
+     * Stale QUEUE entries are NOT reported here; they are evicted automatically
+     * by [translateChapter] since dropping a not-yet-started queue entry never
+     * loses accepted artifacts. Only an actively TRANSLATING chapter needs user
+     * confirmation because cancelling it mid-OCR/inpaint discards the in-flight
+     * page's native work.
+     */
+    fun translateChapterPreflight(manga: Manga, chapter: Chapter): ChapterQueuePreflight {
+        val chapterId = chapter.id
+            ?: return ChapterQueuePreflight.NoConflict
+        if (activeRevisionJobs.containsKey(chapterId)) {
+            return ChapterQueuePreflight.RevisionBlocked(chapterId)
+        }
+        val view = queueState.value.map { it.toQueuedChapterView() }
+        val conflict = findRunningSameSourceConflict(view, chapterId, manga.source)
+            ?: return ChapterQueuePreflight.NoConflict
+        return ChapterQueuePreflight.RunningConflict(
+            chapterId = conflict.chapterId,
+            chapterName = conflict.chapterName,
+        )
+    }
+
+    /**
+     * Evicts every queued (status == QUEUE) chapter of [sourceId] other than
+     * [keepChapterId] from the batch queue. Preserves accepted artifacts:
+     * [removeFromTranslationQueue] only drops the queue entry; the chapter's
+     * ChapterTranslationStore and its persisted OCR/inpaint/translation data
+     * stay intact, so a later Start Batch on that chapter resumes via the
+     * BatchResumeGateDecider's artifact scan without redoing completed work.
+     */
+    private fun evictStaleQueuedChapters(keepChapterId: Long, sourceId: Long) {
+        val staleIds = staleQueuedChaptersToEvict(
+            queueState.value.map { it.toQueuedChapterView() },
+            keepChapterId,
+            sourceId,
+        ).map { it.chapterId }.toSet()
+        if (staleIds.isEmpty()) return
+        val stale = queueState.value
+            .filter { it.chapter.id != null && it.chapter.id in staleIds }
+            .map { it.chapter }
+        stale.forEach { chapter ->
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT evicting stale queued chapter ${chapter.id} (source=$sourceId) in favor of $keepChapterId; artifacts preserved"
+            }
+            removeFromTranslationQueue(chapter)
+        }
+    }
+
+    /**
+     * TachiyomiAT bug 3 fix: cancels an actively running translation of
+     * [chapterId] (same source) so a subsequent [translateChapter] can start on
+     * a different chapter. Used after the UI confirms a [ChapterQueuePreflight.RunningConflict].
+     * Cancels in-flight page jobs, durably clears transient queue pages
+     * (preserving rendered/terminal artifacts), and drops the queue entry.
+     */
+    fun cancelRunningChapterForReplace(chapterId: Long) {
+        val chapter = queueState.value
+            .firstOrNull { it.chapter.id == chapterId }
+            ?.chapter
+            ?: return
+        kotlinx.coroutines.runBlocking {
+            scheduler.cancelPageTranslations(chapterId)
+        }
+        activeStores.get(chapterId)?.let { store ->
+            kotlinx.coroutines.runBlocking {
+                store.clearTransientQueuePages("Replaced by another chapter's batch")
+            }
+        }
+        removeFromTranslationQueue(chapter)
     }
 
     fun getChapterTranslationStatus(

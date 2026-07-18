@@ -43,19 +43,18 @@ import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.TranslationManager
-import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.model.TranslationSettingsSummary
-import eu.kanade.translation.model.snapshotTranslationSummary
-// TachiyomiAT CP7: standalone revision UI/UX contracts and pure reducer.
+import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.ChapterRevisionEligibility
 import eu.kanade.translation.model.RevisionConfirmState
 import eu.kanade.translation.model.RevisionConfirmation
-import eu.kanade.translation.model.RevisionPreflightOutcome
 import eu.kanade.translation.model.RevisionReviewerOption
 import eu.kanade.translation.model.RevisionScope
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationSettingsSummary
 import eu.kanade.translation.model.defaultScope
 import eu.kanade.translation.model.resolveEffectiveReviewerEngine
+import eu.kanade.translation.model.snapshotTranslationSummary
 import eu.kanade.translation.model.toConfirmState
 import eu.kanade.translation.model.toResultState
 import eu.kanade.translation.model.withReviewerPicked
@@ -66,11 +65,11 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -105,7 +104,6 @@ import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
 import tachiyomi.domain.translation.AiEngine
-import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
 import tachiyomi.source.local.isLocal
@@ -935,6 +933,11 @@ class MangaScreenModel(
      * popup is accepted (or when the popup is suppressed via the
      * `translationConfirmPretranslate` preference). Encapsulates the download
      * guard + launch that previously lived inline in the START branch.
+     *
+     * Bug 3 fix: before queueing, run a preflight check. If another chapter of
+     * the same source is actively TRANSLATING, surface a confirmation dialog
+     * (the in-flight native work would be discarded by cancel). Stale QUEUE
+     * entries are evicted automatically inside translateChapter.
      */
     fun confirmChapterTranslation(item: ChapterList.Item) {
         val manga = successState?.manga ?: return
@@ -942,8 +945,42 @@ class MangaScreenModel(
             "TachiyomiAT translate START: chapter=${item.chapter.name} manga=${manga.title} " +
                 "lastPageRead=${item.chapter.lastPageRead}"
         }
+        when (val preflight = translationManager.translateChapterPreflight(manga, item.chapter)) {
+            is ChapterQueuePreflight.NoConflict -> launchTranslateChapter(manga, item.chapter)
+            is ChapterQueuePreflight.RunningConflict -> {
+                updateSuccessState {
+                    it.copy(dialog = Dialog.RunningTranslationConflict(item, preflight))
+                }
+            }
+            is ChapterQueuePreflight.RevisionBlocked -> {
+                // A standalone revision is active for this chapter; the user must
+                // finish or cancel it before starting a batch. Log and no-op here
+                // so the existing revision UI stays the focus.
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT translate START blocked: revision active for chapter=${item.chapter.id}"
+                }
+            }
+        }
+    }
+
+    /**
+     * TachiyomiAT bug 3 fix: called after the user confirms the
+     * [Dialog.RunningTranslationConflict] dialog. Cancels the in-flight chapter
+     * (preserving its accepted artifacts via clearTransientQueuePages) and then
+     * starts the requested chapter's batch.
+     */
+    fun confirmReplaceRunningChapter(item: ChapterList.Item) {
+        val manga = successState?.manga ?: return
+        val preflight = (successState?.dialog as? Dialog.RunningTranslationConflict)?.conflict ?: return
         screenModelScope.launchNonCancellable {
+            translationManager.cancelRunningChapterForReplace(preflight.chapterId)
             translationManager.translateChapter(manga, item.chapter)
+        }
+    }
+
+    private fun launchTranslateChapter(manga: Manga, chapter: Chapter) {
+        screenModelScope.launchNonCancellable {
+            translationManager.translateChapter(manga, chapter)
         }
     }
 
@@ -1080,7 +1117,9 @@ class MangaScreenModel(
             reviewerEngine = confirmation.reviewerEngine,
             reviewerModel = confirmation.reviewerModel,
         ) ?: run {
-            logcat(LogPriority.WARN) { "startRevision returned null for chapter $chapterId (active batch / revision / deleted)" }
+            logcat(LogPriority.WARN) {
+                "startRevision returned null for chapter $chapterId (active batch / revision / deleted)"
+            }
             return
         }
         observeTranslationProgress(chapterId)
@@ -1511,6 +1550,16 @@ class MangaScreenModel(
             val item: ChapterList.Item,
             val summary: TranslationSettingsSummary,
         ) : Dialog
+
+        // TachiyomiAT bug 3: another chapter of the same source is actively
+        // translating; the user must confirm cancelling it before this chapter's
+        // batch can start. The conflict carries enough identity for the dialog
+        // copy and for cancelRunningChapterForReplace.
+        data class RunningTranslationConflict(
+            val item: ChapterList.Item,
+            val conflict: eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict,
+        ) : Dialog
+
         // TachiyomiAT CP7: standalone revision confirmation + terminal result.
         // The confirm dialog holds the pure confirm state (Idle/Ready/Rejected)
         // so reviewer/scope edits are unit-testable; the result dialog carries

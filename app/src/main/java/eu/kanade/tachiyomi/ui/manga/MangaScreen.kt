@@ -5,6 +5,9 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -71,6 +74,8 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.at.ATMR
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
 
 class MangaScreen(
@@ -345,6 +350,33 @@ class MangaScreen(
                     },
                     onConfirm = { screenModel.confirmChapterTranslation(dialog.item) },
                     onDismissRequest = onDismissRequest,
+                )
+            }
+
+            is MangaScreenModel.Dialog.RunningTranslationConflict -> {
+                AlertDialog(
+                    onDismissRequest = onDismissRequest,
+                    title = {
+                        Text(text = stringResource(ATMR.strings.manga_translate_conflict_title))
+                    },
+                    text = {
+                        Text(
+                            text = stringResource(
+                                ATMR.strings.manga_translate_conflict_body,
+                                dialog.conflict.chapterName,
+                            ),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { screenModel.confirmReplaceRunningChapter(dialog.item) }) {
+                            Text(text = stringResource(ATMR.strings.manga_translate_conflict_confirm))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismissRequest) {
+                            Text(text = stringResource(MR.strings.action_cancel))
+                        }
+                    },
                 )
             }
 
