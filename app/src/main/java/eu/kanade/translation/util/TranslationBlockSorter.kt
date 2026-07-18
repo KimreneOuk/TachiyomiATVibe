@@ -13,9 +13,9 @@ object TranslationBlockSorter {
      * Within each group, it sorts Top-to-Bottom, then Left-to-Right or Right-to-Left.
      */
     fun sort(
-        blocks: List<TranslationBlock>, 
+        blocks: List<TranslationBlock>,
         fromLang: TextRecognizerLanguage,
-        readingOrder: TranslationReadingOrder = TranslationReadingOrder.AUTO
+        readingOrder: TranslationReadingOrder = TranslationReadingOrder.AUTO,
     ): MutableList<TranslationBlock> {
         if (blocks.isEmpty()) return mutableListOf()
 
@@ -31,20 +31,20 @@ object TranslationBlockSorter {
         }
 
         val result = mutableListOf<TranslationBlock>()
-        
+
         panelGroups.keys.sorted().forEach { panelIdx ->
             result.addAll(coordinateSort(panelGroups[panelIdx]!!, fromLang, readingOrder))
         }
-        
+
         result.addAll(coordinateSort(unassigned, fromLang, readingOrder))
-        
+
         return result
     }
 
     private fun coordinateSort(
-        blocks: List<TranslationBlock>, 
+        blocks: List<TranslationBlock>,
         fromLang: TextRecognizerLanguage,
-        readingOrder: TranslationReadingOrder
+        readingOrder: TranslationReadingOrder,
     ): List<TranslationBlock> {
         if (blocks.isEmpty()) return emptyList()
 
@@ -61,7 +61,10 @@ object TranslationBlockSorter {
                 val avgY = currentRow.map { it.y }.average()
 
                 // Same row if blocks vertically overlap, or Y is near the row's average Y.
-                val overlap = maxOf(0f, minOf(lastBlock.y + lastBlock.height, block.y + block.height) - maxOf(lastBlock.y, block.y))
+                val overlap = maxOf(
+                    0f,
+                    minOf(lastBlock.y + lastBlock.height, block.y + block.height) - maxOf(lastBlock.y, block.y),
+                )
                 if (overlap > 0 || abs(block.y - avgY) < block.height / 2) {
                     currentRow.add(block)
                 } else {

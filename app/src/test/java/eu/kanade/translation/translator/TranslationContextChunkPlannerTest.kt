@@ -288,7 +288,8 @@ class TranslationContextChunkPlannerTest {
         val lineCount = out.lineSequence().filter { it.isNotBlank() }.count()
         lineCount shouldBe TranslationContextChunkPlanner.MAX_ROLLING_PAIRS
         // The newest pairs survive; the oldest are evicted.
-        out shouldContain "blk${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4} => trans${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4}"
+        out shouldContain
+            "blk${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4} => trans${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4}"
     }
 
     @Test

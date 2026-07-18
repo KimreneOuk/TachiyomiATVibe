@@ -9,7 +9,7 @@ package eu.kanade.translation.detection
  *
  * Conservative policy — no fallback, no nearest-panel guessing:
  *  - [OWNED]       containment >= [OWNED_THRESHOLD] -> confident panel ownership
- *  - [SPANNING]    [SPAN_LO] <= containment < [OWNED_THRESHOLD] -> crosses a gutter
+ *  - [SPANNING] [SPAN_LO] <= containment < [OWNED_THRESHOLD] -> crosses a gutter
  *  - [FREE_FLOATING] containment < [SPAN_LO] AND >= 1 panel exists on the page
  *  - [ORPHAN]      text exists but the page has 0 panels (broken/full-bleed page)
  *  - [INVALID]     degenerate input geometry (zero/negative area, NaN)
@@ -25,6 +25,7 @@ object PanelAssignment {
 
     /** containment >= this -> confident ownership (matches tools/ eval: 0.80). */
     const val OWNED_THRESHOLD = 0.80f
+
     /** [SPAN_LO, OWNED_THRESHOLD) -> crosses a panel gutter (matches tools/ eval: 0.10). */
     const val SPAN_LO = 0.10f
 
@@ -60,7 +61,7 @@ object PanelAssignment {
     )
 
     /**
-     * Assign [textX1..textY2] (original-image coordinates) to the panel in
+     * Assign textX1..textY2 (original-image coordinates) to the panel in
      * [panels] (reading-order indices) with max containment. Panels are
      * [x1, y1, x2, y2] in the same coordinate space.
      *
@@ -69,7 +70,10 @@ object PanelAssignment {
      * silently coerced into a confident assignment.
      */
     fun assign(
-        textX1: Float, textY1: Float, textX2: Float, textY2: Float,
+        textX1: Float,
+        textY1: Float,
+        textX2: Float,
+        textY2: Float,
         panels: List<FloatArray>,
     ): Result {
         if (!isValidBox(textX1, textY1, textX2, textY2)) {
@@ -84,8 +88,14 @@ object PanelAssignment {
             val p = panels[i]
             if (!isValidBox(p[0], p[1], p[2], p[3])) continue
             val inter = intersectionArea(
-                textX1, textY1, textX2, textY2,
-                p[0], p[1], p[2], p[3],
+                textX1,
+                textY1,
+                textX2,
+                textY2,
+                p[0],
+                p[1],
+                p[2],
+                p[3],
             )
             if (inter <= 0f) continue
             val cont = if (textArea > 0f) inter / textArea else 0f
@@ -125,8 +135,14 @@ object PanelAssignment {
     }
 
     fun intersectionArea(
-        ax1: Float, ay1: Float, ax2: Float, ay2: Float,
-        bx1: Float, by1: Float, bx2: Float, by2: Float,
+        ax1: Float,
+        ay1: Float,
+        ax2: Float,
+        ay2: Float,
+        bx1: Float,
+        by1: Float,
+        bx2: Float,
+        by2: Float,
     ): Float {
         val ix1 = maxOf(ax1, bx1)
         val iy1 = maxOf(ay1, by1)

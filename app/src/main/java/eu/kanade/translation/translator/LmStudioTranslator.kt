@@ -1,20 +1,12 @@
 ﻿package eu.kanade.translation.translator
 
-import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import logcat.logcat
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
-import logcat.LogPriority
 
 class LmStudioTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -36,7 +28,7 @@ class LmStudioTranslator(
             rollingContext = "",
             glossary = "",
             estimatedPromptTokens = 0,
-            maxOutputTokens = maxOutputToken
+            maxOutputTokens = maxOutputToken,
         )
         translateContextual(chunk, isPass2 = false)
     }
@@ -53,7 +45,7 @@ class LmStudioTranslator(
             isPass2 = isPass2,
             url = "$normalizedBaseUrl/chat/completions",
             headers = emptyMap(),
-            logTag = "LmStudioTranslator"
+            logTag = "LmStudioTranslator",
         ) { systemPrompt, finalPrompt ->
             buildJsonObject {
                 put("model", modelName)

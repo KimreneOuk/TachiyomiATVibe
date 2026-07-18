@@ -15,7 +15,7 @@ class TranslationBlockSorterTest {
             symHeight = 10f, symWidth = 10f,
             angle = 0f,
             panelIndex = panelIndex,
-            panelAssignment = panelAssignment
+            panelAssignment = panelAssignment,
         )
     }
 
@@ -26,11 +26,11 @@ class TranslationBlockSorterTest {
             createBlock("B1", x = 10f, y = 10f, panelIndex = 1, panelAssignment = "owned"),
             createBlock("A2", x = 10f, y = 20f, panelIndex = 0, panelAssignment = "owned"),
             createBlock("A1", x = 10f, y = 5f, panelIndex = 0, panelAssignment = "owned"),
-            createBlock("U1", x = 10f, y = 0f) // unassigned, highest Y, but should be at end
+            createBlock("U1", x = 10f, y = 0f), // unassigned, highest Y, but should be at end
         )
 
         val sorted = TranslationBlockSorter.sort(blocks, TextRecognizerLanguage.ENGLISH)
-        
+
         sorted[0].text shouldBe "A1"
         sorted[1].text shouldBe "A2"
         sorted[2].text shouldBe "B1"

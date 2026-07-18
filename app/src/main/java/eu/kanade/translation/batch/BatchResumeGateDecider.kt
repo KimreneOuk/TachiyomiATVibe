@@ -2,8 +2,8 @@ package eu.kanade.translation.batch
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.scheduling.TranslationLifecyclePolicy
 import eu.kanade.translation.model.isStageRunning
+import eu.kanade.translation.scheduling.TranslationLifecyclePolicy
 
 /**
  * Batch resume gate, extracted from TranslationPipeline.translateBatch.
@@ -34,7 +34,8 @@ internal object BatchResumeGateDecider {
         if (page?.isStageRunning == true && page.ocrStatus != StageStatus.READY) return Decision.FULL
         return when (TranslationLifecyclePolicy.nextStage(page, cleanedFileValid, inpaintModeMatches)) {
             TranslationLifecyclePolicy.NextStage.SKIP,
-            TranslationLifecyclePolicy.NextStage.RENDER -> Decision.SKIP_ALL
+            TranslationLifecyclePolicy.NextStage.RENDER,
+            -> Decision.SKIP_ALL
             TranslationLifecyclePolicy.NextStage.INPAINT -> Decision.INPAINT_ONLY
             TranslationLifecyclePolicy.NextStage.FULL -> Decision.FULL
         }

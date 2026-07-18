@@ -35,7 +35,6 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.EASE_IN_OUT
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.EASE_OUT_QUAD
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView.SCALE_TYPE_CENTER_INSIDE
 import com.github.chrisbanes.photoview.PhotoView
-import com.google.android.material.button.MaterialButton
 import eu.kanade.domain.base.BasePreferences
 import eu.kanade.tachiyomi.data.coil.cropBorders
 import eu.kanade.tachiyomi.data.coil.customDecoder
@@ -268,7 +267,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             scaleType = android.widget.ImageView.ScaleType.CENTER_INSIDE
             val p = (5 * resources.displayMetrics.density).toInt()
             setPadding(p, p, p, p)
-            
+
             // Circular ripple background with 40% transparent black
             val mask = android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL

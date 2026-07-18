@@ -5,8 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
-import android.view.Choreographer
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.View
 import androidx.core.content.res.ResourcesCompat
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
@@ -29,7 +29,10 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     private val typeface: Typeface = ResourcesCompat.getFont(context, R.font.animeace)?.let {
         Typeface.create(it, Typeface.BOLD)
     } ?: Typeface.DEFAULT_BOLD
-    private val fill = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply { typeface = this@TranslationOverlayView.typeface }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
+        typeface =
+            this@TranslationOverlayView.typeface
+    }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
         typeface = this@TranslationOverlayView.typeface
         style = Paint.Style.STROKE
@@ -131,7 +134,8 @@ internal class TranslationOverlayView @JvmOverloads constructor(
 
     private fun drawLayout(canvas: Canvas, layout: eu.kanade.translation.rendering.BlockLayout) {
         val textColor = layout.block.textColor.toInt()
-        val luma = ((textColor shr 16 and 0xFF) * 299 + (textColor shr 8 and 0xFF) * 587 + (textColor and 0xFF) * 114) / 1000
+        val luma =
+            ((textColor shr 16 and 0xFF) * 299 + (textColor shr 8 and 0xFF) * 587 + (textColor and 0xFF) * 114) / 1000
         fill.color = textColor
         fill.textSize = layout.fontSizePx
         stroke.color = if (luma < 128) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
@@ -147,7 +151,12 @@ internal class TranslationOverlayView @JvmOverloads constructor(
                 val lines = layout.lines
                 val fm = fill.fontMetrics
                 var y = layout.originY - lines.size * (fm.descent - fm.ascent) / 2f - fm.ascent
-                fill.textAlign = when (layout.drawAlign) { TextAlign.LEFT -> Paint.Align.LEFT; TextAlign.RIGHT -> Paint.Align.RIGHT; TextAlign.CENTER -> Paint.Align.CENTER }
+                fill.textAlign =
+                    when (layout.drawAlign) {
+                        TextAlign.LEFT -> Paint.Align.LEFT
+                        TextAlign.RIGHT -> Paint.Align.RIGHT
+                        TextAlign.CENTER -> Paint.Align.CENTER
+                    }
                 stroke.textAlign = fill.textAlign
                 lines.forEach { line ->
                     canvas.drawText(line, layout.originX, y, stroke)

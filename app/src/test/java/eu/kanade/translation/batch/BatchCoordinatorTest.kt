@@ -1,10 +1,7 @@
 package eu.kanade.translation.batch
 
-import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.translator.TranslatorComputeClass
-import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
@@ -12,7 +9,6 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 
 class BatchCoordinatorTest {
 
@@ -30,18 +26,18 @@ class BatchCoordinatorTest {
         // Wait until OCR is published
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
-        
+
         // Let translator start
         translator.allowTranslationToStart("p0")
-        
+
         // Wait for all-OCR barrier
         events.awaitEvent("allOcrBarrierReleased")
-        
+
         // Yield so translator lane picks up items
         repeat(3) { yield() }
-        
+
         // DeferringTranslatorWorker accepts immediately
-        
+
         native.allowInpaintToFinish("p0")
         done.await()
 
@@ -50,7 +46,7 @@ class BatchCoordinatorTest {
         val barrierIdx = log.indexOf("allOcrBarrierReleased")
         val translateIdx = log.indexOf("translationRequested:p0")
         val inpaintStartIdx = log.indexOf("inpaintStarted:p0")
-        
+
         (ocrFinishIdx < barrierIdx) shouldBe true
         (barrierIdx < inpaintStartIdx) shouldBe true
         (translateIdx > -1) shouldBe true
@@ -69,24 +65,24 @@ class BatchCoordinatorTest {
 
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
-        
+
         native.ocrPublished("p1").await()
         native.allowOcrToFinish("p1")
-        
+
         translator.allowTranslationToStart("p0")
         translator.allowTranslationToStart("p1")
-        
+
         native.allowInpaintToFinish("p0")
         native.allowInpaintToFinish("p1")
-        
+
         done.await()
-        
+
         val log = events.log
         val ocr0 = log.indexOf("ocrStarted:p0")
         val ocr1 = log.indexOf("ocrStarted:p1")
         val inpaint0 = log.indexOf("inpaintStarted:p0")
         val inpaint1 = log.indexOf("inpaintStarted:p1")
-        
+
         (ocr0 < ocr1) shouldBe true
         (ocr1 < inpaint0) shouldBe true
         (inpaint0 < inpaint1) shouldBe true
@@ -105,17 +101,17 @@ class BatchCoordinatorTest {
 
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
-        
+
         translator.allowTranslationToStart("p0")
         native.allowInpaintToFinish("p0")
-        
+
         done.await()
-        
+
         val log = events.log
         val barrierIdx = log.indexOf("allOcrBarrierReleased")
         val translateStart = log.indexOf("translationRequested:p0")
         val inpaintStart = log.indexOf("inpaintStarted:p0")
-        
+
         (barrierIdx < translateStart) shouldBe true
         (translateStart < inpaintStart) shouldBe true
     }
@@ -136,16 +132,16 @@ class BatchCoordinatorTest {
         native.allowOcrToFinish("p0")
         native.ocrPublished("p1").await()
         native.allowOcrToFinish("p1")
-        
+
         events.awaitEvent("allOcrBarrierReleased")
-        
+
         // Unstall translator
         translator.allowTranslationToStart("p0")
         translator.allowTranslationToStart("p1")
         native.allowInpaintToFinish("p0")
         native.allowInpaintToFinish("p1")
         done.await()
-        
+
         events.log.contains("allOcrBarrierReleased") shouldBe true
     }
 

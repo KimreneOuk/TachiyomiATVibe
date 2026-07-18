@@ -31,7 +31,7 @@ class GeminiTranslator(
             rollingContext = "",
             glossary = "",
             estimatedPromptTokens = 0,
-            maxOutputTokens = maxOutputToken
+            maxOutputTokens = maxOutputToken,
         )
         translateContextual(chunk, isPass2 = false)
     }
@@ -136,7 +136,7 @@ class GeminiTranslator(
                 ),
                 systemInstruction = content {
                     text(systemPrompt)
-                }
+                },
             )
 
             val response = activeModel.generateContent(finalPrompt)

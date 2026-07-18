@@ -1,6 +1,5 @@
 package eu.kanade.translation.inpainting
 
-import eu.kanade.translation.detection.Detection
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock

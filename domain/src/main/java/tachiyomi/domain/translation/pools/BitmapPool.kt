@@ -42,7 +42,7 @@ class BitmapPool private constructor(
     }
 
     fun get(width: Int, height: Int): Bitmap {
-        val sizeKey = "${width}x${height}"
+        val sizeKey = "${width}x$height"
         val pool = pools.getOrPut(sizeKey) { ConcurrentLinkedQueue() }
 
         return poolLock.withLock {

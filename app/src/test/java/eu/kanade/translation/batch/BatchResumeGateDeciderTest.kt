@@ -52,7 +52,18 @@ class BatchResumeGateDeciderTest {
         val page = page(ocrStatus = StageStatus.READY).withMaskAndDurableCleaned().apply {
             inpaintingModeUsed = "FAST"
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-            blocks.add(TranslationBlock(text = "x", width = 1f, height = 1f, x = 0f, y = 0f, symHeight = 1f, symWidth = 1f, angle = 0f))
+            blocks.add(
+                TranslationBlock(
+                    text = "x",
+                    width = 1f,
+                    height = 1f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            )
         }
 
         BatchResumeGateDecider.decide(page, cleanedFileValid = true, inpaintModeMatches = true) shouldBe
@@ -70,7 +81,18 @@ class BatchResumeGateDeciderTest {
             inpaintStatus = StageStatus.READY
             inpaintRevision = 0
         }
-        page.blocks.add(TranslationBlock(text = "x", width = 1f, height = 1f, x = 0f, y = 0f, symHeight = 1f, symWidth = 1f, angle = 0f))
+        page.blocks.add(
+            TranslationBlock(
+                text = "x",
+                width = 1f,
+                height = 1f,
+                x = 0f,
+                y = 0f,
+                symHeight = 1f,
+                symWidth = 1f,
+                angle = 0f,
+            ),
+        )
 
         BatchResumeGateDecider.decide(page) shouldBe BatchResumeGateDecider.Decision.INPAINT_ONLY
     }
@@ -81,7 +103,18 @@ class BatchResumeGateDeciderTest {
         val page = page(ocrStatus = StageStatus.READY).apply {
             cleanedImageName = "001.cleaned.png"
             inpaintStatus = StageStatus.READY
-            blocks.add(TranslationBlock(text = "x", width = 1f, height = 1f, x = 0f, y = 0f, symHeight = 1f, symWidth = 1f, angle = 0f))
+            blocks.add(
+                TranslationBlock(
+                    text = "x",
+                    width = 1f,
+                    height = 1f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            )
         }
 
         BatchResumeGateDecider.decide(page) shouldBe BatchResumeGateDecider.Decision.FULL

@@ -96,7 +96,10 @@ fun TranslationCompareHandle(
     onSelectOriginal: () -> Unit,
     onSelectTranslated: () -> Unit,
     onOpenSettings: () -> Unit,
-    onDeletePageTranslation: () -> Unit,
+    onResetTranslationData: (Boolean) -> Unit,
+    onResetInpaintData: () -> Unit,
+    onResetOcrData: () -> Unit,
+    onResetEverything: () -> Unit,
     onDeleteChapterTranslation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -181,16 +184,40 @@ fun TranslationCompareHandle(
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
             title = { Text(text = "Delete Translation") },
-            text = { Text(text = "Do you want to delete the translation for the current page only, or the entire chapter?") },
+            text = { Text(text = "What part of the translation do you want to reset?") },
             confirmButton = {
                 Column(horizontalAlignment = Alignment.End) {
                     TextButton(
                         onClick = {
                             showDeleteDialog = false
-                            onDeletePageTranslation()
+                            onResetTranslationData(true)
                         },
                     ) {
-                        Text(text = "Current Page")
+                        Text(text = "Translation Only (Keep Edits)")
+                    }
+                    TextButton(
+                        onClick = {
+                            showDeleteDialog = false
+                            onResetTranslationData(false)
+                        },
+                    ) {
+                        Text(text = "Translation Only (Clear Edits)")
+                    }
+                    TextButton(
+                        onClick = {
+                            showDeleteDialog = false
+                            onResetInpaintData()
+                        },
+                    ) {
+                        Text(text = "Inpaint & Rendering")
+                    }
+                    TextButton(
+                        onClick = {
+                            showDeleteDialog = false
+                            onResetOcrData()
+                        },
+                    ) {
+                        Text(text = "OCR & Everything")
                     }
                     TextButton(
                         onClick = {

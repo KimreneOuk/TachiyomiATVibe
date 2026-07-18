@@ -17,8 +17,8 @@ import kotlinx.coroutines.flow.flowOf
  */
 internal class ActiveChapterStoreRegistry {
     private val stores = LinkedHashMap<Long, ChapterTranslationStore>()
-    private val _stores = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
-    val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _stores.asStateFlow()
+    private val _snapshots = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
+    val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _snapshots.asStateFlow()
 
     @Synchronized
     fun get(chapterId: Long): ChapterTranslationStore? = stores[chapterId]
@@ -57,6 +57,6 @@ internal class ActiveChapterStoreRegistry {
     }
 
     private fun publish() {
-        _stores.value = stores.toMap()
+        _snapshots.value = stores.toMap()
     }
 }

@@ -1,19 +1,12 @@
 ﻿package eu.kanade.translation.translator
 
-import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import logcat.logcat
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
 class DeepSeekTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -33,7 +26,7 @@ class DeepSeekTranslator(
             rollingContext = "",
             glossary = "",
             estimatedPromptTokens = 0,
-            maxOutputTokens = maxOutputToken
+            maxOutputTokens = maxOutputToken,
         )
         translateContextual(chunk, isPass2 = false)
     }
@@ -47,7 +40,7 @@ class DeepSeekTranslator(
             isPass2 = isPass2,
             url = "https://api.deepseek.com/chat/completions",
             headers = mapOf("Authorization" to "Bearer $apiKey"),
-            logTag = "DeepSeekTranslator"
+            logTag = "DeepSeekTranslator",
         ) { systemPrompt, finalPrompt ->
             buildJsonObject {
                 put("model", if (modelName.isBlank()) "deepseek-chat" else modelName)

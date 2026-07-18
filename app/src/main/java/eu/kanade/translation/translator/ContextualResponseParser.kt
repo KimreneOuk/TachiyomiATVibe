@@ -19,7 +19,7 @@ object AnchoredBlockId {
     fun isAnchored(raw: String): Boolean = pattern.matches(raw.trim())
 
     /** Build an anchored id from its parts. */
-    fun format(pageIndex: Int, blockIndex: Int): String = "p${pageIndex}_b${blockIndex}"
+    fun format(pageIndex: Int, blockIndex: Int): String = "p${pageIndex}_b$blockIndex"
 }
 
 /**
@@ -43,6 +43,7 @@ data class ContextualTranslationResult(
     enum class Status {
         /** Valid, non-blank translation. May carry an explicit [qualityTag]. */
         TRANSLATED,
+
         /** Unknown id, blank, malformed, or duplicate — draft must be retained. */
         REJECTED,
     }

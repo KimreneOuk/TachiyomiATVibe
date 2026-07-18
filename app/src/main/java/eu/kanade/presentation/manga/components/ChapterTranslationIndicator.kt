@@ -42,6 +42,7 @@ enum class ChapterTranslationAction {
     DETAILS,
     CANCEL,
     DELETE,
+
     // TachiyomiAT CP7: standalone revision (review) of already-translated text.
     REVIEW,
 }

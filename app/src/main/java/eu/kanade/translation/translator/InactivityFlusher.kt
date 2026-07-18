@@ -4,8 +4,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * TachiyomiAT: deterministic inactivity-driven flush for the streaming AI chunk
@@ -19,20 +17,19 @@ import kotlinx.coroutines.sync.withLock
  *    advance time and observe flushes without real delays.
  *  - Existing token/page limits preserved: flushing delegates to the planner's
  *    [StreamingChunkPlanner.flushRemaining], which already enforces the budget.
- *  - One provider request at a time: the flush holds [translateMutex] across
+ *  - One provider request at a time: the flush holds the provided admission lock across
  *    the translate callback so an inactivity flush and a size-driven flush can
- *    never issue two concurrent provider requests for the same planner.
+ *    never issue two concurrent provider requests.
  */
 class InactivityFlusher(
     private val inactivityMs: Long = DEFAULT_INACTIVITY_MS,
     private val timeSource: TimeSource = SystemTimeSource,
     private val sleeper: Sleeper = CoroutineSleeper,
     /**
-     * Invoked under [translateMutex] when an inactivity flush fires. Receives
-     * the chunk built from the planner's remaining buffer (may be null if the
-     * buffer was emptied concurrently). The callback owns the provider request.
+     * Invoked under the admission lock when an inactivity flush fires. Receives
+     * the FlushResult built from the planner's remaining buffer. The callback owns the provider request.
      */
-    private val onFlush: suspend (TranslationContextChunk?) -> Unit,
+    private val onFlush: suspend (StreamingChunkPlanner.FlushResult) -> Unit,
 ) {
     /**
      * Minimal clock abstraction so tests can drive virtual time. Returns a
@@ -47,11 +44,11 @@ class InactivityFlusher(
         suspend fun sleepMillis(ms: Long)
     }
 
-    /** Flushes in a dedicated scope; cancelled by [stop]. */
-    private val translateMutex = Mutex()
     private var timerJob: Job? = null
+
     @Volatile
     private var lastActivityMs: Long = timeSource.elapsedMillis()
+
     @Volatile
     private var stopped: Boolean = false
 
@@ -69,7 +66,7 @@ class InactivityFlusher(
      * Re-checks the deadline after each wake so a late activity record that
      * lands during the wake extends the wait instead of falsely firing.
      */
-    fun start(scope: CoroutineScope, buildRemainingChunk: suspend () -> TranslationContextChunk?) {
+    fun start(scope: CoroutineScope, buildRemainingChunk: suspend () -> StreamingChunkPlanner.FlushResult) {
         if (stopped) return
         cancelTimer()
         timerJob = scope.launch {
@@ -79,16 +76,16 @@ class InactivityFlusher(
                 val now = timeSource.elapsedMillis()
                 val idle = now - lastActivityMs
                 if (idle >= inactivityMs) {
-                    // Hold the translate mutex so an inactivity flush cannot run
+                    // Hold the admission lock so an inactivity flush cannot run
                     // concurrently with a size-driven flush (one provider request
                     // at a time). buildRemainingChunk also runs under the lock so
                     // the planner buffer is observed consistently.
-                    translateMutex.withLock {
-                        if (stopped) return@launch
+                    eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
+                        if (stopped) return@withRequest
                         val recheckIdle = timeSource.elapsedMillis() - lastActivityMs
                         if (recheckIdle >= inactivityMs) {
-                            val chunk = buildRemainingChunk()
-                            onFlush(chunk)
+                            val result = buildRemainingChunk()
+                            onFlush(result)
                             // A flush consumes the idle window: re-arm the deadline
                             // so the loop waits a full inactivity window before
                             // flushing again. Without this, a frozen clock (or a
@@ -101,9 +98,6 @@ class InactivityFlusher(
             }
         }
     }
-
-    /** Serialize provider requests: a size-driven flush acquires the same mutex. */
-    suspend fun <T> withTranslateLock(block: suspend () -> T): T = translateMutex.withLock { block() }
 
     /** Cancel the inactivity timer. Further [start] calls re-arm it. */
     fun cancelTimer() {

@@ -2,12 +2,11 @@ package eu.kanade.translation.rendering
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.inpainting.BoundaryAwarePipeline
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 
 /**
  * TachiyomiAT: shared text-color estimator.
@@ -61,7 +60,9 @@ object RenderColorEstimator {
             logcat(LogPriority.DEBUG) {
                 "[color] B/W snap: bgLuma=%.1f ink=rgb(%d,%d,%d) -> %s".format(
                     bgLuma,
-                    fgColor[0].toInt(), fgColor[1].toInt(), fgColor[2].toInt(),
+                    fgColor[0].toInt(),
+                    fgColor[1].toInt(),
+                    fgColor[2].toInt(),
                     if (forced == 0xFFFFFFFFL) "white" else "black",
                 )
             }
@@ -111,7 +112,13 @@ object RenderColorEstimator {
         // F4: unparented text (SFX/free text) has no bubble interior, so a wide
         // pad reaches into adjacent artwork → wrong polarity → illegible text.
         // Keep unparented pad tight; parented widens to capture the bubble interior.
-        val basePad = if (parentBbox != null) max(12, min(boxWidth, boxHeight) / 2) else max(2, min(boxWidth, boxHeight) / 8)
+        val basePad = if (parentBbox !=
+            null
+        ) {
+            max(12, min(boxWidth, boxHeight) / 2)
+        } else {
+            max(2, min(boxWidth, boxHeight) / 8)
+        }
         val pad = if (parentBbox != null) max(basePad, 16) else basePad
         val left = (x1 - pad).coerceIn(0, bitmap.width)
         val top = (y1 - pad).coerceIn(0, bitmap.height)

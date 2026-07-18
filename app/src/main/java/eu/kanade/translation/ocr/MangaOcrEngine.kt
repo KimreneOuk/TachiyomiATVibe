@@ -1,28 +1,27 @@
 package eu.kanade.translation.ocr
 
+import ai.onnxruntime.OnnxTensor
+import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.Paint
-import ai.onnxruntime.OnnxTensor
-import ai.onnxruntime.OrtSession
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.TranslationPreferences
+import tachiyomi.domain.translation.pools.BitmapPool
+import tachiyomi.domain.translation.pools.DirectBufferPool
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import java.nio.LongBuffer
 import kotlin.math.max
-import tachiyomi.domain.translation.pools.BitmapPool
-import tachiyomi.domain.translation.pools.DirectBufferPool
-import tachiyomi.domain.translation.TranslationPreferences
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 
 class MangaOcrEngine : RoiOcrEngine {
 
@@ -35,6 +34,7 @@ class MangaOcrEngine : RoiOcrEngine {
     private val decoderThreadCount = maxOf(1, minOf(Runtime.getRuntime().availableProcessors() / 2, 2))
     private val kCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
     private val vCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
+
     // TachiyomiAT: pooled DIRECT buffer for the encoder input. FloatBuffer.wrap
     // is heap-backed, forcing ORT to allocate a native copy per call that leaks
     // across recognize() calls (ORT #16937); a direct buffer is used in place.
@@ -65,7 +65,7 @@ class MangaOcrEngine : RoiOcrEngine {
             encoderOpts.close()
         }
 
-        val decoderOpts = OnnxRuntimeProvider.createSessionOptions() { opts ->
+        val decoderOpts = OnnxRuntimeProvider.createSessionOptions { opts ->
             opts.setIntraOpNumThreads(decoderThreadCount)
         }
         try {
@@ -425,6 +425,7 @@ class MangaOcrEngine : RoiOcrEngine {
         private const val START_TOKEN = 2
         private const val END_TOKEN = 3
         private const val MAX_LEN = 256
+
         // TachiyomiAT: real decode ceiling. The gpt2 position-embedding Gather
         // (node_embedding_1) has 128 entries; pos==128 overflows it and crashes
         // the chapter. MAX_LEN (256) is only the KV-cache dim, not a safe bound.
@@ -460,6 +461,7 @@ class MangaOcrEngine : RoiOcrEngine {
          */
         @Volatile
         private var diagnosticsInitialized = false
+
         @Volatile
         private var diagnosticsEnabled = false
 

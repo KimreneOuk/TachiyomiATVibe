@@ -539,8 +539,10 @@ class SmartBubbleTextCleanerTest {
         val pixels = IntArray(w * h) { gray(255) } // flat white background
         // Two sparse dark "strokes" with a large white gap between them.
         val strokePixels = setOf(
-            5 * w + 8, 5 * w + 9, // left stroke
-            5 * w + 30, 5 * w + 31, // right stroke, far from the left
+            5 * w + 8,
+            5 * w + 9, // left stroke
+            5 * w + 30,
+            5 * w + 31, // right stroke, far from the left
         )
         strokePixels.forEach { pixels[it] = gray(20) }
         // Ring median = white (the dominant background).
@@ -634,4 +636,3 @@ class SmartBubbleTextCleanerTest {
         cached1.size shouldBe 100
     }
 }
-

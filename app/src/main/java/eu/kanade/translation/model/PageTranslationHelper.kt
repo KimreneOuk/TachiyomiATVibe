@@ -31,8 +31,11 @@ class PageTranslationHelper {
         }
 
         private fun shouldMerge(r1: TranslationBlock, r2: TranslationBlock): Boolean {
-            return abs(r1.angle - r2.angle) < 10 && r1.x < (r2.x + r2.width) && (r1.x + r1.width) > r2.x &&
-                r1.y < (r2.y + r2.height) && (r1.y + r1.height) > r2.y
+            return abs(r1.angle - r2.angle) < 10 &&
+                r1.x < (r2.x + r2.width) &&
+                (r1.x + r1.width) > r2.x &&
+                r1.y < (r2.y + r2.height) &&
+                (r1.y + r1.height) > r2.y
         }
 
         private fun mergeGroup(group: List<TranslationBlock>): TranslationBlock {
@@ -153,8 +156,11 @@ class PageTranslationHelper {
         }
 
         private fun TranslationBlock.toIntBox(): IntArray? =
-            if (width <= 0f || height <= 0f) null
-            else intArrayOf(x.toInt(), y.toInt(), (x + width).toInt(), (y + height).toInt())
+            if (width <= 0f || height <= 0f) {
+                null
+            } else {
+                intArrayOf(x.toInt(), y.toInt(), (x + width).toInt(), (y + height).toInt())
+            }
 
         private fun IntArray.isValid(): Boolean =
             size >= 4 && this[2] > this[0] && this[3] > this[1]

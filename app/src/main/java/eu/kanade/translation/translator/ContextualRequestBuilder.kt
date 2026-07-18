@@ -1,6 +1,5 @@
 package eu.kanade.translation.translator
 
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.stableFingerprint
 
 /**

@@ -6,7 +6,6 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.stableFingerprint
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -78,8 +77,14 @@ class Checkpoint2IntegrationTest {
         val mergeResult = RevisionMerger.merge(mergeLive, batch, listOf(target), 1L, "ch")
 
         val outcome = RevisionCommitter.commit(
-            store, mergeLive, listOf(target), batch,
-            RevisionCommitter.orderedAnchorIds(batch), mergeResult, 1L, "ch",
+            store,
+            mergeLive,
+            listOf(target),
+            batch,
+            RevisionCommitter.orderedAnchorIds(batch),
+            mergeResult,
+            1L,
+            "ch",
         )
 
         outcome.appliedCount shouldBe 0
@@ -100,8 +105,14 @@ class Checkpoint2IntegrationTest {
         val mergeLive = RevisionCommitter.mergeLiveSnapshot(store, listOf("p0"))
         val mergeResult = RevisionMerger.merge(mergeLive, batch, listOf(target), 1L, "ch")
         val outcome = RevisionCommitter.commit(
-            store, mergeLive, listOf(target), batch,
-            RevisionCommitter.orderedAnchorIds(batch), mergeResult, 1L, "ch",
+            store,
+            mergeLive,
+            listOf(target),
+            batch,
+            RevisionCommitter.orderedAnchorIds(batch),
+            mergeResult,
+            1L,
+            "ch",
         )
 
         outcome.appliedCount shouldBe 0
@@ -125,8 +136,14 @@ class Checkpoint2IntegrationTest {
         }
         val mergeResult = RevisionMerger.merge(mergeLive, batch, listOf(target), 1L, "ch")
         val outcome = RevisionCommitter.commit(
-            store, mergeLive, listOf(target), batch,
-            RevisionCommitter.orderedAnchorIds(batch), mergeResult, 1L, "ch",
+            store,
+            mergeLive,
+            listOf(target),
+            batch,
+            RevisionCommitter.orderedAnchorIds(batch),
+            mergeResult,
+            1L,
+            "ch",
         )
 
         outcome.appliedCount shouldBe 0
@@ -165,8 +182,14 @@ class Checkpoint2IntegrationTest {
         val mergeLive = RevisionCommitter.mergeLiveSnapshot(store, listOf("p0"))
         val mergeResult = RevisionMerger.merge(mergeLive, batch, listOf(t0, t1), 1L, "ch")
         val outcome = RevisionCommitter.commit(
-            store, mergeLive, listOf(t0, t1), batch,
-            RevisionCommitter.orderedAnchorIds(batch), mergeResult, 1L, "ch",
+            store,
+            mergeLive,
+            listOf(t0, t1),
+            batch,
+            RevisionCommitter.orderedAnchorIds(batch),
+            mergeResult,
+            1L,
+            "ch",
         )
 
         outcome.appliedCount shouldBe 1
@@ -191,8 +214,14 @@ class Checkpoint2IntegrationTest {
         val mergeLive = RevisionCommitter.mergeLiveSnapshot(store, listOf("p0"))
         val mergeResult = RevisionMerger.merge(mergeLive, batch, listOf(t0), 1L, "ch")
         RevisionCommitter.commit(
-            store, mergeLive, listOf(t0), batch,
-            RevisionCommitter.orderedAnchorIds(batch), mergeResult, 1L, "ch",
+            store,
+            mergeLive,
+            listOf(t0),
+            batch,
+            RevisionCommitter.orderedAnchorIds(batch),
+            mergeResult,
+            1L,
+            "ch",
         )
 
         store.state.value["p0"]!!.translationStatus shouldBe StageStatus.READY
@@ -252,9 +281,11 @@ class Checkpoint2IntegrationTest {
         )
         planner.accept("p0", page)
         val flushed = planner.flushRemaining().finalChunk!!
-        (flushed.estimatedPromptTokens + flushed.maxOutputTokens +
-            TranslationContextChunkPlanner.SAFETY_MARGIN <=
-            TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS) shouldBe true
+        (
+            flushed.estimatedPromptTokens + flushed.maxOutputTokens +
+                TranslationContextChunkPlanner.SAFETY_MARGIN <=
+                TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
+            ) shouldBe true
     }
 
     // ---- helpers ----

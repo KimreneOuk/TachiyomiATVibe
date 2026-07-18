@@ -94,10 +94,20 @@ class RenderColorEstimatorDedupTest {
         val black = (0xFF shl 24) // 0xFF000000 as ARGB Int; r=g=b=0
         val pixels = IntArray(16) { black }
         val luma = RenderColorEstimator.sampleBackgroundLuma(
-            pixels, cropWidth = 4, cropHeight = 4, cropLeft = 0, cropTop = 0, parentBbox = null,
+            pixels,
+            cropWidth = 4,
+            cropHeight = 4,
+            cropLeft = 0,
+            cropTop = 0,
+            parentBbox = null,
         )
         val fill = RenderColorEstimator.decideTextFill(
-            pixels, cropWidth = 4, cropHeight = 4, cropLeft = 0, cropTop = 0, parentBbox = null,
+            pixels,
+            cropWidth = 4,
+            cropHeight = 4,
+            cropLeft = 0,
+            cropTop = 0,
+            parentBbox = null,
         )
         luma shouldBe 0.0f
         fill shouldBe 0xFFFFFFFFL
@@ -108,10 +118,20 @@ class RenderColorEstimatorDedupTest {
         val white = 0xFFFFFFFF.toInt()
         val pixels = IntArray(16) { white }
         val luma = RenderColorEstimator.sampleBackgroundLuma(
-            pixels, cropWidth = 4, cropHeight = 4, cropLeft = 0, cropTop = 0, parentBbox = null,
+            pixels,
+            cropWidth = 4,
+            cropHeight = 4,
+            cropLeft = 0,
+            cropTop = 0,
+            parentBbox = null,
         )
         val fill = RenderColorEstimator.decideTextFill(
-            pixels, cropWidth = 4, cropHeight = 4, cropLeft = 0, cropTop = 0, parentBbox = null,
+            pixels,
+            cropWidth = 4,
+            cropHeight = 4,
+            cropLeft = 0,
+            cropTop = 0,
+            parentBbox = null,
         )
         luma shouldBe 255.0f
         fill shouldBe 0xFF000000L

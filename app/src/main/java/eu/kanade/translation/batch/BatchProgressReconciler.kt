@@ -25,6 +25,7 @@ object BatchProgressReconciler {
     fun reconcile(
         pageMap: Map<String, PageTranslation>,
         orderedKeys: List<String>,
+        activeGeneration: Long,
     ): ReconciliationResult {
         val expectedKeys = orderedKeys.distinct()
         val unexpectedPageKeys = pageMap.keys - expectedKeys.toSet()
@@ -55,6 +56,14 @@ object BatchProgressReconciler {
             val page = pageMap[pageKey]
             if (page == null) {
                 strandedPages[pageKey] = "Translation incomplete — expected page is missing"
+                failedCount++
+                continue
+            }
+            if (page.runGeneration != activeGeneration && !page.hasRenderedResult && !page.isTextlessTerminal) {
+                // Not owned by the active generation and not successfully terminal.
+                // It was skipped by the planner because it wasn't valid, but never reached by the producer.
+                strandedPages[pageKey] =
+                    "Translation incomplete — expected page was stranded by a prior run and not reached"
                 failedCount++
                 continue
             }
@@ -98,7 +107,9 @@ object BatchProgressReconciler {
         return !isStageFailed &&
             !hasRenderedResult &&
             !isTextlessTerminal &&
-            (ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
-                ocrStatus == eu.kanade.translation.model.StageStatus.PENDING)
+            (
+                ocrStatus == eu.kanade.translation.model.StageStatus.RUNNING ||
+                    ocrStatus == eu.kanade.translation.model.StageStatus.PENDING
+                )
     }
 }

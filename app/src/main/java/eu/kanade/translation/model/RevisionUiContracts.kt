@@ -49,8 +49,10 @@ data class ChapterRevisionEligibility(
 ) {
     /** A contextual reviewer with credentials is configured. */
     val hasReviewer: Boolean get() = reviewerOptions.isNotEmpty()
+
     /** Any target exists for either scope. */
     val hasTargets: Boolean get() = flaggedTargets > 0 || allTranslatedTargets > 0
+
     /** True when only part of the chapter is translated. */
     val isPartial: Boolean get() = expectedPages != null && translatedPages < expectedPages
 }

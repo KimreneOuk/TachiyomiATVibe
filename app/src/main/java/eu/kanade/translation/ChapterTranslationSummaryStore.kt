@@ -42,7 +42,9 @@ class ChapterTranslationSummaryStore(
                 "TachiyomiAT chapter summary read failed: pageFile=${pageFile.name} summaryFile=${summaryFile.name}"
             }
         }.getOrNull()?.takeIf { summary ->
-            if (summary.formatVersion == ChapterTranslationSummary.FORMAT_VERSION) true else {
+            if (summary.formatVersion == ChapterTranslationSummary.FORMAT_VERSION) {
+                true
+            } else {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT chapter summary rejected: pageFile=${pageFile.name} reason=unsupported format=${summary.formatVersion}"
                 }

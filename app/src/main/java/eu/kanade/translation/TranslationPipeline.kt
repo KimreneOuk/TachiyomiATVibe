@@ -8,68 +8,66 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
-import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.translation.batch.BatchCoordinator
+import eu.kanade.translation.batch.BatchProgressReconciler
+import eu.kanade.translation.batch.BatchResumeGateDecider
+import eu.kanade.translation.batch.NativeLaneWorker
+import eu.kanade.translation.batch.OcrReadyPageRef
+import eu.kanade.translation.batch.RenderJoinWorker
+import eu.kanade.translation.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.batch.TranslatorLaneWorker
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.RenderQuality
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasCurrentInpaintMask
-import eu.kanade.translation.model.hasRecognizedTranslation
-import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.resetAttemptCharge
-import eu.kanade.translation.rendering.RenderColorEstimator
+import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.recognition.RoiPageRecognitionEngine
+import eu.kanade.translation.rendering.RenderColorEstimator
+import eu.kanade.translation.scheduling.NativeRunQuarantine
+import eu.kanade.translation.scheduling.TranslationExecutor
+import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.translator.AiTranslationRetryPlanner
+import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.ChapterGlossaryBuilder
 import eu.kanade.translation.translator.ContextualTextTranslator
+import eu.kanade.translation.translator.DeepSeekTranslator
+import eu.kanade.translation.translator.GeminiTranslator
+import eu.kanade.translation.translator.InactivityFlusher
 import eu.kanade.translation.translator.LmStudioTranslator
+import eu.kanade.translation.translator.OpenRouterTranslator
+import eu.kanade.translation.translator.StreamingChunkPlanner
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.TranslationContextChunk
-import eu.kanade.translation.translator.StreamingChunkPlanner
-import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.translator.TranslationBlockValidation
-import eu.kanade.translation.translator.AiTranslatorKind
-import eu.kanade.translation.translator.GeminiTranslator
-import eu.kanade.translation.translator.OpenRouterTranslator
-import eu.kanade.translation.translator.DeepSeekTranslator
-import eu.kanade.translation.translator.StandardTranslatorKind
+import eu.kanade.translation.translator.TranslationContextChunk
+import eu.kanade.translation.translator.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.TranslationEngineBuilder
+import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlin.coroutines.coroutineContext
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.transformLatest
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.supervisorScope
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -77,52 +75,24 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.core.archive.archiveReader
-import mihon.core.archive.ArchiveReader
-import tachiyomi.core.common.util.lang.launchIO
-import tachiyomi.core.common.util.lang.launchUI
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.source.service.SourceManager
-import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
-import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
-import eu.kanade.translation.batch.BatchCoordinator
-import eu.kanade.translation.batch.NativeLaneWorker
-import eu.kanade.translation.batch.PageKey
-import eu.kanade.translation.batch.OcrReadyPageRef
-import eu.kanade.translation.batch.RenderJoinWorker
-import eu.kanade.translation.batch.TranslatorLaneWorker
-import eu.kanade.translation.batch.BatchProgressReconciler
-import eu.kanade.translation.batch.BatchOomPolicy
-import eu.kanade.translation.batch.BatchResumeGateDecider
-import eu.kanade.translation.batch.TranslationBatchProgressTracker
-import eu.kanade.translation.scheduling.NativeRunQuarantine
-import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.translator.AnchoredBlockId
-import eu.kanade.translation.translator.ContextualRequestBuilder
-import eu.kanade.translation.translator.ContextualTranslationBatch
-import eu.kanade.translation.translator.InactivityFlusher
-import eu.kanade.translation.translator.MLKitTranslator
-import eu.kanade.translation.translator.RevisionMerger
-import eu.kanade.translation.translator.RevisionCommitter
-import eu.kanade.translation.translator.RevisionPlanner
-import eu.kanade.translation.translator.TargetLocation
-import eu.kanade.translation.translator.TargetPrecondition
-import eu.kanade.translation.translator.TranslatorComputeClass
-import eu.kanade.translation.model.detachedCopy
-import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.scheduling.TranslationExecutor
+import kotlin.coroutines.coroutineContext
+
+class LayoutFailureException(val blockIds: List<String>, message: String) : Exception(message)
 
 class TranslationPipeline(
     private val context: Context,
@@ -269,19 +239,24 @@ class TranslationPipeline(
 
     @Volatile
     private var currentFromLang: TextRecognizerLanguage
+
     @Volatile
     private var currentOcrModel: OcrModel
+
     // RoiPageRecognitionEngine caches the resolved reading order once per instance,
     // so a runtime flip requires a recognition rebuild — same logic as fromLang/ocrModel.
     @Volatile
     private var currentReadingOrder: tachiyomi.domain.translation.TranslationReadingOrder
+
     // @Volatile: these are reassigned from a translation coroutine (language change) and
     // read/closed from closeEngines() WITHOUT the permit (stop() on the main thread), so a
     // race must read a consistent reference, not a half-published one.
     @Volatile
     private var textTranslator: TextTranslator
+
     @Volatile
     private var recognitionEngine: PageRecognitionEngine
+
     @Volatile
     private var currentInpaintingMode: InpaintingMode
 
@@ -417,8 +392,12 @@ class TranslationPipeline(
         inFlightPageKeys.clear()
         enginesClosed = true
         val closedNow = nativeRunQuarantine.tryRunExclusive {
-            try { recognitionEngine.close() } catch (_: Exception) {}
-            try { textTranslator.close() } catch (_: Exception) {}
+            try {
+                recognitionEngine.close()
+            } catch (_: Exception) {}
+            try {
+                textTranslator.close()
+            } catch (_: Exception) {}
         }
         if (!closedNow) {
             logcat(LogPriority.WARN) {
@@ -429,8 +408,10 @@ class TranslationPipeline(
 
     @Volatile
     private var consecutiveOomCount = 0
+
     @Volatile
     private var currentChapterTranslation: Translation? = null
+
     @Volatile
     private var enginesClosed = false
 
@@ -488,10 +469,14 @@ class TranslationPipeline(
             translationStatus = StageStatus.PENDING,
             inpaintStatus = StageStatus.FAILED,
             renderStatus = StageStatus.PENDING,
-            errorMessage = errorMessage,
             updatedAt = System.currentTimeMillis(),
             retryCount = retryCount,
-        ).apply { this.attemptCount = attemptCount }
+        ).apply {
+            this.attemptCount = attemptCount
+            this.translationError = errorMessage
+            this.ocrError = errorMessage
+            this.inpaintError = errorMessage
+        }
     }
 
     /**
@@ -534,7 +519,9 @@ class TranslationPipeline(
         // error/timeout path, so re-throwing here would mask the original failure.
         // The store is keyed on manga/chapter (not language).
         val syntheticTranslation = Translation(
-            source, manga, chapter,
+            source,
+            manga,
+            chapter,
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
@@ -577,7 +564,9 @@ class TranslationPipeline(
     ) {
         // SAFE language fallbacks (see markPageTimedOut); re-throwing here would mask the cause.
         val syntheticTranslation = Translation(
-            source, manga, chapter,
+            source,
+            manga,
+            chapter,
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
@@ -619,6 +608,13 @@ class TranslationPipeline(
      * Splitting the permit-held ONNX work from the network-bound HTTP translate lets the next
      * prefetch page's ONNX overlap this page's network call — the same asymmetry
      * benefit the batch path already derives.
+     *
+     * Scheduling scope: this single-page path bypasses the batch coordinator's
+     * all-OCR barrier (`BatchCoordinator.runPass1`) by design — it processes
+     * exactly one page, so there is no chapter-wide OCR set to wait for. The
+     * chapter-level "no inpaint before all OCR terminal" invariant only applies
+     * to batch/pre-translation; here OCR and inpaint of the same single page run
+     * sequentially inside this function.
      */
     override suspend fun translateSinglePage(
         manga: Manga,
@@ -786,797 +782,949 @@ class TranslationPipeline(
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
         store.withGeneration(batchGeneration) {
             withNativeLane(
-            timeoutMs = ONNX_PHASE_TIMEOUT_MS,
-            chapterId = chapter.id,
-            chapterName = chapter.name,
-            pageKey = "<engine-setup>",
-            onTimeout = {
-                store.invalidateGeneration("engine setup timeout chapter=${chapter.name}")
-            },
+                timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+                chapterId = chapter.id,
+                chapterName = chapter.name,
+                pageKey = "<engine-setup>",
+                onTimeout = {
+                    store.invalidateGeneration("engine setup timeout chapter=${chapter.name}")
+                },
             ) {
                 engineRebuildMutex.withLock {
                     ensureEnginesBuiltFor(fromLang, toLang)
                 }
             } ?: return@withGeneration
 
-        val ensureCompanionDir: suspend () -> UniFile? = {
-            provider.getCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
-        }
-
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT batch START chapter=${chapter.name} pages=${orderedStreams.size} " +
-                "engine=${recognitionEngine::class.simpleName} translator=${textTranslator::class.simpleName}"
-        }
-
-        // Lane A (OCR+inpaint, permit-bound) feeds Lane B (translate, HTTP-bound)
-        // through an UNLIMITED channel; render is a join (tryRender) that reuses the
-        // in-memory cleaned bitmap when it fits the byte budget.
-        val isAi = translationPreferences.translationEngineCategory().get() == TranslationEngineCategory.AI_MODEL &&
-            textTranslator is ContextualTextTranslator
-        val contextualTranslator = textTranslator as? ContextualTextTranslator
-        val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
-            ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
-        val chunkProfile = if (contextualTranslator is LmStudioTranslator) {
-            TranslationContextChunkPlanner.Profile.LM_STUDIO
-        } else {
-            TranslationContextChunkPlanner.Profile.DEFAULT
-        }
-
-        // Chapter-level glossary accumulator for cross-chunk name/pronoun continuity.
-        // Seeded from already-translated pairs on batch resume so recurring terms
-        // established before a restart still feed the glossary.
-        val glossaryStats = ChapterGlossaryBuilder.Stats()
-        if (isAi) {
-            store.translatedPairs().forEach { (s, t) -> glossaryStats.add(s, t) }
-        }
-
-        // Held-cleaned-bitmap registry: render reuses the in-memory bitmap instead of
-        // reloading from disk. Bounded by BOTH a byte ceiling and a count cap; a page
-        // exceeding either spills (its .cleaned.jpg is already durable, so the bitmap
-        // recycles immediately and render reloads it).
-        val heldBitmapBytes = AtomicLong(0L)
-        val countSlots = Semaphore(HELD_BITMAP_MAX_COUNT)
-        val bitmapRegistry = ConcurrentHashMap<String, Bitmap>()
-        val translationRegistry = ConcurrentHashMap<String, PageTranslation>()
-        val renderMutexes = ConcurrentHashMap<String, Mutex>()
-        val aborted = AtomicBoolean(false)
-
-        suspend fun resumeGate(page: PageTranslation?): BatchResumeGate {
-            // Null inpaintingModeUsed = legacy page persisted before this field; treat
-            // as a match so existing chapters are not mass re-translated on first open.
-            val desiredMode = inpaintingModeFromPref().name
-            val inpaintModeMatches = page?.inpaintingModeUsed == null || page.inpaintingModeUsed == desiredMode
-            val decision = BatchResumeGateDecider.decide(
-                page,
-                cleanedFileValid = true,
-                inpaintModeMatches = inpaintModeMatches,
-            )
-            if (decision == BatchResumeGateDecider.Decision.SKIP_ALL && page?.cleanedImageName != null) {
-                val physicallyPresent = withContext(Dispatchers.IO) {
-                    provider.findPageCleanedImage(
-                        manga.title,
-                        source,
-                        chapter.name,
-                        chapter.scanlator,
-                        page.cleanedImageName!!,
-                    )?.let { it.exists() && it.length() > 0L } == true
-                }
-                if (!physicallyPresent) {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT resume invalidated metadata-only cleaned image: pageKey=${page.sourceFileName} cleaned=${page.cleanedImageName}"
-                    }
-                    return if (page.hasCurrentInpaintMask) {
-                        BatchResumeGate.INPAINT_ONLY
-                    } else {
-                        BatchResumeGate.FULL
-                    }
-                }
+            val ensureCompanionDir: suspend () -> UniFile? = {
+                provider.getCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
             }
-            if (!inpaintModeMatches) {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT resume re-inpainting for mode change: pageKey=${page?.sourceFileName} " +
-                        "was=${page?.inpaintingModeUsed} now=$desiredMode"
-                }
-            }
-            return when (decision) {
-                BatchResumeGateDecider.Decision.SKIP_ALL -> BatchResumeGate.SKIP_ALL
-                BatchResumeGateDecider.Decision.INPAINT_ONLY -> BatchResumeGate.INPAINT_ONLY
-                BatchResumeGateDecider.Decision.FULL -> BatchResumeGate.FULL
-            }
-        }
 
-        fun holdCleaned(pageKey: String, cleaned: Bitmap?) {
-            if (cleaned == null) return
-            val acquired = countSlots.tryAcquire()
-            val fits = acquired && heldBitmapBytes.get() + cleaned.byteCount <= HELD_BITMAP_BYTE_CEILING
-            if (fits) {
-                heldBitmapBytes.addAndGet(cleaned.byteCount.toLong())
-                bitmapRegistry[pageKey] = cleaned
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT batch START chapter=${chapter.name} pages=${orderedStreams.size} " +
+                    "engine=${recognitionEngine::class.simpleName} translator=${textTranslator::class.simpleName}"
+            }
+
+            // Lane A (OCR+inpaint, permit-bound) feeds Lane B (translate, HTTP-bound)
+            // through an UNLIMITED channel; render is a join (tryRender) that reuses the
+            // in-memory cleaned bitmap when it fits the byte budget.
+            val isAi = translationPreferences.translationEngineCategory().get() == TranslationEngineCategory.AI_MODEL &&
+                textTranslator is ContextualTextTranslator
+            val contextualTranslator = textTranslator as? ContextualTextTranslator
+            val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
+                ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
+            val chunkProfile = if (contextualTranslator is LmStudioTranslator) {
+                TranslationContextChunkPlanner.Profile.LM_STUDIO
             } else {
-                if (acquired) countSlots.release()
-                try { cleaned.recycle() } catch (_: Exception) {}
+                TranslationContextChunkPlanner.Profile.DEFAULT
             }
-        }
 
-        fun recycleHeld(pageKey: String) {
-            val b = bitmapRegistry.remove(pageKey) ?: return
-            heldBitmapBytes.addAndGet(-b.byteCount.toLong())
-            try { b.recycle() } catch (_: Exception) {}
-            countSlots.release()
-        }
+            // Chapter-level glossary accumulator for cross-chunk name/pronoun continuity.
+            // Seeded from already-translated pairs on batch resume so recurring terms
+            // established before a restart still feed the glossary.
+            val glossaryStats = ChapterGlossaryBuilder.Stats()
+            if (isAi) {
+                store.translatedPairs().forEach { (s, t) -> glossaryStats.add(s, t) }
+            }
 
-        suspend fun tryRender(pageKey: String) {
-            val mutex = renderMutexes.computeIfAbsent(pageKey) { Mutex() }
-            mutex.withLock {
-                val page = translationRegistry[pageKey] ?: return@withLock
-                if (page.renderStatus == StageStatus.READY) {
-                    recycleHeld(pageKey)
-                    translationRegistry.remove(pageKey)
-                    tracker?.markRenderDone(pageKey)
-                    return@withLock
+            // Held-cleaned-bitmap registry: render reuses the in-memory bitmap instead of
+            // reloading from disk. Bounded by BOTH a byte ceiling and a count cap; a page
+            // exceeding either spills (its .cleaned.jpg is already durable, so the bitmap
+            // recycles immediately and render reloads it).
+            val heldBitmapBytes = AtomicLong(0L)
+            val countSlots = Semaphore(HELD_BITMAP_MAX_COUNT)
+            val bitmapRegistry = ConcurrentHashMap<String, Bitmap>()
+            val translationRegistry = ConcurrentHashMap<String, PageTranslation>()
+            val renderMutexes = ConcurrentHashMap<String, Mutex>()
+            val aborted = AtomicBoolean(false)
+
+            suspend fun resumeGate(page: PageTranslation?): BatchResumeGate {
+                // Null inpaintingModeUsed = legacy page persisted before this field; treat
+                // as a match so existing chapters are not mass re-translated on first open.
+                val desiredMode = inpaintingModeFromPref().name
+                val inpaintModeMatches = page?.inpaintingModeUsed == null || page.inpaintingModeUsed == desiredMode
+                val decision = BatchResumeGateDecider.decide(
+                    page,
+                    cleanedFileValid = true,
+                    inpaintModeMatches = inpaintModeMatches,
+                )
+                if (decision == BatchResumeGateDecider.Decision.SKIP_ALL && page?.cleanedImageName != null) {
+                    val physicallyPresent = withContext(Dispatchers.IO) {
+                        provider.findPageCleanedImage(
+                            manga.title,
+                            source,
+                            chapter.name,
+                            chapter.scanlator,
+                            page.cleanedImageName!!,
+                        )?.let { it.exists() && it.length() > 0L } == true
+                    }
+                    if (!physicallyPresent) {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT resume invalidated metadata-only cleaned image: pageKey=${page.sourceFileName} cleaned=${page.cleanedImageName}"
+                        }
+                        return if (page.hasCurrentInpaintMask) {
+                            BatchResumeGate.INPAINT_ONLY
+                        } else {
+                            BatchResumeGate.FULL
+                        }
+                    }
                 }
-                val status = page.translationStatus
-                if (status != StageStatus.READY && status != StageStatus.PARTIAL) {
-                    if (status == StageStatus.FAILED) {
+                if (!inpaintModeMatches) {
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT resume re-inpainting for mode change: pageKey=${page?.sourceFileName} " +
+                            "was=${page?.inpaintingModeUsed} now=$desiredMode"
+                    }
+                }
+                return when (decision) {
+                    BatchResumeGateDecider.Decision.SKIP_ALL -> BatchResumeGate.SKIP_ALL
+                    BatchResumeGateDecider.Decision.INPAINT_ONLY -> BatchResumeGate.INPAINT_ONLY
+                    BatchResumeGateDecider.Decision.FULL -> BatchResumeGate.FULL
+                }
+            }
+
+            fun holdCleaned(pageKey: String, cleaned: Bitmap?) {
+                if (cleaned == null) return
+                val acquired = countSlots.tryAcquire()
+                val fits = acquired && heldBitmapBytes.get() + cleaned.byteCount <= HELD_BITMAP_BYTE_CEILING
+                if (fits) {
+                    heldBitmapBytes.addAndGet(cleaned.byteCount.toLong())
+                    bitmapRegistry[pageKey] = cleaned
+                } else {
+                    if (acquired) countSlots.release()
+                    try {
+                        cleaned.recycle()
+                    } catch (_: Exception) {}
+                }
+            }
+
+            fun recycleHeld(pageKey: String) {
+                val b = bitmapRegistry.remove(pageKey) ?: return
+                heldBitmapBytes.addAndGet(-b.byteCount.toLong())
+                try {
+                    b.recycle()
+                } catch (_: Exception) {}
+                countSlots.release()
+            }
+
+            suspend fun tryRender(pageKey: String) {
+                val mutex = renderMutexes.computeIfAbsent(pageKey) { Mutex() }
+                mutex.withLock {
+                    val page = translationRegistry[pageKey] ?: return@withLock
+                    if (page.renderStatus == StageStatus.READY) {
                         recycleHeld(pageKey)
                         translationRegistry.remove(pageKey)
+                        tracker?.markRenderDone(pageKey)
+                        return@withLock
                     }
-                    return@withLock
+                    val status = page.translationStatus
+                    if (status != StageStatus.READY && status != StageStatus.PARTIAL) {
+                        if (status == StageStatus.FAILED) {
+                            recycleHeld(pageKey)
+                            translationRegistry.remove(pageKey)
+                        }
+                        return@withLock
+                    }
+                    val inpaintStatus = page.inpaintStatus
+                    if (inpaintStatus != StageStatus.READY && inpaintStatus != StageStatus.PARTIAL && inpaintStatus != StageStatus.TEXTLESS) {
+                        if (inpaintStatus == StageStatus.FAILED) {
+                            recycleHeld(pageKey)
+                            translationRegistry.remove(pageKey)
+                        }
+                        // Inpaint isn't ready yet, wait for inpaintWorker to call tryRender
+                        return@withLock
+                    }
+                    // READY/PARTIAL -> render. Consume the held bitmap on the happy path
+                    // (no disk reload); spill/SKIP_ALL pages reload .cleaned.jpg instead.
+                    val held = bitmapRegistry.remove(pageKey)
+                    if (held != null) {
+                        heldBitmapBytes.addAndGet(-held.byteCount.toLong())
+                        countSlots.release()
+                    }
+                    val bitmap = held ?: page.cleanedImageName?.let { loadPersistedCleanedBitmap(manga, chapter, source, it) }
+                    if (bitmap == null && inpaintStatus != StageStatus.TEXTLESS) {
+                        page.inpaintStatus = StageStatus.FAILED
+                        page.renderStatus = StageStatus.FAILED
+                        page.recordAttemptFailure()
+                        page.errorMessage = "Cleaned image is missing or unreadable; retry inpainting"
+                        tracker?.markInpaintFailed(pageKey, page.errorMessage!!)
+                        tracker?.markRenderFailed(pageKey, page.errorMessage!!)
+                        persistPageWithOomRecovery(store, pageKey, page)
+                        translationRegistry.remove(pageKey)
+                        return@withLock
+                    }
+                    var renderPersisted = false
+                    try {
+                        tracker?.markRenderRunning(pageKey)
+                        store.updatePage(pageKey) {
+                            (it ?: page).apply {
+                                renderStatus = StageStatus.RUNNING
+                                updatedAt = System.currentTimeMillis()
+                            }
+                        }
+                        val renderInput = store.snapshot(pageKey)
+                        RenderColorEstimator.recomputeFor(bitmap, page.blocks)
+                        page.renderStatus = StageStatus.READY
+                        page.updatedAt = System.currentTimeMillis()
+                        val patch = RenderStagePatch(
+                            pageKey = pageKey,
+                            generation = renderInput.generation,
+                            expectedCleanedImageName = renderInput.page?.cleanedImageName ?: "",
+                            expectedInpaintRevision = renderInput.page?.inpaintRevision ?: 0,
+                            expectedOcrBlockFingerprints = renderInput.blockFingerprints,
+                            blocks = page.blocks.mapIndexed { index, block ->
+                                RenderBlockPatch(
+                                    blockIndex = index,
+                                    expectedBlockFingerprint = renderInput.page?.blocks?.getOrNull(index)?.stableFingerprint() ?: "",
+                                    textColor = block.textColor,
+                                    strokeColor = block.strokeColor,
+                                    strokeWidth = block.strokeWidth,
+                                )
+                            },
+                            renderStatus = StageStatus.READY,
+                        )
+                        renderPersisted = store.mergeRender(patch) is StagePatchResult.Accepted
+                        tracker?.markRenderDone(pageKey)
+                    } catch (e: LayoutFailureException) {
+                        page.renderStatus = StageStatus.FAILED
+                        page.recordAttemptFailure()
+                        val msg = if (e.blockIds.isNotEmpty()) "${e.message} (blocks: ${e.blockIds.joinToString()})" else e.message
+                        page.errorMessage = msg
+                        tracker?.markRenderFailed(pageKey, msg ?: "Layout failed")
+                        logcat(LogPriority.ERROR, e) { "TachiyomiAT batch render layout failed: $pageKey blocks=${e.blockIds}" }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        page.renderStatus = StageStatus.FAILED
+                        page.recordAttemptFailure()
+                        page.errorMessage = e.message
+                        tracker?.markRenderFailed(pageKey, e.message ?: e::class.java.simpleName)
+                        logcat(LogPriority.ERROR, e) { "TachiyomiAT batch render failed: $pageKey" }
+                    } finally {
+                        try {
+                            bitmap?.recycle()
+                        } catch (_: Exception) {}
+                        page.cleanedBitmap = null
+                        if (!renderPersisted) {
+                            persistPageWithOomRecovery(store, pageKey, page)
+                        }
+                        translationRegistry.remove(pageKey)
+                    }
                 }
-                // READY/PARTIAL -> render. Consume the held bitmap on the happy path
-                // (no disk reload); spill/SKIP_ALL pages reload .cleaned.jpg instead.
-                val held = bitmapRegistry.remove(pageKey)
-                if (held != null) {
-                    heldBitmapBytes.addAndGet(-held.byteCount.toLong())
-                    countSlots.release()
+            }
+
+            val chunkCounter = AtomicLong(0L)
+            var dynamicGlossary = ""
+            var dynamicGlossaryExtracted = false
+
+            suspend fun translateChunkAi(
+                chunk: TranslationContextChunk,
+                completedPages: Set<String>,
+                rolling: String,
+                pastTranslations: String = "",
+                analyticalMode: Boolean = false,
+            ): Pair<String, String> {
+                coroutineContext.ensureActive()
+                val ct = contextualTranslator ?: return rolling to pastTranslations
+
+                if (!dynamicGlossaryExtracted) {
+                    dynamicGlossaryExtracted = true
+                    dynamicGlossary = eu.kanade.translation.translator.GlossaryExtractor.extractGlossary(ct, chunk.pages.values.toList())
                 }
-                val bitmap = held ?: page.cleanedImageName?.let { loadPersistedCleanedBitmap(manga, chapter, source, it) }
-                if (bitmap == null) {
-                    page.inpaintStatus = StageStatus.FAILED
-                    page.renderStatus = StageStatus.FAILED
-                    page.recordAttemptFailure()
-                    page.errorMessage = "Cleaned image is missing or unreadable; retry inpainting"
-                    tracker?.markInpaintFailed(pageKey, page.errorMessage!!)
-                    tracker?.markRenderFailed(pageKey, page.errorMessage!!)
-                    persistPageWithOomRecovery(store, pageKey, page)
-                    translationRegistry.remove(pageKey)
-                    return@withLock
+
+                val glossaryText = dynamicGlossary + "\n" + ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
+                // Build future OCR context from pages already OCR'd but not yet
+                // translated (in the registry, no translation yet). Empty when
+                // Analytical Mode is off or no upcoming pages exist.
+                val futureContext = if (analyticalMode) {
+                    val upcoming = translationRegistry.values
+                        .filter { pg ->
+                            pg.blocks.any { it.translation.isBlank() && it.text.isNotBlank() }
+                        }
+                    TranslationContextChunkPlanner.buildFutureContext(upcoming)
+                } else {
+                    ""
                 }
-                try {
-                    tracker?.markRenderRunning(pageKey)
-                    store.updatePage(pageKey) {
-                        (it ?: page).apply {
-                            renderStatus = StageStatus.RUNNING
+                val withRolling = TranslationContextChunkPlanner.withRollingContext(
+                    chunk = chunk,
+                    rollingContext = rolling,
+                    requestedOutputTokens = requestedOutputTokens,
+                    profile = chunkProfile,
+                    glossary = glossaryText,
+                )
+                val contextualChunk = if (analyticalMode) {
+                    TranslationContextChunkPlanner.withSlidingContext(
+                        chunk = withRolling,
+                        pastTranslations = pastTranslations,
+                        futureContext = futureContext,
+                        requestedOutputTokens = requestedOutputTokens,
+                        profile = chunkProfile,
+                    )
+                } else {
+                    withRolling
+                }
+                chunk.pages.keys.forEach { pk ->
+                    val p = translationRegistry[pk] ?: return@forEach
+                    store.updatePage(pk) {
+                        (it ?: p).apply {
+                            translationStatus = StageStatus.RUNNING
+                            errorMessage = null
                             updatedAt = System.currentTimeMillis()
                         }
                     }
-                    RenderColorEstimator.recomputeFor(bitmap, page.blocks)
-                    page.renderStatus = StageStatus.READY
-                    page.updatedAt = System.currentTimeMillis()
-                    tracker?.markRenderDone(pageKey)
+                    tracker?.markTranslateRunning(pk)
+                }
+                try {
+                    translateAiChunkWithAdaptiveRetry(
+                        translator = ct,
+                        chunk = contextualChunk,
+                        requestedOutputTokens = requestedOutputTokens,
+                        profile = chunkProfile,
+                        allowFailureSplit = ct is LmStudioTranslator,
+                        label = "stream-${chunkCounter.incrementAndGet()}",
+                        retryDepth = 0,
+                    )
+                    var newRolling = TranslationContextChunkPlanner.updateRollingContext(
+                        rolling,
+                        contextualChunk.pages,
+                    )
+                    // Accumulate target-side past translations for the Analytical-Mode sliding
+                    // window. Left as-is when off so the non-analytical path is unchanged.
+                    var newPast = if (analyticalMode) {
+                        val combined = if (pastTranslations.isBlank()) {
+                            TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
+                        } else {
+                            pastTranslations + "\n" +
+                                TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
+                        }
+                        // Bound to the last N lines (MAX_PAST_TRANSLATION_PAIRS) by
+                        // taking the tail after splitting on newlines.
+                        val lines = combined.lineSequence().filter { it.isNotBlank() }.toList()
+                        lines.takeLast(TranslationContextChunkPlanner.MAX_PAST_TRANSLATION_PAIRS)
+                            .joinToString("\n")
+                    } else {
+                        pastTranslations
+                    }
+                    val estimatedRollingTokens = TranslationContextChunkPlanner.estimateTokens(newRolling)
+                    val maxTokens = TranslationContextChunkPlanner.constraintsFor(chunkProfile).maxRollingContextTokens
+                    if (estimatedRollingTokens > maxTokens) {
+                        val summaryPrompt = "Summarize the following manga dialogue context into a dense 2-3 sentence paragraph focusing on current plot and speakers:\n\n$newRolling"
+                        val summary = ct.promptText(summaryPrompt)
+                        if (summary.isNotBlank()) {
+                            logcat(LogPriority.INFO) { "Summarized rolling context ($estimatedRollingTokens tokens -> ${TranslationContextChunkPlanner.estimateTokens(summary)} tokens)" }
+                            newRolling = "[SUMMARY] $summary"
+                        }
+                    }
+                    // Accumulate this chunk's translated pairs into the chapter glossary and
+                    // persist it. Keep the metric tied to the current pipe-delimited protocol;
+                    // legacy speech-role tags are no longer part of the prompt contract.
+                    var translatedPairs = 0
+                    contextualChunk.pages.values.forEach { page ->
+                        page.blocks.forEach { b ->
+                            glossaryStats.add(b.text, b.translation)
+                            if (b.translation.isNotBlank()) translatedPairs++
+                        }
+                    }
+                    val newGlossary = glossaryStats.build()
+                    store.updateGlossary(newGlossary)
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT batch stage2-AI chunk: translatedPairs=$translatedPairs " +
+                            "glossaryEntries=${newGlossary.size}"
+                    }
+                    completedPages.forEach { pk ->
+                        val p = translationRegistry[pk] ?: return@forEach
+                        val translatedPage = contextualChunk.pages[pk]
+                        if (translatedPage != null) {
+                            val translatedBlocks = translatedPage.blocks.associateBy { b -> b.blockId }
+                            p.blocks = p.blocks.map { b ->
+                                translatedBlocks[b.blockId]?.let { tb ->
+                                    b.copy(
+                                        translation = tb.translation,
+                                    )
+                                } ?: b
+                            }.toMutableList()
+                        }
+
+                        val status = TranslationBlockValidation.applyTo(p)
+                        when (status) {
+                            StageStatus.READY -> tracker?.markTranslateDone(pk)
+                            StageStatus.PARTIAL -> tracker?.markTranslatePartial(pk)
+                            StageStatus.FAILED -> tracker?.markTranslateFailed(pk, p.errorMessage ?: "Validation failed")
+                        }
+                        store.updatePage(pk) {
+                            (it ?: p).apply {
+                                translationStatus = p.translationStatus
+                                if (status == StageStatus.FAILED) {
+                                    translationError = p.translationError
+                                    retryCount = p.retryCount
+                                    attemptCount = p.attemptCount
+                                }
+                                if (it != null && it !== p) {
+                                    val mergedBlocks = p.blocks.associateBy { b -> b.blockId }
+                                    blocks = blocks.map { b ->
+                                        mergedBlocks[b.blockId]?.let { tb ->
+                                            b.copy(
+                                                translation = tb.translation,
+                                            )
+                                        } ?: b
+                                    }.toMutableList()
+                                }
+                                updatedAt = System.currentTimeMillis()
+                            }
+                        }
+                        tryRender(pk)
+                    }
+                    return newRolling to newPast
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    page.renderStatus = StageStatus.FAILED
-                    page.recordAttemptFailure()
-                    page.errorMessage = e.message
-                    tracker?.markRenderFailed(pageKey, e.message ?: e::class.java.simpleName)
-                    logcat(LogPriority.ERROR, e) { "TachiyomiAT batch render failed: $pageKey" }
-                } finally {
-                    try { bitmap.recycle() } catch (_: Exception) {}
-                    page.cleanedBitmap = null
-                    persistPageWithOomRecovery(store, pageKey, page)
-                    translationRegistry.remove(pageKey)
+                    val reason = e.message ?: e.javaClass.simpleName
+                    chunk.pages.keys.forEach { pk ->
+                        val p = translationRegistry[pk] ?: return@forEach
+                        markBatchTranslationFailed(store, pk, p, "AI chunk failed: $reason")
+                        tracker?.markTranslateFailed(pk, "AI chunk failed: $reason")
+                    }
+                    logcat(LogPriority.ERROR, e) {
+                        "TachiyomiAT contextual batch translate failed: chunk pages=${chunk.pages.keys}"
+                    }
+                    return rolling to pastTranslations
                 }
             }
-        }
 
-        val chunkCounter = AtomicLong(0L)
-        var dynamicGlossary = ""
-        var dynamicGlossaryExtracted = false
-
-        suspend fun translateChunkAi(
-            chunk: TranslationContextChunk,
-            completedPages: Set<String>,
-            rolling: String,
-            pastTranslations: String = "",
-            analyticalMode: Boolean = false,
-        ): Pair<String, String> {
-            coroutineContext.ensureActive()
-            val ct = contextualTranslator ?: return rolling to pastTranslations
-
-            if (!dynamicGlossaryExtracted) {
-                dynamicGlossaryExtracted = true
-                dynamicGlossary = eu.kanade.translation.translator.GlossaryExtractor.extractGlossary(ct, chunk.pages.values.toList())
-            }
-
-            val glossaryText = dynamicGlossary + "\n" + ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
-            // Build future OCR context from pages already OCR'd but not yet
-            // translated (in the registry, no translation yet). Empty when
-            // Analytical Mode is off or no upcoming pages exist.
-            val futureContext = if (analyticalMode) {
-                val upcoming = translationRegistry.values
-                    .filter { pg ->
-                        pg.blocks.any { it.translation.isBlank() && it.text.isNotBlank() }
-                    }
-                TranslationContextChunkPlanner.buildFutureContext(upcoming)
-            } else {
-                ""
-            }
-            val withRolling = TranslationContextChunkPlanner.withRollingContext(
-                chunk = chunk,
-                rollingContext = rolling,
-                requestedOutputTokens = requestedOutputTokens,
-                profile = chunkProfile,
-                glossary = glossaryText,
-            )
-            val contextualChunk = if (analyticalMode) {
-                TranslationContextChunkPlanner.withSlidingContext(
-                    chunk = withRolling,
-                    pastTranslations = pastTranslations,
-                    futureContext = futureContext,
-                    requestedOutputTokens = requestedOutputTokens,
-                    profile = chunkProfile,
-                )
-            } else {
-                withRolling
-            }
-            chunk.pages.keys.forEach { pk ->
-                val p = translationRegistry[pk] ?: return@forEach
+            suspend fun completeChunklessPage(pk: String) {
+                val p = translationRegistry[pk] ?: return
+                TranslationBlockValidation.applyTo(p)
+                p.translationStatus = StageStatus.READY
                 store.updatePage(pk) {
                     (it ?: p).apply {
-                        translationStatus = StageStatus.RUNNING
-                        errorMessage = null
+                        translationStatus = StageStatus.READY
+                        translationError = null
+                        if (it != null && it !== p) {
+                            val mergedBlocks = p.blocks.associateBy { b -> b.blockId }
+                            blocks = blocks.map { b ->
+                                mergedBlocks[b.blockId]?.let { tb ->
+                                    b.copy(
+                                        translation = tb.translation,
+                                    )
+                                } ?: b
+                            }.toMutableList()
+                        }
                         updatedAt = System.currentTimeMillis()
                     }
                 }
-                tracker?.markTranslateRunning(pk)
+                tracker?.markTranslateDone(pk)
+                tryRender(pk)
             }
-            try {
-                translateAiChunkWithAdaptiveRetry(
-                    translator = ct,
-                    chunk = contextualChunk,
-                    requestedOutputTokens = requestedOutputTokens,
-                    profile = chunkProfile,
-                    allowFailureSplit = ct is LmStudioTranslator,
-                    label = "stream-${chunkCounter.incrementAndGet()}",
-                    retryDepth = 0,
-                )
-                var newRolling = TranslationContextChunkPlanner.updateRollingContext(
-                    rolling, contextualChunk.pages,
-                )
-                // Accumulate target-side past translations for the Analytical-Mode sliding
-                // window. Left as-is when off so the non-analytical path is unchanged.
-                var newPast = if (analyticalMode) {
-                    val combined = if (pastTranslations.isBlank()) {
-                        TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
-                    } else {
-                        pastTranslations + "\n" +
-                            TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
-                    }
-                    // Bound to the last N lines (MAX_PAST_TRANSLATION_PAIRS) by
-                    // taking the tail after splitting on newlines.
-                    val lines = combined.lineSequence().filter { it.isNotBlank() }.toList()
-                    lines.takeLast(TranslationContextChunkPlanner.MAX_PAST_TRANSLATION_PAIRS)
-                        .joinToString("\n")
-                } else {
-                    pastTranslations
-                }
-                val estimatedRollingTokens = TranslationContextChunkPlanner.estimateTokens(newRolling)
-                val maxTokens = TranslationContextChunkPlanner.constraintsFor(chunkProfile).maxRollingContextTokens
-                if (estimatedRollingTokens > maxTokens) {
-                    val summaryPrompt = "Summarize the following manga dialogue context into a dense 2-3 sentence paragraph focusing on current plot and speakers:\n\n$newRolling"
-                    val summary = ct.promptText(summaryPrompt)
-                    if (summary.isNotBlank()) {
-                        logcat(LogPriority.INFO) { "Summarized rolling context ($estimatedRollingTokens tokens -> ${TranslationContextChunkPlanner.estimateTokens(summary)} tokens)" }
-                        newRolling = "[SUMMARY] $summary"
-                    }
-                }
-                // Accumulate this chunk's translated pairs into the chapter glossary and
-                // persist it. Keep the metric tied to the current pipe-delimited protocol;
-                // legacy speech-role tags are no longer part of the prompt contract.
-                var translatedPairs = 0
-                contextualChunk.pages.values.forEach { page ->
-                    page.blocks.forEach { b ->
-                        glossaryStats.add(b.text, b.translation)
-                        if (b.translation.isNotBlank()) translatedPairs++
-                    }
-                }
-                val newGlossary = glossaryStats.build()
-                store.updateGlossary(newGlossary)
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT batch stage2-AI chunk: translatedPairs=$translatedPairs " +
-                        "glossaryEntries=${newGlossary.size}"
-                }
-                completedPages.forEach { pk ->
-                    val p = translationRegistry[pk] ?: return@forEach
-                    val status = TranslationBlockValidation.applyTo(p)
-                    when (status) {
-                        StageStatus.READY -> tracker?.markTranslateDone(pk)
-                        StageStatus.PARTIAL -> tracker?.markTranslatePartial(pk)
-                        StageStatus.FAILED -> tracker?.markTranslateFailed(pk, p.errorMessage ?: "Validation failed")
-                    }
-                    store.updatePage(pk) {
-                        (it ?: p).apply {
-                            translationStatus = p.translationStatus
-                            if (status == StageStatus.FAILED) {
-                                errorMessage = p.errorMessage
-                                retryCount = p.retryCount
-                                attemptCount = p.attemptCount
-                            }
-                            updatedAt = System.currentTimeMillis()
-                        }
-                    }
-                    tryRender(pk)
-                }
-                return newRolling to newPast
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                val reason = e.message ?: e.javaClass.simpleName
-                chunk.pages.keys.forEach { pk ->
-                    val p = translationRegistry[pk] ?: return@forEach
-                    markBatchTranslationFailed(store, pk, p, "AI chunk failed: $reason")
-                    tracker?.markTranslateFailed(pk, "AI chunk failed: $reason")
-                    tryRender(pk)
-                }
-                logcat(LogPriority.ERROR, e) {
-                    "TachiyomiAT contextual batch translate failed: chunk pages=${chunk.pages.keys}"
-                }
-                return rolling to pastTranslations
-            }
-        }
 
-        suspend fun completeChunklessPage(pk: String) {
-            val p = translationRegistry[pk] ?: return
-            TranslationBlockValidation.applyTo(p)
-            p.translationStatus = StageStatus.READY
-            store.updatePage(pk) {
-                (it ?: p).apply {
-                    translationStatus = StageStatus.READY
-                    errorMessage = null
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            tracker?.markTranslateDone(pk)
-            tryRender(pk)
-        }
+            // ---- TachiyomiAT Checkpoint 2 integration: coordinated Pass-1 ----
+            // The batch schedule is now driven by [BatchCoordinator] (bounded channel
+            // cap 2, serialized native lane, REMOTE_IO translation overlapping same-page
+            // inpaint, LOCAL_COMPUTE translation serialized with native, per-page render
+            // join, Pass-1 barrier). The pipeline supplies real adapter implementations of
+            // [NativeLaneWorker] / [TranslatorLaneWorker] / [RenderJoinWorker] that reuse
+            // the existing OCR/inpaint/persist/translate/render helpers above, so the heavy
+            // Android/ONNX/HTTP logic is unchanged — only the schedule is centralized.
+            //
+            // TranslatorComputeClass drives lane routing: ML Kit (LOCAL_COMPUTE) is kept
+            // inline on the native lane so its on-device inference never overlaps native
+            // OCR/inpaint; remote providers (REMOTE_IO) overlap their network wait with
+            // same-page inpaint because the work item is offered to the bounded channel
+            // AFTER OCR persistence and BEFORE inpaint completes.
+            val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
 
-        // ---- TachiyomiAT Checkpoint 2 integration: coordinated Pass-1 ----
-        // The batch schedule is now driven by [BatchCoordinator] (bounded channel
-        // cap 2, serialized native lane, REMOTE_IO translation overlapping same-page
-        // inpaint, LOCAL_COMPUTE translation serialized with native, per-page render
-        // join, Pass-1 barrier). The pipeline supplies real adapter implementations of
-        // [NativeLaneWorker] / [TranslatorLaneWorker] / [RenderJoinWorker] that reuse
-        // the existing OCR/inpaint/persist/translate/render helpers above, so the heavy
-        // Android/ONNX/HTTP logic is unchanged — only the schedule is centralized.
-        //
-        // TranslatorComputeClass drives lane routing: ML Kit (LOCAL_COMPUTE) is kept
-        // inline on the native lane so its on-device inference never overlaps native
-        // OCR/inpaint; remote providers (REMOTE_IO) overlap their network wait with
-        // same-page inpaint because the work item is offered to the bounded channel
-        // AFTER OCR persistence and BEFORE inpaint completes.
-        val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
-
-        val streamsByKey = LinkedHashMap(orderedStreams.toMap())
-        val nativeWorker = object : NativeLaneWorker {
-            override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
-                coroutineContext.ensureActive()
-                if (aborted.get()) return null
-                val streamFn = streamsByKey[pageKey] ?: return null
-                val existing = store.state.value[pageKey]
-                val gate = resumeGate(existing)
-                if (gate == BatchResumeGate.SKIP_ALL) {
-                    // Fully durable (OCR+inpaint done): no decode/slot; render reloads disk.
-                    val p = existing!!
-                    translationRegistry[pageKey] = p
-                    tryRender(pageKey)
-                    return null // Skip all, no translation needed
-                }
-                var producedTarget: PageTranslation? = null
-                var producedDecoded: DecodedPage? = null
-                withNativeLane(
-                    timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
-                    chapterId = chapter.id,
-                    chapterName = chapter.name,
-                    pageKey = pageKey,
-                    onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
-                ) {
-                    val latest = store.state.value[pageKey]
-                    val innerGate = resumeGate(latest)
-                    if (innerGate == BatchResumeGate.SKIP_ALL) {
-                        val p = latest!!
+            val streamsByKey = LinkedHashMap(orderedStreams.toMap())
+            val nativeWorker = object : NativeLaneWorker {
+                override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
+                    coroutineContext.ensureActive()
+                    if (aborted.get()) return null
+                    val streamFn = streamsByKey[pageKey] ?: return null
+                    val existing = store.state.value[pageKey]
+                    val gate = resumeGate(existing)
+                    if (gate == BatchResumeGate.SKIP_ALL) {
+                        // Fully durable (OCR+inpaint done): no decode/slot; render reloads disk.
+                        val p = existing!!
                         translationRegistry[pageKey] = p
                         tryRender(pageKey)
-                        producedTarget = p
-                        return@withNativeLane
+                        return null // Skip all, no translation needed
                     }
-                    try {
-                        val decoded = try {
-                            decodePageBitmapForTranslation(pageKey, streamFn)
-                        } catch (deferred: LowMemoryDecodeDeferredException) {
-                            tracker?.markOcrFailed(pageKey, deferred.message ?: "Decode deferred")
-                            store.updatePage(pageKey) {
-                                (it ?: PageTranslation()).apply {
-                                    sourceFileName = pageKey
-                                    ocrStatus = StageStatus.FAILED
-                                    errorMessage = deferred.message
-                                    retryCount = (it?.retryCount ?: 0) + 1
-                                    attemptCount = (it?.attemptCount ?: 0) + 1
-                                    updatedAt = System.currentTimeMillis()
+                    var producedTarget: PageTranslation? = null
+                    var producedDecoded: DecodedPage? = null
+                    withNativeLane(
+                        timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
+                        chapterId = chapter.id,
+                        chapterName = chapter.name,
+                        pageKey = pageKey,
+                        onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
+                    ) {
+                        val latest = store.state.value[pageKey]
+                        val innerGate = resumeGate(latest)
+                        if (innerGate == BatchResumeGate.SKIP_ALL) {
+                            val p = latest!!
+                            translationRegistry[pageKey] = p
+                            tryRender(pageKey)
+                            producedTarget = p
+                            return@withNativeLane
+                        }
+                        try {
+                            val decoded = try {
+                                decodePageBitmapForTranslation(pageKey, streamFn)
+                            } catch (deferred: LowMemoryDecodeDeferredException) {
+                                tracker?.markOcrFailed(pageKey, deferred.message ?: "Decode deferred")
+                                store.updatePage(pageKey) {
+                                    (it ?: PageTranslation()).apply {
+                                        sourceFileName = pageKey
+                                        ocrStatus = StageStatus.FAILED
+                                        errorMessage = deferred.message
+                                        retryCount = (it?.retryCount ?: 0) + 1
+                                        attemptCount = (it?.attemptCount ?: 0) + 1
+                                        updatedAt = System.currentTimeMillis()
+                                    }
                                 }
-                            }
-                            return@withNativeLane
-                        } ?: run {
-                            tracker?.markOcrFailed(pageKey, "Failed to decode page: null bitmap")
-                            store.updatePage(pageKey) {
-                                (it ?: PageTranslation()).apply {
-                                    sourceFileName = pageKey
-                                    ocrStatus = StageStatus.FAILED
-                                    errorMessage = "Failed to decode page: null bitmap"
-                                    retryCount = (it?.retryCount ?: 0) + 1
-                                    attemptCount = (it?.attemptCount ?: 0) + 1
-                                    updatedAt = System.currentTimeMillis()
+                                return@withNativeLane
+                            } ?: run {
+                                tracker?.markOcrFailed(pageKey, "Failed to decode page: null bitmap")
+                                store.updatePage(pageKey) {
+                                    (it ?: PageTranslation()).apply {
+                                        sourceFileName = pageKey
+                                        ocrStatus = StageStatus.FAILED
+                                        errorMessage = "Failed to decode page: null bitmap"
+                                        retryCount = (it?.retryCount ?: 0) + 1
+                                        attemptCount = (it?.attemptCount ?: 0) + 1
+                                        updatedAt = System.currentTimeMillis()
+                                    }
                                 }
+                                return@withNativeLane
                             }
-                            return@withNativeLane
+                            producedDecoded = decoded
+                            // Decode succeeds: the bitmap is owned by this handle until
+                            // [releaseNativeResources]. OCR persistence runs here (analyzePage
+                            // persists blocks + ocrStatus BEFORE inpaint), closing the OCR crash
+                            // window first and producing the immutable work item offered to the
+                            // translation lane below.
+                            if (innerGate == BatchResumeGate.INPAINT_ONLY) {
+                                translationRegistry[pageKey] = latest ?: PageTranslation(sourceFileName = pageKey)
+                            } else {
+                                tracker?.markOcrRunning(pageKey)
+                                val analyzed = analyzePage(pageKey, decoded.bitmap, decoded, store)
+                                tracker?.markOcrDone(pageKey)
+                                translationRegistry[pageKey] = analyzed
+                            }
+                            producedTarget = translationRegistry[pageKey]
+                        } catch (deferred: LowMemoryRecognitionDeferredException) {
+                            val t = translationRegistry[pageKey]
+                            if (t != null) {
+                                t.inpaintStatus = StageStatus.FAILED
+                                t.errorMessage = deferred.message
+                            }
+                            tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
                         }
-                        producedDecoded = decoded
-                        // Decode succeeds: the bitmap is owned by this handle until
-                        // [releaseNativeResources]. OCR persistence runs here (analyzePage
-                        // persists blocks + ocrStatus BEFORE inpaint), closing the OCR crash
-                        // window first and producing the immutable work item offered to the
-                        // translation lane below.
-                        if (innerGate == BatchResumeGate.INPAINT_ONLY) {
-                            translationRegistry[pageKey] = latest ?: PageTranslation(sourceFileName = pageKey)
-                        } else {
-                            tracker?.markOcrRunning(pageKey)
-                            val analyzed = analyzePage(pageKey, decoded.bitmap, decoded, store)
-                            tracker?.markOcrDone(pageKey)
-                            translationRegistry[pageKey] = analyzed
-                        }
-                        producedTarget = translationRegistry[pageKey]
-                    } catch (deferred: LowMemoryRecognitionDeferredException) {
-                        val t = translationRegistry[pageKey]
-                        if (t != null) {
-                            t.inpaintStatus = StageStatus.FAILED
-                            t.errorMessage = deferred.message
-                        }
-                        tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
                     }
-                }
-                val target = producedTarget ?: return null
-                
-                // Recycle bitmap immediately for OCR-first barrier (Checkpoint 3)
-                if (producedDecoded != null) {
-                    try { producedDecoded!!.bitmap.recycle() } catch (_: Exception) {}
-                }
-                BitmapPool.releaseAll()
-                try { recognitionEngine.reclaimPooledMemory() } catch (_: Exception) {}
+                    val target = producedTarget ?: return null
 
-                return OcrReadyPageRef(
-                    pageKey = pageKey,
-                    pageIndex = pageIndex,
-                    generation = 0L,
-                    blockFingerprints = emptyList()
-                )
-            }
-
-            override suspend fun runInpaintStage(pageKey: String) {
-                val streamFn = streamsByKey[pageKey] ?: return
-                val latest = store.state.value[pageKey] ?: return
-                val target = translationRegistry[pageKey] ?: latest
-                // SKIP_ALL-resume durable cleaned image shortcut: keep existing result.
-                val hasDurableCleaned = latest.cleanedImageName != null &&
-                    latest.inpaintStatus == StageStatus.READY &&
-                    latest.hasCurrentInpaintResult
-                if (hasDurableCleaned) {
-                    target.cleanedImageName = latest.cleanedImageName
-                    target.inpaintingModeUsed = latest.inpaintingModeUsed
-                    target.inpaintStatus = StageStatus.READY
-                    target.cleanedBitmap = null
-                    return
-                }
-                withNativeLane(
-                    timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
-                    chapterId = chapter.id,
-                    chapterName = chapter.name,
-                    pageKey = pageKey,
-                    onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
-                ) {
-                    var decoded: DecodedPage? = null
+                    // Recycle bitmap immediately for OCR-first barrier (Checkpoint 3)
+                    if (producedDecoded != null) {
+                        try {
+                            producedDecoded!!.bitmap.recycle()
+                        } catch (_: Exception) {}
+                    }
+                    BitmapPool.releaseAll()
                     try {
-                        tracker?.markInpaintRunning(pageKey)
-                        decoded = decodePageBitmapForTranslation(pageKey, streamFn)
-                        if (decoded == null) {
-                            tracker?.markInpaintFailed(pageKey, "Null bitmap on re-decode")
-                            return@withNativeLane
-                        }
-                        preflightInpaintGate(decoded.bitmap, pageKey)
-                        inpaintPage(pageKey, decoded.bitmap, target, store)
-                        if (target.inpaintStatus == StageStatus.FAILED &&
-                            target.cleanedBitmap == null &&
-                            target.blocks.isNotEmpty()
-                        ) {
-                            // One bounded recovery pass reclaims memory and re-runs
-                            // recognition/inpaint at a larger sample size. It never
-                            // changes OCR engines or models.
-                            retryInpaintDownscaled(
-                                manga, chapter, source, pageKey,
-                                orderedStreams, decoded, target,
-                            )
-                        }
-                        if (target.inpaintStatus == StageStatus.READY) tracker?.markInpaintDone(pageKey)
-                        else tracker?.markInpaintFailed(pageKey, target.errorMessage ?: "Inpaint failed")
-                    } catch (deferred: LowMemoryRecognitionDeferredException) {
-                        target.inpaintStatus = StageStatus.FAILED
-                        target.errorMessage = deferred.message
-                        tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
-                    } finally {
-                        if (decoded != null) {
-                            try { decoded.bitmap.recycle() } catch (_: Exception) {}
-                        }
-                        BitmapPool.releaseAll()
-                        try { recognitionEngine.reclaimPooledMemory() } catch (_: Exception) {}
-                    }
+                        recognitionEngine.reclaimPooledMemory()
+                    } catch (_: Exception) {}
+
+                    val persisted = store.snapshot(pageKey)
+                    return OcrReadyPageRef(
+                        pageKey = pageKey,
+                        pageIndex = pageIndex,
+                        generation = batchGeneration,
+                        blockFingerprints = persisted.blockFingerprints,
+                    )
                 }
-                // Persist the cleaned bitmap off the native permit (matches the prior
-                // producer's post-inpaint publication step) and hand it to render.
-                val cleaned = target.cleanedBitmap
-                if (cleaned != null) {
-                    val companionDir = ensureCompanionDir()
-                    val published = persistCleanedBitmap(target, cleaned, companionDir, pageKey, chapter.name, store)
-                    if (published == null) {
-                        // Never render an in-memory cleaned bitmap whose durable
-                        // publication failed. The reader must remain on the original
-                        // and receive a retryable failure instead of a transient overlay.
+
+                override suspend fun runInpaintStage(pageKey: String) {
+                    val streamFn = streamsByKey[pageKey] ?: return
+                    val latest = store.state.value[pageKey] ?: return
+                    val target = translationRegistry[pageKey] ?: latest
+                    // SKIP_ALL-resume durable cleaned image shortcut: keep existing result.
+                    val hasDurableCleaned = latest.cleanedImageName != null &&
+                        latest.inpaintStatus == StageStatus.READY &&
+                        latest.hasCurrentInpaintResult &&
+                        resumeGate(latest) == BatchResumeGate.SKIP_ALL
+                    if (hasDurableCleaned) {
+                        target.cleanedImageName = latest.cleanedImageName
+                        target.inpaintingModeUsed = latest.inpaintingModeUsed
+                        target.inpaintStatus = StageStatus.READY
                         target.cleanedBitmap = null
+                        return
                     }
-                }
-                holdCleaned(pageKey, target.cleanedBitmap)
-                target.cleanedBitmap = null
-            }
-
-        }
-
-        // The translator lane owns the streaming AI chunk planner (contextual path) or
-        // performs per-page translation (standard path). Either way it is a SINGLE
-        // serialized lane so only one provider request is in flight at a time. For the
-        // AI path, pages complete on chunk flush and render through tryRender; for the
-        // standard path, each page translates, validates, and renders per item.
-        val translatorWorker = object : TranslatorLaneWorker {
-            // AI contextual streaming state, owned by this lane.
-            val planner: StreamingChunkPlanner? =
-                if (isAi) StreamingChunkPlanner(requestedOutputTokens, chunkProfile) else null
-            var rollingContext = ""
-            val analyticalMode = runCatching {
-                Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
-                    .translationAnalyticalMode().get()
-            }.getOrDefault(false)
-            var pastTranslations = ""
-
-            // InactivityFlusher (Checkpoint 2 §3): a trailing partial AI chunk flushes
-            // after 250ms with no new page accepted, so a slow producer never strands the
-            // last pages. The flush holds the translate mutex so it never races a
-            // size-driven flush (one provider request at a time). Preserves the planner's
-            // token/page limits because it delegates to [StreamingChunkPlanner.flushRemaining].
-            val inactivityFlusher: InactivityFlusher? = if (isAi) {
-                InactivityFlusher(
-                    onFlush = { chunk ->
-                        if (chunk == null) return@InactivityFlusher
-                        val (newRolling, newPast) = translateChunkAi(
-                            chunk, emptySet(), rollingContext, pastTranslations, analyticalMode,
-                        )
-                        rollingContext = newRolling
-                        pastTranslations = newPast
-                    },
-                )
-            } else {
-                null
-            }
-
-            override suspend fun translate(ref: OcrReadyPageRef) {
-                val pageKey = ref.pageKey
-                val p = translationRegistry[pageKey] ?: store.state.value[pageKey]?.detachedCopy()?.also {
-                    translationRegistry[pageKey] = it
-                } ?: return
-                val readingOrder = translationPreferences.translationReadingOrder().get()
-                p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
-                translationRegistry[pageKey] = p
-                val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
-                if (sourceBlocks == 0) {
-                    p.translationStatus = StageStatus.SKIPPED
-                    p.renderStatus = StageStatus.SKIPPED
-                    store.updatePage(pageKey) { p }
-                    tracker?.markTranslateSkipped(pageKey)
-                    tracker?.markRenderSkipped(pageKey)
-                    recycleHeld(pageKey)
-                    translationRegistry.remove(pageKey)
-                    return
-                }
-                if (isAi && planner != null) {
-                    // Contextual path: accept this page into the streaming planner and
-                    // process every emission (chunk flush / chunkless completion). A page
-                    // may complete on a chunk that flushes when a LATER page is accepted,
-                    // so completed pages are rendered here via tryRender as chunks flush.
-                    inactivityFlusher?.recordActivity()
-                    val emission = planner.accept(pageKey, p)
-                    if (emission != null && emission.chunk != null) {
-                        val (newRolling, newPast) = translateChunkAi(
-                            emission.chunk!!, emission.completedPages,
-                            rollingContext, pastTranslations, analyticalMode,
-                        )
-                        rollingContext = newRolling
-                        pastTranslations = newPast
-                    } else if (emission != null) {
-                        emission.completedPages.forEach { pk -> completeChunklessPage(pk) }
-                    }
-                    tryRender(pageKey)
-                } else {
-                    // Standard (per-page) path: translate, validate, persist, render.
-                    try {
-                        tracker?.markTranslateRunning(pageKey)
-                        textTranslator.translatePage(pageKey, p)
-                        TranslationBlockValidation.applyTo(p)
-                        val s = p.translationStatus
-                        when (s) {
-                            StageStatus.READY -> tracker?.markTranslateDone(pageKey)
-                            StageStatus.PARTIAL -> tracker?.markTranslatePartial(pageKey)
-                            else -> tracker?.markTranslateFailed(pageKey, p.errorMessage ?: "Translate unknown state")
+                    withNativeLane(
+                        timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
+                        chapterId = chapter.id,
+                        chapterName = chapter.name,
+                        pageKey = pageKey,
+                        onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
+                    ) {
+                        var decoded: DecodedPage? = null
+                        try {
+                            tracker?.markInpaintRunning(pageKey)
+                            decoded = decodePageBitmapForTranslation(pageKey, streamFn)
+                            if (decoded == null) {
+                                tracker?.markInpaintFailed(pageKey, "Null bitmap on re-decode")
+                                return@withNativeLane
+                            }
+                            preflightInpaintGate(decoded.bitmap, pageKey)
+                            inpaintPage(pageKey, decoded.bitmap, target, store)
+                            if (target.inpaintStatus == StageStatus.FAILED &&
+                                target.cleanedBitmap == null &&
+                                target.blocks.isNotEmpty()
+                            ) {
+                                // One bounded recovery pass reclaims memory and re-runs
+                                // recognition/inpaint at a larger sample size. It never
+                                // changes OCR engines or models.
+                                retryInpaintDownscaled(
+                                    manga,
+                                    chapter,
+                                    source,
+                                    pageKey,
+                                    orderedStreams,
+                                    decoded,
+                                    target,
+                                )
+                            }
+                            if (target.inpaintStatus == StageStatus.READY) {
+                                tracker?.markInpaintDone(pageKey)
+                            } else {
+                                tracker?.markInpaintFailed(pageKey, target.errorMessage ?: "Inpaint failed")
+                            }
+                        } catch (deferred: LowMemoryRecognitionDeferredException) {
+                            target.inpaintStatus = StageStatus.FAILED
+                            target.errorMessage = deferred.message
+                            tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
+                        } finally {
+                            if (decoded != null) {
+                                try {
+                                    decoded.bitmap.recycle()
+                                } catch (_: Exception) {}
+                            }
+                            BitmapPool.releaseAll()
+                            try {
+                                recognitionEngine.reclaimPooledMemory()
+                            } catch (_: Exception) {}
                         }
-                    } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        p.translationStatus = StageStatus.FAILED
-                        p.errorMessage = e.message
-                        tracker?.markTranslateFailed(pageKey, e.message ?: e::class.java.simpleName)
-                        logcat(LogPriority.ERROR, e) { "TachiyomiAT batch translate failed: $pageKey" }
-                    } finally {
+                    }
+                    // Persist the cleaned bitmap off the native permit (matches the prior
+                    // producer's post-inpaint publication step) and hand it to render.
+                    val cleaned = target.cleanedBitmap
+                    if (cleaned != null) {
+                        val companionDir = ensureCompanionDir()
+                        val published = persistCleanedBitmap(target, cleaned, companionDir, pageKey, chapter.name, store)
+                        if (published == null) {
+                            // Never render an in-memory cleaned bitmap whose durable
+                            // publication failed. The reader must remain on the original
+                            // and receive a retryable failure instead of a transient overlay.
+                            target.cleanedBitmap = null
+                        }
+                    } else {
                         store.updatePage(pageKey) {
-                            (it ?: p).apply {
-                                translationStatus = p.translationStatus
-                                errorMessage = p.errorMessage
+                            (it ?: target).apply {
+                                inpaintStatus = target.inpaintStatus
+                                errorMessage = target.errorMessage
                                 updatedAt = System.currentTimeMillis()
                             }
                         }
                     }
-                    tryRender(pageKey)
+                    holdCleaned(pageKey, target.cleanedBitmap)
+                    target.cleanedBitmap = null
                 }
             }
-        }
 
-        // Render join: per-page join of the translation result with its inpaint/render
-        // prerequisites. tryRender is idempotent (READY short-circuit) so it is safe to
-        // call both at chunk-completion (AI) and here; the per-page render mutex keeps
-        // it serialized. This is the join the coordinator awaits for each page.
-        val renderJoin = object : RenderJoinWorker {
-            override fun onNativeBranchDone(pageKey: String) {}
-            override fun onTranslationBranchDone(pageKey: String) {}
-            override suspend fun awaitAndRender(pageKey: String) {
-                tryRender(pageKey)
-            }
-        }
+            // The translator lane owns the streaming AI chunk planner (contextual path) or
+            // performs per-page translation (standard path). Either way it is a SINGLE
+            // serialized lane so only one provider request is in flight at a time. For the
+            // AI path, pages complete on chunk flush and render through tryRender; for the
+            // standard path, each page translates, validates, and renders per item.
+            val translatorWorker = object : TranslatorLaneWorker {
+                // AI contextual streaming state, owned by this lane.
+                val planner: StreamingChunkPlanner? =
+                    if (isAi) StreamingChunkPlanner(requestedOutputTokens, chunkProfile) else null
+                var rollingContext = ""
+                val analyticalMode = runCatching {
+                    Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
+                        .translationAnalyticalMode().get()
+                }.getOrDefault(false)
+                var pastTranslations = ""
 
-        val coordinator = BatchCoordinator(
-            nativeWorker = nativeWorker,
-            translatorWorker = translatorWorker,
-            renderJoin = renderJoin,
-        )
-
-        try {
-            coroutineScope {
-                // Start the inactivity flusher for the AI lane so a trailing partial
-                // chunk does not wait forever for the next page (Checkpoint 2 §3). It
-                // shares the translator lane's lifetime: cancelled when this scope ends.
-                translatorWorker.inactivityFlusher?.start(this) {
-                    translatorWorker.planner?.flushRemaining()?.finalChunk
+                // InactivityFlusher (Checkpoint 2 §3): a trailing partial AI chunk flushes
+                // after 250ms with no new page accepted, so a slow producer never strands the
+                // last pages. The flush holds the translate mutex so it never races a
+                // size-driven flush (one provider request at a time). Preserves the planner's
+                // token/page limits because it delegates to [StreamingChunkPlanner.flushRemaining].
+                val inactivityFlusher: InactivityFlusher? = if (isAi) {
+                    InactivityFlusher(
+                        onFlush = { flushResult ->
+                            if (flushResult.finalChunk != null) {
+                                val (newRolling, newPast) = translateChunkAi(
+                                    flushResult.finalChunk,
+                                    flushResult.completedPages,
+                                    rollingContext,
+                                    pastTranslations,
+                                    analyticalMode,
+                                )
+                                rollingContext = newRolling
+                                pastTranslations = newPast
+                            } else {
+                                flushResult.completedPages.forEach { pk -> completeChunklessPage(pk) }
+                            }
+                            flushResult.rejectedPages.forEach { (pk, reason) ->
+                                val rp = translationRegistry[pk]
+                                if (rp != null) {
+                                    markBatchTranslationFailed(store, pk, rp, reason)
+                                    tracker?.markTranslateFailed(pk, reason)
+                                }
+                            }
+                        },
+                    )
+                } else {
+                    null
                 }
-                val orderedPages = orderedStreams.mapIndexed { index, (pageKey, _) ->
-                    pageKey to index
-                }
-                coordinator.runPass1(orderedPages, computeClass)
-                // Pass-1 barrier reached: every page's native work + translator-lane
-                // accept is complete. Flush the AI planner's tail chunk (Pass-1
-                // completion) and render any pages completed by it. This MUST finish
-                // before Pass 2 starts (Checkpoint 2 §5 — Pass 2 starts after the
-                // Pass-1 translation barrier, not after inpaint/render).
-                if (isAi) {
-                    val planner = translatorWorker.planner
-                    if (planner != null) {
-                        translatorWorker.inactivityFlusher?.cancelTimer()
-                        val flush = planner.flushRemaining()
-                        if (flush.finalChunk != null) {
-                            val (newRolling, newPast) = translateChunkAi(
-                                flush.finalChunk, flush.completedPages,
-                                translatorWorker.rollingContext,
-                                translatorWorker.pastTranslations,
-                                translatorWorker.analyticalMode,
-                            )
-                            translatorWorker.rollingContext = newRolling
-                            translatorWorker.pastTranslations = newPast
-                        } else {
-                            flush.completedPages.forEach { pk -> completeChunklessPage(pk) }
+
+                override suspend fun translate(ref: OcrReadyPageRef) {
+                    val pageKey = ref.pageKey
+                    val p = translationRegistry[pageKey] ?: store.state.value[pageKey]?.detachedCopy()?.also {
+                        translationRegistry[pageKey] = it
+                    } ?: return
+                    val readingOrder = translationPreferences.translationReadingOrder().get()
+                    p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
+                    translationRegistry[pageKey] = p
+                    val sourceBlocks = p.blocks.count { it.text.isNotBlank() }
+                    if (sourceBlocks == 0) {
+                        p.translationStatus = StageStatus.SKIPPED
+                        p.renderStatus = StageStatus.SKIPPED
+                        store.updatePage(pageKey) { p }
+                        tracker?.markTranslateSkipped(pageKey)
+                        tracker?.markRenderSkipped(pageKey)
+                        recycleHeld(pageKey)
+                        translationRegistry.remove(pageKey)
+                        return
+                    }
+                    if (isAi && planner != null) {
+                        // Contextual path: accept this page into the streaming planner and
+                        // process every emission (chunk flush / chunkless completion). A page
+                        // may complete on a chunk that flushes when a LATER page is accepted,
+                        // so completed pages are rendered here via tryRender as chunks flush.
+                        eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
+                            inactivityFlusher?.recordActivity()
+                            val emission = planner.accept(pageKey, p)
+                            if (emission != null && emission.chunk != null) {
+                                val (newRolling, newPast) = translateChunkAi(
+                                    emission.chunk!!,
+                                    emission.completedPages,
+                                    rollingContext,
+                                    pastTranslations,
+                                    analyticalMode,
+                                )
+                                rollingContext = newRolling
+                                pastTranslations = newPast
+                            } else if (emission != null) {
+                                emission.completedPages.forEach { pk -> completeChunklessPage(pk) }
+                            }
                         }
-                        flush.rejectedPages.forEach { (pk, reason) ->
-                            val rp = translationRegistry[pk]
-                            if (rp != null) {
-                                markBatchTranslationFailed(store, pk, rp, reason)
-                                tracker?.markTranslateFailed(pk, reason)
-                                tryRender(pk)
+                    } else {
+                        // Standard (per-page) path: translate, validate, persist, render.
+                        try {
+                            eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
+                                tracker?.markTranslateRunning(pageKey)
+                                textTranslator.translatePage(pageKey, p)
+                            }
+                            TranslationBlockValidation.applyTo(p)
+                            val s = p.translationStatus
+                            when (s) {
+                                StageStatus.READY -> tracker?.markTranslateDone(pageKey)
+                                StageStatus.PARTIAL -> tracker?.markTranslatePartial(pageKey)
+                                else -> tracker?.markTranslateFailed(pageKey, p.errorMessage ?: "Translate unknown state")
+                            }
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                            p.translationStatus = StageStatus.FAILED
+                            p.errorMessage = e.message
+                            tracker?.markTranslateFailed(pageKey, e.message ?: e::class.java.simpleName)
+                            logcat(LogPriority.ERROR, e) { "TachiyomiAT batch translate failed: $pageKey" }
+                        } finally {
+                            store.updatePage(pageKey) {
+                                (it ?: p).apply {
+                                    translationStatus = p.translationStatus
+                                    translationError = p.translationError
+                                    updatedAt = System.currentTimeMillis()
+                                    if (it != null && it !== p) {
+                                        val translatedBlocks = p.blocks.associateBy { b -> b.blockId }
+                                        blocks = blocks.map { b ->
+                                            translatedBlocks[b.blockId]?.let { tb ->
+                                                b.copy(
+                                                    translation = tb.translation,
+                                                )
+                                            } ?: b
+                                        }.toMutableList()
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                // Render sweep for any page whose translation completed but render was
-                // deferred (e.g. an AI page whose chunk flushed late).
-                translationRegistry.keys.toList().forEach { pk -> tryRender(pk) }
             }
-        } finally {
-            translatorWorker.inactivityFlusher?.stop()
-            // Only the registry's REMAINING entries need a release here: consumed/
-            // recycled/spilled bitmaps already balanced themselves. Releasing exactly
-            // `leaked` slots restores countSlots with no double-release. This is the
-            // ONLY release site that observes pages whose render never ran.
-            val leaked = bitmapRegistry.size
-            bitmapRegistry.values.forEach { try { it.recycle() } catch (_: Exception) {} }
-            bitmapRegistry.clear()
-            heldBitmapBytes.set(0L)
-            repeat(leaked) { countSlots.release() }
-        }
 
-        // OOM abort: markChapterError already recorded the abort reason on every
-        // still-pending page, so skip the reconciler finish.
-        if (aborted.get()) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
-            }
-            store.flush()
-            return@withGeneration
-        }
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
-        }
+            // Render join: per-page join of the translation result with its inpaint/render
+            // prerequisites. tryRender is idempotent (READY short-circuit) so it is safe to
+            // call both at chunk-completion (AI) and here; the per-page render mutex keeps
+            // it serialized. This is the join the coordinator awaits for each page.
+            val nativeRenderSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+            val translationRenderSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
 
+            fun signalFor(
+                signals: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
+                pageKey: String,
+            ): CompletableDeferred<Unit> = signals.getOrPut(pageKey) { CompletableDeferred() }
 
+            val renderJoin = object : RenderJoinWorker {
+                override fun onNativeBranchDone(pageKey: String) {
+                    signalFor(nativeRenderSignals, pageKey).complete(Unit)
+                }
 
-        val reconciliation = BatchProgressReconciler.reconcile(
-            pageMap = store.state.value,
-            orderedKeys = orderedStreams.map { it.first },
-        )
-        // Persist every expected stranded page before emitting terminal progress. This
-        // ensures callers that observe the terminal state can also inspect retryable failures.
-        reconciliation.strandedPages.forEach { (pageKey, reason) ->
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT batch stranded page: chapter=${chapter.name} pageKey=$pageKey reason=$reason"
-            }
-            store.updatePage(pageKey) { existing ->
-                (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                    ocrStatus = StageStatus.FAILED
-                    errorMessage = reason
-                    updatedAt = System.currentTimeMillis()
+                override fun onTranslationBranchDone(pageKey: String) {
+                    signalFor(translationRenderSignals, pageKey).complete(Unit)
+                }
+
+                override suspend fun awaitAndRender(pageKey: String) {
+                    signalFor(nativeRenderSignals, pageKey).await()
+                    signalFor(translationRenderSignals, pageKey).await()
+                    tryRender(pageKey)
+                    nativeRenderSignals.remove(pageKey)
+                    translationRenderSignals.remove(pageKey)
                 }
             }
-        }
-        store.flush()
-        val summaryPublished = store.publishSummary(
-            ChapterTranslationSummary(
-                expectedPageCount = orderedStreams.map { it.first }.distinct().size,
-                terminalOutcome = reconciliation.chapterStatus.value,
-                unresolvedRevisionCount = reconciliation.unresolvedRevisionCount,
-                updatedAtMillis = System.currentTimeMillis(),
-            ),
-        )
-        if (!summaryPublished) {
-            logcat(LogPriority.ERROR) {
-                "TachiyomiAT batch terminal summary unavailable: chapter=${chapter.name} reason=sidecar publication failed"
+
+            val coordinator = BatchCoordinator(
+                nativeWorker = nativeWorker,
+                translatorWorker = translatorWorker,
+                renderJoin = renderJoin,
+            )
+
+            try {
+                coroutineScope {
+                    // Start the inactivity flusher for the AI lane so a trailing partial
+                    // chunk does not wait forever for the next page (Checkpoint 2 §3). It
+                    // shares the translator lane's lifetime: cancelled when this scope ends.
+                    translatorWorker.inactivityFlusher?.start(this) {
+                        translatorWorker.planner?.flushRemaining() ?: eu.kanade.translation.translator.StreamingChunkPlanner.FlushResult(null, emptySet(), emptyMap())
+                    }
+                    val orderedPages = orderedStreams.mapIndexed { index, (pageKey, _) ->
+                        pageKey to index
+                    }
+                    coordinator.runPass1(orderedPages, computeClass)
+                    // Pass-1 barrier reached: every page's native work + translator-lane
+                    // accept is complete. Flush the AI planner's tail chunk (Pass-1
+                    // completion) and render any pages completed by it. This MUST finish
+                    // before Pass 2 starts (Checkpoint 2 §5 — Pass 2 starts after the
+                    // Pass-1 translation barrier, not after inpaint/render).
+                    if (isAi) {
+                        val planner = translatorWorker.planner
+                        if (planner != null) {
+                            translatorWorker.inactivityFlusher?.cancelTimer()
+                            eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
+                                val flush = planner.flushRemaining()
+                                if (flush.finalChunk != null) {
+                                    val (newRolling, newPast) = translateChunkAi(
+                                        flush.finalChunk,
+                                        flush.completedPages,
+                                        translatorWorker.rollingContext,
+                                        translatorWorker.pastTranslations,
+                                        translatorWorker.analyticalMode,
+                                    )
+                                    translatorWorker.rollingContext = newRolling
+                                    translatorWorker.pastTranslations = newPast
+                                } else {
+                                    flush.completedPages.forEach { pk -> completeChunklessPage(pk) }
+                                }
+                                flush.rejectedPages.forEach { (pk, reason) ->
+                                    val rp = translationRegistry[pk]
+                                    if (rp != null) {
+                                        markBatchTranslationFailed(store, pk, rp, reason)
+                                        tracker?.markTranslateFailed(pk, reason)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Render sweep for any page whose translation completed but render was
+                    // deferred (e.g. an AI page whose chunk flushed late).
+                }
+            } finally {
+                translatorWorker.inactivityFlusher?.stop()
+                // Only the registry's REMAINING entries need a release here: consumed/
+                // recycled/spilled bitmaps already balanced themselves. Releasing exactly
+                // `leaked` slots restores countSlots with no double-release. This is the
+                // ONLY release site that observes pages whose render never ran.
+                val leaked = bitmapRegistry.size
+                bitmapRegistry.values.forEach {
+                    try {
+                        it.recycle()
+                    } catch (_: Exception) {}
+                }
+                bitmapRegistry.clear()
+                heldBitmapBytes.set(0L)
+                repeat(leaked) { countSlots.release() }
             }
-        }
-        tracker?.finish(reconciliation)
-        val revision = tracker?.snapshot?.value?.revision
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} " +
-                "revisionCompleted=${revision?.completedBlocks ?: 0} " +
-                "revisionFailed=${revision?.failedBlocks ?: 0} " +
-                "revisionSkipped=${revision?.skippedBlocks ?: 0} " +
-                "revisionUserEdited=${revision?.userEditedBlocks ?: 0}"
-        }
+
+            // OOM abort: markChapterError already recorded the abort reason on every
+            // still-pending page, so skip the reconciler finish.
+            if (aborted.get()) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
+                }
+                store.flush()
+                return@withGeneration
+            }
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
+            }
+
+            val reconciliation = BatchProgressReconciler.reconcile(
+                pageMap = store.state.value,
+                orderedKeys = orderedStreams.map { it.first },
+                activeGeneration = store.currentGeneration,
+            )
+            // Persist every expected stranded page before emitting terminal progress. This
+            // ensures callers that observe the terminal state can also inspect retryable failures.
+            reconciliation.strandedPages.forEach { (pageKey, reason) ->
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT batch stranded page: chapter=${chapter.name} pageKey=$pageKey reason=$reason"
+                }
+                store.updatePage(pageKey) { existing ->
+                    (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
+                        ocrStatus = StageStatus.FAILED
+                        errorMessage = reason
+                        updatedAt = System.currentTimeMillis()
+                    }
+                }
+            }
+            store.flush()
+            val summaryPublished = store.publishSummary(
+                ChapterTranslationSummary(
+                    expectedPageCount = orderedStreams.map { it.first }.distinct().size,
+                    terminalOutcome = reconciliation.chapterStatus.value,
+                    unresolvedRevisionCount = reconciliation.unresolvedRevisionCount,
+                    updatedAtMillis = System.currentTimeMillis(),
+                ),
+            )
+            if (!summaryPublished) {
+                logcat(LogPriority.ERROR) {
+                    "TachiyomiAT batch terminal summary unavailable: chapter=${chapter.name} reason=sidecar publication failed"
+                }
+            }
+            tracker?.finish(reconciliation)
+            val revision = tracker?.snapshot?.value?.revision
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} " +
+                    "revisionCompleted=${revision?.completedBlocks ?: 0} " +
+                    "revisionFailed=${revision?.failedBlocks ?: 0} " +
+                    "revisionSkipped=${revision?.skippedBlocks ?: 0} " +
+                    "revisionUserEdited=${revision?.userEditedBlocks ?: 0}"
+            }
         }
     }
 
@@ -1795,53 +1943,87 @@ class TranslationPipeline(
         try {
             registerActiveStore(syntheticTranslation)
 
-            val resumeTranslation = if (!force) {
-                store.state.value[pageKey]?.copyForResume()
+            val resumeTranslation = store.state.value[pageKey]?.copyForResume()
+            val desiredModeName = inpaintingModeFromPref().name
+            val modeMatches = resumeTranslation?.inpaintingModeUsed == null || resumeTranslation.inpaintingModeUsed == desiredModeName
+            val adjustedResume = if (resumeTranslation != null && !modeMatches && resumeTranslation.isCleanedImageReady) {
+                resumeTranslation.copy(inpaintStatus = StageStatus.PENDING, cleanedImageName = null)
             } else {
-                null
+                resumeTranslation
             }
-            if (resumeTranslation?.hasRenderedResult == true) {
+
+            val workPlan = eu.kanade.translation.model.PageWorkPlanner.plan(adjustedResume, force)
+
+            if (!workPlan.runOcr && !workPlan.runTranslation && !workPlan.runInpaint && !workPlan.runRender) {
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT single-page resume skip: pageKey=$pageKey already has final output"
                 }
                 return null
             }
-            val resumeFromTranslatedBlocks = resumeTranslation
-                ?.takeIf { it.hasRecognizedTranslation }
-            // A cleaned image is only safe to resume from when the mode that
-            // produced it matches the current preference (a FAST->QUALITY switch
-            // must re-inpaint) and its file is still on disk. Null mode = legacy.
-            val desiredModeName = inpaintingModeFromPref().name
-            val modeMatches = resumeFromTranslatedBlocks?.inpaintingModeUsed == null ||
-                resumeFromTranslatedBlocks.inpaintingModeUsed == desiredModeName
-            if (resumeFromTranslatedBlocks?.isCleanedImageReady == true && modeMatches) {
-                val cleanedBitmap = loadPersistedCleanedBitmap(
-                    manga,
-                    chapter,
-                    source,
-                    resumeFromTranslatedBlocks.cleanedImageName!!,
-                )
+
+            if (!workPlan.runOcr && !workPlan.runInpaint) {
+                val cleanedBitmap = loadPersistedCleanedBitmap(manga, chapter, source, adjustedResume!!.cleanedImageName!!)
                 if (cleanedBitmap != null) {
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT single-page resume: render from cleaned image pageKey=$pageKey " +
-                            "cleaned=${resumeFromTranslatedBlocks.cleanedImageName}"
+                    if (!workPlan.runTranslation) {
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT single-page resume: render from cleaned image pageKey=$pageKey cleaned=${adjustedResume.cleanedImageName}"
+                        }
+                        renderResumedPage(
+                            manga,
+                            chapter,
+                            source,
+                            pageKey,
+                            store,
+                            adjustedResume,
+                            cleanedBitmap,
+                            " (resume cleaned)",
+                        )
+                        return null
+                    } else {
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT single-page resume: translate + render from cleaned image pageKey=$pageKey"
+                        }
+
+                        // Fake a decoded page for the sake of the result
+                        val stream = streamFromReader ?: peekReaderPageStream(manga, chapter, source, pageKey)
+                        val streams = if (stream != null) listOf(pageKey to stream) else emptyList()
+
+                        val fakeDecoded = DecodedPage(
+                            bitmap = cleanedBitmap,
+                            sampleSize = adjustedResume.decodeSampleSize,
+                            originalWidth = adjustedResume.originalImgWidth.toInt(),
+                            originalHeight = adjustedResume.originalImgHeight.toInt(),
+                            decodeDecision = eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision(
+                                kind = eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind.FULL,
+                                sampleSize = adjustedResume.decodeSampleSize,
+                                rawBitmapBytes = 0L,
+                                sampledBitmapBytes = 0L,
+                                sourcePixels = 0L,
+                                sampledPixels = 0L,
+                                snapshot = eu.kanade.translation.util.TranslationMemoryBudget.snapshot(),
+                            ),
+                            sourceBytesSize = 0L,
+                        )
+
+                        adjustedResume.cleanedBitmap = cleanedBitmap
+                        if (force) adjustedResume.prepareForcedRetry()
+                        adjustedResume.resetAttemptCharge()
+                        adjustedResume.translationStatus = StageStatus.PENDING
+                        store.updatePage(pageKey) { adjustedResume }
+
+                        needsHttpRender = true
+                        return OnnxPhaseResult(
+                            pageTranslation = adjustedResume,
+                            store = store,
+                            fromLang = fromLang,
+                            syntheticTranslation = syntheticTranslation,
+                            streams = streams,
+                            decoded = fakeDecoded,
+                            commitPrecondition = store.snapshot(pageKey).toPrecondition(),
+                        )
                     }
-                    renderResumedPage(
-                        manga,
-                        chapter,
-                        source,
-                        pageKey,
-                        store,
-                        resumeFromTranslatedBlocks,
-                        cleanedBitmap,
-                        successMessageSuffix = " (resume cleaned)",
-                    )
-                    return null
-                }
-            } else if (resumeFromTranslatedBlocks?.isCleanedImageReady == true && !modeMatches) {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT single-page resume re-inpainting for mode change: pageKey=$pageKey " +
-                        "was=${resumeFromTranslatedBlocks.inpaintingModeUsed} now=$desiredModeName"
+                } else {
+                    logcat(LogPriority.WARN) { "Cleaned image missing for $pageKey, falling through to re-decode" }
                 }
             }
 
@@ -1853,7 +2035,10 @@ class TranslationPipeline(
                 listOf(pageKey to streamFromReader)
             } else {
                 val chapterPath = downloadProvider.findChapterDir(
-                    chapter.name, chapter.scanlator, manga.title, source,
+                    chapter.name,
+                    chapter.scanlator,
+                    manga.title,
+                    source,
                 ) ?: run {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT single-page translation cannot start (soft skip, no store write): " +
@@ -1864,6 +2049,7 @@ class TranslationPipeline(
                 }
                 getChapterPages(chapterPath)
             }
+
             val entry = streams.find { it.first == pageKey } ?: run {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT single-page translation cannot find requested page: pageKey=$pageKey " +
@@ -1880,21 +2066,6 @@ class TranslationPipeline(
                     }
                 }
                 return null
-            }
-
-            store.updatePage(pageKey) {
-                (it ?: PageTranslation()).apply {
-                    sourceFileName = pageKey
-                    if (force || ocrStatus != StageStatus.READY) {
-                        ocrStatus = StageStatus.RUNNING
-                    }
-                    if (force) {
-                        prepareForcedRetry()
-                    }
-                    resetAttemptCharge()
-                    errorMessage = null
-                    updatedAt = System.currentTimeMillis()
-                }
             }
 
             val decoded = try {
@@ -1918,6 +2089,7 @@ class TranslationPipeline(
                 }
                 return null
             }
+
             if (decoded == null) {
                 store.updatePage(pageKey) {
                     (it ?: PageTranslation()).apply {
@@ -1933,31 +2105,67 @@ class TranslationPipeline(
             }
 
             val bitmap = decoded.bitmap
-            if (resumeFromTranslatedBlocks != null) {
+
+            if (!workPlan.runOcr && workPlan.runInpaint) {
                 try {
-                    logcat(LogPriority.INFO) {
-                        "TachiyomiAT single-page resume: inpaint + render from translated blocks pageKey=$pageKey"
+                    if (!workPlan.runTranslation) {
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT single-page resume: inpaint + render from translated blocks pageKey=$pageKey"
+                        }
+                        if (force) adjustedResume!!.prepareForcedRetry()
+                        adjustedResume!!.resetAttemptCharge()
+                        resumeInpaintAndRender(
+                            manga,
+                            chapter,
+                            source,
+                            pageKey,
+                            store,
+                            decoded,
+                            bitmap,
+                            adjustedResume,
+                        )
+                        return null
+                    } else {
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT single-page resume: inpaint + translate + render pageKey=$pageKey"
+                        }
+                        if (force) adjustedResume!!.prepareForcedRetry()
+                        adjustedResume!!.resetAttemptCharge()
+                        adjustedResume.inpaintStatus = StageStatus.RUNNING
+                        store.updatePage(pageKey) { adjustedResume }
+
+                        adjustedResume.cleanedBitmap = recognitionEngine.inpaint(bitmap, adjustedResume)
+
+                        needsHttpRender = true
+                        return OnnxPhaseResult(
+                            pageTranslation = adjustedResume,
+                            store = store,
+                            fromLang = fromLang,
+                            syntheticTranslation = syntheticTranslation,
+                            streams = streams,
+                            decoded = decoded,
+                            commitPrecondition = store.snapshot(pageKey).toPrecondition(),
+                        )
                     }
-                    resumeInpaintAndRender(
-                        manga,
-                        chapter,
-                        source,
-                        pageKey,
-                        store,
-                        decoded,
-                        bitmap,
-                        resumeFromTranslatedBlocks,
-                    )
                 } finally {
-                    try { bitmap.recycle() } catch (_: Exception) {}
+                    try {
+                        bitmap.recycle()
+                    } catch (_: Exception) {}
                     BitmapPool.releaseAll()
                 }
-                return null
             }
+
             store.updatePage(pageKey) {
                 (it ?: PageTranslation()).apply {
                     sourceFileName = pageKey
-                    ocrStatus = StageStatus.RUNNING
+                    if (force || ocrStatus != StageStatus.READY) {
+                        ocrStatus = StageStatus.RUNNING
+                    }
+                    if (force) {
+                        prepareForcedRetry()
+                    }
+                    resetAttemptCharge()
+                    errorMessage = null
                     updatedAt = System.currentTimeMillis()
                 }
             }
@@ -1965,10 +2173,15 @@ class TranslationPipeline(
             val pageTranslation: PageTranslation
             try {
                 pageTranslation = processSinglePage(
-                    pageKey, bitmap, decoded, store,
+                    pageKey,
+                    bitmap,
+                    decoded,
+                    store,
                 )
             } finally {
-                try { bitmap.recycle() } catch (_: Exception) {}
+                try {
+                    bitmap.recycle()
+                } catch (_: Exception) {}
                 BitmapPool.releaseAll()
             }
 
@@ -1989,7 +2202,9 @@ class TranslationPipeline(
                     streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
                 }
                 unregisterActiveStore(syntheticTranslation)
-                try { recognitionEngine.reclaimPooledMemory() } catch (_: Exception) {}
+                try {
+                    recognitionEngine.reclaimPooledMemory()
+                } catch (_: Exception) {}
             }
         }
     }
@@ -2110,7 +2325,7 @@ class TranslationPipeline(
                     pageTranslation.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(
                         pageTranslation.blocks,
                         fromLang,
-                        readingOrder
+                        readingOrder,
                     )
                     pageTranslation.translationStatus = StageStatus.RUNNING
                     runTranslate(pageTranslation)
@@ -2165,8 +2380,10 @@ class TranslationPipeline(
             coroutineContext.ensureActive()
 
             if (pageTranslation.blocks.isNotEmpty() &&
-                (pageTranslation.translationStatus == StageStatus.READY ||
-                    pageTranslation.translationStatus == StageStatus.PARTIAL)
+                (
+                    pageTranslation.translationStatus == StageStatus.READY ||
+                        pageTranslation.translationStatus == StageStatus.PARTIAL
+                    )
             ) {
                 val hasCleaned = pageTranslation.cleanedBitmap != null
                 if (hasCleaned) {
@@ -2183,7 +2400,9 @@ class TranslationPipeline(
                         pageTranslation.errorMessage = e.message
                         logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
                     } finally {
-                        try { cleanedBitmap.recycle() } catch (_: Exception) {}
+                        try {
+                            cleanedBitmap.recycle()
+                        } catch (_: Exception) {}
                     }
                 } else {
                     logcat(LogPriority.WARN) {
@@ -2236,7 +2455,9 @@ class TranslationPipeline(
                             pageTranslation.errorMessage = e.message
                             logcat(LogPriority.ERROR, e) { "Failed to render text for single page (retry path) $pageKey" }
                         } finally {
-                            try { retriedCleaned.recycle() } catch (_: Exception) {}
+                            try {
+                                retriedCleaned.recycle()
+                            } catch (_: Exception) {}
                         }
                     } else {
                         pageTranslation.renderStatus = StageStatus.FAILED
@@ -2244,7 +2465,7 @@ class TranslationPipeline(
                         val reason = pageTranslation.errorMessage ?: "inpaint unavailable"
                         pageTranslation.errorMessage =
                             "Inpainting unavailable ($reason) — original text would show through, so the " +
-                                "translated text was not rendered. Retry, or switch recognition mode."
+                            "translated text was not rendered. Retry, or switch recognition mode."
                         logcat(LogPriority.WARN) {
                             "TachiyomiAT single-page render BLOCKED for $pageKey: inpaint unavailable after retry " +
                                 "(reason=$reason). Showing original image with error instead of a half-translated overlay."
@@ -2253,7 +2474,9 @@ class TranslationPipeline(
                 }
             } else {
                 pageTranslation.cleanedBitmap?.let {
-                    try { it.recycle() } catch (_: Exception) {}
+                    try {
+                        it.recycle()
+                    } catch (_: Exception) {}
                 }
             }
             pageTranslation.cleanedBitmap = null
@@ -2297,13 +2520,19 @@ class TranslationPipeline(
             store.flush()
             // Defensive recycle: a cancel/timeout can unwind here from before render, where
             // cleanedBitmap (the inpainted full-page bitmap, ~10–48 MB) was never recycled.
-            pageTranslation.cleanedBitmap?.let { try { it.recycle() } catch (_: Exception) {} }
+            pageTranslation.cleanedBitmap?.let {
+                try {
+                    it.recycle()
+                } catch (_: Exception) {}
+            }
             pageTranslation.cleanedBitmap = null
             chapter.id?.let { chapterId ->
                 streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
             }
             unregisterActiveStore(syntheticTranslation)
-            try { recognitionEngine.reclaimPooledMemory() } catch (_: Exception) {}
+            try {
+                recognitionEngine.reclaimPooledMemory()
+            } catch (_: Exception) {}
         }
     }
 
@@ -2380,7 +2609,9 @@ class TranslationPipeline(
             }
             logcat(LogPriority.ERROR, e) { "Failed to render standalone page $pageKey" }
         } finally {
-            try { bitmap.recycle() } catch (_: Exception) {}
+            try {
+                bitmap.recycle()
+            } catch (_: Exception) {}
         }
     }
 
@@ -2409,7 +2640,6 @@ class TranslationPipeline(
         return translator as? ContextualTextTranslator
     }
 
-
     private suspend fun persistCleanedBitmap(
         pageTranslation: PageTranslation,
         cleanedBitmap: Bitmap,
@@ -2433,7 +2663,7 @@ class TranslationPipeline(
                 check(directory != null) { "translation output folder is unavailable" }
                 val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 val version = System.currentTimeMillis().toString(36) + "-" + System.nanoTime().toString(36).takeLast(6)
-                val finalName = "${safeName}.cleaned.$version.jpg"
+                val finalName = "$safeName.cleaned.$version.jpg"
                 tempName = "$finalName.tmp"
                 val temp = directory.findFile(tempName!!)?.also { it.delete() } ?: directory.createFile(tempName!!)
                 check(temp != null) { "could not create temporary cleaned image" }
@@ -2454,17 +2684,19 @@ class TranslationPipeline(
 
             override fun delete(name: String): Boolean = directory?.findFile(name)?.delete() ?: true
         })
-        when (val result = publisher.publish(chapterName, pageKey, previousName) { newName ->
-            store.patchPage(pageKey, precondition, "publish cleaned image") { current ->
-                (current ?: pageTranslation).apply {
-                    cleanedImageName = newName
-                    inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                    inpaintingModeUsed = currentInpaintingMode.name
-                    inpaintStatus = StageStatus.READY
-                    errorMessage = null
+        when (
+            val result = publisher.publish(chapterName, pageKey, previousName) { newName ->
+                store.patchPage(pageKey, precondition, "publish cleaned image") { current ->
+                    (current ?: pageTranslation).apply {
+                        cleanedImageName = newName
+                        inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+                        inpaintingModeUsed = currentInpaintingMode.name
+                        inpaintStatus = StageStatus.READY
+                        errorMessage = null
+                    }
                 }
             }
-        }) {
+        ) {
             is CleanedImagePublisher.Result.Published -> {
                 pageTranslation.cleanedImageName = result.name
                 pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
@@ -2514,7 +2746,9 @@ class TranslationPipeline(
         if (published == null) {
             // Do not let HTTP/render consume an in-memory result when the reader
             // cannot reopen it after publication or a newer page won the race.
-            try { cleaned.recycle() } catch (_: Exception) {}
+            try {
+                cleaned.recycle()
+            } catch (_: Exception) {}
             page.cleanedBitmap = null
             return null
         }
@@ -2556,7 +2790,9 @@ class TranslationPipeline(
             pageTranslation.errorMessage = e.message
             logcat(LogPriority.ERROR, e) { "Failed to render resumed page $pageKey" }
         } finally {
-            try { cleanedBitmap.recycle() } catch (_: Exception) {}
+            try {
+                cleanedBitmap.recycle()
+            } catch (_: Exception) {}
             pageTranslation.cleanedBitmap = null
             pageTranslation.updatedAt = System.currentTimeMillis()
             persistPageWithOomRecovery(store, pageKey, pageTranslation)
@@ -2620,7 +2856,9 @@ class TranslationPipeline(
             chapter.scanlator,
         )
         if (persistCleanedBitmap(pageTranslation, cleaned, companionDir, pageKey, chapter.name, store) == null) {
-            try { cleaned.recycle() } catch (_: Exception) {}
+            try {
+                cleaned.recycle()
+            } catch (_: Exception) {}
             pageTranslation.renderStatus = StageStatus.FAILED
             persistPageWithOomRecovery(store, pageKey, pageTranslation)
             return
@@ -2702,7 +2940,11 @@ class TranslationPipeline(
                     cleaned
                 } else {
                     val s = Bitmap.createScaledBitmap(cleaned, targetW, targetH, true)
-                    if (s !== cleaned) try { cleaned.recycle() } catch (_: Exception) {}
+                    if (s !== cleaned) {
+                        try {
+                            cleaned.recycle()
+                        } catch (_: Exception) {}
+                    }
                     s
                 }
                 pageTranslation.cleanedBitmap = scaledCleaned
@@ -2712,13 +2954,13 @@ class TranslationPipeline(
             }
             retryTranslation.cleanedBitmap = null // we own it now
         } finally {
-            try { retryBitmap.recycle() } catch (_: Exception) {}
+            try {
+                retryBitmap.recycle()
+            } catch (_: Exception) {}
             BitmapPool.releaseAll()
         }
         return pageTranslation
     }
-
-
 
     /**
      * TachiyomiAT: STAGE 1 of the staged batch pipeline — detect + OCR only.
@@ -2957,7 +3199,7 @@ class TranslationPipeline(
             // Repeated OOMs: stop this page rather than switching the block detector.
             if (consecutiveOomCount >= 2) {
                 logcat(LogPriority.WARN) {
-                    "ONNX recognition hit ${consecutiveOomCount} consecutive OOMs; not switching geometry engines"
+                    "ONNX recognition hit $consecutiveOomCount consecutive OOMs; not switching geometry engines"
                 }
                 store.updatePage(fileName) {
                     (it ?: PageTranslation()).apply {
@@ -3004,7 +3246,9 @@ class TranslationPipeline(
     }
 
     fun forceReleaseNativeBuffers() {
-        try { recognitionEngine.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        try {
+            recognitionEngine.forceReleaseNativeBuffers()
+        } catch (_: Exception) {}
     }
 
     private fun preflightAnalyzeGate(bitmap: Bitmap, fileName: String) {
@@ -3038,7 +3282,9 @@ class TranslationPipeline(
     private fun reclaimTranslationMemory(reason: String, trimImageCache: Boolean) {
         val before = TranslationMemoryBudget.snapshot()
         BitmapPool.releaseAll()
-        try { recognitionEngine.forceReleaseNativeBuffers() } catch (e: Throwable) {
+        try {
+            recognitionEngine.forceReleaseNativeBuffers()
+        } catch (e: Throwable) {
             logcat(LogPriority.WARN, e) { "forceReleaseNativeBuffers threw during memory reclaim: $reason" }
         }
         if (trimImageCache) {
@@ -3238,7 +3484,7 @@ class TranslationPipeline(
         val height: Int,
         val reason: String,
     ) : RuntimeException(
-        "Low memory translating $fileName: $reason (page=${width}x$height). Retry when memory recovers."
+        "Low memory translating $fileName: $reason (page=${width}x$height). Retry when memory recovers.",
     )
 
     private fun getChapterPages(chapterPath: UniFile): List<Pair<String, () -> InputStream>> {

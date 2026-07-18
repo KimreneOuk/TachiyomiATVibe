@@ -67,10 +67,18 @@ data class TranslationProgressSnapshot(
     val countPair: Pair<Int, Int> get() = donePages to totalPages
 
     @Immutable
-    data class Page(val pageKey: String, val index: Int, val stage: TranslationProgressStage, val errorMessage: String? = null)
+    data class Page(
+        val pageKey: String,
+        val index: Int,
+        val stage: TranslationProgressStage,
+        val errorMessage: String? = null,
+    )
 
     companion object {
-        fun empty(chapterId: Long, state: Translation.State = Translation.State.NOT_TRANSLATED) = TranslationProgressSnapshot(
+        fun empty(
+            chapterId: Long,
+            state: Translation.State = Translation.State.NOT_TRANSLATED,
+        ) = TranslationProgressSnapshot(
             chapterId = chapterId, state = state, donePages = 0, totalPages = 0,
             activePage = 0, activePageKey = null, queuedCount = 0, failedCount = 0, pages = emptyList(),
         )
@@ -81,11 +89,22 @@ data class TranslationProgressSnapshot(
             pageMap: Map<String, PageTranslation>?,
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
-            batchPhase: TranslationBatchPhase = if (state == Translation.State.TRANSLATING) TranslationBatchPhase.FIRST_PASS else TranslationBatchPhase.IDLE,
+            batchPhase: TranslationBatchPhase = if (state ==
+                Translation.State.TRANSLATING
+            ) {
+                TranslationBatchPhase.FIRST_PASS
+            } else {
+                TranslationBatchPhase.IDLE
+            },
             revision: RevisionProgress = RevisionProgress(),
         ): TranslationProgressSnapshot = eu.kanade.translation.batch.TranslationBatchProgressTracker.computeSnapshot(
-            pageMap.orEmpty(), state, indexResolver = indexResolver, permitHolderPageKey = permitHolderPageKey,
-            batchPhase = batchPhase, revision = revision, chapterId = chapterId,
+            pageMap.orEmpty(),
+            state,
+            indexResolver = indexResolver,
+            permitHolderPageKey = permitHolderPageKey,
+            batchPhase = batchPhase,
+            revision = revision,
+            chapterId = chapterId,
         )
     }
 }
@@ -105,6 +124,15 @@ internal object PageIndexResolver {
     }
 }
 
-enum class TranslationProgressStage { QUEUED, OCR, INPAINT, TRANSLATE, RENDER, DONE, FAILED;
+enum class TranslationProgressStage {
+    QUEUED,
+    OCR,
+    INPAINT,
+    TRANSLATE,
+    RENDER,
+    DONE,
+    FAILED,
+    ;
+
     val isRunning: Boolean get() = this == OCR || this == INPAINT || this == TRANSLATE || this == RENDER
 }

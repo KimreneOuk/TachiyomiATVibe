@@ -30,8 +30,14 @@ class StrictNnapiFallbackTest {
         val baseline = intArrayOf(3, 4)
         val result = StrictNnapiFallback.run(
             useNnapi = true,
-            nnapi = { nnapiCalls++; rejected },
-            xnnpack = { baselineCalls++; StrictNnapiFallback.Candidate.Accepted(baseline) },
+            nnapi = {
+                nnapiCalls++
+                rejected
+            },
+            xnnpack = {
+                baselineCalls++
+                StrictNnapiFallback.Candidate.Accepted(baseline)
+            },
         )
         result.route shouldBe StrictNnapiFallback.Route.XNNPACK
         result.value shouldBe baseline
@@ -85,8 +91,14 @@ class StrictNnapiFallbackTest {
         var baselineCalls = 0
         val result = StrictNnapiFallback.run(
             useNnapi = false,
-            nnapi = { nnapiCalls++; StrictNnapiFallback.Candidate.Accepted(1) },
-            xnnpack = { baselineCalls++; StrictNnapiFallback.Candidate.Failed(IllegalStateException()) },
+            nnapi = {
+                nnapiCalls++
+                StrictNnapiFallback.Candidate.Accepted(1)
+            },
+            xnnpack = {
+                baselineCalls++
+                StrictNnapiFallback.Candidate.Failed(IllegalStateException())
+            },
         )
         result.route shouldBe StrictNnapiFallback.Route.PUSH_PULL
         nnapiCalls shouldBe 0

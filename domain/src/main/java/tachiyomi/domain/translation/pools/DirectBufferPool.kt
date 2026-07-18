@@ -13,6 +13,7 @@ class DirectBufferPool(
     private val maxPoolSize: Int = 4,
 ) {
     private val availableBuffers = ConcurrentLinkedQueue<FloatBuffer>()
+
     /**
      * TachiyomiAT: in-use tracking MUST use identity equality, not the
      * FloatBuffer's content/position-dependent equals/hashCode.

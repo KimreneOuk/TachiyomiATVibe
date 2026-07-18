@@ -49,7 +49,8 @@ class StreamingChunkPlanner(
         )
     }
     private val outputUpperBound: Int = requestedOutputTokens.coerceAtLeast(constraints.minOutputTokens)
-    private val maxPromptTokens: Int = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
+    private val maxPromptTokens: Int =
+        constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
 
     private val emitted = mutableListOf<TranslationContextChunk>()
     private val rejected = linkedMapOf<String, String>()
@@ -95,7 +96,10 @@ class StreamingChunkPlanner(
         val completed = linkedSetOf<String>()
 
         if (rejectReason != null) {
-            flushForAccept()?.let { lastChunk = it.chunk; completed += it.completed }
+            flushForAccept()?.let {
+                lastChunk = it.chunk
+                completed += it.completed
+            }
             rejected[pageKey] = rejectReason
             // A rejected page contributes no refs and is intentionally never
             // reported as completed.
@@ -112,7 +116,10 @@ class StreamingChunkPlanner(
                             prospectivePageCount > constraints.maxPagesPerChunk
                         )
                 ) {
-                    flushForAccept()?.let { lastChunk = it.chunk; completed += it.completed }
+                    flushForAccept()?.let {
+                        lastChunk = it.chunk
+                        completed += it.completed
+                    }
                 }
                 current += ref
                 currentTokens += refTokens

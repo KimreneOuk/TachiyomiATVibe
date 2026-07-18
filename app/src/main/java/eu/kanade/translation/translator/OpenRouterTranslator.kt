@@ -1,20 +1,12 @@
 ﻿package eu.kanade.translation.translator
 
-import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
-import kotlinx.serialization.json.putJsonObject
 import logcat.logcat
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
 class OpenRouterTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -34,7 +26,7 @@ class OpenRouterTranslator(
             rollingContext = "",
             glossary = "",
             estimatedPromptTokens = 0,
-            maxOutputTokens = maxOutputToken
+            maxOutputTokens = maxOutputToken,
         )
         translateContextual(chunk, isPass2 = false)
     }
@@ -45,7 +37,7 @@ class OpenRouterTranslator(
             isPass2 = isPass2,
             url = "https://openrouter.ai/api/v1/chat/completions",
             headers = mapOf("Authorization" to "Bearer $apiKey"),
-            logTag = "OpenRouterTranslator"
+            logTag = "OpenRouterTranslator",
         ) { systemPrompt, finalPrompt ->
             buildJsonObject {
                 put("model", modelName)

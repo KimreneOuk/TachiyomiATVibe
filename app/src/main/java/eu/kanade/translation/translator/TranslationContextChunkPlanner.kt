@@ -17,12 +17,15 @@ object TranslationContextChunkPlanner {
     const val MAX_CONTEXT_TOKENS = 8_192
     const val SAFETY_MARGIN = 512
     const val MIN_OUTPUT_TOKENS = 256
+
     // Accounts for the unified system prompt + few-shot examples (TranslationPrompts).
     const val PROMPT_OVERHEAD_TOKENS = 1_100
+
     // Token budget for the combined rolling-context + chapter glossary injected
     // via TranslationPrompts.contextPrefix. Large enough for a small glossary
     // (~400) plus ~32 recent pairs; drops cleanly when exceeded.
     const val MAX_ROLLING_CONTEXT_TOKENS = 1_500
+
     // Pair-count cap on the rolling recent-pairs window.
     const val MAX_ROLLING_PAIRS = 32
 
@@ -142,7 +145,9 @@ object TranslationContextChunkPlanner {
         val lines = upcoming.flatMap { page ->
             page.blocks.mapNotNull { block ->
                 val text = block.text.trim()
-                if (text.isBlank()) null else {
+                if (text.isBlank()) {
+                    null
+                } else {
                     "$text"
                 }
             }
@@ -244,7 +249,13 @@ object TranslationContextChunkPlanner {
         requestedOutputTokens: Int,
         constraints: Constraints,
     ): TranslationContextChunk =
-        copy(maxOutputTokens = StreamingChunkPlanner.effectiveOutputCap(estimatedPromptTokens, requestedOutputTokens, constraints))
+        copy(
+            maxOutputTokens = StreamingChunkPlanner.effectiveOutputCap(
+                estimatedPromptTokens,
+                requestedOutputTokens,
+                constraints,
+            ),
+        )
 
     fun constraintsFor(profile: Profile): Constraints = when (profile) {
         Profile.DEFAULT -> Constraints(

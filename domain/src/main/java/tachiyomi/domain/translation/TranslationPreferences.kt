@@ -120,7 +120,10 @@ class TranslationPreferences(
     }
 
     //region Category and engine selection
-    fun translationEngineCategory() = preferenceStore.getEnum("translation_engine_category", TranslationEngineCategory.STANDARD)
+    fun translationEngineCategory() = preferenceStore.getEnum(
+        "translation_engine_category",
+        TranslationEngineCategory.STANDARD,
+    )
     fun translationStandardEngine() = preferenceStore.getEnum("translation_standard_engine", StandardEngine.MLKIT)
     fun translationAiEngine() = preferenceStore.getEnum("translation_ai_engine", AiEngine.GEMINI)
 
@@ -243,7 +246,10 @@ class TranslationPreferences(
      * once per instance, so changing this at runtime forces a recognition
      * rebuild (see the engine-rebuild gate in TranslationPipeline).
      */
-    fun translationReadingOrder() = preferenceStore.getEnum("translation_reading_order", TranslationReadingOrder.RTL_MANGA)
+    fun translationReadingOrder() = preferenceStore.getEnum(
+        "translation_reading_order",
+        TranslationReadingOrder.RTL_MANGA,
+    )
 
     //endregion
 

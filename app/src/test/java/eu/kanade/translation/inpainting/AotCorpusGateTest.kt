@@ -50,10 +50,16 @@ class AotCorpusGateTest {
             val staticOut = readArgbBin("$page/static_out.bin")
 
             val dynamicRejected = AotOutputGuard.isSuspiciousUniformFill(
-                dynamicOut.pixels, mask.pixels, mask.width, mask.height,
+                dynamicOut.pixels,
+                mask.pixels,
+                mask.width,
+                mask.height,
             )
             val staticRejected = AotOutputGuard.isSuspiciousUniformFill(
-                staticOut.pixels, mask.pixels, mask.width, mask.height,
+                staticOut.pixels,
+                mask.pixels,
+                mask.width,
+                mask.height,
             )
 
             // Gate: a NEW rejection is dynamic=accept AND static=reject.
@@ -112,7 +118,11 @@ class AotCorpusGateTest {
                 if (jsonString(manifest, "identity") != identity) add("identity")
                 if (jsonString(manifest, "page") != identity) add("page")
                 if (jsonString(manifest, "source_page") != sourcePage) add("source_page")
-                if (jsonString(manifest, "source_file") != "page-${sourcePage.removePrefix("real_")}.jpg") add("source_file")
+                if (jsonString(manifest, "source_file") !=
+                    "page-${sourcePage.removePrefix("real_")}.jpg"
+                ) {
+                    add("source_file")
+                }
                 if (jsonString(manifest, "generator") != "generate_masks_faithful.py") add("generator")
                 if (jsonBoolean(manifest, "fallback_used") != false) add("fallback_used")
                 val lineCount = jsonInt(manifest, "paddle_line_count")
@@ -146,13 +156,34 @@ class AotCorpusGateTest {
                 if (mask.width != fixture.side || mask.height != fixture.side) add("mask dimensions")
                 if (dynamic.width != fixture.side || dynamic.height != fixture.side) add("dynamic dimensions")
                 if (static.width != fixture.side || static.height != fixture.side) add("static dimensions")
-                if (mask.pixels.size != expectedPixels || dynamic.pixels.size != expectedPixels || static.pixels.size != expectedPixels) add("pixel count")
-                if (jsonString(manifest, "fixture_kind") != "deterministic_transformed_real_corpus_center_crop") add("fixture_kind")
+                if (mask.pixels.size != expectedPixels ||
+                    dynamic.pixels.size != expectedPixels ||
+                    static.pixels.size != expectedPixels
+                ) {
+                    add("pixel count")
+                }
+                if (jsonString(manifest, "fixture_kind") !=
+                    "deterministic_transformed_real_corpus_center_crop"
+                ) {
+                    add("fixture_kind")
+                }
                 if (jsonInt(manifest, "fixture_side") != fixture.side) add("fixture_side")
                 if (jsonString(manifest, "fixture_source_identity") != fixture.identity) add("fixture_source_identity")
-                if (jsonString(manifest, "fixture_transform") != "center_crop_from_512_to_${fixture.side}_no_resize") add("fixture_transform")
-                if (jsonString(manifest, "dynamic_route") != "native_${fixture.side}x${fixture.side}") add("dynamic_route")
-                if (jsonString(manifest, "static_route") != "production_center_background_pad_zero_mask_512_crop_back") add("static_route")
+                if (jsonString(manifest, "fixture_transform") !=
+                    "center_crop_from_512_to_${fixture.side}_no_resize"
+                ) {
+                    add("fixture_transform")
+                }
+                if (jsonString(manifest, "dynamic_route") !=
+                    "native_${fixture.side}x${fixture.side}"
+                ) {
+                    add("dynamic_route")
+                }
+                if (jsonString(manifest, "static_route") !=
+                    "production_center_background_pad_zero_mask_512_crop_back"
+                ) {
+                    add("static_route")
+                }
                 if (jsonBoolean(manifest, "synthetic_color_used") != false) add("synthetic_color_used")
             }
             if (malformed.isNotEmpty()) {
@@ -273,6 +304,7 @@ class AotCorpusGateTest {
 
     private companion object {
         const val MODEL_INPUT_SIZE = 512
+
         // One sample per detector-v4 free-text ROI. Paddle DET runs independently
         // on each ROI padded by 12 px, then each resulting group gets its own crop,
         // mask, and stable real_NNN__ft_NNN identity. This prevents separate groups

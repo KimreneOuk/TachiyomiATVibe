@@ -60,8 +60,10 @@ internal object AotBoxGeometry {
         minOverlapFraction: Float = 0.12f,
     ): Boolean {
         if (bubbleBoxes.isEmpty() || textBox.size < 4) return false
-        val textArea = ((textBox[2] - textBox[0]).coerceAtLeast(1) *
-            (textBox[3] - textBox[1]).coerceAtLeast(1)).toFloat()
+        val textArea = (
+            (textBox[2] - textBox[0]).coerceAtLeast(1) *
+                (textBox[3] - textBox[1]).coerceAtLeast(1)
+            ).toFloat()
         for (bubble in bubbleBoxes) {
             val ix1 = max(textBox[0], bubble[0])
             val iy1 = max(textBox[1], bubble[1])

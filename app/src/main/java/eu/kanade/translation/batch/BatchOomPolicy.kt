@@ -16,7 +16,9 @@ object BatchOomPolicy {
         if (consecutiveOomCount <= 0) return AbortDecision(false, consecutiveOomCount)
         val reason = if (consecutiveOomCount >= threshold) {
             "Memory exhausted after $consecutiveOomCount consecutive OOMs — retry after restart"
-        } else null
+        } else {
+            null
+        }
         return AbortDecision(
             abort = consecutiveOomCount >= threshold,
             consecutiveCount = consecutiveOomCount,

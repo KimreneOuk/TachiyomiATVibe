@@ -175,9 +175,11 @@ fun TranslationBlock.ocrFingerprint(): String {
 fun PageTranslation.ocrBlockFingerprints(): List<String> = blocks.map { it.ocrFingerprint() }
 
 fun PageTranslation.inpaintMaskFingerprint(): String =
-    fingerprint(inpaintMaskBoxes.joinToString("|") { box ->
-        "${box.x1},${box.y1},${box.x2},${box.y2},${box.label}"
-    })
+    fingerprint(
+        inpaintMaskBoxes.joinToString("|") { box ->
+            "${box.x1},${box.y1},${box.x2},${box.y2},${box.label}"
+        },
+    )
 
 private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
     .digest(value.toByteArray(Charsets.UTF_8))

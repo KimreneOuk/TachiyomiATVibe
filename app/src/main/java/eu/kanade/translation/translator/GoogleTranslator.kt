@@ -107,9 +107,9 @@ class GoogleTranslator(
 
         var j: Long = 406644
         for (num in list) {
-            j = RL(j + num.toLong(), "+-a^+6")
+            j = rl(j + num.toLong(), "+-a^+6")
         }
-        var rL = RL(j, "+-3^+b+-f") xor 3293161072L
+        var rL = rl(j, "+-3^+b+-f") xor 3293161072L
         if (rL < 0) {
             rL = (rL and 2147483647L) + 2147483648L
         }
@@ -117,7 +117,7 @@ class GoogleTranslator(
         return "$j2.${406644L xor j2}"
     }
 
-    private fun RL(j: Long, str: String): Long {
+    private fun rl(j: Long, str: String): Long {
         var result = j
         var i = 0
         while (i < str.length - 2) {
@@ -129,10 +129,8 @@ class GoogleTranslator(
         return result
     }
 
-
     override fun close() {
         okHttpClient.connectionPool.evictAll()
         okHttpClient.dispatcher.executorService.shutdown()
     }
-
 }

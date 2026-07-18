@@ -115,7 +115,7 @@ class KeystoreApiKeyManager(private val context: Context) {
             val keyEntry = KeyStore.SecretKeyEntry(secretKey)
             val protection = android.security.keystore.KeyProtection.Builder(
                 android.security.keystore.KeyProperties.PURPOSE_ENCRYPT or
-                    android.security.keystore.KeyProperties.PURPOSE_DECRYPT
+                    android.security.keystore.KeyProperties.PURPOSE_DECRYPT,
             )
                 .setBlockModes(android.security.keystore.KeyProperties.BLOCK_MODE_GCM)
                 .setEncryptionPaddings(android.security.keystore.KeyProperties.ENCRYPTION_PADDING_NONE)

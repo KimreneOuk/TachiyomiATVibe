@@ -90,17 +90,22 @@ object BubbleSegmentationDecoder {
         var minY = pageHeight
         var maxX = -1
         var maxY = -1
-        for (y in y1 until y2) for (x in x1 until x2) {
-            val inputX = x * letterbox.ratio + letterbox.padX
-            val inputY = y * letterbox.ratio + letterbox.padY
-            val protoX = (inputX / INPUT_SIZE * prototypeWidth).toInt().coerceIn(0, prototypeWidth - 1)
-            val protoY = (inputY / INPUT_SIZE * prototypeHeight).toInt().coerceIn(0, prototypeHeight - 1)
-            val protoIndex = protoY * prototypeWidth + protoX
-            var sum = 0f
-            for (channel in 0 until PROTOTYPE_CHANNELS) sum += candidate.coefficients[channel] * prototypes[channel * prototypeWidth * prototypeHeight + protoIndex]
-            if (sigmoid(sum) >= threshold) {
-                pixels[y * pageWidth + x] = 1
-                minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x); maxY = max(maxY, y)
+        for (y in y1 until y2) {
+            for (x in x1 until x2) {
+                val inputX = x * letterbox.ratio + letterbox.padX
+                val inputY = y * letterbox.ratio + letterbox.padY
+                val protoX = (inputX / INPUT_SIZE * prototypeWidth).toInt().coerceIn(0, prototypeWidth - 1)
+                val protoY = (inputY / INPUT_SIZE * prototypeHeight).toInt().coerceIn(0, prototypeHeight - 1)
+                val protoIndex = protoY * prototypeWidth + protoX
+                var sum = 0f
+                for (channel in 0 until PROTOTYPE_CHANNELS) sum += candidate.coefficients[channel] * prototypes[channel * prototypeWidth * prototypeHeight + protoIndex]
+                if (sigmoid(sum) >= threshold) {
+                    pixels[y * pageWidth + x] = 1
+                    minX = min(minX, x)
+                    minY = min(minY, y)
+                    maxX = max(maxX, x)
+                    maxY = max(maxY, y)
+                }
             }
         }
         return if (maxX >= minX && maxY >= minY) Mask(pixels, pageWidth, pageHeight, intArrayOf(minX, minY, maxX + 1, maxY + 1), candidate.score) else null
@@ -108,11 +113,16 @@ object BubbleSegmentationDecoder {
 
     private fun sigmoid(value: Float): Float = (1f / (1f + exp(-value))).toFloat()
     private fun iou(a: Candidate, b: Candidate): Float {
-        val ax1 = a.cx - a.width / 2f; val ay1 = a.cy - a.height / 2f
-        val ax2 = a.cx + a.width / 2f; val ay2 = a.cy + a.height / 2f
-        val bx1 = b.cx - b.width / 2f; val by1 = b.cy - b.height / 2f
-        val bx2 = b.cx + b.width / 2f; val by2 = b.cy + b.height / 2f
-        val iw = min(ax2, bx2) - max(ax1, bx1); val ih = min(ay2, by2) - max(ay1, by1)
+        val ax1 = a.cx - a.width / 2f
+        val ay1 = a.cy - a.height / 2f
+        val ax2 = a.cx + a.width / 2f
+        val ay2 = a.cy + a.height / 2f
+        val bx1 = b.cx - b.width / 2f
+        val by1 = b.cy - b.height / 2f
+        val bx2 = b.cx + b.width / 2f
+        val by2 = b.cy + b.height / 2f
+        val iw = min(ax2, bx2) - max(ax1, bx1)
+        val ih = min(ay2, by2) - max(ay1, by1)
         if (iw <= 0f || ih <= 0f) return 0f
         return iw * ih / (a.width * a.height + b.width * b.height - iw * ih)
     }

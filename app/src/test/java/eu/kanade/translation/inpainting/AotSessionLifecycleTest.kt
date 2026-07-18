@@ -46,7 +46,10 @@ class AotSessionLifecycleTest {
         AotSessionLifecycle.closeIndependently(
             fixed = AutoCloseable { closed += "fixed" },
             dynamic = AutoCloseable { closed += "dynamic" },
-            nnapi = AutoCloseable { closed += "nnapi"; error("close") },
+            nnapi = AutoCloseable {
+                closed += "nnapi"
+                error("close")
+            },
             onFailure = failures::add,
         )
         closed shouldContainExactly listOf("nnapi", "fixed", "dynamic")

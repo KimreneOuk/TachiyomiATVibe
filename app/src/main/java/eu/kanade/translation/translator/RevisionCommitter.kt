@@ -60,7 +60,7 @@ object RevisionCommitter {
         mergeResult: RevisionMerger.MergeResult,
         chapterId: Long?,
         chapterName: String,
-        ): CommitOutcome {
+    ): CommitOutcome {
         var keptCount = 0
         var correctedCount = 0
         var unresolvedCount = mergeResult.unresolvedCount

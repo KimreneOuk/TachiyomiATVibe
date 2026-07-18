@@ -1,6 +1,7 @@
 ﻿package eu.kanade.translation.translator
 
 import eu.kanade.tachiyomi.network.await
+import logcat.LogPriority
 import logcat.logcat
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -8,7 +9,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
-import logcat.LogPriority
 
 abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
 
@@ -32,27 +32,27 @@ abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
     ): String {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = payloadJson.toRequestBody(mediaType)
-        
+
         val requestBuilder = Request.Builder()
             .url(url)
             .post(body)
-            
+
         for ((key, value) in headers) {
             requestBuilder.header(key, value)
         }
         // Always enforce Content-Type
         requestBuilder.header("Content-Type", "application/json")
-        
+
         val request = requestBuilder.build()
         val response = okHttpClient.newCall(request).await()
-        
+
         val responseBody = response.body ?: throw IllegalStateException("Empty response body from $url")
         val responseString = responseBody.string()
         val responseJson = JSONObject(responseString)
-        
+
         val choicesArray = responseJson.optJSONArray("choices")
         val rawOutput = choicesArray?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
-        
+
         if (rawOutput.isNullOrBlank()) {
             val snippet = if (responseString.length > 300) responseString.substring(0, 300) else responseString
             logcat(LogPriority.WARN) {
@@ -63,7 +63,7 @@ abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
                     responseJson.optString("error", responseJson.toString()),
             )
         }
-        
+
         return rawOutput
     }
 

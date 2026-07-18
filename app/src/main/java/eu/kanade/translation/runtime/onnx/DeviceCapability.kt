@@ -1,7 +1,6 @@
 package eu.kanade.translation.runtime.onnx
 
 import android.os.Build
-
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -19,9 +18,12 @@ object DeviceCapability {
         val fingerprint = Build.FINGERPRINT.orEmpty().lowercase()
         val model = Build.MODEL.orEmpty().lowercase()
         val hardware = Build.HARDWARE.orEmpty().lowercase()
-        fingerprint.startsWith("generic") || fingerprint.contains("emulator") ||
-            model.contains("sdk_gphone") || model.contains("emulator") ||
-            hardware.contains("goldfish") || hardware.contains("ranchu")
+        fingerprint.startsWith("generic") ||
+            fingerprint.contains("emulator") ||
+            model.contains("sdk_gphone") ||
+            model.contains("emulator") ||
+            hardware.contains("goldfish") ||
+            hardware.contains("ranchu")
     }
 
     fun describe(): String =

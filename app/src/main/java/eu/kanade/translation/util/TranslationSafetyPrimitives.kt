@@ -60,6 +60,7 @@ object TranslationSafetyPrimitives {
     sealed interface DrainOutcome {
         /** Lock was held; drain skipped to avoid native use-after-free. */
         data object Skipped : DrainOutcome
+
         /** Lock was free; [count] children were drained. */
         data class Drained(val count: Int) : DrainOutcome
     }

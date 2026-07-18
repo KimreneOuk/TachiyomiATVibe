@@ -13,7 +13,6 @@ import eu.kanade.translation.translator.TextTranslatorLanguage
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.float
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.int

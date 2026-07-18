@@ -30,7 +30,9 @@ object OnnxRuntimeProvider {
         return try {
             environment.createSession(modelPath, opts)
         } catch (error: Throwable) {
-            try { opts.close() } catch (_: Throwable) {}
+            try {
+                opts.close()
+            } catch (_: Throwable) {}
             val ep = when {
                 useAccelerator -> "NNAPI"
                 useXnnpack -> "XNNPACK"
@@ -50,7 +52,9 @@ object OnnxRuntimeProvider {
                 cpuOpts.close()
             }
         } finally {
-            try { opts.close() } catch (_: Throwable) {}
+            try {
+                opts.close()
+            } catch (_: Throwable) {}
         }
     }
 
@@ -93,7 +97,11 @@ object OnnxRuntimeProvider {
             configure(options)
             return options
         } catch (error: Throwable) {
-            try { options.close() } catch (closeError: Throwable) { error.addSuppressed(closeError) }
+            try {
+                options.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
             throw error
         }
     }

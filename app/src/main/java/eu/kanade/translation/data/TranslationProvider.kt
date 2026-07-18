@@ -54,8 +54,8 @@ class TranslationProvider(
      * @param source the source to query.
      */
     fun findSourceDir(source: Source): UniFile? {
-        val sourceDir=translationDir?.findFile(getSourceDirName(source))
-        return sourceDir;
+        val sourceDir = translationDir?.findFile(getSourceDirName(source))
+        return sourceDir
     }
 
     /**
@@ -163,8 +163,6 @@ class TranslationProvider(
         return dir.findFile(pageImageName)
     }
 
-
-
     fun deleteCompanionImages(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?) {
         findCompanionImageDir(mangaTitle, source, chapterName, chapterScanlator)?.delete()
     }
@@ -173,5 +171,4 @@ class TranslationProvider(
         val sanitized = pageKey.replace(Regex("[^a-zA-Z0-9.\\-_]"), "_")
         return "$sanitized.$type.png"
     }
-
 }

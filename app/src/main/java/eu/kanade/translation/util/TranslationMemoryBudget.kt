@@ -1,7 +1,7 @@
 package eu.kanade.translation.util
 
-import android.app.Application
 import android.app.ActivityManager
+import android.app.Application
 import android.content.Context
 import android.os.Debug
 import logcat.LogPriority
@@ -262,7 +262,7 @@ object TranslationMemoryBudget {
 
         if (snapshot.availableHeapBytes < requiredHeap + margin) {
             return MemoryPreflightDecision.Defer(
-                "Tight JVM heap for Decode: required=${(requiredHeap + margin).toMiB()}MiB, available=${snapshot.availableHeapBytes.toMiB()}MiB"
+                "Tight JVM heap for Decode: required=${(requiredHeap + margin).toMiB()}MiB, available=${snapshot.availableHeapBytes.toMiB()}MiB",
             )
         }
 
@@ -276,7 +276,9 @@ object TranslationMemoryBudget {
             }
             val sysHeadroom = memInfo.availMem - memInfo.threshold
             if (sysHeadroom < 50L * MIB) {
-                return MemoryPreflightDecision.Defer("Tight system memory for Decode: headroom=${sysHeadroom.toMiB()}MiB")
+                return MemoryPreflightDecision.Defer(
+                    "Tight system memory for Decode: headroom=${sysHeadroom.toMiB()}MiB",
+                )
             }
         }
         return MemoryPreflightDecision.Proceed
@@ -291,7 +293,7 @@ object TranslationMemoryBudget {
 
         if (snapshot.availableHeapBytes < requiredHeap + margin) {
             return MemoryPreflightDecision.Defer(
-                "Tight JVM heap for Analyze: required=${(requiredHeap + margin).toMiB()}MiB, available=${snapshot.availableHeapBytes.toMiB()}MiB"
+                "Tight JVM heap for Analyze: required=${(requiredHeap + margin).toMiB()}MiB, available=${snapshot.availableHeapBytes.toMiB()}MiB",
             )
         }
 
@@ -306,7 +308,9 @@ object TranslationMemoryBudget {
             val sysHeadroom = memInfo.availMem - memInfo.threshold
             val requiredSysMem = 128L * MIB // For ONNX detector & OCR sessions native buffers
             if (sysHeadroom < requiredSysMem) {
-                return MemoryPreflightDecision.Defer("Tight system memory for Analyze: headroom=${sysHeadroom.toMiB()}MiB, required=${requiredSysMem.toMiB()}MiB")
+                return MemoryPreflightDecision.Defer(
+                    "Tight system memory for Analyze: headroom=${sysHeadroom.toMiB()}MiB, required=${requiredSysMem.toMiB()}MiB",
+                )
             }
         }
         return MemoryPreflightDecision.Proceed
@@ -320,7 +324,7 @@ object TranslationMemoryBudget {
 
         if (snapshot.availableHeapBytes < estimatedInpaintHeap + margin) {
             return MemoryPreflightDecision.Defer(
-                "Tight JVM heap for Inpaint: required=${(estimatedInpaintHeap + margin).toMiB()}MiB, available=${snapshot.availableHeapBytes.toMiB()}MiB"
+                "Tight JVM heap for Inpaint: required=${(estimatedInpaintHeap + margin).toMiB()}MiB, available=${snapshot.availableHeapBytes.toMiB()}MiB",
             )
         }
 
@@ -355,8 +359,16 @@ object TranslationMemoryBudget {
         if (!diagnosticsEnabled) return
         val snapshot = snapshot()
         val nativeHeap = Debug.getNativeHeapAllocatedSize()
-        val gcCount = try { Debug.getRuntimeStat("art.gc.gc-count") } catch (_: Throwable) { null }
-        val gcTime = try { Debug.getRuntimeStat("art.gc.gc-time") } catch (_: Throwable) { null }
+        val gcCount = try {
+            Debug.getRuntimeStat("art.gc.gc-count")
+        } catch (_: Throwable) {
+            null
+        }
+        val gcTime = try {
+            Debug.getRuntimeStat("art.gc.gc-time")
+        } catch (_: Throwable) {
+            null
+        }
 
         val app = Injekt.get<Application>()
         val activityManager = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager

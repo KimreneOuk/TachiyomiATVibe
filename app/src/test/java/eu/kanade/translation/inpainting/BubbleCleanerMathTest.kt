@@ -32,7 +32,8 @@ class BubbleCleanerMathTest {
 
     @Test
     fun `percentileGray returns 0th bin when all mass at zero`() {
-        val hist = IntArray(256); hist[0] = 10
+        val hist = IntArray(256)
+        hist[0] = 10
         BubbleCleanerMath.percentileGray(hist, 10, 0.0f) shouldBe 0
         BubbleCleanerMath.percentileGray(hist, 10, 0.5f) shouldBe 0
         BubbleCleanerMath.percentileGray(hist, 10, 1.0f) shouldBe 0

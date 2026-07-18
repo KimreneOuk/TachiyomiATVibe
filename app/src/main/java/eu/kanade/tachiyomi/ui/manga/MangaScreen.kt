@@ -36,6 +36,7 @@ import eu.kanade.presentation.manga.ChapterSettingsDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.manga.EditCoverAction
 import eu.kanade.presentation.manga.MangaScreen
+import eu.kanade.presentation.manga.components.ChapterResetSheet
 import eu.kanade.presentation.manga.components.ChapterTranslationAction
 import eu.kanade.presentation.manga.components.ConfirmTranslationDialog
 import eu.kanade.presentation.manga.components.DeleteChaptersDialog
@@ -334,6 +335,29 @@ class MangaScreen(
                 RevisionResultSheet(
                     chapterName = dialog.item.chapter.name,
                     state = dialog.state,
+                    onDismissRequest = onDismissRequest,
+                )
+            }
+
+            is MangaScreenModel.Dialog.ChapterReset -> {
+                ChapterResetSheet(
+                    preflight = dialog.preflight,
+                    onResetTranslation = { preserveEdits ->
+                        screenModel.dismissDialog()
+                        screenModel.resetChapterTranslation(dialog.item, preserveEdits)
+                    },
+                    onResetInpaint = {
+                        screenModel.dismissDialog()
+                        screenModel.resetChapterInpaint(dialog.item)
+                    },
+                    onResetOcr = {
+                        screenModel.dismissDialog()
+                        screenModel.resetChapterOcr(dialog.item)
+                    },
+                    onDeleteEverything = {
+                        screenModel.dismissDialog()
+                        screenModel.deleteChapterTranslation(dialog.item)
+                    },
                     onDismissRequest = onDismissRequest,
                 )
             }

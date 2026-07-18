@@ -34,7 +34,14 @@ object PreferenceValidator {
             value.isBlank() -> ValidationResult.Invalid("API key cannot be empty", "Enter a valid API key")
             value.length < 10 -> ValidationResult.Warning("Short key", "API key seems too short")
             value.length > 5000 -> ValidationResult.Invalid("Too long", "API key exceeds maximum length")
-            engine.equals("MLKIT", ignoreCase = true) || engine.equals("GOOGLE", ignoreCase = true) -> ValidationResult.Warning("Not required", "This engine does not require an API key")
+            engine.equals(
+                "MLKIT",
+                ignoreCase = true,
+            ) ||
+                engine.equals(
+                    "GOOGLE",
+                    ignoreCase = true,
+                ) -> ValidationResult.Warning("Not required", "This engine does not require an API key")
             else -> ValidationResult.Valid
         }
     }

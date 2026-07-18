@@ -8,7 +8,7 @@ object GlossaryExtractor {
 
     suspend fun extractGlossary(
         translator: ContextualTextTranslator,
-        pages: List<PageTranslation>
+        pages: List<PageTranslation>,
     ): String {
         val textBuilder = StringBuilder()
         pages.forEach { page ->
@@ -26,13 +26,13 @@ object GlossaryExtractor {
             Format as a strict list like:
             OriginalTerm: TranslatedTerm
             Only return the terms, no other text.
-            
+
             Text:
             $sourceText
         """.trimIndent()
 
         logcat(LogPriority.INFO) { "Extracting glossary from first ${pages.size} pages..." }
-        
+
         return try {
             val response = translator.promptText(prompt)
             if (response.isNotBlank()) {

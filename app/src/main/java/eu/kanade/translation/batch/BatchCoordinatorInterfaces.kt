@@ -1,8 +1,5 @@
 package eu.kanade.translation.batch
 
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.translator.TranslatorComputeClass
-
 /**
  * TachiyomiAT: testable batch coordinator interfaces.
  */

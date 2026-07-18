@@ -189,7 +189,7 @@ object SettingsTranslationScreen : SearchableSettings {
                     entries = mapOf(
                         TranslationReadingOrder.AUTO to "Auto (Based on language)",
                         TranslationReadingOrder.RTL_MANGA to "Right-to-Left (Manga)",
-                        TranslationReadingOrder.LTR_COMIC to "Left-to-Right (Comic)"
+                        TranslationReadingOrder.LTR_COMIC to "Left-to-Right (Comic)",
                     ).toImmutableMap(),
                 ),
             ),

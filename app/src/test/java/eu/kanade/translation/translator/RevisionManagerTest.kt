@@ -3,11 +3,9 @@ package eu.kanade.translation.translator
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.RevisionScope
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.stableFingerprint
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.shouldNotBe
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
@@ -68,7 +66,7 @@ class RevisionManagerTest {
     @Test
     fun `RevisionDriver runs revision and commits to store`() = runTest {
         val store = storeWith(flaggedPage("p0", draft = "draft0"))
-        
+
         // Mock contextual translator
         val mockTranslator = object : ContextualTextTranslator {
             override val contextualCapability = ContextualTranslationCapability.CONTEXTUAL_REVIEW
@@ -90,7 +88,7 @@ class RevisionManagerTest {
 
             override suspend fun translateContextualStructured(
                 chunk: TranslationContextChunk,
-                isPass2: Boolean
+                isPass2: Boolean,
             ): ContextualTranslationBatch {
                 val targets = chunk.pages.flatMap { (pk, page) ->
                     page.blocks.mapIndexedNotNull { idx, b ->
@@ -112,7 +110,7 @@ class RevisionManagerTest {
 
         report.correctedCount shouldBe 1
         report.unresolvedCount shouldBe 0
-        
+
         val committed = store.state.value["p0"]!!.blocks[0]
         committed.translation shouldBe "Corrected stand-alone."
         committed.needsRevision shouldBe false
@@ -129,9 +127,9 @@ class RevisionManagerTest {
                         width = 10f, height = 10f, x = 0f, y = 0f,
                         symHeight = 1f, symWidth = 1f, angle = 0f,
                         needsRevision = false, // Not flagged!
-                    )
-                )
-            )
+                    ),
+                ),
+            ),
         )
 
         val mockTranslator = object : ContextualTextTranslator {
@@ -154,7 +152,7 @@ class RevisionManagerTest {
 
             override suspend fun translateContextualStructured(
                 chunk: TranslationContextChunk,
-                isPass2: Boolean
+                isPass2: Boolean,
             ): ContextualTranslationBatch {
                 val targets = chunk.pages.flatMap { (pk, page) ->
                     page.blocks.mapIndexedNotNull { idx, b ->
@@ -175,7 +173,7 @@ class RevisionManagerTest {
         )
 
         report.correctedCount shouldBe 1
-        
+
         val committed = store.state.value["p0"]!!.blocks[0]
         committed.translation shouldBe "Corrected ALL."
         committed.needsRevision shouldBe false

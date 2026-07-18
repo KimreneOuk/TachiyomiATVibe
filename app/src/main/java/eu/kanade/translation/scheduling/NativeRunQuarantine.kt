@@ -1,17 +1,17 @@
 package eu.kanade.translation.scheduling
 
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.async
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.selects.onTimeout
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.util.concurrent.atomic.AtomicLong

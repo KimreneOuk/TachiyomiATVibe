@@ -49,25 +49,28 @@ class MlKitFullPageRecognitionEngine(language: TextRecognizerLanguage) : PageRec
             // local copy diverged and caused a gray-text bug).
             val contrastColors = RenderColorEstimator.estimate(
                 bitmap,
-                bounds.left, bounds.top, bounds.right, bounds.bottom,
+                bounds.left,
+                bounds.top,
+                bounds.right,
+                bounds.bottom,
             )
-                translation.blocks.add(
-                    TranslationBlock(
-                        text = block.text,
-                        width = bounds.width().toFloat(),
-                        height = bounds.height().toFloat(),
-                        symWidth = symBounds.width().toFloat(),
-                        symHeight = symBounds.height().toFloat(),
-                        angle = angle,
-                        x = bounds.left.toFloat(),
-                        y = bounds.top.toFloat(),
-                        direction = if (isVertical) "TTB" else "LTR",
-                        textColor = contrastColors.first,
-                        strokeColor = contrastColors.second,
-                        strokeWidth = contrastColors.third,
-                    ),
-                )
-            }
+            translation.blocks.add(
+                TranslationBlock(
+                    text = block.text,
+                    width = bounds.width().toFloat(),
+                    height = bounds.height().toFloat(),
+                    symWidth = symBounds.width().toFloat(),
+                    symHeight = symBounds.height().toFloat(),
+                    angle = angle,
+                    x = bounds.left.toFloat(),
+                    y = bounds.top.toFloat(),
+                    direction = if (isVertical) "TTB" else "LTR",
+                    textColor = contrastColors.first,
+                    strokeColor = contrastColors.second,
+                    strokeWidth = contrastColors.third,
+                ),
+            )
+        }
         // TachiyomiAT: ML Kit emits one block per TextBlock with no dedupe, so
         // overlapping TextBlocks on dense pages render on top of each other.
         // Run before ocrBlockCount is set so the count reflects post-dedupe.

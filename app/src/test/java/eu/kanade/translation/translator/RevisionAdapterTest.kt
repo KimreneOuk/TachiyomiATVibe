@@ -277,8 +277,8 @@ class RevisionAdapterTest {
         val (id0, id1, id2) = request.orderedIds
 
         val rawLines = listOf(
-            "$id0|Corrected 0",   // Corrected -> TRANSLATED
-            "$id1|   ",            // Blank -> REJECTED
+            "$id0|Corrected 0", // Corrected -> TRANSLATED
+            "$id1|   ", // Blank -> REJECTED
             // id2 omitted -> MISSING
         )
         val results = parseRevision(request.idMap, rawLines)

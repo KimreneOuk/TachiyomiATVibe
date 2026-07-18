@@ -42,8 +42,8 @@ class PushPullGradientTest {
         val (px, mask) = bluePanelPage()
         val med = PushPullGradient.localRingMedian(px, 40, 40, mask, ring = 6)
         // The annulus around the hole is the blue panel → blue, not the page white.
-        red(med) shouldBeLessThan 120   // ~70
-        blue(med) shouldBeGreaterThan 175  // ~200
+        red(med) shouldBeLessThan 120 // ~70
+        blue(med) shouldBeGreaterThan 175 // ~200
     }
 
     @Test

@@ -1,8 +1,5 @@
 package eu.kanade.translation.inpainting
 
-import kotlin.math.max
-import kotlin.math.min
-
 internal object AotReportBubbleFill {
 
     internal fun reportBubbleFill(
@@ -64,7 +61,11 @@ internal object AotReportBubbleFill {
                     val down = idx + width
                     val left = idx - 1
                     val right = idx + 1
-                    if (mask[up] == 0.toByte() || mask[down] == 0.toByte() || mask[left] == 0.toByte() || mask[right] == 0.toByte()) {
+                    if (mask[up] == 0.toByte() ||
+                        mask[down] == 0.toByte() ||
+                        mask[left] == 0.toByte() ||
+                        mask[right] == 0.toByte()
+                    ) {
                         isBoundary = true
                     }
                 }
@@ -85,7 +86,7 @@ internal object AotReportBubbleFill {
                     if (y > 0) idx - width else -1,
                     if (y < height - 1) idx + width else -1,
                     if (x > 0) idx - 1 else -1,
-                    if (x < width - 1) idx + 1 else -1
+                    if (x < width - 1) idx + 1 else -1,
                 )
 
                 for (ni in neighbors) {
@@ -117,7 +118,7 @@ internal object AotReportBubbleFill {
                 val r = AotPixelOps.histogramMedian(histR, count)
                 val g = AotPixelOps.histogramMedian(histG, count)
                 val b = AotPixelOps.histogramMedian(histB, count)
-                
+
                 // Snap near-gray to pure white/black to match bubble paper/ink.
                 val cmax = maxOf(r, g, b)
                 val cmin = minOf(r, g, b)
@@ -127,15 +128,21 @@ internal object AotReportBubbleFill {
                 if (cmax - cmin < 30) {
                     val luma = (cmax + cmin) / 2
                     if (luma > 220) {
-                        fR = 255; fG = 255; fB = 255
+                        fR = 255
+                        fG = 255
+                        fB = 255
                     } else if (luma < 60) {
-                        fR = 0; fG = 0; fB = 0
+                        fR = 0
+                        fG = 0
+                        fB = 0
                     }
                 }
                 median = (0xFF shl 24) or (fR shl 16) or (fG shl 8) or fB
             } else {
                 // Fallback to average of component if it's too small to erode
-                var sr = 0L; var sg = 0L; var sb = 0L
+                var sr = 0L
+                var sg = 0L
+                var sb = 0L
                 for (idx in component) {
                     val p = pixels[idx]
                     sr += (p shr 16) and 0xFF
@@ -167,7 +174,7 @@ internal object AotReportBubbleFill {
         width: Int,
         height: Int,
         passes: Int,
-        insetPx: Int
+        insetPx: Int,
     ) {
         val scratch = IntArray(component.size)
         for (pass in 0 until passes) {

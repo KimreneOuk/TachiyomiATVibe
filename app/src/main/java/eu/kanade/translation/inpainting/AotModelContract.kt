@@ -44,7 +44,12 @@ internal object AotModelContract {
         name: String,
         dynamicBatch: Boolean,
     ) {
-        val batchMatches = if (dynamicBatch) shape.getOrNull(0)?.let { it == 1L || it <= 0L } == true else shape.getOrNull(0) == 1L
+        val batchMatches = if (dynamicBatch) {
+            shape.getOrNull(0)?.let { it == 1L || it <= 0L } == true
+        } else {
+            shape.getOrNull(0) ==
+                1L
+        }
         require(shape.size == 4 && batchMatches && shape[1] == channels) {
             "$name must be NCHW [${if (dynamicBatch) "B" else "1"},$channels,H,W], actual=${shape.contentToString()}"
         }

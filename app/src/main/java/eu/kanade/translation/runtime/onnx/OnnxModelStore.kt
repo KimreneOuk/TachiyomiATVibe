@@ -109,7 +109,7 @@ class OnnxModelStore(private val context: Context) {
             logcat(LogPriority.WARN) { "Panel detector model not found in assets, skipping" }
             null
         }
-        
+
         val bubbleSegmenterFile = try {
             copyIfNeeded(dir, "bubble_segmenter.onnx", "models/segmentation/manga109_bubble_int8.onnx")
         } catch (_: Exception) {
@@ -332,6 +332,7 @@ class OnnxModelStore(private val context: Context) {
         // exists so a forced re-deploy can ship WITHOUT a byte change (e.g.
         // fixing a corrupt bundle whose hash happens to match an older cache).
         const val MODEL_ASSET_VERSION = "quality-2026-07-12-v1"
+
         // Real models are multi-MB (AOT ~23MB); below 64 KiB is certainly truncated.
         const val MIN_VALID_ONNX_BYTES = 64L * 1024L
     }

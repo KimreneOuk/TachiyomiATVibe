@@ -8,9 +8,6 @@ import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.translator.TextTranslatorLanguage
@@ -21,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -33,6 +29,7 @@ import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.core.archive.ArchiveReader
 import mihon.core.archive.archiveReader
@@ -216,9 +213,11 @@ class ChapterTranslator(
         cancelTranslatorJob()
         queueState.value.filter { it.status == Translation.State.TRANSLATING }
             .forEach { it.status = Translation.State.ERROR }
-        
+
         if (reason == "reader backgrounded") {
-            try { pipeline.forceReleaseNativeBuffers() } catch (_: Exception) {}
+            try {
+                pipeline.forceReleaseNativeBuffers()
+            } catch (_: Exception) {}
         }
 
         // TachiyomiAT: the historical `if (reason != null) return` skipped
@@ -251,13 +250,13 @@ class ChapterTranslator(
      */
     fun onMemoryPressure(level: Int, pressureClass: MemoryPressureClass) {
         tachiyomi.domain.translation.pools.BitmapPool.releaseAll()
-        try { pipeline.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        if (pressureClass != MemoryPressureClass.Critical) return
-        cancelTranslatorJob()
-        queueState.value.filter { it.status == Translation.State.TRANSLATING }
-            .forEach { it.status = Translation.State.QUEUE }
-        clearAllReaderPageStreams()
-        memoryRequeued = true
+        try {
+            pipeline.forceReleaseNativeBuffers()
+        } catch (_: Exception) {}
+        // TachiyomiAT: Do NOT cancel the translator job even under Critical memory pressure.
+        // If we cancel the job, we prematurely drop the HTTP connection to the AI engine while
+        // it is still generating, causing the UI to "lag behind" (showing Aborted while the engine translates).
+        // If the OS truly needs memory, it will kill the process and we will resume via restoreQueue() on restart.
     }
 
     fun pause() {
@@ -413,7 +412,10 @@ class ChapterTranslator(
                     existingFile
                 } else {
                     val translationMangaDir = provider.getMangaDir(translation.manga.title, translation.source)
-                    val saveFile = provider.getTranslationFileName(translation.chapter.name, translation.chapter.scanlator)
+                    val saveFile = provider.getTranslationFileName(
+                        translation.chapter.name,
+                        translation.chapter.scanlator,
+                    )
                     translationMangaDir.createFile(saveFile)
                 }
                 if (translationFile == null) {
@@ -481,7 +483,9 @@ class ChapterTranslator(
                 val chapterId = translation.chapter.id
                 tracker = if (chapterId != null) {
                     pipeline.batchTrackerFactory?.invoke(chapterId, store, orderedStreams.map { it.first })
-                } else null
+                } else {
+                    null
+                }
                 if (translationJob?.isActive != true) {
                     logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
                 } else {
@@ -504,6 +508,7 @@ class ChapterTranslator(
             val reconciliation = eu.kanade.translation.batch.BatchProgressReconciler.reconcile(
                 pageMap = pageStates,
                 orderedKeys = batchOrderedPageKeys,
+                activeGeneration = store.currentGeneration,
             )
             translation.status = if (
                 reconciliation.chapterStatus == Translation.State.TRANSLATED &&
@@ -518,7 +523,11 @@ class ChapterTranslator(
             }
         } catch (error: Throwable) {
             if (error is CancellationException) {
-                tracker?.abort(batchOrderedPageKeys.toSet(), "Batch cancelled")
+                // If it's no longer in the queue, it was explicitly removed (cancelled).
+                // If it's still in the queue, it was merely paused or memory-requeued; do not abort the tracker so it can be resumed.
+                if (!queueState.value.contains(translation)) {
+                    tracker?.abort(batchOrderedPageKeys.toSet(), "Batch cancelled")
+                }
                 store?.flush()
                 throw error
             }

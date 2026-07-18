@@ -191,10 +191,10 @@ object BubbleMaskBuilder {
         // Sentinel must be large but leave headroom so INF + weight cannot
         // overflow Int (adding to a still-unreached neighbour). 1e9 leaves
         // ~1.3e9 of headroom, far more than any real chamfer sum.
-        val INF = 1_000_000_000
-        val dist = IntArray(n) { INF }
-        val H = 3 // horizontal/vertical step weight (chamfer 3,4)
-        val D = 4 // diagonal step weight
+        val infValue = 1_000_000_000
+        val dist = IntArray(n) { infValue }
+        val h = 3 // horizontal/vertical step weight (chamfer 3,4)
+        val d = 4 // diagonal step weight
 
         // Forward pass (top-left → bottom-right). Only relax from neighbours
         // already reached (< INF); unreached ones cannot contribute yet.
@@ -202,19 +202,26 @@ object BubbleMaskBuilder {
             val row = y * width
             for (x in 0 until width) {
                 val i = row + x
-                if (mask[i] != 0.toByte()) { dist[i] = 0; continue }
+                if (mask[i] != 0.toByte()) {
+                    dist[i] = 0
+                    continue
+                }
                 var best = dist[i]
                 if (x > 0) {
-                    val v = dist[i - 1]; if (v < best - H) best = v + H
+                    val v = dist[i - 1]
+                    if (v < best - h) best = v + h
                 }
                 if (y > 0) {
-                    val v = dist[i - width]; if (v < best - H) best = v + H
+                    val v = dist[i - width]
+                    if (v < best - h) best = v + h
                 }
                 if (x > 0 && y > 0) {
-                    val v = dist[i - width - 1]; if (v < best - D) best = v + D
+                    val v = dist[i - width - 1]
+                    if (v < best - d) best = v + d
                 }
                 if (x < width - 1 && y > 0) {
-                    val v = dist[i - width + 1]; if (v < best - D) best = v + D
+                    val v = dist[i - width + 1]
+                    if (v < best - d) best = v + d
                 }
                 dist[i] = best
             }
@@ -226,25 +233,29 @@ object BubbleMaskBuilder {
                 val i = row + x
                 var best = dist[i]
                 if (x < width - 1) {
-                    val v = dist[i + 1]; if (v < best - H) best = v + H
+                    val v = dist[i + 1]
+                    if (v < best - h) best = v + h
                 }
                 if (y < height - 1) {
-                    val v = dist[i + width]; if (v < best - H) best = v + H
+                    val v = dist[i + width]
+                    if (v < best - h) best = v + h
                 }
                 if (x < width - 1 && y < height - 1) {
-                    val v = dist[i + width + 1]; if (v < best - D) best = v + D
+                    val v = dist[i + width + 1]
+                    if (v < best - d) best = v + d
                 }
                 if (x > 0 && y < height - 1) {
-                    val v = dist[i + width - 1]; if (v < best - D) best = v + D
+                    val v = dist[i + width - 1]
+                    if (v < best - d) best = v + d
                 }
                 dist[i] = best
             }
         }
 
         val out = FloatArray(n)
-        val scale = 1f / H.toFloat() // chamfer units → px
+        val scale = 1f / h.toFloat() // chamfer units → px
         for (i in 0 until n) {
-            out[i] = if (dist[i] >= INF) Float.POSITIVE_INFINITY else dist[i] * scale
+            out[i] = if (dist[i] >= infValue) Float.POSITIVE_INFINITY else dist[i] * scale
         }
         return out
     }

@@ -45,7 +45,7 @@ val PageTranslation.isTranslationDisplayReady: Boolean
         blocks.any { it.translation.isNotBlank() }
 
 val PageTranslation.shouldShowTranslationOverlay: Boolean
-    get() = isTranslationDisplayReady
+    get() = blocks.any { it.translation.isNotBlank() }
 
 /**
  * TachiyomiAT: true when this page carries a persisted inpaint mask captured by

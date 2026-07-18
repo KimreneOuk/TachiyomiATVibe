@@ -3,13 +3,12 @@ package eu.kanade.translation
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isStageRunning
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.stableFingerprint
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
@@ -18,22 +17,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.withContext
-import kotlin.coroutines.AbstractCoroutineContextElement
-import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 class ChapterTranslationStore(
     // Mutable so persistLocked() caches the file materialized by fileCreator on
@@ -46,11 +45,15 @@ class ChapterTranslationStore(
     private val mutex = Mutex()
     private var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
+
     @Volatile
     private var generation = 0L
     private var nextPageVersion = 0L
 
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
+    val currentGeneration: Long get() = generation
+
+    fun resetPreflight(): ChapterResetPreflight = chapterResetPreflight(state.value.values)
 
     data class PageSnapshot(
         val page: PageTranslation?,
@@ -115,11 +118,14 @@ class ChapterTranslationStore(
     init {
         initialPages.forEach { (pageKey, page) ->
             val version = nextVersion()
-            pages = pages.put(pageKey, page.detachedCopy().apply {
-                sourceFileName = sourceFileName ?: pageKey
-                runGeneration = generation
-                pageVersion = version
-            })
+            pages = pages.put(
+                pageKey,
+                page.detachedCopy().apply {
+                    sourceFileName = sourceFileName ?: pageKey
+                    runGeneration = generation
+                    pageVersion = version
+                },
+            )
         }
         _state.value = snapshotPages()
     }
@@ -152,7 +158,8 @@ class ChapterTranslationStore(
                 expected.generation != generation -> "generation expected=${expected.generation} actual=$generation"
                 expected.pageVersion != (current?.pageVersion ?: 0L) ->
                     "pageVersion expected=${expected.pageVersion} actual=${current?.pageVersion ?: 0L}"
-                expected.blockFingerprints != null && expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
+                expected.blockFingerprints != null &&
+                    expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
                     "block fingerprint changed"
                 else -> null
             }
@@ -196,7 +203,11 @@ class ChapterTranslationStore(
         val current = page.blocks.getOrNull(blockIndex)
             ?: throw IllegalStateException("block index $blockIndex missing")
         check(current.stableFingerprint() == expectedBlockFingerprint) { "block fingerprint changed" }
-        if (expectedTranslation != null) check(current.translation == expectedTranslation) { "block translation changed" }
+        if (expectedTranslation !=
+            null
+        ) {
+            check(current.translation == expectedTranslation) { "block translation changed" }
+        }
         check(current.userEditedAt == expectedUserEditedAt) { "block edit timestamp changed" }
         page.apply { blocks[blockIndex] = patch(current.detachedCopy()).detachedCopy() }
     }
@@ -301,13 +312,16 @@ class ChapterTranslationStore(
                 ?.let { "inpaint mask identity changed" }
         if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
 
-        val updated = ownedPage(patch.pageKey, current!!.detachedCopy().apply {
-            cleanedImageName = patch.cleanedImageName
-            inpaintRevision = patch.inpaintRevision
-            inpaintingModeUsed = patch.inpaintingModeUsed
-            inpaintStatus = patch.inpaintStatus
-            errorMessage = patch.errorMessage
-        })
+        val updated = ownedPage(
+            patch.pageKey,
+            current!!.detachedCopy().apply {
+                cleanedImageName = patch.cleanedImageName
+                inpaintRevision = patch.inpaintRevision
+                inpaintingModeUsed = patch.inpaintingModeUsed
+                inpaintStatus = patch.inpaintStatus
+                errorMessage = patch.errorMessage
+            },
+        )
         pages = pages.put(patch.pageKey, updated)
         publishLocked(current, updated)
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey))
@@ -370,11 +384,14 @@ class ChapterTranslationStore(
             } ?: "block index ${patch.blockIndex} missing"
         if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
 
-        val updated = ownedPage(patch.pageKey, current!!.detachedCopy().apply {
-            val block = blocks[patch.blockIndex]
-            patch.replacementTranslation?.let { block.translation = it }
-            block.needsRevision = patch.needsRevision
-        })
+        val updated = ownedPage(
+            patch.pageKey,
+            current!!.detachedCopy().apply {
+                val block = blocks[patch.blockIndex]
+                patch.replacementTranslation?.let { block.translation = it }
+                block.needsRevision = patch.needsRevision
+            },
+        )
         pages = pages.put(patch.pageKey, updated)
         publishLocked(current, updated)
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), listOf(patch.blockIndex))
@@ -519,9 +536,13 @@ class ChapterTranslationStore(
                             translationStatus = page.translationStatus.cancelIfTransient(),
                             inpaintStatus = page.inpaintStatus.cancelIfTransient(),
                             renderStatus = page.renderStatus.cancelIfTransient(),
-                            errorMessage = reason,
                             updatedAt = now,
-                        ),
+                        ).also {
+                            it.ocrError = reason
+                            it.translationError = reason
+                            it.inpaintError = reason
+                            it.renderError = reason
+                        },
                     )
                 }
             }.toPersistentMap()
@@ -797,7 +818,9 @@ class ChapterTranslationStore(
         }
         val file = translationFile
         if (file == null) {
-            logcat(LogPriority.ERROR) { "TachiyomiAT chapter summary publication failed: reason=translation file unavailable" }
+            logcat(LogPriority.ERROR) {
+                "TachiyomiAT chapter summary publication failed: reason=translation file unavailable"
+            }
             return@withLock false
         }
         ChapterTranslationSummaryStore(file).publish(summary)
@@ -843,7 +866,28 @@ class ChapterTranslationStore(
         fun open(translationFile: UniFile): ChapterTranslationStore {
             val existing = if (translationFile.exists()) {
                 try {
-                    Json.decodeFromStream<Map<String, PageTranslation>>(translationFile.openInputStream())
+                    val map = Json.decodeFromStream<Map<String, PageTranslation>>(translationFile.openInputStream())
+                    map.values.forEach { page ->
+                        if (page.errorMessage != null) {
+                            if (page.ocrStatus == StageStatus.FAILED) page.ocrError = page.ocrError ?: page.errorMessage
+                            if (page.translationStatus ==
+                                StageStatus.FAILED
+                            ) {
+                                page.translationError = page.translationError ?: page.errorMessage
+                            }
+                            if (page.inpaintStatus ==
+                                StageStatus.FAILED
+                            ) {
+                                page.inpaintError = page.inpaintError ?: page.errorMessage
+                            }
+                            if (page.renderStatus ==
+                                StageStatus.FAILED
+                            ) {
+                                page.renderError = page.renderError ?: page.errorMessage
+                            }
+                        }
+                    }
+                    map
                 } catch (e: Exception) {
                     logcat(LogPriority.WARN, e) { "Failed to load existing translation store; starting empty" }
                     emptyMap()

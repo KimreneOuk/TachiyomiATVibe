@@ -11,7 +11,6 @@ import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
 import java.io.File
 import java.nio.FloatBuffer
-import java.nio.LongBuffer
 
 class OnnxPageTextDetector {
 

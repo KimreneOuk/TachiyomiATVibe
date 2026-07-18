@@ -1,14 +1,12 @@
 package eu.kanade.translation.translator
 
+import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.SharedProviderRequestAdmission
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.RevisionReport
-import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.detachedCopy
-import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import logcat.LogPriority
@@ -108,8 +106,11 @@ object RevisionDriver {
             group.targets.map { it.pageKey }.distinct().forEach { pageKey ->
                 val livePage = groupLiveState[pageKey] ?: return@forEach
                 val rebuiltBlocks = livePage.blocks.mapIndexed { idx, block ->
-                    if ((pageKey to idx) in groupTargetKeys) block.detachedCopy()
-                    else block.detachedCopy().copy(needsRevision = false)
+                    if ((pageKey to idx) in groupTargetKeys) {
+                        block.detachedCopy()
+                    } else {
+                        block.detachedCopy().copy(needsRevision = false)
+                    }
                 }.toMutableList()
                 chunkPages[pageKey] = livePage.copy(blocks = rebuiltBlocks)
             }
@@ -143,7 +144,8 @@ object RevisionDriver {
             }
 
             val mergeLive = RevisionCommitter.mergeLiveSnapshot(
-                store, group.targets.map { it.pageKey }.distinct(),
+                store,
+                group.targets.map { it.pageKey }.distinct(),
             )
             val mergeResult = RevisionMerger.merge(
                 livePages = mergeLive,

@@ -6,9 +6,6 @@ import android.graphics.PointF
 import android.view.LayoutInflater
 import androidx.core.view.isVisible
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
-import eu.kanade.translation.model.shouldSurfaceError
-import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
@@ -17,6 +14,9 @@ import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
+import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.model.shouldSurfaceError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -240,7 +240,7 @@ class PagerPageHolder(
         // an explanatory errorMessage that must NOT be painted red.
         val translation = page.translation
         val errorMsg = if (translation != null && translation.shouldSurfaceError) {
-            translation.errorMessage
+            translation.activeError
         } else {
             null
         }
@@ -458,7 +458,7 @@ class PagerPageHolder(
         // FAILED stages with no rendered/cleaned result to show instead.
         val translation = page.translation
         val errorMsg = if (translation != null && translation.shouldSurfaceError) {
-            translation.errorMessage
+            translation.activeError
         } else {
             null
         }

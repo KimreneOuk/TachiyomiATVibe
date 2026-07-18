@@ -476,7 +476,9 @@ class ReaderActivity : BaseActivity() {
                 it.translationProgress
             }.collectAsState(initial = Pair(0, 0))
             val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
-            val translationBatchProgress by viewModel.state.map { it.translationBatchProgress }.collectAsState(initial = null)
+            val translationBatchProgress by viewModel.state.map {
+                it.translationBatchProgress
+            }.collectAsState(initial = null)
             // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
             val translationQueue by viewModel.translationQueueState.collectAsState()
             val translationSettingsState by viewModel.translationSettingsState.collectAsState()
@@ -520,7 +522,10 @@ class ReaderActivity : BaseActivity() {
                     onSelectOriginal = { viewModel.setCurrentPageShowTranslated(false) },
                     onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
                     onOpenSettings = { viewModel.openTranslationSettingsDialog() },
-                    onDeletePageTranslation = { viewModel.deleteCurrentPageTranslation() },
+                    onResetTranslationData = { preserveEdits -> viewModel.resetTranslationData(preserveEdits) },
+                    onResetInpaintData = { viewModel.resetInpaintData() },
+                    onResetOcrData = { viewModel.resetOcrData() },
+                    onResetEverything = { viewModel.resetEverything() },
                     onDeleteChapterTranslation = { viewModel.deleteCurrentChapterTranslation() },
                     modifier = Modifier.padding(start = 8.dp),
                 )

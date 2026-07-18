@@ -25,7 +25,11 @@ class TranslationBatchProgressReducerTest {
             TranslationProgressStage.INPAINT,
             TranslationProgressStage.TRANSLATE,
         )
-        store.state.value.values.all { it.inpaintStatus == StageStatus.PENDING && it.translationStatus == StageStatus.PENDING } shouldBe true
+        store.state.value.values.all {
+            it.inpaintStatus == StageStatus.PENDING &&
+                it.translationStatus == StageStatus.PENDING
+        } shouldBe
+            true
         tracker.close()
     }
 
@@ -37,7 +41,10 @@ class TranslationBatchProgressReducerTest {
             "skipped" to PageTranslation(ocrStatus = StageStatus.SKIPPED),
             "pending" to PageTranslation(),
         )
-        val count = TranslationBatchProgressTracker.computeSnapshot(pages, eu.kanade.translation.model.Translation.State.TRANSLATING)
+        val count = TranslationBatchProgressTracker.computeSnapshot(
+            pages,
+            eu.kanade.translation.model.Translation.State.TRANSLATING,
+        )
             .perStage.getValue(BatchPhase.OCR)
 
         count.succeeded shouldBe 1
@@ -50,14 +57,30 @@ class TranslationBatchProgressReducerTest {
     @Test
     fun `terminal failure and textless skip are processed terminal work`() {
         val failed = TranslationBatchProgressTracker.computeSnapshot(
-            mapOf("page" to PageTranslation(ocrStatus = StageStatus.FAILED, translationStatus = StageStatus.FAILED, inpaintStatus = StageStatus.FAILED, renderStatus = StageStatus.FAILED)),
+            mapOf(
+                "page" to
+                    PageTranslation(
+                        ocrStatus = StageStatus.FAILED,
+                        translationStatus = StageStatus.FAILED,
+                        inpaintStatus = StageStatus.FAILED,
+                        renderStatus = StageStatus.FAILED,
+                    ),
+            ),
             eu.kanade.translation.model.Translation.State.ERROR,
         )
         failed.fraction shouldBe 1f
         failed.perStage.getValue(BatchPhase.OCR).failed shouldBe 1
 
         val textless = TranslationBatchProgressTracker.computeSnapshot(
-            mapOf("page" to PageTranslation(ocrStatus = StageStatus.READY, translationStatus = StageStatus.SKIPPED, inpaintStatus = StageStatus.SKIPPED, renderStatus = StageStatus.SKIPPED)),
+            mapOf(
+                "page" to
+                    PageTranslation(
+                        ocrStatus = StageStatus.READY,
+                        translationStatus = StageStatus.SKIPPED,
+                        inpaintStatus = StageStatus.SKIPPED,
+                        renderStatus = StageStatus.SKIPPED,
+                    ),
+            ),
             eu.kanade.translation.model.Translation.State.TRANSLATING,
         )
         textless.pages.single().stage shouldBe TranslationProgressStage.DONE

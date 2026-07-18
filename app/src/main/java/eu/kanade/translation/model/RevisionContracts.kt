@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 
 enum class RevisionScope {
     FLAGGED,
-    ALL_TRANSLATED
+    ALL_TRANSLATED,
 }
 
 @Immutable

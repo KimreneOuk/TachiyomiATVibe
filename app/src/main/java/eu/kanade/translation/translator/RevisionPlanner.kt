@@ -1,8 +1,8 @@
 package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.RevisionScope
+import eu.kanade.translation.model.TranslationBlock
 
 /**
  * TachiyomiAT: pure revision planner. Builds bounded Pass-2 request groups from
@@ -157,7 +157,10 @@ object RevisionPlanner {
     }
 
     /** Collect flagged targets in stable reading order. */
-    private fun collectTargets(orderedPages: LinkedHashMap<String, PageTranslation>, scope: RevisionScope): List<Target> {
+    private fun collectTargets(
+        orderedPages: LinkedHashMap<String, PageTranslation>,
+        scope: RevisionScope,
+    ): List<Target> {
         val out = mutableListOf<Target>()
         for ((pageKey, page) in orderedPages) {
             for ((blockIndex, block) in page.blocks.withIndex()) {
@@ -201,7 +204,9 @@ object RevisionPlanner {
     }
 
     private fun isRevisionTarget(block: TranslationBlock, scope: RevisionScope): Boolean =
-        block.userEditedAt == null && block.text.isNotBlank() && block.translation.isNotBlank() &&
+        block.userEditedAt == null &&
+            block.text.isNotBlank() &&
+            block.translation.isNotBlank() &&
             (scope == RevisionScope.ALL_TRANSLATED || block.needsRevision)
 
     /**

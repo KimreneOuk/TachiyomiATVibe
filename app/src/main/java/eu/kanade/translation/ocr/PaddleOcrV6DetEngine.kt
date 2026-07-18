@@ -9,9 +9,9 @@ import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
-import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.Closeable
@@ -54,6 +54,7 @@ class PaddleOcrV6DetEngine : Closeable {
 
     private var session: OrtSession? = null
     private var inputName: String = "x"
+
     @Volatile
     private var closed: Boolean = false
 
@@ -157,7 +158,7 @@ class PaddleOcrV6DetEngine : Closeable {
                 logcat(LogPriority.INFO) {
                     "[paddle_det] total=${(t2 - t0) / 1_000_000.0}ms " +
                         "infer=${(t1 - t0) / 1_000_000.0}ms " +
-                        "crop=${w}x${h} map=${mapWidth}x${mapHeight} active=${active.width}x${active.height} " +
+                        "crop=${w}x$h map=${mapWidth}x$mapHeight active=${active.width}x${active.height} " +
                         "lines=${cropLines.size}"
                 }
             }
@@ -298,6 +299,7 @@ class PaddleOcrV6DetEngine : Closeable {
 
         @Volatile
         private var diagnosticsInitialized = false
+
         @Volatile
         private var diagnosticsEnabled = false
 

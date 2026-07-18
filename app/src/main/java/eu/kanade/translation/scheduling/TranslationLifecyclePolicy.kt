@@ -2,14 +2,14 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasExhaustedRetries
+import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.hasCurrentInpaintMask
-import eu.kanade.translation.model.hasRecognizedTranslation
-import eu.kanade.translation.model.isCleanedImageReady
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.lifecycle
 import eu.kanade.translation.model.shouldSkipAutoScheduling
 
@@ -94,9 +94,13 @@ object TranslationLifecyclePolicy {
         if (page.hasExhaustedRetries || page.isTextlessTerminal) {
             return NextStage.SKIP
         }
-        if (page.isCleanedImageReady && cleanedFileValid && inpaintModeMatches &&
-            (page.hasRecognizedTranslation ||
-                (page.ocrStatus == StageStatus.READY && page.hasCurrentInpaintMask))
+        if (page.isCleanedImageReady &&
+            cleanedFileValid &&
+            inpaintModeMatches &&
+            (
+                page.hasRecognizedTranslation ||
+                    (page.ocrStatus == StageStatus.READY && page.hasCurrentInpaintMask)
+                )
         ) {
             return NextStage.RENDER
         }

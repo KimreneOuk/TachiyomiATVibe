@@ -983,6 +983,101 @@ class TranslationManager(
         resetOcrData(chapter, manga, source, pageKey)
     }
 
+    suspend fun chapterResetPreflight(
+        chapter: Chapter,
+        manga: Manga,
+        source: Source,
+    ): ChapterResetPreflight {
+        val chapterId = chapter.id
+        val activeStore = chapterId?.let(activeStores::get)
+        if (activeStore != null) return activeStore.resetPreflight()
+
+        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+        if (file?.exists() != true) return ChapterResetPreflight(0, 0, 0, 0)
+        return ChapterTranslationStore.open(file).resetPreflight()
+    }
+
+    suspend fun resetChapterTranslationData(
+        chapter: Chapter,
+        manga: Manga,
+        source: Source,
+        preserveEdits: Boolean,
+    ) {
+        resetChapterData(chapter, manga, source) { page ->
+            val blocks = page.blocks.map { block ->
+                if (preserveEdits && block.userEditedAt != null) {
+                    block
+                } else {
+                    block.copy(
+                        translation = "",
+                        needsRevision = false,
+                        textColor = 0xFF000000,
+                        strokeColor = 0xFFFFFFFF,
+                        strokeWidth = 0f,
+                    )
+                }
+            }.toMutableList()
+            page.copy(
+                blocks = blocks,
+                translationStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+            ).also {
+                it.translationError = null
+                it.renderError = null
+            }
+        }
+    }
+
+    suspend fun resetChapterInpaintData(chapter: Chapter, manga: Manga, source: Source) {
+        resetChapterData(chapter, manga, source) { page ->
+            page.copy(
+                cleanedImageName = null,
+                inpaintStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+            ).also {
+                it.inpaintError = null
+                it.renderError = null
+            }
+        }
+        provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
+    }
+
+    suspend fun resetChapterOcrData(chapter: Chapter, manga: Manga, source: Source) {
+        deleteTranslation(chapter, manga, source)
+    }
+
+    private suspend fun resetChapterData(
+        chapter: Chapter,
+        manga: Manga,
+        source: Source,
+        transform: (PageTranslation) -> PageTranslation,
+    ) {
+        val chapterId = chapter.id ?: return
+        scheduler.cancelAutoTranslations(chapterId)
+        cancelPageTranslations(chapterId)
+        removeFromTranslationQueue(chapter)
+        translator.cancelTranslatorJobAndJoin()
+        streamRegistry.clearChapter(source.id, manga.id, chapterId)
+
+        val activeStore = activeStores.get(chapterId)
+        if (activeStore != null) {
+            activeStore.state.value.keys.forEach { pageKey ->
+                activeStore.updatePage(pageKey) { page -> page?.let(transform) ?: PageTranslation.EMPTY }
+            }
+            activeStore.flush()
+        } else {
+            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+            if (file?.exists() == true) {
+                val store = ChapterTranslationStore.open(file)
+                store.state.value.keys.forEach { pageKey ->
+                    store.updatePage(pageKey) { page -> page?.let(transform) ?: PageTranslation.EMPTY }
+                }
+                store.flush()
+            }
+        }
+        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
+    }
+
     suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) {
         val chapterId = chapter.id ?: return
         cancelPageTranslation(chapterId, pageKey)
@@ -996,7 +1091,13 @@ class TranslationManager(
                     if (preserveEdits && block.userEditedAt != null) {
                         block
                     } else {
-                        block.copy(translation = "", needsRevision = false)
+                        block.copy(
+                            translation = "",
+                            needsRevision = false,
+                            textColor = 0xFF000000,
+                            strokeColor = 0xFFFFFFFF,
+                            strokeWidth = 0f,
+                        )
                     }
                 }.toMutableList()
 
@@ -1020,7 +1121,13 @@ class TranslationManager(
                         if (preserveEdits && block.userEditedAt != null) {
                             block
                         } else {
-                            block.copy(translation = "", needsRevision = false)
+                            block.copy(
+                                translation = "",
+                                needsRevision = false,
+                                textColor = 0xFF000000,
+                                strokeColor = 0xFFFFFFFF,
+                                strokeWidth = 0f,
+                            )
                         }
                     }.toMutableList()
 

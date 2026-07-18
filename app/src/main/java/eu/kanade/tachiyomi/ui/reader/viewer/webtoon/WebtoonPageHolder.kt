@@ -11,15 +11,15 @@ import androidx.core.view.updateLayoutParams
 import androidx.core.view.updateMargins
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
-import eu.kanade.translation.model.shouldSurfaceError
-import eu.kanade.translation.model.displayImageName
-import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.model.shouldSurfaceError
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -158,7 +158,7 @@ class WebtoonPageHolder(
             frame.setTranslating(false)
         }
         // Surface errors only when idle (matches refreshTranslation's guard).
-        val errorMsg = if (!isBeingTranslated) currentPage.translation?.errorMessage else null
+        val errorMsg = if (!isBeingTranslated) currentPage.translation?.activeError else null
         frame.showTranslationError(errorMsg)
     }
 
@@ -416,7 +416,7 @@ class WebtoonPageHolder(
         // shouldSurfaceError admits only real FAILED stages with no result.
         val translation = currentPage.translation
         val errorMsg = if (translation != null && translation.shouldSurfaceError) {
-            translation.errorMessage
+            translation.activeError
         } else {
             null
         }

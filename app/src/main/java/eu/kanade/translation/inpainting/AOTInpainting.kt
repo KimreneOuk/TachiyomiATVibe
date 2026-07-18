@@ -1,13 +1,13 @@
 package eu.kanade.translation.inpainting
 
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.RectF
-import android.os.Build
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtProvider
 import ai.onnxruntime.OrtSession
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.RectF
+import android.os.Build
 import eu.kanade.translation.runtime.onnx.DeviceCapability
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.util.TranslationMemoryBudget
@@ -142,7 +142,9 @@ class AOTInpainting {
             }
             created
         } catch (error: Throwable) {
-            try { created?.close() } catch (closeError: Throwable) {
+            try {
+                created?.close()
+            } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
             }
             nnapiHealth.disableForNativeException()
@@ -151,7 +153,9 @@ class AOTInpainting {
             }
             null
         } finally {
-            try { opts?.close() } catch (error: Throwable) {
+            try {
+                opts?.close()
+            } catch (error: Throwable) {
                 logcat(LogPriority.WARN, error) { "[inpaint] route=nnapi optionsClose=failed" }
             }
         }
@@ -188,7 +192,9 @@ class AOTInpainting {
             }
             created
         } catch (error: Throwable) {
-            try { created?.close() } catch (_: Throwable) {}
+            try {
+                created?.close()
+            } catch (_: Throwable) {}
             logcat(LogPriority.ERROR, error) {
                 "[inpaint] route=$route init=failed provider=XNNPACK model=${modelFile.name}"
             }
@@ -406,7 +412,6 @@ class AOTInpainting {
         return image
     }
 
-
     private fun inpaintReportFreeTextFast(image: Bitmap, boxes: List<IntArray>): Bitmap {
         val bounds = AotBoxGeometry.paddedUnionBounds(boxes, image.width, image.height, REPORT_PUSH_PULL_CONTEXT) ?: return image
         val cropW = bounds[2] - bounds[0]
@@ -530,18 +535,19 @@ class AOTInpainting {
     ): AotFallbackCoordinator.CandidateResult {
         val nnapiSession = fixedNnapiSession
         val memory = TranslationMemoryBudget.nnapiMemorySnapshot()
-        val useNnapi = nnapiSession != null && NnapiCapabilityGate.decide(
-            NnapiCapabilityGate.Snapshot(
-                sdk = Build.VERSION.SDK_INT,
-                supportedAbis = Build.SUPPORTED_ABIS.toList(),
-                emulator = DeviceCapability.isProbablyEmulator,
-                nnapiProviderCompiled = true,
-                availableHeapBytes = memory.availableHeapBytes,
-                systemHeadroomBytes = memory.systemHeadroomBytes,
-                lowMemory = memory.lowMemory,
-                healthy = nnapiHealth.isHealthy(),
-            ),
-        ).eligible
+        val useNnapi = nnapiSession != null &&
+            NnapiCapabilityGate.decide(
+                NnapiCapabilityGate.Snapshot(
+                    sdk = Build.VERSION.SDK_INT,
+                    supportedAbis = Build.SUPPORTED_ABIS.toList(),
+                    emulator = DeviceCapability.isProbablyEmulator,
+                    nnapiProviderCompiled = true,
+                    availableHeapBytes = memory.availableHeapBytes,
+                    systemHeadroomBytes = memory.systemHeadroomBytes,
+                    lowMemory = memory.lowMemory,
+                    healthy = nnapiHealth.isHealthy(),
+                ),
+            ).eligible
         val prepared = try {
             prepareFixedInput(page, mask, crop, side)
         } catch (error: Throwable) {
@@ -599,8 +605,12 @@ class AOTInpainting {
         val grayscale: Boolean,
     ) : AutoCloseable {
         override fun close() {
-            try { imageTensor.close() } finally {
-                try { maskTensor.close() } finally {
+            try {
+                imageTensor.close()
+            } finally {
+                try {
+                    maskTensor.close()
+                } finally {
                     imgInputPool.release(imageBuffer)
                     maskInputPool.release(maskBuffer)
                 }
@@ -682,8 +692,16 @@ class AOTInpainting {
                 grayscale = totalChroma / samples < 15,
             )
         } catch (error: Throwable) {
-            try { imageTensor?.close() } catch (closeError: Throwable) { error.addSuppressed(closeError) }
-            try { maskTensor?.close() } catch (closeError: Throwable) { error.addSuppressed(closeError) }
+            try {
+                imageTensor?.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
+            try {
+                maskTensor?.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
             imgInputPool.release(imageBuffer)
             maskInputPool.release(maskBuffer)
             throw error
@@ -993,7 +1011,7 @@ class AOTInpainting {
                 val maskPixel = maskPixels[i]
                 val maskVal = if (AotPixelOps.maskValue(maskPixel) > 127) 1.0f else 0.0f
                 maskBuffer.put(0 * channelSize + i, maskVal)
-                
+
                 r *= (1.0f - maskVal)
                 g *= (1.0f - maskVal)
                 b *= (1.0f - maskVal)
@@ -1084,7 +1102,7 @@ class AOTInpainting {
                         "mean=${"%.1f".format(guardStats.mean)} " +
                         "variance=${"%.1f".format(guardStats.variance)} " +
                         "channelDelta=${"%.1f".format(guardStats.channelDelta)} " +
-                        "masked=${guardStats.maskedCount} crop=${cropWidth}x${cropHeight} " +
+                        "masked=${guardStats.maskedCount} crop=${cropWidth}x$cropHeight " +
                         "— falling back to cleanRegions"
                 }
                 if (reportFallbackOnly) {
@@ -1100,8 +1118,8 @@ class AOTInpainting {
             canvas.drawBitmap(blended ?: throw IllegalStateException("Inpainting blend was not created"), xMin.toFloat(), yMin.toFloat(), null)
 
             logcat(LogPriority.INFO) {
-                "[inpaint] route=$route modelMs=${(t1 - t0) / 1_000_000.0} crop=${cropWidth}x${cropHeight} " +
-                    "tensor=${inferenceWidth}x${inferenceHeight} offset=$fixedOffset,$fixedOffset guard=pass"
+                "[inpaint] route=$route modelMs=${(t1 - t0) / 1_000_000.0} crop=${cropWidth}x$cropHeight " +
+                    "tensor=${inferenceWidth}x$inferenceHeight offset=$fixedOffset,$fixedOffset guard=pass"
             }
 
             return image

@@ -901,32 +901,7 @@ class MangaScreenModel(
                 }
             }
 
-            ChapterTranslationAction.DELETE -> {
-                screenModelScope.launchNonCancellable {
-                    try {
-                        successState?.let { state ->
-                            translationManager.deleteTranslation(
-                                item.chapter,
-                                state.manga,
-                                state.source,
-                            )
-                            updateSuccessState { successState ->
-                                val modifiedIndex = successState.chapters.indexOfFirst { it.id == item.chapter.id }
-                                if (modifiedIndex < 0) return@updateSuccessState successState
-
-                                val newChapters = successState.chapters.toMutableList().apply {
-                                    val item = removeAt(modifiedIndex)
-                                        .copy(translationState = Translation.State.NOT_TRANSLATED)
-                                    add(modifiedIndex, item)
-                                }
-                                successState.copy(chapters = newChapters)
-                            }
-                        }
-                    } catch (e: Throwable) {
-                        logcat(LogPriority.ERROR, e)
-                    }
-                }
-            }
+            ChapterTranslationAction.DELETE -> showChapterResetDialog(item)
 
             // TachiyomiAT CP7: open the shared revision confirmation dialog.
             // The manager runs preflight and returns a typed outcome; the UI
@@ -935,6 +910,53 @@ class MangaScreenModel(
                 item = item,
                 scope = defaultScope(item.revisionEligibility),
             )
+        }
+    }
+
+    fun showChapterResetDialog(item: ChapterList.Item) {
+        val state = successState ?: return
+        screenModelScope.launch {
+            val preflight = translationManager.chapterResetPreflight(item.chapter, state.manga, state.source)
+            updateSuccessState { it.copy(dialog = Dialog.ChapterReset(item, preflight)) }
+        }
+    }
+
+    fun resetChapterTranslation(item: ChapterList.Item, preserveEdits: Boolean) = runChapterReset(item) {
+        resetChapterTranslationData(item.chapter, it.manga, it.source, preserveEdits)
+    }
+
+    fun resetChapterInpaint(item: ChapterList.Item) = runChapterReset(item) {
+        resetChapterInpaintData(item.chapter, it.manga, it.source)
+    }
+
+    fun resetChapterOcr(item: ChapterList.Item) = runChapterReset(item) {
+        resetChapterOcrData(item.chapter, it.manga, it.source)
+    }
+
+    fun deleteChapterTranslation(item: ChapterList.Item) = runChapterReset(item) {
+        deleteTranslation(item.chapter, it.manga, it.source)
+    }
+
+    private fun runChapterReset(
+        item: ChapterList.Item,
+        action: suspend TranslationManager.(State.Success) -> Unit,
+    ) {
+        screenModelScope.launchNonCancellable {
+            try {
+                val state = successState ?: return@launchNonCancellable
+                action(translationManager, state)
+                updateSuccessState { current ->
+                    val index = current.chapters.indexOfFirst { it.id == item.chapter.id }
+                    if (index < 0) return@updateSuccessState current
+                    current.copy(
+                        chapters = current.chapters.toMutableList().apply {
+                            this[index] = this[index].copy(translationState = Translation.State.NOT_TRANSLATED)
+                        },
+                    )
+                }
+            } catch (e: Throwable) {
+                logcat(LogPriority.ERROR, e)
+            }
         }
     }
 
@@ -1566,6 +1588,10 @@ class MangaScreenModel(
         data object TrackSheet : Dialog
         data object FullCover : Dialog
         data class TranslationProgress(val chapterId: Long) : Dialog
+        data class ChapterReset(
+            val item: ChapterList.Item,
+            val preflight: eu.kanade.translation.ChapterResetPreflight,
+        ) : Dialog
         data class ConfirmTranslation(
             val item: ChapterList.Item,
             val summary: TranslationSettingsSummary,

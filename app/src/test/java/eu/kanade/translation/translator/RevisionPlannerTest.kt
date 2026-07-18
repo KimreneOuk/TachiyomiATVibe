@@ -3,11 +3,9 @@ package eu.kanade.translation.translator
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldBeEmpty
-import io.kotest.matchers.collections.shouldHaveAtLeastSize
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
-import eu.kanade.translation.model.RevisionScope
 
 /**
  * Guards [RevisionPlanner] — the pure Pass-2 planner (Checkpoint 2 §6).
@@ -81,7 +79,8 @@ class RevisionPlannerTest {
         val maxPromptTokens = base + oneTargetTokens
 
         val plan = RevisionPlanner.plan(
-            pages, emptyMap(),
+            pages,
+            emptyMap(),
             requestedOutputTokens = 2048,
             maxPromptTokens = maxPromptTokens,
         )
@@ -103,7 +102,8 @@ class RevisionPlannerTest {
             "p0" to page(flagged(giant), flagged("small")),
         )
         val plan = RevisionPlanner.plan(
-            pages, emptyMap(),
+            pages,
+            emptyMap(),
             requestedOutputTokens = 2048,
             maxPromptTokens = 2000, // the giant alone exceeds base+tokens
         )

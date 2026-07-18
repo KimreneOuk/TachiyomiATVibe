@@ -24,16 +24,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import eu.kanade.presentation.components.AdaptiveSheet
-import eu.kanade.presentation.more.settings.widget.AiModelListState
 import eu.kanade.presentation.more.settings.widget.AiModelPickerWidget
 import eu.kanade.presentation.more.settings.widget.ApiKeyPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
-import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.StandardTranslatorKind
@@ -43,10 +43,9 @@ import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
-import tachiyomi.domain.translation.OcrModel
-import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.padding
 import tachiyomi.presentation.core.i18n.stringResource
@@ -476,14 +475,14 @@ private fun ColumnScope.LanguagesSection(
         recentLangs = translationRecentLanguagesFrom,
         onValueChange = onTranslateFromLanguageChange,
     )
-    
+
     EngineListRow(
         title = stringResource(ATMR.strings.pref_ocr_model),
         entries = ocrModelEntries,
         value = ocrModel,
         onValueChange = onOcrModelChange,
     )
-    
+
     SearchableLanguageRow(
         title = stringResource(ATMR.strings.pref_translate_to),
         entries = toLangs,
@@ -659,7 +658,7 @@ private fun ColumnScope.AiEngineRows(
         AiEngine.DEEPSEEK -> stringResource(ATMR.strings.pref_ai_api_key_deepseek)
         AiEngine.LMSTUDIO -> stringResource(ATMR.strings.pref_ai_base_url_lmstudio)
     }
-    
+
     if (state.aiEngine == AiEngine.LMSTUDIO) {
         EditTextPreferenceWidget(
             title = apiKeyTitle,

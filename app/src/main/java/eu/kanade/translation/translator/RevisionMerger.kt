@@ -1,7 +1,6 @@
 package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.stableFingerprint
 import logcat.LogPriority
@@ -108,13 +107,23 @@ object RevisionMerger {
                 chapterName = chapterName,
             )
             when (outcome) {
-                is TargetOutcome.Kept -> { kept += outcome; touchedPages += outcome.pageKey }
-                is TargetOutcome.Corrected -> { corrected += outcome; touchedPages += outcome.pageKey }
+                is TargetOutcome.Kept -> {
+                    kept += outcome
+                    touchedPages += outcome.pageKey
+                }
+                is TargetOutcome.Corrected -> {
+                    corrected += outcome
+                    touchedPages += outcome.pageKey
+                }
                 is TargetOutcome.Unresolved -> unresolved += outcome
             }
         }
 
-        val pageStatuses = derivePageStatuses(livePages, touchedPages, kept.map { it.pageKey } + corrected.map { it.pageKey })
+        val pageStatuses = derivePageStatuses(
+            livePages,
+            touchedPages,
+            kept.map { it.pageKey } + corrected.map { it.pageKey },
+        )
         return MergeResult(
             kept = kept,
             corrected = corrected,

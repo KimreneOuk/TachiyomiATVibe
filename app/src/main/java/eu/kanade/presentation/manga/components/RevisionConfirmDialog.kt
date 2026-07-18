@@ -21,8 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import eu.kanade.translation.model.RevisionConfirmState
 import eu.kanade.translation.model.RevisionRejectionReason
-import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.RevisionReviewerOption
+import eu.kanade.translation.model.RevisionScope
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.padding

@@ -4,6 +4,16 @@
     <string name="pref_category_translations">Translations</string>
     <string name="pref_translation_summary">Automatic Translations</string>
     <string name="manga_translate">Translate</string>
+    <string name="translation_reset_title">Reset translation data</string>
+    <string name="translation_reset_summary">%1$d OCR pages · %2$d cleaned pages · %3$d translated blocks</string>
+    <string name="translation_reset_keep_edits">Preserve %1$d manual edits</string>
+    <string name="translation_reset_translation">Reset translation</string>
+    <string name="translation_reset_translation_summary">Keeps OCR and cleaned images; clears translated text and color data.</string>
+    <string name="translation_reset_inpaint">Reset inpaint</string>
+    <string name="translation_reset_inpaint_summary">Keeps OCR and translated text; deletes cleaned images and color data.</string>
+    <string name="translation_reset_ocr">Reset OCR</string>
+    <string name="translation_reset_ocr_summary">Deletes all chapter translation data; pages will be OCRed again.</string>
+    <string name="translation_reset_everything">Delete everything</string>
     <string name="manga_translation_progress">Translation progress</string>
     <string name="manga_translation_counts">%1$d/%2$d pages done - %3$d queued - %4$d failed</string>
     <string name="manga_translation_active">Page %1$d - %2$s</string>

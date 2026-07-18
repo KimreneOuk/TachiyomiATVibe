@@ -1,13 +1,13 @@
 package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.ChapterRevisionEligibility
+import eu.kanade.translation.model.REVISION_RESULT_MAX_CHANGES
 import eu.kanade.translation.model.RevisionConfirmation
 import eu.kanade.translation.model.RevisionPreflightOutcome
 import eu.kanade.translation.model.RevisionRejectionReason
 import eu.kanade.translation.model.RevisionReport
 import eu.kanade.translation.model.RevisionReviewerOption
 import eu.kanade.translation.model.RevisionScope
-import eu.kanade.translation.model.REVISION_RESULT_MAX_CHANGES
 import eu.kanade.translation.model.defaultScope
 import eu.kanade.translation.model.isStartAlreadyActive
 import eu.kanade.translation.model.resolveInitialSelection
