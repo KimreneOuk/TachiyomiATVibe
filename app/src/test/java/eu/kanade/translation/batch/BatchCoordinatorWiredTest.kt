@@ -31,14 +31,14 @@ class BatchCoordinatorWiredTest {
         native.allowOcrToFinish("p0")
         native.ocrPublished("p1").await()
         native.allowOcrToFinish("p1")
-        
+
         events.awaitEvent("allOcrBarrierReleased")
-        
+
         // Yield so translator lane picks up items
         repeat(3) { yield() }
-        
+
         // DeferringTranslatorWorker accepts immediately
-        
+
         native.allowInpaintToFinish("p0")
         native.allowInpaintToFinish("p1")
         pass1.await()
@@ -49,13 +49,24 @@ class BatchCoordinatorWiredTest {
         val log = events.log
         val barrierIdx = log.indexOf("allOcrBarrierReleased")
         val translateIdx = log.indexOf("translationRequested:p0")
+        val inpaintStartIdx = log.indexOf("inpaintStarted:p0")
         val inpaintFinishIdx = log.indexOf("inpaintFinished:p0")
-        
+
         (barrierIdx shouldNotBe -1)
         (translateIdx shouldNotBe -1)
         (inpaintFinishIdx shouldNotBe -1)
-        (translateIdx > barrierIdx) shouldBe true
+        // Plan rule 5: remote translation may overlap OCR, so translation may
+        // start BEFORE the all-OCR barrier. The previous assertion
+        // (translateIdx > barrierIdx) encoded the old regression where the
+        // translation queue was fed only after awaitAll(). The real invariant
+        // is just that translation finishes before its page's inpaint finishes
+        // (joined render) and that no inpaint starts before the barrier.
         (translateIdx < inpaintFinishIdx) shouldBe true
+        // B1: the all-OCR barrier must open before ANY inpaint starts. This was
+        // missing from the original assertion set and let the old regression
+        // (post-awaitAll queue feed) pass silently.
+        (inpaintStartIdx shouldNotBe -1)
+        (barrierIdx < inpaintStartIdx) shouldBe true
 
         val pass2 = async { coord.runPass2(listOf("p0" to PageTranslation())) { } }
         pass2.await()
@@ -134,7 +145,7 @@ class BatchCoordinatorWiredTest {
             }
             deferred.await()
         }
-        
+
         override fun ocrStarted(pageKey: String) = add("ocrStarted:$pageKey")
         override fun ocrFinished(pageKey: String) = add("ocrFinished:$pageKey")
         override fun ocrPublished(pageKey: String) = add("ocrPublished:$pageKey")
@@ -153,7 +164,7 @@ class BatchCoordinatorWiredTest {
         private val inpaintGates = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
         private val ocrSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
         private val ocrFinishGates = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
-        
+
         override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
             ocrSignals.getOrPut(pageKey) { CompletableDeferred() }.complete(Unit)
             ocrFinishGates.getOrPut(pageKey) { CompletableDeferred() }.await()
