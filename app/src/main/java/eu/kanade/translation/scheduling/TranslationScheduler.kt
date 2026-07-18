@@ -12,13 +12,14 @@ import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.lifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
@@ -296,6 +297,21 @@ class TranslationScheduler(
             queuedPageKeys.removeIf { it.startsWith(queuePrefix) }
         }
 
+        // TachiyomiAT bug 4 fix: synchronously flip the chapter's in-flight pages
+        // to CANCELLED so the reader overlay/dim clears immediately. Without this,
+        // isPageBeingTranslated() keeps returning true until each cancelled job's
+        // finally block runs — which may never happen if the worker is past its
+        // suspension point in uncancellable native code.
+        if (cancelled && chapterId != null) {
+            markChapterCancelledSync(chapterId)
+        } else if (cancelled && chapterId == null) {
+            // Global auto cancel: flip every active store's in-flight pages.
+            activeAutoJobs.keys.asSequence()
+                .mapNotNull { it.substringAfter("auto:").substringBefore(':').toLongOrNull() }
+                .distinct()
+                .forEach { markChapterCancelledSync(it) }
+        }
+
         return cancelled
     }
 
@@ -347,16 +363,14 @@ class TranslationScheduler(
 
     private suspend fun markPageAutoSoftSkipped(store: ChapterTranslationStore, pageKey: String) {
         store.updatePage(pageKey) { existing ->
-            val page = existing ?: return@updatePage PageTranslation(
+            val page = existing ?: PageTranslation(
                 sourceFileName = pageKey,
                 ocrStatus = StageStatus.CANCELLED,
-                errorMessage = null,
                 updatedAt = System.currentTimeMillis(),
             )
             if (page.renderStatus == StageStatus.READY) return@updatePage page
             page.apply {
                 cancelInFlightStages()
-                errorMessage = null
                 updatedAt = System.currentTimeMillis()
             }
         }
@@ -457,19 +471,52 @@ class TranslationScheduler(
         // auto can reschedule the page later.
         store.updatePage(pageKey) { current ->
             // Re-check inside the lock in case it changed between peek and write.
-            val cur = current ?: return@updatePage PageTranslation(
+            val cur = current ?: PageTranslation(
                 sourceFileName = pageKey,
                 ocrStatus = StageStatus.CANCELLED,
-                errorMessage = "Translation cancelled",
                 updatedAt = System.currentTimeMillis(),
-            )
+            ).also { it.ocrError = "Translation cancelled" }
             if (cur.hasRenderedResult || cur.isStageFailed) return@updatePage cur
             cur.apply {
                 cancelInFlightStages()
-                errorMessage = "Translation cancelled"
+                ocrError = "Translation cancelled"
                 updatedAt = System.currentTimeMillis()
             }
         }
+    }
+
+    /**
+     * TachiyomiAT bug 4 fix: synchronously flip every in-flight page in [chapterId]'s
+     * store to CANCELLED so the reader clears the dim/overlay immediately. The auto/
+     * master-toggle-off paths previously only cancelled the jobs (and relied on each
+     * job's finally block to reset the status), which left pages visibly RUNNING until
+     * the coroutine unwound — sometimes never, if the worker was past its suspension
+     * point in uncancellable native/HTTP code.
+     *
+     * Mirrors the proven per-page pattern in [cancelPageTranslation]: runBlocking on
+     * [immediateStoreResolver] is acceptable because callers run on the reader/UI
+     * scope and the store's own mutex is the only inner lock (no nested UI-thread
+     * concerns). Pages that already reached a rendered or failed terminal state are
+     * left untouched so accepted artifacts survive.
+     *
+     * Returns the number of pages that were flipped to CANCELLED.
+     */
+    fun markChapterCancelledSync(chapterId: Long): Int {
+        val store = immediateStoreResolver?.invoke(chapterId) ?: return 0
+        val runningKeys = store.state.value.entries
+            .asSequence()
+            .filter { (_, page) -> page != null && page!!.isStageRunning }
+            .map { it.key }
+            .toList()
+        if (runningKeys.isEmpty()) return 0
+        var flipped = 0
+        runBlocking {
+            runningKeys.forEach { key ->
+                markPageCancelled(store, key)
+                flipped++
+            }
+        }
+        return flipped
     }
 
     /**
@@ -482,7 +529,9 @@ class TranslationScheduler(
     fun markPageJobStuck(chapterId: Long, pageKey: String) {
         val jobKey = "$chapterId:$pageKey"
         val job = synchronized(activePageJobs) { activePageJobs.remove(jobKey) }
-        try { job?.cancel() } catch (_: Throwable) {}
+        try {
+            job?.cancel()
+        } catch (_: Throwable) {}
         queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") && it.endsWith(":${pageKey.replace(':', '_')}") }
         logcat(LogPriority.WARN) {
             "TachiyomiAT evicted stuck page job: jobKey=$jobKey (worker abandoned in native/HTTP code)"
@@ -564,22 +613,38 @@ class TranslationScheduler(
      * Cancels every in-flight single-page job and every auto-prefetch window.
      * Call on reader destroy or master translation toggle off so no orphaned work
      * keeps running.
+     *
+     * TachiyomiAT bug 4 fix: after cancelling jobs, synchronously flip every
+     * active store's in-flight pages to CANCELLED so reader overlays clear
+     * immediately. Callers that want to preserve artifacts should NOT call this;
+     * use the per-chapter paths instead. The durable CANCELLED write itself is
+     * owned by the caller via [ChapterTranslationStore.clearTransientQueuePages]
+     * — this method only guarantees the in-memory snapshot settles synchronously.
      */
     fun cancelAllPageTranslations() {
         queuedPageKeys.clear()
+        val affectedChapterIds = mutableSetOf<Long>()
         val autoIterator = activeAutoJobs.entries.iterator()
         while (autoIterator.hasNext()) {
-            val (_, job) = autoIterator.next()
+            val (key, job) = autoIterator.next()
             job.cancel()
             autoIterator.remove()
+            key.substringAfter("auto:").substringBefore(':').toLongOrNull()?.let {
+                affectedChapterIds += it
+            }
         }
         synchronized(activePageJobs) {
             val iterator = activePageJobs.entries.iterator()
             while (iterator.hasNext()) {
-                val (_, job) = iterator.next()
+                val (key, job) = iterator.next()
                 job.cancel()
                 iterator.remove()
+                key.substringBefore(':').toLongOrNull()?.let { affectedChapterIds += it }
             }
         }
+        // TachiyomiAT bug 4 fix: flip every affected chapter's in-flight pages
+        // synchronously so the dim/overlay clears without waiting on each job's
+        // finally block.
+        affectedChapterIds.forEach { markChapterCancelledSync(it) }
     }
 }

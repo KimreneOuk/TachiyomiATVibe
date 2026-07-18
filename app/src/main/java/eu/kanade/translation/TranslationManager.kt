@@ -4,36 +4,45 @@ import android.content.Context
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
+import eu.kanade.translation.ChapterTranslationSummary
+import eu.kanade.translation.batch.BatchProgressReconciler
+import eu.kanade.translation.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.model.ChapterRevisionEligibility
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
+import eu.kanade.translation.model.RevisionConfirmation
+import eu.kanade.translation.model.RevisionPreflightOutcome
+import eu.kanade.translation.model.RevisionPreflightResult
+import eu.kanade.translation.model.RevisionPreflightToken
+import eu.kanade.translation.model.RevisionRejectionReason
+import eu.kanade.translation.model.RevisionReport
+import eu.kanade.translation.model.RevisionReviewerOption
+import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
-import eu.kanade.translation.batch.TranslationBatchProgressTracker
-import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
-import eu.kanade.translation.model.shouldSkipAutoScheduling
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.translator.RevisionDriver
+import eu.kanade.translation.translator.RevisionPlanner
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlin.coroutines.coroutineContext
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.joinAll
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -49,27 +58,10 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
+import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import eu.kanade.translation.model.RevisionScope
-import eu.kanade.translation.model.RevisionPreflightResult
-import eu.kanade.translation.model.RevisionPreflightToken
-import eu.kanade.translation.model.RevisionReport
-import eu.kanade.translation.model.ChapterRevisionEligibility
-import eu.kanade.translation.model.RevisionConfirmation
-import eu.kanade.translation.model.RevisionPreflightOutcome
-import eu.kanade.translation.model.RevisionReviewerOption
-import eu.kanade.translation.model.RevisionRejectionReason
-import tachiyomi.domain.translation.AiEngine
-import kotlinx.collections.immutable.toImmutableList
-import eu.kanade.translation.ChapterTranslationSummary
-import eu.kanade.translation.model.detachedCopy
-import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
-import eu.kanade.translation.batch.BatchProgressReconciler
-import eu.kanade.translation.translator.RevisionPlanner
-import eu.kanade.translation.translator.RevisionDriver
-
 
 class TranslationManager(
     private val context: Context,
@@ -78,7 +70,7 @@ class TranslationManager(
     private val translationPreferences: TranslationPreferences = Injekt.get(),
 ) {
     private val pipeline = TranslationPipeline(context, provider)
-    private val translator = ChapterTranslator(context, provider, pipeline = pipeline);
+    private val translator = ChapterTranslator(context, provider, pipeline = pipeline)
 
     // Held here (DI singleton) so deleteTranslation can evict stale reader page-stream closures pointing at the deleted rendered/cleaned PNGs.
     private val streamRegistry: TranslationStreamRegistry = Injekt.get()
@@ -188,14 +180,11 @@ class TranslationManager(
         // standalone revision terminally; Benign just releases pooled caches.
         val pressureClass = MemoryPressurePolicy.classify(level)
         translator.onMemoryPressure(level, pressureClass)
-        if (pressureClass == MemoryPressureClass.Critical) {
-            scheduler.cancelAllPageTranslations()
-            // Revision stops terminally under critical pressure and does NOT auto-replay:
-            // a possibly-billed provider request must not be re-issued after a memory kill.
-            // The committed patches remain and the report (if any) is whatever landed
-            // before the cancellation. The user can re-run explicitly.
-            activeRevisionJobs.keys.toList().forEach { cancelRevision(it) }
-        }
+        // TachiyomiAT: Do NOT proactively cancel page translations or revisions here.
+        // Aggressive vendor OSes (e.g. Oplus) send TRIM_MEMORY_COMPLETE (80, Critical)
+        // simply when the app is backgrounded. Cancelling jobs drops the HTTP connection
+        // to the AI engine, making it seem like the UI "lagged behind" while the engine
+        // keeps translating. If the OS actually needs memory, it will kill the process.
     }
 
     /**
@@ -305,7 +294,11 @@ class TranslationManager(
 
             val source = sourceManager.get(manga.source) as? HttpSource ?: return null
             val store = openOrCreateActiveChapterTranslationStore(
-                chapterId, chapter.name, chapter.scanlator, manga.title, source
+                chapterId,
+                chapter.name,
+                chapter.scanlator,
+                manga.title,
+                source,
             ) ?: return null
 
             val orderedPageKeys = store.state.value.keys.sortedWith { f1, f2 -> f1.compareToCaseInsensitiveNaturalOrder(f2) }
@@ -348,12 +341,13 @@ class TranslationManager(
                         listener = listener,
                         onPageUpdated = { pageKey ->
                             pipeline.tryRenderStandalone(manga, chapter, source, pageKey, store)
-                        }
+                        },
                     )
 
                     val reconciliation = BatchProgressReconciler.reconcile(
                         pageMap = store.state.value,
                         orderedKeys = orderedPageKeys,
+                        activeGeneration = store.currentGeneration,
                     )
 
                     store.publishSummary(
@@ -363,7 +357,7 @@ class TranslationManager(
                             unresolvedRevisionCount = reconciliation.unresolvedRevisionCount,
                             updatedAtMillis = System.currentTimeMillis(),
                             latestRevisionReport = report,
-                        )
+                        ),
                     )
                     store.flush()
                     tracker.finish(reconciliation)
@@ -537,8 +531,8 @@ class TranslationManager(
             logcat(LogPriority.WARN) { "Cannot queue batch translation for chapter $chapterId: revision is active" }
             return
         }
-        translator.queueChapter(manga, chapters);
-        startTranslation();
+        translator.queueChapter(manga, chapters)
+        startTranslation()
     }
 
     fun getChapterTranslationStatus(
@@ -571,7 +565,7 @@ class TranslationManager(
         chapterName: String,
         scanlator: String?,
         title: String,
-        sourceId: Long
+        sourceId: Long,
     ): Flow<Translation.State> {
         val queueStatusFlow = queueState.map { queue ->
             queue.find { it.chapter.id == chapterId }?.status
@@ -668,7 +662,6 @@ class TranslationManager(
             }
         }
         return emptyMap()
-
     }
 
     fun getChapterTranslation(
@@ -820,7 +813,7 @@ class TranslationManager(
                                 state = state,
                                 pageMap = activeStores.get(chapterId)?.state?.value,
                                 permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
-                            )
+                            ),
                         )
                     }
                 }
@@ -883,7 +876,7 @@ class TranslationManager(
         disposeBatchTracker(chapterId)
         unregisterActiveTranslationStore(chapterId)
         streamRegistry.clearChapter(source.id, manga.id, chapterId)
-        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source);
+        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
         file?.delete()
         // CP9: purge the bounded summary sidecar alongside the translation JSON. The summary
         // carries latestRevisionReport (CP5 bounded report); leaving it orphaned on disk would
@@ -899,11 +892,127 @@ class TranslationManager(
     }
 
     suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
+        resetOcrData(chapter, manga, source, pageKey)
+    }
+
+    suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) {
         val chapterId = chapter.id ?: return
-        
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
-        
+
+        val store = activeStores.get(chapterId)
+        if (store != null) {
+            store.updatePage(pageKey) { page ->
+                page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+                val newBlocks = page.blocks.map { block ->
+                    if (preserveEdits && block.userEditedAt != null) {
+                        block
+                    } else {
+                        block.copy(translation = "", needsRevision = false)
+                    }
+                }.toMutableList()
+
+                page.copy(
+                    blocks = newBlocks,
+                    translationStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                    renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                ).also {
+                    it.translationError = null
+                    it.renderError = null
+                }
+            }
+            store.flush()
+        } else {
+            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+            if (file?.exists() == true) {
+                val s = ChapterTranslationStore.open(file)
+                s.updatePage(pageKey) { page ->
+                    page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+                    val newBlocks = page.blocks.map { block ->
+                        if (preserveEdits && block.userEditedAt != null) {
+                            block
+                        } else {
+                            block.copy(translation = "", needsRevision = false)
+                        }
+                    }.toMutableList()
+
+                    page.copy(
+                        blocks = newBlocks,
+                        translationStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                        renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                    ).also {
+                        it.translationError = null
+                        it.renderError = null
+                    }
+                }
+                s.flush()
+            }
+        }
+
+        // Reconcile batch progress so summary drops cleared data
+        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
+    }
+
+    suspend fun resetInpaintData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
+        val chapterId = chapter.id ?: return
+        cancelPageTranslation(chapterId, pageKey)
+        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
+
+        val store = activeStores.get(chapterId)
+        val persistedCleanedName = store?.state?.value?.get(pageKey)?.cleanedImageName
+        if (store != null) {
+            store.updatePage(pageKey) { page ->
+                page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+                page.copy(
+                    cleanedImageName = null,
+                    inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                    renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                ).also {
+                    it.inpaintError = null
+                    it.renderError = null
+                }
+            }
+            store.flush()
+        } else {
+            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+            if (file?.exists() == true) {
+                val s = ChapterTranslationStore.open(file)
+                s.updatePage(pageKey) { page ->
+                    page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+                    page.copy(
+                        cleanedImageName = null,
+                        inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                        renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                    ).also {
+                        it.inpaintError = null
+                        it.renderError = null
+                    }
+                }
+                s.flush()
+            }
+        }
+
+        val companionDir = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
+        if (companionDir != null) {
+            persistedCleanedName?.let { companionDir.findFile(it)?.delete() }
+            val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+            companionDir.findFile("$safePageKey.cleaned.png")?.delete()
+            companionDir.findFile("$safePageKey.cleaned.jpg")?.delete()
+            companionDir.findFile("$safePageKey.rendered.png")?.delete()
+            companionDir.listFiles()?.asSequence().orEmpty()
+                .filter { it.name?.startsWith("$safePageKey.cleaned.") == true }
+                .forEach { it.delete() }
+        }
+
+        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
+    }
+
+    suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
+        val chapterId = chapter.id ?: return
+
+        cancelPageTranslation(chapterId, pageKey)
+        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
+
         val activeStore = activeStores.get(chapterId)
         val persistedCleanedName = activeStore?.state?.value?.get(pageKey)?.cleanedImageName
         if (activeStore != null) {
@@ -916,7 +1025,7 @@ class TranslationManager(
                 store.flush()
             }
         }
-        
+
         val companionDir = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
         if (companionDir != null) {
             persistedCleanedName?.let { companionDir.findFile(it)?.delete() }
@@ -930,6 +1039,21 @@ class TranslationManager(
                 .filter { it.name?.startsWith("$safePageKey.cleaned.") == true }
                 .forEach { it.delete() }
         }
+    }
+
+    private suspend fun reconcileBatchProgress(
+        chapterId: Long,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+    ) {
+        // Refresh the active-store summary after a stage reset so the chapter
+        // list can drop stale progress data. Only runs when the store is open
+        // (i.e. the reader is active for this chapter); persisted-only chapters
+        // are unaffected because their summary is rebuilt on the next open.
+        val store = activeStores.get(chapterId) ?: return
+        store.flush()
     }
 
     fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {
@@ -974,8 +1098,6 @@ class TranslationManager(
             }
         }
     }
-
-
 
     fun getCompanionImageDirForChapter(chapterName: String, scanlator: String?, title: String, source: Source): UniFile? {
         return provider.findCompanionImageDir(title, source, chapterName, scanlator)
@@ -1031,7 +1153,15 @@ class TranslationManager(
             .filter { cancelBatchQueue || !isBatchTranslationActive(it) }
         val stores = chapterIdsToEvict.mapNotNull { activeStores.get(it) }
         if (stores.isNotEmpty()) {
-            storeScope.launch {
+            // TachiyomiAT bug 4 fix: the durable CANCELLED write MUST land before
+            // unregisterActiveTranslationStore marks these stores defunct below.
+            // The previous code launched clearTransientQueuePages on storeScope
+            // and then synchronously called markDefunct in the same pass; the
+            // async clear was rejected as defunct and the durable state was
+            // silently dropped, leaving pages RUNNING in the next session's
+            // rehydrated snapshot. Run the clear to completion here (bounded by
+            // the small number of active chapter stores) before eviction.
+            kotlinx.coroutines.runBlocking {
                 stores.forEach { store ->
                     store.clearTransientQueuePages("All translation cancelled")
                 }
