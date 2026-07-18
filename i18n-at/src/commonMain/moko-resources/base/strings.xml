@@ -110,7 +110,12 @@
     <string name="manga_batch_stage_ocr">OCR/Detection</string>
     <string name="manga_batch_stage_translate">Translation</string>
     <string name="manga_batch_stage_inpaint">Cleaning</string>
-    <string name="manga_batch_stage_render">Render</string>
+    <!-- TachiyomiAT bug 2 fix: split the old single Render row. Color is
+         text-fill color estimation (renderStatus == READY); Display is
+         hasRenderedResult, the reader's actual translated-image gate. -->
+    <string name="manga_batch_stage_render">Color</string>
+    <string name="manga_batch_stage_color">Color</string>
+    <string name="manga_batch_stage_display">Display</string>
     <string name="manga_batch_stage_count">%4$d/%5$d processed · %1$d succeeded · %2$d failed · %3$d skipped</string>
     <string name="manga_batch_revision_percent">Revision %1$d%%</string>
     <string name="manga_batch_revision_excluded">Revision skipped: %1$d · user edited: %2$d</string>

@@ -16,8 +16,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -150,8 +150,19 @@ fun TranslationProgressSheet(
                 HorizontalDivider()
                 StageRow(stringResource(ATMR.strings.manga_batch_stage_ocr), snapshot.perStage[BatchPhase.OCR])
                 StageRow(stringResource(ATMR.strings.manga_batch_stage_inpaint), snapshot.perStage[BatchPhase.INPAINT])
-                StageRow(stringResource(ATMR.strings.manga_batch_stage_translate), snapshot.perStage[BatchPhase.TRANSLATE])
-                StageRow(stringResource(ATMR.strings.manga_batch_stage_render), snapshot.perStage[BatchPhase.RENDER])
+                StageRow(
+                    stringResource(ATMR.strings.manga_batch_stage_translate),
+                    snapshot.perStage[BatchPhase.TRANSLATE],
+                )
+                // TachiyomiAT bug 2 fix: split the old single "Render" row into
+                // Color (renderStatus == READY, i.e. text-fill color estimation)
+                // and Display (hasRenderedResult, i.e. the reader will actually
+                // show the translated image). The two diverge when translation
+                // finished but the cleaned image is missing/unreadable, which
+                // previously surfaced as "indicator says rendered, reader shows
+                // original + grayed overlay".
+                StageRow(stringResource(ATMR.strings.manga_batch_stage_color), snapshot.perStage[BatchPhase.RENDER])
+                StageRow(stringResource(ATMR.strings.manga_batch_stage_display), snapshot.perStage[BatchPhase.DISPLAY])
             }
 
             if (snapshot.groupedFailures.isNotEmpty()) {
@@ -213,7 +224,9 @@ private fun StageRow(label: String, count: StageCount?) {
     if (count == null || count.total == 0) return
     val stageFraction = if (count.total > 0) {
         count.processed.toFloat() / count.total
-    } else 0f
+    } else {
+        0f
+    }
     val animatedFraction by animateFloatAsState(
         targetValue = stageFraction.coerceIn(0f, 1f),
         label = "stage_progress",
@@ -244,7 +257,13 @@ private fun StageRow(label: String, count: StageCount?) {
                 count.total,
             ),
             style = MaterialTheme.typography.bodySmall,
-            color = if (count.failed > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (count.failed >
+                0
+            ) {
+                MaterialTheme.colorScheme.error
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
         )
     }
 }
