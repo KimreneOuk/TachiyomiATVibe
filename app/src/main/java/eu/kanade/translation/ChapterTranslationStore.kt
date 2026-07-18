@@ -725,7 +725,7 @@ class ChapterTranslationStore(
                 target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
                 return
             }
-            val tempFile = parent.createFile(TEMP_FILE_NAME)
+            val tempFile = parent.createFile(tempFileNameFor(target))
             if (tempFile == null) {
                 target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
                 return
@@ -829,15 +829,15 @@ class ChapterTranslationStore(
     companion object {
         private const val PERSIST_DEBOUNCE_MS = 250L
 
-        /**
-         * Sibling temp file used by [persistLocked] for the write-temp-then-
-         * rename atomicity pattern. It is created in the same directory as the
-         * target translation file and renamed over it once encoding completes.
-         */
-        private const val TEMP_FILE_NAME = "translation.tmp"
-
         /** Fallback name for the rename target if [UniFile.getName] is null. */
         private const val DEFAULT_FILE_NAME = "translation.json"
+
+        /**
+         * Creates a sibling temp-file name scoped to its target translation file.
+         * This avoids concurrent stores overwriting a shared temporary document.
+         */
+        private fun tempFileNameFor(target: UniFile): String =
+            "${target.name ?: DEFAULT_FILE_NAME}.tmp"
 
         /** Opens an existing on-disk translation file into a store. */
         fun open(translationFile: UniFile): ChapterTranslationStore {
