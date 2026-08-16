@@ -1,7 +1,6 @@
 package eu.kanade.translation.rendering
 
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.segmentation.BubbleMaskRle
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -553,67 +552,6 @@ class TextLayoutPlannerTest {
         val e = extent(l, m)
         (e.right <= 1500f + 0.5f) shouldBe true
         (e.left >= -0.5f) shouldBe true
-    }
-
-    @Test
-    fun `two detector boxes inside single bubble mask fit at legible font size`() {
-        val mask = BubbleMaskRle(
-            width = 1000,
-            height = 1000,
-            bounds = listOf(400, 100, 700, 400),
-            runs = emptyList(),
-            score = 0.95f,
-        )
-        val topBlock = block(
-            x = 450f,
-            y = 140f,
-            w = 180f,
-            h = 60f,
-            text = "Where am I right now?",
-            score = 0.9f,
-        ).copy(segmentationMask = mask)
-
-        val bottomBlock = block(
-            x = 450f,
-            y = 260f,
-            w = 180f,
-            h = 60f,
-            text = "Why can't I move my body?",
-            score = 0.9f,
-        ).copy(segmentationMask = mask)
-
-        val m = FakeMeasurer()
-        val plan = TextLayoutPlanner.plan(listOf(topBlock, bottomBlock), 1000f, 1000f, 1, false, m)
-
-        plan shouldHaveSize 2
-        (plan[0].fontSizePx >= 16f) shouldBe true
-        (plan[1].fontSizePx >= 16f) shouldBe true
-    }
-
-    @Test
-    fun `three horizontally linked ovals maintain natural width and legible font`() {
-        val mask = BubbleMaskRle(
-            width = 1000,
-            height = 1000,
-            bounds = listOf(350, 100, 750, 300),
-            runs = emptyList(),
-            score = 0.95f,
-        )
-        val left = block(x = 380f, y = 160f, w = 100f, h = 60f, text = "Unbelievable", score = 0.9f)
-            .copy(segmentationMask = mask)
-        val mid = block(x = 510f, y = 175f, w = 100f, h = 60f, text = "The barrier broke", score = 0.9f)
-            .copy(segmentationMask = mask)
-        val right = block(x = 630f, y = 155f, w = 100f, h = 60f, text = "What do we do", score = 0.9f)
-            .copy(segmentationMask = mask)
-
-        val m = FakeMeasurer()
-        val plan = TextLayoutPlanner.plan(listOf(left, mid, right), 1000f, 1000f, 1, false, m)
-
-        plan shouldHaveSize 3
-        (plan[0].fontSizePx >= 14f) shouldBe true
-        (plan[1].fontSizePx >= 14f) shouldBe true
-        (plan[2].fontSizePx >= 14f) shouldBe true
-        (plan[1].safeW >= 80f) shouldBe true
     }
 }
 

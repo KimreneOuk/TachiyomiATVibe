@@ -418,15 +418,14 @@ object TextLayoutPlanner {
         }
 
         if (regionOverride != null) {
-            val regionCenterX = (region.left + region.right) / 2f
-            val regionCenterY = (region.top + region.bottom) / 2f
-            originX = regionCenterX
-            originY = regionCenterY
+            val centerX = block.x + block.width / 2f
+            val centerY = block.y + block.height / 2f
+            originX = centerX
+            originY = centerY
             drawAlign = TextAlign.CENTER
 
-            // Anchor to the visual centroid of the sub-region / bubble canvas so
-            // text utilizes the entire width and height of the allocated bubble space
-            // rather than being penalised by a double-inset against an off-centre OCR box.
+            // The OCR centre may be off-centre inside a fused mask slice. Fit to
+            // the smaller side so centred text cannot be clipped on either edge.
             var maskClip = FloatRect(
                 region.left + strokeWidth / 2f,
                 region.top + strokeWidth / 2f,
@@ -434,10 +433,8 @@ object TextLayoutPlanner {
                 region.bottom - strokeWidth / 2f,
             )
             repeat(2) {
-                // Apply a 4px safety buffer so text baseline and stroke outlines never
-                // touch rough RLE mask borders or trigger mid-letter clipping.
-                safeW = max(1f, maskClip.width() - 4f)
-                safeH = max(1f, maskClip.height() - 4f)
+                safeW = max(1f, 2f * min(centerX - maskClip.left, maskClip.right - centerX))
+                safeH = max(1f, 2f * min(centerY - maskClip.top, maskClip.bottom - centerY))
                 fontSize = binarySearchFontSize(
                     text,
                     safeW,
@@ -455,12 +452,12 @@ object TextLayoutPlanner {
                     region.bottom - strokeWidth / 2f,
                 )
             }
-            clipRect = null
+            clipRect = maskClip
         }
 
         // Free text / parented translations remain visually attached to the OCR
         // region even when the fitted container is larger than that source box.
-        if (anchorToOcrCenter && regionOverride == null) {
+        if (anchorToOcrCenter) {
             originX = block.x + block.width / 2f
             originY = block.y + block.height / 2f
             drawAlign = TextAlign.CENTER
@@ -894,61 +891,37 @@ object TextLayoutPlanner {
             }
             val spanX = centers.values.maxOf { it.first } - centers.values.minOf { it.first }
             val spanY = centers.values.maxOf { it.second } - centers.values.minOf { it.second }
-            val splitY = spanY >= spanX
+            val splitX = spanX >= spanY
+            val ordered = indexedBlocks.sortedBy { centers[it.index]!!.let { c -> if (splitX) c.first else c.second } }
+            val cuts = ordered.zipWithNext().map { (left, right) ->
+                val a = centers[left.index]!!
+                val b = centers[right.index]!!
+                if (splitX) (a.first + b.first) / 2f else (a.second + b.second) / 2f
+            }
 
-            for (item in indexedBlocks) {
-                val c = centers[item.index]!!
-                if (splitY) {
-                    // Vertical Bubble (e.g. tall speech bubble with top and bottom lines):
-                    // Partition along Y, but grant 100% FULL WIDTH in X so lines can wrap naturally.
-                    val topNeighbor = indexedBlocks
-                        .filter { it.index != item.index && centers[it.index]!!.second < c.second }
-                        .maxByOrNull { centers[it.index]!!.second }
-                    val bottomNeighbor = indexedBlocks
-                        .filter { it.index != item.index && centers[it.index]!!.second > c.second }
-                        .minByOrNull { centers[it.index]!!.second }
-
-                    val topBound = if (topNeighbor != null) {
-                        (centers[topNeighbor.index]!!.second + c.second) / 2f
-                    } else {
-                        maskRect.top
-                    }
-                    val bottomBound = if (bottomNeighbor != null) {
-                        (c.second + centers[bottomNeighbor.index]!!.second) / 2f
-                    } else {
-                        maskRect.bottom
-                    }
-
-                    regions[item.index] = FloatRect(maskRect.left, topBound, maskRect.right, bottomBound)
+            ordered.forEachIndexed { position, item ->
+                val region = if (splitX) {
+                    FloatRect(
+                        if (position == 0) maskRect.left else cuts[position - 1],
+                        maskRect.top,
+                        if (position == ordered.lastIndex) maskRect.right else cuts[position],
+                        maskRect.bottom,
+                    )
                 } else {
-                    // Horizontal Bubble (e.g. side-by-side linked ovals):
-                    // Partition along X, but grant 100% FULL HEIGHT in Y.
-                    val leftNeighbor = indexedBlocks
-                        .filter { it.index != item.index && centers[it.index]!!.first < c.first }
-                        .maxByOrNull { centers[it.index]!!.first }
-                    val rightNeighbor = indexedBlocks
-                        .filter { it.index != item.index && centers[it.index]!!.first > c.first }
-                        .minByOrNull { centers[it.index]!!.first }
-
-                    val leftBound = if (leftNeighbor != null) {
-                        (centers[leftNeighbor.index]!!.first + c.first) / 2f
-                    } else {
-                        maskRect.left
-                    }
-                    val rightBound = if (rightNeighbor != null) {
-                        (c.first + centers[rightNeighbor.index]!!.first) / 2f
-                    } else {
-                        maskRect.right
-                    }
-
-                    regions[item.index] = FloatRect(leftBound, maskRect.top, rightBound, maskRect.bottom)
+                    FloatRect(
+                        maskRect.left,
+                        if (position == 0) maskRect.top else cuts[position - 1],
+                        maskRect.right,
+                        if (position == ordered.lastIndex) maskRect.bottom else cuts[position],
+                    )
                 }
+                regions[item.index] = region
             }
         }
         return regions
     }
 
-    /** Give children of one fused mask harmonic fitted font sizes without catastrophic cascade collapse. */
+    /** Give children of one fused mask the same safe fitted font size. */
     private fun equalizeSharedMaskFonts(
         layouts: List<BlockLayout>,
         measurer: TextMeasurer,
@@ -960,10 +933,7 @@ object TextLayoutPlanner {
         return layouts.map { layout ->
             val group = groups[layout.block.segmentationMask]
             if (group == null || group.size < 2) return@map layout
-            val maxFont = group.maxOf { it.fontSizePx }
-            val minFont = group.minOf { it.fontSizePx }
-            val commonFont = max(minFont, maxFont * 0.80f)
-            if (layout.fontSizePx == commonFont) return@map layout
+            val commonFont = group.minOf { it.fontSizePx }
             layout.copy(
                 fontSizePx = commonFont,
                 strokeWidth = computeStrokeWidth(commonFont, scale),
