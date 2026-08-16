@@ -68,8 +68,6 @@
     <string name="pref_inpainting_mode_quality">Quality</string>
     <string name="pref_inpainting_mode_fast">Fast</string>
     <string name="reader_translate">Translate</string>
-    <string name="reader_translating">Translating %1$d/%2$d</string>
-    <string name="reader_translating_page">Translating page %1$d of %2$d</string>
     <string name="reader_translation_cancel">Cancel</string>
     <string name="reader_translation_delete">Delete translation</string>
     <string name="reader_translation_not_downloaded">Translation requires downloaded chapters</string>
@@ -93,6 +91,27 @@
     <string name="reader_translation_revision_progress">Revising flagged text: %1$d/%2$d</string>
     <string name="reader_translation_revision_finalizing">Finishing translation updates</string>
     <string name="reader_translation_revision_failed">%1$d revisions failed</string>
+
+    <!-- TachiyomiAT: live reader auto-translation feedback -->
+    <string name="reader_auto_stage_queued">Queued</string>
+    <string name="reader_auto_stage_reading">Reading text</string>
+    <string name="reader_auto_stage_cleaning">Cleaning bubbles</string>
+    <string name="reader_auto_stage_translating">Translating text</string>
+    <string name="reader_auto_stage_finishing">Finishing page</string>
+    <string name="reader_auto_stage_translated">Translated</string>
+    <string name="reader_auto_stage_failed">Failed</string>
+    <string name="reader_auto_reason_memory">Low memory</string>
+    <string name="reader_auto_reason_network">Waiting for network</string>
+    <string name="reader_auto_reason_source">Waiting for source</string>
+    <string name="reader_auto_reason_compute">Waiting for device</string>
+    <string name="reader_auto_status_preparing">Auto · Preparing %1$d ahead</string>
+    <string name="reader_auto_status_current">Auto · Preparing current page</string>
+    <string name="reader_auto_status_ready">Auto · %1$d of %2$d ready ahead</string>
+    <string name="reader_auto_status_all_ready">Auto · %1$d ahead ready</string>
+    <string name="reader_auto_status_ready_empty">Auto · Ready</string>
+    <string name="reader_auto_status_paused">Auto paused · %1$s · %2$d of %3$d ready ahead</string>
+    <string name="reader_auto_status_failed">Auto · %1$d of %2$d ready ahead · %3$d failed</string>
+    <string name="reader_auto_suffix_ready_ahead">· %1$d ready ahead</string>
 
     <!-- TachiyomiAT: per-page original/translated compare handle -->
     <string name="reader_compare_handle">Compare original and translated</string>
@@ -138,10 +157,35 @@
     <string name="manga_batch_revision_complete">Revision complete</string>
     <string name="manga_batch_revision_failed">%1$d revisions failed</string>
     <string name="manga_batch_finalizing">Finishing translation updates</string>
+    <string name="manga_batch_page_progress">Page %1$d of %2$d</string>
+    <string name="manga_batch_percent">%1$d%%</string>
+    <string name="manga_batch_stage_done">done</string>
+    <string name="manga_batch_stage_running">running</string>
+    <string name="manga_batch_stage_failed">failed</string>
+    <string name="manga_batch_stage_queued">queued</string>
+    <string name="manga_batch_legend_done">done</string>
+    <string name="manga_batch_legend_active">translating</string>
+    <string name="manga_batch_legend_pending">pending</string>
+    <!-- TachiyomiAT: tier-led progress chips. Each page chip carries two
+         tier blocks; tier-1 (Readable) is OCR+translate done, tier-2 (Final)
+         is the cleaned/rendered image. Working = not readable yet. -->
+    <string name="manga_batch_tier_readable">Readable</string>
+    <string name="manga_batch_tier_final">Final</string>
+    <string name="manga_batch_tier_working">Working</string>
+    <string name="manga_batch_tier_failed">Failed</string>
+    <string name="manga_batch_tier_hint">Readable pages can be read now while cleaning finishes. Final pages have the original text cleaned away.</string>
+    <string name="manga_batch_warnings">%1$d warnings</string>
+    <string name="manga_batch_read_now">Read now</string>
+    <string name="manga_batch_status_ocr">Reading page text</string>
+    <string name="manga_batch_status_translate">Translating recognized text</string>
+    <string name="manga_batch_status_inpaint">Cleaning original text</string>
+    <string name="manga_batch_status_render">Preparing translated text overlay</string>
 
     <!-- TachiyomiAT: standalone revision UI/UX (CP7). Manga and reader share
          one confirmation/result flow; the manager owns counts and the work. -->
     <string name="manga_translate_review">Review translations</string>
+    <string name="manga_translate_download_first">Translate (will download first)</string>
+    <string name="manga_translate_multi">Translate</string>
     <!-- TachiyomiAT bug 3: another chapter of the same source is actively
          translating when the user starts a new batch; confirm before cancelling. -->
     <string name="manga_translate_conflict_title">Translation in progress</string>

@@ -6,7 +6,6 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import io.kotest.matchers.shouldBe
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -15,8 +14,7 @@ class TranslationBatchTrackerRegistryTest {
     @Test
     fun `normal completion caches terminal snapshot before disposing live tracker`() = runTest {
         val registry = TranslationBatchTrackerRegistry()
-        val tracker = tracker(chapterId = 1, registry = registry)
-        registry.replace(1, tracker)
+        val tracker = registry.createTracker(1, ChapterTranslationStore(null, null), emptyList(), this)
 
         tracker.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0, 0))
         runCurrent()
@@ -29,8 +27,7 @@ class TranslationBatchTrackerRegistryTest {
     @Test
     fun `cancellation caches terminal snapshot before disposing live tracker`() = runTest {
         val registry = TranslationBatchTrackerRegistry()
-        val tracker = tracker(chapterId = 2, registry = registry)
-        registry.replace(2, tracker)
+        val tracker = registry.createTracker(2, ChapterTranslationStore(null, null), emptyList(), this)
 
         tracker.abort(emptySet(), "Cancelled")
         runCurrent()
@@ -66,16 +63,25 @@ class TranslationBatchTrackerRegistryTest {
         registry.terminalSnapshot(99)!!.groupedFailures.getValue("failure") shouldBe listOf("page-1")
     }
 
-    private fun CoroutineScope.tracker(
-        chapterId: Long,
-        registry: TranslationBatchTrackerRegistry,
-    ): TranslationBatchProgressTracker = TranslationBatchProgressTracker(
-        chapterId,
-        ChapterTranslationStore(null, null),
-        emptyList(),
-        this,
-        onTerminalSnapshot = { snapshot -> registry.complete(chapterId, snapshot) },
-    )
+    @Test
+    fun `late terminal from replaced tracker cannot close or cache over newer owner`() = runTest {
+        val registry = TranslationBatchTrackerRegistry()
+        val old = registry.createTracker(7, ChapterTranslationStore(null, null), emptyList(), this)
+        // Queue a real terminal event before replacement. The tracker keeps
+        // that accepted event drainable after close so the production callback
+        // runs against the newer registry owner and is identity-rejected.
+        old.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0, 0))
+        val newer = registry.createTracker(7, ChapterTranslationStore(null, null), emptyList(), this)
+        runCurrent()
+
+        registry.getLive(7) shouldBe newer
+        registry.terminalSnapshot(7) shouldBe null
+
+        newer.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0, 0))
+        runCurrent()
+        registry.getLive(7) shouldBe null
+        registry.terminalSnapshot(7)!!.batchPhase shouldBe TranslationBatchPhase.FINISHED
+    }
 
     private fun snapshot(chapterId: Long, state: Translation.State = Translation.State.TRANSLATED) =
         TranslationProgressSnapshot.empty(chapterId, state).copy(batchPhase = TranslationBatchPhase.FINISHED)

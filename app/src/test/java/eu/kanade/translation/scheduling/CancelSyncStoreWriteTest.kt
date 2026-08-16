@@ -41,6 +41,7 @@ class CancelSyncStoreWriteTest {
                 source: HttpSource,
                 pageKey: String,
                 force: Boolean,
+                stageListener: TranslationStageListener?,
             ) {}
             override suspend fun translateSinglePageFromStream(
                 manga: Manga,
@@ -49,7 +50,24 @@ class CancelSyncStoreWriteTest {
                 pageKey: String,
                 streamFn: () -> InputStream,
                 force: Boolean,
+                stageListener: TranslationStageListener?,
             ) {}
+            override suspend fun prepareSinglePage(
+                manga: Manga,
+                chapter: Chapter,
+                source: HttpSource,
+                pageKey: String,
+                streamFn: (() -> InputStream)?,
+                force: Boolean,
+                stageListener: TranslationStageListener?,
+            ): PreparedPage? = null
+            override suspend fun translatePreparedPage(
+                manga: Manga,
+                chapter: Chapter,
+                source: HttpSource,
+                prepared: PreparedPage,
+                stageListener: TranslationStageListener?,
+            ): Boolean = false
         }
         val resolver = TranslationStoreResolver { id -> if (id == chapterId) store else null }
         val immediate = { id: Long -> if (id == chapterId) store else null }

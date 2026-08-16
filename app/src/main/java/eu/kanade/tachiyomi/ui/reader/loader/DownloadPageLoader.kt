@@ -42,7 +42,15 @@ internal class DownloadPageLoader(
     override suspend fun getPages(): List<ReaderPage> {
         val dbChapter = chapter.chapter
         val chapterPath = downloadProvider.findChapterDir(dbChapter.name, dbChapter.scanlator, manga.title, source)
-        val translations = translationManager.getChapterTranslation(
+        val translations = dbChapter.id?.let {
+            translationManager.getChapterTranslationForReader(
+                it,
+                chapter.chapter.name,
+                chapter.chapter.scanlator,
+                manga.title,
+                source,
+            )
+        } ?: translationManager.getChapterTranslation(
             chapter.chapter.name,
             chapter.chapter.scanlator,
             manga.title,

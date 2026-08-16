@@ -17,7 +17,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class BatchCoordinatorWiredTest {
 
     @Test
-    fun `deferred translator lane still overlaps inpaint and gates pass2 on barrier`() = runTest {
+    fun `deferred translator lane still overlaps inpaint and gates pass2 on pass1`() = runTest {
         val events = RecordingListener()
         val native = GatedNativeWorker()
         val translator = DeferringTranslatorWorker()
@@ -29,10 +29,12 @@ class BatchCoordinatorWiredTest {
 
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
+        events.awaitEvent("inpaintStarted:p0")
+        native.allowInpaintToFinish("p0")
+
         native.ocrPublished("p1").await()
         native.allowOcrToFinish("p1")
-
-        events.awaitEvent("allOcrBarrierReleased")
+        events.awaitEvent("inpaintStarted:p1")
 
         // Yield so translator lane picks up items
         repeat(3) { yield() }
@@ -47,31 +49,21 @@ class BatchCoordinatorWiredTest {
         translator.accepted shouldContainExactly setOf("p0", "p1")
 
         val log = events.log
-        val barrierIdx = log.indexOf("allOcrBarrierReleased")
         val translateIdx = log.indexOf("translationRequested:p0")
-        val inpaintStartIdx = log.indexOf("inpaintStarted:p0")
         val inpaintFinishIdx = log.indexOf("inpaintFinished:p0")
 
-        (barrierIdx shouldNotBe -1)
         (translateIdx shouldNotBe -1)
         (inpaintFinishIdx shouldNotBe -1)
-        // Plan rule 5: remote translation may overlap OCR, so translation may
-        // start BEFORE the all-OCR barrier. The previous assertion
-        // (translateIdx > barrierIdx) encoded the old regression where the
-        // translation queue was fed only after awaitAll(). The real invariant
-        // is just that translation finishes before its page's inpaint finishes
-        // (joined render) and that no inpaint starts before the barrier.
+        // Remote translation is offered after OCR and may run while inpaint is
+        // still active. There is no chapter-wide OCR barrier anymore.
         (translateIdx < inpaintFinishIdx) shouldBe true
-        // B1: the all-OCR barrier must open before ANY inpaint starts. This was
-        // missing from the original assertion set and let the old regression
-        // (post-awaitAll queue feed) pass silently.
-        (inpaintStartIdx shouldNotBe -1)
-        (barrierIdx < inpaintStartIdx) shouldBe true
+        (log.indexOf("allOcrBarrierReleased") shouldBe -1)
 
         val pass2 = async { coord.runPass2(listOf("p0" to PageTranslation())) { } }
         pass2.await()
         val pass2Idx = events.log.indexOf("pass2Started")
-        (pass2Idx > barrierIdx) shouldBe true
+        val pass1Idx = events.log.indexOf("pass1BarrierReleased")
+        (pass2Idx > pass1Idx) shouldBe true
     }
 
     @Test

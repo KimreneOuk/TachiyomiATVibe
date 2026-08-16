@@ -38,9 +38,12 @@ import eu.kanade.translation.translator.RevisionPlanner
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asFlow
@@ -66,6 +69,7 @@ import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+import java.util.concurrent.ConcurrentHashMap
 
 class TranslationManager(
     private val context: Context,
@@ -144,6 +148,19 @@ class TranslationManager(
 
     private val activeStores = ActiveChapterStoreRegistry()
     private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
+    private val translateAfterDownload = ConcurrentHashMap<Long, TranslationRequest>()
+    private val workMetadata = ConcurrentHashMap<Long, TranslationWorkMetadata>()
+
+    private data class TranslationRequest(
+        val manga: Manga,
+        val chapter: Chapter,
+    )
+
+    private data class TranslationWorkMetadata(
+        val mangaId: Long,
+        val mangaTitle: String,
+        val chapterName: String,
+    )
 
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
     private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -157,15 +174,50 @@ class TranslationManager(
     val isAnyBatchTranslationActive: Boolean
         get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
 
+    fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
+        chapter.id?.let { translateAfterDownload[it] = TranslationRequest(manga, chapter) }
+    }
+
+    suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) {
+        val chapterId = chapter.id ?: return
+        val request = translateAfterDownload.remove(chapterId) ?: return
+        if (request.manga.id != manga.id) return
+        translateChapter(request.manga, request.chapter)
+    }
+
     fun stopReaderTranslations(reason: String) {
         // CP8: the reader going background/close is a UI-lifecycle event, NOT process
         // ownership. Batch queue and standalone revisions must survive it (they are
         // owned by the application-scope translator/storeScope, not the reader). So
         // cancel only the reader-owned in-flight single-page jobs; leave the batch
-        // queue and activeRevisionJobs intact. Foreground-resume / a fresh reader
+        // queue and revision ownership intact. Foreground-resume / a fresh reader
         // session re-attaches; user explicit Stop/Disable still cancels everything
         // (those paths call cancelAllPageTranslations with cancelRevisions = true).
         cancelAllPageTranslations(cancelBatchQueue = false, cancelRevisions = false)
+        if (!isAnyBatchTranslationActive) {
+            translatorStop(reason, closeEngines = false)
+        }
+    }
+
+    /**
+     * Starts reader-owned teardown on the manager lifetime rather than the
+     * ReaderViewModel scope. The deferred completes only after scheduler
+     * coordinator/native/page jobs have joined and reader stores are evicted.
+     */
+    fun requestReaderStop(reason: String): Deferred<Unit> =
+        applicationScope.async(start = CoroutineStart.UNDISPATCHED) {
+            awaitReaderStop(reason)
+        }
+
+    /** Joined counterpart for callers that already own a non-cancelled scope. */
+    suspend fun awaitReaderStop(reason: String) {
+        scheduler.awaitReaderStop()
+        val chapterIdsToEvict = activeStores.chapterIds()
+            .filter { !isBatchTranslationActive(it) }
+        chapterIdsToEvict.forEach { chapterId ->
+            activeStores.get(chapterId)?.clearTransientQueuePages(reason)
+            unregisterActiveTranslationStore(chapterId)
+        }
         if (!isAnyBatchTranslationActive) {
             translatorStop(reason, closeEngines = false)
         }
@@ -189,23 +241,6 @@ class TranslationManager(
         // simply when the app is backgrounded. Cancelling jobs drops the HTTP connection
         // to the AI engine, making it seem like the UI "lagged behind" while the engine
         // keeps translating. If the OS actually needs memory, it will kill the process.
-    }
-
-    /**
-     * CP8: called from reader foreground-resume. If critical memory pressure had
-     * requeued the batch translator's in-flight pages (translator.memoryRequeued),
-     * restart the batch worker exactly once when the queue still has pending work
-     * and is not already running. Clears the requeue flag so a subsequent resume
-     * does not double-start. Returns true iff a restart was actually issued.
-     */
-    fun consumeMemoryRequeueRestart(): Boolean {
-        if (!translator.memoryRequeued) return false
-        translator.memoryRequeued = false
-        if (!translator.isRunning && queueState.value.isNotEmpty()) {
-            translator.start()
-            return true
-        }
-        return false
     }
 
     fun startTranslation() {
@@ -234,10 +269,14 @@ class TranslationManager(
         }
     }
 
-    private val activeRevisionJobs = java.util.concurrent.ConcurrentHashMap<Long, Job>()
+    private val revisionOwnership = RevisionOwnershipGate()
 
     fun isRevisionActive(chapterId: Long): Boolean {
-        return activeRevisionJobs.containsKey(chapterId)
+        return revisionOwnership.isActive(chapterId)
+    }
+
+    private fun releaseRevisionOwnership(chapterId: Long, job: Job? = null) {
+        revisionOwnership.release(chapterId, job)
     }
 
     fun getRevisionPreflight(
@@ -289,14 +328,39 @@ class TranslationManager(
             return null
         }
 
-        scheduler.cancelAutoTranslations(chapterId)
-
-        synchronized(activeRevisionJobs) {
-            if (activeRevisionJobs.containsKey(chapterId)) {
-                return getBatchTracker(chapterId)?.snapshot
+        // Reserve revision ownership before cancelling Auto. updateAutoWindow
+        // uses the same lock, so it cannot observe the gap between reservation
+        // and job registration and re-arm Auto in that interval. The cleanup
+        // transaction starts immediately after this reservation decision below;
+        // a cancellation/resolver/store failure therefore cannot strand the
+        // pending reservation.
+        val revisionReserved = revisionOwnership.withLock {
+            if (isBatchTranslationActive(chapterId) || !revisionOwnership.reserveLocked(chapterId)) {
+                return@withLock false
             }
+            true
+        }
+        if (!revisionReserved) {
+            if (isBatchTranslationActive(chapterId)) return null
+            return getBatchTracker(chapterId)?.snapshot
+        }
 
-            val source = sourceManager.get(manga.source) as? HttpSource ?: return null
+        var tracker: TranslationBatchProgressTracker? = null
+        var transaction: RevisionOwnershipTransaction? = null
+        try {
+            // Keep Auto cancellation inside the reservation transaction while
+            // retaining the gate across the cancellation call. A pending
+            // reservation suppresses concurrent Auto/revision admission; the
+            // finally below releases it if this call or any later setup step
+            // throws before a job is registered.
+            revisionOwnership.withLock {
+                scheduler.cancelAutoTranslations(chapterId)
+            }
+            // All setup belongs to the reservation transaction. Any resolver,
+            // store, preference, or tracker failure below must release the
+            // reservation rather than suppressing future revisions/Auto.
+            val source = sourceManager.get(manga.source) as? HttpSource
+                ?: return null
             val store = openOrCreateActiveChapterTranslationStore(
                 chapterId,
                 chapter.name,
@@ -306,29 +370,39 @@ class TranslationManager(
             ) ?: return null
 
             val orderedPageKeys = store.state.value.keys.sortedWith { f1, f2 -> f1.compareToCaseInsensitiveNaturalOrder(f2) }
-            val tracker = createBatchTracker(chapterId, store, orderedPageKeys)
-
-            val job = storeScope.launch {
+            val createdTracker = createBatchTracker(chapterId, store, orderedPageKeys)
+            tracker = createdTracker
+            val ownedTracker = createdTracker
+            val ownership = RevisionOwnershipTransaction(
+                gate = revisionOwnership,
+                chapterId = chapterId,
+                disposeTracker = {
+                    batchTrackerRegistry.disposeIfCurrent(chapterId, ownedTracker)
+                },
+            )
+            transaction = ownership
+            val job = storeScope.launch(start = CoroutineStart.LAZY) {
+                ownership.markBodyStarted()
                 try {
                     val translatorEngine = pipeline.getContextualTranslator(reviewerEngine, reviewerModel)
                         ?: throw IllegalStateException("Reviewer model not available: ${reviewerEngine.name}/$reviewerModel")
 
                     val listener = object : RevisionDriver.ProgressListener {
                         override fun onBegin(totalBlocks: Int, skippedBlocks: Int, userEditedBlocks: Int, groupsCount: Int) {
-                            tracker.beginRevision(totalBlocks, skippedBlocks, userEditedBlocks)
+                            ownedTracker.beginRevision(totalBlocks, skippedBlocks, userEditedBlocks)
                         }
                         override fun onGroupStart(pageKeys: Set<String>, groupTargetsCount: Int) {
-                            tracker.markRevisionChunkRunning(pageKeys, groupTargetsCount)
+                            ownedTracker.markRevisionChunkRunning(pageKeys, groupTargetsCount)
                         }
                         override fun onGroupComplete(appliedCount: Int, failedCount: Int) {
-                            tracker.markRevisionChunkCompleted(appliedCount)
-                            if (failedCount > 0) tracker.markRevisionChunkFailed(failedCount)
+                            ownedTracker.markRevisionChunkCompleted(appliedCount)
+                            if (failedCount > 0) ownedTracker.markRevisionChunkFailed(failedCount)
                         }
                         override fun onOverBudget(pageKey: String, blockIndex: Int, estimatedTokens: Int, maxPromptTokens: Int) {
-                            tracker.markRevisionChunkFailed(1)
+                            ownedTracker.markRevisionChunkFailed(1)
                         }
                         override fun onFinished() {
-                            tracker.markRevisionFinished()
+                            ownedTracker.markRevisionFinished()
                         }
                     }
 
@@ -364,27 +438,38 @@ class TranslationManager(
                         ),
                     )
                     store.flush()
-                    tracker.finish(reconciliation)
+                    ownership.markTerminalRequested()
+                    ownedTracker.finish(reconciliation)
                 } catch (e: CancellationException) {
-                    tracker.abort(emptySet(), "Revision cancelled")
+                    ownership.markTerminalRequested()
+                    ownedTracker.abort(emptySet(), "Revision cancelled")
                     throw e
                 } catch (e: Exception) {
                     logcat(LogPriority.ERROR, e) { "Revision job failed: chapter=${chapter.name}" }
-                    tracker.abort(emptySet(), e.message ?: "Unknown error")
-                } finally {
-                    synchronized(activeRevisionJobs) {
-                        activeRevisionJobs.remove(chapterId)
-                    }
+                    ownership.markTerminalRequested()
+                    ownedTracker.abort(emptySet(), e.message ?: "Unknown error")
                 }
             }
 
-            activeRevisionJobs[chapterId] = job
-            return tracker.snapshot
+            if (!ownership.register(job)) return null
+            return ownedTracker.snapshot
+        } catch (error: Throwable) {
+            transaction?.abortSetup()
+            if (transaction == null) {
+                tracker?.let { batchTrackerRegistry.disposeIfCurrent(chapterId, it) }
+            }
+            throw error
+        } finally {
+            if (transaction == null) {
+                releaseRevisionOwnership(chapterId)
+            } else {
+                transaction?.abortSetup()
+            }
         }
     }
 
     fun cancelRevision(chapterId: Long) {
-        activeRevisionJobs[chapterId]?.cancel()
+        revisionOwnership.cancel(chapterId)
     }
 
     /**
@@ -531,21 +616,40 @@ class TranslationManager(
 
     fun translateChapter(manga: Manga, chapters: Chapter) {
         val chapterId = chapters.id ?: return
-        if (activeRevisionJobs.containsKey(chapterId)) {
-            logcat(LogPriority.WARN) { "Cannot queue batch translation for chapter $chapterId: revision is active" }
-            return
+        revisionOwnership.withLock {
+            if (revisionOwnership.isActiveLocked(chapterId)) {
+                logcat(LogPriority.WARN) { "Cannot queue batch translation for chapter $chapterId: revision is active" }
+                return@withLock
+            }
+            // Batch acquisition and Auto shutdown are one ownership transition.
+            // A recovery reconcile takes the same gate, so it cannot re-admit
+            // this chapter between the shutdown and queue insertion.
+            scheduler.shutdownAutoCoordinator(chapterId)
+            // TachiyomiAT bug 3 fix: an explicit Start Batch on a different chapter
+            // must not silently resume a previously queued/running chapter of the
+            // same source. The translator's launchTranslatorJob picks queue entries
+            // "first per source" in insertion order, so a stale queued chapter would
+            // run before the one the user just requested. Evict stale QUEUE entries
+            // (artifacts preserved via the store) before queuing the new one.
+            // Running conflicts are reported separately via [translateChapterPreflight]
+            // so the UI can confirm cancellation of in-flight work.
+            evictStaleQueuedChapters(chapterId, manga.source)
+            translator.queueChapter(manga, chapters)
+            startTranslation()
         }
-        // TachiyomiAT bug 3 fix: an explicit Start Batch on a different chapter
-        // must not silently resume a previously queued/running chapter of the
-        // same source. The translator's launchTranslatorJob picks queue entries
-        // "first per source" in insertion order, so a stale queued chapter would
-        // run before the one the user just requested. Evict stale QUEUE entries
-        // (artifacts preserved via the store) before queuing the new one.
-        // Running conflicts are reported separately via [translateChapterPreflight]
-        // so the UI can confirm cancellation of in-flight work.
-        evictStaleQueuedChapters(chapterId, manga.source)
-        translator.queueChapter(manga, chapters)
-        startTranslation()
+    }
+
+    fun translateChapters(manga: Manga, chapters: List<Chapter>) {
+        if (chapters.isEmpty()) return
+        revisionOwnership.withLock {
+            chapters.forEach { chapter ->
+                val chapterId = chapter.id ?: return@forEach
+                if (revisionOwnership.isActiveLocked(chapterId)) return@forEach
+                scheduler.shutdownAutoCoordinator(chapterId)
+                translator.queueChapter(manga, chapter)
+            }
+            startTranslation()
+        }
     }
 
     /**
@@ -562,7 +666,7 @@ class TranslationManager(
     fun translateChapterPreflight(manga: Manga, chapter: Chapter): ChapterQueuePreflight {
         val chapterId = chapter.id
             ?: return ChapterQueuePreflight.NoConflict
-        if (activeRevisionJobs.containsKey(chapterId)) {
+        if (isRevisionActive(chapterId)) {
             return ChapterQueuePreflight.RevisionBlocked(chapterId)
         }
         val view = queueState.value.map { it.toQueuedChapterView() }
@@ -752,6 +856,17 @@ class TranslationManager(
         return emptyMap()
     }
 
+    fun getChapterTranslationForReader(
+        chapterId: Long,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+    ): Map<String, PageTranslation> {
+        activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return it }
+        return getChapterTranslation(chapterName, scanlator, mangaTitle, source)
+    }
+
     fun getChapterTranslation(
         file: UniFile,
     ): Map<String, PageTranslation> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
@@ -761,6 +876,65 @@ class TranslationManager(
             file.delete()
         }
         return@runBlocking emptyMap()
+    }
+
+    /** Returns whether this chapter has an existing or active translation store. */
+    fun hasTranslationStore(chapter: Chapter, manga: Manga, source: Source): Boolean {
+        chapter.id?.let { activeStores.get(it) }?.let { return it.state.value.isNotEmpty() }
+        return provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+            ?.exists() == true
+    }
+
+    /** Re-keys source URL pages to the names written by a completed download. */
+    suspend fun rekeyTranslationForCompletedDownload(
+        chapter: Chapter,
+        manga: Manga,
+        source: Source,
+        onlineKeyByPageIndex: List<String>,
+        onDiskKeyByPageIndex: List<String>,
+    ) {
+        val chapterId = chapter.id ?: return
+        if (onlineKeyByPageIndex.size != onDiskKeyByPageIndex.size) return
+
+        val activeStore = activeStores.get(chapterId)
+        val store = activeStore ?: run {
+            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+                ?: return
+            if (!file.exists()) return
+            ChapterTranslationStore.open(file)
+        }
+        val pages = store.state.value
+        if (pages.size != onlineKeyByPageIndex.size) return
+        if (pages.keys.none { it in onlineKeyByPageIndex }) return
+        if (pages.keys.all { it in onDiskKeyByPageIndex }) return
+
+        // Match deleteTranslation's cancellation ordering while retaining the
+        // active store instance so an open reader observes the new snapshot.
+        revisionOwnership.withLock {
+            cancelRevision(chapterId)
+            // The gate is held for batch setup only, so joining here cannot
+            // deadlock with a running batch. This method is called from the
+            // downloader's IO coroutine, making the bounded blocking bridge safe.
+            kotlinx.coroutines.runBlocking { translator.cancelTranslatorJobAndJoin() }
+        }
+        scheduler.cancelAutoTranslations(chapterId)
+        scheduler.cancelPageTranslations(chapterId)
+        store.beginGeneration("completed download re-key")
+        val moves = store.rekeyPages(onlineKeyByPageIndex, onDiskKeyByPageIndex)
+        if (moves.isEmpty()) return
+
+        store.flush()
+        val companionDir = provider.findCompanionImageDir(
+            manga.title,
+            source,
+            chapter.name,
+            chapter.scanlator,
+        )
+        moves.forEach { (oldKey, newKey) ->
+            val oldImage = provider.companionImageNameForPage(oldKey)
+            val newImage = provider.companionImageNameForPage(newKey)
+            companionDir?.findFile(oldImage)?.renameTo(newImage)
+        }
     }
 
     fun openChapterTranslationStore(file: UniFile): StateFlow<Map<String, PageTranslation>> {
@@ -842,6 +1016,64 @@ class TranslationManager(
     fun cancelAutoTranslations(chapterId: Long? = null): Boolean =
         scheduler.cancelAutoTranslations(chapterId)
 
+    /**
+     * Ticket 03: live auto-translation snapshot from the rolling coordinator.
+     * Null when no coordinator is active. The reader observes this to render
+     * the compact ready-ahead status without polling the durable store.
+     */
+    val autoSnapshot: kotlinx.coroutines.flow.StateFlow<eu.kanade.translation.scheduling.AutoTranslationSnapshot?> =
+        scheduler.autoSnapshot
+
+    /**
+     * Ticket 03: rolling coordinator window update. Accepts a desired-window
+     * spec and delegates to the scheduler, which owns the coordinator.
+     *
+     * Batch arbitration: batch chapter translation owns the chapter and
+     * suppresses auto (same rule the legacy path enforces). While a batch job
+     * is queued or translating for this chapter, the rolling coordinator is
+     * shut down and this call is a no-op; it re-arms on the next window update
+     * once batch is no longer active. An active revision is treated the same
+     * way: revision owns the chapter's translated output, so auto is suppressed
+     * while [isRevisionActive] holds.
+     */
+    fun updateAutoWindow(
+        identity: eu.kanade.translation.scheduling.AutoChapterIdentity,
+        visiblePageIndex: Int,
+        configuredAheadTarget: Int,
+        pageCount: Int,
+        session: TranslationSession,
+        pageResolver: (Int) -> eu.kanade.translation.scheduling.RollingAutoCoordinator.PageWorkItem?,
+        computeClass: eu.kanade.translation.translator.TranslatorComputeClass,
+    ) {
+        val chapterId = session.chapter.id
+        revisionOwnership.withLock {
+            if (chapterId != null &&
+                (isBatchTranslationActive(chapterId) || revisionOwnership.isActiveLocked(chapterId))
+            ) {
+                scheduler.shutdownAutoCoordinator(chapterId)
+                return@withLock
+            }
+            scheduler.updateAutoWindow(
+                identity,
+                visiblePageIndex,
+                configuredAheadTarget,
+                pageCount,
+                session,
+                pageResolver,
+                computeClass,
+            )
+        }
+    }
+
+    fun shutdownAutoCoordinator() = scheduler.shutdownAutoCoordinator()
+
+    /** Reconciles the active rolling window after a reader lifecycle/memory signal. */
+    fun reconcileAutoWindow() = revisionOwnership.withLock {
+        scheduler.reconcileAutoWindow { chapterId ->
+            !isBatchTranslationActive(chapterId) && !revisionOwnership.isActiveLocked(chapterId)
+        }
+    }
+
     fun observeActiveStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? = activeStores.observe(chapterId)
 
     /**
@@ -854,20 +1086,13 @@ class TranslationManager(
         chapterId: Long,
         store: ChapterTranslationStore,
         orderedPageKeys: List<String>,
-    ): TranslationBatchProgressTracker {
-        val tracker = TranslationBatchProgressTracker(
-            chapterId = chapterId,
-            store = store,
-            orderedPageKeys = orderedPageKeys,
-            scope = storeScope,
-            permitHolderResolver = { pipeline.permitHolderPageKeySnapshot() },
-            onTerminalSnapshot = { snapshot ->
-                batchTrackerRegistry.complete(chapterId, snapshot)
-            },
-        )
-        batchTrackerRegistry.replace(chapterId, tracker)
-        return tracker
-    }
+    ): TranslationBatchProgressTracker = batchTrackerRegistry.createTracker(
+        chapterId = chapterId,
+        store = store,
+        orderedPageKeys = orderedPageKeys,
+        scope = storeScope,
+        permitHolderResolver = { pipeline.permitHolderPageKeySnapshot() },
+    )
 
     fun disposeBatchTracker(chapterId: Long) {
         batchTrackerRegistry.dispose(chapterId)
@@ -908,6 +1133,81 @@ class TranslationManager(
             }
             .distinctUntilChanged()
     }
+
+    fun observeAllTranslationWork(): Flow<List<TranslationWorkItem>> {
+        val queueChanges = queueState.flatMapLatest { queue ->
+            queue.forEach { translation ->
+                translation.chapter.id?.let { chapterId ->
+                    workMetadata[chapterId] = TranslationWorkMetadata(
+                        mangaId = translation.manga.id,
+                        mangaTitle = translation.manga.title,
+                        chapterName = translation.chapter.name,
+                    )
+                }
+            }
+            val statusChanges = queue.map { translation ->
+                translation.statusFlow.map { queue }
+            }
+            if (statusChanges.isEmpty()) flowOf(queue) else statusChanges.merge().onStart { emit(queue) }
+        }
+        return combine(queueChanges, batchTrackerRegistry.live, batchTrackerRegistry.terminal) { queue, live, terminal ->
+            Triple(queue, live, terminal)
+        }.flatMapLatest { (queue, live, terminal) ->
+            val trackerFlows = live.map { (chapterId, tracker) ->
+                tracker.snapshot.map { chapterId to it }.onStart {
+                    emit(chapterId to tracker.snapshot.value)
+                }
+            }
+            val snapshots = if (trackerFlows.isEmpty()) {
+                flowOf(emptyMap())
+            } else {
+                combine(trackerFlows) { entries -> entries.toMap() }
+            }
+            snapshots.map { liveSnapshots ->
+                val queuedIds = queue.mapNotNull { it.chapter.id }.toSet()
+                val queuedItems = queue.mapNotNull { translation ->
+                    val chapterId = translation.chapter.id ?: return@mapNotNull null
+                    val snapshot = liveSnapshots[chapterId]
+                    TranslationWorkItem(
+                        mangaId = translation.manga.id,
+                        mangaTitle = translation.manga.title,
+                        chapterId = chapterId,
+                        chapterName = translation.chapter.name,
+                        state = when (translation.status) {
+                            Translation.State.QUEUE -> TranslationWorkState.Queued
+                            Translation.State.ERROR -> TranslationWorkState.Failed
+                            else -> TranslationWorkState.InProgress
+                        },
+                        progress = snapshot?.progressFraction() ?: 0f,
+                    )
+                }
+                val recentItems = terminal.values
+                    .filter { it.chapterId !in queuedIds }
+                    .map { snapshot ->
+                        val metadata = workMetadata[snapshot.chapterId]
+                        TranslationWorkItem(
+                            mangaId = metadata?.mangaId ?: 0L,
+                            mangaTitle = metadata?.mangaTitle.orEmpty(),
+                            chapterId = snapshot.chapterId,
+                            chapterName = metadata?.chapterName ?: snapshot.chapterId.toString(),
+                            state = if (snapshot.state == Translation.State.ERROR || snapshot.aborted) {
+                                TranslationWorkState.Failed
+                            } else {
+                                TranslationWorkState.Recent
+                            },
+                            progress = snapshot.progressFraction(),
+                        )
+                    }
+                queuedItems + recentItems
+            }
+        }.distinctUntilChanged()
+    }
+
+    private fun TranslationProgressSnapshot.progressFraction(): Float = when {
+        totalStages > 0 -> doneStages.toFloat() / totalStages
+        totalPages > 0 -> donePages.toFloat() / totalPages
+        else -> 0f
+    }.coerceIn(0f, 1f)
 
     /**
      * Per-chapter batch progress (done/total) for the manga-screen chapter-list indicator, so
@@ -1342,7 +1642,8 @@ class TranslationManager(
     fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false, cancelRevisions: Boolean = true) {
         scheduler.cancelAllPageTranslations()
         if (cancelRevisions) {
-            activeRevisionJobs.keys.toList().forEach { cancelRevision(it) }
+            val revisionChapterIds = revisionOwnership.ownedChapterIds()
+            revisionChapterIds.forEach { cancelRevision(it) }
         }
         val chapterIdsToEvict = activeStores.chapterIds()
             .filter { cancelBatchQueue || !isBatchTranslationActive(it) }

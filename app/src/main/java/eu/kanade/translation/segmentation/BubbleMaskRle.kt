@@ -14,8 +14,10 @@ data class BubbleMaskRle(
     init {
         require(width > 0 && height > 0 && bounds.size == 4 && runs.size % 2 == 0) { "Invalid bubble RLE" }
         require(
-            bounds[0] in 0..width && bounds[1] in 0..height &&
-                bounds[2] in bounds[0]..width && bounds[3] in bounds[1]..height,
+            bounds[0] in 0..width &&
+                bounds[1] in 0..height &&
+                bounds[2] in bounds[0]..width &&
+                bounds[3] in bounds[1]..height,
         ) { "Bubble RLE bounds outside mask" }
         var previousEnd = 0
         for (i in runs.indices step 2) {

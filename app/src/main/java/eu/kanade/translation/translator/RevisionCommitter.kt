@@ -61,6 +61,7 @@ object RevisionCommitter {
         chapterId: Long?,
         chapterName: String,
     ): CommitOutcome {
+        val capturedGeneration = store.currentGeneration
         var keptCount = 0
         var correctedCount = 0
         var unresolvedCount = mergeResult.unresolvedCount
@@ -122,11 +123,13 @@ object RevisionCommitter {
         touchedPages.forEach { pageKey ->
             val current = store.state.value[pageKey] ?: return@forEach
             val validatedStatus = TranslationBlockValidation.applyTo(current)
-            store.updatePage(pageKey) { existing ->
-                (existing ?: current).apply {
-                    translationStatus = validatedStatus
-                    errorMessage = null
-                    updatedAt = System.currentTimeMillis()
+            store.withGeneration(capturedGeneration) {
+                store.updatePage(pageKey) { existing ->
+                    (existing ?: current).apply {
+                        translationStatus = validatedStatus
+                        errorMessage = null
+                        updatedAt = System.currentTimeMillis()
+                    }
                 }
             }
         }

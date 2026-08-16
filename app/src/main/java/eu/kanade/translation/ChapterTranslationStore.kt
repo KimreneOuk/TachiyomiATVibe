@@ -23,9 +23,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
@@ -104,6 +106,18 @@ class ChapterTranslationStore(
     private var defunct = false
 
     fun markDefunct() {
+        persistJob?.let { pendingPersist ->
+            val completed = runBlocking {
+                withTimeoutOrNull(PERSIST_JOIN_TIMEOUT_MS) { pendingPersist.join() }
+            }
+            if (completed == null) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT store persist did not finish within $PERSIST_JOIN_TIMEOUT_MS ms before eviction"
+                }
+            }
+            pendingPersist.cancel()
+        }
+        persistJob = null
         defunct = true
         generation++
         logcat(LogPriority.WARN) { "TachiyomiAT store marked defunct: generation=$generation" }
@@ -469,9 +483,47 @@ class ChapterTranslationStore(
             updatedPages.forEach { (pageKey, page) ->
                 pages = pages.put(pageKey, ownedPage(pageKey, page))
             }
-            dirty = false
-            persistLocked()
+            dirty = !persistLocked()
             _state.value = snapshotPages()
+        }
+    }
+
+    /** Moves source-keyed pages to their completed-download keys atomically. */
+    suspend fun rekeyPages(
+        onlineKeys: List<String>,
+        onDiskKeys: List<String>,
+    ): List<Pair<String, String>> {
+        if (defunct || onlineKeys.size != onDiskKeys.size) return emptyList()
+        return mutex.withLock {
+            if (pages.size != onlineKeys.size) return@withLock emptyList()
+            val onDiskKeySet = onDiskKeys.toSet()
+            if (pages.keys.all { it in onDiskKeySet }) return@withLock emptyList()
+
+            val moves = pages.keys.mapNotNull { oldKey ->
+                val index = onlineKeys.indexOf(oldKey)
+                if (index < 0) return@mapNotNull null
+                val newKey = onDiskKeys[index]
+                if (newKey == oldKey || pages.containsKey(newKey)) return@mapNotNull null
+                oldKey to newKey
+            }
+            if (moves.isEmpty()) return@withLock emptyList()
+
+            val moveByOldKey = moves.toMap()
+            var updatedPages = persistentMapOf<String, PageTranslation>()
+            pages.forEach { (oldKey, page) ->
+                val newKey = moveByOldKey[oldKey] ?: oldKey
+                val updated = if (newKey == oldKey) {
+                    page
+                } else {
+                    page.detachedCopy().apply { sourceFileName = newKey }
+                }
+                updatedPages = updatedPages.put(newKey, ownedPage(newKey, updated))
+            }
+            pages = updatedPages
+            dirty = true
+            schedulePersist()
+            _state.value = snapshotPages()
+            moves
         }
     }
 
@@ -547,8 +599,7 @@ class ChapterTranslationStore(
                 }
             }.toPersistentMap()
             if (changed) {
-                dirty = false
-                persistLocked()
+                dirty = !persistLocked()
                 _state.value = snapshotPages()
             }
         }
@@ -713,7 +764,8 @@ class ChapterTranslationStore(
         return false
     }
 
-    private fun persistLocked() {
+    private fun persistLocked(): Boolean {
+        if (defunct) return false
         persistCount++
         // Resolve the backing file lazily on first write. Opening a chapter with
         // no existing file leaves translationFile null; materializing it on first
@@ -722,7 +774,7 @@ class ChapterTranslationStore(
         if (translationFile == null) {
             translationFile = fileCreator?.invoke()
         }
-        val target = translationFile ?: return
+        val target = translationFile ?: return false
         // SAF-backed (UniFile): a stale/revoked tree URI or moved folder can make
         // openOutputStream() throw IOException. In-memory state is still correct
         // and the reader gets live StateFlow updates, so a write failure must NOT
@@ -744,12 +796,12 @@ class ChapterTranslationStore(
                 // Single-document URI (no sibling location): fall back to a direct
                 // truncating write — prefer liveness over corruption-risk.
                 target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
-                return
+                return true
             }
             val tempFile = parent.createFile(tempFileNameFor(target))
             if (tempFile == null) {
                 target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
-                return
+                return true
             }
             try {
                 tempFile.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
@@ -773,19 +825,35 @@ class ChapterTranslationStore(
                 logcat(LogPriority.WARN, e) { "Atomic rename of translation store failed; falling back to copy" }
                 false
             }
-            if (!renamed) {
+            if (renamed) {
+                // A SAF rename replaces the backing document. Keep a handle to
+                // that new document instead of retaining [target], whose URI now
+                // points at the deleted placeholder. Reusing the stale handle made
+                // every later persist fail: cleaned JPEGs survived, but the JSON
+                // never received translated blocks, so the reader had nothing to
+                // draw over the cleaned page.
+                translationFile = parent.findFile(targetName) ?: tempFile
+            } else {
+                // target may already have been deleted before renameTo() reported
+                // failure. Resolve or recreate it before copying the fully encoded
+                // temporary snapshot, then retain the fresh handle for future writes.
+                val replacement = parent.findFile(targetName) ?: parent.createFile(targetName)
+                check(replacement != null) { "could not recreate translation store after rename failure" }
                 try {
                     tempFile.openInputStream().use { input ->
-                        target.openOutputStream().use { output -> input.copyTo(output) }
+                        replacement.openOutputStream().use { output -> input.copyTo(output) }
                     }
+                    translationFile = replacement
                 } finally {
                     try {
                         tempFile.delete()
                     } catch (_: Exception) {}
                 }
             }
+            return true
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to persist translation store; in-memory state retained" }
+            return false
         }
     }
 
@@ -797,8 +865,7 @@ class ChapterTranslationStore(
 
     private fun flushDirtyLocked() {
         if (dirty) {
-            dirty = false
-            persistLocked()
+            if (persistLocked()) dirty = false else dirty = true
         }
         if (glossaryDirty) {
             // Keep dirty on failure so a later completion/close flush can retry.
@@ -851,6 +918,7 @@ class ChapterTranslationStore(
 
     companion object {
         private const val PERSIST_DEBOUNCE_MS = 250L
+        private const val PERSIST_JOIN_TIMEOUT_MS = 2_000L
 
         /** Fallback name for the rename target if [UniFile.getName] is null. */
         private const val DEFAULT_FILE_NAME = "translation.json"

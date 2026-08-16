@@ -182,16 +182,15 @@ fun MangaChapterListItem(
                 }
             }
             // TachiyomiAT
-            if (downloadStateProvider() == Download.State.DOWNLOADED) {
-                ChapterTranslationIndicator(
-                    enabled = true,
-                    modifier = Modifier.padding(start = 4.dp),
-                    translationStateProvider = translationStateProvider,
-                    translationProgressProvider = translationProgressProvider,
-                    reviewAvailableProvider = reviewAvailableProvider,
-                    onClick = { onTranslationClick?.invoke(it) },
-                )
-            }
+            ChapterTranslationIndicator(
+                enabled = true,
+                modifier = Modifier.padding(start = 4.dp),
+                translationStateProvider = translationStateProvider,
+                translationProgressProvider = translationProgressProvider,
+                reviewAvailableProvider = reviewAvailableProvider,
+                downloadedProvider = { downloadStateProvider() == Download.State.DOWNLOADED },
+                onClick = { onTranslationClick?.invoke(it) },
+            )
             ChapterDownloadIndicator(
                 enabled = downloadIndicatorEnabled,
                 modifier = Modifier.padding(start = 4.dp),

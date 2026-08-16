@@ -11,9 +11,12 @@ import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.View.ACCESSIBILITY_LIVE_REGION_NONE
+import android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
+import android.widget.TextView
 import androidx.annotation.AttrRes
 import androidx.annotation.CallSuper
 import androidx.annotation.StyleRes
@@ -75,20 +78,20 @@ open class ReaderPageImageView @JvmOverloads constructor(
         relayoutTranslateButton()
     }
 
-    // TachiyomiAT: clean up when this view detaches. The fade animator introduced
-    // in [showProcessingOverlay] runs on the pageView via View.animate(), which
-    // targets the view's Handler; if the holder is recycled/detached mid-fade
-    // the animator would otherwise keep running against a detached view (wasted
-    // work + potential jank when re-attached). Cancel it, restore full alpha,
-    // and drop the overlay so a recycled holder doesn't briefly show a stale
-    // dim+spinner. Idempotent state is also reset so the next attach starts clean.
+    // TachiyomiAT: cancel an in-flight image transition when this view detaches.
+    // A recycled holder must not keep a second decoded view or a stale feedback
+    // pill alive while it is outside the reader.
     override fun onDetachedFromWindow() {
+        cancelLandscapeZoom()
         super.onDetachedFromWindow()
+        imageGeneration++
         pageView?.animate()?.cancel()
         pageView?.alpha = 1.0f
-        processingOverlayVisible = false
-        processingScrim?.isVisible = false
-        processingIndicator?.hide()
+        previousPageView?.animate()?.cancel()
+        previousPageView?.let(::removeAndRecyclePageView)
+        previousPageView = null
+        crossfadePending = false
+        clearTranslationFeedback()
     }
 
     // TachiyomiAT : need this for textblock placements
@@ -128,16 +131,16 @@ open class ReaderPageImageView @JvmOverloads constructor(
     open fun onImageLoaded() {
         onImageLoaded?.invoke()
         background = pageBackground
+        finishImageTransition()
         translationImageReady = translationImageSelected
-        if (!translationImageSelected) {
+        val hasTier1Blocks = !translationImageSelected && pendingTranslationBlocks.isNotEmpty()
+        if (!translationImageSelected && !hasTier1Blocks) {
             translationOverlay?.isVisible = false
         }
         // TachiyomiAT: the image just decoded, so its on-screen rect is now
         // known — re-pin the translate button onto the image (not the holder).
         relayoutTranslateButton()
-        // Bind only after the selected image has decoded. This prevents cached
-        // translated blocks from drawing over a newly selected original image.
-        if (translationImageReady && pendingTranslationBlocks.isNotEmpty()) {
+        if ((translationImageReady || hasTier1Blocks) && pendingTranslationBlocks.isNotEmpty()) {
             val imageView = pageView as? SubsamplingScaleImageView
             if (imageView != null) {
                 ensureTranslationOverlay()
@@ -155,6 +158,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
     @CallSuper
     open fun onImageLoadError() {
+        cancelLandscapeZoom()
+        restorePreviousImageAfterLoadError()
         translationImageReady = false
         pendingTranslationBlocks = emptyList()
         pendingPageWidth = 0
@@ -162,6 +167,48 @@ open class ReaderPageImageView @JvmOverloads constructor(
         translationOverlay?.bind(null, emptyList(), 0, 0)
         translationOverlay?.isVisible = false
         onImageLoadError?.invoke()
+    }
+
+    private fun finishImageTransition() {
+        val oldView = previousPageView ?: run {
+            pageView?.alpha = 1f
+            return
+        }
+        val newView = pageView ?: return
+        val transitionGeneration = imageGeneration
+        val transitionFence = ReaderImageCallbackFence(transitionGeneration, oldView)
+        crossfadePending = false
+        newView.alpha = 0f
+        newView.animate()
+            .alpha(1f)
+            .setDuration(TRANSLATION_CROSSFADE_DURATION_MS)
+            .withEndAction {
+                transitionFence.dispatchIfCurrent(imageGeneration, previousPageView) {
+                    removeAndRecyclePageView(oldView)
+                    previousPageView = null
+                }
+            }
+            .start()
+    }
+
+    private fun restorePreviousImageAfterLoadError() {
+        val newView = pageView
+        val oldView = previousPageView ?: return
+        newView?.animate()?.cancel()
+        newView?.let(::removeAndRecyclePageView)
+        pageView = oldView
+        previousPageView = null
+        pageView?.alpha = 1f
+        crossfadePending = false
+        restoreOverlayOrder()
+    }
+
+    private fun cancelLandscapeZoom() {
+        landscapeZoomRunnable?.let { runnable ->
+            landscapeZoomHandler?.removeCallbacks(runnable)
+        }
+        landscapeZoomRunnable = null
+        landscapeZoomHandler = null
     }
 
     @CallSuper
@@ -190,19 +237,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
         onViewClicked?.invoke()
     }
 
-    private var processingIndicator: ReaderProgressIndicator? = null
-    private var processingScrim: View? = null
+    // TachiyomiAT: compact, non-interactive stage feedback. This replaces the
+    // old full-page scrim/spinner; the image always remains at alpha 1f.
+    private var translationFeedbackView: TextView? = null
+    private var feedbackHideRunnable: Runnable? = null
+    private var feedbackRunnable: Runnable? = null
+    private val feedbackCoalescer = ReaderTranslationFeedbackCoalescer()
 
-    // TachiyomiAT: tracks the current processing-overlay state so
-    // [showProcessingOverlay] can short-circuit duplicate calls (translation
-    // status re-emits the same RUNNING state repeatedly) instead of re-firing
-    // the fade animator each time.
-    private var processingOverlayVisible: Boolean = false
-
-    // TachiyomiAT: small error text shown below the spinner when a translation
-    // fails, so the user gets meaningful feedback instead of silently seeing
-    // "nothing happened" on skipped/failed pages.
-    private var errorText: android.widget.TextView? = null
+    // TachiyomiAT: optional muted chapter-context suffix ("· N ready ahead")
+    // appended to the per-page pill when an auto run is active. Terminal states
+    // (Failed/Translated) suppress it so the error/result reads clean.
+    private var feedbackContextSuffix: String? = null
 
     // TachiyomiAT: per-page translate button at top-left corner
     private var translateButton: AppCompatImageView? = null
@@ -220,6 +265,16 @@ open class ReaderPageImageView @JvmOverloads constructor(
     private var pendingPageWidth = 0
     private var pendingPageHeight = 0
 
+    // Keep the previous decoded view underneath a replacement until the new
+    // image reaches its ready callback. This makes the translated result
+    // crossfade in without a blank frame, while retaining only two bounded
+    // holder views during the short transition.
+    private var previousPageView: View? = null
+    private var imageGeneration: Long = 0L
+    private var crossfadePending = false
+    private var landscapeZoomRunnable: Runnable? = null
+    private var landscapeZoomHandler: android.os.Handler? = null
+
     private fun ensureTranslationOverlay() {
         if (translationOverlay != null) return
         translationOverlay = TranslationOverlayView(context).apply {
@@ -235,9 +290,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
         translationImageReady = false
         translationOverlay?.isVisible = false
         if (!selected) {
-            pendingTranslationBlocks = emptyList()
-            pendingPageWidth = 0
-            pendingPageHeight = 0
             translationOverlay?.clear()
         }
     }
@@ -246,13 +298,11 @@ open class ReaderPageImageView @JvmOverloads constructor(
         pendingTranslationBlocks = blocks
         pendingPageWidth = pageWidth
         pendingPageHeight = pageHeight
-        if (blocks.isNotEmpty() && translationImageReady) {
-            val imageView = pageView as? SubsamplingScaleImageView
-            if (imageView != null) {
-                ensureTranslationOverlay()
-                translationOverlay?.isVisible = true
-                translationOverlay?.bind(imageView, blocks, pageWidth, pageHeight)
-            }
+        val imageView = pageView as? SubsamplingScaleImageView
+        if (blocks.isNotEmpty() && imageView != null) {
+            ensureTranslationOverlay()
+            translationOverlay?.isVisible = true
+            translationOverlay?.bind(imageView, blocks, pageWidth, pageHeight)
         } else {
             translationOverlay?.isVisible = false
             translationOverlay?.clear()
@@ -464,21 +514,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
     /**
      * TachiyomiAT: restores the intended child-view z-order after
      * [setImage] / second [setImage] re-adds the pageView as the LAST child,
-     * repushing the translate button and any active processing overlay (scrim,
-     * spinner, error text) behind it. Callers who show the overlay before
-     * setting the image would otherwise see no dimming and no spinner, and the
-     * button would be invisible to touch.
+     * repushing the translate button and the stage pill behind it.
      */
     private fun restoreOverlayOrder() {
         // Overlay goes above the pageView
         translationOverlay?.bringToFront()
         // Button: must always be on top so it can receive taps.
         translateButton?.bringToFront()
-        // Processing overlay: the scrim dims the image, the spinner gives
-        // progress feedback, and the error text surfaces failures.
-        processingScrim?.bringToFront()
-        processingIndicator?.bringToFront()
-        errorText?.bringToFront()
+        translationFeedbackView?.bringToFront()
     }
 
     /**
@@ -508,114 +551,171 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    private fun ensureProcessingOverlay() {
-        if (processingIndicator != null && processingScrim != null) return
-        // Scrim: a transparent click-passthrough view used to dim the image.
-        val scrim = View(context)
-        scrim.setBackgroundColor(0x66000000.toInt())
-        scrim.isClickable = false
-        scrim.isFocusable = false
-        scrim.layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
-        addView(scrim)
-        processingScrim = scrim
-
-        val indicator = ReaderProgressIndicator(context)
-        indicator.layoutParams = FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.CENTER,
-        )
-        addView(indicator)
-        processingIndicator = indicator
-
-        // TachiyomiAT: error text shown below the spinner when a page's
-        // translation finished with an error (OOM, bad AI response, timeout,
-        // etc.). Previously these were silent — the page just looked like it
-        // never got translated.
-        val tv = android.widget.TextView(context).apply {
-            setTextColor(0xFF_FF6B6B.toInt())
+    private fun ensureTranslationFeedbackView() {
+        if (translationFeedbackView != null) return
+        val density = resources.displayMetrics.density
+        translationFeedbackView = TextView(context).apply {
             setTextAppearance(android.R.style.TextAppearance_DeviceDefault_Small)
+            setTextColor(android.graphics.Color.WHITE)
             gravity = Gravity.CENTER
-            isVisible = false
-            layoutParams = FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.CENTER,
-            ).apply {
-                topMargin = (64 * resources.displayMetrics.density).toInt()
+            maxLines = 1
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            accessibilityLiveRegion = ACCESSIBILITY_LIVE_REGION_NONE
+            setPadding(
+                (12 * density).toInt(),
+                (6 * density).toInt(),
+                (12 * density).toInt(),
+                (6 * density).toInt(),
+            )
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = 18 * density
+                setColor(0xCC202124.toInt())
+                setStroke((1 * density).toInt().coerceAtLeast(1), 0x66FFFFFF)
+            }
+            layoutParams = FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = (24 * density).toInt()
             }
         }
-        addView(tv)
-        errorText = tv
-
-        // Make sure the overlay is rendered above the page image.
-        scrim.bringToFront()
-        indicator.bringToFront()
-        tv.bringToFront()
+        addView(translationFeedbackView)
+        restoreOverlayOrder()
     }
 
-    fun showTranslationError(message: String?) {
-        if (message.isNullOrBlank()) {
-            errorText?.isVisible = false
+    /**
+     * Updates page feedback only. The image is never dimmed, animated, or
+     * blocked while a stage is running. Short stage changes are coalesced on
+     * the UI thread; terminal feedback is immediate and does not delay the
+     * translated-image crossfade.
+     */
+    fun showTranslationFeedback(state: ReaderPageFeedbackState?, contextSuffix: String? = null) {
+        feedbackContextSuffix = contextSuffix
+        val now = android.os.SystemClock.uptimeMillis()
+        if (state == null) {
+            feedbackCoalescer.submit(null, now)
+            applyTranslationFeedback(null)
+            scheduleFeedbackFlush(now)
             return
         }
-        ensureProcessingOverlay()
-        errorText?.apply {
-            text = message
+        val update = feedbackCoalescer.submit(state, now)
+        if (update != null) applyTranslationFeedback(update)
+        scheduleFeedbackFlush(now)
+    }
+
+    /** Starts a fresh page-translation attempt after an explicit owner reset. */
+    fun beginTranslationFeedbackAttempt() {
+        feedbackHideRunnable?.let(::removeCallbacks)
+        feedbackHideRunnable = null
+        feedbackRunnable?.let(::removeCallbacks)
+        feedbackRunnable = null
+        feedbackCoalescer.beginAttempt()
+        applyTranslationFeedback(null)
+    }
+
+    fun clearTranslationFeedback() {
+        feedbackHideRunnable?.let(::removeCallbacks)
+        feedbackHideRunnable = null
+        feedbackRunnable?.let(::removeCallbacks)
+        feedbackRunnable = null
+        feedbackCoalescer.reset()
+        translationFeedbackView?.isVisible = false
+        translationFeedbackView?.contentDescription = null
+    }
+
+    private fun scheduleFeedbackFlush(now: Long) {
+        feedbackRunnable?.let(::removeCallbacks)
+        val delay = feedbackCoalescer.pendingDelayMs(now) ?: return
+        val runnable = Runnable {
+            feedbackRunnable = null
+            val update = feedbackCoalescer.flush(android.os.SystemClock.uptimeMillis())
+            if (update != null) applyTranslationFeedback(update)
+            scheduleFeedbackFlush(android.os.SystemClock.uptimeMillis())
+        }
+        feedbackRunnable = runnable
+        postDelayed(runnable, delay)
+    }
+
+    private fun applyTranslationFeedback(state: ReaderPageFeedbackState?) {
+        feedbackHideRunnable?.let(::removeCallbacks)
+        feedbackHideRunnable = null
+        if (state == null) {
+            translationFeedbackView?.isVisible = false
+            translationFeedbackView?.contentDescription = null
+            return
+        }
+
+        ensureTranslationFeedbackView()
+        val label = state.localizedLabel(context)
+        val displayText = feedbackDisplayText(state, label)
+        translationFeedbackView?.apply {
+            text = displayText
+            contentDescription = displayText
+            accessibilityLiveRegion = when (state) {
+                ReaderPageFeedbackState.Translated,
+                is ReaderPageFeedbackState.Failed,
+                -> ACCESSIBILITY_LIVE_REGION_POLITE
+                else -> ACCESSIBILITY_LIVE_REGION_NONE
+            }
             isVisible = true
             bringToFront()
         }
+        if (state is ReaderPageFeedbackState.Translated) {
+            val hide = Runnable {
+                feedbackHideRunnable = null
+                feedbackCoalescer.dismissTerminal()
+                applyTranslationFeedback(null)
+            }
+            feedbackHideRunnable = hide
+            postDelayed(hide, TRANSLATED_FEEDBACK_DURATION_MS)
+        }
     }
 
-    fun showProcessingOverlay(visible: Boolean) {
-        // TachiyomiAT: idempotent — no-op when the requested state already matches
-        // the current overlay state. Translation status re-emits (RUNNING stage
-        // transitions) can call this repeatedly; without this guard each call
-        // would re-trigger the fade and the scrim/indicator toggle.
-        if (visible == processingOverlayVisible) return
-        processingOverlayVisible = visible
-
-        // Dim the page image with a short fade instead of an instant alpha snap,
-        // so the overlay appearing/disappearing feels smooth rather than blinking.
-        // Cancel any in-flight alpha animator first so rapid toggles don't stack.
-        pageView?.animate()?.cancel()
-        val targetAlpha = if (visible) DIMMED_ALPHA else 1.0f
-        pageView
-            ?.animate()
-            ?.alpha(targetAlpha)
-            ?.setDuration(OVERLAY_FADE_DURATION_MS)
-            ?.start()
-
-        if (visible) {
-            ensureProcessingOverlay()
-            processingScrim?.isVisible = true
-            processingIndicator?.show()
-        } else {
-            processingScrim?.isVisible = false
-            processingIndicator?.hide()
+    private fun feedbackDisplayText(
+        state: ReaderPageFeedbackState,
+        label: String,
+    ): CharSequence {
+        val suffix = feedbackContextSuffix?.takeIf {
+            state !is ReaderPageFeedbackState.Failed &&
+                state !is ReaderPageFeedbackState.Translated &&
+                state !is ReaderPageFeedbackState.Deferred
+        } ?: return label
+        return android.text.SpannableStringBuilder().apply {
+            append(label)
+            append(' ')
+            val start = length
+            append(suffix)
+            setSpan(
+                android.text.style.ForegroundColorSpan(FEEDBACK_SUFFIX_COLOR),
+                start,
+                length,
+                android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
+            )
         }
     }
 
     open fun onPageSelected(forward: Boolean) {
-        with(pageView as? SubsamplingScaleImageView) {
-            if (this == null) return
-            if (isReady) {
-                landscapeZoom(forward)
-            } else {
-                setOnImageEventListener(
-                    object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
-                        override fun onReady() {
-                            setupZoom(config)
-                            landscapeZoom(forward)
+        val selectedView = pageView as? SubsamplingScaleImageView ?: return
+        val callbackFence = ReaderImageCallbackFence(imageGeneration, selectedView)
+        if (selectedView.isReady) {
+            selectedView.landscapeZoom(forward)
+        } else {
+            selectedView.setOnImageEventListener(
+                object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
+                    override fun onReady() {
+                        callbackFence.dispatchIfCurrent(imageGeneration, pageView as? SubsamplingScaleImageView) {
+                            selectedView.setupZoom(this@ReaderPageImageView.config)
+                            selectedView.landscapeZoom(forward)
                             this@ReaderPageImageView.onImageLoaded()
                         }
+                    }
 
-                        override fun onImageLoadError(e: Exception) {
-                            onImageLoadError()
+                    override fun onImageLoadError(e: Exception) {
+                        callbackFence.dispatchIfCurrent(imageGeneration, pageView as? SubsamplingScaleImageView) {
+                            this@ReaderPageImageView.onImageLoadError()
                         }
-                    },
-                )
-            }
+                    }
+                },
+            )
         }
     }
 
@@ -627,24 +727,39 @@ open class ReaderPageImageView @JvmOverloads constructor(
             sWidth > sHeight &&
             scale == minScale
         ) {
-            handler?.postDelayed(500) {
-                val point = when (config!!.zoomStartPosition) {
-                    ZoomStartPosition.LEFT -> if (forward) PointF(0F, 0F) else PointF(sWidth.toFloat(), 0F)
-                    ZoomStartPosition.RIGHT -> if (forward) PointF(sWidth.toFloat(), 0F) else PointF(0F, 0F)
-                    ZoomStartPosition.CENTER -> center
-                }
+            val selectedView = this
+            val selectedHandler = handler ?: return
+            val callbackFence = ReaderImageCallbackFence(imageGeneration, selectedView)
+            cancelLandscapeZoom()
+            val runnable = Runnable {
+                landscapeZoomRunnable = null
+                landscapeZoomHandler = null
+                callbackFence.dispatchIfCurrent(imageGeneration, pageView as? SubsamplingScaleImageView) {
+                    val currentConfig = this@ReaderPageImageView.config
+                    if (currentConfig != null) {
+                        val point = when (currentConfig.zoomStartPosition) {
+                            ZoomStartPosition.LEFT -> if (forward) PointF(0F, 0F) else PointF(selectedView.sWidth.toFloat(), 0F)
+                            ZoomStartPosition.RIGHT -> if (forward) PointF(selectedView.sWidth.toFloat(), 0F) else PointF(0F, 0F)
+                            ZoomStartPosition.CENTER -> selectedView.center
+                        }
 
-                val targetScale = height.toFloat() / sHeight.toFloat()
-                animateScaleAndCenter(targetScale, point)!!
-                    .withDuration(500)
-                    .withEasing(EASE_IN_OUT_QUAD)
-                    .withInterruptible(true)
-                    .start()
+                        val targetScale = selectedView.height.toFloat() / selectedView.sHeight.toFloat()
+                        selectedView.animateScaleAndCenter(targetScale, point)!!
+                            .withDuration(500)
+                            .withEasing(EASE_IN_OUT_QUAD)
+                            .withInterruptible(true)
+                            .start()
+                    }
+                }
             }
+            landscapeZoomRunnable = runnable
+            landscapeZoomHandler = selectedHandler
+            selectedHandler.postDelayed(runnable, 500L)
         }
     }
 
     fun setImage(drawable: Drawable, config: Config) {
+        beginImageTransition()
         translationImageReady = false
         translationOverlay?.isVisible = false
         this.config = config
@@ -655,16 +770,14 @@ open class ReaderPageImageView @JvmOverloads constructor(
             prepareNonAnimatedImageView()
             setNonAnimatedImage(drawable, config)
         }
-        // TachiyomiAT: prepare*ImageView() removes the old pageView and adds a
-        // new one, which pushes it to the END of the FrameLayout child list —
-        // putting the SSIV/PhotoView ON TOP of the translate button AND any
-        // active processing overlay (scrim + spinner) for touch dispatch and
-        // drawing, even though bringToFront was called earlier. Re-bring
-        // those child views to the front so they actually appear/detect taps.
+        // TachiyomiAT: prepare*ImageView() adds a new child at the end of the
+        // FrameLayout child list. Re-bring controls and feedback to the front
+        // so they remain visible and receive taps.
         restoreOverlayOrder()
     }
 
     fun setImage(source: BufferedSource, isAnimated: Boolean, config: Config) {
+        beginImageTransition()
         translationImageReady = false
         translationOverlay?.isVisible = false
         this.config = config
@@ -675,12 +788,16 @@ open class ReaderPageImageView @JvmOverloads constructor(
             prepareNonAnimatedImageView()
             setNonAnimatedImage(source, config)
         }
-        // TachiyomiAT: keep overlay children on top after the new pageView is
-        // added as the last child (see setImage(drawable) for details).
+        // TachiyomiAT: keep controls and feedback on top after the new pageView
+        // is added as the last child (see setImage(drawable) for details).
         restoreOverlayOrder()
     }
 
     fun recycle() {
+        cancelLandscapeZoom()
+        imageGeneration++
+        pageView?.animate()?.cancel()
+        previousPageView?.animate()?.cancel()
         translationImageSelected = false
         translationImageReady = false
         pendingTranslationBlocks = emptyList()
@@ -688,13 +805,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
         pendingPageHeight = 0
         translationOverlay?.isVisible = false
         translationOverlay?.clear()
-        pageView?.let {
-            when (it) {
-                is SubsamplingScaleImageView -> it.recycle()
-                is AppCompatImageView -> it.dispose()
-            }
-            it.isVisible = false
-        }
+        clearTranslationFeedback()
+        pageView?.let(::removeAndRecyclePageView)
+        previousPageView?.let(::removeAndRecyclePageView)
+        pageView = null
+        previousPageView = null
+        crossfadePending = false
     }
 
     /**
@@ -751,10 +867,33 @@ open class ReaderPageImageView @JvmOverloads constructor(
         }
     }
 
-    private fun prepareNonAnimatedImageView() {
-        if (pageView is SubsamplingScaleImageView) return
-        removeView(pageView)
+    private fun beginImageTransition() {
+        cancelLandscapeZoom()
+        imageGeneration++
+        pageView?.animate()?.cancel()
+        previousPageView?.animate()?.cancel()
+        previousPageView?.let(::removeAndRecyclePageView)
+        previousPageView = pageView?.takeIf { it.isVisible }
+        if (previousPageView != null) {
+            previousPageView?.alpha = 1f
+            crossfadePending = true
+        } else {
+            pageView?.let(::removeAndRecyclePageView)
+            crossfadePending = false
+        }
+        pageView = null
+    }
 
+    private fun removeAndRecyclePageView(view: View) {
+        removeView(view)
+        when (view) {
+            is SubsamplingScaleImageView -> view.recycle()
+            is AppCompatImageView -> view.dispose()
+        }
+        view.isVisible = false
+    }
+
+    private fun prepareNonAnimatedImageView() {
         pageView = if (isWebtoon) {
             WebtoonSubsamplingImageView(context)
         } else {
@@ -778,6 +917,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
             )
             setOnClickListener { this@ReaderPageImageView.onViewClicked() }
         }
+        pageView?.alpha = if (crossfadePending) 0f else 1f
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
     }
 
@@ -798,6 +938,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         data: Any,
         config: Config,
     ) = (pageView as? SubsamplingScaleImageView)?.apply {
+        val generation = imageGeneration
+        val selectedView = this
+        val callbackFence = ReaderImageCallbackFence(generation, selectedView)
         setDoubleTapZoomDuration(config.zoomDuration.getSystemScaledDuration())
         setMinimumScaleType(config.minimumScaleType)
         setMinimumDpi(1) // Just so that very small image will be fit for initial load
@@ -805,13 +948,17 @@ open class ReaderPageImageView @JvmOverloads constructor(
         setOnImageEventListener(
             object : SubsamplingScaleImageView.DefaultOnImageEventListener() {
                 override fun onReady() {
-                    setupZoom(config)
-                    if (isVisibleOnScreen()) landscapeZoom(true)
-                    this@ReaderPageImageView.onImageLoaded()
+                    callbackFence.dispatchIfCurrent(imageGeneration, pageView as? SubsamplingScaleImageView) {
+                        setupZoom(config)
+                        if (isVisibleOnScreen()) landscapeZoom(true)
+                        this@ReaderPageImageView.onImageLoaded()
+                    }
                 }
 
                 override fun onImageLoadError(e: Exception) {
-                    this@ReaderPageImageView.onImageLoadError()
+                    callbackFence.dispatchIfCurrent(imageGeneration, pageView as? SubsamplingScaleImageView) {
+                        this@ReaderPageImageView.onImageLoadError()
+                    }
                 }
             },
         )
@@ -844,12 +991,16 @@ open class ReaderPageImageView @JvmOverloads constructor(
                     .diskCachePolicy(CachePolicy.DISABLED)
                     .target(
                         onSuccess = { result ->
-                            val image = result as BitmapImage
-                            setImage(ImageSource.bitmap(image.bitmap))
-                            isVisible = true
+                            callbackFence.dispatchIfCurrent(imageGeneration, pageView as? SubsamplingScaleImageView) {
+                                val image = result as BitmapImage
+                                setImage(ImageSource.bitmap(image.bitmap))
+                                isVisible = true
+                            }
                         },
                         onError = {
-                            onImageLoadError()
+                            callbackFence.dispatchIfCurrent(imageGeneration, pageView as? SubsamplingScaleImageView) {
+                                this@ReaderPageImageView.onImageLoadError()
+                            }
                         },
                     )
                     .size(ViewSizeResolver(this@ReaderPageImageView))
@@ -867,9 +1018,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     private fun prepareAnimatedImageView() {
-        if (pageView is AppCompatImageView) return
-        removeView(pageView)
-
         pageView = if (isWebtoon) {
             AppCompatImageView(context)
         } else {
@@ -902,6 +1050,7 @@ open class ReaderPageImageView @JvmOverloads constructor(
                 }
             }
         }
+        pageView?.alpha = if (crossfadePending) 0f else 1f
         addView(pageView, MATCH_PARENT, MATCH_PARENT)
     }
 
@@ -909,6 +1058,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         data: Any,
         config: Config,
     ) = (pageView as? AppCompatImageView)?.apply {
+        val generation = imageGeneration
+        val selectedView = this
+        val callbackFence = ReaderImageCallbackFence(generation, selectedView)
         if (this is PhotoView) {
             setZoomTransitionDuration(config.zoomDuration.getSystemScaledDuration())
         }
@@ -919,14 +1071,18 @@ open class ReaderPageImageView @JvmOverloads constructor(
             .diskCachePolicy(CachePolicy.DISABLED)
             .target(
                 onSuccess = { result ->
-                    val drawable = result.asDrawable(context.resources)
-                    setImageDrawable(drawable)
-                    (drawable as? Animatable)?.start()
-                    isVisible = true
-                    this@ReaderPageImageView.onImageLoaded()
+                    callbackFence.dispatchIfCurrent(imageGeneration, pageView as? AppCompatImageView) {
+                        val drawable = result.asDrawable(context.resources)
+                        setImageDrawable(drawable)
+                        (drawable as? Animatable)?.start()
+                        isVisible = true
+                        this@ReaderPageImageView.onImageLoaded()
+                    }
                 },
                 onError = {
-                    this@ReaderPageImageView.onImageLoadError()
+                    callbackFence.dispatchIfCurrent(imageGeneration, pageView as? AppCompatImageView) {
+                        this@ReaderPageImageView.onImageLoadError()
+                    }
                 },
             )
             .crossfade(false)
@@ -958,6 +1114,6 @@ open class ReaderPageImageView @JvmOverloads constructor(
 
 private const val MAX_ZOOM_SCALE = 5F
 
-// TachiyomiAT: animation tuning for the translation processing overlay.
-private const val DIMMED_ALPHA = 0.4f
-private const val OVERLAY_FADE_DURATION_MS = 150L
+private const val TRANSLATION_CROSSFADE_DURATION_MS = 180L
+private const val TRANSLATED_FEEDBACK_DURATION_MS = 900L
+private const val FEEDBACK_SUFFIX_COLOR = 0x99FFFFFF.toInt()

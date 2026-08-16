@@ -185,18 +185,6 @@ class ChapterTranslator(
     @Volatile
     var isPaused: Boolean = false
 
-    /**
-     * CP8: set by [onMemoryPressure] under Critical pressure after the in-flight batch
-     * pages have been requeued (TRANSLATING back to QUEUE) and the translator job
-     * cancelled WITHOUT going through [stop] (which would flip them to ERROR).
-     * Distinguishes a memory kill from a user pause so the reader foreground-resume
-     * path can restart the batch worker exactly once via
-     * [TranslationManager.consumeMemoryRequeueRestart]. User-paused stays paused;
-     * memory-requeued expects a single restart.
-     */
-    @Volatile
-    var memoryRequeued: Boolean = false
-
     fun start(): Boolean {
         if (isRunning || queueState.value.isEmpty()) {
             return false
@@ -233,21 +221,7 @@ class ChapterTranslator(
         pipeline.closeEngines()
     }
 
-    /**
-     * CP8: act on the coarse [MemoryPressureClass], not the raw trim level. The previous
-     * raw `level >= TRIM_MEMORY_*` branches over-matched: UI_HIDDEN(20)/BACKGROUND(40)/
-     * MODERATE(60) all exceed RUNNING_LOW(15), so a benign app-background trim cancelled
-     * the batch job every time the user switched apps. Now:
-     *  - Always release the bitmap pool + native buffers (cheap, safe under any pressure).
-     *  - Benign: leave the batch job and revision untouched.
-     *  - Critical: cancel the translator job and requeue TRANSLATING pages back to QUEUE
-     *    (NOT ERROR — a memory kill is not a translation failure; the work is still
-     *    wanted). Set [memoryRequeued] so the reader foreground-resume path restarts the
-     *    batch worker exactly once. We deliberately do NOT call [stop] here: stop flips
-     *    TRANSLATING to ERROR and would prevent the requeue+restart this path exists for.
-     *    Native session close remains owned by the normal lifecycle teardown under its
-     *    permit/guard, exactly as the old comment required.
-     */
+    /** Releases transient native and bitmap memory in response to OS pressure. */
     fun onMemoryPressure(level: Int, pressureClass: MemoryPressureClass) {
         tachiyomi.domain.translation.pools.BitmapPool.releaseAll()
         try {

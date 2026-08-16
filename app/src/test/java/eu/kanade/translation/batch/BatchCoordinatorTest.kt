@@ -6,7 +6,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
 import java.util.concurrent.ConcurrentHashMap
 
@@ -27,33 +26,25 @@ class BatchCoordinatorTest {
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
 
-        // Let translator start
+        // Inpaint starts immediately after this page's OCR, before any chapter barrier.
+        events.awaitEvent("inpaintStarted:p0")
+
+        // Let translator start while inpaint is still gated.
         translator.allowTranslationToStart("p0")
-
-        // Wait for all-OCR barrier
-        events.awaitEvent("allOcrBarrierReleased")
-
-        // Yield so translator lane picks up items
-        repeat(3) { yield() }
-
-        // DeferringTranslatorWorker accepts immediately
-
         native.allowInpaintToFinish("p0")
         done.await()
 
         val log = events.log
         val ocrFinishIdx = log.indexOf("ocrFinished:p0")
-        val barrierIdx = log.indexOf("allOcrBarrierReleased")
         val translateIdx = log.indexOf("translationRequested:p0")
         val inpaintStartIdx = log.indexOf("inpaintStarted:p0")
 
-        (ocrFinishIdx < barrierIdx) shouldBe true
-        (barrierIdx < inpaintStartIdx) shouldBe true
-        (translateIdx > -1) shouldBe true
+        (ocrFinishIdx < translateIdx) shouldBe true
+        (ocrFinishIdx < inpaintStartIdx) shouldBe true
     }
 
     @Test
-    fun `OCR sweeps sequentially then inpaint sweeps sequentially`() = runTest {
+    fun `each page inpaints before the next page OCR starts`() = runTest {
         val events = RecordingListener()
         val native = GatedNativeWorker()
         val translator = RecordingTranslatorWorker()
@@ -65,15 +56,17 @@ class BatchCoordinatorTest {
 
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
+        events.awaitEvent("inpaintStarted:p0")
+        events.log.contains("ocrStarted:p1") shouldBe false
+        native.allowInpaintToFinish("p0")
 
         native.ocrPublished("p1").await()
         native.allowOcrToFinish("p1")
+        events.awaitEvent("inpaintStarted:p1")
+        native.allowInpaintToFinish("p1")
 
         translator.allowTranslationToStart("p0")
         translator.allowTranslationToStart("p1")
-
-        native.allowInpaintToFinish("p0")
-        native.allowInpaintToFinish("p1")
 
         done.await()
 
@@ -83,13 +76,14 @@ class BatchCoordinatorTest {
         val inpaint0 = log.indexOf("inpaintStarted:p0")
         val inpaint1 = log.indexOf("inpaintStarted:p1")
 
-        (ocr0 < ocr1) shouldBe true
-        (ocr1 < inpaint0) shouldBe true
-        (inpaint0 < inpaint1) shouldBe true
+        val inpaint0Finish = log.indexOf("inpaintFinished:p0")
+        (ocr0 < inpaint0) shouldBe true
+        (inpaint0Finish < ocr1) shouldBe true
+        (ocr1 < inpaint1) shouldBe true
     }
 
     @Test
-    fun `ML Kit translates and inpaints sequentially after OCR barrier`() = runTest {
+    fun `ML Kit translates inline between OCR and inpaint`() = runTest {
         val events = RecordingListener()
         val native = GatedNativeWorker()
         val translator = RecordingTranslatorWorker()
@@ -102,22 +96,24 @@ class BatchCoordinatorTest {
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
 
+        events.awaitEvent("translationRequested:p0")
         translator.allowTranslationToStart("p0")
+        events.awaitEvent("inpaintStarted:p0")
         native.allowInpaintToFinish("p0")
 
         done.await()
 
         val log = events.log
-        val barrierIdx = log.indexOf("allOcrBarrierReleased")
+        val ocrFinish = log.indexOf("ocrFinished:p0")
         val translateStart = log.indexOf("translationRequested:p0")
         val inpaintStart = log.indexOf("inpaintStarted:p0")
 
-        (barrierIdx < translateStart) shouldBe true
+        (ocrFinish < translateStart) shouldBe true
         (translateStart < inpaintStart) shouldBe true
     }
 
     @Test
-    fun `unlimited channel allows OCR to finish even if translator is stalled`() = runTest {
+    fun `later OCR waits for the earlier page inpaint`() = runTest {
         val events = RecordingListener()
         val native = GatedNativeWorker()
         val translator = RecordingTranslatorWorker()
@@ -127,22 +123,26 @@ class BatchCoordinatorTest {
         val pages = listOf("p0" to 0, "p1" to 1)
         val done = async { coord.runPass1(pages, TranslatorComputeClass.REMOTE_IO) }
 
-        // Translator is stalled, but OCR should still finish for both
+        // The next page waits until the current page's inpaint has finished.
         native.ocrPublished("p0").await()
         native.allowOcrToFinish("p0")
+        events.awaitEvent("inpaintStarted:p0")
+        events.log.contains("ocrStarted:p1") shouldBe false
+        native.allowInpaintToFinish("p0")
+
         native.ocrPublished("p1").await()
         native.allowOcrToFinish("p1")
-
-        events.awaitEvent("allOcrBarrierReleased")
+        events.awaitEvent("inpaintStarted:p1")
 
         // Unstall translator
         translator.allowTranslationToStart("p0")
         translator.allowTranslationToStart("p1")
-        native.allowInpaintToFinish("p0")
         native.allowInpaintToFinish("p1")
         done.await()
 
-        events.log.contains("allOcrBarrierReleased") shouldBe true
+        val inpaint0Finish = events.log.indexOf("inpaintFinished:p0")
+        val ocr1 = events.log.indexOf("ocrStarted:p1")
+        (inpaint0Finish < ocr1) shouldBe true
     }
 
     class RecordingListener : BatchScheduleListener() {
@@ -172,7 +172,6 @@ class BatchCoordinatorTest {
         override fun translationFinished(pageKey: String) = add("translationFinished:$pageKey")
         override fun renderStarted(pageKey: String) = add("renderStarted:$pageKey")
         override fun renderFinished(pageKey: String) = add("renderFinished:$pageKey")
-        override fun allOcrBarrierReleased() = add("allOcrBarrierReleased")
         override fun pass1BarrierReleased() = add("pass1BarrierReleased")
         override fun pass2Started() = add("pass2Started")
     }

@@ -1,10 +1,13 @@
 package eu.kanade.presentation.manga.components
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
@@ -59,12 +62,17 @@ fun ChapterTranslationIndicator(
     // [Translation.State] and downloaded-image state (text-only review needs no
     // download).
     reviewAvailableProvider: () -> Boolean = { false },
+    // TachiyomiAT: pre-translate is always reachable; when false the idle glyph
+    // carries a "will download first" hint badge.
+    downloadedProvider: () -> Boolean = { true },
     modifier: Modifier = Modifier,
 ) {
+    val downloaded = downloadedProvider()
     when (val translationState = translationStateProvider()) {
         Translation.State.NOT_TRANSLATED -> NotTranslatedIndicator(
             enabled = enabled,
             modifier = modifier,
+            downloaded = downloaded,
             onClick = onClick,
         )
         Translation.State.QUEUE, Translation.State.TRANSLATING -> TranslatingIndicator(
@@ -72,11 +80,13 @@ fun ChapterTranslationIndicator(
             modifier = modifier,
             onClick = onClick,
             snapshot = translationProgressProvider(),
+            translationState = translationState,
         )
         Translation.State.TRANSLATED, Translation.State.READY_WITH_WARNINGS -> TranslatedIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
+            translationState = translationState,
             reviewAvailable = reviewAvailableProvider(),
         )
         Translation.State.ERROR -> ErrorIndicator(
@@ -91,6 +101,7 @@ fun ChapterTranslationIndicator(
 private fun NotTranslatedIndicator(
     enabled: Boolean,
     modifier: Modifier = Modifier,
+    downloaded: Boolean = true,
     onClick: (ChapterTranslationAction) -> Unit,
 ) {
     Box(
@@ -107,10 +118,23 @@ private fun NotTranslatedIndicator(
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_translate_circle),
-            contentDescription = stringResource(ATMR.strings.manga_translate),
+            contentDescription = stringResource(
+                if (downloaded) ATMR.strings.manga_translate else ATMR.strings.manga_translate_download_first,
+            ),
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        if (!downloaded) {
+            Icon(
+                imageVector = Icons.Outlined.Download,
+                contentDescription = null,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(10.dp)
+                    .background(MaterialTheme.colorScheme.surface, CircleShape),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 
@@ -120,6 +144,7 @@ private fun TranslatingIndicator(
     onClick: (ChapterTranslationAction) -> Unit,
     modifier: Modifier = Modifier,
     snapshot: TranslationProgressSnapshot? = null,
+    translationState: Translation.State = Translation.State.TRANSLATING,
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
@@ -133,7 +158,11 @@ private fun TranslatingIndicator(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        val strokeColor = MaterialTheme.colorScheme.onSurfaceVariant
+        val strokeColor = if (translationState == Translation.State.TRANSLATING) {
+            MaterialTheme.colorScheme.primary
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
         // TachiyomiAT: stage-based progress fraction
         val isDeterminate = snapshot != null && snapshot.totalStages > 0
         val isRevising = snapshot?.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.REVISING
@@ -194,10 +223,16 @@ private fun TranslatedIndicator(
     enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: (ChapterTranslationAction) -> Unit,
+    translationState: Translation.State = Translation.State.TRANSLATED,
     // TachiyomiAT CP7: renders REVIEW when manager-derived eligibility exists.
     reviewAvailable: Boolean = false,
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
+    val tint = if (translationState == Translation.State.READY_WITH_WARNINGS) {
+        WarningColor
+    } else {
+        MaterialTheme.colorScheme.tertiary
+    }
     Box(
         modifier = modifier
             .size(IconButtonTokens.StateLayerSize)
@@ -213,7 +248,7 @@ private fun TranslatedIndicator(
             painter = painterResource(R.drawable.ic_translate_circle_filled),
             contentDescription = null,
             modifier = Modifier.size(IndicatorSize),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = tint,
         )
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
             if (reviewAvailable) {
@@ -291,6 +326,8 @@ private fun Modifier.commonClickable(
 
 private val IndicatorSize = 23.dp
 private val IndicatorPadding = 2.dp
+
+private val WarningColor = Color(0xFFFFA000)
 
 // To match composable parameter name when used later
 private val IndicatorStrokeWidth = IndicatorPadding

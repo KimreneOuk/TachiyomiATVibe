@@ -1,6 +1,8 @@
 package eu.kanade.translation.batch
 
+import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -30,12 +32,41 @@ internal class TranslationBatchTrackerRegistry(
     private val _terminal = MutableStateFlow<Map<Long, TranslationProgressSnapshot>>(emptyMap())
     val terminal: StateFlow<Map<Long, TranslationProgressSnapshot>> = _terminal.asStateFlow()
 
+    /**
+     * Production tracker factory used by TranslationManager. The terminal
+     * callback captures the producing tracker and therefore cannot complete or
+     * evict a newer owner after replacement.
+     */
+    fun createTracker(
+        chapterId: Long,
+        store: ChapterTranslationStore,
+        orderedPageKeys: List<String>,
+        scope: CoroutineScope,
+        permitHolderResolver: (() -> String?)? = null,
+    ): TranslationBatchProgressTracker {
+        var trackerOwner: TranslationBatchProgressTracker? = null
+        val tracker = TranslationBatchProgressTracker(
+            chapterId = chapterId,
+            store = store,
+            orderedPageKeys = orderedPageKeys,
+            scope = scope,
+            permitHolderResolver = permitHolderResolver,
+            onTerminalSnapshot = { snapshot ->
+                trackerOwner?.let { completeIfCurrent(chapterId, it, snapshot) }
+            },
+        )
+        trackerOwner = tracker
+        replace(chapterId, tracker)
+        return tracker
+    }
+
     @Synchronized
     fun getLive(chapterId: Long): TranslationBatchProgressTracker? = liveTrackers[chapterId]
 
     @Synchronized
     fun replace(chapterId: Long, tracker: TranslationBatchProgressTracker) {
         liveTrackers.remove(chapterId)?.close()
+        if (terminalSnapshots.remove(chapterId) != null) publishTerminal()
         liveTrackers[chapterId] = tracker
         publishLive()
     }
@@ -49,10 +80,38 @@ internal class TranslationBatchTrackerRegistry(
         publishLive()
     }
 
+    /**
+     * Completes only the tracker that produced [snapshot]. A late terminal
+     * event from a replaced tracker must not cache stale progress or close the
+     * newer live owner for the same chapter.
+     */
+    @Synchronized
+    fun completeIfCurrent(
+        chapterId: Long,
+        tracker: TranslationBatchProgressTracker,
+        snapshot: TranslationProgressSnapshot,
+    ) {
+        if (liveTrackers[chapterId] !== tracker) return
+        terminalSnapshots[chapterId] = snapshot.detachedCopy()
+        publishTerminal()
+        liveTrackers.remove(chapterId)
+        tracker.close()
+        publishLive()
+    }
+
     @Synchronized
     fun dispose(chapterId: Long) {
         val removed = liveTrackers.remove(chapterId) ?: return
         removed.close()
+        publishLive()
+    }
+
+    /** Dispose only the transaction's tracker; never tear down a newer owner. */
+    @Synchronized
+    fun disposeIfCurrent(chapterId: Long, tracker: TranslationBatchProgressTracker) {
+        if (liveTrackers[chapterId] !== tracker) return
+        liveTrackers.remove(chapterId)
+        tracker.close()
         publishLive()
     }
 
