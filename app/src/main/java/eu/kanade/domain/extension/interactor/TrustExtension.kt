@@ -12,9 +12,11 @@ class TrustExtension(
 ) {
 
     suspend fun isTrusted(pkgInfo: PackageInfo, fingerprints: List<String>): Boolean {
-        val trustedFingerprints = extensionRepoRepository.getAll().map { it.signingKeyFingerprint }.toHashSet()
-        val key = "${pkgInfo.packageName}:${PackageInfoCompat.getLongVersionCode(pkgInfo)}:${fingerprints.last()}"
-        return trustedFingerprints.any { fingerprints.contains(it) } || key in preferences.trustedExtensions().get()
+        val trustedFingerprints = extensionRepoRepository.getAll()
+            .map { it.signingKeyFingerprint.lowercase() }
+            .toHashSet()
+        val key = "${pkgInfo.packageName}:${PackageInfoCompat.getLongVersionCode(pkgInfo)}:${fingerprints.last().lowercase()}"
+        return fingerprints.any { it.lowercase() in trustedFingerprints } || key in preferences.trustedExtensions().get()
     }
 
     fun trust(pkgName: String, versionCode: Long, signatureHash: String) {

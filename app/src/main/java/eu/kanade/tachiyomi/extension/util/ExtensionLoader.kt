@@ -42,16 +42,16 @@ internal object ExtensionLoader {
 
     private val preferences: SourcePreferences by injectLazy()
     private val trustExtension: TrustExtension by injectLazy()
-    private val loadNsfwSource by lazy {
-        preferences.showNsfwSource().get()
-    }
 
     private const val EXTENSION_FEATURE = "tachiyomi.extension"
+    private const val EXTENSION_FEATURE_X = "tachiyomix.extension"
     private const val METADATA_SOURCE_CLASS = "tachiyomi.extension.class"
     private const val METADATA_SOURCE_FACTORY = "tachiyomi.extension.factory"
     private const val METADATA_NSFW = "tachiyomi.extension.nsfw"
+    private const val METADATA_LIB_VERSION = "tachiyomix.extensionLib"
+    private const val METADATA_LIB_VERSION_ALT = "tachiyomi.extensionLib"
     const val LIB_VERSION_MIN = 1.4
-    const val LIB_VERSION_MAX = 1.5
+    const val LIB_VERSION_MAX = 1.6
 
     @Suppress("DEPRECATION")
     private val PACKAGE_FLAGS = PackageManager.GET_CONFIGURATIONS or
@@ -229,7 +229,9 @@ internal object ExtensionLoader {
         val appInfo = pkgInfo.applicationInfo!!
         val pkgName = pkgInfo.packageName
 
-        val extName = pkgManager.getApplicationLabel(appInfo).toString().substringAfter("Tachiyomi: ")
+        val extName = pkgManager.getApplicationLabel(appInfo).toString()
+            .substringAfter("Tachiyomi: ")
+            .substringAfter("Tachiyomix: ")
         val versionName = pkgInfo.versionName
         val versionCode = PackageInfoCompat.getLongVersionCode(pkgInfo)
 
@@ -239,7 +241,12 @@ internal object ExtensionLoader {
         }
 
         // Validate lib version
-        val libVersion = versionName.substringBeforeLast('.').toDoubleOrNull()
+        val metaLibVersion = when (val value = appInfo.metaData?.get(METADATA_LIB_VERSION) ?: appInfo.metaData?.get(METADATA_LIB_VERSION_ALT)) {
+            is Number -> value.toDouble()
+            is String -> value.toDoubleOrNull()
+            else -> null
+        }
+        val libVersion = metaLibVersion ?: versionName.substringBeforeLast('.').toDoubleOrNull()
         if (libVersion == null || libVersion < LIB_VERSION_MIN || libVersion > LIB_VERSION_MAX) {
             logcat(LogPriority.WARN) {
                 "Lib version is $libVersion, while only versions " +
@@ -265,7 +272,9 @@ internal object ExtensionLoader {
             return LoadResult.Untrusted(extension)
         }
 
-        val isNsfw = appInfo.metaData.getInt(METADATA_NSFW) == 1
+        val isNsfw = appInfo.metaData?.getInt(METADATA_NSFW) == 1 ||
+            appInfo.metaData?.getInt("tachiyomix.contentWarning") == 1
+        val loadNsfwSource = preferences.showNsfwSource().get()
         if (!loadNsfwSource && isNsfw) {
             logcat(LogPriority.WARN) { "NSFW extension $pkgName not allowed" }
             return LoadResult.Error
@@ -278,7 +287,17 @@ internal object ExtensionLoader {
             return LoadResult.Error
         }
 
-        val sources = appInfo.metaData.getString(METADATA_SOURCE_CLASS)!!
+        val classMetadata = appInfo.metaData?.getString(METADATA_SOURCE_CLASS)
+            ?: appInfo.metaData?.getString("tachiyomix.extension.class")
+        val factoryMetadata = appInfo.metaData?.getString(METADATA_SOURCE_FACTORY)
+            ?: appInfo.metaData?.getString("tachiyomix.extension.factory")
+
+        if (classMetadata.isNullOrEmpty() && factoryMetadata.isNullOrEmpty()) {
+            logcat(LogPriority.WARN) { "Extension $extName ($pkgName) has no source class or factory metadata" }
+            return LoadResult.Error
+        }
+
+        val sources = (classMetadata ?: factoryMetadata)!!
             .split(";")
             .map {
                 val sourceClass = it.trim()
@@ -319,7 +338,7 @@ internal object ExtensionLoader {
             lang = lang,
             isNsfw = isNsfw,
             sources = sources,
-            pkgFactory = appInfo.metaData.getString(METADATA_SOURCE_FACTORY),
+            pkgFactory = factoryMetadata ?: appInfo.metaData?.getString(METADATA_SOURCE_FACTORY),
             icon = appInfo.loadIcon(pkgManager),
             isShared = extensionInfo.isShared,
         )
@@ -354,7 +373,9 @@ internal object ExtensionLoader {
      * @param pkgInfo The package info of the application.
      */
     private fun isPackageAnExtension(pkgInfo: PackageInfo): Boolean {
-        return pkgInfo.reqFeatures.orEmpty().any { it.name == EXTENSION_FEATURE }
+        return pkgInfo.reqFeatures.orEmpty().any {
+            it.name == EXTENSION_FEATURE || it.name == EXTENSION_FEATURE_X
+        }
     }
 
     /**
