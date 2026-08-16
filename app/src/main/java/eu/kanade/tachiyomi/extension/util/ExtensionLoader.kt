@@ -242,12 +242,14 @@ internal object ExtensionLoader {
 
         // Validate lib version
         val metaLibVersion = when (val value = appInfo.metaData?.get(METADATA_LIB_VERSION) ?: appInfo.metaData?.get(METADATA_LIB_VERSION_ALT)) {
+            is Float -> value.toString().toDoubleOrNull()
+            is Double -> value
             is Number -> value.toDouble()
             is String -> value.toDoubleOrNull()
             else -> null
         }
         val libVersion = metaLibVersion ?: versionName.substringBeforeLast('.').toDoubleOrNull()
-        if (libVersion == null || libVersion < LIB_VERSION_MIN || libVersion > LIB_VERSION_MAX) {
+        if (libVersion == null || libVersion < (LIB_VERSION_MIN - 0.01) || libVersion > (LIB_VERSION_MAX + 0.01)) {
             logcat(LogPriority.WARN) {
                 "Lib version is $libVersion, while only versions " +
                     "$LIB_VERSION_MIN to $LIB_VERSION_MAX are allowed"
@@ -386,11 +388,14 @@ internal object ExtensionLoader {
      */
     private fun getSignatures(pkgInfo: PackageInfo): List<String>? {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val signingInfo = pkgInfo.signingInfo!!
-            if (signingInfo.hasMultipleSigners()) {
+            val signingInfo = pkgInfo.signingInfo
+            if (signingInfo == null) {
+                @Suppress("DEPRECATION")
+                pkgInfo.signatures
+            } else if (signingInfo.hasMultipleSigners()) {
                 signingInfo.apkContentsSigners
             } else {
-                signingInfo.signingCertificateHistory
+                signingInfo.signingCertificateHistory ?: signingInfo.apkContentsSigners
             }
         } else {
             @Suppress("DEPRECATION")
