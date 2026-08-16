@@ -80,7 +80,9 @@ internal class PageTextRenderer(typeface: Typeface) {
             try {
                 preparedLayout.clip?.let(canvas::clipPath)
                 val clip = preparedLayout.layout.clipRect
-                if (clip != null) canvas.clipRect(clip.left, clip.top, clip.right, clip.bottom)
+                if (clip != null && preparedLayout.clip == null) {
+                    canvas.clipRect(clip.left, clip.top, clip.right, clip.bottom)
+                }
                 drawLayout(canvas, preparedLayout)
             } finally {
                 canvas.restoreToCount(save)
