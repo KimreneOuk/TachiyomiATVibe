@@ -46,10 +46,17 @@
             <div class="layout-switch-group">
                 <span class="control-label">Sample:</span>
                 <select id="sample-select" onchange="switchSample(this.value)">
+                    <option value="conjoined-thin-tall-ovals">⚡ Conjoined Thin Tall Ovals: Multi-Lobe Full Height Utilization</option>
+                    <option value="ultra-thin-tall-oval">📏 Ultra-Thin Tall Oval: Full Vertical Height Utilization</option>
+                    <option value="slim-oval-dialogue-pair">🗣️ Slim Tall Oval Dialogue Bubbles (Two Speakers Overlapping)</option>
+                    <option value="peanut-double-lobe">🥜 Double-Lobe Peanut Bubble (User Reference 1)</option>
+                    <option value="dialogue-overlapping-bubbles">👥 Dialogue Overlapping Bubbles (User Reference 2: Two Characters)</option>
+                    <option value="extreme-proximity-clouds">⚡ Extreme Proximity: 2 Cloud Heads Touching at Waist (Gap ≤ 5px)</option>
+                    <option value="conjoined-cloud-pair">☁️ User Reference: Conjoined Double-Cloud Speech Bubbles</option>
                     <option value="screenshot-tall-bubble">📸 User Screenshot: Tall Bubble (Diagonal Stagger &amp; Truncation Fix)</option>
-                    <option value="conjoined-3-horizontal">⚠️ Conjoined Bubbles: 3 Linked Ovals on Nearly Same Height</option>
-                    <option value="conjoined-2-horizontal">⚠️ Conjoined Bubbles: 2 Linked Ovals (Side-by-Side)</option>
-                    <option value="conjoined-3-diagonal">⚠️ Conjoined Bubbles: 3 Linked Ovals (Cascading / Diagonal)</option>
+                    <option value="conjoined-3-horizontal">⚠️ Conjoined Bubbles: 3 Connected Bubbles (Nearly Same Height)</option>
+                    <option value="conjoined-2-horizontal">⚠️ Conjoined Bubbles: 2 Connected Bubbles (Side-by-Side)</option>
+                    <option value="conjoined-3-diagonal">⚠️ Conjoined Bubbles: 3 Connected Bubbles (Cascading / Diagonal)</option>
                     <option value="manga-4panel">Manga 4-Panel Page (Classic RTL)</option>
                     <option value="manga-complex">Complex Asymmetric Panels with Spanning Bubble</option>
                     <option value="webtoon-strip">Vertical Webtoon Strip (LTR)</option>
@@ -227,20 +234,20 @@
                 </div>
             </div>
             <div class="canvas-wrapper dual-view" id="canvas-wrapper">
-                <!-- Left: Current Engine Bug -->
+                <!-- Left: Standard Original Raw Detection & Placement -->
                 <div class="canvas-card" id="card-bug">
                     <div class="canvas-card-header bug">
-                        <span class="card-badge bug">🔴 Current Implementation</span>
-                        <span class="card-subtitle">Naive Rect Slicing &bull; Double-Inset Squeeze &bull; 8.5px Font</span>
+                        <span class="card-badge bug">📍 Standard Original Raw Detection &amp; Placement</span>
+                        <span class="card-subtitle">Raw Detector v4 Boxes (Amber) &bull; text_bubble Boxes (Cyan) &bull; Original Text</span>
                     </div>
                     <svg id="manga-svg-bug" viewBox="0 0 800 1100" class="manga-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
                 </div>
 
-                <!-- Right: 4-Pillar Solution -->
+                <!-- Right: New Implementation Idea -->
                 <div class="canvas-card" id="card-fix">
                     <div class="canvas-card-header fix">
-                        <span class="card-badge fix">🟢 4-Pillar Architectural Solution</span>
-                        <span class="card-subtitle">Centroid Anchoring &bull; Component Oval Hulls &bull; 22.0px Font</span>
+                        <span class="card-badge fix">✨ New Implementation (Starting Truth + Ceiling)</span>
+                        <span class="card-subtitle">text_bubble Starting Truth &bull; YOLO11 Mask Ceiling &bull; Clean Typography</span>
                     </div>
                     <svg id="manga-svg-fix" viewBox="0 0 800 1100" class="manga-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
                 </div>
