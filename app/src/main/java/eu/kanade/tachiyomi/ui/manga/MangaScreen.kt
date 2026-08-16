@@ -298,12 +298,19 @@ class MangaScreen(
                     chapterName = item?.chapter?.name.orEmpty(),
                     snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
                     onDismissRequest = onDismissRequest,
+                    onReadNow = {
+                        if (item != null) {
+                            screenModel.dismissDialog()
+                            openChapter(context, item.chapter)
+                        }
+                    },
                     onCancel = {
                         if (item != null) {
                             screenModel.runChapterTranslationActions(item, ChapterTranslationAction.CANCEL)
                         }
                         screenModel.dismissDialog()
                     },
+                    onPauseResume = screenModel::setTranslationQueuePaused,
                     onViewReport = if (showViewReport && item != null) {
                         { screenModel.showRevisionResult(item) }
                     } else {

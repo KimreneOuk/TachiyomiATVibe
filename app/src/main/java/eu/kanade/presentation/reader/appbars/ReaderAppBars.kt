@@ -7,9 +7,12 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Bookmark
@@ -17,12 +20,14 @@ import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AppBar
 import eu.kanade.presentation.components.AppBarActions
 import eu.kanade.presentation.reader.components.ChapterNavigator
+import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationUiState
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
@@ -68,9 +73,8 @@ fun ReaderAppBars(
     onClickCropBorder: () -> Unit,
     onClickSettings: () -> Unit,
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
-    translationProgress: Pair<Int, Int> = Pair(0, 0),
-    translationCurrentPage: Int = 0,
     translationBatchProgress: TranslationProgressSnapshot? = null,
+    autoTranslation: ReaderAutoTranslationUiState = ReaderAutoTranslationUiState.empty(),
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: forwarded to BottomReaderBar to disable the translate icon
     // while work is running.
@@ -87,124 +91,135 @@ fun ReaderAppBars(
         Modifier
     }
 
-    Column(
-        modifier = Modifier.fillMaxHeight(),
-        verticalArrangement = Arrangement.SpaceBetween,
-    ) {
-        AnimatedVisibility(
-            visible = visible,
-            enter = slideInVertically(
-                initialOffsetY = { -it },
-                animationSpec = animationSpec,
-            ),
-            exit = slideOutVertically(
-                targetOffsetY = { -it },
-                animationSpec = animationSpec,
-            ),
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxHeight(),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            AppBar(
-                modifier = modifierWithInsetsPadding
-                    .clickable(onClick = onClickTopAppBar),
-                backgroundColor = backgroundColor,
-                title = mangaTitle,
-                subtitle = chapterTitle,
-                navigateUp = navigateUp,
-                actions = {
-                    AppBarActions(
-                        actions = persistentListOf<AppBar.AppBarAction>().builder()
-                            .apply {
-                                add(
-                                    AppBar.Action(
-                                        title = stringResource(
-                                            if (bookmarked) {
-                                                MR.strings.action_remove_bookmark
-                                            } else {
-                                                MR.strings.action_bookmark
-                                            },
-                                        ),
-                                        icon = if (bookmarked) {
-                                            Icons.Outlined.Bookmark
-                                        } else {
-                                            Icons.Outlined.BookmarkBorder
-                                        },
-                                        onClick = onToggleBookmarked,
-                                    ),
-                                )
-                                onOpenInWebView?.let {
-                                    add(
-                                        AppBar.OverflowAction(
-                                            title = stringResource(MR.strings.action_open_in_web_view),
-                                            onClick = it,
-                                        ),
-                                    )
-                                }
-                                onOpenInBrowser?.let {
-                                    add(
-                                        AppBar.OverflowAction(
-                                            title = stringResource(MR.strings.action_open_in_browser),
-                                            onClick = it,
-                                        ),
-                                    )
-                                }
-                                onShare?.let {
-                                    add(
-                                        AppBar.OverflowAction(
-                                            title = stringResource(MR.strings.action_share),
-                                            onClick = it,
-                                        ),
-                                    )
-                                }
-                            }
-                            .build(),
-                    )
-                },
-            )
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        AnimatedVisibility(
-            visible = visible,
-            enter = slideInVertically(
-                initialOffsetY = { it },
-                animationSpec = animationSpec,
-            ),
-            exit = slideOutVertically(
-                targetOffsetY = { it },
-                animationSpec = animationSpec,
-            ),
-        ) {
-            Column(
-                modifier = modifierWithInsetsPadding,
-                verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+            AnimatedVisibility(
+                visible = visible,
+                enter = slideInVertically(
+                    initialOffsetY = { -it },
+                    animationSpec = animationSpec,
+                ),
+                exit = slideOutVertically(
+                    targetOffsetY = { -it },
+                    animationSpec = animationSpec,
+                ),
             ) {
-                ChapterNavigator(
-                    isRtl = isRtl,
-                    onNextChapter = onNextChapter,
-                    enabledNext = enabledNext,
-                    onPreviousChapter = onPreviousChapter,
-                    enabledPrevious = enabledPrevious,
-                    currentPage = currentPage,
-                    totalPages = totalPages,
-                    onPageIndexChange = onPageIndexChange,
-                )
-                BottomReaderBar(
+                AppBar(
+                    modifier = modifierWithInsetsPadding
+                        .clickable(onClick = onClickTopAppBar),
                     backgroundColor = backgroundColor,
-                    readingMode = readingMode,
-                    onClickReadingMode = onClickReadingMode,
-                    orientation = orientation,
-                    onClickOrientation = onClickOrientation,
-                    cropEnabled = cropEnabled,
-                    onClickCropBorder = onClickCropBorder,
-                    onClickSettings = onClickSettings,
-                    translationState = translationState,
-                    translationProgress = translationProgress,
-                    translationCurrentPage = translationCurrentPage,
-                    translationBatchProgress = translationBatchProgress,
-                    onClickTranslate = onClickTranslate,
-                    translateEnabled = translateEnabled,
+                    title = mangaTitle,
+                    subtitle = chapterTitle,
+                    navigateUp = navigateUp,
+                    actions = {
+                        AppBarActions(
+                            actions = persistentListOf<AppBar.AppBarAction>().builder()
+                                .apply {
+                                    add(
+                                        AppBar.Action(
+                                            title = stringResource(
+                                                if (bookmarked) {
+                                                    MR.strings.action_remove_bookmark
+                                                } else {
+                                                    MR.strings.action_bookmark
+                                                },
+                                            ),
+                                            icon = if (bookmarked) {
+                                                Icons.Outlined.Bookmark
+                                            } else {
+                                                Icons.Outlined.BookmarkBorder
+                                            },
+                                            onClick = onToggleBookmarked,
+                                        ),
+                                    )
+                                    onOpenInWebView?.let {
+                                        add(
+                                            AppBar.OverflowAction(
+                                                title = stringResource(MR.strings.action_open_in_web_view),
+                                                onClick = it,
+                                            ),
+                                        )
+                                    }
+                                    onOpenInBrowser?.let {
+                                        add(
+                                            AppBar.OverflowAction(
+                                                title = stringResource(MR.strings.action_open_in_browser),
+                                                onClick = it,
+                                            ),
+                                        )
+                                    }
+                                    onShare?.let {
+                                        add(
+                                            AppBar.OverflowAction(
+                                                title = stringResource(MR.strings.action_share),
+                                                onClick = it,
+                                            ),
+                                        )
+                                    }
+                                }
+                                .build(),
+                        )
+                    },
                 )
             }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            AnimatedVisibility(
+                visible = visible,
+                enter = slideInVertically(
+                    initialOffsetY = { it },
+                    animationSpec = animationSpec,
+                ),
+                exit = slideOutVertically(
+                    targetOffsetY = { it },
+                    animationSpec = animationSpec,
+                ),
+            ) {
+                Column(
+                    modifier = modifierWithInsetsPadding,
+                    verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
+                ) {
+                    ChapterNavigator(
+                        isRtl = isRtl,
+                        onNextChapter = onNextChapter,
+                        enabledNext = enabledNext,
+                        onPreviousChapter = onPreviousChapter,
+                        enabledPrevious = enabledPrevious,
+                        currentPage = currentPage,
+                        totalPages = totalPages,
+                        onPageIndexChange = onPageIndexChange,
+                    )
+                    BottomReaderBar(
+                        backgroundColor = backgroundColor,
+                        readingMode = readingMode,
+                        onClickReadingMode = onClickReadingMode,
+                        orientation = orientation,
+                        onClickOrientation = onClickOrientation,
+                        cropEnabled = cropEnabled,
+                        onClickCropBorder = onClickCropBorder,
+                        onClickSettings = onClickSettings,
+                        translationState = translationState,
+                        translationBatchProgress = translationBatchProgress,
+                        autoTranslation = autoTranslation,
+                        onClickTranslate = onClickTranslate,
+                        translateEnabled = translateEnabled,
+                    )
+                }
+            }
+        }
+
+        if (!visible && autoTranslation.hasVisibleAutoFeedback) {
+            AutoTranslationStatus(
+                state = autoTranslation,
+                compact = true,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 12.dp, bottom = 8.dp),
+            )
         }
     }
 }

@@ -47,6 +47,12 @@ val PageTranslation.isTranslationDisplayReady: Boolean
 val PageTranslation.shouldShowTranslationOverlay: Boolean
     get() = blocks.any { it.translation.isNotBlank() }
 
+val PageTranslation.isTier1DisplayReady: Boolean
+    get() = ocrStatus == StageStatus.READY &&
+        (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
+        blocks.any { it.translation.isNotBlank() } &&
+        !isCleanedImageReady
+
 /**
  * TachiyomiAT: true when this page carries a persisted inpaint mask captured by
  * the current OCR logic, so a resumed batch can safely skip re-OCR and still

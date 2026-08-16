@@ -71,6 +71,10 @@ data class TranslationProgressSnapshot(
         val pageKey: String,
         val index: Int,
         val stage: TranslationProgressStage,
+        val ocrDone: Boolean = false,
+        val translateDone: Boolean = false,
+        val inpaintDone: Boolean = false,
+        val renderDone: Boolean = false,
         val errorMessage: String? = null,
     )
 

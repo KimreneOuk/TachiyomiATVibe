@@ -10,6 +10,19 @@ import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 abstract class PageLoader {
 
     /**
+     * A short-lived reader lifecycle hook for a page whose original stream became available.
+     * Implementations must invoke it only after the page can be resolved by its reader owner.
+     * The reader clears this hook before the loader is recycled.
+     */
+    @Volatile
+    var onPageStreamReady: (() -> Unit)? = null
+
+    /** Notifies the reader after a concrete loader has installed a page's original stream. */
+    protected fun notifyPageStreamReady() {
+        onPageStreamReady?.invoke()
+    }
+
+    /**
      * Whether this loader has been already recycled.
      */
     var isRecycled = false
@@ -41,6 +54,7 @@ abstract class PageLoader {
      */
     @CallSuper
     open fun recycle() {
+        onPageStreamReady = null
         isRecycled = true
     }
 }

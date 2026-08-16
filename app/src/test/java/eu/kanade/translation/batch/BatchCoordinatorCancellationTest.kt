@@ -12,19 +12,12 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * B1 regression coverage: cancelling a batch mid-OCR (before the all-OCR
- * barrier opens) must not allow any inpaint job to start. The barrier lives in
- * `BatchCoordinator.runPass1` after `ocrJobs.awaitAll()`; if cancellation lands
- * before that point the inpaint loop is never reached.
- *
- * Also verifies the inverse: once the barrier has opened and inpaint has begun,
- * cancelling the coordinator stops launching further inpaints but lets the
- * currently running one observe its cancellation.
+ * B1 regression coverage for cancellation in the per-page OCR/inpaint loop.
  */
 class BatchCoordinatorCancellationTest {
 
     @Test
-    fun `cancel before all-OCR barrier launches zero inpaint jobs`() = runTest {
+    fun `cancel before any page completes OCR launches zero inpaint jobs`() = runTest {
         val events = RecordingListener()
         val native = GatedNativeWorker()
         val translator = ImmediateTranslatorWorker()
@@ -34,13 +27,8 @@ class BatchCoordinatorCancellationTest {
         val pages = listOf("p0" to 0, "p1" to 1, "p2" to 2)
         val pass1 = async { coord.runPass1(pages, TranslatorComputeClass.REMOTE_IO) }
 
-        // Let only p0 OCR publish; p1 and p2 are still gated, so awaitAll() cannot
-        // complete and the barrier cannot open.
+        // Let p0 enter OCR, but cancel before OCR can complete and reach inpaint.
         native.ocrPublished("p0").await()
-        native.allowOcrToFinish("p0")
-        // Yield so the OCR job for p0 lands; p1/p2 are blocked in runOcrStage.
-        repeat(3) { yield() }
-
         pass1.cancelAndJoin()
 
         events.inpaintStartedCount.get() shouldBe 0
@@ -48,7 +36,7 @@ class BatchCoordinatorCancellationTest {
     }
 
     @Test
-    fun `cancel after barrier stops launching further inpaint jobs`() = runTest {
+    fun `cancel during page two leaves page one fully complete`() = runTest {
         val events = RecordingListener()
         val native = GatedNativeWorker()
         val translator = ImmediateTranslatorWorker()
@@ -58,19 +46,17 @@ class BatchCoordinatorCancellationTest {
         val pages = listOf("p0" to 0, "p1" to 1, "p2" to 2)
         val pass1 = async { coord.runPass1(pages, TranslatorComputeClass.REMOTE_IO) }
 
-        // Open the barrier by releasing every OCR gate.
-        native.releaseOcr(3)
-        events.awaitEvent("allOcrBarrierReleased")
-
-        // Let p0 inpaint start, then cancel before p1/p2 inpaint begin.
+        // Complete page one through inpaint, then cancel while page two is in OCR.
+        native.ocrPublished("p0").await()
+        native.allowOcrToFinish("p0")
         events.awaitEvent("inpaintStarted:p0")
+        native.allowInpaintToFinish("p0")
+        native.ocrPublished("p1").await()
         pass1.cancelAndJoin()
 
-        // p0 launched; p1 and p2 may or may not have started depending on
-        // scheduling, but the count must be strictly less than the page count
-        // (i.e. cancellation prevented the full sweep).
-        val started = events.inpaintStartedCount.get()
-        (started < pages.size) shouldBe true
+        events.inpaintStartedCount.get() shouldBe 1
+        events.log.contains("inpaintStarted:p1") shouldBe false
+        events.log.contains("inpaintStarted:p2") shouldBe false
     }
 
     private class RecordingListener : BatchScheduleListener() {
@@ -125,14 +111,8 @@ class BatchCoordinatorCancellationTest {
             ocrFinishGates.getOrPut(pageKey) { CompletableDeferred() }.complete(Unit)
         }
 
-        fun releaseOcr(count: Int) {
-            repeat(count) { idx ->
-                val key = "p$idx"
-                // Ensure the publish signal exists (it would be created inside runOcrStage),
-                // then release the OCR finish gate so runOcrStage returns.
-                ocrPublishedSignals.getOrPut(key) { CompletableDeferred() }.complete(Unit)
-                ocrFinishGates.getOrPut(key) { CompletableDeferred() }.complete(Unit)
-            }
+        fun allowInpaintToFinish(pageKey: String) {
+            inpaintFinishGates.getOrPut(pageKey) { CompletableDeferred() }.complete(Unit)
         }
     }
 

@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.translation.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -75,8 +76,7 @@ internal class HttpPageLoader(
                 // it as the preferred key when matching live translation store
                 // updates back to this page — more stable than the imageUrl
                 // fallback which can change across page-list refreshes.
-                sourceFileName = page.imageUrl?.substringAfterLast('/')?.substringBefore('?')
-                    ?: page.url.substringAfterLast('/').substringBefore('?')
+                sourceFileName = onlinePageTranslationKey(page.imageUrl, page.url)
             }
         }
     }
@@ -188,6 +188,7 @@ internal class HttpPageLoader(
 
             page.originalStream = { chapterCache.getImageFile(imageUrl).inputStream() }
             page.status = Page.State.READY
+            notifyPageStreamReady()
         } catch (e: Throwable) {
             page.status = Page.State.ERROR
             if (e is CancellationException) {

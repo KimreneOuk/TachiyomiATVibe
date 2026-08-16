@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Serialized, projection-only progress tracker. It never changes [store]; pipeline workers
@@ -36,6 +37,12 @@ class TranslationBatchProgressTracker(
 ) {
     private val events = Channel<TranslationBatchEvent>(Channel.UNLIMITED)
     private var finished = false
+
+    // A terminal event already accepted by the channel must be allowed to
+    // drain after replacement so the production identity-fenced callback can
+    // observe and reject it. close() still cancels trackers with no terminal
+    // work queued, preserving prompt teardown for ordinary replacements.
+    private val terminalEventQueued = AtomicBoolean(false)
     private val terminalSnapshot = CompletableDeferred<TranslationProgressSnapshot>()
     private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
     private var projection = Projection()
@@ -108,24 +115,30 @@ class TranslationBatchProgressTracker(
         TranslationBatchEvent.PagePhase(pageKey, indexResolver[pageKey] ?: 0, phase, status, reason = reason),
     )
 
-    fun finish(result: ReconciliationResult) = emit(
-        TranslationBatchEvent.BatchFinished(
-            result.chapterStatus,
-            result.doneCount,
-            result.failedCount,
-            result.partialCount,
-            orderedPageKeys.size,
-        ),
-    )
+    fun finish(result: ReconciliationResult) {
+        terminalEventQueued.set(true)
+        emit(
+            TranslationBatchEvent.BatchFinished(
+                result.chapterStatus,
+                result.doneCount,
+                result.failedCount,
+                result.partialCount,
+                orderedPageKeys.size,
+            ),
+        )
+    }
     fun abort(
         remainingPageKeys: Set<String>,
         reason: String,
-    ) = emit(TranslationBatchEvent.BatchAborted(reason, remainingPageKeys))
+    ) {
+        terminalEventQueued.set(true)
+        emit(TranslationBatchEvent.BatchAborted(reason, remainingPageKeys))
+    }
     suspend fun awaitTerminalSnapshot(): TranslationProgressSnapshot = terminalSnapshot.await()
     fun close() {
         finished = true
         events.close()
-        reducerJob.cancel()
+        if (!terminalEventQueued.get()) reducerJob.cancel()
     }
 
     private fun snapshotFor(state: Projection): TranslationProgressSnapshot = computeSnapshot(
@@ -261,9 +274,9 @@ class TranslationBatchProgressTracker(
             val rows = pageMap.entries.mapIndexed { order, (key, page) ->
                 val stage = progressStage(page)
                 TranslationProgressSnapshot.Page(
-                    key,
-                    PageIndexResolver.resolve(key, order, indexResolver),
-                    if (permitHolderPageKey !=
+                    pageKey = key,
+                    index = PageIndexResolver.resolve(key, order, indexResolver),
+                    stage = if (permitHolderPageKey !=
                         null &&
                         stage.isRunning &&
                         key != permitHolderPageKey
@@ -272,7 +285,12 @@ class TranslationBatchProgressTracker(
                     } else {
                         stage
                     },
-                    page.errorMessage,
+                    ocrDone = page.ocrStatus == StageStatus.READY,
+                    translateDone = page.translationStatus == StageStatus.READY ||
+                        page.translationStatus == StageStatus.PARTIAL,
+                    inpaintDone = page.inpaintStatus == StageStatus.READY,
+                    renderDone = page.renderStatus == StageStatus.READY,
+                    errorMessage = page.activeError,
                 )
             }.sortedWith(compareBy<TranslationProgressSnapshot.Page> { it.index }.thenBy { it.pageKey })
             val stageCounts = BatchPhase.entries.associateWith { phase -> count(pageMap.values, phase) }

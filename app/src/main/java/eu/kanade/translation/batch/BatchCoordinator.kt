@@ -3,9 +3,7 @@ package eu.kanade.translation.batch
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Semaphore
@@ -13,24 +11,13 @@ import kotlinx.coroutines.sync.withPermit
 
 /**
  * TachiyomiAT: orchestrates one batch's per-page detect/OCR, remote translation,
- * inpaint, and render work while enforcing the chapter-level scheduling invariant
- * from Plan/active/2026-07-18-translation-stage-recovery/plan.md:
- *
- *   No inpaint job may start until every expected chapter page has reached a
- *   terminal detect/OCR result for the active generation.
- *
- * `runPass1` enforces this with an explicit set-equality barrier
- * (`terminalOcrKeys == expectedPageKeys`) after `ocrJobs.awaitAll()`, BEFORE the
- * inpaint loop starts. Remote translation is fed into the translation channel
- * inside each per-page OCR job, so it may overlap later OCR; this is correct
- * per plan rule 5 and avoids the prior regression where the queue was only fed
- * after `awaitAll()`.
+ * inpaint, and render work. Each page completes its OCR and inpaint stages on
+ * the serialized native lane before the next page starts.
  *
  * Scope note: this coordinator only governs the batch path
  * (`TranslationPipeline.translateBatch`). The manual/auto single-page path
- * (`TranslationPipeline.translateSinglePage`) bypasses the barrier by design —
- * it processes exactly one page, so there is no chapter-wide OCR set to wait
- * for. A multi-page chapter barrier is meaningful only for batch/pre-translation.
+ * (`TranslationPipeline.translateSinglePage`) is not routed through this
+ * coordinator.
  */
 class BatchCoordinator(
     private val nativeWorker: NativeLaneWorker,
@@ -64,23 +51,13 @@ class BatchCoordinator(
             }
         }
 
-        val ocrJobs = mutableListOf<Deferred<Unit>>()
-        val localRefs = java.util.concurrent.ConcurrentHashMap<String, OcrReadyPageRef>()
         val validPages = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
-        val expectedPageKeys = orderedPages.map { it.first }.toSet()
-        val terminalOcrKeys = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-
         for ((pageKey, pageIndex) in orderedPages) {
-            val job = async {
-                val ref = nativeLanePermit.withPermit {
-                    listener.ocrStarted(pageKey)
-                    val r = nativeWorker.runOcrStage(pageKey, pageIndex)
-                    listener.ocrFinished(pageKey)
-                    r
-                }
-
-                terminalOcrKeys += pageKey
+            nativeLanePermit.withPermit {
+                listener.ocrStarted(pageKey)
+                val ref = nativeWorker.runOcrStage(pageKey, pageIndex)
+                listener.ocrFinished(pageKey)
 
                 if (ref != null) {
                     validPages += pageKey
@@ -89,34 +66,12 @@ class BatchCoordinator(
                         needsTranslation += pageKey
                         translationQueue.send(ref)
                     } else {
-                        localRefs[pageKey] = ref
+                        listener.translationRequested(pageKey)
+                        translatorWorker.translate(ref)
+                        listener.translationFinished(pageKey)
+                        renderJoin.onTranslationBranchDone(pageKey)
+                        translationGate(pageKey).complete(Unit)
                     }
-                }
-            }
-            ocrJobs += job
-        }
-        ocrJobs.awaitAll()
-
-        check(terminalOcrKeys == expectedPageKeys) {
-            "Barrier deadlock: terminal OCR keys $terminalOcrKeys do not match expected $expectedPageKeys"
-        }
-        listener.allOcrBarrierReleased()
-
-        if (remote) {
-            translationQueue.close()
-        }
-
-        for ((pageKey, _) in orderedPages) {
-            if (!validPages.contains(pageKey)) continue
-
-            nativeLanePermit.withPermit {
-                if (!remote) {
-                    val ref = localRefs[pageKey]!!
-                    listener.translationRequested(pageKey)
-                    translatorWorker.translate(ref)
-                    listener.translationFinished(pageKey)
-                    renderJoin.onTranslationBranchDone(pageKey)
-                    translationGate(pageKey).complete(Unit)
                 }
 
                 listener.inpaintStarted(pageKey)
@@ -126,9 +81,7 @@ class BatchCoordinator(
                 nativeGate(pageKey).complete(Unit)
             }
         }
-        if (!remote) {
-            translationQueue.close()
-        }
+        translationQueue.close()
 
         val renderJob = async {
             for ((pageKey, _) in orderedPages) {
