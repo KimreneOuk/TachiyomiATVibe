@@ -26,6 +26,16 @@ class AotModelContractTest {
     }
 
     @Test
+    fun `fixed contract accepts Qualcomm AI Hub tensor names`() {
+        assertDoesNotThrow {
+            AotModelContract.validate(
+                AotModelContract.Kind.FIXED_512,
+                fixedContract(inputNames = setOf("input_image", "input_mask")),
+            )
+        }
+    }
+
+    @Test
     fun `dynamic contract rejects fixed spatial tensors`() {
         assertDoesNotThrow {
             AotModelContract.validate(AotModelContract.Kind.DYNAMIC, dynamicContract())

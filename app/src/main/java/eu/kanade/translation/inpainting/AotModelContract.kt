@@ -14,8 +14,13 @@ internal object AotModelContract {
     )
 
     fun validate(kind: Kind, contract: Contract) {
-        require(contract.inputNames == setOf("image", "mask")) {
-            "AOT inputs must be exactly [image, mask], actual=${contract.inputNames}"
+        val validSets = setOf(
+            setOf("image", "mask"),
+            setOf("input_image", "input_mask"),
+            setOf("input", "mask"),
+        )
+        require(contract.inputNames in validSets) {
+            "AOT inputs must be [image, mask] or [input_image, input_mask], actual=${contract.inputNames}"
         }
         require(contract.outputCount == 1) {
             "AOT must expose exactly one output, actual=${contract.outputCount}"

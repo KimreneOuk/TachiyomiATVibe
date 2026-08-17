@@ -8,6 +8,11 @@ interface RoiOcrEngine : Closeable {
 
     suspend fun recognizeWithConf(crop: Bitmap): Pair<String, Float> = recognize(crop) to 1f
 
+    suspend fun recognizeBatch(crops: List<Bitmap>): List<String> = crops.map { recognize(it) }
+
+    suspend fun recognizeBatchWithConf(crops: List<Bitmap>): List<Pair<String, Float>> =
+        recognizeBatch(crops).map { it to 1f }
+
     /**
      * TachiyomiAT: cooperative hint to release engine-owned off-heap/pooled memory
      * that [close] would free but that can otherwise persist across calls.

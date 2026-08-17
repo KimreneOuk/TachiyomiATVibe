@@ -9,6 +9,7 @@ import android.graphics.Canvas
 import android.graphics.RectF
 import android.os.Build
 import eu.kanade.translation.runtime.onnx.DeviceCapability
+import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
@@ -85,6 +86,7 @@ class AOTInpainting {
 
     private var fixedSession: OrtSession? = null
     private var fixedNnapiSession: OrtSession? = null
+    private var fixedQnnSession: OrtSession? = null
     private var dynamicSession: OrtSession? = null
     private val nnapiHealth = NnapiHealthMonitor()
     private val bubbleCleaner = SmartBubbleTextCleaner()
@@ -93,10 +95,46 @@ class AOTInpainting {
     fun initialize(fixedModelFile: File?, dynamicModelFile: File?) {
         fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
         dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
+        if (HardwareDiscoveryEngine.resolveRoute() == HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP &&
+            fixedModelFile != null && fixedModelFile.exists()
+        ) {
+            fixedQnnSession = initializeQnnSession(fixedModelFile)
+        }
         fixedNnapiSession = initializeStrictNnapiSession(fixedModelFile)
         logcat(LogPriority.INFO) {
-            "[inpaint] init fixedXnnpack=${fixedSession != null} fixedNnapi=${fixedNnapiSession != null} " +
+            "[inpaint] init fixedXnnpack=${fixedSession != null} fixedQnn=${fixedQnnSession != null} fixedNnapi=${fixedNnapiSession != null} " +
                 "dynamic=${dynamicSession != null} strictCpuFallbackDisabled=true ${DeviceCapability.describe()}"
+        }
+    }
+
+    private fun initializeQnnSession(modelFile: File): OrtSession? {
+        var opts: OrtSession.SessionOptions? = null
+        var created: OrtSession? = null
+        return try {
+            opts = OnnxRuntimeProvider.createQnnHtpSessionOptions()
+            created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
+            AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(created))
+            logcat(LogPriority.INFO) {
+                "[inpaint] route=qnn_htp init=ok model=${modelFile.name} ${DeviceCapability.describe()}"
+            }
+            created
+        } catch (error: Throwable) {
+            try {
+                created?.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
+            HardwareDiscoveryEngine.tripCircuitBreaker("qnn_init_failed", error)
+            logcat(LogPriority.ERROR, error) {
+                "[inpaint] route=qnn_htp init=failed model=${modelFile.name} ${DeviceCapability.describe()}"
+            }
+            null
+        } finally {
+            try {
+                opts?.close()
+            } catch (error: Throwable) {
+                logcat(LogPriority.WARN, error) { "[inpaint] route=qnn_htp optionsClose=failed" }
+            }
         }
     }
 
@@ -219,10 +257,11 @@ class AOTInpainting {
         )
     }
 
-    fun isInitialized(): Boolean = fixedSession != null || dynamicSession != null
+    fun isInitialized(): Boolean = fixedSession != null || dynamicSession != null || fixedQnnSession != null
 
     private fun neuralSessionCount(): Int =
         (if (fixedSession != null) 1 else 0) +
+            (if (fixedQnnSession != null) 1 else 0) +
             (if (fixedNnapiSession != null && nnapiHealth.isHealthy()) 1 else 0) +
             (if (dynamicSession != null) 1 else 0)
 
@@ -554,6 +593,49 @@ class AOTInpainting {
             loggedFailure("fixed_prepare", "exception", crop, side, error)
             return AotFallbackCoordinator.CandidateResult.Failed(error)
         }
+        val qnnSession = fixedQnnSession
+        if (qnnSession != null) {
+            try {
+                val qnnResult = runPreparedFixedCandidate("fixed_qnn_htp", qnnSession, prepared, crop, side)
+                when (qnnResult) {
+                    is StrictNnapiFallback.Candidate.Accepted -> {
+                        return AotFallbackCoordinator.CandidateResult.Accepted(qnnResult.value)
+                    }
+                    is StrictNnapiFallback.Candidate.Rejected -> {
+                        logcat(LogPriority.WARN) {
+                            "[inpaint] route=fixed_qnn_htp guard_rejected, falling back to CPU XNNPACK"
+                        }
+                        val cpuResult = runPreparedFixedCandidate("fixed_xnnpack", xnnpackSession, prepared, crop, side)
+                        return when (cpuResult) {
+                            is StrictNnapiFallback.Candidate.Accepted -> AotFallbackCoordinator.CandidateResult.Accepted(cpuResult.value)
+                            is StrictNnapiFallback.Candidate.Rejected -> AotFallbackCoordinator.CandidateResult.Rejected(cpuResult.stats)
+                            is StrictNnapiFallback.Candidate.Failed -> AotFallbackCoordinator.CandidateResult.Failed(cpuResult.error)
+                        }
+                    }
+                    is StrictNnapiFallback.Candidate.Failed -> {
+                        HardwareDiscoveryEngine.tripCircuitBreaker("qnn_execution_failed", qnnResult.error)
+                        closeAndDetachQnn("execution_failed", qnnResult.error)
+                        val cpuResult = runPreparedFixedCandidate("fixed_xnnpack", xnnpackSession, prepared, crop, side)
+                        return when (cpuResult) {
+                            is StrictNnapiFallback.Candidate.Accepted -> AotFallbackCoordinator.CandidateResult.Accepted(cpuResult.value)
+                            is StrictNnapiFallback.Candidate.Rejected -> AotFallbackCoordinator.CandidateResult.Rejected(cpuResult.stats)
+                            is StrictNnapiFallback.Candidate.Failed -> AotFallbackCoordinator.CandidateResult.Failed(cpuResult.error)
+                        }
+                    }
+                }
+            } catch (error: Throwable) {
+                HardwareDiscoveryEngine.tripCircuitBreaker("qnn_execution_failed", error)
+                closeAndDetachQnn("execution_exception", error)
+                val cpuResult = runPreparedFixedCandidate("fixed_xnnpack", xnnpackSession, prepared, crop, side)
+                return when (cpuResult) {
+                    is StrictNnapiFallback.Candidate.Accepted -> AotFallbackCoordinator.CandidateResult.Accepted(cpuResult.value)
+                    is StrictNnapiFallback.Candidate.Rejected -> AotFallbackCoordinator.CandidateResult.Rejected(cpuResult.stats)
+                    is StrictNnapiFallback.Candidate.Failed -> AotFallbackCoordinator.CandidateResult.Failed(cpuResult.error)
+                }
+            } finally {
+                prepared.close()
+            }
+        }
         val result = try {
             StrictNnapiFallback.run(
                 useNnapi = useNnapi,
@@ -771,6 +853,18 @@ class AOTInpainting {
             logcat(LogPriority.ERROR, closeError) { "[inpaint] route=nnapi close=failed reason=$reason" }
         }
         logcat(LogPriority.WARN, error) { "[inpaint] route=xnnpack nnapi=disabled reason=$reason" }
+    }
+
+    private fun closeAndDetachQnn(reason: String, error: Throwable? = null) {
+        val session = fixedQnnSession ?: return
+        fixedQnnSession = null
+        try {
+            session.close()
+        } catch (closeError: Throwable) {
+            error?.addSuppressed(closeError)
+            logcat(LogPriority.ERROR, closeError) { "[inpaint] route=qnn_htp close=failed reason=$reason" }
+        }
+        logcat(LogPriority.WARN, error) { "[inpaint] route=xnnpack qnn_htp=disabled reason=$reason" }
     }
 
     private fun tryNeuralCandidate(
@@ -1259,14 +1353,16 @@ class AOTInpainting {
         bubbleCleaner.clearWorkingBuffers()
         val fixed = fixedSession
         val nnapi = fixedNnapiSession
+        val qnn = fixedQnnSession
         val dynamic = dynamicSession
         // Detach first so repeated/concurrent lifecycle teardown cannot close a
         // native handle twice. Each distinct session is still attempted when its
         // sibling close fails.
         fixedSession = null
         fixedNnapiSession = null
+        fixedQnnSession = null
         dynamicSession = null
-        AotSessionLifecycle.closeIndependently(fixed, dynamic, nnapi) { failure ->
+        AotSessionLifecycle.closeIndependently(fixed, dynamic, nnapi, qnn) { failure ->
             logcat(LogPriority.ERROR, failure.error) {
                 "[inpaint] route=${failure.route} close=failed"
             }
@@ -1274,6 +1370,10 @@ class AOTInpainting {
         clearScratch()
         imgInputPool.clear()
         maskInputPool.clear()
+    }
+
+    fun freeNativeSessions() {
+        close()
     }
 
     /**

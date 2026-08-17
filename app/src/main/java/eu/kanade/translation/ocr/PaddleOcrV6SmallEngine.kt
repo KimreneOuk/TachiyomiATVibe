@@ -31,11 +31,10 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     private var dictionary: List<String> = emptyList()
     private var inputName: String = "x"
 
-    // TachiyomiAT: pooled DIRECT buffer for the rec input. The rec width varies
-    // per crop, so the pool is sized for the max shape; each call exposes only
-    // [width x height x 3] floats via the buffer limit. A heap-backed wrap()
-    // forces ORT to allocate a per-call native copy that leaks (ORT #16937) —
-    // the same class as MangaOcrEngine.inputPixelPool.
+    // TachiyomiAT: pooled DIRECT buffer for the rec input. The rec width is bucketed
+    // to fixed shapes (640 or 1600), so the pool is sized for MAX_RECOGNITION_WIDTH (1600);
+    // each call exposes only [width x height x 3] floats via the buffer limit.
+    // A heap-backed wrap() forces ORT to allocate a per-call native copy that leaks (ORT #16937).
     private val inputPixelPool = DirectBufferPool(
         3 * RECOGNITION_HEIGHT * MAX_RECOGNITION_WIDTH * 4,
         maxPoolSize = 2,
@@ -49,9 +48,11 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         dictionary = BufferedReader(InputStreamReader(dictionaryFile.inputStream(), Charsets.UTF_8)).use { reader ->
             reader.lineSequence().map { it.trimEnd() }.toList()
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions()
         try {
-            session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
+            session = OnnxRuntimeProvider.createSessionWithFallback(
+                modelFile.absolutePath,
+                useAccelerator = true,
+            )
             inputName = session?.inputNames?.firstOrNull() ?: "x"
             logcat(LogPriority.INFO) {
                 "PaddleOCR v6 small loaded (dictionary=${dictionary.size}, inputs=${session?.inputNames}, outputs=${session?.outputNames})"
@@ -59,8 +60,6 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "PaddleOCR v6 small session init failed" }
             throw e
-        } finally {
-            opts.close()
         }
     }
 
@@ -169,31 +168,31 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         }
     }
 
-    private fun normalize(value: Int): Float {
+    internal fun normalize(value: Int): Float {
         return (value / 255.0f - 0.5f) / 0.5f
     }
 
-    private fun alignWidth(width: Int): Int {
-        // Match the reference pipeline: pad to AT LEAST the native width (320),
-        // aligned to WIDTH_ALIGNMENT. Key fix for vertical/rotated text — the
-        // original 16-32px alignment starved per-character resolution.
-        val floored = maxOf(width, MIN_TARGET_WIDTH)
-        val aligned = ((floored + WIDTH_ALIGNMENT - 1) / WIDTH_ALIGNMENT) * WIDTH_ALIGNMENT
-        return aligned.coerceAtMost(MAX_RECOGNITION_WIDTH)
+    internal fun alignWidth(width: Int): Int {
+        // Fixed-width bucketing: inputs <= 640 align to 640; inputs > 640 align to 1600.
+        return if (width <= BUCKET_WIDTH_SMALL) {
+            BUCKET_WIDTH_SMALL
+        } else {
+            MAX_RECOGNITION_WIDTH
+        }
     }
 
-    private companion object {
-        private const val RECOGNITION_HEIGHT = 48
+    internal companion object {
+        const val RECOGNITION_HEIGHT = 48
 
-        // PP-OCR rec is trained on (3, 48, 320); padding below this starves the
-        // model of per-character resolution and yields garbage on vertical text.
-        private const val MIN_TARGET_WIDTH = 320
-        private const val MAX_RECOGNITION_WIDTH = 1600
-        private const val WIDTH_ALIGNMENT = 16
+        // PP-OCR rec is trained on (3, 48, 320); width bucketing aligns inputs
+        // <= 640 to 640 and > 640 to 1600 (MAX_RECOGNITION_WIDTH).
+        const val MIN_TARGET_WIDTH = 640
+        const val BUCKET_WIDTH_SMALL = 640
+        const val MAX_RECOGNITION_WIDTH = 1600
 
         // Gray that normalizes to 0.0 (the normalization mean) — used for the
         // right-side padding instead of white, matching the reference pipeline.
-        private const val PAD_GRAY = 0xFF808080.toInt()
+        const val PAD_GRAY = 0xFF808080.toInt()
 
         @Volatile
         private var diagnosticsInitialized = false

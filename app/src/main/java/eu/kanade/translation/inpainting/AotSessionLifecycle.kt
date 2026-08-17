@@ -12,11 +12,13 @@ internal object AotSessionLifecycle {
         fixed: AutoCloseable?,
         dynamic: AutoCloseable?,
         nnapi: AutoCloseable? = null,
+        qnn: AutoCloseable? = null,
         onFailure: (CloseFailure) -> Unit = {},
     ) {
         val closed = java.util.Collections.newSetFromMap(
             java.util.IdentityHashMap<AutoCloseable, Boolean>(),
         )
+        closeOneIfDistinct("qnn", qnn, closed, onFailure)
         closeOneIfDistinct("nnapi", nnapi, closed, onFailure)
         closeOneIfDistinct("fixed", fixed, closed, onFailure)
         closeOneIfDistinct("dynamic", dynamic, closed, onFailure)

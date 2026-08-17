@@ -94,8 +94,6 @@ class MangaOcrEngine : RoiOcrEngine {
 
     override suspend fun recognize(cropBitmap: Bitmap): String {
         val enc = encoderSession ?: throw IllegalStateException("OCR not initialized")
-        val decInit = decoderInitSession ?: throw IllegalStateException("OCR not initialized")
-        val decStep = decoderStepSession ?: throw IllegalStateException("OCR not initialized")
 
         val t0 = System.nanoTime()
         val pixels = preprocess(cropBitmap)
@@ -106,15 +104,6 @@ class MangaOcrEngine : RoiOcrEngine {
 
         var inputTensor: OnnxTensor? = null
         var encResult: OrtSession.Result? = null
-        var startIdsTensor: OnnxTensor? = null
-        var initResult: OrtSession.Result? = null
-
-        var selfKCacheTensor: OnnxTensor? = null
-        var selfVCacheTensor: OnnxTensor? = null
-        var stepInputIdsTensor: OnnxTensor? = null
-        var stepPositionIdsTensor: OnnxTensor? = null
-        var selfKCacheBuf: java.nio.FloatBuffer? = null
-        var selfVCacheBuf: java.nio.FloatBuffer? = null
         // TachiyomiAT: declared nullable outside try and assigned inside, so the
         // pool acquire/release stays balanced even if a later line throws.
         var pixelBuffer: java.nio.FloatBuffer? = null
@@ -139,7 +128,46 @@ class MangaOcrEngine : RoiOcrEngine {
             val encHiddenTensor = encResult[0] as OnnxTensor
 
             val t2 = System.nanoTime()
+            val result = decodeHiddenState(encHiddenTensor)
+            val t3 = System.nanoTime()
 
+            // Gate the per-ROI (30+/page) timing log behind the opt-in pref.
+            if (isDiagnosticsEnabled()) {
+                logcat(LogPriority.INFO) {
+                    "[ocr] total=${(t3 - t0) / 1_000_000.0}ms " +
+                        "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
+                        "encoder=${(t2 - t1) / 1_000_000.0}ms " +
+                        "decoder=${(t3 - t2) / 1_000_000.0}ms"
+                }
+            }
+            return result
+        } finally {
+            inputTensor?.close()
+            encResult?.close()
+            pixelBuffer?.let { inputPixelPool.release(it) }
+        }
+    }
+
+    override suspend fun recognizeBatch(crops: List<Bitmap>): List<String> {
+        if (crops.isEmpty()) return emptyList()
+        return crops.map { recognize(it) }
+    }
+
+    private fun decodeHiddenState(encHiddenTensor: OnnxTensor): String {
+        val decInit = decoderInitSession ?: throw IllegalStateException("OCR not initialized")
+        val decStep = decoderStepSession ?: throw IllegalStateException("OCR not initialized")
+
+        var startIdsTensor: OnnxTensor? = null
+        var initResult: OrtSession.Result? = null
+
+        var selfKCacheTensor: OnnxTensor? = null
+        var selfVCacheTensor: OnnxTensor? = null
+        var stepInputIdsTensor: OnnxTensor? = null
+        var stepPositionIdsTensor: OnnxTensor? = null
+        var selfKCacheBuf: java.nio.FloatBuffer? = null
+        var selfVCacheBuf: java.nio.FloatBuffer? = null
+
+        try {
             val startIdsBuf = java.nio.ByteBuffer.allocateDirect(8)
                 .order(java.nio.ByteOrder.nativeOrder())
                 .asLongBuffer()
@@ -159,9 +187,6 @@ class MangaOcrEngine : RoiOcrEngine {
             val crossK = initResult[3] as OnnxTensor
             val crossV = initResult[4] as OnnxTensor
 
-            val t3 = System.nanoTime()
-
-            val cacheSize = 4L * 1 * 4 * MAX_LEN * 64
             selfKCacheBuf = kCachePool.acquire()
             selfVCacheBuf = vCachePool.acquire()
 
@@ -265,8 +290,6 @@ class MangaOcrEngine : RoiOcrEngine {
                 }
             }
 
-            val t4 = System.nanoTime()
-
             val text = buildString {
                 for (tokenId in tokenIds) {
                     if (tokenId < vocab.size) {
@@ -274,34 +297,16 @@ class MangaOcrEngine : RoiOcrEngine {
                     }
                 }
             }
-            val result = postprocess(text)
-            val t5 = System.nanoTime()
-
-            // Gate the per-ROI (30+/page) timing log behind the opt-in pref.
-            if (isDiagnosticsEnabled()) {
-                logcat(LogPriority.INFO) {
-                    "[ocr] total=${(t5 - t0) / 1_000_000.0}ms " +
-                        "preprocess=${(t1 - t0) / 1_000_000.0}ms " +
-                        "encoder=${(t2 - t1) / 1_000_000.0}ms " +
-                        "decoder_init=${(t3 - t2) / 1_000_000.0}ms " +
-                        "decoder_steps=${(t4 - t3) / 1_000_000.0}ms " +
-                        "postprocess=${(t5 - t4) / 1_000_000.0}ms " +
-                        "tokens=${tokenIds.size}"
-                }
-            }
-            return result
+            return postprocess(text)
         } finally {
-            inputTensor?.close()
             startIdsTensor?.close()
             selfKCacheTensor?.close()
             selfVCacheTensor?.close()
             stepInputIdsTensor?.close()
             stepPositionIdsTensor?.close()
-            encResult?.close()
             initResult?.close()
             selfKCacheBuf?.let { kCachePool.release(it) }
             selfVCacheBuf?.let { vCachePool.release(it) }
-            pixelBuffer?.let { inputPixelPool.release(it) }
         }
     }
 
@@ -431,15 +436,16 @@ class MangaOcrEngine : RoiOcrEngine {
         // the chapter. MAX_LEN (256) is only the KV-cache dim, not a safe bound.
         private const val DECODER_POSITION_COUNT = 128
 
-        internal fun writeNormalizedChw(sourcePixels: IntArray, destination: FloatBuffer) {
+        internal fun writeNormalizedChw(sourcePixels: IntArray, destination: FloatBuffer, offset: Int = 0) {
             val channelSize = 224 * 224
             require(sourcePixels.size == channelSize) {
                 "MangaOCR preprocessing expected $channelSize pixels, got ${sourcePixels.size}"
             }
-            require(destination.capacity() >= 3 * channelSize) {
-                "MangaOCR input buffer is too small: ${destination.capacity()}"
+            require(destination.capacity() >= offset + 3 * channelSize) {
+                "MangaOCR input buffer is too small: ${destination.capacity()} < ${offset + 3 * channelSize}"
             }
             for (c in 0 until 3) {
+                val channelOffset = offset + c * channelSize
                 for (i in sourcePixels.indices) {
                     val pixel = sourcePixels[i]
                     val channelValue = when (c) {
@@ -447,7 +453,7 @@ class MangaOcrEngine : RoiOcrEngine {
                         1 -> (pixel shr 8 and 0xFF) / 255.0f
                         else -> (pixel and 0xFF) / 255.0f
                     }
-                    destination.put(c * channelSize + i, (channelValue - 0.5f) / 0.5f)
+                    destination.put(channelOffset + i, (channelValue - 0.5f) / 0.5f)
                 }
             }
         }

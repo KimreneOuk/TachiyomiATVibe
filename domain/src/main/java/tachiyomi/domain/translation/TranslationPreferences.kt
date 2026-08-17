@@ -42,6 +42,15 @@ enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
  * - [LTR_COMIC]: force left-to-right western-comic ordering regardless of
  *   language.
  */
+/**
+ * TachiyomiAT: Hardware accelerator target for on-device inference (Detectors, OCR, Inpainting).
+ * - [AUTO]: Probes and latches the fastest backend (Qualcomm QNN HTP -> NNAPI -> CPU XNNPACK).
+ * - [QUALCOMM_NPU]: Forces Qualcomm QNN HTP execution provider.
+ * - [NNAPI]: Forces Android NNAPI execution provider.
+ * - [CPU_XNNPACK]: Forces multithreaded CPU execution provider with XNNPACK.
+ */
+enum class TranslationHardwareAccelerator { AUTO, QUALCOMM_NPU, NNAPI, CPU_XNNPACK }
+
 enum class TranslationReadingOrder { AUTO, RTL_MANGA, LTR_COMIC }
 
 class TranslationPreferences(
@@ -102,6 +111,9 @@ class TranslationPreferences(
      * backend with converted models, not generic NNAPI.
      */
     fun translationOnnxEp() = preferenceStore.getString("translation_onnx_ep", "AUTO")
+
+    fun translationHardwareAccelerator() =
+        preferenceStore.getEnum("translation_hardware_accelerator", TranslationHardwareAccelerator.AUTO)
 
     /**
      * Legacy experimental QNN toggle.

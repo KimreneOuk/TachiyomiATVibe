@@ -11,7 +11,12 @@ object DeviceCapability {
 
     val isQualcommSnapdragon: Boolean by lazy {
         socManufacturer.contains("qualcomm", ignoreCase = true) ||
-            socManufacturer.equals("qcom", ignoreCase = true)
+            socManufacturer.contains("qcom", ignoreCase = true) ||
+            socManufacturer.contains("qti", ignoreCase = true) ||
+            Build.HARDWARE.contains("qcom", ignoreCase = true) ||
+            Build.BOARD.contains("qcom", ignoreCase = true) ||
+            socModel.startsWith("sm", ignoreCase = true) ||
+            socModel.startsWith("sdm", ignoreCase = true)
     }
 
     val isProbablyEmulator: Boolean by lazy {

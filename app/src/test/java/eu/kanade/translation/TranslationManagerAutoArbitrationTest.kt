@@ -13,9 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
-import sun.misc.Unsafe
+import org.junit.jupiter.api.assertThrows
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.AiEngine
@@ -169,7 +168,9 @@ class TranslationManagerAutoArbitrationTest {
         translator: ChapterTranslator,
         ownership: RevisionOwnershipGate,
     ): TranslationManager {
-        val manager = unsafe.allocateInstance(TranslationManager::class.java) as TranslationManager
+        val unsafeClass = Class.forName("sun.misc.Unsafe")
+        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
+        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
         putObject(manager, "scheduler", scheduler)
         putObject(manager, "translator", translator)
         putObject(manager, "revisionOwnership", ownership)
@@ -177,15 +178,20 @@ class TranslationManagerAutoArbitrationTest {
     }
 
     private fun putObject(target: Any, fieldName: String, value: Any) {
+        val unsafeClass = Class.forName("sun.misc.Unsafe")
+        val objectFieldOffset = unsafeClass.getMethod("objectFieldOffset", java.lang.reflect.Field::class.java)
+        val putObject = unsafeClass.getMethod("putObject", Any::class.java, Long::class.javaPrimitiveType, Any::class.java)
         val field = target.javaClass.getDeclaredField(fieldName)
-        unsafe.putObject(target, unsafe.objectFieldOffset(field), value)
+        val offset = objectFieldOffset.invoke(unsafe, field) as Long
+        putObject.invoke(unsafe, target, offset, value)
     }
 
     private companion object {
-        val unsafe: Unsafe by lazy {
-            val field = Unsafe::class.java.getDeclaredField("theUnsafe")
+        val unsafe: Any by lazy {
+            val unsafeClass = Class.forName("sun.misc.Unsafe")
+            val field = unsafeClass.getDeclaredField("theUnsafe")
             field.isAccessible = true
-            field.get(null) as Unsafe
+            field.get(null)
         }
     }
 }

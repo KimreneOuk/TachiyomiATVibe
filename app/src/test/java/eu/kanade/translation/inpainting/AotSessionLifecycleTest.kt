@@ -57,10 +57,28 @@ class AotSessionLifecycleTest {
     }
 
     @Test
+    fun `QNN closes independently first and siblings survive its failure`() {
+        val closed = mutableListOf<String>()
+        val failures = mutableListOf<AotSessionLifecycle.CloseFailure>()
+        AotSessionLifecycle.closeIndependently(
+            fixed = AutoCloseable { closed += "fixed" },
+            dynamic = AutoCloseable { closed += "dynamic" },
+            nnapi = AutoCloseable { closed += "nnapi" },
+            qnn = AutoCloseable {
+                closed += "qnn"
+                error("qnn close")
+            },
+            onFailure = failures::add,
+        )
+        closed shouldContainExactly listOf("qnn", "nnapi", "fixed", "dynamic")
+        failures.map { it.route } shouldContainExactly listOf("qnn")
+    }
+
+    @Test
     fun `aliased NNAPI handle closes only once`() {
         var closes = 0
         val aliased = AutoCloseable { closes++ }
-        AotSessionLifecycle.closeIndependently(aliased, aliased, aliased)
+        AotSessionLifecycle.closeIndependently(aliased, aliased, aliased, aliased)
         closes shouldBe 1
     }
 

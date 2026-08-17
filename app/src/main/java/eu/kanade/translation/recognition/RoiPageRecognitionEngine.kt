@@ -23,6 +23,7 @@ import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.rendering.RenderColorEstimator
+import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
@@ -279,11 +280,19 @@ class RoiPageRecognitionEngine(
         // close() cannot free a native session out from under an in-flight
         // OrtSession.run(). Each native pass (detect + every recognize()) must
         // be inside this critical section.
+        var detectMs = 0L
+        var segmentMs = 0L
+        var ocrMs = 0L
         val analyzed = try {
             nativeGuard.withLock {
                 if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
+                val detectStart = System.nanoTime()
                 val detections = localDetector.detect(bitmap)
+                detectMs = (System.nanoTime() - detectStart) / 1_000_000
+
+                val segmentStart = System.nanoTime()
                 val bubbleMasksRaw = bubbleSegmenter?.segment(bitmap) ?: emptyList()
+                segmentMs = (System.nanoTime() - segmentStart) / 1_000_000
                 val bubbleMasks = bubbleMasksRaw.map { eu.kanade.translation.segmentation.BubbleMaskRle.encode(it) }
                 val bubbles = detections.filter { it.label == 0 }
                 val textDetections = detections.filter { it.label == 1 || it.label == 2 }
@@ -307,139 +316,193 @@ class RoiPageRecognitionEngine(
                 }
                 val lockedRecognizedBlocks = mutableListOf<RecognizedBlock>()
                 val engine = localOcrEngine
-                for (detection in filteredDetections) {
-                    // TachiyomiAT: cooperative close — bail out of the per-ROI OCR
-                    // loop if close() ran between iterations, before the native call.
-                    if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
-                    // TachiyomiAT: horizontal-line engines (PaddleOCR) need context
-                    // padding to avoid edge-effect failures; native-vertical engines
-                    // get tight unbounded crops.
-                    val pad = if (engine.prefersHorizontalText) 12 else 0
-                    val unpaddedCrop = cropBitmap(bitmap, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3])
-                    val crop = if (pad > 0) cropBitmap(bitmap, detection.bbox[0] - pad, detection.bbox[1] - pad, detection.bbox[2] + pad, detection.bbox[3] + pad) else unpaddedCrop
-                    // TachiyomiAT: PaddleOCR's rec head is a CNN+CTC trained on HORIZONTAL
-                    // text lines; a tall vertical crop yields garbage. Two-part fix:
-                    //  1. COLUMN SPLITTING: split by ink-gap, OCR each column separately,
-                    //     concatenate right-to-left (whole-box 1/6 vs per-column 6/6).
-                    //  2. CCW ROTATION per column; CW yields upside-down text (0/6 vs 6/6).
-                    // OCR-only; rendering stays vertical via direction="TTB" below.
-                    // Gated on prefersHorizontalText — MangaOcr/ML Kit read vertical natively.
-                    val bbox = detection.bbox
-                    val boxWidthPre = (bbox[2] - bbox[0]).toFloat()
-                    val boxHeightPre = (bbox[3] - bbox[1]).toFloat()
-                    val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
-                        language == TextRecognizerLanguage.CHINESE ||
-                        language == TextRecognizerLanguage.KOREAN
-                    val tallVertical = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
-                    // TachiyomiAT: PaddleOCR rec reads a single horizontal strip, so any
-                    // multi-line bubble must be split by the det model first. Run the
-                    // det-based split on EVERY Paddle bubble — recognizeDetColumns
-                    // classifies each line as horizontal or vertical and joins correctly,
-                    // so English multi-line paragraphs read properly (previously gated to
-                    // tall CJK boxes only and collapsed English into one garbled line).
-                    // MangaOcr/ML Kit read vertical natively and stay on the single-read path.
-                    val paddleMultiLine = engine.prefersHorizontalText && paddleDet != null
-                    // CJK vertical bubble on a Paddle engine WITHOUT the det asset: a
-                    // horizontal read of vertical text is reliably wrong, so use the
-                    // ink-gap heuristic column split (preserves prior behavior).
-                    val paddleVerticalHeuristic = isVerticalLanguage &&
-                        engine.prefersHorizontalText &&
-                        paddleDet == null &&
-                        boxHeightPre > boxWidthPre * 1.5f
-                    var rotatedForOcr = false
-                    val text = try {
-                        when {
-                            paddleMultiLine -> {
-                                rotatedForOcr = tallVertical
-                                var rawText = recognizeMultiLine(engine, crop, paddleDet, tallVertical)
-                                if (rawText.isEmpty() && isVerticalLanguage && boxHeightPre > boxWidthPre) {
-                                    rotatedForOcr = true
-                                    val fallbackText = recognizeMultiLine(engine, unpaddedCrop, null, verticalFallback = true)
-                                    if (fallbackText.isNotEmpty()) rawText = fallbackText
-                                }
-                                rawText
-                            }
-                            paddleVerticalHeuristic -> {
-                                rotatedForOcr = true
-                                recognizeMultiLine(engine, unpaddedCrop, paddleDet, verticalFallback = true)
-                            }
-                            else -> {
-                                val rawText = engine.recognizeWithConf(crop).first
-                                if (OcrTextFilter.isUsable(rawText, language)) rawText else ""
-                            }
-                        }
+                val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
+                    language == TextRecognizerLanguage.CHINESE ||
+                    language == TextRecognizerLanguage.KOREAN
+
+                val ocrStart = System.nanoTime()
+                if (!engine.prefersHorizontalText) {
+                    if (closed) throw IllegalStateException("ONNX recognition engine closed before batch OCR")
+                    val crops = filteredDetections.map { detection ->
+                        cropBitmap(bitmap, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3])
+                    }
+                    val batchResults = try {
+                        engine.recognizeBatchWithConf(crops)
                     } catch (e: Exception) {
-                        logcat(LogPriority.ERROR, e) { "Failed to recognize text in box" }
-                        ""
+                        logcat(LogPriority.ERROR, e) { "Failed batch OCR recognition" }
+                        emptyList()
                     } finally {
-                        if (crop !== unpaddedCrop) {
-                            crop.recycle()
-                        }
-                        unpaddedCrop.recycle()
+                        crops.forEach { it.recycle() }
                     }
-                    // TachiyomiAT: per-block OCR diagnostics, gated by the opt-in
-                    // translation_diagnostics pref so recognition quality is inspectable.
-                    if (resolveDiagnostics()) {
-                        logcat(LogPriority.INFO) {
-                            "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
-                                "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
-                                "rotated=${if (rotatedForOcr) "90ccw" else "no"} text=\"$text\""
+
+                    for (i in filteredDetections.indices) {
+                        val detection = filteredDetections[i]
+                        val bbox = detection.bbox
+                        val rawText = batchResults.getOrNull(i)?.first ?: ""
+                        val text = if (OcrTextFilter.isUsable(rawText, language)) rawText else ""
+
+                        if (resolveDiagnostics()) {
+                            logcat(LogPriority.INFO) {
+                                "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
+                                    "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
+                                    "rotated=no text=\"$text\""
+                            }
                         }
-                    }
-                    val boxWidth = (bbox[2] - bbox[0]).toFloat()
-                    val boxHeight = (bbox[3] - bbox[1]).toFloat()
-                    val centerX = (bbox[0] + bbox[2]) / 2.0
-                    val centerY = (bbox[1] + bbox[3]) / 2.0
-                    val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
-                    val parentBbox = rawParent?.let { rp ->
-                        val siblings = bubbles.filter { it !== rp }.map { it.bbox }
-                        trimParentBbox(rp.bbox, bbox, siblings)
-                    } ?: rawParent?.bbox
-                    // TachiyomiAT: text color sampled against the ORIGINAL bitmap as a
-                    // first pass; ChapterTranslator recomputes AFTER inpainting (against
-                    // the cleaned bitmap). Kept as a fallback if inpainting is skipped.
-                    val renderColors = RenderColorEstimator.estimate(
-                        bitmap,
-                        bbox[0],
-                        bbox[1],
-                        bbox[2],
-                        bbox[3],
-                        parentBbox,
-                    )
-                    // TachiyomiAT: render direction. The renderer only goes vertical when
-                    // direction=="TTB"; without this, Japanese vertical text was rendered
-                    // horizontally even though MangaOcr read it correctly. Height-to-width
-                    // ratio heuristic, gated on CJK languages so Latin text is unaffected.
-                    val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
-                    lockedRecognizedBlocks.add(
-                        RecognizedBlock(
-                            detection = detection,
-                            block = TranslationBlock(
-                                text = text,
-                                width = boxWidth,
-                                height = boxHeight,
-                                x = bbox[0].toFloat(),
-                                y = bbox[1].toFloat(),
-                                symWidth = boxWidth * 0.1f,
-                                symHeight = boxHeight * 0.1f,
-                                angle = 0f,
-                                label = detection.label,
-                                score = detection.score,
-                                parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
-                                parentY = parentBbox?.get(1)?.toFloat() ?: 0f,
-                                parentWidth = parentBbox?.let { (it[2] - it[0]).toFloat() } ?: 0f,
-                                parentHeight = parentBbox?.let { (it[3] - it[1]).toFloat() } ?: 0f,
-                                textColor = renderColors.first,
-                                strokeColor = renderColors.second,
-                                strokeWidth = renderColors.third,
-                                direction = direction,
-                                segmentationMask = bubbleMasks.firstOrNull { rle ->
-                                    rle.overlapPixels(centerX.toInt(), centerY.toInt(), centerX.toInt() + 1, centerY.toInt() + 1) > 0
-                                },
+                        val boxWidth = (bbox[2] - bbox[0]).toFloat()
+                        val boxHeight = (bbox[3] - bbox[1]).toFloat()
+                        val centerX = (bbox[0] + bbox[2]) / 2.0
+                        val centerY = (bbox[1] + bbox[3]) / 2.0
+                        val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
+                        val parentBbox = rawParent?.let { rp ->
+                            val siblings = bubbles.filter { it !== rp }.map { it.bbox }
+                            trimParentBbox(rp.bbox, bbox, siblings)
+                        } ?: rawParent?.bbox
+                        val renderColors = RenderColorEstimator.estimate(
+                            bitmap,
+                            bbox[0],
+                            bbox[1],
+                            bbox[2],
+                            bbox[3],
+                            parentBbox,
+                        )
+                        val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
+                        lockedRecognizedBlocks.add(
+                            RecognizedBlock(
+                                detection = detection,
+                                block = TranslationBlock(
+                                    text = text,
+                                    width = boxWidth,
+                                    height = boxHeight,
+                                    x = bbox[0].toFloat(),
+                                    y = bbox[1].toFloat(),
+                                    symWidth = boxWidth * 0.1f,
+                                    symHeight = boxHeight * 0.1f,
+                                    angle = 0f,
+                                    label = detection.label,
+                                    score = detection.score,
+                                    parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
+                                    parentY = parentBbox?.get(1)?.toFloat() ?: 0f,
+                                    parentWidth = parentBbox?.let { (it[2] - it[0]).toFloat() } ?: 0f,
+                                    parentHeight = parentBbox?.let { (it[3] - it[1]).toFloat() } ?: 0f,
+                                    textColor = renderColors.first,
+                                    strokeColor = renderColors.second,
+                                    strokeWidth = renderColors.third,
+                                    direction = direction,
+                                    segmentationMask = bubbleMasks.firstOrNull { rle ->
+                                        rle.overlapPixels(centerX.toInt(), centerY.toInt(), centerX.toInt() + 1, centerY.toInt() + 1) > 0
+                                    },
+                                ),
                             ),
-                        ),
-                    )
+                        )
+                    }
+                } else {
+                    for (detection in filteredDetections) {
+                        // TachiyomiAT: cooperative close — bail out of the per-ROI OCR
+                        // loop if close() ran between iterations, before the native call.
+                        if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
+                        // TachiyomiAT: horizontal-line engines (PaddleOCR) need context
+                        // padding to avoid edge-effect failures; native-vertical engines
+                        // get tight unbounded crops.
+                        val pad = 12
+                        val unpaddedCrop = cropBitmap(bitmap, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3])
+                        val crop = cropBitmap(bitmap, detection.bbox[0] - pad, detection.bbox[1] - pad, detection.bbox[2] + pad, detection.bbox[3] + pad)
+                        val bbox = detection.bbox
+                        val boxWidthPre = (bbox[2] - bbox[0]).toFloat()
+                        val boxHeightPre = (bbox[3] - bbox[1]).toFloat()
+                        val tallVertical = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
+                        val paddleMultiLine = paddleDet != null
+                        val paddleVerticalHeuristic = isVerticalLanguage &&
+                            paddleDet == null &&
+                            boxHeightPre > boxWidthPre * 1.5f
+                        var rotatedForOcr = false
+                        val text = try {
+                            when {
+                                paddleMultiLine -> {
+                                    rotatedForOcr = tallVertical
+                                    var rawText = recognizeMultiLine(engine, crop, paddleDet, tallVertical)
+                                    if (rawText.isEmpty() && isVerticalLanguage && boxHeightPre > boxWidthPre) {
+                                        rotatedForOcr = true
+                                        val fallbackText = recognizeMultiLine(engine, unpaddedCrop, null, verticalFallback = true)
+                                        if (fallbackText.isNotEmpty()) rawText = fallbackText
+                                    }
+                                    rawText
+                                }
+                                paddleVerticalHeuristic -> {
+                                    rotatedForOcr = true
+                                    recognizeMultiLine(engine, unpaddedCrop, paddleDet, verticalFallback = true)
+                                }
+                                else -> {
+                                    val rawText = engine.recognizeWithConf(crop).first
+                                    if (OcrTextFilter.isUsable(rawText, language)) rawText else ""
+                                }
+                            }
+                        } catch (e: Exception) {
+                            logcat(LogPriority.ERROR, e) { "Failed to recognize text in box" }
+                            ""
+                        } finally {
+                            if (crop !== unpaddedCrop) {
+                                crop.recycle()
+                            }
+                            unpaddedCrop.recycle()
+                        }
+                        // TachiyomiAT: per-block OCR diagnostics, gated by the opt-in
+                        // translation_diagnostics pref so recognition quality is inspectable.
+                        if (resolveDiagnostics()) {
+                            logcat(LogPriority.INFO) {
+                                "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
+                                    "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
+                                    "rotated=${if (rotatedForOcr) "90ccw" else "no"} text=\"$text\""
+                            }
+                        }
+                        val boxWidth = (bbox[2] - bbox[0]).toFloat()
+                        val boxHeight = (bbox[3] - bbox[1]).toFloat()
+                        val centerX = (bbox[0] + bbox[2]) / 2.0
+                        val centerY = (bbox[1] + bbox[3]) / 2.0
+                        val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
+                        val parentBbox = rawParent?.let { rp ->
+                            val siblings = bubbles.filter { it !== rp }.map { it.bbox }
+                            trimParentBbox(rp.bbox, bbox, siblings)
+                        } ?: rawParent?.bbox
+                        val renderColors = RenderColorEstimator.estimate(
+                            bitmap,
+                            bbox[0],
+                            bbox[1],
+                            bbox[2],
+                            bbox[3],
+                            parentBbox,
+                        )
+                        val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
+                        lockedRecognizedBlocks.add(
+                            RecognizedBlock(
+                                detection = detection,
+                                block = TranslationBlock(
+                                    text = text,
+                                    width = boxWidth,
+                                    height = boxHeight,
+                                    x = bbox[0].toFloat(),
+                                    y = bbox[1].toFloat(),
+                                    symWidth = boxWidth * 0.1f,
+                                    symHeight = boxHeight * 0.1f,
+                                    angle = 0f,
+                                    label = detection.label,
+                                    score = detection.score,
+                                    parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
+                                    parentY = parentBbox?.get(1)?.toFloat() ?: 0f,
+                                    parentWidth = parentBbox?.let { (it[2] - it[0]).toFloat() } ?: 0f,
+                                    parentHeight = parentBbox?.let { (it[3] - it[1]).toFloat() } ?: 0f,
+                                    textColor = renderColors.first,
+                                    strokeColor = renderColors.second,
+                                    strokeWidth = renderColors.third,
+                                    direction = direction,
+                                    segmentationMask = bubbleMasks.firstOrNull { rle ->
+                                        rle.overlapPixels(centerX.toInt(), centerY.toInt(), centerX.toInt() + 1, centerY.toInt() + 1) > 0
+                                    },
+                                ),
+                            ),
+                        )
+                    }
                 }
+                ocrMs = (System.nanoTime() - ocrStart) / 1_000_000
                 RecognizedAnalyzeResult(lockedPageTranslation, lockedRecognizedBlocks)
             }
         } finally {
@@ -484,6 +547,11 @@ class RoiPageRecognitionEngine(
         pageTranslation.inpaintMaskBoxes = PageInpaintingPlanner.computeMask(pageTranslation)
         val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
         logcat(LogPriority.INFO) {
+            "[translation_perf] route=${HardwareDiscoveryEngine.activeRoute.name} " +
+                "stage=recognition total=${elapsedMs}ms detector=${detectMs}ms segmenter=${segmentMs}ms " +
+                "ocr=${ocrMs}ms (blocks=${pageTranslation.blocks.size} batched=${!localOcrEngine.prefersHorizontalText})"
+        }
+        logcat(LogPriority.INFO) {
             "RoiPageRecognitionEngine analyzed ${pageTranslation.blocks.size} blocks " +
                 "emptyOcr=${pageTranslation.blocks.count { it.text.isBlank() }} in ${elapsedMs}ms"
         }
@@ -503,7 +571,8 @@ class RoiPageRecognitionEngine(
         // Re-check [closed] inside the lock. Box/mask computation is delegated to
         // PageInpaintingEngine (do not duplicate here — an earlier copy was
         // unreachable and masked the real planner path).
-        return try {
+        val inpaintStart = System.nanoTime()
+        val result = try {
             nativeGuard.withLock {
                 if (closed) {
                     pageTranslation.inpaintStatus = StageStatus.FAILED
@@ -526,6 +595,12 @@ class RoiPageRecognitionEngine(
                 }
             }
         }
+        val inpaintMs = (System.nanoTime() - inpaintStart) / 1_000_000
+        logcat(LogPriority.INFO) {
+            "[translation_perf] route=${HardwareDiscoveryEngine.activeRoute.name} " +
+                "stage=inpainting total=${inpaintMs}ms mode=$inpaintingMode maskBoxes=${pageTranslation.inpaintMaskBoxes.size}"
+        }
+        return result
     }
 
     private data class RecognizedBlock(
