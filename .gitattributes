@@ -23,5 +23,8 @@
 *.pyc binary
 *.swp binary
 
+# Corpus gate binary outputs (raw ARGB int32 — must not be line-ending normalized)
+*.bin binary
+
 # ONNX models (protobuf binary - must not be line-ending normalized)
 *.onnx binary

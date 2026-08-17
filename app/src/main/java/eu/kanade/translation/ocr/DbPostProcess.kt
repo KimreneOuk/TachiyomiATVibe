@@ -317,7 +317,6 @@ object DbPostProcess {
         return Component(minX, minY, maxX, maxY, count, probSum)
     }
 
-
     private data class Component(
         val minX: Int,
         val minY: Int,

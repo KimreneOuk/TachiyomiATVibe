@@ -1,10 +1,24 @@
-# Experimental pager translation overlay
+# Live translation overlay
 
-The **Experimental live pager overlay** setting is disabled by default. When enabled, the interactive pager loads the persisted `.cleaned.png` background and draws translated blocks in native Canvas coordinates over the active `SubsamplingScaleImageView`. This avoids producing and decoding a second full-page `.rendered.png` for the pager path.
+The reader displays the persisted cleaned image and draws translated blocks in
+native Canvas coordinates over the active `SubsamplingScaleImageView`. Pager and
+webtoon holders both bind the same overlay path across reader modes. This avoids
+producing a second full-page image
+for every text update and lets a corrected block appear without waiting for a
+new baked bitmap.
 
-The overlay is deliberately pager-only. Animated pages have no stable SSIV transform and therefore must be baked before display. Webtoon does not attach a cleaned live-overlay result: it logs an explicit error and keeps the original page visible rather than silently presenting the cleaned image without its translated text. Batch translation remains baked so its output can be opened in any reader mode.
+Batch pre-translation is readable page-by-page. The first-pass translation is
+shown as soon as the cleaned image and translated blocks are ready, including
+blocks marked for automatic revision. When delayed Pass 2 returns a correction,
+the shared store updates and the reader refreshes the overlay for that page.
+The batch progress surfaces expose the separate first-pass and revision phases;
+“rendered” does not mean “revision complete.”
 
-`PageTranslation` persists the cleaned image name, `cleanedRevision`, source overlay dimensions, blocks, and normal stage state. `CURRENT_INPAINT_REVISION` is versioned so stale cleanup output is reprocessed. Failed overlay binding is logged with the page's existing reader error path; it never attempts to show baked text over a missing cleaned image.
+`PageTranslation` persists the cleaned image name, `inpaintRevision`, source
+overlay dimensions, blocks, and normal stage state. `CURRENT_INPAINT_REVISION`
+is versioned so stale cleanup output is reprocessed. Failed overlay binding is
+logged with the page's existing reader error path; it never attempts to show
+translated text over a missing cleaned image.
 
 The Canvas renderer maps source coordinates through SSIV's `sourceToViewCoord` transform, redraws at most once per frame for pan/zoom updates, uses geometric 1.25× scale buckets to avoid layout churn, and renders the same vertical punctuation/layout rules as baked output.
 

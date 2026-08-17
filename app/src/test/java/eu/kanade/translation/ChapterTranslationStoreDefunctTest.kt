@@ -92,8 +92,8 @@ class ChapterTranslationStoreDefunctTest {
         store.markDefunct()
         store.replaceAll(
             mapOf(
-                "p1" to PageTranslation(renderedImageName = "p1.rendered.png"),
-                "p2" to PageTranslation(renderedImageName = "p2.rendered.png"),
+                "p1" to PageTranslation(cleanedImageName = "p1.cleaned.png"),
+                "p2" to PageTranslation(cleanedImageName = "p2.cleaned.png"),
             ),
         )
 

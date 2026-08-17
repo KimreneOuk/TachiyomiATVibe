@@ -14,6 +14,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
+import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +79,7 @@ class Downloader(
     private val xml: XML = Injekt.get(),
     private val getCategories: GetCategories = Injekt.get(),
     private val getTracks: GetTracks = Injekt.get(),
+    private val translationManager: TranslationManager = Injekt.get(),
 ) {
 
     /**
@@ -392,6 +395,23 @@ class Downloader(
                 download.source,
             )
 
+            val onDiskKeys = if (translationManager.hasTranslationStore(download.chapter, download.manga, download.source)) {
+                tmpDir.listFiles().orEmpty()
+                    .filter { file ->
+                        if (!file.isFile) {
+                            false
+                        } else {
+                            val name = file.name ?: return@filter false
+                            runCatching { ImageUtil.isImage(name) { file.openInputStream() } }
+                                .getOrDefault(false)
+                        }
+                    }
+                    .mapNotNull { it.name }
+                    .sorted()
+            } else {
+                emptyList()
+            }
+
             // Only rename the directory if it's downloaded
             if (downloadPreferences.saveChaptersAsCBZ().get()) {
                 archiveChapter(mangaDir, chapterDirname, tmpDir)
@@ -403,6 +423,18 @@ class Downloader(
             DiskUtil.createNoMediaFile(tmpDir, context)
 
             download.status = Download.State.DOWNLOADED
+
+            if (onDiskKeys.isNotEmpty()) {
+                val onlineKeys = pageList.map { page -> onlinePageTranslationKey(page.imageUrl, page.url) }
+                translationManager.rekeyTranslationForCompletedDownload(
+                    chapter = download.chapter,
+                    manga = download.manga,
+                    source = download.source,
+                    onlineKeyByPageIndex = onlineKeys,
+                    onDiskKeyByPageIndex = onDiskKeys,
+                )
+            }
+            translationManager.startTranslationAfterDownloadIfRequested(download.manga, download.chapter)
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             // If the page list threw, it will resume here

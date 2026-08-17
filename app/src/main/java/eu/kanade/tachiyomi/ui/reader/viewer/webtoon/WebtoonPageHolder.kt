@@ -11,14 +11,18 @@ import androidx.core.view.updateLayoutParams
 import androidx.core.view.updateMargins
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
-import eu.kanade.translation.model.shouldSurfaceError
-import eu.kanade.translation.model.displayImageName
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageFeedbackState
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderPageFeedback
+import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
+import eu.kanade.tachiyomi.ui.reader.viewer.toReaderPageFeedback
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.translation.model.displayImageName
+import eu.kanade.translation.model.isStageRunning
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +42,30 @@ import tachiyomi.core.common.util.lang.withIOContext
 import tachiyomi.core.common.util.lang.withUIContext
 import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
+
+/**
+ * Identity fence for callbacks that outlive a Webtoon holder bind. A recycled
+ * holder can keep the same view instance while its page changes, so generation
+ * and page identity are both required.
+ */
+internal data class ReaderHolderBindFence<T : Any>(
+    val generation: Int,
+    val page: T,
+) {
+    fun isCurrent(currentGeneration: Int, currentPage: T?): Boolean =
+        generation == currentGeneration && page === currentPage
+
+    /**
+     * Dispatches an emission only while the captured bind and page are current.
+     * This is the production seam used by the Auto/page-view collectors and
+     * lets rebind tests assert that a stale callback did not mutate the holder.
+     */
+    fun dispatchIfCurrent(currentGeneration: Int, currentPage: T?, action: () -> Unit): Boolean {
+        if (!isCurrent(currentGeneration, currentPage)) return false
+        action()
+        return true
+    }
+}
 
 class WebtoonPageHolder(
     private val frame: ReaderPageImageView,
@@ -64,6 +92,8 @@ class WebtoonPageHolder(
         get() = viewer.recycler.height
 
     private var page: ReaderPage? = null
+    private var autoFeedbackState: ReaderPageFeedbackState? = null
+    private var feedbackAttemptActive = false
 
     // TachiyomiAT: the holder's coroutine scope. Unlike PagerPageHolder (which
     // cancels its scope once in onDetachedFromWindow, the end of the view's
@@ -75,6 +105,8 @@ class WebtoonPageHolder(
     private var holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var loadJob: Job? = null
+    private var autoTranslationJob: Job? = null
+    private var pageViewJob: Job? = null
 
     /**
      * TachiyomiAT: the rendered/cleaned image FILE NAME currently displayed by
@@ -130,41 +162,52 @@ class WebtoonPageHolder(
      * mid-translation" predicate that decides whether to show the cancel
      * affordance vs. the translate affordance.
      */
-    private fun isPageBeingTranslated(): Boolean = page?.translation?.let { t ->
-        t.ocrStatus == "RUNNING" ||
-            t.inpaintStatus == "RUNNING" ||
-            t.translationStatus == "RUNNING" ||
-            t.renderStatus == "RUNNING"
-    } ?: false
+    private fun isPageBeingTranslated(): Boolean = page?.translation?.isStageRunning == true
 
-    /**
-     * TachiyomiAT: lightweight status-only sync. Counterpart to [refreshTranslation]
-     * for the case where a page's stage transitioned (RUNNING/FAILED) but the
-     * displayed IMAGE did not change. Updates ONLY the processing overlay and the
-     * translate/cancel button + error text — it must never re-decode or re-set
-     * the image. Holder-level page-view updates call this for status-only changes,
-     * which avoids the redundant image work that caused the auto-translate blink.
-     */
-    fun syncTranslationStatus() {
+    /** Lightweight status-only sync; never re-decodes or re-sets the image. */
+    fun syncTranslationFeedback() {
         val currentPage = page ?: return
+        val durableFeedback = currentPage.translation?.toReaderPageFeedback()
         val isBeingTranslated = isPageBeingTranslated()
+        if (isBeingTranslated && !feedbackAttemptActive) {
+            frame.beginTranslationFeedbackAttempt()
+            feedbackAttemptActive = true
+        } else if (!isBeingTranslated) {
+            feedbackAttemptActive = false
+        }
+        val feedback = selectReaderPageFeedback(
+            durableFeedback = durableFeedback,
+            autoFeedback = autoFeedbackState,
+            durableAttemptActive = isBeingTranslated,
+        )
+        frame.showTranslationFeedback(feedback)
         if (isBeingTranslated) {
-            frame.showProcessingOverlay(true)
             frame.setTranslating(true)
         } else {
-            frame.showProcessingOverlay(false)
             frame.showTranslateButton(translationEnabled)
             frame.setTranslating(false)
         }
-        // Surface errors only when idle (matches refreshTranslation's guard).
-        val errorMsg = if (!isBeingTranslated) currentPage.translation?.errorMessage else null
-        frame.showTranslationError(errorMsg)
     }
 
     fun bind(page: ReaderPage) {
         // TachiyomiAT: invalidate any in-flight setImage() so it can't write the
         // previous page's image into this rebound holder (see [bindGeneration]).
         bindGeneration++
+        val generation = bindGeneration
+        val boundPage = page
+        autoTranslationJob?.cancel()
+        autoTranslationJob = null
+        pageViewJob?.cancel()
+        pageViewJob = null
+        loadJob?.cancel()
+        loadJob = null
+        // A bind can happen without recycle() when RecyclerView reuses an
+        // attached holder. Reset both decoded views and presentation state at
+        // this boundary so page A cannot remain visible behind page B.
+        frame.recycle()
+        removeErrorLayout()
+        progressIndicator.setProgress(0)
+        progressContainer.isVisible = true
         // TachiyomiAT: a freshly bound page hasn't rendered anything yet — reset
         // the dedup cache so the first refresh after rebind always applies.
         lastShownImageName = null
@@ -175,24 +218,36 @@ class WebtoonPageHolder(
             holderScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         }
         this.page = page
-        // TachiyomiAT: seed the processing overlay from the page's DURABLE
-        // translation status the instant it is bound. Previously the overlay was
-        // only (re)shown when [setImage]/[refreshTranslation]/[syncTranslationStatus]
+        // TachiyomiAT: seed the stage pill from the page's DURABLE translation
+        // status the instant it is bound. Previously the overlay was only
+        // (re)shown when [setImage]/[refreshTranslation]
         // ran — and those are only driven by the page-load statusFlow reaching READY
         // or by a page-view update reaching an ATTACHED holder. So a
         // page that scrolled off-screen (holder recycled → onDetachedFromWindow
         // cleared the ephemeral overlay state) and scrolled back WHILE still
-        // mid-translation had a window — sometimes a long one — with no animation,
+        // mid-translation had a window — sometimes a long one — with no feedback,
         // even though PageTranslation.*Status was still "RUNNING". Re-deriving the
-        // overlay here from the durable stage status makes it consistent: any bound
-        // (visible) translating page animates immediately, independent of event or
-        // decode timing. syncTranslationStatus() only touches the overlay/button
-        // (never re-decodes), so it's safe before loadPageAndProcessStatus() runs.
-        syncTranslationStatus()
-        viewer.activity.viewModel.observePageView(page)
-            ?.onEach { refreshTranslation() }
+        // stage here makes it consistent independent of event or decode timing.
+        autoFeedbackState = null
+        feedbackAttemptActive = false
+        syncTranslationFeedback()
+        val bindFence = ReaderHolderBindFence(generation, boundPage)
+        autoTranslationJob = viewer.activity.viewModel.autoTranslationUiState
+            .onEach { autoState ->
+                bindFence.dispatchIfCurrent(bindGeneration, this.page) {
+                    autoFeedbackState = autoState.orderedSlots
+                        .firstOrNull { it.pageIndex == boundPage.index }
+                        ?.state
+                        ?.toReaderPageFeedback()
+                    syncTranslationFeedback()
+                }
+            }
+            .launchIn(holderScope)
+        pageViewJob = viewer.activity.viewModel.observePageView(boundPage)
+            ?.onEach {
+                bindFence.dispatchIfCurrent(bindGeneration, this.page) { refreshTranslation() }
+            }
             ?.launchIn(holderScope)
-        loadJob?.cancel()
         loadJob = holderScope.launch { loadPageAndProcessStatus() }
         refreshLayoutParams()
     }
@@ -212,6 +267,10 @@ class WebtoonPageHolder(
     override fun recycle() {
         loadJob?.cancel()
         loadJob = null
+        autoTranslationJob?.cancel()
+        autoTranslationJob = null
+        pageViewJob?.cancel()
+        pageViewJob = null
 
         // TachiyomiAT: cancel the holder's coroutine scope. Previously this was
         // never done — the SupervisorJob + Main.immediate context leaked for the
@@ -225,6 +284,8 @@ class WebtoonPageHolder(
         // pool doesn't keep the previous page (and its stream lambdas) alive,
         // and doesn't carry stale dedup state into its next binding.
         page = null
+        autoFeedbackState = null
+        feedbackAttemptActive = false
         lastShownImageName = null
         bindGeneration++
 
@@ -296,6 +357,10 @@ class WebtoonPageHolder(
             boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
         }
         val streamFn = boundPage.stream ?: return
+        frame.prepareTranslationImage(boundPage.showTranslatedImage)
+        selectReaderTranslationOverlayBinding(boundPage.showTranslatedImage, boundPage.translation).let { overlay ->
+            frame.setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight)
+        }
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
         lastShownImageName = if (boundPage.showTranslatedImage) {
@@ -306,7 +371,7 @@ class WebtoonPageHolder(
 
         val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated) {
-            frame.showProcessingOverlay(true)
+            syncTranslationFeedback()
             // Show the cancel affordance instead of hiding the button, so the
             // user gets feedback that translation is running and can cancel it.
             frame.setTranslating(true)
@@ -337,7 +402,7 @@ class WebtoonPageHolder(
                     ),
                 )
                 if (isBeingTranslated) {
-                    frame.showProcessingOverlay(true)
+                    syncTranslationFeedback()
                 }
                 removeErrorLayout()
             }
@@ -346,7 +411,6 @@ class WebtoonPageHolder(
             logcat(LogPriority.ERROR, e)
             withUIContext {
                 if (myGeneration != bindGeneration) return@withUIContext
-                frame.showProcessingOverlay(false)
                 setError()
             }
         }
@@ -372,17 +436,17 @@ class WebtoonPageHolder(
 
         when {
             isBeingTranslated -> {
-                frame.showProcessingOverlay(true)
+                syncTranslationFeedback()
                 frame.setTranslating(true)
             }
             wantTranslated -> {
                 if (alreadyShowingCorrectImage) {
-                    frame.showProcessingOverlay(false)
+                    syncTranslationFeedback()
                     frame.showTranslateButton(translationEnabled)
                     frame.setTranslating(false)
                 } else {
                     currentPage.showTranslatedImage = true
-                    frame.showProcessingOverlay(false)
+                    syncTranslationFeedback()
                     frame.showTranslateButton(translationEnabled)
                     frame.setTranslating(false)
                     loadJob?.cancel()
@@ -391,12 +455,12 @@ class WebtoonPageHolder(
             }
             else -> {
                 if (alreadyShowingCorrectImage) {
-                    frame.showProcessingOverlay(false)
+                    syncTranslationFeedback()
                     frame.showTranslateButton(translationEnabled)
                     frame.setTranslating(false)
                 } else {
                     currentPage.showTranslatedImage = false
-                    frame.showProcessingOverlay(false)
+                    syncTranslationFeedback()
                     frame.showTranslateButton(translationEnabled)
                     frame.setTranslating(false)
                     loadJob?.cancel()
@@ -408,23 +472,10 @@ class WebtoonPageHolder(
         // short-circuit if nothing changed. When showing the original (not a
         // translated stream) there's no name to track.
         lastShownImageName = if (currentPage.showTranslatedImage) newName else null
-        // TachiyomiAT: surface translation errors — but only for a genuine
-        // terminal failure. Cancellation, the stranded-page sweep, and PARTIAL
-        // all write an explanatory errorMessage that is NOT a failure;
-        // shouldSurfaceError admits only real FAILED stages with no result.
-        val translation = currentPage.translation
-        val errorMsg = if (translation != null && translation.shouldSurfaceError) {
-            translation.errorMessage
-        } else {
-            null
-        }
-        frame.showTranslationError(errorMsg)
+        syncTranslationFeedback()
 
-        val wantOverlay = currentPage.showTranslatedImage && translation != null
-        val blocksToDraw = if (wantOverlay) translation!!.blocks else emptyList()
-        val w = if (wantOverlay) translation!!.imgWidth.toInt() else 0
-        val h = if (wantOverlay) translation!!.imgHeight.toInt() else 0
-        frame.setTranslationBlocks(blocksToDraw, w, h)
+        val overlay = selectReaderTranslationOverlayBinding(currentPage.showTranslatedImage, currentPage.translation)
+        frame.setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight)
     }
 
     private fun process(imageSource: BufferedSource): BufferedSource {
@@ -455,6 +506,8 @@ class WebtoonPageHolder(
 
     private fun setError() {
         progressContainer.isVisible = false
+        feedbackAttemptActive = false
+        frame.clearTranslationFeedback()
         initErrorLayout()
     }
 

@@ -87,10 +87,10 @@ class BubbleMaskBuilderTest {
         out[20] shouldBe 0
         out[24] shouldBe 0
         // Diagonals at distance sqrt(2) ARE reached (this is what rounds corners).
-        out[6] shouldBe 1   // (1,1)
-        out[8] shouldBe 1   // (3,1)
-        out[16] shouldBe 1  // (1,3)
-        out[18] shouldBe 1  // (3,3)
+        out[6] shouldBe 1 // (1,1)
+        out[8] shouldBe 1 // (3,1)
+        out[16] shouldBe 1 // (1,3)
+        out[18] shouldBe 1 // (3,3)
     }
 
     @Test
@@ -395,8 +395,10 @@ class BubbleMaskBuilderTest {
 
         val dist = BubbleMaskBuilder.distanceToMask(mask, w, h)
 
-        for (y in 3..6) for (x in 3..6) {
-            dist[y * w + x] shouldBe 0f
+        for (y in 3..6) {
+            for (x in 3..6) {
+                dist[y * w + x] shouldBe 0f
+            }
         }
     }
 

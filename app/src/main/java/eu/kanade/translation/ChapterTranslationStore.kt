@@ -3,9 +3,12 @@ package eu.kanade.translation
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.blockFingerprints
+import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isStageRunning
+import eu.kanade.translation.model.stableFingerprint
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
@@ -14,18 +17,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 
 class ChapterTranslationStore(
     // Mutable so persistLocked() caches the file materialized by fileCreator on
@@ -39,7 +48,39 @@ class ChapterTranslationStore(
     private var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
+    @Volatile
+    private var generation = 0L
+    private var nextPageVersion = 0L
+
     val state: StateFlow<Map<String, PageTranslation>> = _state.asStateFlow()
+    val currentGeneration: Long get() = generation
+
+    fun resetPreflight(): ChapterResetPreflight = chapterResetPreflight(state.value.values)
+
+    data class PageSnapshot(
+        val page: PageTranslation?,
+        val generation: Long,
+        val pageVersion: Long,
+        val blockFingerprints: List<String>,
+    )
+
+    data class PatchPrecondition(
+        val generation: Long,
+        val pageVersion: Long,
+        val blockFingerprints: List<String>? = null,
+    )
+
+    sealed interface PatchResult {
+        data class Accepted(val snapshot: PageSnapshot) : PatchResult
+        data class Rejected(val reason: String) : PatchResult
+    }
+
+    private class GenerationContext(
+        val store: ChapterTranslationStore,
+        val generation: Long,
+    ) : AbstractCoroutineContextElement(Key) {
+        companion object Key : CoroutineContext.Key<GenerationContext>
+    }
 
     // TachiyomiAT: chapter-level term→target glossary for cross-chunk translator
     // continuity. Persisted to sibling JSON (additive; failure degrades to empty).
@@ -48,6 +89,7 @@ class ChapterTranslationStore(
 
     private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var dirty = false
+    private var glossaryDirty = false
     private var persistJob: Job? = null
 
     /**
@@ -64,7 +106,21 @@ class ChapterTranslationStore(
     private var defunct = false
 
     fun markDefunct() {
+        persistJob?.let { pendingPersist ->
+            val completed = runBlocking {
+                withTimeoutOrNull(PERSIST_JOIN_TIMEOUT_MS) { pendingPersist.join() }
+            }
+            if (completed == null) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT store persist did not finish within $PERSIST_JOIN_TIMEOUT_MS ms before eviction"
+                }
+            }
+            pendingPersist.cancel()
+        }
+        persistJob = null
         defunct = true
+        generation++
+        logcat(LogPriority.WARN) { "TachiyomiAT store marked defunct: generation=$generation" }
     }
 
     val isDefunct: Boolean
@@ -74,30 +130,333 @@ class ChapterTranslationStore(
         private set
 
     init {
-        pages = initialPages.toPersistentMap()
+        initialPages.forEach { (pageKey, page) ->
+            val version = nextVersion()
+            pages = pages.put(
+                pageKey,
+                page.detachedCopy().apply {
+                    sourceFileName = sourceFileName ?: pageKey
+                    runGeneration = generation
+                    pageVersion = version
+                },
+            )
+        }
         _state.value = snapshotPages()
+    }
+
+    suspend fun snapshot(pageKey: String): PageSnapshot = mutex.withLock {
+        snapshotLocked(pageKey)
+    }
+
+    suspend fun beginGeneration(reason: String): Long = mutex.withLock {
+        generation++
+        logcat(LogPriority.INFO) { "TachiyomiAT store generation advanced: generation=$generation reason=$reason" }
+        generation
+    }
+
+    suspend fun invalidateGeneration(reason: String): Long = beginGeneration(reason)
+
+    suspend fun <T> withGeneration(generation: Long, block: suspend () -> T): T =
+        withContext(GenerationContext(this, generation)) { block() }
+
+    suspend fun patchPage(
+        pageKey: String,
+        expected: PatchPrecondition,
+        description: String,
+        patch: (PageTranslation?) -> PageTranslation,
+    ): PatchResult {
+        if (defunct) return rejected(pageKey, description, "store is defunct")
+        return mutex.withLock {
+            val current = pages[pageKey]
+            val rejection = when {
+                expected.generation != generation -> "generation expected=${expected.generation} actual=$generation"
+                expected.pageVersion != (current?.pageVersion ?: 0L) ->
+                    "pageVersion expected=${expected.pageVersion} actual=${current?.pageVersion ?: 0L}"
+                expected.blockFingerprints != null &&
+                    expected.blockFingerprints != current?.blockFingerprints().orEmpty() ->
+                    "block fingerprint changed"
+                else -> null
+            }
+            if (rejection != null) {
+                rejected(pageKey, description, rejection)
+            } else {
+                val candidate = try {
+                    patch(current?.detachedCopy())
+                } catch (failure: IllegalArgumentException) {
+                    return@withLock rejected(
+                        pageKey,
+                        description,
+                        failure.message ?: failure::class.java.simpleName,
+                    )
+                } catch (failure: IllegalStateException) {
+                    return@withLock rejected(
+                        pageKey,
+                        description,
+                        failure.message ?: failure::class.java.simpleName,
+                    )
+                }
+                val updated = ownedPage(pageKey, candidate)
+                pages = pages.put(pageKey, updated)
+                publishLocked(current, updated)
+                PatchResult.Accepted(snapshotLocked(pageKey))
+            }
+        }
+    }
+
+    suspend fun patchBlock(
+        pageKey: String,
+        blockIndex: Int,
+        expected: PatchPrecondition,
+        expectedBlockFingerprint: String,
+        expectedTranslation: String? = null,
+        expectedUserEditedAt: Long? = null,
+        description: String,
+        patch: (eu.kanade.translation.model.TranslationBlock) -> eu.kanade.translation.model.TranslationBlock,
+    ): PatchResult = patchPage(pageKey, expected, description) { page ->
+        requireNotNull(page) { "page missing" }
+        val current = page.blocks.getOrNull(blockIndex)
+            ?: throw IllegalStateException("block index $blockIndex missing")
+        check(current.stableFingerprint() == expectedBlockFingerprint) { "block fingerprint changed" }
+        if (expectedTranslation !=
+            null
+        ) {
+            check(current.translation == expectedTranslation) { "block translation changed" }
+        }
+        check(current.userEditedAt == expectedUserEditedAt) { "block edit timestamp changed" }
+        page.apply { blocks[blockIndex] = patch(current.detachedCopy()).detachedCopy() }
+    }
+
+    /** Apply a stage patch while checking only the identities owned by that stage. */
+    suspend fun applyStagePatch(
+        patch: StagePatch,
+        description: String,
+    ): StagePatchResult {
+        if (defunct) return rejectedStage(patch.pageKey, description, "store is defunct")
+        return mutex.withLock {
+            val current = pages[patch.pageKey]
+            when (patch) {
+                is StagePatch.Translation -> mergeTranslationLocked(current, patch.value, description)
+                is StagePatch.Inpaint -> mergeInpaintLocked(current, patch.value, description)
+                is StagePatch.Render -> mergeRenderLocked(current, patch.value, description)
+                is StagePatch.Revision -> mergeRevisionLocked(current, patch.value, description)
+            }
+        }
+    }
+
+    suspend fun mergeTranslation(
+        patch: TranslationStagePatch,
+        description: String = "translation stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Translation(patch), description)
+
+    suspend fun mergeInpaint(
+        patch: InpaintStagePatch,
+        description: String = "inpaint stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Inpaint(patch), description)
+
+    suspend fun mergeRender(
+        patch: RenderStagePatch,
+        description: String = "render stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Render(patch), description)
+
+    suspend fun mergeRevision(
+        patch: RevisionStagePatch,
+        description: String = "revision stage merge",
+    ): StagePatchResult = applyStagePatch(StagePatch.Revision(patch), description)
+
+    private fun mergeTranslationLocked(
+        current: PageTranslation?,
+        patch: TranslationStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val identityRejection = stageIdentityRejection(current, patch.generation)
+            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, patch.expectedSourceTexts)
+        if (identityRejection != null) {
+            return rejectedStage(patch.pageKey, description, identityRejection)
+        }
+        val page = current!!.detachedCopy()
+        val applied = mutableListOf<Int>()
+        val rejectedTargets = mutableListOf<String>()
+        patch.blocks.forEach { target ->
+            val block = page.blocks.getOrNull(target.blockIndex)
+            val rejection = when {
+                block == null -> "block index ${target.blockIndex} missing"
+                block.ocrFingerprint() != target.expectedOcrFingerprint ->
+                    "block ${target.blockIndex} OCR identity changed"
+                block.text != target.expectedSourceText ->
+                    "block ${target.blockIndex} source changed"
+                block.translation != target.expectedTranslation ->
+                    "block ${target.blockIndex} translation changed"
+                block.userEditedAt != target.expectedUserEditedAt ->
+                    "block ${target.blockIndex} user edit changed"
+                block.needsRevision != target.expectedNeedsRevision ->
+                    "block ${target.blockIndex} revision flag changed"
+                else -> null
+            }
+            if (rejection != null) {
+                rejectedTargets += rejection
+            } else {
+                block!!.translation = target.translation
+                block.needsRevision = target.needsRevision
+                applied += target.blockIndex
+            }
+        }
+        if (applied.isEmpty()) {
+            return rejectedStage(
+                patch.pageKey,
+                description,
+                rejectedTargets.firstOrNull() ?: "no translation targets",
+            )
+        }
+        page.translationStatus = patch.translationStatus
+        page.errorMessage = patch.errorMessage
+        val updated = ownedPage(patch.pageKey, page)
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), applied)
+    }
+
+    private fun mergeInpaintLocked(
+        current: PageTranslation?,
+        patch: InpaintStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val rejection = stageIdentityRejection(current, patch.generation)
+            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, null)
+            ?: current?.takeUnless { it.inpaintMaskFingerprint() == patch.expectedMaskFingerprint }
+                ?.let { "inpaint mask identity changed" }
+        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
+
+        val updated = ownedPage(
+            patch.pageKey,
+            current!!.detachedCopy().apply {
+                cleanedImageName = patch.cleanedImageName
+                inpaintRevision = patch.inpaintRevision
+                inpaintingModeUsed = patch.inpaintingModeUsed
+                inpaintStatus = patch.inpaintStatus
+                errorMessage = patch.errorMessage
+            },
+        )
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey))
+    }
+
+    private fun mergeRenderLocked(
+        current: PageTranslation?,
+        patch: RenderStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val rejection = stageIdentityRejection(current, patch.generation)
+            ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, null)
+            ?: current?.takeUnless { it.cleanedImageName == patch.expectedCleanedImageName }
+                ?.let { "cleaned image identity changed" }
+            ?: current?.takeUnless { it.inpaintRevision == patch.expectedInpaintRevision }
+                ?.let { "inpaint revision changed" }
+        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
+
+        val page = current!!.detachedCopy()
+        patch.blocks.forEach { target ->
+            val block = page.blocks.getOrNull(target.blockIndex)
+            if (block == null) {
+                return rejectedStage(patch.pageKey, description, "block index ${target.blockIndex} missing")
+            }
+            if (block.stableFingerprint() != target.expectedBlockFingerprint) {
+                return rejectedStage(patch.pageKey, description, "render block identity changed")
+            }
+        }
+        patch.blocks.forEach { target ->
+            val block = page.blocks[target.blockIndex]
+            block.textColor = target.textColor
+            block.strokeColor = target.strokeColor
+            block.strokeWidth = target.strokeWidth
+        }
+        page.renderStatus = patch.renderStatus
+        page.errorMessage = patch.errorMessage
+        val updated = ownedPage(patch.pageKey, page)
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), patch.blocks.map { it.blockIndex })
+    }
+
+    private fun mergeRevisionLocked(
+        current: PageTranslation?,
+        patch: RevisionStagePatch,
+        description: String,
+    ): StagePatchResult {
+        val rejection = stageIdentityRejection(current, patch.generation)
+            ?: current?.blocks?.getOrNull(patch.blockIndex)?.let { block ->
+                when {
+                    block.stableFingerprint() != patch.expectedBlockFingerprint -> "revision block identity changed"
+                    block.text != patch.expectedSourceText -> "revision source changed"
+                    block.translation != patch.expectedDraft -> "revision draft changed"
+                    block.needsRevision != patch.expectedNeedsRevision -> "revision flag changed"
+                    block.userEditedAt != patch.expectedUserEditedAt -> "revision user edit changed"
+                    patch.replacementTranslation != null && patch.replacementTranslation.isBlank() ->
+                        "blank revision replacement"
+                    else -> null
+                }
+            } ?: "block index ${patch.blockIndex} missing"
+        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
+
+        val updated = ownedPage(
+            patch.pageKey,
+            current!!.detachedCopy().apply {
+                val block = blocks[patch.blockIndex]
+                patch.replacementTranslation?.let { block.translation = it }
+                block.needsRevision = patch.needsRevision
+            },
+        )
+        pages = pages.put(patch.pageKey, updated)
+        publishLocked(current, updated)
+        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), listOf(patch.blockIndex))
+    }
+
+    private fun stageIdentityRejection(page: PageTranslation?, expectedGeneration: Long): String? = when {
+        expectedGeneration != generation -> "generation expected=$expectedGeneration actual=$generation"
+        page == null -> "page missing"
+        else -> null
+    }
+
+    private fun ocrIdentityRejection(
+        page: PageTranslation?,
+        expectedFingerprints: List<String>,
+        expectedSources: List<String>?,
+    ): String? = when {
+        page == null -> "page missing"
+        page.ocrBlockFingerprints() != expectedFingerprints -> "OCR block identity changed"
+        expectedSources != null && page.blocks.map { it.text } != expectedSources -> "OCR source changed"
+        else -> null
+    }
+
+    private fun rejectedStage(pageKey: String, description: String, reason: String): StagePatchResult.Rejected {
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT stage patch rejected: pageKey=$pageKey generation=$generation " +
+                "operation=$description reason=$reason"
+        }
+        return StagePatchResult.Rejected(reason)
     }
 
     suspend fun updatePage(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
         if (defunct) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT store updatePage rejected: store is defunct pageKey=$pageKey"
-            }
+            rejected(pageKey, "updatePage", "store is defunct")
             return
         }
+        val context = currentCoroutineContext()[GenerationContext]
         mutex.withLock {
+            if (context?.store === this && context.generation != generation) {
+                rejected(
+                    pageKey,
+                    "updatePage",
+                    "generation expected=${context.generation} actual=$generation",
+                )
+                return@withLock
+            }
             val previous = pages[pageKey]
-            val updated = update(pages[pageKey]).apply {
-                sourceFileName = sourceFileName ?: pageKey
-                updatedAt = System.currentTimeMillis()
-            }
+            // Legacy callers receive detached input; the store always adopts a
+            // second detached copy so neither input nor returned objects remain live.
+            val updated = ownedPage(pageKey, update(previous?.detachedCopy()))
             pages = pages.put(pageKey, updated)
-            if (shouldPersistUpdate(previous, updated)) {
-                schedulePersist()
-            }
-            // Snapshot copy so MutableStateFlow always emits — even when callers
-            // mutate a previously emitted PageTranslation in place.
-            _state.value = snapshotPages()
+            publishLocked(previous, updated)
         }
     }
 
@@ -120,10 +479,51 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
-            pages = updatedPages.toPersistentMap()
-            dirty = false
-            persistLocked()
+            pages = persistentMapOf()
+            updatedPages.forEach { (pageKey, page) ->
+                pages = pages.put(pageKey, ownedPage(pageKey, page))
+            }
+            dirty = !persistLocked()
             _state.value = snapshotPages()
+        }
+    }
+
+    /** Moves source-keyed pages to their completed-download keys atomically. */
+    suspend fun rekeyPages(
+        onlineKeys: List<String>,
+        onDiskKeys: List<String>,
+    ): List<Pair<String, String>> {
+        if (defunct || onlineKeys.size != onDiskKeys.size) return emptyList()
+        return mutex.withLock {
+            if (pages.size != onlineKeys.size) return@withLock emptyList()
+            val onDiskKeySet = onDiskKeys.toSet()
+            if (pages.keys.all { it in onDiskKeySet }) return@withLock emptyList()
+
+            val moves = pages.keys.mapNotNull { oldKey ->
+                val index = onlineKeys.indexOf(oldKey)
+                if (index < 0) return@mapNotNull null
+                val newKey = onDiskKeys[index]
+                if (newKey == oldKey || pages.containsKey(newKey)) return@mapNotNull null
+                oldKey to newKey
+            }
+            if (moves.isEmpty()) return@withLock emptyList()
+
+            val moveByOldKey = moves.toMap()
+            var updatedPages = persistentMapOf<String, PageTranslation>()
+            pages.forEach { (oldKey, page) ->
+                val newKey = moveByOldKey[oldKey] ?: oldKey
+                val updated = if (newKey == oldKey) {
+                    page
+                } else {
+                    page.detachedCopy().apply { sourceFileName = newKey }
+                }
+                updatedPages = updatedPages.put(newKey, ownedPage(newKey, updated))
+            }
+            pages = updatedPages
+            dirty = true
+            schedulePersist()
+            _state.value = snapshotPages()
+            moves
         }
     }
 
@@ -146,7 +546,7 @@ class ChapterTranslationStore(
             var changed = false
             pageKeys.forEach { pageKey ->
                 if (!pages.containsKey(pageKey)) {
-                    pages = pages.put(pageKey, PageTranslation(sourceFileName = pageKey))
+                    pages = pages.put(pageKey, ownedPage(pageKey, PageTranslation(sourceFileName = pageKey)))
                     changed = true
                 }
             }
@@ -170,6 +570,10 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
+            generation++
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT store generation invalidated: generation=$generation reason=${reason ?: "clear transient queue"}"
+            }
             var changed = false
             val now = System.currentTimeMillis()
             pages = pages.mapValues { (_, page) ->
@@ -177,28 +581,67 @@ class ChapterTranslationStore(
                     page
                 } else {
                     changed = true
-                    page.copy(
-                        ocrStatus = page.ocrStatus.cancelIfTransient(),
-                        translationStatus = page.translationStatus.cancelIfTransient(),
-                        inpaintStatus = page.inpaintStatus.cancelIfTransient(),
-                        renderStatus = page.renderStatus.cancelIfTransient(),
-                        errorMessage = reason,
-                        updatedAt = now,
+                    ownedPage(
+                        page.sourceFileName.orEmpty(),
+                        page.copy(
+                            ocrStatus = page.ocrStatus.cancelIfTransient(),
+                            translationStatus = page.translationStatus.cancelIfTransient(),
+                            inpaintStatus = page.inpaintStatus.cancelIfTransient(),
+                            renderStatus = page.renderStatus.cancelIfTransient(),
+                            updatedAt = now,
+                        ).also {
+                            it.ocrError = reason
+                            it.translationError = reason
+                            it.inpaintError = reason
+                            it.renderError = reason
+                        },
                     )
                 }
             }.toPersistentMap()
             if (changed) {
-                dirty = false
-                persistLocked()
+                dirty = !persistLocked()
                 _state.value = snapshotPages()
             }
         }
     }
 
-    private fun snapshotPages(): Map<String, PageTranslation> =
-        pages.entries.associate { (key, page) -> key to page.copy() }
+    private fun nextVersion(): Long = ++nextPageVersion
 
-    fun glossarySnapshot(): Map<String, String> = glossary
+    private fun ownedPage(pageKey: String, candidate: PageTranslation): PageTranslation =
+        candidate.detachedCopy().apply {
+            sourceFileName = sourceFileName ?: pageKey
+            updatedAt = System.currentTimeMillis()
+            runGeneration = generation
+            pageVersion = nextVersion()
+        }
+
+    private fun publishLocked(previous: PageTranslation?, updated: PageTranslation) {
+        if (shouldPersistUpdate(previous, updated)) schedulePersist()
+        _state.value = snapshotPages()
+    }
+
+    private fun snapshotLocked(pageKey: String): PageSnapshot {
+        val page = pages[pageKey]
+        return PageSnapshot(
+            page = page?.detachedCopy(),
+            generation = generation,
+            pageVersion = page?.pageVersion ?: 0L,
+            blockFingerprints = page?.blockFingerprints().orEmpty(),
+        )
+    }
+
+    private fun rejected(pageKey: String, description: String, reason: String): PatchResult.Rejected {
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT store patch rejected: pageKey=$pageKey generation=$generation " +
+                "operation=$description reason=$reason"
+        }
+        return PatchResult.Rejected(reason)
+    }
+
+    private fun snapshotPages(): Map<String, PageTranslation> =
+        pages.entries.associate { (key, page) -> key to page.detachedCopy() }
+
+    fun glossarySnapshot(): Map<String, String> = glossary.toMap()
 
     /**
      * All translated (source => target) pairs in the chapter so far — used to
@@ -221,8 +664,11 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
-            glossary = updated
-            persistGlossaryLocked()
+            if (glossary != updated) {
+                glossary = updated.toMap()
+                glossaryDirty = true
+                schedulePersist(markPageDirty = false)
+            }
         }
     }
 
@@ -237,16 +683,20 @@ class ChapterTranslationStore(
         }
     }
 
-    private fun persistGlossaryLocked() {
-        val file = ensureGlossaryFile() ?: return
+    private fun persistGlossaryLocked(): Boolean {
+        val file = ensureGlossaryFile()
+        if (file == null) {
+            logcat(LogPriority.ERROR) { "TachiyomiAT glossary persistence failed: reason=file unavailable" }
+            return false
+        }
         val snapshot = glossary
-        runCatching {
+        return runCatching {
             file.openOutputStream().use { output ->
                 Json.encodeToStream(snapshot, output)
             }
-        }.onFailure { e ->
-            logcat(LogPriority.WARN, e) { "Failed to persist glossary; in-memory state retained" }
-        }
+        }.onFailure { error ->
+            logcat(LogPriority.ERROR, error) { "TachiyomiAT glossary persistence failed: reason=write error" }
+        }.isSuccess
     }
 
     private fun glossaryName(tf: UniFile): String =
@@ -314,7 +764,8 @@ class ChapterTranslationStore(
         return false
     }
 
-    private fun persistLocked() {
+    private fun persistLocked(): Boolean {
+        if (defunct) return false
         persistCount++
         // Resolve the backing file lazily on first write. Opening a chapter with
         // no existing file leaves translationFile null; materializing it on first
@@ -323,7 +774,7 @@ class ChapterTranslationStore(
         if (translationFile == null) {
             translationFile = fileCreator?.invoke()
         }
-        val target = translationFile ?: return
+        val target = translationFile ?: return false
         // SAF-backed (UniFile): a stale/revoked tree URI or moved folder can make
         // openOutputStream() throw IOException. In-memory state is still correct
         // and the reader gets live StateFlow updates, so a write failure must NOT
@@ -345,12 +796,12 @@ class ChapterTranslationStore(
                 // Single-document URI (no sibling location): fall back to a direct
                 // truncating write — prefer liveness over corruption-risk.
                 target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
-                return
+                return true
             }
-            val tempFile = parent.createFile(TEMP_FILE_NAME)
+            val tempFile = parent.createFile(tempFileNameFor(target))
             if (tempFile == null) {
                 target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
-                return
+                return true
             }
             try {
                 tempFile.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
@@ -374,68 +825,137 @@ class ChapterTranslationStore(
                 logcat(LogPriority.WARN, e) { "Atomic rename of translation store failed; falling back to copy" }
                 false
             }
-            if (!renamed) {
+            if (renamed) {
+                // A SAF rename replaces the backing document. Keep a handle to
+                // that new document instead of retaining [target], whose URI now
+                // points at the deleted placeholder. Reusing the stale handle made
+                // every later persist fail: cleaned JPEGs survived, but the JSON
+                // never received translated blocks, so the reader had nothing to
+                // draw over the cleaned page.
+                translationFile = parent.findFile(targetName) ?: tempFile
+            } else {
+                // target may already have been deleted before renameTo() reported
+                // failure. Resolve or recreate it before copying the fully encoded
+                // temporary snapshot, then retain the fresh handle for future writes.
+                val replacement = parent.findFile(targetName) ?: parent.createFile(targetName)
+                check(replacement != null) { "could not recreate translation store after rename failure" }
                 try {
                     tempFile.openInputStream().use { input ->
-                        target.openOutputStream().use { output -> input.copyTo(output) }
+                        replacement.openOutputStream().use { output -> input.copyTo(output) }
                     }
+                    translationFile = replacement
                 } finally {
                     try {
                         tempFile.delete()
                     } catch (_: Exception) {}
                 }
             }
+            return true
         } catch (e: Exception) {
             logcat(LogPriority.ERROR, e) { "Failed to persist translation store; in-memory state retained" }
+            return false
         }
     }
 
     suspend fun flush() {
         mutex.withLock {
-            if (dirty) {
-                dirty = false
-                persistLocked()
-            }
+            flushDirtyLocked()
         }
     }
 
-    fun close() {
+    private fun flushDirtyLocked() {
+        if (dirty) {
+            if (persistLocked()) dirty = false else dirty = true
+        }
+        if (glossaryDirty) {
+            // Keep dirty on failure so a later completion/close flush can retry.
+            if (persistGlossaryLocked()) glossaryDirty = false
+        }
+    }
+
+    suspend fun readSummary(): ChapterTranslationSummary? = mutex.withLock {
+        translationFile?.let(::ChapterTranslationSummaryStore)?.read()
+    }
+
+    /** Publishes the completion sidecar only after the page snapshot is durable. */
+    suspend fun publishSummary(summary: ChapterTranslationSummary): Boolean = mutex.withLock {
+        flushDirtyLocked()
+        if (translationFile == null) {
+            translationFile = fileCreator?.invoke()
+        }
+        val file = translationFile
+        if (file == null) {
+            logcat(LogPriority.ERROR) {
+                "TachiyomiAT chapter summary publication failed: reason=translation file unavailable"
+            }
+            return@withLock false
+        }
+        ChapterTranslationSummaryStore(file).publish(summary)
+    }
+
+    suspend fun closeAndFlush() {
+        mutex.withLock { flushDirtyLocked() }
         persistScope.cancel()
     }
 
-    private fun schedulePersist() {
-        if (dirty) return
-        dirty = true
+    fun close() {
+        persistScope.launch {
+            mutex.withLock { flushDirtyLocked() }
+        }.invokeOnCompletion {
+            persistScope.cancel()
+        }
+    }
+
+    private fun schedulePersist(markPageDirty: Boolean = true) {
+        if (markPageDirty) dirty = true
+        if (persistJob?.isActive == true) return
         persistJob = persistScope.launch {
             delay(PERSIST_DEBOUNCE_MS)
-            mutex.withLock {
-                if (dirty) {
-                    dirty = false
-                    persistLocked()
-                }
-            }
+            mutex.withLock { flushDirtyLocked() }
             persistJob = null
         }
     }
 
     companion object {
         private const val PERSIST_DEBOUNCE_MS = 250L
-
-        /**
-         * Sibling temp file used by [persistLocked] for the write-temp-then-
-         * rename atomicity pattern. It is created in the same directory as the
-         * target translation file and renamed over it once encoding completes.
-         */
-        private const val TEMP_FILE_NAME = "translation.tmp"
+        private const val PERSIST_JOIN_TIMEOUT_MS = 2_000L
 
         /** Fallback name for the rename target if [UniFile.getName] is null. */
         private const val DEFAULT_FILE_NAME = "translation.json"
+
+        /**
+         * Creates a sibling temp-file name scoped to its target translation file.
+         * This avoids concurrent stores overwriting a shared temporary document.
+         */
+        private fun tempFileNameFor(target: UniFile): String =
+            "${target.name ?: DEFAULT_FILE_NAME}.tmp"
 
         /** Opens an existing on-disk translation file into a store. */
         fun open(translationFile: UniFile): ChapterTranslationStore {
             val existing = if (translationFile.exists()) {
                 try {
-                    Json.decodeFromStream<Map<String, PageTranslation>>(translationFile.openInputStream())
+                    val map = Json.decodeFromStream<Map<String, PageTranslation>>(translationFile.openInputStream())
+                    map.values.forEach { page ->
+                        if (page.errorMessage != null) {
+                            if (page.ocrStatus == StageStatus.FAILED) page.ocrError = page.ocrError ?: page.errorMessage
+                            if (page.translationStatus ==
+                                StageStatus.FAILED
+                            ) {
+                                page.translationError = page.translationError ?: page.errorMessage
+                            }
+                            if (page.inpaintStatus ==
+                                StageStatus.FAILED
+                            ) {
+                                page.inpaintError = page.inpaintError ?: page.errorMessage
+                            }
+                            if (page.renderStatus ==
+                                StageStatus.FAILED
+                            ) {
+                                page.renderError = page.renderError ?: page.errorMessage
+                            }
+                        }
+                    }
+                    map
                 } catch (e: Exception) {
                     logcat(LogPriority.WARN, e) { "Failed to load existing translation store; starting empty" }
                     emptyMap()

@@ -11,7 +11,7 @@
 
 ```
 translation/
-├─ ChapterTranslator.kt          Orchestrates the 5-stage pipeline for one chapter
+├─ ChapterTranslator.kt          Orchestrates staged, streaming chapter work
 ├─ ChapterTranslationStore.kt    Per-chapter JSON store of page translation states
 ├─ TranslationManager.kt         Central coordinator: jobs, auto-prefetch, cancel, lifecycle
 ├─ TranslationPipeline.kt        Singleton pipeline: engines, decode, persist, OOM recovery
@@ -83,14 +83,14 @@ translation/
 ├─ translator/
 │  ├─ AiModelFetcher.kt          ★ PURE parseOpenAiModels/parseGeminiModels/normalizeBaseUrl
 │  ├─ AiTranslatorKind.kt        AI translator enum (Gemini/DeepSeek/OpenRouter/LM Studio)
-│  ├─ DeepSeekTranslator.kt      DeepSeek adapter (delegates parsing to NumberedLineResponseParser)
+│  ├─ DeepSeekTranslator.kt      DeepSeek adapter (pipe-delimited ID/status protocol)
 │  ├─ GeminiTranslator.kt        Gemini adapter
 │  ├─ DeepLApi.kt                DeepL endpoint/auth helper (Free vs Pro host from `:fx` key suffix)
 │  ├─ DeepLTranslator.kt         DeepL adapter
 │  ├─ GoogleTranslator.kt        Google Translate adapter
-│  ├─ LmStudioTranslator.kt      LM Studio adapter (delegates parsing to NumberedLineResponseParser)
+│  ├─ LmStudioTranslator.kt      LM Studio adapter (pipe-delimited ID/status protocol)
 │  ├─ MLKitTranslator.kt         On-device ML Kit translator
-│  ├─ NumberedLineResponseParser.kt ★ PURE STRICT `[index] text` parser (DeepSeek/LM Studio); no positional fallback, rejects out-of-range/dup/blank/CJK-leak
+│  ├─ NumberedLineResponseParser.kt ★ PURE legacy `[index] text` parser; retained for its standalone contract, not the active AI-provider protocol
 │  ├─ OcrArtifactSanitizer.kt    ★ PURE OCR misread (N°/№/Ｎ０) stripper
 │  ├─ OpenRouterTranslator.kt    OpenRouter adapter
 │  ├─ StandardTranslatorKind.kt  Standard translator enum (ML Kit/Google/DeepL)
@@ -98,6 +98,7 @@ translation/
 │  ├─ TextTranslatorLanguage.kt  Target-language enum
 │  ├─ TranslationBlockFilters.kt ★ PURE watermark (RTMTH) block removal
 │  ├─ TranslationBlockValidation.kt ★ PURE post-translate validation (blank/source-equal → PARTIAL/FAILED; all→READY)
+│  ├─ TranslationPrompts.kt         Shared `bN|Text|[STATUS]` prompt and response parser
 │  └─ TranslationEngineBuilder.kt Resolves active translator from preferences
 │
 └─ util/
@@ -117,7 +118,7 @@ each now has a single tested source of truth:
 
 | What | Was duplicated in | Now lives in |
 |------|-------------------|--------------|
-| `[index] text` LLM response parsing | DeepSeekTranslator, LmStudioTranslator | `NumberedLineResponseParser` |
+| `bN|Text|[STATUS]` AI response parsing | all four AI translators | `TranslationPrompts` |
 | OCR artifact (N°/№/Ｎ０) stripping | DeepSeekTranslator (inline) | `OcrArtifactSanitizer` |
 | bbox IoU / intersection / area + geometric-dedupe | OnnxPageTextDetector, RoiPageRecognitionEngine | `BoxGeometry` (+ `DedupThresholds`) |
 | Mask building / dilation / feathering | SmartBubbleTextCleaner (private) | `BubbleMaskBuilder` |
@@ -162,12 +163,14 @@ full-vocabulary (the token embedding does not overflow). See
 analysis. **Verify any change to this loop on a text-dense page on-device**, not
 unit tests alone — graph internals aren't unit-testable.
 
-### 3. Watchdog force-release clears in-flight bookkeeping
-`withLeakProofPermit` force-releases the permit when a page is stuck in
-uncancellable native code. The watchdog's `onForceRelease` callback MUST clear
-any dedup key (`inFlightPageKeys`) the worker would otherwise only clear in its
-own (unreachable-while-stuck) `finally`, or the page is silently blacklisted
-for the rest of the process. `closeEngines()` also clears `inFlightPageKeys`.
+### 3. Native timeout quarantine prevents unsafe re-entry
+A timeout around uncancellable native OCR or inpaint **does not** release its
+native admission permit. `NativeRunQuarantine` invalidates that run's generation
+and rejects its late result, while keeping the native lane quarantined until the
+actual call exits. New native work is not admitted during quarantine. This
+prevents concurrent native calls after a timeout and makes late writes harmless;
+store patches still require the current generation, page version, and block
+fingerprint. `closeEngines()` also clears native in-flight bookkeeping.
 
 ### 4. OOM recovery frees native, not just Java, memory
 `reclaimTranslationMemory` calls `recognitionEngine.forceReleaseNativeBuffers()`
@@ -244,10 +247,15 @@ fail loudly). Both calls are wrapped in `runCatching` that logs at WARN if a
 future ORT version removes them — the session is still created, just with the
 default (arena-on) config, so a forward ORT bump cannot brick translation.
 
-All translation ONNX sessions are CPU-only. NNAPI/QNN registration is not used
-in the current runtime; stale execution-provider preferences are ignored.
-Future NPU support should be a separate Qualcomm QNN/QAIRT backend with
-converted models, not a generic NNAPI fallback.
+Execution providers are mixed and chosen per model in `OnnxRuntimeProvider`. The
+text detector, panel detector, bubble segmenter, and PaddleOCR det attempt NNAPI
+via `createSessionWithFallback` (which retries on CPU when NNAPI graph
+compilation fails, e.g. the detector's Split op). MangaOcr and PaddleOCR
+recognition stay CPU-only. AOT inpainting prefers XNNPACK and additionally keeps
+a strict-NNAPI fixed-512 session behind `NnapiCapabilityGate`/`NnapiHealthMonitor`
+with a NNAPI -> XNNPACK -> push-pull fallback cascade. GPU (OpenCL) EP is not
+shipped in `onnxruntime-android`; a future Qualcomm NPU backend still belongs in
+the separate `onnxruntime-android-qnn` artifact with converted models.
 
 The trade-off is a modest per-inference CPU cost (the arena also serves as a
 free-list, so without it each inference goes through malloc/free) in exchange
@@ -406,22 +414,20 @@ batch that somehow lost its mask is visible. `TranslationBlockValidation` writes
 a `"Translation incomplete: X/Y blocks translated"` reason on FAILED pages and a
 `"Translation partial: X/Y blocks translated"` reason on PARTIAL pages.
 
-### 15. Strict no-fallback policy (`NumberedLineResponseParser`, `PageTextRenderer`, config resolvers, `MLKitTranslator`, `PageInpaintingEngine`, reader UI)
+### 15. Strict no-fallback policy (AI output validation, `PageTextRenderer`, config resolvers, `MLKitTranslator`, `PageInpaintingEngine`, reader UI)
 "No fallback" means nothing is ever silently substituted: not source text for a
 blank translation (contract #14b), not positional guesses for malformed model
 output, not vertical layout for a stray CJK glyph, not a default language/engine/
 inpaint mode for an invalid or unavailable config, and not a stale error message
 for a page that produced output or was deliberately stopped.
 
-**(a) The numbered-line parser never guesses.** `NumberedLineResponseParser.parse`
-matches `^[index] text$` lines and rejects (drops) any entry that: has no
-`[index]` prefix, has an index outside `[0, expectedCount)`, is a duplicate index
-(first wins), is blank, or — when `targetLang` is a non-CJK language — contains
-CJK characters (source-script leakage guard, e.g. a leaked `(笑)` in an English
-translation). The old positional fallback that assigned unnumbered prose lines
-to `0, 1, 2, ...` is GONE: a model that ignores the format contributes nothing,
-every block stays blank, and the page is PARTIAL/FAILED by validation. Gemini/
-OpenRouter are JSON-protocol and unaffected.
+**(a) Active AI output is ID-mapped pipe text.** All four AI adapters share
+`TranslationPrompts`: Pass 1 expects `bN|Translated Text|[OK]` or
+`bN|Translated Text|[FLAG]`; Pass 2 expects `bN|Corrected Text`. The parser
+ignores malformed lines instead of assigning output positionally, and the
+post-translation validator leaves missing or blank blocks partial/failed.
+`NumberedLineResponseParser` still has a strict standalone `[index] text`
+contract and tests, but it is not the active provider protocol.
 
 **(b) Vertical layout is majority-CJK only.** `PageTextRenderer` renders a block
 vertical only when CJK characters are the MAJORITY (>50%) of its non-whitespace
@@ -698,12 +704,12 @@ can retry. This pairs with `TranslationBlockValidation` (contract #14), which
 turns an incomplete translation into a page-level `FAILED` — without it a
 half-translated page would still count as READY and slip past this gate.
 
-### 18. Reader single-page path releases the ONNX permit before HTTP translate (`TranslationPipeline.translateSinglePage`)
+### 18. Reader single-page path separates native work from HTTP translate (`TranslationPipeline.translateSinglePage`)
 The reader/single-page path is split into two phases so the ONNX engine (the bottleneck) stays busy instead of idling during the network call — the same ONNX‖HTTP overlap the batch path already had:
-1. **ONNX phase** (`translateSinglePageOnnx`, under `translatorPermit` + the `withLeakProofPermit` watchdog): stream resolution → decode → `processSinglePage` (detect+OCR+inpaint) → persist `.cleaned`. The decoded page bitmap is recycled **before** the permit is released (the existing `bitmap.recycle()` + `BitmapPool.releaseAll()` finally).
+1. **ONNX phase** (`translateSinglePageOnnx`, under native admission with `NativeRunQuarantine`): stream resolution → decode → `processSinglePage` (detect+OCR+inpaint) → persist `.cleaned`. The decoded page bitmap is recycled **before** the permit is released (the existing `bitmap.recycle()` + `BitmapPool.releaseAll()` finally).
 2. **HTTP+render phase** (`translateSinglePageHttpRender`, **permit-free**): cooperative cancel → `textTranslator.translatePage` (+ PARTIAL retry) → Canvas render → persist. It captures a local `activeTranslator = textTranslator` reference so a concurrent engine rebuild/`closeEngines()` from a config change does not race the in-flight HTTP call (the old instance may be closed mid-flight → one page fails and retries with the new instance — an accepted trade-off, no drain logic).
 
-The `inFlightPageKeys` dedup + `onForceRelease` cover the ONNX phase only. The cleaned bitmap (`pageTranslation.cleanedBitmap`) crosses the boundary alive and is recycled in the HTTP+render phase after render. Resume/already-rendered short-circuits stay inside the ONNX phase and run unchanged. Peak held cleaned bitmaps is bounded by the warm window and the fact that ONNX (serial under the permit) is the bottleneck, so in practice 1–2 cleaned bitmaps are alive at once.
+Native quarantine and in-flight deduplication cover the ONNX phase only. The cleaned bitmap (`pageTranslation.cleanedBitmap`) crosses the boundary alive and is recycled in the HTTP+render phase after render. Resume/already-rendered short-circuits stay inside the ONNX phase and run unchanged. Peak held cleaned bitmaps is bounded by the warm window and the fact that ONNX (serial under the permit) is the bottleneck, so in practice 1–2 cleaned bitmaps are alive at once.
 
 ### 19. OCR engine-capability routing: MangaOcr gets the ROI only (`RoiPageRecognitionEngine`, `OcrTextFilter`, `RoiOcrEngine.prefersHorizontalText`)
 Engines declare their vertical-handling capability via `RoiOcrEngine.prefersHorizontalText` (default `false` = reads vertical natively, e.g. MangaOcr; `true` = horizontal-line CTC head needing split/rotate, e.g. PaddleOCR). The orchestrator must honor it:
@@ -809,122 +815,133 @@ Bitmap / ONNX / ML Kit code is deliberately excluded (it needs a device).
 
 ## Staged batch pre-translation
 
-The manga-screen "translate chapter" action (`MangaScreenModel.runChapterTranslationActions`
-→ `TranslationManager.translateChapter` → `ChapterTranslator.translateChapterInternal`)
-now runs a **staged batch** instead of the old page-1-first sequential loop.
-The reader's per-page / auto-prefetch path is unchanged.
+The manga-screen chapter action (`MangaScreenModel` → `TranslationManager` →
+`ChapterTranslator`) runs a staged batch. The reader's per-page / auto-prefetch
+path remains separate.
 
-### Resume-aware ordering (`ResumeOrdering`)
-Pages are ordered **forward-first from the resume page, then backfill**: a user
-mid-chapter (resume page 50 of 200) gets pages 50–199 translated first, then
-1–49. This makes pre-translating a chapter you've started actually useful — the
-next page you'll read is ready first. `Chapter.lastPageRead` (already carried on
-the `Translation`) seeds the split. The helper is pure + unit-tested
-(`ResumeOrderingTest`).
+### Scheduling and translation lanes
 
-### Three stages (`TranslationPipeline.translateBatch`)
-1. **DETECT + OCR batch** — `analyzePage` (split from `processSinglePage`) for
-   each page, serialized under `translatorPermit`. One page's bitmap/tensor set
-   is alive at a time. Persists `ocrStatus=READY` + blocks per page (resumable —
-   pages already analyzed are skipped).
-2. **INPAINT ‖ TRANSLATE** — for each analyzed page, inpaint (re-decoded bitmap,
-   serialized under the permit) runs concurrently with `textTranslator.translatePage`
-   (HTTP-only, no permit). HTTP overlaps ONNX — free parallelism, no extra peak
-   memory. Both are awaited before render.
-3. **RENDER** — for each page with translated text + a cleaned image, render
-   translated text onto the cleaned bitmap (Canvas only, no permit) and persist.
+`BatchCoordinator` owns one serialized native lane, one serialized provider-request
+lane, a bounded translation channel with **capacity 2**, and a per-page render
+join. OCR persistence creates a detached immutable work item. For `REMOTE_IO`, it
+is offered to the translation channel **before same-page inpaint**, allowing the
+remote request to overlap inpaint. OCR and inpaint themselves never overlap.
+
+If the channel is full, the native lane first completes same-page inpaint and
+releases the bitmap and native resources; only then does it suspend to send the
+work item. It therefore never suspends while holding either resource. ML Kit is
+`LOCAL_COMPUTE` and stays serialized with native work. Gemini, OpenRouter,
+DeepSeek, LM Studio, DeepL, and Google Translate are `REMOTE_IO` and may overlap
+same-page inpaint. The single provider lane prevents concurrent contextual provider
+requests.
+
+Contextual chunks retain the existing token budget and flush incomplete input after
+**250 ms** of inactivity. Requests return structured, request-local result IDs such
+as `p0_b3`; these IDs are anchored to the request and require no persisted block-ID
+migration. Pass 1 accepts only valid nonblank translations. A valid line without
+`[OK]` or `[FLAG]` remains readable but is automatically flagged for revision.
+Malformed, unknown, missing, blank, or duplicate IDs cannot overwrite a draft; they
+remain untranslated and follow partial/retry handling.
+
+### Strict automatic revision (Pass 2)
+
+Pass 2 begins after the complete Pass-1 translation barrier, without waiting for
+inpaint/render. Final completion waits for revision, inpaint, rendering,
+persistence, and reconciliation. `RevisionPlanner` preserves reading order, emits
+at most 20 target IDs, respects the token budget without truncation, and includes
+the chapter glossary plus nearby source/draft dialogue as context. Providers output
+corrections for target IDs only.
+
+A merge is atomic and re-checks batch generation, page version, block fingerprint,
+current draft, `needsRevision`, and `userEditedAt`. Only a unique, valid, nonblank
+correction that passes those preconditions is applied, clears the revision flag, and
+counts as completed. Missing, blank, malformed, duplicate, stale, edited, or
+rejected results preserve the draft and remain flagged/count as failed.
+`TranslationBlockValidation` runs again after every merge; it derives `READY` or
+`PARTIAL` from the actual blocks and Pass 2 never force-marks a page `READY`.
+
+### State ownership, safe publication, and reader readiness
+
+`ChapterTranslationStore` is the sole owner of live page/block state. It stores and
+emits deep detached snapshots, and workers submit atomic patches rather than
+mutating shared page instances. Patch preconditions use the current run generation,
+monotonic page version, and block fingerprint. `NativeRunQuarantine` invalidates
+late results and blocks new native admissions until the timed-out call really exits.
+
+Cleaned images are published as versioned **`.jpg`** files: write a temporary file,
+verify it, atomically commit its filename through the store patch, then delete the
+old file only after the commit is accepted. An interrupted or rejected publication
+can leave an orphan to clean up, but never a store reference to a broken file.
+
+For text-bearing pages, the reader retains the original image until all three are
+ready: a cleaned file, valid translation, and a renderable overlay. A translation
+failure therefore never exposes a cleaned-only page. Truly textless pages are
+marked downstream `SKIPPED`, retain the original image, and are terminal success.
+`PageView` includes an overlay-content fingerprint so text-only Pass-2 changes
+refresh the overlay without decoding the image again.
 
 ### Memory model
-**Re-decode per stage**: the page bitmap is recycled after analyze and re-decoded
-for inpaint. `decodePageBitmapForTranslation` buffers source bytes into a private
-`ByteArray`, so there is no shared-stream race (and the reader is not open on
-this path, so no concurrent display decode). One **decode** bitmap alive at a time
-honors the 6GB / 20-30% heap constraint. Translation (HTTP) and render (Canvas)
-need no ONNX permit and overlap the inpaint serial loop.
 
-**Cleaned bitmaps are per-page, not accumulated.** `inpaintPage` persists each
-cleaned image to disk (`.cleaned.png`, setting `cleanedImageName`) and stage 2
-then recycles the in-memory `cleanedBitmap` immediately — it never carries it
-into the `inpainted` map. Stage 3 reloads each cleaned image from disk one at a
-time via `loadPersistedCleanedBitmap` (the same helper the reader's
-`resumeInpaintAndRender` uses). The batch therefore holds **at most one cleaned
-bitmap at any instant** regardless of chapter length. (Previously stage 2 kept
-every cleaned bitmap live across the whole chapter until stage 3 released them
-one per render — for a 200-page chapter that was ~200 full-page bitmaps
-simultaneously and OOM'd with "failed to recover memory".)
+The batch re-decodes source images as required and releases native admission and
+page bitmaps at stage boundaries. Cleaned images are persisted rather than retained
+as a chapter-wide map, but current scheduling and memory budgeting may support up
+to **four cleaned bitmaps / 48 MiB**; this is a cap, not an at-most-one-bitmap
+claim. Native OCR/inpaint serialization and backpressure release-before-send keep
+that bounded while remote translation overlaps I/O wait time.
 
-### Stage split (`analyzePage` / `inpaintPage`)
-The fused `processSinglePage` (which calls `recognize` = analyze+inpaint) is
-preserved for the reader path. The batch path uses two new methods extracted from
-it: `analyzePage` (detect+OCR, leaves `cleanedBitmap` null) and `inpaintPage`
-(needs the bitmap + the analyzed `PageTranslation`, persists the cleaned image).
-The `PageRecognitionEngine` interface already exposes `analyze`/`inpaint`
-separately; `inpaint` reads `allTextDetections` + `blocks` from the passed-in
-translation.
+### Progress, outcomes, and lifecycle
 
-### Per-chapter progress snapshot (`TranslationProgressSnapshot`)
-The chapter-list translate indicator turns determinate while a batch runs,
-showing `done/total` (for example `12/40`). Tapping the running indicator opens
-the manga-screen `TranslationProgressSheet`, which shows a linear progress bar,
-active page/stage, queued/failed counts, per-page stage rows, failed reasons,
-and a cancel action.
+Typed `TranslationBatchEvent` inputs feed a pure serialized reducer. The pipeline
+and store own page stage state; `TranslationBatchProgressTracker` is only the
+progress projection. Concurrent work is represented by an `activeStages` set,
+rather than a misleading single active stage. Per-stage counts expose succeeded,
+failed, skipped, processed, and total; processed work is `succeeded + failed +
+skipped`, so a terminal failure advances its fraction. Revision progress is
+`(completed + failed) / total` and additionally exposes skipped and user-edited
+counts.
 
-`ChapterTranslator.translateChapterInternal` sets chapter status to
-`TRANSLATING` when real batch work starts and pre-registers all ordered page
-keys in the shared `ChapterTranslationStore` before OCR. These placeholders are
-memory-only, so the sheet can show the full chapter total immediately without
-creating a false translated file on disk.
+Reconciliation walks authoritative ordered page keys. Missing, cancelled, or
+incomplete expected pages become stranded failures before the terminal snapshot;
+unexpected keys are reported but do not inflate expected totals. Terminal events
+bypass UI throttling. Live trackers are disposed immediately on normal completion
+or cancellation, while a chapter-keyed, access-ordered LRU retains only detached
+terminal snapshots (maximum **20**) for late observers.
 
-`TranslationManager.observeTranslationProgress(chapterId)` always returns a
-live flow. If the manga screen subscribes while the chapter is only queued, it
-emits an empty snapshot first, then switches to the store-backed snapshot once
-the translator registers the active store. `TranslationProgressSnapshot.compute`
-derives per-page stages from `PageTranslation` statuses and counts failed pages
-as completed for batch-progress convergence. Pure + unit-tested
-(`TranslationProgressSnapshotTest`).
+`READY_WITH_WARNINGS` means the chapter remains readable with partial drafts or
+unresolved revisions; hard OCR, inpaint, or render failures remain `ERROR`. An
+adjacent, atomically published `*.summary.json` sidecar records format version,
+expected page count, terminal outcome, unresolved revision count, and update time.
+Existing page JSON is unchanged. Legacy page files with no readable summary remain
+readable but are only partially available until a full batch writes a summary.
 
-### Reader ownership while pre-translation runs
-Reader auto/manual translation uses the same active chapter store as batch
-pre-translation. While a chapter batch is `QUEUE` or `TRANSLATING`, reader
-auto/manual scheduling for that same chapter is suppressed; the reader only
-observes the shared store. Unrelated chapters can still schedule reader page
-jobs normally.
+Active store selection is keyed by chapter ID, preventing a background chapter from
+contaminating the open reader. Application trim-memory callbacks are forwarded to
+translation management even without a reader. Chapter glossary persistence is
+debounced with store writes and flushed on completion, cancellation, or close.
 
-Reader pause/close/background cleanup cancels reader page/auto jobs and evicts
-reader streams, but it does not clear active batch queues or unregister active
-batch stores. The explicit "Stop all translation" action and the master
-translation disable path call `cancelAllPageTranslations(cancelBatchQueue =
-true)`, which also clears the chapter batch queue.
+### Resume-aware ordering (`ResumeOrdering`)
 
-### AI 8k context budget (`TranslationContextChunkPlanner`)
-AI_MODEL batch pre-translation now translates ordered multi-page chunks after
-OCR instead of calling `translatePage` once per page. The hard budget is
-`MAX_CONTEXT_TOKENS = 8192` with `SAFETY_MARGIN = 512`; token estimates are
-conservative, treating CJK characters as one token and Latin runs as roughly
-four characters per token. The user `translationAiOutputTokens` preference is
-only an upper bound: each chunk receives a reduced output cap so estimated
-prompt + rolling context + output + margin stays inside the 8k budget.
+Pages are ordered **forward-first from the resume page, then backfill**: a user
+mid-chapter (resume page 50 of 200) gets pages 50–199 translated first, then 1–49.
+`Chapter.lastPageRead` seeds the split. The helper is pure and unit-tested
+(`ResumeOrderingTest`).
 
-Rolling context is concise and opportunistic: recent source/translation pairs
-are included only when they fit within the prompt budget and the rolling-context
-cap. If a page is too large, the planner splits it by blocks. If a single block
-cannot fit even with no rolling context and the minimum output reserve, the page
-is marked failed with a context-budget error instead of sending an oversized AI
-request.
+### Test coverage for the staged pipeline
 
-AI providers implement `ContextualTextTranslator`. DeepSeek/LM Studio keep the
-numbered-line protocol, while OpenRouter/Gemini keep the JSON page-key protocol.
-Both protocols preserve page keys and block counts as much as the provider
-allows, remove watermark blocks via `TranslationBlockFilters`, and log response
-length mismatches so bad AI output is visible. Pure chunk-budget tests live in
-`TranslationContextChunkPlannerTest`; numbered parser mismatch/gap behavior is
-covered by `NumberedLineResponseParserTest`.
+The batch coordinator tests cover native serialization, `REMOTE_IO` overlap, ML Kit
+serialization, capacity-2 backpressure, and the Pass-1/Pass-2 barrier. Contextual
+parser and revision tests cover structured IDs, validation, budgets, duplicate or
+stale results, edit-wins preconditions, and `PARTIAL` preservation. Store, reducer,
+summary, lifecycle, and registry tests cover detached ownership, processed progress,
+warning outcomes, atomic summary publication, terminal delivery, chapter isolation,
+tracker disposal/LRU, memory-pressure forwarding, and glossary flush behavior.
 
 ---
 
 | Test | Guards |
 |------|--------|
-| `translator/NumberedLineResponseParserTest` | `[index] text` strict parse: in-order/sparse/gaps preserved; rejects unnumbered prose (NO positional fallback), out-of-range index, duplicate index (first wins), blank value, CJK-leakage when targetLang is non-CJK; CJK-target & null-targetLang bypass the leakage check |
+| `translator/TranslationPromptsTest` | ID-mapped source lines, pipe-delimited Pass 1/Pass 2 prompt contracts, status parsing, language guidance, and rolling/glossary context |
+| `translator/NumberedLineResponseParserTest` | Retained legacy `[index] text` parser contract; not used by current AI adapters |
 | `translator/OcrArtifactSanitizerTest` | N°/Nº/№/Ｎ０/N⁰ strip (before-punct / inline / leading / end-of-string), space collapse, glued-word limitation |
 | `translator/TranslationBlockFiltersTest` | RTMTH watermark removal (case-insensitive, multi-page, embedded) |
 | `translator/AiModelFetcherParseTest` | OpenAI `data[].id` + Gemini model filtering/prefix-strip, kotlinx Json, JSON-null id guard |
@@ -992,9 +1009,9 @@ Move these out together:
   Most entangled group — `autoFallbackToFast` is R/W from three places and
   `downgradeOnnxAfterOom` rewrites `recognitionEngine`. Needs a shared-state
   design, not a pure helper.
-- Two further implicit responsibilities surfaced: **permit/watchdog infra**
-  (`translatorPermit`, `inFlightPageKeys`, `withLeakProofPermit`, ~lines 105–196)
-  and **active-store bookkeeping** (`currentChapterTranslation`,
+- Two further implicit responsibilities surfaced: **native-admission/quarantine
+  infrastructure** (`nativeRunQuarantine`, native permits, in-flight keys) and
+  **active-store bookkeeping** (`currentChapterTranslation`,
   `activeStoreResolver`, `register/unregisterActiveStore`).
 
 **Already done this pass:** extracted `ShortHash`; removed dead
@@ -1007,10 +1024,9 @@ OpenRouter / DeepSeek / LM Studio share the same `choices[0].message.content`
 → parse flow with near-identical OkHttp setup, 60s timeouts, `close()` body
 (evict pool + shutdown dispatcher), and `response.body` shape-checking. Gemini
 is the odd one (Google SDK, not raw HTTP). A future `OpenAiChatTranslator` base
-could fold the three OpenAI-shape adapters together; DeepSeek/LM Studio already
-share `NumberedLineResponseParser`, OpenRouter + Gemini share the JSON-object
-shape. Watch: the `sanitizeOcrArtifacts` step is currently DeepSeek-only — if the
-others start emitting の-misreads, route them through `OcrArtifactSanitizer` too.
+could fold the three OpenAI-shape adapters together; all four AI providers share
+the pipe-delimited `TranslationPrompts` contract. `OcrArtifactSanitizer` is a
+defensive compatibility step for model output, not a separate provider protocol.
 
 ### 3. Pre-existing lint debt (LOW effort, LOW payoff, mechanical)
 

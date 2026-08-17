@@ -13,14 +13,19 @@ data class BubbleMaskRle(
 ) {
     init {
         require(width > 0 && height > 0 && bounds.size == 4 && runs.size % 2 == 0) { "Invalid bubble RLE" }
-        require(bounds[0] in 0..width && bounds[1] in 0..height &&
-            bounds[2] in bounds[0]..width && bounds[3] in bounds[1]..height
+        require(
+            bounds[0] in 0..width &&
+                bounds[1] in 0..height &&
+                bounds[2] in bounds[0]..width &&
+                bounds[3] in bounds[1]..height,
         ) { "Bubble RLE bounds outside mask" }
         var previousEnd = 0
         for (i in runs.indices step 2) {
             val start = runs[i]
             val length = runs[i + 1]
-            require(start >= previousEnd && length > 0 && start <= pixelCount - length) { "Bubble RLE run outside mask" }
+            require(start >= previousEnd && length > 0 && start <= pixelCount - length) {
+                "Bubble RLE run outside mask"
+            }
             previousEnd = start + length
         }
     }
@@ -54,7 +59,12 @@ data class BubbleMaskRle(
                 val start = runs[i]
                 if (start >= rowEnd) break
                 val end = start + runs[i + 1]
-                if (end > rowStart) overlap += (minOf(end, rowEnd, rowStart + right) - maxOf(start, rowStart + left)).coerceAtLeast(0)
+                if (end >
+                    rowStart
+                ) {
+                    overlap +=
+                        (minOf(end, rowEnd, rowStart + right) - maxOf(start, rowStart + left)).coerceAtLeast(0)
+                }
             }
         }
         return overlap
@@ -68,10 +78,14 @@ data class BubbleMaskRle(
             val runs = ArrayList<Int>()
             var index = 0
             while (index < mask.pixels.size) {
-                if (mask.pixels[index] == 0.toByte()) { index++; continue }
+                if (mask.pixels[index] == 0.toByte()) {
+                    index++
+                    continue
+                }
                 val start = index
                 while (index < mask.pixels.size && mask.pixels[index] != 0.toByte()) index++
-                runs += start; runs += index - start
+                runs += start
+                runs += index - start
             }
             return BubbleMaskRle(mask.width, mask.height, mask.bounds.toList(), runs, mask.score)
         }

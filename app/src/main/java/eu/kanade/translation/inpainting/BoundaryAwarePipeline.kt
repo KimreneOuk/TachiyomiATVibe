@@ -83,7 +83,11 @@ object BoundaryAwarePipeline {
         val containment = ByteArray(n)
 
         val (seedMask, interiorMedian) = buildSeedMask(
-            pixels, contextW, contextH, parentBubble, eraseBoxes,
+            pixels,
+            contextW,
+            contextH,
+            parentBubble,
+            eraseBoxes,
         )
 
         if (seedMask.size != n) {
@@ -286,13 +290,17 @@ object BoundaryAwarePipeline {
                 val y = i / width
                 if (x > 0 && y > 0) {
                     val leftGray =
-                        (((pixels[(y * width) + (x - 1)] shr 16 and 0xFF) * 299) +
-                            ((pixels[(y * width) + (x - 1)] shr 8 and 0xFF) * 587) +
-                            ((pixels[(y * width) + (x - 1)] and 0xFF) * 114)) / 1000
+                        (
+                            ((pixels[(y * width) + (x - 1)] shr 16 and 0xFF) * 299) +
+                                ((pixels[(y * width) + (x - 1)] shr 8 and 0xFF) * 587) +
+                                ((pixels[(y * width) + (x - 1)] and 0xFF) * 114)
+                            ) / 1000
                     val upGray =
-                        (((pixels[((y - 1) * width) + x] shr 16 and 0xFF) * 299) +
-                            ((pixels[((y - 1) * width) + x] shr 8 and 0xFF) * 587) +
-                            ((pixels[((y - 1) * width) + x] and 0xFF) * 114)) / 1000
+                        (
+                            ((pixels[((y - 1) * width) + x] shr 16 and 0xFF) * 299) +
+                                ((pixels[((y - 1) * width) + x] shr 8 and 0xFF) * 587) +
+                                ((pixels[((y - 1) * width) + x] and 0xFF) * 114)
+                            ) / 1000
                     if (abs(gray - leftGray) + abs(gray - upGray) > 80) edgeCount++
                 }
             }
@@ -553,5 +561,4 @@ object BoundaryAwarePipeline {
         val mid = rList.size / 2
         return (0xFF shl 24) or (rList[mid] shl 16) or (gList[mid] shl 8) or bList[mid]
     }
-
 }

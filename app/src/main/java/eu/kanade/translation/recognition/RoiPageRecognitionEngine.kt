@@ -6,8 +6,6 @@ import eu.kanade.translation.detection.Detection
 import eu.kanade.translation.detection.OnnxPageTextDetector
 import eu.kanade.translation.detection.OnnxPanelDetector
 import eu.kanade.translation.detection.PanelAssignment
-import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
-import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.inpainting.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
@@ -26,7 +24,9 @@ import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
+import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.util.TranslationMemoryBudget
+import eu.kanade.translation.util.TranslationSafetyPrimitives
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -34,7 +34,6 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.OcrModel
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -47,6 +46,7 @@ class RoiPageRecognitionEngine(
 
     private val modelStore = OnnxModelStore(context)
     private var detector: OnnxPageTextDetector? = null
+
     /**
      * TachiyomiAT: optional YOLO26-nano manga panel detector. Best-effort
      * init (mirrors paddleDet): when the asset is missing or fails to load,
@@ -54,12 +54,14 @@ class RoiPageRecognitionEngine(
      * panel-less exactly as before. Never blocks OCR/inpaint.
      */
     private var panelDetector: OnnxPanelDetector? = null
+
     /**
      * TachiyomiAT: optional YOLO11-seg manga bubble segmenter.
      * Drives the precise Interior Median Solid Fill and Symmetrical Growth.
      */
     private var bubbleSegmenter: OnnxBubbleSegmenter? = null
     private var roiOcrEngine: RoiOcrEngine? = null
+
     /**
      * TachiyomiAT: PP-OCRv6 small **det** engine, used to split a vertical-text
      * ROI into individual text lines for the PaddleOCR rec path. Only built when
@@ -71,10 +73,12 @@ class RoiPageRecognitionEngine(
     private var paddleDet: PaddleOcrV6DetEngine? = null
     private var inpainting: AOTInpainting? = null
     private var pageInpainter: PageInpaintingEngine? = null
+
     @Volatile
     private var initialized = false
     private var initFailed = false
     private val initMutex = Mutex()
+
     /**
      * TachiyomiAT: serializes native ONNX inference (analyze/inpaint) against
      * close(). The batch path can call close() before acquiring the translator
@@ -85,6 +89,7 @@ class RoiPageRecognitionEngine(
      * (main thread), so it uses tryLock rather than runBlocking.
      */
     private val nativeGuard = Mutex()
+
     // TachiyomiAT: cooperative close flag. close() can race an in-flight
     // analyze()/inpaint() and free native ONNX sessions mid-call past a
     // suspension point (SIGSEGV, not catchable). analyze()/inpaint() poll this
@@ -96,6 +101,7 @@ class RoiPageRecognitionEngine(
     // construction) to avoid an Injekt cycle during init; cached after first read.
     @Volatile
     private var translationDiagnosticsEnabled: Boolean = false
+
     @Volatile
     private var diagnosticsResolved: Boolean = false
     private fun resolveDiagnostics(): Boolean {
@@ -114,6 +120,7 @@ class RoiPageRecognitionEngine(
     // language). Resolved lazily to avoid an Injekt cycle during init.
     @Volatile
     private var readingOrderRtl: Boolean = true
+
     @Volatile
     private var readingOrderResolved: Boolean = false
     private fun resolveReadingOrderRtl(): Boolean {
@@ -206,7 +213,8 @@ class RoiPageRecognitionEngine(
                 // model. Previously gated behind a removed experimental flag, so
                 // the default MANGAOCR path never got Paddle-driven masking. The
                 // PADDLEOCR_V6_SMALL branch above already built it for rec.
-                if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL && paddleDet == null &&
+                if (ocrModel != OcrModel.PADDLEOCR_V6_SMALL &&
+                    paddleDet == null &&
                     (modelStore.paddleOcrV6DetAvailable() || modelStore.paddleOcrV6DetAssetsAvailable())
                 ) {
                     try {
@@ -231,9 +239,10 @@ class RoiPageRecognitionEngine(
                 val localInpainting = AOTInpainting()
                 localInpainting.paddleDetector = paddleDet
                 if (inpaintingMode == InpaintingMode.QUALITY) {
-                    paths.inpaintModel?.let { model ->
-                        localInpainting.initialize(model)
-                    }
+                    localInpainting.initialize(
+                        fixedModelFile = paths.inpaint512Model,
+                        dynamicModelFile = paths.inpaintModel,
+                    )
                 } else {
                     logcat(LogPriority.INFO) { "ONNX init: FAST inpainting mode; skipping AOT session initialization" }
                 }
@@ -271,162 +280,166 @@ class RoiPageRecognitionEngine(
         // be inside this critical section.
         val analyzed = try {
             nativeGuard.withLock {
-            if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
-            val detections = localDetector.detect(bitmap)
-            val bubbleMasksRaw = bubbleSegmenter?.segment(bitmap) ?: emptyList()
-            val bubbleMasks = bubbleMasksRaw.map { eu.kanade.translation.segmentation.BubbleMaskRle.encode(it) }
-            val bubbles = detections.filter { it.label == 0 }
-            val textDetections = detections.filter { it.label == 1 || it.label == 2 }
-            val lockedPageTranslation = PageTranslation(
-                imgWidth = bitmap.width.toFloat(),
-                imgHeight = bitmap.height.toFloat(),
-                recognitionEngine = "onnx",
-                detectionCount = detections.size,
-                ocrStatus = StageStatus.RUNNING,
-                updatedAt = System.currentTimeMillis(),
-            )
-            val geometricallyDeduped = dedupeTextDetections(textDetections, bubbles)
-            val filteredDetections = suppressCrossLabelDuplicates(geometricallyDeduped, bubbles)
-            // TachiyomiAT: stash on the per-page translation so concurrent pages
-            // can't overwrite each other's data before inpaint() reads it back.
-            lockedPageTranslation.allTextDetections =
-                filteredDetections + (textDetections.filter { it !in filteredDetections && it !in geometricallyDeduped })
-            logcat(LogPriority.INFO) {
-                "ONNX recognition detections: bubbles=${bubbles.size} text=${textDetections.size} " +
-                    "geometricText=${geometricallyDeduped.size} filteredText=${filteredDetections.size}"
-            }
-            val lockedRecognizedBlocks = mutableListOf<RecognizedBlock>()
-            val engine = localOcrEngine
-            for (detection in filteredDetections) {
-                // TachiyomiAT: cooperative close — bail out of the per-ROI OCR
-                // loop if close() ran between iterations, before the native call.
-                if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
-                // TachiyomiAT: horizontal-line engines (PaddleOCR) need context
-                // padding to avoid edge-effect failures; native-vertical engines
-                // get tight unbounded crops.
-                val pad = if (engine.prefersHorizontalText) 12 else 0
-                val unpaddedCrop = cropBitmap(bitmap, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3])
-                val crop = if (pad > 0) cropBitmap(bitmap, detection.bbox[0] - pad, detection.bbox[1] - pad, detection.bbox[2] + pad, detection.bbox[3] + pad) else unpaddedCrop
-            // TachiyomiAT: PaddleOCR's rec head is a CNN+CTC trained on HORIZONTAL
-            // text lines; a tall vertical crop yields garbage. Two-part fix:
-            //  1. COLUMN SPLITTING: split by ink-gap, OCR each column separately,
-            //     concatenate right-to-left (whole-box 1/6 vs per-column 6/6).
-            //  2. CCW ROTATION per column; CW yields upside-down text (0/6 vs 6/6).
-            // OCR-only; rendering stays vertical via direction="TTB" below.
-            // Gated on prefersHorizontalText — MangaOcr/ML Kit read vertical natively.
-            val bbox = detection.bbox
-            val boxWidthPre = (bbox[2] - bbox[0]).toFloat()
-            val boxHeightPre = (bbox[3] - bbox[1]).toFloat()
-            val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
-                language == TextRecognizerLanguage.CHINESE ||
-                language == TextRecognizerLanguage.KOREAN
-            val tallVertical = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
-            // TachiyomiAT: PaddleOCR rec reads a single horizontal strip, so any
-            // multi-line bubble must be split by the det model first. Run the
-            // det-based split on EVERY Paddle bubble — recognizeDetColumns
-            // classifies each line as horizontal or vertical and joins correctly,
-            // so English multi-line paragraphs read properly (previously gated to
-            // tall CJK boxes only and collapsed English into one garbled line).
-            // MangaOcr/ML Kit read vertical natively and stay on the single-read path.
-            val paddleMultiLine = engine.prefersHorizontalText && paddleDet != null
-            // CJK vertical bubble on a Paddle engine WITHOUT the det asset: a
-            // horizontal read of vertical text is reliably wrong, so use the
-            // ink-gap heuristic column split (preserves prior behavior).
-            val paddleVerticalHeuristic = isVerticalLanguage && engine.prefersHorizontalText &&
-                paddleDet == null && boxHeightPre > boxWidthPre * 1.5f
-            var rotatedForOcr = false
-            val text = try {
-                when {
-                    paddleMultiLine -> {
-                        rotatedForOcr = tallVertical
-                        var rawText = recognizeMultiLine(engine, crop, paddleDet, tallVertical)
-                        if (rawText.isEmpty() && isVerticalLanguage && boxHeightPre > boxWidthPre) {
-                            rotatedForOcr = true
-                            val fallbackText = recognizeMultiLine(engine, unpaddedCrop, null, verticalFallback = true)
-                            if (fallbackText.isNotEmpty()) rawText = fallbackText
-                        }
-                        rawText
-                    }
-                    paddleVerticalHeuristic -> {
-                        rotatedForOcr = true
-                        recognizeMultiLine(engine, unpaddedCrop, paddleDet, verticalFallback = true)
-                    }
-                    else -> {
-                        val rawText = engine.recognizeWithConf(crop).first
-                        if (OcrTextFilter.isUsable(rawText, language)) rawText else ""
-                    }
-                }
-            } catch (e: Exception) {
-                logcat(LogPriority.ERROR, e) { "Failed to recognize text in box" }
-                ""
-            } finally {
-                if (crop !== unpaddedCrop) {
-                    crop.recycle()
-                }
-                unpaddedCrop.recycle()
-            }
-            // TachiyomiAT: per-block OCR diagnostics, gated by the opt-in
-            // translation_diagnostics pref so recognition quality is inspectable.
-            if (resolveDiagnostics()) {
+                if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
+                val detections = localDetector.detect(bitmap)
+                val bubbleMasks = bubbleSegmenter?.segment(bitmap) ?: emptyList()
+                val bubbles = detections.filter { it.label == 0 }
+                val textDetections = detections.filter { it.label == 1 || it.label == 2 }
+                val lockedPageTranslation = PageTranslation(
+                    imgWidth = bitmap.width.toFloat(),
+                    imgHeight = bitmap.height.toFloat(),
+                    recognitionEngine = "onnx",
+                    detectionCount = detections.size,
+                    ocrStatus = StageStatus.RUNNING,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                val geometricallyDeduped = dedupeTextDetections(textDetections, bubbles)
+                val filteredDetections = suppressCrossLabelDuplicates(geometricallyDeduped, bubbles)
+                // TachiyomiAT: stash on the per-page translation so concurrent pages
+                // can't overwrite each other's data before inpaint() reads it back.
+                lockedPageTranslation.allTextDetections =
+                    filteredDetections + (textDetections.filter { it !in filteredDetections && it !in geometricallyDeduped })
                 logcat(LogPriority.INFO) {
-                    "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
-                        "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
-                        "rotated=${if (rotatedForOcr) "90ccw" else "no"} text=\"$text\""
+                    "ONNX recognition detections: bubbles=${bubbles.size} text=${textDetections.size} " +
+                        "geometricText=${geometricallyDeduped.size} filteredText=${filteredDetections.size}"
                 }
-            }
-            val boxWidth = (bbox[2] - bbox[0]).toFloat()
-            val boxHeight = (bbox[3] - bbox[1]).toFloat()
-            val centerX = (bbox[0] + bbox[2]) / 2.0
-            val centerY = (bbox[1] + bbox[3]) / 2.0
-            val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
-            val parentBbox = rawParent?.let { rp ->
-                val siblings = bubbles.filter { it !== rp }.map { it.bbox }
-                trimParentBbox(rp.bbox, bbox, siblings)
-            } ?: rawParent?.bbox
-            // TachiyomiAT: text color sampled against the ORIGINAL bitmap as a
-            // first pass; ChapterTranslator recomputes AFTER inpainting (against
-            // the cleaned bitmap). Kept as a fallback if inpainting is skipped.
-            val renderColors = RenderColorEstimator.estimate(
-                bitmap,
-                bbox[0], bbox[1], bbox[2], bbox[3],
-                parentBbox,
-            )
-            // TachiyomiAT: render direction. The renderer only goes vertical when
-            // direction=="TTB"; without this, Japanese vertical text was rendered
-            // horizontally even though MangaOcr read it correctly. Height-to-width
-            // ratio heuristic, gated on CJK languages so Latin text is unaffected.
-            val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
-            lockedRecognizedBlocks.add(
-                RecognizedBlock(
-                    detection = detection,
-                    block = TranslationBlock(
-                    text = text,
-                    width = boxWidth,
-                    height = boxHeight,
-                    x = bbox[0].toFloat(),
-                    y = bbox[1].toFloat(),
-                    symWidth = boxWidth * 0.1f,
-                    symHeight = boxHeight * 0.1f,
-                    angle = 0f,
-                    label = detection.label,
-                    score = detection.score,
-                    parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
-                    parentY = parentBbox?.get(1)?.toFloat() ?: 0f,
-                    parentWidth = parentBbox?.let { (it[2] - it[0]).toFloat() } ?: 0f,
-                    parentHeight = parentBbox?.let { (it[3] - it[1]).toFloat() } ?: 0f,
-                    textColor = renderColors.first,
-                    strokeColor = renderColors.second,
-                    strokeWidth = renderColors.third,
-                    direction = direction,
-                    segmentationMask = bubbleMasks.firstOrNull { rle ->
-                        rle.overlapPixels(centerX.toInt(), centerY.toInt(), centerX.toInt() + 1, centerY.toInt() + 1) > 0
+                val lockedRecognizedBlocks = mutableListOf<RecognizedBlock>()
+                val engine = localOcrEngine
+                for (detection in filteredDetections) {
+                    // TachiyomiAT: cooperative close — bail out of the per-ROI OCR
+                    // loop if close() ran between iterations, before the native call.
+                    if (closed) throw IllegalStateException("ONNX recognition engine closed during OCR loop")
+                    // TachiyomiAT: horizontal-line engines (PaddleOCR) need context
+                    // padding to avoid edge-effect failures; native-vertical engines
+                    // get tight unbounded crops.
+                    val pad = if (engine.prefersHorizontalText) 12 else 0
+                    val unpaddedCrop = cropBitmap(bitmap, detection.bbox[0], detection.bbox[1], detection.bbox[2], detection.bbox[3])
+                    val crop = if (pad > 0) cropBitmap(bitmap, detection.bbox[0] - pad, detection.bbox[1] - pad, detection.bbox[2] + pad, detection.bbox[3] + pad) else unpaddedCrop
+                    // TachiyomiAT: PaddleOCR's rec head is a CNN+CTC trained on HORIZONTAL
+                    // text lines; a tall vertical crop yields garbage. Two-part fix:
+                    //  1. COLUMN SPLITTING: split by ink-gap, OCR each column separately,
+                    //     concatenate right-to-left (whole-box 1/6 vs per-column 6/6).
+                    //  2. CCW ROTATION per column; CW yields upside-down text (0/6 vs 6/6).
+                    // OCR-only; rendering stays vertical via direction="TTB" below.
+                    // Gated on prefersHorizontalText — MangaOcr/ML Kit read vertical natively.
+                    val bbox = detection.bbox
+                    val boxWidthPre = (bbox[2] - bbox[0]).toFloat()
+                    val boxHeightPre = (bbox[3] - bbox[1]).toFloat()
+                    val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
+                        language == TextRecognizerLanguage.CHINESE ||
+                        language == TextRecognizerLanguage.KOREAN
+                    val tallVertical = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
+                    // TachiyomiAT: PaddleOCR rec reads a single horizontal strip, so any
+                    // multi-line bubble must be split by the det model first. Run the
+                    // det-based split on EVERY Paddle bubble — recognizeDetColumns
+                    // classifies each line as horizontal or vertical and joins correctly,
+                    // so English multi-line paragraphs read properly (previously gated to
+                    // tall CJK boxes only and collapsed English into one garbled line).
+                    // MangaOcr/ML Kit read vertical natively and stay on the single-read path.
+                    val paddleMultiLine = engine.prefersHorizontalText && paddleDet != null
+                    // CJK vertical bubble on a Paddle engine WITHOUT the det asset: a
+                    // horizontal read of vertical text is reliably wrong, so use the
+                    // ink-gap heuristic column split (preserves prior behavior).
+                    val paddleVerticalHeuristic = isVerticalLanguage &&
+                        engine.prefersHorizontalText &&
+                        paddleDet == null &&
+                        boxHeightPre > boxWidthPre * 1.5f
+                    var rotatedForOcr = false
+                    val text = try {
+                        when {
+                            paddleMultiLine -> {
+                                rotatedForOcr = tallVertical
+                                var rawText = recognizeMultiLine(engine, crop, paddleDet, tallVertical)
+                                if (rawText.isEmpty() && isVerticalLanguage && boxHeightPre > boxWidthPre) {
+                                    rotatedForOcr = true
+                                    val fallbackText = recognizeMultiLine(engine, unpaddedCrop, null, verticalFallback = true)
+                                    if (fallbackText.isNotEmpty()) rawText = fallbackText
+                                }
+                                rawText
+                            }
+                            paddleVerticalHeuristic -> {
+                                rotatedForOcr = true
+                                recognizeMultiLine(engine, unpaddedCrop, paddleDet, verticalFallback = true)
+                            }
+                            else -> {
+                                val rawText = engine.recognizeWithConf(crop).first
+                                if (OcrTextFilter.isUsable(rawText, language)) rawText else ""
+                            }
+                        }
+                    } catch (e: Exception) {
+                        logcat(LogPriority.ERROR, e) { "Failed to recognize text in box" }
+                        ""
+                    } finally {
+                        if (crop !== unpaddedCrop) {
+                            crop.recycle()
+                        }
+                        unpaddedCrop.recycle()
                     }
-                ),
-                ),
-            )
+                    // TachiyomiAT: per-block OCR diagnostics, gated by the opt-in
+                    // translation_diagnostics pref so recognition quality is inspectable.
+                    if (resolveDiagnostics()) {
+                        logcat(LogPriority.INFO) {
+                            "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
+                                "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
+                                "rotated=${if (rotatedForOcr) "90ccw" else "no"} text=\"$text\""
+                        }
+                    }
+                    val boxWidth = (bbox[2] - bbox[0]).toFloat()
+                    val boxHeight = (bbox[3] - bbox[1]).toFloat()
+                    val centerX = (bbox[0] + bbox[2]) / 2.0
+                    val centerY = (bbox[1] + bbox[3]) / 2.0
+                    val rawParent = selectParentBubble(detection, bbox, bubbles, centerX, centerY)
+                    val parentBbox = rawParent?.let { rp ->
+                        val siblings = bubbles.filter { it !== rp }.map { it.bbox }
+                        trimParentBbox(rp.bbox, bbox, siblings)
+                    } ?: rawParent?.bbox
+                    // TachiyomiAT: text color sampled against the ORIGINAL bitmap as a
+                    // first pass; ChapterTranslator recomputes AFTER inpainting (against
+                    // the cleaned bitmap). Kept as a fallback if inpainting is skipped.
+                    val renderColors = RenderColorEstimator.estimate(
+                        bitmap,
+                        bbox[0],
+                        bbox[1],
+                        bbox[2],
+                        bbox[3],
+                        parentBbox,
+                    )
+                    // TachiyomiAT: render direction. The renderer only goes vertical when
+                    // direction=="TTB"; without this, Japanese vertical text was rendered
+                    // horizontally even though MangaOcr read it correctly. Height-to-width
+                    // ratio heuristic, gated on CJK languages so Latin text is unaffected.
+                    val direction = if (isVerticalLanguage && boxHeight > boxWidth * 1.2f) "TTB" else "LTR"
+                    lockedRecognizedBlocks.add(
+                        RecognizedBlock(
+                            detection = detection,
+                            block = TranslationBlock(
+                                text = text,
+                                width = boxWidth,
+                                height = boxHeight,
+                                x = bbox[0].toFloat(),
+                                y = bbox[1].toFloat(),
+                                symWidth = boxWidth * 0.1f,
+                                symHeight = boxHeight * 0.1f,
+                                angle = 0f,
+                                label = detection.label,
+                                score = detection.score,
+                                parentX = parentBbox?.get(0)?.toFloat() ?: 0f,
+                                parentY = parentBbox?.get(1)?.toFloat() ?: 0f,
+                                parentWidth = parentBbox?.let { (it[2] - it[0]).toFloat() } ?: 0f,
+                                parentHeight = parentBbox?.let { (it[3] - it[1]).toFloat() } ?: 0f,
+                                textColor = renderColors.first,
+                                strokeColor = renderColors.second,
+                                strokeWidth = renderColors.third,
+                                direction = direction,
+                                segmentationMask = bubbleMasks.firstOrNull { rle ->
+                                    rle.overlapPixels(centerX.toInt(), centerY.toInt(), centerX.toInt() + 1, centerY.toInt() + 1) > 0
+                                },
+                            ),
+                        ),
+                    )
+                }
+                RecognizedAnalyzeResult(lockedPageTranslation, lockedRecognizedBlocks)
             }
-            RecognizedAnalyzeResult(lockedPageTranslation, lockedRecognizedBlocks)
-        }
         } finally {
             if (closed && initialized) {
                 if (nativeGuard.tryLock()) {
@@ -490,16 +503,16 @@ class RoiPageRecognitionEngine(
         // unreachable and masked the real planner path).
         return try {
             nativeGuard.withLock {
-            if (closed) {
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.errorMessage = "ONNX recognition engine closed before inpaint"
-                pageTranslation.updatedAt = System.currentTimeMillis()
-                null
-            } else {
-                (pageInpainter ?: PageInpaintingEngine(inpaintingMode, inpainting ?: AOTInpainting()))
-                    .inpaint(bitmap, pageTranslation)
+                if (closed) {
+                    pageTranslation.inpaintStatus = StageStatus.FAILED
+                    pageTranslation.errorMessage = "ONNX recognition engine closed before inpaint"
+                    pageTranslation.updatedAt = System.currentTimeMillis()
+                    null
+                } else {
+                    (pageInpainter ?: PageInpaintingEngine(inpaintingMode, inpainting ?: AOTInpainting()))
+                        .inpaint(bitmap, pageTranslation)
+                }
             }
-        }
         } finally {
             if (closed && initialized) {
                 if (nativeGuard.tryLock()) {
@@ -583,7 +596,10 @@ class RoiPageRecognitionEngine(
         val counts = HashMap<String, Int>()
         for (block in pageTranslation.blocks) {
             val res = PanelAssignment.assign(
-                block.x, block.y, block.x + block.width, block.y + block.height,
+                block.x,
+                block.y,
+                block.x + block.width,
+                block.y + block.height,
                 orderedPanels,
             )
             applyAssignment(pageTranslation, block, res)
@@ -676,12 +692,48 @@ class RoiPageRecognitionEngine(
     }
 
     private fun freeNativeSessions() {
-        try { detector?.close() } catch (e: Exception) { logcat(LogPriority.ERROR, e) { "Error closing detector" } } finally { detector = null }
-        try { roiOcrEngine?.close() } catch (e: Exception) { logcat(LogPriority.ERROR, e) { "Error closing roiOcrEngine" } } finally { roiOcrEngine = null }
-        try { paddleDet?.close() } catch (e: Exception) { logcat(LogPriority.ERROR, e) { "Error closing paddleDet" } } finally { paddleDet = null }
-        try { inpainting?.close() } catch (e: Exception) { logcat(LogPriority.ERROR, e) { "Error closing inpainting" } } finally { inpainting = null }
-        try { panelDetector?.close() } catch (e: Exception) { logcat(LogPriority.ERROR, e) { "Error closing panelDetector" } } finally { panelDetector = null }
-        try { bubbleSegmenter?.close() } catch (e: Exception) { logcat(LogPriority.ERROR, e) { "Error closing bubbleSegmenter" } } finally { bubbleSegmenter = null }
+        try {
+            detector?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error closing detector" }
+        } finally {
+            detector = null
+        }
+        try {
+            roiOcrEngine?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error closing roiOcrEngine" }
+        } finally {
+            roiOcrEngine = null
+        }
+        try {
+            paddleDet?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error closing paddleDet" }
+        } finally {
+            paddleDet = null
+        }
+        try {
+            inpainting?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error closing inpainting" }
+        } finally {
+            inpainting = null
+        }
+        try {
+            panelDetector?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error closing panelDetector" }
+        } finally {
+            panelDetector = null
+        }
+        try {
+            bubbleSegmenter?.close()
+        } catch (e: Exception) {
+            logcat(LogPriority.ERROR, e) { "Error closing bubbleSegmenter" }
+        } finally {
+            bubbleSegmenter = null
+        }
         pageInpainter = null
         initialized = false
     }
@@ -715,19 +767,57 @@ class RoiPageRecognitionEngine(
         // TachiyomiAT: free off-heap pooled state held by sub-engines WITHOUT
         // tearing them down. Called by OOM recovery so native pressure from one
         // page doesn't carry into the next. Guarded so partial init is a no-op.
-        try { detector?.reclaimPooledMemory() } catch (_: Exception) {}
-        try { roiOcrEngine?.reclaimPooledMemory() } catch (_: Exception) {}
-        try { paddleDet?.reclaimPooledMemory() } catch (_: Exception) {}
-        try { inpainting?.reclaimPooledMemory() } catch (_: Exception) {}
-        try { panelDetector?.reclaimPooledMemory() } catch (_: Exception) {}
+        try {
+            detector?.reclaimPooledMemory()
+        } catch (_: Exception) {}
+        try {
+            roiOcrEngine?.reclaimPooledMemory()
+        } catch (_: Exception) {}
+        try {
+            paddleDet?.reclaimPooledMemory()
+        } catch (_: Exception) {}
+        try {
+            inpainting?.reclaimPooledMemory()
+        } catch (_: Exception) {}
+        try {
+            panelDetector?.reclaimPooledMemory()
+        } catch (_: Exception) {}
+        try {
+            bubbleSegmenter?.reclaimPooledMemory()
+        } catch (_: Exception) {}
     }
 
     override fun forceReleaseNativeBuffers() {
-        try { detector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { roiOcrEngine?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { paddleDet?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { inpainting?.forceReleaseNativeBuffers() } catch (_: Exception) {}
-        try { panelDetector?.forceReleaseNativeBuffers() } catch (_: Exception) {}
+        // Memory-pressure callbacks may race an in-flight native run. Never
+        // drain child pools while the worker owns nativeGuard: skip this call
+        // (leak-instead-of-SIGSEGV, mirroring close()). The worker's own
+        // finally releases its pools after the guarded native call completes,
+        // and the next memory-pressure callback will retry.
+        //
+        // The skip-vs-drain decision forwards to TranslationSafetyPrimitives so
+        // the P0-1 invariant (no drain while the native lock is held) is
+        // unit-testable without an ONNX engine — see drainChildBuffersGuarded.
+        val lockAcquired = nativeGuard.tryLock()
+        if (!lockAcquired) {
+            logcat(LogPriority.WARN) {
+                "RoiPageRecognitionEngine.forceReleaseNativeBuffers: nativeGuard held; " +
+                    "skipping pooled-buffer release to avoid native use-after-free"
+            }
+            return
+        }
+        try {
+            val engines = listOfNotNull(
+                detector?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                roiOcrEngine?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                paddleDet?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                inpainting?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                panelDetector?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                bubbleSegmenter?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+            )
+            TranslationSafetyPrimitives.drainChildBuffersGuarded(lockHeld = false, engines = engines)
+        } finally {
+            nativeGuard.unlock()
+        }
     }
 
     private fun suppressCrossLabelDuplicates(
@@ -961,7 +1051,11 @@ class RoiPageRecognitionEngine(
                     it.vertical && verticalCjk && engine.prefersHorizontalText -> recognizeVerticalColumnPerChar(engine, columnCrop)
                     it.vertical && engine.prefersHorizontalText -> {
                         val rotated = rotateCcw(columnCrop)
-                        try { recognizeSingleLine(engine, rotated) } finally { rotated.recycle() }
+                        try {
+                            recognizeSingleLine(engine, rotated)
+                        } finally {
+                            rotated.recycle()
+                        }
                     }
                     else -> recognizeSingleLine(engine, columnCrop)
                 }
@@ -1006,7 +1100,11 @@ class RoiPageRecognitionEngine(
                     recognizeVerticalColumnPerChar(engine, columnCrop)
                 } else if (engine.prefersHorizontalText) {
                     val rotated = rotateCcw(columnCrop)
-                    try { recognizeSingleLine(engine, rotated) } finally { rotated.recycle() }
+                    try {
+                        recognizeSingleLine(engine, rotated)
+                    } finally {
+                        rotated.recycle()
+                    }
                 } else {
                     recognizeSingleLine(engine, columnCrop)
                 }
@@ -1086,9 +1184,11 @@ class RoiPageRecognitionEngine(
             var dark = 0
             for (x in 0 until w) {
                 val px = pixels[y * w + x]
-                val lum = (0.299f * ((px shr 16) and 0xFF) +
-                    0.587f * ((px shr 8) and 0xFF) +
-                    0.114f * (px and 0xFF)).toInt()
+                val lum = (
+                    0.299f * ((px shr 16) and 0xFF) +
+                        0.587f * ((px shr 8) and 0xFF) +
+                        0.114f * (px and 0xFF)
+                    ).toInt()
                 if (lum < INK_LUMINANCE_THRESHOLD) dark++
             }
             inkFraction[y] = dark.toFloat() / w.toFloat()
@@ -1146,9 +1246,11 @@ class RoiPageRecognitionEngine(
             var dark = 0
             for (y in 0 until h) {
                 val px = pixels[y * w + x]
-                val lum = (0.299f * ((px shr 16) and 0xFF) +
-                    0.587f * ((px shr 8) and 0xFF) +
-                    0.114f * (px and 0xFF)).toInt()
+                val lum = (
+                    0.299f * ((px shr 16) and 0xFF) +
+                        0.587f * ((px shr 8) and 0xFF) +
+                        0.114f * (px and 0xFF)
+                    ).toInt()
                 if (lum < INK_LUMINANCE_THRESHOLD) dark++
             }
             inkFraction[x] = dark.toFloat() / h.toFloat()
@@ -1260,8 +1362,10 @@ class RoiPageRecognitionEngine(
         if (detection.label != 1 && detection.label != 2) return null
         val containing = bubbles
             .filter { b ->
-                centerX >= b.bbox[0] && centerX <= b.bbox[2] &&
-                    centerY >= b.bbox[1] && centerY <= b.bbox[3]
+                centerX >= b.bbox[0] &&
+                    centerX <= b.bbox[2] &&
+                    centerY >= b.bbox[1] &&
+                    centerY <= b.bbox[3]
             }
             .minByOrNull {
                 (it.bbox[2] - it.bbox[0]) * (it.bbox[3] - it.bbox[1])
@@ -1290,16 +1394,19 @@ class RoiPageRecognitionEngine(
         private const val COLUMN_GAP_INK_FRACTION = 0.02f
         private const val MIN_COLUMN_GAP_PX = 10
         private const val MIN_COLUMN_WIDTH_PX = 12
+
         // TachiyomiAT: min det-line dimension (see recognizeDetColumns). Distinct
         // from MIN_COLUMN_WIDTH_PX: det already filtered noise, so 4px only rejects
         // fragments while 12px wrongly dropped legitimate small ROI text lines.
         private const val MIN_DET_LINE_PX = 4
         private const val MIN_PARENT_TEXT_OVERLAP_FRACTION = 0.20f
+
         // TachiyomiAT: det-line size guard for [recognizeDetColumns]. Rejects
         // sub-glyph noise (det sometimes emits tiny fragments) and false merges
         // (huge regions spanning multiple bubbles). Sized in crop pixel coords.
         private const val MAX_COLUMN_WIDTH_PX = 400
         private const val MAX_COLUMN_HEIGHT_PX = 800
+
         // TachiyomiAT: minimum confidence for PaddleOCR CTC output. PaddleOCR
         // reports meaningful confidence values; reads below this threshold are
         // likely garbage and discarded before translation. MangaOcr returns

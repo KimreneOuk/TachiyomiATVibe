@@ -1,0 +1,63 @@
+{
+  "identity": "real_008__ft_003",
+  "page": "real_008__ft_003",
+  "source_page": "real_008",
+  "source_file": "page-008.jpg",
+  "source_dims": [
+    1125,
+    1600
+  ],
+  "category": "free_text_aot512",
+  "inpaint_path": "inpaintReportFreeTextAot512",
+  "detector_index": 3,
+  "detector_box": [
+    114,
+    75,
+    263,
+    755
+  ],
+  "detector_score": 0.85139132,
+  "paddle_roi": [
+    102,
+    63,
+    275,
+    767
+  ],
+  "paddle_lines": [
+    [
+      225,
+      97,
+      245,
+      394
+    ],
+    [
+      156,
+      98,
+      206,
+      713
+    ]
+  ],
+  "paddle_line_count": 2,
+  "crop": [
+    0,
+    149,
+    512,
+    661
+  ],
+  "crop_dims": [
+    512,
+    512
+  ],
+  "mask_pad": 16,
+  "mask_dilate": 8,
+  "generator": "generate_masks_faithful.py",
+  "fallback_used": false,
+  "fixture_identity": "real_008__ft_003__center_crop_480",
+  "fixture_kind": "deterministic_transformed_real_corpus_center_crop",
+  "fixture_side": 480,
+  "fixture_source_identity": "real_008__ft_003",
+  "fixture_transform": "center_crop_from_512_to_480_no_resize",
+  "dynamic_route": "native_480x480",
+  "static_route": "production_center_background_pad_zero_mask_512_crop_back",
+  "synthetic_color_used": false
+}

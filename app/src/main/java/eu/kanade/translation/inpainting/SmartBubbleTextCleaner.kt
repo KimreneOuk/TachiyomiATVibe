@@ -290,7 +290,11 @@ class SmartBubbleTextCleaner(
 
         var finalMask = combinedMask
         // TachiyomiAT: scale morphology by region size for proportional feather/dilation.
-        val (scaledFeather, scaledDilation) = BubbleCleanerMath.scaledMorphology(minRegionDim, featherRadius, dilationIterations)
+        val (scaledFeather, scaledDilation) = BubbleCleanerMath.scaledMorphology(
+            minRegionDim,
+            featherRadius,
+            dilationIterations,
+        )
         finalMask = BubbleMaskBuilder.dilateMaskDisk(finalMask, contextW, contextH, scaledDilation)
         if (BubbleMaskBuilder.maskCoverage(finalMask) < MIN_OCR_TEXT_MASK_COVERAGE) {
             val aggressiveContrast = buildLocalContrastTextMask(
@@ -834,7 +838,8 @@ class SmartBubbleTextCleaner(
                         max(14f, min(42f, std * 0.85f + 10f))
                     }
                     val darkStroke = value < mean - threshold || (value < 82f && mean > 110f)
-                    val lightStroke = !dominantLightBackground && value > mean + threshold && value > 172f && mean < 205f
+                    val lightStroke =
+                        !dominantLightBackground && value > mean + threshold && value > 172f && mean < 205f
                     if (darkStroke || lightStroke) {
                         val zi = (y - by1) * zoneW + (x - bx1)
                         zoneMask[zi] = 1

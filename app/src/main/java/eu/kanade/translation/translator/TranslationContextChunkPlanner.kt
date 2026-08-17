@@ -17,12 +17,15 @@ object TranslationContextChunkPlanner {
     const val MAX_CONTEXT_TOKENS = 8_192
     const val SAFETY_MARGIN = 512
     const val MIN_OUTPUT_TOKENS = 256
+
     // Accounts for the unified system prompt + few-shot examples (TranslationPrompts).
     const val PROMPT_OVERHEAD_TOKENS = 1_100
+
     // Token budget for the combined rolling-context + chapter glossary injected
     // via TranslationPrompts.contextPrefix. Large enough for a small glossary
     // (~400) plus ~32 recent pairs; drops cleanly when exceeded.
     const val MAX_ROLLING_CONTEXT_TOKENS = 1_500
+
     // Pair-count cap on the rolling recent-pairs window.
     const val MAX_ROLLING_PAIRS = 32
 
@@ -120,13 +123,7 @@ object TranslationContextChunkPlanner {
                     if (text.isBlank() || translation.isBlank() || translation == text) {
                         null
                     } else {
-                        // Tag in-bubble source lines so rolling context carries speaker continuity across chunk boundaries.
-                        val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
-                            "[${TranslationPrompts.SPEECH_TAG}] "
-                        } else {
-                            ""
-                        }
-                        "$tag$text => $translation"
+                        "$text => $translation"
                     }
                 }
             }
@@ -148,13 +145,10 @@ object TranslationContextChunkPlanner {
         val lines = upcoming.flatMap { page ->
             page.blocks.mapNotNull { block ->
                 val text = block.text.trim()
-                if (text.isBlank()) null else {
-                    val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
-                        "[${TranslationPrompts.SPEECH_TAG}] "
-                    } else {
-                        ""
-                    }
-                    "$tag$text"
+                if (text.isBlank()) {
+                    null
+                } else {
+                    "$text"
                 }
             }
         }
@@ -175,12 +169,7 @@ object TranslationContextChunkPlanner {
                 if (text.isBlank() || translation.isBlank() || translation == text) {
                     null
                 } else {
-                    val tag = if (block.parentWidth > 0f && block.parentHeight > 0f) {
-                        "[${TranslationPrompts.SPEECH_TAG}] "
-                    } else {
-                        ""
-                    }
-                    "$tag$text => $translation"
+                    "$text => $translation"
                 }
             }
         }
@@ -260,7 +249,13 @@ object TranslationContextChunkPlanner {
         requestedOutputTokens: Int,
         constraints: Constraints,
     ): TranslationContextChunk =
-        copy(maxOutputTokens = StreamingChunkPlanner.effectiveOutputCap(estimatedPromptTokens, requestedOutputTokens, constraints))
+        copy(
+            maxOutputTokens = StreamingChunkPlanner.effectiveOutputCap(
+                estimatedPromptTokens,
+                requestedOutputTokens,
+                constraints,
+            ),
+        )
 
     fun constraintsFor(profile: Profile): Constraints = when (profile) {
         Profile.DEFAULT -> Constraints(
@@ -307,8 +302,21 @@ data class TranslationContextChunk(
 )
 
 interface ContextualTextTranslator : TextTranslator {
-    suspend fun translateContextual(chunk: TranslationContextChunk)
-    
+    /** Capability is explicit so Pass 2 cannot target validation-only adapters. */
+    val contextualCapability: ContextualTranslationCapability
+
+    suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean = false)
+
+    /**
+     * Mandatory structured-result contract. Every contextual provider returns
+     * per-id results keyed by request-local IDs (e.g. `p0_b3` for Pass 2, `b0`
+     * for Pass 1) without mutating request blocks.
+     */
+    suspend fun translateContextualStructured(
+        chunk: TranslationContextChunk,
+        isPass2: Boolean,
+    ): ContextualTranslationBatch
+
     /** Prompts the underlying model directly (used for glossary generation and summarization). */
     suspend fun promptText(prompt: String): String
 }

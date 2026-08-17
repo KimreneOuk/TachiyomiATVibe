@@ -80,7 +80,7 @@ class DbPostProcessTest {
     @Test
     fun `lowering box_thresh recovers the weak rectangle`() {
         val map = probMapWith(intArrayOf(2, 2, 8, 5), boxProb = 0.3f)
-        val lines = DbPostProcess.detectLines(map, width, height, boxThresh = 0.2f)
+        val lines = DbPostProcess.detectLines(map, width, height, boxThreshold = 0.2f)
         lines shouldHaveSize 1
     }
 
@@ -98,7 +98,7 @@ class DbPostProcessTest {
         // Inpaint thresh 0.18 < 0.19 → binarized, and box_thresh default (0.45)
         // drops it (mean 0.19 < 0.45); so also lower box_thresh to recover it,
         // matching how the inpaint path calls both lowered thresholds together.
-        val lines = DbPostProcess.detectLines(map, width, height, thresh = 0.18f, boxThresh = 0.1f)
+        val lines = DbPostProcess.detectLines(map, width, height, threshold = 0.18f, boxThreshold = 0.1f)
         lines shouldHaveSize 1
     }
 
@@ -120,14 +120,14 @@ class DbPostProcessTest {
     fun `back-project maps map-space bbox to crop-space with scale factors`() {
         val mapBox = intArrayOf(100, 50, 200, 150)
         // scaleX = cropW/mapW = 800/400 = 2.0 ; scaleY = 600/300 = 2.0
-        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropW = 800, cropH = 600)
+        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropWidth = 800, cropHeight = 600)
         crop.toList() shouldBe listOf(200, 100, 400, 300)
     }
 
     @Test
     fun `back-project clamps to crop bounds`() {
         val mapBox = intArrayOf(0, 0, 1000, 1000)
-        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropW = 100, cropH = 100)
+        val crop = DbPostProcess.backProject(mapBox, scaleX = 2f, scaleY = 2f, cropWidth = 100, cropHeight = 100)
         crop.toList() shouldBe listOf(0, 0, 99, 99)
     }
 
@@ -154,13 +154,18 @@ class DbPostProcessTest {
             for (col in 0 until 6) {
                 val x0 = col * 7 + 1
                 val y0 = row * 18 + 1
-                for (y in y0 until y0 + 5) for (x in x0 until x0 + 5) {
-                    map[y * 60 + x] = 0.9f
+                for (y in y0 until y0 + 5) {
+                    for (x in x0 until x0 + 5) {
+                        map[y * 60 + x] = 0.9f
+                    }
                 }
             }
         }
         val lines = DbPostProcess.detectLines(
-            map, width = 60, height = 60, maxCandidates = 100,
+            map,
+            width = 60,
+            height = 60,
+            maxCandidates = 100,
         )
         // 3 rows -> 3 merged lines (one per row).
         lines.size shouldBe 3
@@ -187,7 +192,7 @@ class DbPostProcessTest {
     @Test
     fun `merge does not collapse fragments on different rows`() {
         val frags = listOf(
-            line(10, 50, 100, 90),   // row 1
+            line(10, 50, 100, 90), // row 1
             line(10, 200, 100, 240), // row 2 (far apart)
         )
         val merged = DbPostProcess.mergeLineFragments(frags)
@@ -245,8 +250,8 @@ class DbPostProcessTest {
     fun `merge handles mixed horizontal and vertical without cross-merging`() {
         // One horizontal row + one vertical column that happen to overlap in x.
         val frags = listOf(
-            line(50, 100, 200, 140),  // horizontal
-            line(100, 50, 140, 300),  // vertical (taller than wide)
+            line(50, 100, 200, 140), // horizontal
+            line(100, 50, 140, 300), // vertical (taller than wide)
         )
         val merged = DbPostProcess.mergeLineFragments(frags)
         // They must NOT merge: one is horizontal (w>=h), the other vertical (h>w),

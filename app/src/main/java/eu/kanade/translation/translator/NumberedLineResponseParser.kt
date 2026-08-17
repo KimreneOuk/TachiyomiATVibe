@@ -57,7 +57,8 @@ object NumberedLineResponseParser {
         TextTranslatorLanguage.JAPANESE,
         TextTranslatorLanguage.KOREAN,
         TextTranslatorLanguage.CHINESESIM,
-        TextTranslatorLanguage.CHINESETRAD -> true
+        TextTranslatorLanguage.CHINESETRAD,
+        -> true
         else -> false
     }
 

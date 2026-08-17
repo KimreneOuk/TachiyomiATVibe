@@ -1,0 +1,5 @@
+# Regenerable outputs — do not commit.
+gate_output/
+gate_output_real/
+__pycache__/
+*.pyc

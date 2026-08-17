@@ -1,0 +1,21 @@
+{
+  "emitter": "emit_corpus_outputs.py",
+  "corpus": "Okiraku Ryoushu no Tanoshii Ryouchi Bouei ~Seisan-kei Majutsu de Na mo na Kimura wo Saikyou no Jousai Toshi ni~ Chapter 33 &#8211; Rawkuma",
+  "expected_count": 4,
+  "emitted_count": 4,
+  "failure_count": 0,
+  "identities": [
+    "real_001__ft_001",
+    "real_002__ft_001",
+    "real_008__ft_003",
+    "real_024__ft_001"
+  ],
+  "failures": [],
+  "fixture_mode": "sub512_transformed_real_corpus",
+  "fixture_sizes": [
+    300,
+    400,
+    480,
+    511
+  ]
+}

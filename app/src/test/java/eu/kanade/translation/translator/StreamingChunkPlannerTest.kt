@@ -241,7 +241,11 @@ class StreamingChunkPlannerTest {
         maxPagesPerChunk: Int? = null,
     ) {
         val batch = TranslationContextChunkPlanner.plan(
-            pages, requestedOutputTokens, profile, maxBlocksPerChunk, maxPagesPerChunk,
+            pages,
+            requestedOutputTokens,
+            profile,
+            maxBlocksPerChunk,
+            maxPagesPerChunk,
         )
         val stream = streamRun(pages, requestedOutputTokens, profile, maxBlocksPerChunk, maxPagesPerChunk)
 

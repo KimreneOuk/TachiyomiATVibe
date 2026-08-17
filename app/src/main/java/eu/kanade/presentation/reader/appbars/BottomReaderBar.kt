@@ -2,6 +2,7 @@ package eu.kanade.presentation.reader.appbars
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -20,9 +21,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationUiState
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBatchPhase
+import eu.kanade.translation.model.TranslationProgressSnapshot
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -38,8 +42,8 @@ fun BottomReaderBar(
     onClickCropBorder: () -> Unit,
     onClickSettings: () -> Unit,
     translationState: Translation.State = Translation.State.NOT_TRANSLATED,
-    translationProgress: Pair<Int, Int> = Pair(0, 0),
-    translationCurrentPage: Int = 0,
+    translationBatchProgress: TranslationProgressSnapshot? = null,
+    autoTranslation: ReaderAutoTranslationUiState = ReaderAutoTranslationUiState.empty(),
     onClickTranslate: () -> Unit = {},
     // TachiyomiAT: while translation is running the icon is disabled so repeated
     // taps can't pile up overlapping requests behind the singleton translator
@@ -47,88 +51,100 @@ fun BottomReaderBar(
     // appeared to "do nothing" because the second request queued behind itself.
     translateEnabled: Boolean = true,
 ) {
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(backgroundColor)
-            .padding(8.dp),
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
+            .background(backgroundColor),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        IconButton(onClick = onClickReadingMode) {
-            Icon(
-                painter = painterResource(readingMode.iconRes),
-                contentDescription = stringResource(MR.strings.viewer),
-            )
-        }
+        AutoTranslationStatus(
+            state = autoTranslation,
+            compact = true,
+            modifier = Modifier.padding(top = 4.dp),
+        )
 
-        IconButton(onClick = onClickOrientation) {
-            Icon(
-                imageVector = orientation.icon,
-                contentDescription = stringResource(MR.strings.rotation_type),
-            )
-        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClickReadingMode) {
+                Icon(
+                    painter = painterResource(readingMode.iconRes),
+                    contentDescription = stringResource(MR.strings.viewer),
+                )
+            }
 
-        IconButton(onClick = onClickCropBorder) {
-            Icon(
-                painter = painterResource(if (cropEnabled) R.drawable.ic_crop_24dp else R.drawable.ic_crop_off_24dp),
-                contentDescription = stringResource(MR.strings.pref_crop_borders),
-            )
-        }
+            IconButton(onClick = onClickOrientation) {
+                Icon(
+                    imageVector = orientation.icon,
+                    contentDescription = stringResource(MR.strings.rotation_type),
+                )
+            }
 
-        IconButton(onClick = onClickTranslate, enabled = translateEnabled) {
-            when (translationState) {
-                Translation.State.NOT_TRANSLATED, Translation.State.QUEUE -> {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_translate_circle),
-                        contentDescription = stringResource(ATMR.strings.reader_translate),
-                    )
-                }
-                Translation.State.TRANSLATING -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 2.dp,
-                    )
-                }
-                Translation.State.TRANSLATED -> {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_translate_circle_filled),
-                        contentDescription = stringResource(ATMR.strings.reader_translate),
-                    )
-                }
-                Translation.State.ERROR -> {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_translate_circle),
-                        contentDescription = stringResource(ATMR.strings.reader_translate),
-                        tint = MaterialTheme.colorScheme.error,
-                    )
+            IconButton(onClick = onClickCropBorder) {
+                Icon(
+                    painter = painterResource(if (cropEnabled) R.drawable.ic_crop_24dp else R.drawable.ic_crop_off_24dp),
+                    contentDescription = stringResource(MR.strings.pref_crop_borders),
+                )
+            }
+
+            IconButton(onClick = onClickTranslate, enabled = translateEnabled) {
+                when (translationState) {
+                    Translation.State.NOT_TRANSLATED, Translation.State.QUEUE -> {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_translate_circle),
+                            contentDescription = stringResource(ATMR.strings.reader_translate),
+                        )
+                    }
+                    Translation.State.TRANSLATING -> {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                    Translation.State.TRANSLATED, Translation.State.READY_WITH_WARNINGS -> {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_translate_circle_filled),
+                            contentDescription = stringResource(ATMR.strings.reader_translate),
+                        )
+                    }
+                    Translation.State.ERROR -> {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_translate_circle),
+                            contentDescription = stringResource(ATMR.strings.reader_translate),
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             }
-        }
 
-        if (translationState == Translation.State.TRANSLATING && translationProgress.second > 0) {
-            // TachiyomiAT: prefer the page currently being translated so the
-            // label matches the page the spinner animates on. Fall back to the
-            // completed-count string when no specific page is RUNNING (e.g. a
-            // batch-queue transition where only the queue status is known), so
-            // the bar still shows progress instead of going blank.
-            val text = if (translationCurrentPage > 0) {
-                stringResource(ATMR.strings.reader_translating_page, translationCurrentPage, translationProgress.second)
-            } else {
-                stringResource(ATMR.strings.reader_translating, translationProgress.first, translationProgress.second)
+            val revision = translationBatchProgress?.revision
+            val revisionText = when (translationBatchProgress?.batchPhase) {
+                TranslationBatchPhase.REVISING -> stringResource(
+                    ATMR.strings.reader_translation_revision_progress,
+                    revision?.completedBlocks ?: 0,
+                    revision?.totalBlocks ?: 0,
+                )
+                TranslationBatchPhase.FINALIZING -> stringResource(ATMR.strings.reader_translation_revision_finalizing)
+                else -> null
             }
-            Text(
-                text = text,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+            if (revisionText != null) {
+                Text(
+                    text = revisionText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
 
-        IconButton(onClick = onClickSettings) {
-            Icon(
-                imageVector = Icons.Outlined.Settings,
-                contentDescription = stringResource(MR.strings.action_settings),
-            )
+            IconButton(onClick = onClickSettings) {
+                Icon(
+                    imageVector = Icons.Outlined.Settings,
+                    contentDescription = stringResource(MR.strings.action_settings),
+                )
+            }
         }
     }
 }

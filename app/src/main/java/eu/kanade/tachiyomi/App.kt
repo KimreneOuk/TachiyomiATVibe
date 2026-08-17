@@ -46,6 +46,7 @@ import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.animatorDurationScale
 import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
+import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -205,6 +206,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
             decoderCoroutineContext(Dispatchers.IO.limitedParallelism(3))
         }
             .build()
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        eu.kanade.translation.forwardTranslationMemoryPressure(level) {
+            Injekt.get<TranslationManager>().onMemoryPressure(it)
+        }
     }
 
     override fun onStart(owner: LifecycleOwner) {

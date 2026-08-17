@@ -19,8 +19,6 @@ import java.io.File
 import java.io.InputStreamReader
 import java.nio.FloatBuffer
 import kotlin.math.ceil
-import kotlin.math.max
-import kotlin.math.min
 
 class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
@@ -186,17 +184,20 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
 
     private companion object {
         private const val RECOGNITION_HEIGHT = 48
+
         // PP-OCR rec is trained on (3, 48, 320); padding below this starves the
         // model of per-character resolution and yields garbage on vertical text.
         private const val MIN_TARGET_WIDTH = 320
         private const val MAX_RECOGNITION_WIDTH = 1600
         private const val WIDTH_ALIGNMENT = 16
+
         // Gray that normalizes to 0.0 (the normalization mean) — used for the
         // right-side padding instead of white, matching the reference pipeline.
         private const val PAD_GRAY = 0xFF808080.toInt()
 
         @Volatile
         private var diagnosticsInitialized = false
+
         @Volatile
         private var diagnosticsEnabled = false
 

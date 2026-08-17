@@ -128,6 +128,9 @@ internal object BubbleCleanerMath {
         stats: SmartBubbleTextCleaner.BackgroundStats,
     ): Boolean =
         bgType == "flat_white" ||
-            ((bgType == "flat_colored" || bgType == "dark_flat") &&
-                stats.grayStd < 10f && stats.edgeDensity < 0.04f)
+            (
+                (bgType == "flat_colored" || bgType == "dark_flat") &&
+                    stats.grayStd < 10f &&
+                    stats.edgeDensity < 0.04f
+                )
 }

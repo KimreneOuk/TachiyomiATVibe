@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AOT corpus page manifest",
+  "description": "Metadata for one page in the AOT Tier 3 guard-rejection corpus. Mirrors the format expected by tools/aot_corpus/run_corpus_gate.py.",
+  "type": "object",
+  "required": ["page", "category"],
+  "properties": {
+    "page": {
+      "type": "string",
+      "description": "Page identifier; must match the folder name containing page.jpg + mask.png."
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "dense-text",
+        "screentone",
+        "color",
+        "large-bubble",
+        "small-page",
+        "asymmetric",
+        "vertical-jp",
+        "dark-panel"
+      ],
+      "description": "Which edge-case class this page exercises (see README.md corpus composition table)."
+    },
+    "expected_box_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Optional: expected number of text boxes on this page, for diagnostics."
+    },
+    "synthetic": {
+      "type": "boolean",
+      "description": "True for programmatically generated pages; false (or omitted) for real manga pages. The gate treats both the same; this field exists so reports can distinguish them."
+    },
+    "source": {
+      "type": "string",
+      "description": "Optional attribution/source for real pages (e.g. chapter title, page URL). Required for non-synthetic pages if the corpus is ever published."
+    },
+    "license": {
+      "type": "string",
+      "description": "Optional license for real pages. Required if the corpus is published."
+    },
+    "note": {
+      "type": "string",
+      "description": "Optional free-text note."
+    }
+  }
+}

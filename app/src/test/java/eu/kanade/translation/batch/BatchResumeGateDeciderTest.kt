@@ -46,6 +46,33 @@ class BatchResumeGateDeciderTest {
     }
 
     @Test
+    fun `mode mismatch on durable cleaned returns INPAINT_ONLY`() {
+        // FAST->QUALITY switch: the durable cleaned output is stale and must be
+        // re-inpainted rather than skipped, while still reusing the OCR mask.
+        val page = page(ocrStatus = StageStatus.READY).withMaskAndDurableCleaned().apply {
+            inpaintingModeUsed = "FAST"
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            blocks.add(
+                TranslationBlock(
+                    text = "x",
+                    width = 1f,
+                    height = 1f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            )
+        }
+
+        BatchResumeGateDecider.decide(page, cleanedFileValid = true, inpaintModeMatches = true) shouldBe
+            BatchResumeGateDecider.Decision.SKIP_ALL
+        BatchResumeGateDecider.decide(page, cleanedFileValid = true, inpaintModeMatches = false) shouldBe
+            BatchResumeGateDecider.Decision.INPAINT_ONLY
+    }
+
+    @Test
     fun `ocr ready with mask and cleaned but stale inpaint result returns INPAINT_ONLY`() {
         // hasCurrentInpaintResult is false when blocks non-empty and
         // inpaintRevision < CURRENT_INPAINT_REVISION (10).
@@ -54,7 +81,18 @@ class BatchResumeGateDeciderTest {
             inpaintStatus = StageStatus.READY
             inpaintRevision = 0
         }
-        page.blocks.add(TranslationBlock(text = "x", width = 1f, height = 1f, x = 0f, y = 0f, symHeight = 1f, symWidth = 1f, angle = 0f))
+        page.blocks.add(
+            TranslationBlock(
+                text = "x",
+                width = 1f,
+                height = 1f,
+                x = 0f,
+                y = 0f,
+                symHeight = 1f,
+                symWidth = 1f,
+                angle = 0f,
+            ),
+        )
 
         BatchResumeGateDecider.decide(page) shouldBe BatchResumeGateDecider.Decision.INPAINT_ONLY
     }
@@ -65,7 +103,18 @@ class BatchResumeGateDeciderTest {
         val page = page(ocrStatus = StageStatus.READY).apply {
             cleanedImageName = "001.cleaned.png"
             inpaintStatus = StageStatus.READY
-            blocks.add(TranslationBlock(text = "x", width = 1f, height = 1f, x = 0f, y = 0f, symHeight = 1f, symWidth = 1f, angle = 0f))
+            blocks.add(
+                TranslationBlock(
+                    text = "x",
+                    width = 1f,
+                    height = 1f,
+                    x = 0f,
+                    y = 0f,
+                    symHeight = 1f,
+                    symWidth = 1f,
+                    angle = 0f,
+                ),
+            )
         }
 
         BatchResumeGateDecider.decide(page) shouldBe BatchResumeGateDecider.Decision.FULL

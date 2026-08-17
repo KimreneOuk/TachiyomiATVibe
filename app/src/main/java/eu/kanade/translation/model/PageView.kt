@@ -5,6 +5,8 @@ data class PageView(
     val lifecycle: PageLifecycle,
     val overlay: OverlayState,
     val errorMessage: String?,
+    val translationReady: Boolean,
+    val overlayFingerprint: String?,
 ) {
     enum class OverlayState {
         Idle,
@@ -20,6 +22,8 @@ fun PageTranslation?.toPageView(): PageView {
             lifecycle = PageLifecycle.Pending,
             overlay = PageView.OverlayState.Idle,
             errorMessage = null,
+            translationReady = false,
+            overlayFingerprint = null,
         )
     }
     val imageName = displayImageName
@@ -33,5 +37,10 @@ fun PageTranslation?.toPageView(): PageView {
         lifecycle = lifecycle,
         overlay = overlay,
         errorMessage = errorMessage,
+        translationReady = isTranslationDisplayReady,
+        overlayFingerprint = overlayContentFingerprint.takeIf { isTranslationDisplayReady },
     )
 }
+
+val PageTranslation.overlayContentFingerprint: String
+    get() = blocks.joinToString(separator = ":") { it.stableFingerprint() }

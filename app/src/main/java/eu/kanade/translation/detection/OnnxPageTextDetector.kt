@@ -11,7 +11,6 @@ import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
 import java.io.File
 import java.nio.FloatBuffer
-import java.nio.LongBuffer
 
 class OnnxPageTextDetector {
 
@@ -35,15 +34,12 @@ class OnnxPageTextDetector {
         logcat(LogPriority.INFO) {
             "Detector init: ${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
-        try {
-            session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Detector init: session FAILED for ${modelFile.absolutePath}" }
-            throw e
-        } finally {
-            opts.close()
-        }
+        // detector-v4: NNAPI graph-compile fails on Split op (AddNnapiSplit ORT_FAIL).
+        // Use the fallback wrapper: tries NNAPI, retries CPU on compile failure.
+        session = OnnxRuntimeProvider.createSessionWithFallback(
+            modelFile.absolutePath,
+            useAccelerator = true,
+        )
         logcat(LogPriority.INFO) {
             "Detector session created from ${modelFile.name} " +
                 "inputs=${session?.inputNames} outputs=${session?.outputNames}"

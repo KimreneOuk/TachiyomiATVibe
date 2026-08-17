@@ -7,10 +7,9 @@ import tachiyomi.domain.translation.OcrModel
 class OcrModelCatalogTest {
 
     @Test
-    fun `japanese supports mangaocr paddleocr and mlkit`() {
+    fun `japanese supports mangaocr and mlkit`() {
         OcrModelCatalog.entriesFor(TextRecognizerLanguage.JAPANESE).map { it.model } shouldBe listOf(
             OcrModel.MANGAOCR,
-            OcrModel.PADDLEOCR_V6_SMALL,
             OcrModel.MLKIT,
         )
     }
@@ -30,10 +29,14 @@ class OcrModelCatalogTest {
             TextRecognizerLanguage.VIETNAMESE,
             TextRecognizerLanguage.RUSSIAN,
         ).forEach { language ->
-            OcrModelCatalog.entriesFor(language).map { it.model } shouldBe listOf(
-                OcrModel.MLKIT,
-                OcrModel.PADDLEOCR_V6_SMALL,
-            )
+            val expected = if (language == TextRecognizerLanguage.CHINESE ||
+                language == TextRecognizerLanguage.ENGLISH
+            ) {
+                listOf(OcrModel.MLKIT, OcrModel.PADDLEOCR_V6_SMALL)
+            } else {
+                listOf(OcrModel.MLKIT)
+            }
+            OcrModelCatalog.entriesFor(language).map { it.model } shouldBe expected
         }
     }
 
@@ -43,7 +46,7 @@ class OcrModelCatalogTest {
         OcrModelCatalog.coerce(
             OcrModel.PADDLEOCR_V6_SMALL,
             TextRecognizerLanguage.JAPANESE,
-        ) shouldBe OcrModel.PADDLEOCR_V6_SMALL
+        ) shouldBe OcrModel.MANGAOCR
         OcrModelCatalog.coerce(OcrModel.MLKIT, TextRecognizerLanguage.JAPANESE) shouldBe OcrModel.MLKIT
     }
 
@@ -74,7 +77,7 @@ class OcrModelCatalogTest {
         val labels = OcrModelCatalog.labelsFor(TextRecognizerLanguage.JAPANESE)
 
         labels[OcrModel.MANGAOCR] shouldBe "MangaOCR"
-        labels[OcrModel.PADDLEOCR_V6_SMALL] shouldBe "PaddleOCR v6 small"
+        labels[OcrModel.PADDLEOCR_V6_SMALL] shouldBe null
         labels[OcrModel.MLKIT] shouldBe "ML Kit"
         // MangaOCR must NOT appear for a non-Japanese language.
         OcrModelCatalog.labelsFor(TextRecognizerLanguage.CHINESE).containsKey(OcrModel.MANGAOCR) shouldBe false

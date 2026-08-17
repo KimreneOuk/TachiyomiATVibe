@@ -1,7 +1,6 @@
 package eu.kanade.translation.rendering
 
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.segmentation.BubbleMaskRle
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -26,6 +25,8 @@ interface TextMeasurer {
      * matching the renderer's legacy stacking height.
      */
     fun lineHeight(fontSizePx: Float): Float
+
+    fun antiAliasInset(fontSizePx: Float): Float = 0f
 }
 
 /**
@@ -90,6 +91,9 @@ data class BlockLayout(
     val drawAlign: TextAlign,
     val clipRect: FloatRect?,
     val lines: List<String>,
+    val maskGeometry: eu.kanade.translation.segmentation.MaskGeometry? = null,
+    val maskKey: String? = null,
+    val maskComponentId: Int? = null,
 )
 
 /**
@@ -239,12 +243,19 @@ object TextLayoutPlanner {
         val safePad = max(0f, (baseW - rect.safeW) / 2f)
 
         val hasParent = regionOverride == null && block.parentWidth > 0f && block.parentHeight > 0f
-        val anchorToOcrCenter = regionOverride != null || hasParent || block.label == 2 ||
+        val anchorToOcrCenter = regionOverride != null ||
+            hasParent ||
+            block.label == 2 ||
             (block.direction == "TTB" && !isVertical)
         val region = if (regionOverride != null) {
             regionOverride
         } else if (hasParent) {
-            FloatRect(block.parentX, block.parentY, block.parentX + block.parentWidth, block.parentY + block.parentHeight)
+            FloatRect(
+                block.parentX,
+                block.parentY,
+                block.parentX + block.parentWidth,
+                block.parentY + block.parentHeight,
+            )
         } else if (rect.reshaped) {
             FloatRect(0f, 0f, pageWidth, pageHeight)
         } else {
@@ -302,15 +313,16 @@ object TextLayoutPlanner {
         var originX: Float
         var drawAlign: TextAlign
         val centeredOriginX = baseX + baseW / 2f
-        val edgeAnchorWouldAvoidOverlap = !isVertical && centeredExtentOverlapsObstacle(
-            text = text,
-            fontSize = fontSize,
-            safeW = safeW,
-            originX = centeredOriginX,
-            originY = originY,
-            obstacles = obstacles,
-            measurer = measurer,
-        )
+        val edgeAnchorWouldAvoidOverlap = !isVertical &&
+            centeredExtentOverlapsObstacle(
+                text = text,
+                fontSize = fontSize,
+                safeW = safeW,
+                originX = centeredOriginX,
+                originY = originY,
+                obstacles = obstacles,
+                measurer = measurer,
+            )
         when {
             grown.grewRight && edgeAnchorWouldAvoidOverlap -> {
                 originX = baseX
@@ -363,7 +375,13 @@ object TextLayoutPlanner {
             safeH = clip.height()
 
             val fitFont = binarySearchFontSize(
-                text, safeW, safeH, safeW, isVertical, scale, measurer,
+                text,
+                safeW,
+                safeH,
+                safeW,
+                isVertical,
+                scale,
+                measurer,
             )
             // Skip the legibility floor so text fits the clipped bounds instead of
             // being cut off.
@@ -385,9 +403,15 @@ object TextLayoutPlanner {
                 originY = r.top + r.height() / 2f
                 safeW = r.width()
                 safeH = r.height()
-                
+
                 val fitFont = binarySearchFontSize(
-                    text, safeW, safeH, safeW, isVertical, scale, measurer,
+                    text,
+                    safeW,
+                    safeH,
+                    safeW,
+                    isVertical,
+                    scale,
+                    measurer,
                 )
                 fontSize = fitFont
             }
@@ -412,7 +436,13 @@ object TextLayoutPlanner {
                 safeW = max(1f, 2f * min(centerX - maskClip.left, maskClip.right - centerX))
                 safeH = max(1f, 2f * min(centerY - maskClip.top, maskClip.bottom - centerY))
                 fontSize = binarySearchFontSize(
-                    text, safeW, safeH, safeW, isVertical, scale, measurer,
+                    text,
+                    safeW,
+                    safeH,
+                    safeW,
+                    isVertical,
+                    scale,
+                    measurer,
                 )
                 strokeWidth = computeStrokeWidth(fontSize, scale)
                 maskClip = FloatRect(
@@ -484,7 +514,7 @@ object TextLayoutPlanner {
             } else {
                 colliding.right
             }.coerceIn(0f, maxX).coerceIn(minXAllowed, maxXAllowed)
-            
+
             if (nextX == x) return x
             x = nextX
             guard++
@@ -778,8 +808,13 @@ object TextLayoutPlanner {
         while (i < text.length) {
             val ch = text[i]
             when {
-                ch == '\n' || ch.isWhitespace() -> { i++ }
-                isCJK(ch) -> { tokens.add(ch.toString()); i++ }
+                ch == '\n' || ch.isWhitespace() -> {
+                    i++
+                }
+                isCJK(ch) -> {
+                    tokens.add(ch.toString())
+                    i++
+                }
                 else -> {
                     val start = i
                     while (i < text.length && !isCJK(text[i]) && !text[i].isWhitespace() && text[i] != '\n') i++
@@ -814,7 +849,12 @@ object TextLayoutPlanner {
             when (layout.drawAlign) {
                 TextAlign.LEFT -> FloatRect(cx, cy - totalH / 2f, cx + maxLineW, cy + totalH / 2f)
                 TextAlign.RIGHT -> FloatRect(cx - maxLineW, cy - totalH / 2f, cx, cy + totalH / 2f)
-                TextAlign.CENTER -> FloatRect(cx - maxLineW / 2f, cy - totalH / 2f, cx + maxLineW / 2f, cy + totalH / 2f)
+                TextAlign.CENTER -> FloatRect(
+                    cx - maxLineW / 2f,
+                    cy - totalH / 2f,
+                    cx + maxLineW / 2f,
+                    cy + totalH / 2f,
+                )
             }
         }
     }
@@ -833,8 +873,10 @@ object TextLayoutPlanner {
         for ((mask, indexedBlocks) in groups) {
             val bounds = mask.bounds
             val maskRect = FloatRect(
-                bounds[0].toFloat(), bounds[1].toFloat(),
-                bounds[2].toFloat(), bounds[3].toFloat(),
+                bounds[0].toFloat(),
+                bounds[1].toFloat(),
+                bounds[2].toFloat(),
+                bounds[3].toFloat(),
             )
             if (indexedBlocks.size == 1) {
                 regions[indexedBlocks.single().index] = maskRect
@@ -895,9 +937,16 @@ object TextLayoutPlanner {
             layout.copy(
                 fontSizePx = commonFont,
                 strokeWidth = computeStrokeWidth(commonFont, scale),
-                lines = if (layout.isVertical) emptyList() else cjkWrap(
-                    layout.text, commonFont, layout.safeW, measurer,
-                ),
+                lines = if (layout.isVertical) {
+                    emptyList()
+                } else {
+                    cjkWrap(
+                        layout.text,
+                        commonFont,
+                        layout.safeW,
+                        measurer,
+                    )
+                },
             )
         }
     }
@@ -1144,4 +1193,58 @@ object TextLayoutPlanner {
         // three divergent legacy formulas; Block.strokeWidth is no longer an input.
         return max(MIN_STROKE_PX * scale, fontSizePx * STROKE_WIDTH_FRACTION)
     }
+
+    fun graphemeClusters(text: String): List<String> {
+        val iterator = java.text.BreakIterator.getCharacterInstance()
+        iterator.setText(text)
+        val clusters = mutableListOf<String>()
+        var start = iterator.first()
+        var end = iterator.next()
+        while (end != java.text.BreakIterator.DONE) {
+            clusters.add(text.substring(start, end))
+            start = end
+            end = iterator.next()
+        }
+        return clusters
+    }
+
+    fun verticalGlyph(cluster: String): String {
+        return when (cluster) {
+            "（" -> "︵"
+            "）" -> "︶"
+            "[" -> "︵"
+            "]" -> "︶"
+            "{" -> "︵"
+            "}" -> "︶"
+            "【" -> "︻"
+            "】" -> "︼"
+            "《" -> "︽"
+            "》" -> "︾"
+            "「" -> "﹁"
+            "」" -> "﹂"
+            "『" -> "﹃"
+            "』" -> "﹄"
+            "ー" -> "丨"
+            "-" -> "丨"
+            "…" -> "︙"
+            "‥" -> "︰"
+            "、" -> "︑"
+            "。" -> "︒"
+            "," -> "︑"
+            "." -> "︒"
+            "?" -> "？"
+            "!" -> "！"
+            else -> cluster
+        }
+    }
+
+    fun verticalOrientation(cluster: String): VerticalOrientation {
+        return if (cluster.length == 1 && cluster[0].isLetterOrDigit() && cluster[0].code in 0x0020..0x007E) {
+            VerticalOrientation.ROTATED
+        } else {
+            VerticalOrientation.UPRIGHT
+        }
+    }
 }
+
+enum class VerticalOrientation { UPRIGHT, ROTATED }

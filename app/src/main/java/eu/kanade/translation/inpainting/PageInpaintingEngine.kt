@@ -17,6 +17,7 @@ class PageInpaintingEngine(
 ) {
     @Volatile
     private var qualityFallbackEnabled: Boolean = false
+
     @Volatile
     private var qualityFallbackResolved: Boolean = false
     private fun resolveQualityFallback(): Boolean {
@@ -47,7 +48,9 @@ class PageInpaintingEngine(
             pageTranslation.updatedAt = System.currentTimeMillis()
             logcat(LogPriority.INFO) {
                 "Page inpainting input: boxes=${input.boxes.size} extraDetector=${input.extraDetectorCount} " +
-                    "labels=${input.labels.groupingBy { it }.eachCount()} mode=$mode neural=${inpainter.isInitialized()}"
+                    "labels=${input.labels.groupingBy {
+                        it
+                    }.eachCount()} mode=$mode neural=${inpainter.isInitialized()}"
             }
             TranslationMemoryBudget.logSnapshot(
                 "before_inpaint",

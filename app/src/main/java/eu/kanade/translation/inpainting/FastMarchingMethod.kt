@@ -1,8 +1,10 @@
 package eu.kanade.translation.inpainting
 
-import android.graphics.Bitmap
 import java.util.PriorityQueue
-import kotlin.math.*
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * Pure Kotlin implementation of the Fast Marching Method (Telea 2004) and
@@ -15,9 +17,15 @@ object FastMarchingMethod {
      * Mimics cv::adaptiveThreshold(src, dst, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY_INV, 15, 10)
      */
     fun adaptiveThresholdGaussian(
-        pixels: IntArray, width: Int, height: Int,
-        blockSize: Int = 15, C: Int = 10,
-        startX: Int = 0, startY: Int = 0, endX: Int = width, endY: Int = height
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        blockSize: Int = 15,
+        C: Int = 10,
+        startX: Int = 0,
+        startY: Int = 0,
+        endX: Int = width,
+        endY: Int = height,
     ): ByteArray {
         val w = endX - startX
         val h = endY - startY
@@ -126,7 +134,7 @@ object FastMarchingMethod {
         if (radius <= 0) return mask.clone()
         val out = ByteArray(width * height)
         val r2 = radius * radius
-        
+
         for (y in 0 until height) {
             for (x in 0 until width) {
                 var keep = true
@@ -136,7 +144,12 @@ object FastMarchingMethod {
                         if (dx * dx + dy * dy <= r2) {
                             val ny = y + dy
                             val nx = x + dx
-                            if (nx < 0 || ny < 0 || nx >= width || ny >= height || mask[ny * width + nx] == 0.toByte()) {
+                            if (nx < 0 ||
+                                ny < 0 ||
+                                nx >= width ||
+                                ny >= height ||
+                                mask[ny * width + nx] == 0.toByte()
+                            ) {
                                 keep = false
                                 break
                             }
@@ -169,7 +182,11 @@ object FastMarchingMethod {
      * Inpaint using Fast Marching Method (Telea)
      */
     fun inpaintTelea(
-        pixels: IntArray, mask: ByteArray, width: Int, height: Int, radius: Int = 3
+        pixels: IntArray,
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        radius: Int = 3,
     ) {
         val flag = ByteArray(width * height)
         val dist = FloatArray(width * height) { 1e6f }
@@ -276,11 +293,27 @@ object FastMarchingMethod {
                         var dist1 = 1e6f
                         var dist2 = 1e6f
 
-                        if (nx - 1 >= 0 && flag[ny * width + nx - 1] == KNOWN) dist1 = min(dist1, dist[ny * width + nx - 1])
-                        if (nx + 1 < width && flag[ny * width + nx + 1] == KNOWN) dist1 = min(dist1, dist[ny * width + nx + 1])
-                        
-                        if (ny - 1 >= 0 && flag[(ny - 1) * width + nx] == KNOWN) dist2 = min(dist2, dist[(ny - 1) * width + nx])
-                        if (ny + 1 < height && flag[(ny + 1) * width + nx] == KNOWN) dist2 = min(dist2, dist[(ny + 1) * width + nx])
+                        if (nx - 1 >= 0 &&
+                            flag[ny * width + nx - 1] == KNOWN
+                        ) {
+                            dist1 = min(dist1, dist[ny * width + nx - 1])
+                        }
+                        if (nx + 1 < width &&
+                            flag[ny * width + nx + 1] == KNOWN
+                        ) {
+                            dist1 = min(dist1, dist[ny * width + nx + 1])
+                        }
+
+                        if (ny - 1 >= 0 &&
+                            flag[(ny - 1) * width + nx] == KNOWN
+                        ) {
+                            dist2 = min(dist2, dist[(ny - 1) * width + nx])
+                        }
+                        if (ny + 1 < height &&
+                            flag[(ny + 1) * width + nx] == KNOWN
+                        ) {
+                            dist2 = min(dist2, dist[(ny + 1) * width + nx])
+                        }
 
                         val d: Float
                         if (dist1 < 1e5f && dist2 < 1e5f) {

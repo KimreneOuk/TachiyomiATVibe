@@ -62,6 +62,9 @@ fun MangaChapterListItem(
     translationStateProvider: () -> Translation.State,
     // TachiyomiAT: batch translation progress for the indicator.
     translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
+    // TachiyomiAT CP7: exposes the standalone REVIEW action when the manager
+    // derived eligibility for this chapter.
+    reviewAvailableProvider: () -> Boolean = { false },
     downloadProgressProvider: () -> Int,
     chapterSwipeStartAction: LibraryPreferences.ChapterSwipeAction,
     chapterSwipeEndAction: LibraryPreferences.ChapterSwipeAction,
@@ -179,15 +182,15 @@ fun MangaChapterListItem(
                 }
             }
             // TachiyomiAT
-            if (downloadStateProvider() == Download.State.DOWNLOADED) {
-                ChapterTranslationIndicator(
-                    enabled = true,
-                    modifier = Modifier.padding(start = 4.dp),
-                    translationStateProvider = translationStateProvider,
-                    translationProgressProvider = translationProgressProvider,
-                    onClick = { onTranslationClick?.invoke(it) },
-                )
-            }
+            ChapterTranslationIndicator(
+                enabled = true,
+                modifier = Modifier.padding(start = 4.dp),
+                translationStateProvider = translationStateProvider,
+                translationProgressProvider = translationProgressProvider,
+                reviewAvailableProvider = reviewAvailableProvider,
+                downloadedProvider = { downloadStateProvider() == Download.State.DOWNLOADED },
+                onClick = { onTranslationClick?.invoke(it) },
+            )
             ChapterDownloadIndicator(
                 enabled = downloadIndicatorEnabled,
                 modifier = Modifier.padding(start = 4.dp),

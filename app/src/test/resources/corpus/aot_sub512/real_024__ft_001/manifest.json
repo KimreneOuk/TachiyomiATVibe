@@ -1,0 +1,87 @@
+{
+  "identity": "real_024__ft_001",
+  "page": "real_024__ft_001",
+  "source_page": "real_024",
+  "source_file": "page-024.jpg",
+  "source_dims": [
+    1125,
+    1600
+  ],
+  "category": "free_text_aot512",
+  "inpaint_path": "inpaintReportFreeTextAot512",
+  "detector_index": 1,
+  "detector_box": [
+    170,
+    638,
+    310,
+    887
+  ],
+  "detector_score": 0.90771234,
+  "paddle_roi": [
+    158,
+    626,
+    322,
+    899
+  ],
+  "paddle_lines": [
+    [
+      286,
+      654,
+      293,
+      699
+    ],
+    [
+      217,
+      655,
+      225,
+      811
+    ],
+    [
+      234,
+      658,
+      247,
+      817
+    ],
+    [
+      264,
+      658,
+      277,
+      863
+    ],
+    [
+      194,
+      659,
+      208,
+      814
+    ],
+    [
+      286,
+      799,
+      293,
+      842
+    ]
+  ],
+  "paddle_line_count": 6,
+  "crop": [
+    0,
+    503,
+    512,
+    1015
+  ],
+  "crop_dims": [
+    512,
+    512
+  ],
+  "mask_pad": 16,
+  "mask_dilate": 8,
+  "generator": "generate_masks_faithful.py",
+  "fallback_used": false,
+  "fixture_identity": "real_024__ft_001__center_crop_511",
+  "fixture_kind": "deterministic_transformed_real_corpus_center_crop",
+  "fixture_side": 511,
+  "fixture_source_identity": "real_024__ft_001",
+  "fixture_transform": "center_crop_from_512_to_511_no_resize",
+  "dynamic_route": "native_511x511",
+  "static_route": "production_center_background_pad_zero_mask_512_crop_back",
+  "synthetic_color_used": false
+}

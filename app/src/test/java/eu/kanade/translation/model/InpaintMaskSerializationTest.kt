@@ -1,8 +1,8 @@
 package eu.kanade.translation.model
 
-import kotlinx.serialization.json.Json
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 
 /**

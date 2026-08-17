@@ -1,7 +1,7 @@
 package eu.kanade.translation.rendering
 
-import io.kotest.matchers.shouldBe
 import io.kotest.matchers.floats.shouldBeGreaterThan
+import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**

@@ -10,11 +10,10 @@ import java.io.InputStream
  * depends on, decoupled from the concrete executor.
  *
  * Today this is satisfied by [eu.kanade.translation.ChapterTranslator], which
- * owns the decode → OCR → translate → inpaint → render pipeline. After the
- * pipeline extraction it will be satisfied by
- * [eu.kanade.translation.TranslationPipeline]. Either way the scheduler only
+ * delegates to [eu.kanade.translation.TranslationPipeline]'s
+ * decode → OCR → translate → inpaint → render pipeline. The scheduler only
  * cares that the executor runs one page to completion (or failure) under its
- * own single permit, with stage-resume + watchdog semantics already handled.
+ * own single permit, with stage-resume + native-run quarantine already handled.
  *
  * The `force` flag: `false` resumes from the latest persisted stage (no
  * re-OCR when valid blocks exist, no re-translate when blocks are translated,
@@ -44,6 +43,7 @@ interface TranslationExecutor {
         source: HttpSource,
         pageKey: String,
         force: Boolean = false,
+        stageListener: TranslationStageListener? = null,
     )
 
     suspend fun translateSinglePageFromStream(
@@ -53,5 +53,115 @@ interface TranslationExecutor {
         pageKey: String,
         streamFn: () -> InputStream,
         force: Boolean = false,
+        stageListener: TranslationStageListener? = null,
     )
+
+    /**
+     * Native phase of the prepared-page boundary: decode → detect/OCR → inpaint
+     * → persist the cleaned image and required metadata durably. Returns a
+     * lightweight [PreparedPage] reference carrying durable identifiers only —
+     * never a decoded bitmap — so a caller may begin another native page while
+     * a remote translator processes this prepared page.
+     *
+     * Returns null on failure before handoff (decode/recognition/persist
+     * failure, soft skip with no durable state, or cancellation-equivalent
+     * terminal writes). A null return cannot be mistaken for a prepared page.
+     *
+     * When [PreparedPage.isTerminal] is true the page needs no further work
+     * (textless terminal, render-only resume that already completed, or an
+     * already-fully-translated page); callers must skip [translatePreparedPage]
+     * in that case.
+     *
+     * Stage events fire at actual execution entry on the supplied
+     * [stageListener]: READING before OCR, CLEANING before a standalone inpaint
+     * (the fused single-page recognize path emits READING for the combined
+     * detect+OCR+inpaint native call).
+     */
+    suspend fun prepareSinglePage(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        streamFn: (() -> InputStream)? = null,
+        force: Boolean = false,
+        stageListener: TranslationStageListener? = null,
+    ): PreparedPage?
+
+    /**
+     * Translation/render phase of the prepared-page boundary: load the durable
+     * cleaned image produced by [prepareSinglePage], translate recognized text,
+     * render the display result, and persist stage writes. Runs outside the
+     * native permit so a caller's other native page may overlap this page's
+     * remote translation.
+     *
+     * @return true when translate/render work was performed or attempted
+     *   (including textless terminal no-ops); false ONLY when the prepared
+     *   reference no longer matches the durable store (generation / pageVersion
+     *   / fingerprint mismatch, missing page, or missing cleaned image) — a
+     *   stale/race outcome the caller may retry. An inpaint failure during
+     *   preparation (no cleaned image produced) also surfaces as false: the
+     *   caller should re-prepare the page rather than mark the slot Failed.
+     * @throws Throwable on a genuine translate/render failure or timeout (after
+     *   durable failure writes), matching the legacy [translateSinglePage]
+     *   propagation so callers can attribute failures correctly instead of
+     *   mistaking them for a race loss.
+     *
+     * TRANSLATING fires before the provider request; RENDERING fires before
+     * compositing the translated result.
+     */
+    suspend fun translatePreparedPage(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        prepared: PreparedPage,
+        stageListener: TranslationStageListener? = null,
+    ): Boolean
+}
+
+/**
+ * Lightweight, serializable reference to a page whose native preparation is
+ * durably complete. Carries only durable identifiers and metadata — never a
+ * decoded bitmap — so it is safe to retain across the native/translation lane
+ * boundary and across coroutine cancellations.
+ *
+ * The handoff is honest: [cleanedImageName] is non-null only after the cleaned
+ * image file is verified durable on disk and the store records
+ * `inpaintStatus == READY` at the current inpaint revision. Callers must not
+ * treat a null [cleanedImageName] as a failure — a textless page legitimately
+ * produces a terminal [PreparedPage] with no cleaned image.
+ */
+data class PreparedPage(
+    val pageKey: String,
+    val chapterId: Long?,
+    val mangaId: Long,
+    val sourceId: Long,
+    val cleanedImageName: String?,
+    val generation: Long,
+    val pageVersion: Long,
+    val blockFingerprints: List<String>,
+    val isTerminal: Boolean,
+)
+
+/**
+ * User-facing pipeline stages, emitted at actual execution entry (not while a
+ * page is waiting in a queue). The labels map to the live reader experience:
+ * READING = detection and OCR, CLEANING = segmentation and inpainting,
+ * TRANSLATING = provider/local translator request, RENDERING = compositing the
+ * translated result.
+ */
+enum class TranslationStageEvent {
+    READING,
+    CLEANING,
+    TRANSLATING,
+    RENDERING,
+}
+
+/**
+ * Narrow callback invoked by [TranslationExecutor] implementations when a
+ * stage actually begins executing for a page. Methods are synchronous and
+ * must not block on the translation pipeline: collectors should snapshot the
+ * event and dispatch any heavy work asynchronously.
+ */
+fun interface TranslationStageListener {
+    fun onStageEntered(pageKey: String, stage: TranslationStageEvent)
 }

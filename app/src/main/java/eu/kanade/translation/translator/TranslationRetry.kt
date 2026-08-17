@@ -23,7 +23,7 @@ internal suspend inline fun <T> withTranslationRetry(
     maxAttempts: Int = 3,
     baseDelayMs: Long = 1000L,
     logTag: String,
-    block: () -> T,
+    crossinline block: suspend () -> T,
 ): T {
     require(maxAttempts > 0) { "maxAttempts must be > 0" }
     var attempt = 0

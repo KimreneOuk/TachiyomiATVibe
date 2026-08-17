@@ -90,13 +90,13 @@ object TranslationBlockValidation {
                     pageTranslation.recordAttemptFailure()
                     pageTranslation.errorMessage =
                         "Translation incomplete: 0/${result.expectedCount} " +
-                            "blocks translated (missing/blank/source-equal translations are not rendered)"
+                        "blocks translated (missing/blank/source-equal translations are not rendered)"
                     StageStatus.FAILED
                 } else {
                     pageTranslation.translationStatus = StageStatus.PARTIAL
                     pageTranslation.errorMessage =
                         "Translation partial: ${result.translatedCount}/${result.expectedCount} " +
-                            "blocks translated (missing regions left blank on the cleaned image)"
+                        "blocks translated (missing regions left blank on the cleaned image)"
                     StageStatus.PARTIAL
                 }
             }

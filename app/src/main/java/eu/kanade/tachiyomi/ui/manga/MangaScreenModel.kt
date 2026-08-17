@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.manga
 
+import android.app.Application
 import android.content.Context
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHostState
@@ -43,21 +44,33 @@ import eu.kanade.tachiyomi.util.chapter.getNextUnread
 import eu.kanade.tachiyomi.util.removeCovers
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.model.ChapterQueuePreflight
+import eu.kanade.translation.model.ChapterRevisionEligibility
+import eu.kanade.translation.model.RevisionConfirmState
+import eu.kanade.translation.model.RevisionConfirmation
+import eu.kanade.translation.model.RevisionReviewerOption
+import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationSettingsSummary
+import eu.kanade.translation.model.defaultScope
+import eu.kanade.translation.model.resolveEffectiveReviewerEngine
 import eu.kanade.translation.model.snapshotTranslationSummary
+import eu.kanade.translation.model.toConfirmState
+import eu.kanade.translation.model.toResultState
+import eu.kanade.translation.model.withReviewerPicked
+import eu.kanade.translation.model.withScopeChanged
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
-import kotlinx.coroutines.flow.sample
-import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -91,8 +104,10 @@ import tachiyomi.domain.manga.model.applyFilter
 import tachiyomi.domain.manga.repository.MangaRepository
 import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.domain.track.interactor.GetTracks
+import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.at.ATMR
 import tachiyomi.source.local.isLocal
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -162,6 +177,7 @@ class MangaScreenModel(
 
     private val selectedPositions: Array<Int> = arrayOf(-1, -1) // first and last selected index in list
     private val selectedChapterIds: HashSet<Long> = HashSet()
+    private var pendingTranslationGroup: List<ChapterList.Item> = emptyList()
 
     /**
      * Helper function to update the UI state only if it's currently in success state
@@ -540,7 +556,15 @@ class MangaScreenModel(
         if (translationProgressJobs[chapterId]?.isActive == true) return
         translationProgressJobs[chapterId] = screenModelScope.launchIO {
             translationManager.observeBatchProgress(chapterId)
-                .sample(200.milliseconds)
+                // Sample nonterminal updates, but deliver terminal snapshots immediately.
+                .transformLatest { progress ->
+                    if (progress.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.FINISHED) {
+                        emit(progress)
+                    } else {
+                        delay(200)
+                        emit(progress)
+                    }
+                }
                 .catch { error -> logcat(LogPriority.ERROR, error) }
                 .flowWithLifecycle(lifecycle)
                 .collect { progress ->
@@ -551,7 +575,9 @@ class MangaScreenModel(
 
     private fun stopTranslationProgress(chapterId: Long) {
         translationProgressJobs.remove(chapterId)?.cancel()
-        updateTranslationProgress(chapterId, null)
+        // Keep the terminal snapshot in the open progress sheet so the user can
+        // see whether automatic Pass 2 completed or failed after the last page
+        // rendered. A later batch replaces it when its tracker emits again.
     }
 
     private fun updateTranslationProgress(chapterId: Long, progress: TranslationProgressSnapshot?) {
@@ -637,6 +663,16 @@ class MangaScreenModel(
                 chapter.id?.let(::observeTranslationProgress)
             }
 
+            // TachiyomiAT CP7: snapshot manager-derived revision eligibility
+            // for any chapter with translation state. The manager returns null
+            // when there is no store, so NOT_TRANSLATED chapters stay null and
+            // hide the REVIEW action. The snapshot is fetched asynchronously
+            // and merged into existing state so it never blocks the list render.
+            val chapterId = chapter.id
+            if (translationState != Translation.State.NOT_TRANSLATED && chapterId != null) {
+                observeRevisionEligibility(chapterId)
+            }
+
             ChapterList.Item(
                 chapter = chapter,
                 downloadState = downloadState,
@@ -645,6 +681,29 @@ class MangaScreenModel(
                 // TachiyomiAT
                 translationState = translationState,
             )
+        }
+    }
+
+    /**
+     * TachiyomiAT CP7: asynchronously snapshots manager-derived revision
+     * eligibility for [chapterId] and merges it into the matching chapter item.
+     * The snapshot is backend-owned (counts, reviewer options, language pair)
+     * so the UI never computes them. Idempotent: re-snapshots are cheap and the
+     * manager reads durable state.
+     */
+    private fun observeRevisionEligibility(chapterId: Long) {
+        screenModelScope.launch {
+            val eligibility = translationManager.snapshotRevisionEligibility(chapterId) ?: return@launch
+            updateSuccessState { success ->
+                val index = success.chapters.indexOfFirst { it.id == chapterId }
+                if (index < 0) return@updateSuccessState success
+                success.copy(
+                    chapters = success.chapters.toMutableList().apply {
+                        val existing = removeAt(index)
+                        add(index, existing.copy(revisionEligibility = eligibility))
+                    },
+                )
+            }
         }
     }
 
@@ -784,22 +843,31 @@ class MangaScreenModel(
     }
 
     // TachiyomiAT
+    fun setTranslationQueuePaused(paused: Boolean) {
+        if (paused) {
+            translationManager.pauseTranslation()
+        } else {
+            translationManager.startTranslation()
+        }
+    }
+
+    // TachiyomiAT
     fun runChapterTranslationActions(
         item: ChapterList.Item,
         action: ChapterTranslationAction,
     ) {
+        runChapterTranslationActions(listOf(item), action)
+    }
+
+    fun runChapterTranslationActions(
+        items: List<ChapterList.Item>,
+        action: ChapterTranslationAction,
+    ) {
+        if (items.isEmpty()) return
+        val item = items.first()
         when (action) {
             ChapterTranslationAction.START -> {
-                // TachiyomiAT: log the guard outcome instead of silently returning.
-                // A silent return on a user action made the staged-batch path look
-                // "dead" when the real cause was the chapter not being downloaded.
-                if (item.downloadState != Download.State.DOWNLOADED) {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT translate START rejected: chapter ${item.chapter.name} " +
-                            "not downloaded (state=${item.downloadState}); download it first."
-                    }
-                    return
-                }
+                pendingTranslationGroup = items
                 // TachiyomiAT: gate batch translation behind a read-only settings
                 // review popup so the user can verify source/target language,
                 // engine/model, OCR model, and output tokens before the chapter is
@@ -820,36 +888,86 @@ class MangaScreenModel(
             }
 
             ChapterTranslationAction.CANCEL -> {
-                val activeTranslation = translationManager.getQueuedTranslationOrNull(item.chapter.id) ?: return
-                translationManager.cancelQueuedTranslation(activeTranslation)
-                updateTranslationState(activeTranslation.apply { status = Translation.State.NOT_TRANSLATED })
-            }
-
-            ChapterTranslationAction.DELETE -> {
-                screenModelScope.launchNonCancellable {
-                    try {
-                        successState?.let { state ->
-                            translationManager.deleteTranslation(
-                                item.chapter,
-                                state.manga,
-                                state.source,
-                            )
-                            updateSuccessState { successState ->
-                                val modifiedIndex = successState.chapters.indexOfFirst { it.id == item.chapter.id }
-                                if (modifiedIndex < 0) return@updateSuccessState successState
-
-                                val newChapters = successState.chapters.toMutableList().apply {
-                                    val item = removeAt(modifiedIndex)
-                                        .copy(translationState = Translation.State.NOT_TRANSLATED)
-                                    add(modifiedIndex, item)
-                                }
-                                successState.copy(chapters = newChapters)
-                            }
+                items.forEach { item ->
+                    val activeTranslation = translationManager.getQueuedTranslationOrNull(item.chapter.id) ?: return@forEach
+                    translationManager.cancelQueuedTranslation(activeTranslation)
+                    updateTranslationState(activeTranslation.apply { status = Translation.State.NOT_TRANSLATED })
+                    // TachiyomiAT bug 4 fix: confirm the cancellation visibly and
+                    // offer Undo. The store-level dim clear is handled by
+                    // cancelPageTranslations; this snackbar closes the loop on the
+                    // user's tap. Undo re-queues via translateChapter, whose
+                    // artifact scan (BatchResumeGateDecider) reuses READY work so
+                    // no completed page is re-OCR'd.
+                    val manga = successState?.manga
+                    screenModelScope.launch {
+                        val context = Injekt.get<Application>()
+                        val result = snackbarHostState.showSnackbar(
+                            message = context.stringResource(ATMR.strings.batch_cancelled_toast),
+                            actionLabel = context.stringResource(ATMR.strings.translation_cancelled_undo),
+                            withDismissAction = true,
+                        )
+                        if (result == SnackbarResult.ActionPerformed && manga != null) {
+                            translationManager.translateChapter(manga, item.chapter)
                         }
-                    } catch (e: Throwable) {
-                        logcat(LogPriority.ERROR, e)
                     }
                 }
+            }
+
+            ChapterTranslationAction.DELETE -> showChapterResetDialog(item)
+
+            // TachiyomiAT CP7: open the shared revision confirmation dialog.
+            // The manager runs preflight and returns a typed outcome; the UI
+            // maps it to display state and never sends blocks/counts back.
+            ChapterTranslationAction.REVIEW -> startRevisionPreflight(
+                item = item,
+                scope = defaultScope(item.revisionEligibility),
+            )
+        }
+    }
+
+    fun showChapterResetDialog(item: ChapterList.Item) {
+        val state = successState ?: return
+        screenModelScope.launch {
+            val preflight = translationManager.chapterResetPreflight(item.chapter, state.manga, state.source)
+            updateSuccessState { it.copy(dialog = Dialog.ChapterReset(item, preflight)) }
+        }
+    }
+
+    fun resetChapterTranslation(item: ChapterList.Item, preserveEdits: Boolean) = runChapterReset(item) {
+        resetChapterTranslationData(item.chapter, it.manga, it.source, preserveEdits)
+    }
+
+    fun resetChapterInpaint(item: ChapterList.Item) = runChapterReset(item) {
+        resetChapterInpaintData(item.chapter, it.manga, it.source)
+    }
+
+    fun resetChapterOcr(item: ChapterList.Item) = runChapterReset(item) {
+        resetChapterOcrData(item.chapter, it.manga, it.source)
+    }
+
+    fun deleteChapterTranslation(item: ChapterList.Item) = runChapterReset(item) {
+        deleteTranslation(item.chapter, it.manga, it.source)
+    }
+
+    private fun runChapterReset(
+        item: ChapterList.Item,
+        action: suspend TranslationManager.(State.Success) -> Unit,
+    ) {
+        screenModelScope.launchNonCancellable {
+            try {
+                val state = successState ?: return@launchNonCancellable
+                action(translationManager, state)
+                updateSuccessState { current ->
+                    val index = current.chapters.indexOfFirst { it.id == item.chapter.id }
+                    if (index < 0) return@updateSuccessState current
+                    current.copy(
+                        chapters = current.chapters.toMutableList().apply {
+                            this[index] = this[index].copy(translationState = Translation.State.NOT_TRANSLATED)
+                        },
+                    )
+                }
+            } catch (e: Throwable) {
+                logcat(LogPriority.ERROR, e)
             }
         }
     }
@@ -869,15 +987,72 @@ class MangaScreenModel(
      * popup is accepted (or when the popup is suppressed via the
      * `translationConfirmPretranslate` preference). Encapsulates the download
      * guard + launch that previously lived inline in the START branch.
+     *
+     * Bug 3 fix: before queueing, run a preflight check. If another chapter of
+     * the same source is actively TRANSLATING, surface a confirmation dialog
+     * (the in-flight native work would be discarded by cancel). Stale QUEUE
+     * entries are evicted automatically inside translateChapter.
      */
     fun confirmChapterTranslation(item: ChapterList.Item) {
         val manga = successState?.manga ?: return
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT translate START: chapter=${item.chapter.name} manga=${manga.title} " +
-                "lastPageRead=${item.chapter.lastPageRead}"
+        val group = pendingTranslationGroup
+            .takeIf { it.any { candidate -> candidate.chapter.id == item.chapter.id } }
+            ?: listOf(item)
+        pendingTranslationGroup = emptyList()
+        val downloaded = group.filter { it.downloadState == Download.State.DOWNLOADED }
+        val awaitingDownload = group.filter { it.downloadState != Download.State.DOWNLOADED }
+        awaitingDownload.forEach { candidate ->
+            translationManager.queueTranslationAfterDownload(manga, candidate.chapter)
         }
+        if (awaitingDownload.isNotEmpty()) {
+            downloadManager.downloadChapters(manga, awaitingDownload.map { it.chapter })
+        }
+        if (downloaded.isEmpty()) return
+        if (downloaded.size > 1) {
+            translationManager.translateChapters(manga, downloaded.map { it.chapter })
+            return
+        }
+        val target = downloaded.single()
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT translate START: chapter=${target.chapter.name} manga=${manga.title} " +
+                "lastPageRead=${target.chapter.lastPageRead}"
+        }
+        when (val preflight = translationManager.translateChapterPreflight(manga, target.chapter)) {
+            is ChapterQueuePreflight.NoConflict -> launchTranslateChapter(manga, target.chapter)
+            is ChapterQueuePreflight.RunningConflict -> {
+                updateSuccessState {
+                    it.copy(dialog = Dialog.RunningTranslationConflict(target, preflight))
+                }
+            }
+            is ChapterQueuePreflight.RevisionBlocked -> {
+                // A standalone revision is active for this chapter; the user must
+                // finish or cancel it before starting a batch. Log and no-op here
+                // so the existing revision UI stays the focus.
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT translate START blocked: revision active for chapter=${item.chapter.id}"
+                }
+            }
+        }
+    }
+
+    /**
+     * TachiyomiAT bug 3 fix: called after the user confirms the
+     * [Dialog.RunningTranslationConflict] dialog. Cancels the in-flight chapter
+     * (preserving its accepted artifacts via clearTransientQueuePages) and then
+     * starts the requested chapter's batch.
+     */
+    fun confirmReplaceRunningChapter(item: ChapterList.Item) {
+        val manga = successState?.manga ?: return
+        val preflight = (successState?.dialog as? Dialog.RunningTranslationConflict)?.conflict ?: return
         screenModelScope.launchNonCancellable {
+            translationManager.cancelRunningChapterForReplace(preflight.chapterId)
             translationManager.translateChapter(manga, item.chapter)
+        }
+    }
+
+    private fun launchTranslateChapter(manga: Manga, chapter: Chapter) {
+        screenModelScope.launchNonCancellable {
+            translationManager.translateChapter(manga, chapter)
         }
     }
 
@@ -897,6 +1072,166 @@ class MangaScreenModel(
      */
     fun translationConfirmPretranslate(): Boolean =
         translationPreferences.translationConfirmPretranslate().get()
+
+    // TachiyomiAT CP7: standalone revision actions. The view-model reads the
+    // reviewer engine/model from the injected [TranslationPreferences] (the
+    // manager does not expose the pref setter) and dispatches only scope +
+    // reviewer + language intents to [TranslationManager]. Closing the screen
+    // does not cancel the work; the manager owns the job.
+
+    /**
+     * The persisted reviewer engine for standalone revision. Drives the default
+     * model selection via [TranslationPreferences.translationAiModel].
+     */
+    private fun revisionReviewerEngine(): AiEngine =
+        translationPreferences.revisionReviewerEngine().get()
+
+    /**
+     * Runs preflight for [item] with the given [scope] and opens the shared
+     * revision confirm dialog with the typed outcome. The confirm dialog shows
+     * the rejection reason (with a settings-nav action when recoverable) or the
+     * Ready confirmation (reviewer picker, scope, counts).
+     */
+    fun startRevisionPreflight(item: ChapterList.Item, scope: RevisionScope) {
+        val chapterId = item.chapter.id ?: return
+        successState?.manga ?: return
+        // Open the dialog in Idle while preflight runs so the user sees the
+        // scope/reviewer surface immediately.
+        updateSuccessState { it.copy(dialog = Dialog.RevisionConfirm(item, RevisionConfirmState.Idle)) }
+        screenModelScope.launch {
+            // Resolve the reviewer engine: Auto follows the Pass-1 translation
+            // engine (with a configured-provider fallback when Pass-1 is non-AI
+            // or its provider lacks a credential); explicit honors the persisted
+            // reviewer engine. Mirrors the reader path.
+            val reviewerOptions = item.revisionEligibility?.reviewerOptions
+                ?: translationManager.revisionReviewerOptions()
+            val engine = resolveEffectiveReviewerEngine(
+                auto = translationPreferences.revisionReviewerAuto().get(),
+                pass1Category = translationPreferences.translationEngineCategory().get(),
+                pass1AiEngine = translationPreferences.translationAiEngine().get(),
+                configuredOptions = reviewerOptions,
+                persistedEngine = revisionReviewerEngine(),
+            )
+            val model = translationPreferences.translationAiModel(engine).get()
+            val outcome = translationManager.runRevisionPreflight(
+                chapterId = chapterId,
+                chapterName = item.chapter.name,
+                scope = scope,
+                reviewerEngine = engine,
+                reviewerModel = model,
+            )
+            val state = outcome.toConfirmState(reviewerOptions, engine)
+            updateSuccessState { it.copy(dialog = Dialog.RevisionConfirm(item, state)) }
+            // Keep eligibility fresh for this chapter so the next REVIEW reflects
+            // any post-preflight state.
+            observeRevisionEligibility(chapterId)
+        }
+    }
+
+    /**
+     * Updates the in-memory confirm state for reviewer/scope edits. The reviewer
+     * engine is persisted immediately via [TranslationPreferences]; the scope is
+     * held in-memory until the next preflight. No backend calls here.
+     */
+    fun updateRevisionConfirmState(
+        item: ChapterList.Item,
+        transform: (RevisionConfirmState) -> RevisionConfirmState,
+    ) {
+        updateSuccessState { success ->
+            val dialog = success.dialog as? Dialog.RevisionConfirm ?: return@updateSuccessState success
+            if (dialog.item.id != item.id) return@updateSuccessState success
+            success.copy(dialog = Dialog.RevisionConfirm(item, transform(dialog.state)))
+        }
+    }
+
+    /**
+     * Persists the picked reviewer engine and updates the confirm dialog's
+     * selection. The model is read from the per-engine model preference by the
+     * next preflight, matching the manager's identity check.
+     */
+    fun pickRevisionReviewer(item: ChapterList.Item, option: RevisionReviewerOption) {
+        // An explicit pick disables Auto so the chosen provider is honored.
+        translationPreferences.revisionReviewerAuto().set(false)
+        translationPreferences.revisionReviewerEngine().set(option.engine)
+        updateRevisionConfirmState(item) { state -> state.withReviewerPicked(option) }
+    }
+
+    /**
+     * Updates the confirm dialog's scope and re-runs preflight so the displayed
+     * counts match the new scope before the user confirms.
+     */
+    fun changeRevisionScope(item: ChapterList.Item, scope: RevisionScope) {
+        // Reflect the new scope immediately, then re-run preflight so the
+        // Ready confirmation carries the new scope's counts.
+        updateRevisionConfirmState(item) { state -> state.withScopeChanged(scope) }
+        startRevisionPreflight(item = item, scope = scope)
+    }
+
+    /**
+     * Confirms and starts the revision. Sends only scope + reviewer + language
+     * to the manager (the opaque token is held backend-side and re-validated at
+     * [TranslationManager.startRevision]). Closing the screen does not cancel
+     * the work.
+     */
+    fun confirmStartRevision(item: ChapterList.Item, confirmation: RevisionConfirmation) {
+        val manga = successState?.manga ?: return
+        val chapterId = item.chapter.id ?: return
+        // UI guard mirrors the manager's active-job admission so a fast
+        // double-tap cannot enqueue a second start.
+        if (translationManager.isRevisionActive(chapterId)) {
+            logcat(LogPriority.WARN) { "Revision already active for chapter $chapterId; ignoring duplicate confirm" }
+            return
+        }
+        val flow = translationManager.startRevision(
+            manga = manga,
+            chapter = item.chapter,
+            scope = confirmation.scope,
+            reviewerEngine = confirmation.reviewerEngine,
+            reviewerModel = confirmation.reviewerModel,
+        ) ?: run {
+            logcat(LogPriority.WARN) {
+                "startRevision returned null for chapter $chapterId (active batch / revision / deleted)"
+            }
+            return
+        }
+        observeTranslationProgress(chapterId)
+        updateSuccessState {
+            it.copy(dialog = Dialog.TranslationProgress(chapterId))
+        }
+        // Reference the flow so it is collected; the manager's tracker updates
+        // the snapshot the progress sheet renders.
+        screenModelScope.launch { flow.collect { /* snapshot flows through queueState */ } }
+    }
+
+    /**
+     * Cancels an active revision for [item]. The manager clears its own job;
+     * closing the screen is not required (and never cancels the work).
+     */
+    fun cancelRevision(item: ChapterList.Item) {
+        val chapterId = item.chapter.id ?: return
+        translationManager.cancelRevision(chapterId)
+    }
+
+    /**
+     * Opens the terminal result sheet for [item], loading the latest durable
+     * report. The sheet renders Loading, then Missing (no run yet) or Loaded
+     * (K/C/U totals + bounded accepted changes).
+     */
+    fun showRevisionResult(item: ChapterList.Item) {
+        val chapterId = item.chapter.id ?: return
+        updateSuccessState {
+            it.copy(dialog = Dialog.RevisionResult(item, eu.kanade.translation.model.RevisionResultState.Loading))
+        }
+        screenModelScope.launch {
+            val report = translationManager.getLatestRevisionReport(chapterId)
+            val state = report?.toResultState()
+                ?: eu.kanade.translation.model.RevisionResultState.Missing
+            updateSuccessState { success ->
+                val dialog = success.dialog as? Dialog.RevisionResult ?: return@updateSuccessState success
+                success.copy(dialog = Dialog.RevisionResult(item, state))
+            }
+        }
+    }
 
     fun runChapterDownloadActions(
         items: List<ChapterList.Item>,
@@ -1283,9 +1618,36 @@ class MangaScreenModel(
         data object TrackSheet : Dialog
         data object FullCover : Dialog
         data class TranslationProgress(val chapterId: Long) : Dialog
+        data class ChapterReset(
+            val item: ChapterList.Item,
+            val preflight: eu.kanade.translation.ChapterResetPreflight,
+        ) : Dialog
         data class ConfirmTranslation(
             val item: ChapterList.Item,
             val summary: TranslationSettingsSummary,
+        ) : Dialog
+
+        // TachiyomiAT bug 3: another chapter of the same source is actively
+        // translating; the user must confirm cancelling it before this chapter's
+        // batch can start. The conflict carries enough identity for the dialog
+        // copy and for cancelRunningChapterForReplace.
+        data class RunningTranslationConflict(
+            val item: ChapterList.Item,
+            val conflict: eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict,
+        ) : Dialog
+
+        // TachiyomiAT CP7: standalone revision confirmation + terminal result.
+        // The confirm dialog holds the pure confirm state (Idle/Ready/Rejected)
+        // so reviewer/scope edits are unit-testable; the result dialog carries
+        // a pure result state (Loading/Missing/Loaded) so the sheet renders one
+        // run identically from manga and reader.
+        data class RevisionConfirm(
+            val item: ChapterList.Item,
+            val state: RevisionConfirmState,
+        ) : Dialog
+        data class RevisionResult(
+            val item: ChapterList.Item,
+            val state: eu.kanade.translation.model.RevisionResultState,
         ) : Dialog
     }
 
@@ -1415,6 +1777,11 @@ sealed class ChapterList {
         // TachiyomiAT: rich batch translation progress for the manga-screen
         // indicator and progress sheet. Null means no active batch.
         val translationProgress: TranslationProgressSnapshot? = null,
+        // TachiyomiAT CP7: manager-derived standalone-revision eligibility.
+        // Null until the first snapshot completes (or when the chapter has no
+        // translation store). Drives the REVIEW menu action; independent of
+        // aggregate [translationState] and downloaded-image state.
+        val revisionEligibility: ChapterRevisionEligibility? = null,
         val downloadProgress: Int,
         val selected: Boolean = false,
     ) : ChapterList() {

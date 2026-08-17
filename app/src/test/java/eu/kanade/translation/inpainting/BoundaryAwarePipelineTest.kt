@@ -4,7 +4,6 @@ import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.comparables.shouldBeLessThan
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
-import kotlin.math.sqrt
 
 /**
  * Guards the pure boundary-aware pipeline helpers extracted into

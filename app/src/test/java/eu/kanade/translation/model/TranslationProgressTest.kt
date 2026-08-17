@@ -30,7 +30,9 @@ class TranslationProgressTest {
         val pages = mapOf(
             "1" to PageTranslation(
                 ocrStatus = StageStatus.READY,
-                inpaintStatus = StageStatus.READY,
+                translationStatus = StageStatus.SKIPPED,
+                inpaintStatus = StageStatus.SKIPPED,
+                renderStatus = StageStatus.SKIPPED,
             ),
         )
         TranslationProgress.compute(pages) shouldBe (1 to 1)
@@ -91,8 +93,6 @@ class TranslationProgressTest {
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
         )
         if (rendered) {
-            p.renderedImageName = "1.rendered.png"
-            p.renderQuality = RenderQuality.FULL
             p.cleanedImageName = "1.cleaned.png"
         }
         return p

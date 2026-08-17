@@ -1,0 +1,18 @@
+{
+  "path": "free_text",
+  "inpaint_path": "inpaintReportFreeTextAot512 (AOT model)",
+  "crop": [
+    30,
+    948,
+    542,
+    1460
+  ],
+  "crop_dims": [
+    512,
+    512
+  ],
+  "free_text_boxes": 2,
+  "paddle_refined_lines": 8,
+  "mask_pad": 16,
+  "mask_dilate": 8
+}

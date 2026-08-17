@@ -34,7 +34,8 @@ import java.nio.FloatBuffer
  * Only class 0 (panel) is returned; class 1 (text) is dropped because the
  * production RT-DETR text detector is the source of truth for text/bubble boxes.
  *
- * CPU-only, like every other translation ONNX session. One cheap 640x640 pass
+ * Attempts NNAPI with a CPU retry via createSessionWithFallback, matching the
+ * other vision-side ONNX engines. One cheap 640x640 pass
  * per page; runs alongside the text detector during recognition.
  */
 class OnnxPanelDetector {
@@ -54,15 +55,10 @@ class OnnxPanelDetector {
             "PanelDetector init: ${modelFile.absolutePath} " +
                 "(${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        val opts = OnnxRuntimeProvider.createSessionOptions(useAccelerator = true)
-        try {
-            session = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "PanelDetector init: session FAILED for ${modelFile.absolutePath}" }
-            throw e
-        } finally {
-            opts.close()
-        }
+        session = OnnxRuntimeProvider.createSessionWithFallback(
+            modelFile.absolutePath,
+            useAccelerator = true,
+        )
         logcat(LogPriority.INFO) {
             "PanelDetector session created from ${modelFile.name} " +
                 "inputs=${session?.inputNames} outputs=${session?.outputNames}"
@@ -106,7 +102,12 @@ class OnnxPanelDetector {
             canvas.drawBitmap(
                 bitmap,
                 null,
-                RectF(padWidth.toFloat(), padHeight.toFloat(), (padWidth + newWidth).toFloat(), (padHeight + newHeight).toFloat()),
+                RectF(
+                    padWidth.toFloat(),
+                    padHeight.toFloat(),
+                    (padWidth + newWidth).toFloat(),
+                    (padHeight + newHeight).toFloat(),
+                ),
                 paint,
             )
 
@@ -159,7 +160,7 @@ class OnnxPanelDetector {
                     "inference=${(t2 - t1) / 1_000_000.0}ms " +
                     "postprocess=${(t3 - t2) / 1_000_000.0}ms " +
                     "raw=${candidates.size} kept=${panels.size} " +
-                    "img=${originalWidth}x${originalHeight} ratio=$ratio"
+                    "img=${originalWidth}x$originalHeight ratio=$ratio"
             }
             return panels
         } finally {
@@ -239,7 +240,10 @@ class OnnxPanelDetector {
     }
 
     private data class Box(
-        val x1: Float, val y1: Float, val x2: Float, val y2: Float,
+        val x1: Float,
+        val y1: Float,
+        val x2: Float,
+        val y2: Float,
         val conf: Float,
     ) {
         fun area(): Float {
@@ -252,12 +256,15 @@ class OnnxPanelDetector {
     private companion object {
         const val IMG_SIZE = 640
         const val INPUT_FLOATS = 3 * IMG_SIZE * IMG_SIZE
+
         // Confidence threshold for class-0 (panel). Matches the tools/ eval conf
         // (0.5) at which the model was validated across the Okiraku chapter.
         const val CONF_THRESHOLD = 0.5f
+
         // Standard YOLO NMS IoU. Lower = more aggressive dedupe of overlapping
         // panels (typical manga gutters leave >0.45 IoU between true panels).
         const val IOU_THRESHOLD = 0.45f
+
         // Ultralytics' default letterbox pad colour (grey 114).
         const val PAD_COLOR = 0xFF727272.toInt()
     }

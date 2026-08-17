@@ -2,12 +2,11 @@ package eu.kanade.translation.rendering
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.inpainting.BoundaryAwarePipeline
+import logcat.LogPriority
+import tachiyomi.core.common.util.system.logcat
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 
 /**
  * TachiyomiAT: shared text-color estimator.
@@ -61,7 +60,9 @@ object RenderColorEstimator {
             logcat(LogPriority.DEBUG) {
                 "[color] B/W snap: bgLuma=%.1f ink=rgb(%d,%d,%d) -> %s".format(
                     bgLuma,
-                    fgColor[0].toInt(), fgColor[1].toInt(), fgColor[2].toInt(),
+                    fgColor[0].toInt(),
+                    fgColor[1].toInt(),
+                    fgColor[2].toInt(),
                     if (forced == 0xFFFFFFFFL) "white" else "black",
                 )
             }
@@ -111,7 +112,13 @@ object RenderColorEstimator {
         // F4: unparented text (SFX/free text) has no bubble interior, so a wide
         // pad reaches into adjacent artwork → wrong polarity → illegible text.
         // Keep unparented pad tight; parented widens to capture the bubble interior.
-        val basePad = if (parentBbox != null) max(12, min(boxWidth, boxHeight) / 2) else max(2, min(boxWidth, boxHeight) / 8)
+        val basePad = if (parentBbox !=
+            null
+        ) {
+            max(12, min(boxWidth, boxHeight) / 2)
+        } else {
+            max(2, min(boxWidth, boxHeight) / 8)
+        }
         val pad = if (parentBbox != null) max(basePad, 16) else basePad
         val left = (x1 - pad).coerceIn(0, bitmap.width)
         val top = (y1 - pad).coerceIn(0, bitmap.height)
@@ -124,10 +131,14 @@ object RenderColorEstimator {
         val pixels = IntArray(cropWidth * cropHeight)
         bitmap.getPixels(pixels, 0, cropWidth, left, top, cropWidth, cropHeight)
 
-        val textArgb = decideTextFill(pixels, cropWidth, cropHeight, left, top, parentBbox)
+        // Sample the two clusters once. The previous path ran the same mask
+        // construction and 5-iteration 2-means twice: once for fill and again
+        // for the vestigial stroke luma.
+        val (bgColor, fgColor) = sampleClusters(pixels, cropWidth, cropHeight, left, top, parentBbox)
+        val textArgb = colorPolicy(bgColor, fgColor)
         // Stroke color mirrors the renderer's luma-inverse invariant so the
         // persisted value is correct if read directly; width is vestigial.
-        val bgLuma = sampleBackgroundLuma(pixels, cropWidth, cropHeight, left, top, parentBbox)
+        val bgLuma = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
         val strokeArgb = if (bgLuma < DARK_BG_LUMA) 0xFF000000L else 0xFFFFFFFFL
         return Triple(textArgb, strokeArgb, 0f)
     }
@@ -149,9 +160,7 @@ object RenderColorEstimator {
         cropTop: Int,
         parentBbox: IntArray? = null,
     ): Long {
-        val sampleMask = bubbleInteriorMask(parentBbox, cropWidth, cropHeight, cropLeft, cropTop)
-        val step = max(1, pixels.size / 1200)
-        val (bgColor, fgColor) = extractClusters(pixels, step, sampleMask)
+        val (bgColor, fgColor) = sampleClusters(pixels, cropWidth, cropHeight, cropLeft, cropTop, parentBbox)
         return colorPolicy(bgColor, fgColor)
     }
 
@@ -167,10 +176,21 @@ object RenderColorEstimator {
         cropTop: Int,
         parentBbox: IntArray? = null,
     ): Float {
+        val (bgColor, _) = sampleClusters(pixels, cropWidth, cropHeight, cropLeft, cropTop, parentBbox)
+        return 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
+    }
+
+    private fun sampleClusters(
+        pixels: IntArray,
+        cropWidth: Int,
+        cropHeight: Int,
+        cropLeft: Int,
+        cropTop: Int,
+        parentBbox: IntArray?,
+    ): Pair<FloatArray, FloatArray> {
         val sampleMask = bubbleInteriorMask(parentBbox, cropWidth, cropHeight, cropLeft, cropTop)
         val step = max(1, pixels.size / 1200)
-        val (bgColor, _) = extractClusters(pixels, step, sampleMask)
-        return 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
+        return extractClusters(pixels, step, sampleMask)
     }
 
     private fun bubbleInteriorMask(

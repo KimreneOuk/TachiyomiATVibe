@@ -11,6 +11,7 @@ data class PageTranslation(
     var imgWidth: Float = 0f,
     var imgHeight: Float = 0f,
     var cleanedImageName: String? = null,
+    var ocrArtifactId: String? = null,
     var recognitionEngine: String? = null,
     var detectionCount: Int = 0,
     var ocrBlockCount: Int = 0,
@@ -21,9 +22,16 @@ data class PageTranslation(
     var translationStatus: String = StageStatus.PENDING,
     var inpaintStatus: String = StageStatus.PENDING,
     var renderStatus: String = StageStatus.PENDING,
-    var errorMessage: String? = null,
+    var ocrError: String? = null,
+    var translationError: String? = null,
+    var inpaintError: String? = null,
+    var renderError: String? = null,
     var updatedAt: Long = 0L,
     var sourceFileName: String? = null,
+    // Defaults preserve compatibility with translation JSON written before
+    // generation/version race preconditions were introduced.
+    var runGeneration: Long = 0L,
+    var pageVersion: Long = 0L,
     // Persisted raw per-failure count for diagnostics/back-compat. Do NOT gate
     // exhaustion on this: a single attempt can fail multiple cascading stages
     // (inpaint→render) and double-count. hasExhaustedRetries keys off attemptCount.
@@ -31,6 +39,17 @@ data class PageTranslation(
     // Incremented when the rendered file's bytes are rewritten. The file name is
     // stable, so UI dedup must not key on the name alone.
     var inpaintRevision: Int = 0,
+    /**
+     * The inpainting mode name ("QUALITY" / "FAST") that produced the current
+     * cleaned image, or null for pages persisted before this field existed.
+     *
+     * Unlike [inpaintRevision] (which tracks mask-logic schema changes, not the
+     * user-selected mode), this lets a FAST->QUALITY switch invalidate stale
+     * FAST cleaned output: the resume gate compares it to the current preference
+     * and forces a re-inpaint on mismatch. Null (legacy) is treated as a match
+     * so existing chapters are not mass re-translated on the first QUALITY open.
+     */
+    var inpaintingModeUsed: String? = null,
     /**
      * TachiyomiAT: SERIALIZABLE inpaint mask captured at OCR time.
      *
@@ -53,6 +72,27 @@ data class PageTranslation(
 ) {
     @Transient
     var cleanedBitmap: Bitmap? = null
+
+    var errorMessage: String? = null
+        set(value) {
+            field = value
+            if (value != null) {
+                when {
+                    ocrStatus == StageStatus.FAILED -> ocrError = value
+                    translationStatus == StageStatus.FAILED -> translationError = value
+                    inpaintStatus == StageStatus.FAILED -> inpaintError = value
+                    renderStatus == StageStatus.FAILED -> renderError = value
+                    else -> ocrError = value // Default to OCR error if stage is unknown
+                }
+            } else {
+                ocrError = null
+                translationError = null
+                inpaintError = null
+                renderError = null
+            }
+        }
+
+    val activeError: String? get() = ocrError ?: translationError ?: inpaintError ?: renderError ?: errorMessage
 
     /**
      * TachiyomiAT: number of DISTINCT page translation attempts that have ended
@@ -119,6 +159,35 @@ data class PageTranslation(
         const val CURRENT_INPAINT_REVISION = 10
         val EMPTY = PageTranslation()
     }
+
+    fun resetTranslation() {
+        translationStatus = StageStatus.PENDING
+        translationError = null
+        blocks.forEach {
+            it.translation = ""
+            it.needsRevision = false
+            it.userEditedAt = null
+        }
+    }
+
+    fun resetInpaint() {
+        inpaintStatus = StageStatus.PENDING
+        inpaintError = null
+        cleanedImageName = null
+        cleanedBitmap = null
+        inpaintRevision = 0
+        inpaintingModeUsed = null
+    }
+
+    fun resetOcr() {
+        ocrStatus = StageStatus.PENDING
+        ocrError = null
+        blocks.clear()
+        inpaintMaskBoxes = emptyList()
+        detectionCount = 0
+        ocrBlockCount = 0
+        ocrArtifactId = null
+    }
 }
 
 /**
@@ -152,6 +221,9 @@ object StageStatus {
     const val READY = "READY"
     const val FAILED = "FAILED"
     const val CANCELLED = "CANCELLED"
+    const val SKIPPED = "SKIPPED"
+    const val TEXTLESS = "TEXTLESS"
+
     /**
      * TachiyomiAT: the translate stage produced SOME valid translations AND
      * some missing/rejected ones, but NOT zero. Distinct from READY (all
@@ -196,6 +268,7 @@ object RenderQuality {
 
 @Serializable
 data class TranslationBlock(
+    var blockId: String? = null,
     var text: String,
     var translation: String = "",
     var width: Float,
@@ -258,4 +331,6 @@ data class TranslationBlock(
      * (Interior Median Solid Fill) and the layout planner (Symmetrical Growth).
      */
     val segmentationMask: eu.kanade.translation.segmentation.BubbleMaskRle? = null,
+    var needsRevision: Boolean = false,
+    var userEditedAt: Long? = null,
 )

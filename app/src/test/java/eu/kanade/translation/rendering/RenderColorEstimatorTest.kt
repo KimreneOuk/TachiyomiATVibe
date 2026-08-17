@@ -29,8 +29,8 @@ class RenderColorEstimatorTest {
         // Symptom A regression: a dark foreground cluster (near-black ink) on a
         // dark background has contrast well below AA → fill must become white.
         val text = RenderColorEstimator.colorPolicy(
-            bgColor = rgb(20, 20, 20),   // dark background
-            fgColor = rgb(30, 30, 30),   // dark ink cluster
+            bgColor = rgb(20, 20, 20), // dark background
+            fgColor = rgb(30, 30, 30), // dark ink cluster
         )
         text shouldBe white
     }
@@ -50,7 +50,7 @@ class RenderColorEstimatorTest {
     fun `dark ink on light background snaps to black`() {
         val text = RenderColorEstimator.colorPolicy(
             bgColor = rgb(230, 230, 230), // light background
-            fgColor = rgb(20, 20, 20),    // dark ink
+            fgColor = rgb(20, 20, 20), // dark ink
         )
         text shouldBe black
     }
@@ -84,7 +84,7 @@ class RenderColorEstimatorTest {
         // fidelity is only sacrificed for legibility, never preemptively.
         val text = RenderColorEstimator.colorPolicy(
             bgColor = rgb(240, 240, 240), // near-white background
-            fgColor = rgb(220, 0, 0),     // saturated red, high contrast
+            fgColor = rgb(220, 0, 0), // saturated red, high contrast
         )
         text shouldBe black
     }

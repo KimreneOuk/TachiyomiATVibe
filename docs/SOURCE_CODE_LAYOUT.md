@@ -55,6 +55,9 @@ TachiyomiAT-1.16.8-dev/
 
 ```text
 Plan/
+├─ README.md
+├─ active/
+│  └─ <YYYY-MM-DD>-<short-topic>/
 ├─ rolling-context-and-prepare-chapter.md
 └─ translation_issue.md
 ```

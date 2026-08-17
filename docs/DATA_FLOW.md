@@ -238,7 +238,7 @@ ChapterTranslator.translate(chapter)
 Note: shared pure logic used across stages lives in focused helpers, not inline:
   • recognition/BoxGeometry        — bbox IoU + geometric dedupe (Stages 1 & 2)
   • inpainting/BubbleMaskBuilder   — mask construction + morphology (Stage 4)
-  • translator/NumberedLineResponseParser + OcrArtifactSanitizer — LLM output parsing (Stage 3)
+  • translator/TranslationPrompts + OcrArtifactSanitizer — pipe-delimited AI output parsing
   • rendering/RenderColorEstimator.colorPolicy — text/stroke color decision (Stage 5)
 See docs/TRANSLATION_MODULE.md for the full map.
         ▼
@@ -323,7 +323,7 @@ TranslationManager (central coordinator)
     │  Lifecycle of ChapterTranslationStore
     │
     ├── ChapterTranslator (per-chapter pipeline)
-    │      Orchestrates 5-stage pipeline for one chapter
+    │      Orchestrates streaming first-pass work and delayed AI revision
     │      Stores results in ChapterTranslationStore
     │
     ├── ChapterTranslationStore (persistence)
@@ -340,6 +340,8 @@ Batch pre-translation ownership:
 - Manga-screen chapter translation opens/registers a shared
   `ChapterTranslationStore`, pre-registers all ordered page keys, then emits
   `TranslationProgressSnapshot` updates to the chapter row and progress sheet.
+  The reader translation settings sheet observes the same snapshot when the
+  active chapter has a running batch.
   The START action is gated behind a read-only confirmation popup
   (`MangaScreenModel.Dialog.ConfirmTranslation` → `ConfirmTranslationDialog`)
   unless the `translationConfirmPretranslate` preference is off. The popup
@@ -352,9 +354,18 @@ Batch pre-translation ownership:
   auto/manual page scheduling is suppressed for that chapter and the reader only
   observes the shared store. Reader pause/close cancels reader jobs and streams
   without clearing active batch queues or unregistering active batch stores.
-- AI_MODEL batch translation chunks OCR text with
-  `TranslationContextChunkPlanner` under an 8192-token context budget before
-  inpaint/render. Standard translators keep the per-page translate path.
+- OCR, inpainting, first-pass AI translation, and rendering are streamed by page:
+  the reader may show a completed first-pass page before the chapter batch ends.
+  AI_MODEL chunks ordered OCR blocks with `TranslationContextChunkPlanner` under
+  an 8192-token context budget; standard translators keep the per-page path.
+- After the first pass reaches its batch barrier, AI translation automatically
+  starts delayed Pass 2 for eligible flagged blocks. Each revision chunk updates
+  the shared store and live reader overlay independently. The progress snapshot
+  exposes `TranslationBatchPhase` plus `RevisionProgress` totals, completed and
+  failed blocks, skipped/user-edited blocks, active revision page, and active
+  chunk size.
+  Final batch completion is not emitted until revision finishes or records
+  failures; these revision counters are live-only and are not resume state.
 
 ---
 

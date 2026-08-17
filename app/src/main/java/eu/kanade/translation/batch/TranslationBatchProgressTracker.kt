@@ -1,307 +1,394 @@
 package eu.kanade.translation.batch
 
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.RevisionProgress
 import eu.kanade.translation.model.StageCount
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Serialized, projection-only progress tracker. It never changes [store]; pipeline workers
+ * publish store state first, then submit typed events which this tracker reduces in order.
+ */
 class TranslationBatchProgressTracker(
     private val chapterId: Long,
     private val store: ChapterTranslationStore,
     private val orderedPageKeys: List<String>,
-    private val scope: CoroutineScope,
+    scope: CoroutineScope,
+    private val permitHolderResolver: (() -> String?)? = null,
+    private val onTerminalSnapshot: ((TranslationProgressSnapshot) -> Unit)? = null,
 ) {
-    private val _snapshot = MutableStateFlow(emptySnapshot())
-    val snapshot: StateFlow<TranslationProgressSnapshot> = _snapshot.asStateFlow()
-
-    private var tickJob: Job? = null
-    private var batchStartTime = System.currentTimeMillis()
+    private val events = Channel<TranslationBatchEvent>(Channel.UNLIMITED)
     private var finished = false
 
-    init {
-        rebuildFromStore()
-        startTick()
+    // A terminal event already accepted by the channel must be allowed to
+    // drain after replacement so the production identity-fenced callback can
+    // observe and reject it. close() still cancels trackers with no terminal
+    // work queued, preserving prompt teardown for ordinary replacements.
+    private val terminalEventQueued = AtomicBoolean(false)
+    private val terminalSnapshot = CompletableDeferred<TranslationProgressSnapshot>()
+    private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
+    private var projection = Projection()
+    private val _snapshot = MutableStateFlow(emptySnapshot())
+    val snapshot: StateFlow<TranslationProgressSnapshot> = _snapshot.asStateFlow()
+    private val reducerJob: Job = scope.launch {
+        for (event in events) {
+            projection = reduce(projection, event)
+            val updatedSnapshot = snapshotFor(projection)
+            _snapshot.value = updatedSnapshot
+            if (event is TranslationBatchEvent.BatchFinished || event is TranslationBatchEvent.BatchAborted) {
+                // Publish immutable terminal state before releasing store/tracker ownership.
+                terminalSnapshot.complete(updatedSnapshot)
+                onTerminalSnapshot?.invoke(updatedSnapshot)
+                finished = true
+                events.close()
+            }
+        }
     }
 
-    private fun emptySnapshot(): TranslationProgressSnapshot {
-        return TranslationProgressSnapshot.empty(chapterId, Translation.State.TRANSLATING)
-    }
+    private fun emptySnapshot() = TranslationProgressSnapshot.empty(chapterId, Translation.State.TRANSLATING)
 
     fun rebuildFromStore() {
-        if (finished) return
-        val pageMap = store.state.value
-        if (pageMap.isEmpty()) {
-            _snapshot.value = emptySnapshot()
-            return
-        }
-        _snapshot.value = computeSnapshot(pageMap, Translation.State.TRANSLATING)
+        if (!finished) _snapshot.value = snapshotFor(projection)
     }
 
-    suspend fun markOcrRunning(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { ocrStatus = StageStatus.RUNNING } }
+    fun emit(event: TranslationBatchEvent) {
+        if (finished || !events.trySend(event).isSuccess) return
     }
 
-    suspend fun markOcrDone(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { ocrStatus = StageStatus.READY } }
-    }
+    fun beginRevision(totalBlocks: Int, skippedBlocks: Int = 0, userEditedBlocks: Int = 0) = emit(
+        TranslationBatchEvent.RevisionStarted(totalBlocks, skippedBlocks, userEditedBlocks),
+    )
+    fun markRevisionChunkRunning(
+        pageKeys: Collection<String>,
+        blockCount: Int,
+    ) = emit(TranslationBatchEvent.RevisionChunkRunning(pageKeys.toSet(), blockCount))
+    fun markRevisionChunkCompleted(
+        completedBlocks: Int,
+    ) = emit(TranslationBatchEvent.RevisionChunkCompleted(completedBlocks))
+    fun markRevisionChunkFailed(failedBlocks: Int) = emit(TranslationBatchEvent.RevisionChunkFailed(failedBlocks))
+    fun markRevisionFinished() = emit(TranslationBatchEvent.RevisionFinished)
 
-    suspend fun markOcrFailed(pageKey: String, reason: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { ocrStatus = StageStatus.FAILED; errorMessage = reason } }
-    }
+    fun markOcrRunning(pageKey: String) = phase(pageKey, BatchPhase.OCR, PhaseStatus.RUNNING)
+    fun markOcrDone(pageKey: String) = phase(pageKey, BatchPhase.OCR, PhaseStatus.DONE)
+    fun markOcrFailed(pageKey: String, reason: String) = phase(pageKey, BatchPhase.OCR, PhaseStatus.FAILED, reason)
+    fun markTranslateRunning(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.RUNNING)
+    fun markTranslateDone(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.DONE)
+    fun markTranslateFailed(
+        pageKey: String,
+        reason: String,
+    ) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.FAILED, reason)
+    fun markTranslatePartial(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.PARTIAL)
+    fun markTranslateSkipped(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.SKIPPED)
+    fun markInpaintRunning(pageKey: String) = phase(pageKey, BatchPhase.INPAINT, PhaseStatus.RUNNING)
+    fun markInpaintDone(pageKey: String) = phase(pageKey, BatchPhase.INPAINT, PhaseStatus.DONE)
+    fun markInpaintFailed(
+        pageKey: String,
+        reason: String,
+    ) = phase(pageKey, BatchPhase.INPAINT, PhaseStatus.FAILED, reason)
+    fun markRenderRunning(pageKey: String) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.RUNNING)
+    fun markRenderDone(pageKey: String) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.DONE)
+    fun markRenderFailed(
+        pageKey: String,
+        reason: String,
+    ) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.FAILED, reason)
+    fun markRenderSkipped(pageKey: String) = phase(pageKey, BatchPhase.RENDER, PhaseStatus.SKIPPED)
 
-    suspend fun markTranslateRunning(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { translationStatus = StageStatus.RUNNING } }
-    }
-
-    suspend fun markTranslateDone(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { translationStatus = StageStatus.READY } }
-    }
-
-    suspend fun markTranslateFailed(pageKey: String, reason: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { translationStatus = StageStatus.FAILED; errorMessage = reason } }
-    }
-
-    suspend fun markTranslatePartial(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { translationStatus = StageStatus.PARTIAL } }
-    }
-
-    suspend fun markInpaintRunning(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { inpaintStatus = StageStatus.RUNNING } }
-    }
-
-    suspend fun markInpaintDone(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { inpaintStatus = StageStatus.READY } }
-    }
-
-    suspend fun markInpaintFailed(pageKey: String, reason: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { inpaintStatus = StageStatus.FAILED; errorMessage = reason } }
-    }
-
-    suspend fun markRenderRunning(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { renderStatus = StageStatus.RUNNING } }
-    }
-
-    suspend fun markRenderDone(pageKey: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { renderStatus = StageStatus.READY } }
-    }
-
-    suspend fun markRenderFailed(pageKey: String, reason: String) {
-        transition(pageKey) { (it ?: PageTranslation(sourceFileName = pageKey)).apply { renderStatus = StageStatus.FAILED; errorMessage = reason } }
-    }
-
-    suspend fun markPageReady(pageKey: String) {
-        transition(pageKey) { existing ->
-            (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                if (ocrStatus == StageStatus.PENDING) ocrStatus = StageStatus.RUNNING
-                if (translationStatus == StageStatus.PENDING) translationStatus = StageStatus.READY
-                if (inpaintStatus == StageStatus.PENDING) inpaintStatus = StageStatus.READY
-                if (renderStatus == StageStatus.PENDING) renderStatus = StageStatus.READY
-            }
-        }
-    }
-
-    suspend fun markChapterError(reason: String) {
-        orderedPageKeys.forEach { pageKey ->
-            store.updatePage(pageKey) { existing ->
-                (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                    if (!hasRenderedResult && !isTextlessTerminal) {
-                        errorMessage = errorMessage ?: reason
-                        ocrStatus = if (ocrStatus == StageStatus.PENDING) StageStatus.FAILED else ocrStatus
-                        translationStatus = if (translationStatus == StageStatus.PENDING) StageStatus.FAILED else translationStatus
-                        inpaintStatus = if (inpaintStatus == StageStatus.PENDING) StageStatus.FAILED else inpaintStatus
-                        if (renderStatus == StageStatus.PENDING) renderStatus = StageStatus.FAILED
-                    }
-                }
-            }
-        }
-        rebuildFromStore()
-    }
+    private fun phase(pageKey: String, phase: BatchPhase, status: PhaseStatus, reason: String? = null) = emit(
+        TranslationBatchEvent.PagePhase(pageKey, indexResolver[pageKey] ?: 0, phase, status, reason = reason),
+    )
 
     fun finish(result: ReconciliationResult) {
-        finished = true
-        tickJob?.cancel()
-        val pageMap = store.state.value
-        val snapshot = computeSnapshot(
-            pageMap = pageMap,
-            chapterState = result.chapterStatus,
-            forcedPartialCount = result.partialCount,
-            forcedFailedCount = result.failedCount + result.strandedPages.size,
-            forcedDoneCount = result.doneCount,
-        )
-        _snapshot.value = snapshot
-    }
-
-    suspend fun abort(remainingPageKeys: Set<String>, reason: String) {
-        finished = true
-        tickJob?.cancel()
-        remainingPageKeys.forEach { pageKey ->
-            store.updatePage(pageKey) { existing ->
-                (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                    if (!hasRenderedResult && !isTextlessTerminal) {
-                        ocrStatus = StageStatus.FAILED
-                        translationStatus = StageStatus.FAILED
-                        inpaintStatus = StageStatus.FAILED
-                        renderStatus = StageStatus.FAILED
-                        errorMessage = reason
-                    }
-                }
-            }
-        }
-        val pageMap = store.state.value
-        _snapshot.value = computeSnapshot(pageMap, Translation.State.ERROR).copy(
-            aborted = true,
-            abortedReason = reason,
+        terminalEventQueued.set(true)
+        emit(
+            TranslationBatchEvent.BatchFinished(
+                result.chapterStatus,
+                result.doneCount,
+                result.failedCount,
+                result.partialCount,
+                orderedPageKeys.size,
+            ),
         )
     }
-
+    fun abort(
+        remainingPageKeys: Set<String>,
+        reason: String,
+    ) {
+        terminalEventQueued.set(true)
+        emit(TranslationBatchEvent.BatchAborted(reason, remainingPageKeys))
+    }
+    suspend fun awaitTerminalSnapshot(): TranslationProgressSnapshot = terminalSnapshot.await()
     fun close() {
         finished = true
-        tickJob?.cancel()
+        events.close()
+        if (!terminalEventQueued.get()) reducerJob.cancel()
     }
 
-    private suspend fun transition(pageKey: String, update: (PageTranslation?) -> PageTranslation) {
-        if (finished) return
-        store.updatePage(pageKey, update)
-    }
-
-    private fun startTick() {
-        tickJob = scope.launch {
-            while (isActive && !finished) {
-                delay(500)
-                if (!finished) {
-                    val pageMap = store.state.value
-                    if (pageMap.isNotEmpty()) {
-                        _snapshot.value = computeSnapshot(pageMap, Translation.State.TRANSLATING)
-                    }
-                }
+    private fun snapshotFor(state: Projection): TranslationProgressSnapshot = computeSnapshot(
+        // The batch's ordered keys define its work set. Persisted leftovers may be
+        // useful diagnostically, but must never inflate progress totals.
+        pageMap = orderedPageKeys.distinct().mapNotNull { pageKey ->
+            store.state.value[pageKey]?.let { page ->
+                pageKey to (
+                    state.pagePhases[pageKey]?.entries?.fold(page) { current, (phase, status) ->
+                        when (phase) {
+                            BatchPhase.OCR -> current.copy(ocrStatus = status)
+                            BatchPhase.TRANSLATE -> current.copy(translationStatus = status)
+                            BatchPhase.INPAINT -> current.copy(inpaintStatus = status)
+                            BatchPhase.RENDER -> current.copy(renderStatus = status)
+                            // DISPLAY has no per-page status override: it is
+                            // derived from hasRenderedResult in count().
+                            BatchPhase.DISPLAY -> current
+                        }
+                    } ?: page
+                    )
             }
-        }
-    }
+        }.toMap(),
+        chapterState = state.chapterState,
+        indexResolver = indexResolver,
+        permitHolderPageKey = permitHolderResolver?.invoke(),
+        batchPhase = state.batchPhase,
+        revision = state.revision,
+        chapterId = chapterId,
+    ).copy(aborted = state.aborted, abortedReason = state.abortReason)
+
+    data class Projection(
+        val chapterState: Translation.State = Translation.State.TRANSLATING,
+        val batchPhase: TranslationBatchPhase = TranslationBatchPhase.FIRST_PASS,
+        val revision: RevisionProgress = RevisionProgress(),
+        val pagePhases: Map<String, Map<BatchPhase, String>> = emptyMap(),
+        val aborted: Boolean = false,
+        val abortReason: String? = null,
+    )
 
     companion object {
+        /** Pure reducer. This is the only mutation of progress projection state. */
+        fun reduce(previous: Projection, event: TranslationBatchEvent): Projection = when (event) {
+            is TranslationBatchEvent.PagePhase -> previous.copy(
+                pagePhases = previous.pagePhases + (
+                    event.pageKey to (
+                        previous.pagePhases[event.pageKey].orEmpty() + (event.phase to event.status.toStageStatus())
+                        )
+                    ),
+            )
+            is TranslationBatchEvent.RevisionStarted -> previous.copy(
+                batchPhase = if (event.totalBlocks >
+                    0
+                ) {
+                    TranslationBatchPhase.REVISING
+                } else {
+                    TranslationBatchPhase.FINALIZING
+                },
+                revision = RevisionProgress(
+                    event.totalBlocks,
+                    keptBlocks = event.skippedBlocks,
+                    userEditedBlocks = event.userEditedBlocks,
+                ),
+            )
+            is TranslationBatchEvent.RevisionChunkRunning -> previous.copy(
+                revision = previous.revision.copy(
+                    activePageKey = event.pageKeys.firstOrNull(),
+                    activeChunkBlocks = event.blockCount,
+                ),
+            )
+            is TranslationBatchEvent.RevisionChunkCompleted -> previous.copy(
+                revision = previous.revision.advance(completed = event.completedBlocks),
+            )
+            is TranslationBatchEvent.RevisionChunkFailed -> previous.copy(
+                revision = previous.revision.advance(failed = event.failedBlocks),
+            )
+            TranslationBatchEvent.RevisionFinished -> previous.copy(
+                batchPhase = TranslationBatchPhase.FINALIZING,
+                revision = previous.revision.copy(activePageKey = null, activeChunkBlocks = 0),
+            )
+            is TranslationBatchEvent.BatchFinished -> previous.copy(
+                chapterState = event.state,
+                batchPhase = TranslationBatchPhase.FINISHED,
+                revision = previous.revision.copy(activePageKey = null, activeChunkBlocks = 0),
+            )
+            is TranslationBatchEvent.BatchAborted -> previous.copy(
+                chapterState = Translation.State.ERROR,
+                batchPhase = TranslationBatchPhase.FINISHED,
+                aborted = true,
+                abortReason = event.reason,
+            )
+            else -> previous
+        }
+
+        private fun PhaseStatus.toStageStatus(): String = when (this) {
+            PhaseStatus.RUNNING -> StageStatus.RUNNING
+            PhaseStatus.DONE -> StageStatus.READY
+            PhaseStatus.FAILED -> StageStatus.FAILED
+            PhaseStatus.SKIPPED -> StageStatus.SKIPPED
+            PhaseStatus.PARTIAL -> StageStatus.PARTIAL
+        }
+
+        private fun RevisionProgress.advance(completed: Int = 0, failed: Int = 0): RevisionProgress {
+            val remaining = (totalBlocks - processedBlocks).coerceAtLeast(0)
+            val completedAdded = completed.coerceIn(0, remaining)
+            val failedAdded = failed.coerceIn(0, remaining - completedAdded)
+            return copy(
+                correctedBlocks = correctedBlocks + completedAdded,
+                unresolvedBlocks =
+                unresolvedBlocks + failedAdded,
+                activePageKey = null,
+                activeChunkBlocks = 0,
+            )
+        }
+
         fun computeSnapshot(
             pageMap: Map<String, PageTranslation>,
             chapterState: Translation.State,
             forcedPartialCount: Int = -1,
             forcedFailedCount: Int = -1,
             forcedDoneCount: Int = -1,
+            indexResolver: Map<String, Int>? = null,
+            permitHolderPageKey: String? = null,
+            batchPhase: TranslationBatchPhase = if (chapterState ==
+                Translation.State.TRANSLATING
+            ) {
+                TranslationBatchPhase.FIRST_PASS
+            } else {
+                TranslationBatchPhase.IDLE
+            },
+            revision: RevisionProgress = RevisionProgress(),
+            chapterId: Long = 0,
         ): TranslationProgressSnapshot {
-            if (pageMap.isEmpty()) {
-                return TranslationProgressSnapshot.empty(0, chapterState)
+            val rows = pageMap.entries.mapIndexed { order, (key, page) ->
+                val stage = progressStage(page)
+                TranslationProgressSnapshot.Page(
+                    pageKey = key,
+                    index = PageIndexResolver.resolve(key, order, indexResolver),
+                    stage = if (permitHolderPageKey !=
+                        null &&
+                        stage.isRunning &&
+                        key != permitHolderPageKey
+                    ) {
+                        TranslationProgressStage.QUEUED
+                    } else {
+                        stage
+                    },
+                    ocrDone = page.ocrStatus == StageStatus.READY,
+                    translateDone = page.translationStatus == StageStatus.READY ||
+                        page.translationStatus == StageStatus.PARTIAL,
+                    inpaintDone = page.inpaintStatus == StageStatus.READY,
+                    renderDone = page.renderStatus == StageStatus.READY,
+                    errorMessage = page.activeError,
+                )
+            }.sortedWith(compareBy<TranslationProgressSnapshot.Page> { it.index }.thenBy { it.pageKey })
+            val stageCounts = BatchPhase.entries.associateWith { phase -> count(pageMap.values, phase) }
+            val processedStages = stageCounts.values.sumOf { it.processed }
+            val activeStages = pageMap.values.flatMap { page -> runningStages(page) }.toSet()
+            val failed = if (forcedFailedCount >=
+                0
+            ) {
+                forcedFailedCount
+            } else {
+                rows.count { it.stage == TranslationProgressStage.FAILED }
             }
-
-            val rows = pageMap.entries
-                .mapIndexed { insertionOrder, (pageKey, page) ->
-                    val stage = progressStage(page)
-                    TranslationProgressSnapshot.Page(
-                        pageKey = pageKey,
-                        index = resolvePageIndex(pageKey, insertionOrder),
-                        stage = stage,
-                        errorMessage = page.errorMessage,
-                    )
-                }
-                .sortedWith(compareBy<TranslationProgressSnapshot.Page> { it.index }.thenBy { it.pageKey })
-
-            val done = if (forcedDoneCount >= 0) forcedDoneCount else rows.count { it.stage == eu.kanade.translation.model.TranslationProgressStage.DONE }
-            val failed = if (forcedFailedCount >= 0) forcedFailedCount else rows.count { it.stage == eu.kanade.translation.model.TranslationProgressStage.FAILED }
-            val partial = if (forcedPartialCount >= 0) forcedPartialCount else rows.count { pageMap[it.pageKey]?.translationStatus == StageStatus.PARTIAL }
-            val queued = rows.count { it.stage == eu.kanade.translation.model.TranslationProgressStage.QUEUED }
-            val active = rows.firstOrNull { it.stage.isRunning }
-                ?: rows.firstOrNull { it.stage == eu.kanade.translation.model.TranslationProgressStage.QUEUED }
-
-            val doneStages = pageMap.values.sumOf { completedStages(it) }
-            val totalStages = pageMap.size * 4
-
-            val elapsedMs = System.currentTimeMillis()
-
-            val ocrDone = pageMap.values.count { it.ocrStatus == StageStatus.READY }
-            val translateDone = pageMap.values.count { it.translationStatus == StageStatus.READY }
-            val inpaintDone = pageMap.values.count { it.inpaintStatus == StageStatus.READY }
-            val renderDone = pageMap.values.count { it.renderStatus == StageStatus.READY }
-
-            val ocrFailed = pageMap.values.count { it.ocrStatus == StageStatus.FAILED }
-            val translateFailed = pageMap.values.count { it.translationStatus == StageStatus.FAILED }
-            val inpaintFailed = pageMap.values.count { it.inpaintStatus == StageStatus.FAILED }
-            val renderFailed = pageMap.values.count { it.renderStatus == StageStatus.FAILED }
-
-            val total = rows.size
-
-            val groupedFailures = pageMap.entries
-                .filter { it.value.isStageFailed || it.value.errorMessage != null }
-                .groupBy { it.value.errorMessage ?: "Unknown error" }
-                .mapValues { (_, entries) -> entries.map { it.key } }
-
+            val done = if (forcedDoneCount >=
+                0
+            ) {
+                forcedDoneCount
+            } else {
+                rows.count { it.stage == TranslationProgressStage.DONE }
+            }
+            val active =
+                rows.firstOrNull { it.stage.isRunning }
+                    ?: rows.firstOrNull { it.stage == TranslationProgressStage.QUEUED }
             return TranslationProgressSnapshot(
-                chapterId = 0,
-                state = chapterState,
-                donePages = done + failed,
-                totalPages = total,
-                activePage = active?.index ?: 0,
-                activePageKey = active?.pageKey,
-                activeStage = active?.stage,
-                queuedCount = queued,
-                failedCount = failed,
-                pages = rows,
-                doneStages = doneStages,
-                totalStages = totalStages,
-                perStage = mapOf(
-                    BatchPhase.OCR to StageCount(done = ocrDone, failed = ocrFailed, total = total),
-                    BatchPhase.TRANSLATE to StageCount(done = translateDone, failed = translateFailed, total = total),
-                    BatchPhase.INPAINT to StageCount(done = inpaintDone, failed = inpaintFailed, total = total),
-                    BatchPhase.RENDER to StageCount(done = renderDone, failed = renderFailed, total = total),
-                ),
-                partialPages = partial,
-                groupedFailures = groupedFailures,
-                elapsedMs = elapsedMs,
-                aborted = false,
-                abortedReason = null,
+                chapterId, chapterState, done + failed, rows.size, active?.index ?: 0, active?.pageKey, activeStages,
+                rows.count {
+                    it.stage ==
+                        TranslationProgressStage.QUEUED
+                },
+                // TachiyomiAT: totalStages must track the live BatchPhase count.
+                // Was hardcoded `* 4`, which under-counted after BatchPhase.DISPLAY
+                // was added and inflated the fraction past 1.0 (one failed page
+                // across 5 phases = 5 processed / 4 total = 1.25).
+                failed, rows, processedStages, pageMap.size * BatchPhase.entries.size, stageCounts,
+                if (forcedPartialCount >=
+                    0
+                ) {
+                    forcedPartialCount
+                } else {
+                    pageMap.values.count { it.translationStatus == StageStatus.PARTIAL }
+                },
+                pageMap.entries.filter {
+                    it.value.isStageFailed ||
+                        it.value.errorMessage != null
+                }.groupBy({
+                    it.value.errorMessage ?: "Unknown error"
+                }, { it.key }),
+                System.currentTimeMillis(), batchPhase = batchPhase, revision = revision,
             )
         }
 
-        private fun progressStage(page: PageTranslation): eu.kanade.translation.model.TranslationProgressStage {
-            if (page.hasRenderedResult) return eu.kanade.translation.model.TranslationProgressStage.DONE
-            if (page.renderStatus == StageStatus.FAILED ||
-                page.inpaintStatus == StageStatus.FAILED ||
-                page.translationStatus == StageStatus.FAILED ||
-                page.ocrStatus == StageStatus.FAILED
-            ) {
-                return eu.kanade.translation.model.TranslationProgressStage.FAILED
+        private fun count(pages: Collection<PageTranslation>, phase: BatchPhase): StageCount {
+            // TachiyomiAT bug 2 fix: RENDER (color estimation) and DISPLAY are
+            // reported separately so the indicator stops claiming a page is
+            // rendered when only its fill colors were computed. DISPLAY success
+            // is derived from hasRenderedResult (cleaned file + translation
+            // displayable + renderStatus READY + non-empty translated blocks),
+            // which is exactly the reader's translatedStream gate. RENDER stays
+            // keyed on renderStatus == READY/PARTIAL (color estimation done).
+            if (phase == BatchPhase.DISPLAY) {
+                val total = pages.size
+                val succeeded = pages.count { it.hasRenderedResult }
+                val failed = pages.count { it.isStageFailed && !it.hasRenderedResult }
+                val skipped = pages.count { it.isTextlessTerminal }
+                return StageCount(succeeded, failed, skipped, total)
             }
-            if (page.renderStatus == StageStatus.RUNNING) return eu.kanade.translation.model.TranslationProgressStage.RENDER
-            if (page.translationStatus == StageStatus.RUNNING) return eu.kanade.translation.model.TranslationProgressStage.TRANSLATE
-            if (page.inpaintStatus == StageStatus.RUNNING) return eu.kanade.translation.model.TranslationProgressStage.INPAINT
-            if (page.ocrStatus == StageStatus.RUNNING) return eu.kanade.translation.model.TranslationProgressStage.OCR
-            if (page.isTextlessTerminal) return eu.kanade.translation.model.TranslationProgressStage.DONE
-            return eu.kanade.translation.model.TranslationProgressStage.QUEUED
+            val statuses = pages.map {
+                when (phase) {
+                    BatchPhase.OCR -> it.ocrStatus
+                    BatchPhase.TRANSLATE -> it.translationStatus
+                    BatchPhase.INPAINT -> it.inpaintStatus
+                    BatchPhase.RENDER -> it.renderStatus
+                    BatchPhase.DISPLAY -> it.renderStatus // unreachable; kept for exhaustiveness
+                }
+            }
+            return StageCount(
+                statuses.count { it == StageStatus.READY || it == StageStatus.PARTIAL },
+                statuses.count {
+                    it ==
+                        StageStatus.FAILED
+                },
+                statuses.count { it == StageStatus.SKIPPED },
+                statuses.size,
+            )
         }
-
-        private fun completedStages(page: PageTranslation): Int {
-            if (page.hasRenderedResult || (page.isTextlessTerminal && !page.isStageRunning) || page.isStageFailed) return 4
-            var count = 0
-            if (page.ocrStatus == StageStatus.READY) count++
-            if (page.translationStatus == StageStatus.READY) count++
-            if (page.inpaintStatus == StageStatus.READY) count++
-            if (page.renderStatus == StageStatus.READY) count++
-            return count
+        private fun runningStages(page: PageTranslation) = buildSet {
+            if (page.ocrStatus == StageStatus.RUNNING) add(TranslationProgressStage.OCR)
+            if (page.inpaintStatus == StageStatus.RUNNING) add(TranslationProgressStage.INPAINT)
+            if (page.translationStatus == StageStatus.RUNNING) add(TranslationProgressStage.TRANSLATE)
+            if (page.renderStatus == StageStatus.RUNNING) add(TranslationProgressStage.RENDER)
         }
-
-        private fun resolvePageIndex(pageKey: String, fallback: Int): Int {
-            val match = Regex("""(\d+)(?!.*\d)""").find(pageKey)
-            return match?.groupValues?.get(1)?.toIntOrNull() ?: (fallback + 1)
+        private fun progressStage(page: PageTranslation): TranslationProgressStage = when {
+            page.hasRenderedResult || page.isTextlessTerminal -> TranslationProgressStage.DONE
+            page.isStageFailed -> TranslationProgressStage.FAILED
+            page.renderStatus == StageStatus.RUNNING -> TranslationProgressStage.RENDER
+            page.translationStatus == StageStatus.RUNNING -> TranslationProgressStage.TRANSLATE
+            page.inpaintStatus == StageStatus.RUNNING -> TranslationProgressStage.INPAINT
+            page.ocrStatus == StageStatus.RUNNING -> TranslationProgressStage.OCR
+            else -> TranslationProgressStage.QUEUED
         }
     }
 }

@@ -116,5 +116,4 @@ class PageTranslationHelperTest {
         original[0].text shouldBe "first"
         original[1].text shouldBe "second"
     }
-
 }

@@ -6,7 +6,6 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
-import io.kotest.matchers.string.shouldNotContain
 import org.junit.jupiter.api.Test
 
 class TranslationContextChunkPlannerTest {
@@ -31,14 +30,14 @@ class TranslationContextChunkPlannerTest {
         val latin = "a".repeat(100)
 
         TranslationContextChunkPlanner.estimateTokens(cjk) shouldBe 100
-        TranslationContextChunkPlanner.estimateTokens(latin) shouldBe 25
+        TranslationContextChunkPlanner.estimateTokens(latin) shouldBe 13
     }
 
     @Test
     fun `large pages split by block without exceeding context`() {
         val pages = linkedMapOf(
             "001.jpg" to PageTranslation(
-                blocks = MutableList(20) { index -> block("block-$index " + "x".repeat(2000)) },
+                blocks = MutableList(20) { index -> block("block-$index " + "x".repeat(10_000)) },
             ),
         )
 
@@ -58,7 +57,7 @@ class TranslationContextChunkPlannerTest {
     @Test
     fun `single oversized block is rejected instead of planned`() {
         val pages = linkedMapOf(
-            "001.jpg" to page("x".repeat(40_000)),
+            "001.jpg" to page("x".repeat(100_000)),
             "002.jpg" to page("small"),
         )
 
@@ -258,24 +257,20 @@ class TranslationContextChunkPlannerTest {
         return PageTranslation(blocks = mutableListOf(block(text)))
     }
 
-    private fun blockInBubble(text: String, translation: String): TranslationBlock =
-        blockWith(text, translation).copy(parentWidth = 40f, parentHeight = 40f)
-
     @Test
-    fun `updateRollingContext tags in-bubble blocks as SPEECH on the source side`() {
+    fun `updateRollingContext keeps plain source and translation pairs`() {
         val page = PageTranslation(
             blocks = mutableListOf(
-                blockInBubble("行く", "I'm going."),
+                blockWith("行く", "I'm going.").copy(parentWidth = 40f, parentHeight = 40f),
                 blockWith("三年後、東京。", "Three years later, Tokyo."),
             ),
         )
 
         val out = TranslationContextChunkPlanner.updateRollingContext("", mapOf("001.jpg" to page))
 
-        out shouldContain "[SPEECH] 行く => I'm going."
+        out shouldContain "行く => I'm going."
         out shouldContain "三年後、東京。 => Three years later, Tokyo."
-        // Free text (no parent bubble) is NOT tagged.
-        out shouldNotContain "[SPEECH] 三年後"
+        out.contains("[SPEECH]") shouldBe false
     }
 
     @Test
@@ -293,7 +288,8 @@ class TranslationContextChunkPlannerTest {
         val lineCount = out.lineSequence().filter { it.isNotBlank() }.count()
         lineCount shouldBe TranslationContextChunkPlanner.MAX_ROLLING_PAIRS
         // The newest pairs survive; the oldest are evicted.
-        out shouldContain "blk${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4} => trans${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4}"
+        out shouldContain
+            "blk${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4} => trans${TranslationContextChunkPlanner.MAX_ROLLING_PAIRS + 4}"
     }
 
     @Test

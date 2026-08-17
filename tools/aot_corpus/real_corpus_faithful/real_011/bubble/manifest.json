@@ -1,0 +1,17 @@
+{
+  "path": "bubble",
+  "inpaint_path": "inpaintReportBubbles (segmentationMask-based)",
+  "crop": [
+    45,
+    698,
+    1053,
+    1533
+  ],
+  "crop_dims": [
+    1008,
+    835
+  ],
+  "seg_masks": 3,
+  "bubble_text_boxes": 5,
+  "mask_source": "YOLO11-seg precise masks rasterized at page res"
+}

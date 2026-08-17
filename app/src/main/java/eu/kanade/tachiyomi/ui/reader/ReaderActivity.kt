@@ -30,6 +30,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -274,11 +275,6 @@ class ReaderActivity : BaseActivity() {
         super.onPause()
     }
 
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        viewModel.onMemoryPressure(level)
-    }
-
     /**
      * Set menu visibility again on activity resume to apply immersive mode again if needed.
      * Helps with rotations.
@@ -480,9 +476,24 @@ class ReaderActivity : BaseActivity() {
                 it.translationProgress
             }.collectAsState(initial = Pair(0, 0))
             val translationCurrentPage by viewModel.state.map { it.translationCurrentPage }.collectAsState(initial = 0)
+            val translationBatchProgress by viewModel.state.map {
+                it.translationBatchProgress
+            }.collectAsState(initial = null)
             // TachiyomiAT: live queue for the translation settings sheet's QueueSection.
             val translationQueue by viewModel.translationQueueState.collectAsState()
             val translationSettingsState by viewModel.translationSettingsState.collectAsState()
+            // TachiyomiAT CP7: revision state for the ReviewSection of the
+            // translation settings sheet. reviewAvailable triggers a snapshot of
+            // manager-derived eligibility whenever the chapter changes.
+            val revisionActive by viewModel.state
+                .map { viewModel.isRevisionActive() }
+                .collectAsState(initial = false)
+            val revisionEligibility by produceState<eu.kanade.translation.model.ChapterRevisionEligibility?>(
+                initialValue = null,
+                viewModel.currentChapterName(),
+            ) {
+                value = viewModel.snapshotRevisionEligibility()
+            }
             val compareState by viewModel.compareState.collectAsState()
 
             ReaderContentOverlay(
@@ -511,7 +522,10 @@ class ReaderActivity : BaseActivity() {
                     onSelectOriginal = { viewModel.setCurrentPageShowTranslated(false) },
                     onSelectTranslated = { viewModel.setCurrentPageShowTranslated(true) },
                     onOpenSettings = { viewModel.openTranslationSettingsDialog() },
-                    onDeletePageTranslation = { viewModel.deleteCurrentPageTranslation() },
+                    onResetTranslationData = { preserveEdits -> viewModel.resetTranslationData(preserveEdits) },
+                    onResetInpaintData = { viewModel.resetInpaintData() },
+                    onResetOcrData = { viewModel.resetOcrData() },
+                    onResetEverything = { viewModel.resetEverything() },
                     onDeleteChapterTranslation = { viewModel.deleteCurrentChapterTranslation() },
                     modifier = Modifier.padding(start = 8.dp),
                 )
@@ -559,8 +573,8 @@ class ReaderActivity : BaseActivity() {
                 },
                 onClickSettings = viewModel::openSettingsDialog,
                 translationState = translationState,
-                translationProgress = translationProgress,
-                translationCurrentPage = translationCurrentPage,
+                translationBatchProgress = translationBatchProgress,
+                autoTranslation = state.autoTranslation,
                 onClickTranslate = { viewModel.openTranslationSettingsDialog() },
                 // TachiyomiAT: the translate control is ALWAYS tappable, even while
                 // translation is running. While busy it shows a spinner, but tapping it
@@ -628,6 +642,17 @@ class ReaderActivity : BaseActivity() {
                         queue = translationQueue,
                         translationProgress = translationProgress,
                         translationCurrentPage = translationCurrentPage,
+                        translationBatchProgress = translationBatchProgress,
+                        reviewAvailable = revisionEligibility != null,
+                        revisionActive = revisionActive,
+                        hasRevisionReport = revisionEligibility != null,
+                        onReview = { viewModel.startRevisionPreflight() },
+                        onCancelRevision = { viewModel.cancelRevision() },
+                        onViewLastReview = { viewModel.showRevisionResult() },
+                        reviewerAuto = translationSettingsState.reviewerAuto,
+                        reviewerEngine = translationSettingsState.reviewerEngine,
+                        onReviewerAutoChange = { viewModel.setRevisionReviewerAuto(it) },
+                        onReviewerEngineChange = { viewModel.setRevisionReviewerEngine(it) },
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {
@@ -662,6 +687,37 @@ class ReaderActivity : BaseActivity() {
                             val page = (state.dialog as? ReaderViewModel.Dialog.PageActions)?.page
                             if (page != null) viewModel.translateSinglePage(page)
                         },
+                    )
+                }
+                is ReaderViewModel.Dialog.RevisionConfirm -> {
+                    val confirmDialog = state.dialog as ReaderViewModel.Dialog.RevisionConfirm
+                    eu.kanade.presentation.manga.components.RevisionConfirmDialog(
+                        state = confirmDialog.state,
+                        onScopeChange = { scope -> viewModel.changeRevisionScope(scope) },
+                        onReviewerPicked = { option -> viewModel.pickRevisionReviewer(option) },
+                        onOpenSettings = {
+                            // Reader has no in-reader translation settings nav for
+                            // the reviewer; the existing TranslationSettings sheet
+                            // exposes engine/model configuration. Dismiss confirm
+                            // and re-open the translation settings sheet.
+                            viewModel.openTranslationSettingsDialog()
+                        },
+                        onConfirm = {
+                            val ready = confirmDialog.state
+                                as? eu.kanade.translation.model.RevisionConfirmState.Ready
+                            if (ready != null) {
+                                viewModel.confirmStartRevision(ready.confirmation)
+                            }
+                        },
+                        onDismissRequest = onDismissRequest,
+                    )
+                }
+                is ReaderViewModel.Dialog.RevisionResult -> {
+                    val resultDialog = state.dialog as ReaderViewModel.Dialog.RevisionResult
+                    eu.kanade.presentation.manga.components.RevisionResultSheet(
+                        chapterName = viewModel.currentChapterName(),
+                        state = resultDialog.state,
+                        onDismissRequest = onDismissRequest,
                     )
                 }
                 null -> {}

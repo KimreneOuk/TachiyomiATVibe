@@ -8,21 +8,29 @@ import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.cancelInFlightStages
-import eu.kanade.translation.model.hasCurrentInpaintResult
 import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.lifecycle
-import eu.kanade.translation.model.shouldSkipAutoScheduling
+import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -43,9 +51,14 @@ import java.util.concurrent.atomic.AtomicLong
 class TranslationScheduler(
     private val executor: TranslationExecutor,
     private val storeResolver: TranslationStoreResolver,
+    private val immediateStoreResolver: ((Long) -> ChapterTranslationStore?)? = null,
 ) : java.io.Closeable {
 
     override fun close() {
+        // Ticket 03: tear down the rolling coordinator (which owns its own
+        // scope when not injected) so scheduler close cannot leak it. scope.cancel()
+        // alone does not reach the coordinator's supervisor scope.
+        shutdownAutoCoordinator()
         scope.cancel()
     }
 
@@ -79,7 +92,157 @@ class TranslationScheduler(
     // ViewModel scope) so they can be cancelled on chapter switch / reader close.
     private val activeAutoJobs = ConcurrentHashMap<String, Job>()
     private val autoWindowIds = AtomicLong(0L)
+    private val autoOwnerVersions = AtomicLong(0L)
     private val autoGenerations = ConcurrentHashMap<Long, AtomicLong>()
+
+    // Ticket 03: rolling auto-coordinator ownership. At most one active per
+    // chapter session; replaces the generation/list scheduling path.
+    private var autoCoordinator: AutoCoordinatorOwner? = null
+    private val autoCoordinatorLock = Any()
+    private val retiringAutoCoordinators = LinkedHashSet<RollingAutoCoordinator>()
+    private var globalAutoCancellationInFlight = false
+    private var autoCancellationEpoch = 0L
+    private var globalAutoCancellationEpoch = 0L
+    private val chapterCancellationEpochs = mutableMapOf<Long, Long>()
+    private var readerStopInFlight = false
+
+    // One stable source pointer drives the reader-facing flow. Switching this
+    // pointer keeps existing collectors attached across coordinator replacement,
+    // shutdown, and chapter/session changes instead of leaving them on an old
+    // coordinator's StateFlow.
+    private val autoCoordinatorSource = MutableStateFlow<RollingAutoCoordinator?>(null)
+    private val autoSnapshotFlow: StateFlow<AutoTranslationSnapshot?> = autoCoordinatorSource
+        .flatMapLatest { coordinator -> coordinator?.snapshot ?: flowOf(null) }
+        .stateIn(scope, SharingStarted.Eagerly, null)
+
+    /**
+     * Live auto-translation snapshot for the active chapter session. Null when
+     * no coordinator is active. Observed by the reader through
+     * [TranslationManager].
+     */
+    val autoSnapshot: StateFlow<AutoTranslationSnapshot?> get() = autoSnapshotFlow
+
+    /**
+     * Ticket 03: rolling coordinator entry point. Accepts a desired-window
+     * update (visible page + ahead target) and delegates to the coordinator.
+     * The coordinator reconciles continually, overlaps remote translation,
+     * serializes local compute, checks memory per admission, and publishes
+     * [autoSnapshot].
+     *
+     * Manual arbitration: the supplied [pageResolver] is wrapped so that any
+     * page with an active manual single-page job ([translatePage]) is hidden
+     * from the coordinator (resolved to null). The coordinator defers it; when
+     * the manual job completes, [translatePage]'s finally pokes [autoCoordinator]
+     * reconcile and the slot becomes admissible again. This preserves the
+     * manual-outranks-auto rule without duplicating executor-level dedup.
+     */
+    fun updateAutoWindow(
+        identity: AutoChapterIdentity,
+        visiblePageIndex: Int,
+        configuredAheadTarget: Int,
+        pageCount: Int,
+        session: TranslationSession,
+        pageResolver: (Int) -> RollingAutoCoordinator.PageWorkItem?,
+        computeClass: TranslatorComputeClass,
+    ) {
+        val chapterId = session.chapter.id
+        val arbitratedResolver: (Int) -> RollingAutoCoordinator.PageWorkItem? = { idx ->
+            val item = pageResolver(idx)
+            if (item != null && chapterId != null) {
+                val manualJob = activePageJobs["$chapterId:${item.pageKey}"]
+                if (manualJob != null && manualJob.isActive) null else item
+            } else {
+                item
+            }
+        }
+        val updateTarget = synchronized(autoCoordinatorLock) {
+            if (readerStopInFlight || globalAutoCancellationInFlight) return@synchronized null
+            if (identity.chapterId in chapterCancellationEpochs) return@synchronized null
+            val current = autoCoordinator
+            val ownerMatches = current != null &&
+                current.identity == identity &&
+                current.sessionKey == session.key &&
+                current.store === session.store
+            val owner = if (ownerMatches) {
+                current!!
+            } else {
+                current?.let { retireLocked(it) }
+                val ownerVersion = autoOwnerVersions.incrementAndGet()
+                val replacement = RollingAutoCoordinator(
+                    executor = executor,
+                    computeClass = computeClass,
+                    predecessorCoordinators = retiringAutoCoordinators.toList(),
+                    ownerVersion = ownerVersion,
+                )
+                AutoCoordinatorOwner(identity, session.key, session.store, replacement, ownerVersion).also {
+                    autoCoordinator = it
+                    autoCoordinatorSource.value = replacement
+                }
+            }
+            if (readerStopInFlight || globalAutoCancellationInFlight || owner.cancellationInFlight) {
+                null
+            } else {
+                AutoCoordinatorUpdate(owner, current?.takeUnless { ownerMatches })
+            }
+        }
+        updateTarget?.let { target ->
+            synchronized(target.owner.callLock) {
+                val stillCurrent = synchronized(autoCoordinatorLock) {
+                    autoCoordinator === target.owner &&
+                        !globalAutoCancellationInFlight &&
+                        !target.owner.cancellationInFlight
+                }
+                if (stillCurrent) {
+                    target.owner.coordinator.updateWindow(
+                        identity = identity,
+                        visiblePageIndex = visiblePageIndex,
+                        configuredAheadTarget = configuredAheadTarget,
+                        pageCount = pageCount,
+                        session = session,
+                        pageResolver = arbitratedResolver,
+                    )
+                }
+            }
+            target.predecessorToShutdown?.let(::shutdownRetiringCoordinator)
+        }
+    }
+
+    /**
+     * Shuts down the rolling coordinator entirely (auto-off / reader-close /
+     * chapter-switch). Clears the snapshot.
+     */
+    fun shutdownAutoCoordinator(chapterId: Long? = null) {
+        val retiring = synchronized(autoCoordinatorLock) {
+            val owner = autoCoordinator ?: return@synchronized null
+            if (chapterId != null && owner.identity.chapterId != chapterId) return@synchronized null
+            autoCoordinator = null
+            autoCoordinatorSource.value = null
+            retireLocked(owner)
+        }
+        retiring?.let(::shutdownRetiringCoordinator)
+    }
+
+    /**
+     * Re-opens admission for an already-bound rolling window after an external
+     * signal such as memory recovery or reader foreground resume.
+     */
+    fun reconcileAutoWindow(admissionGuard: (Long) -> Boolean = { true }) {
+        val owner = synchronized(autoCoordinatorLock) {
+            autoCoordinator?.takeUnless {
+                readerStopInFlight || globalAutoCancellationInFlight || it.cancellationInFlight
+            }
+        } ?: return
+        if (!admissionGuard(owner.identity.chapterId)) return
+        synchronized(owner.callLock) {
+            val stillCurrent = synchronized(autoCoordinatorLock) {
+                autoCoordinator === owner &&
+                    !readerStopInFlight &&
+                    !globalAutoCancellationInFlight &&
+                    !owner.cancellationInFlight
+            }
+            if (stillCurrent) owner.coordinator.reconcile()
+        }
+    }
 
     fun requestAutoWindow(
         session: TranslationSession,
@@ -96,7 +259,9 @@ class TranslationScheduler(
         // marks already-running jobs stale, they finish the page they started
         // (work not wasted), then bail before the next page.
         val generation = autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
-        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
+        // Keep reservations owned by an older window until that window releases
+        // them. Removing them here races with the still-running job and lets the
+        // newer window enqueue the same page a second time.
 
         val accepted = mutableListOf<Pair<String, TranslationPageRequest>>()
         val distinctRequests = requests.distinctBy { it.id }
@@ -104,7 +269,7 @@ class TranslationScheduler(
 
         for (request in distinctRequests) {
             val current = session.store.state.value[request.storageKey]
-            if (current != null && current.shouldSkipAutoScheduling) {
+            if (!TranslationLifecyclePolicy.shouldSchedule(current)) {
                 logAutoDecision("skipped", request, current, request.streamAvailable)
                 continue
             }
@@ -117,7 +282,7 @@ class TranslationScheduler(
             }
             if (manualJob != null) activePageJobs.remove(manualJobKey)
 
-            val reservationKey = autoReservationKey(request, generation)
+            val reservationKey = autoReservationKey(request)
             if (!queuedPageKeys.add(reservationKey)) {
                 logAutoDecision("skipped", request, current, request.streamAvailable, "already-queued")
                 continue
@@ -149,7 +314,7 @@ class TranslationScheduler(
                         break
                     }
                     val current = session.store.state.value[request.storageKey]
-                    if (current != null && current.shouldSkipAutoScheduling) {
+                    if (!TranslationLifecyclePolicy.shouldSchedule(current)) {
                         logAutoDecision("skipped", request, current, request.streamAvailable, "completed-while-queued")
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
@@ -170,8 +335,7 @@ class TranslationScheduler(
                     if (current != null &&
                         current.hasRecognizedTranslation &&
                         current.renderStatus != StageStatus.READY &&
-                        current.cleanedImageName != null &&
-                        current.hasCurrentInpaintResult
+                        current.isCleanedImageReady
                     ) {
                         try {
                             executor.translateSinglePage(
@@ -215,7 +379,7 @@ class TranslationScheduler(
                         markPageAutoSoftSkipped(session.store, request.storageKey)
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
-                        break
+                        continue
                     }
 
                     try {
@@ -238,7 +402,7 @@ class TranslationScheduler(
                                 "storageKey=${request.storageKey} chapter=${session.chapter.name} " +
                                 "manga=${session.manga.title} source=${session.source.id}"
                         }
-                        break
+                        continue
                     } finally {
                         completedReservations.add(reservationKey)
                         queuedPageKeys.remove(reservationKey)
@@ -268,38 +432,68 @@ class TranslationScheduler(
     }
 
     fun cancelAutoTranslations(chapterId: Long? = null): Boolean {
+        // Ticket 03: reserve cancellation under the pointer monitor, then
+        // invoke the coordinator outside it. Matching updates either complete
+        // before this reservation or observe it and are suppressed; no new
+        // same-chapter loop can escape between capture and cancel.
+        val cancellation = beginAutoCancellation(chapterId)
+        val coordinatorCancelled = cancellation?.owner != null
+
         val jobPrefix = chapterId?.let { "auto:$it:" }
         val queuePrefix = chapterId?.let { "auto:$it:" }
-        var cancelled = false
+        var cancelled = coordinatorCancelled
 
-        if (chapterId == null) {
-            autoGenerations.values.forEach { it.incrementAndGet() }
-        } else {
-            autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
-        }
-
-        val jobIterator = activeAutoJobs.entries.iterator()
-        while (jobIterator.hasNext()) {
-            val (key, job) = jobIterator.next()
-            if (jobPrefix == null || key.startsWith(jobPrefix)) {
-                job.cancel()
-                jobIterator.remove()
-                cancelled = true
+        try {
+            cancellation?.let(::performAutoCancellation)
+            if (chapterId == null) {
+                autoGenerations.values.forEach { it.incrementAndGet() }
+            } else {
+                autoGenerations.computeIfAbsent(chapterId) { AtomicLong(0L) }.incrementAndGet()
             }
-        }
 
-        if (queuePrefix == null) {
-            queuedPageKeys.removeIf { it.startsWith("auto:") }
-        } else {
-            queuedPageKeys.removeIf { it.startsWith(queuePrefix) }
-        }
+            val jobIterator = activeAutoJobs.entries.iterator()
+            while (jobIterator.hasNext()) {
+                val (key, job) = jobIterator.next()
+                if (jobPrefix == null || key.startsWith(jobPrefix)) {
+                    job.cancel()
+                    jobIterator.remove()
+                    cancelled = true
+                }
+            }
 
-        return cancelled
+            if (queuePrefix == null) {
+                queuedPageKeys.removeIf { it.startsWith("auto:") }
+            } else {
+                queuedPageKeys.removeIf { it.startsWith(queuePrefix) }
+            }
+
+            // TachiyomiAT bug 4 fix: synchronously flip the chapter's in-flight pages
+            // to CANCELLED so the reader overlay/dim clears immediately. Without this,
+            // isPageBeingTranslated() keeps returning true until each cancelled job's
+            // finally block runs — which may never happen if the worker is past its
+            // suspension point in uncancellable native code.
+            if (cancelled && chapterId != null) {
+                markChapterCancelledSync(chapterId)
+            } else if (cancelled && chapterId == null) {
+                // Global auto cancel: flip every active store's in-flight pages.
+                activeAutoJobs.keys.asSequence()
+                    .mapNotNull { it.substringAfter("auto:").substringBefore(':').toLongOrNull() }
+                    .distinct()
+                    .forEach { markChapterCancelledSync(it) }
+            }
+
+            return cancelled
+        } finally {
+            finishAutoCancellation(cancellation)
+        }
     }
 
-    private fun autoReservationKey(request: TranslationPageRequest, generation: Long): String {
+    private fun autoReservationKey(request: TranslationPageRequest): String {
         val safeStorageKey = request.storageKey.replace(':', '_')
-        return "auto:${request.id.chapterId}:$generation:${request.id.sourceId}:${request.id.mangaId}:${request.id.pageIndex}:$safeStorageKey"
+        // Generation belongs to the window, not to page ownership. A stable key
+        // makes overlapping windows share one reservation while the old worker
+        // is still processing its page.
+        return "auto:${request.id.chapterId}:${request.id.sourceId}:${request.id.mangaId}:${request.id.pageIndex}:$safeStorageKey"
     }
 
     private suspend fun markAutoPageStarting(
@@ -307,15 +501,15 @@ class TranslationScheduler(
         pageKey: String,
         current: PageTranslation?,
     ) {
-        if (current != null && current.shouldSkipAutoScheduling) return
+        if (!TranslationLifecyclePolicy.shouldSchedule(current)) return
         store.updatePage(pageKey) { existing ->
             val page = existing ?: PageTranslation(sourceFileName = pageKey)
-            if (page.renderStatus == StageStatus.READY && page.hasCurrentInpaintResult) return@updatePage page
+            if (page.renderStatus == StageStatus.READY && page.isCleanedImageReady) return@updatePage page
             page.apply {
                 sourceFileName = pageKey
                 errorMessage = null
                 when {
-                    hasRecognizedTranslation && cleanedImageName != null -> {
+                    hasRecognizedTranslation && isCleanedImageReady -> {
                         renderStatus = StageStatus.RUNNING
                     }
                     hasRecognizedTranslation -> {
@@ -342,16 +536,14 @@ class TranslationScheduler(
 
     private suspend fun markPageAutoSoftSkipped(store: ChapterTranslationStore, pageKey: String) {
         store.updatePage(pageKey) { existing ->
-            val page = existing ?: return@updatePage PageTranslation(
+            val page = existing ?: PageTranslation(
                 sourceFileName = pageKey,
                 ocrStatus = StageStatus.CANCELLED,
-                errorMessage = null,
                 updatedAt = System.currentTimeMillis(),
             )
             if (page.renderStatus == StageStatus.READY) return@updatePage page
             page.apply {
                 cancelInFlightStages()
-                errorMessage = null
                 updatedAt = System.currentTimeMillis()
             }
         }
@@ -412,6 +604,11 @@ class TranslationScheduler(
                     synchronized(activePageJobs) {
                         activePageJobs.remove(jobKey)
                     }
+                    // Ticket 03: a manual single-page job no longer holds this
+                    // page, so any auto-window slot that was hidden from the
+                    // rolling coordinator by [updateAutoWindow]'s manual
+                    // arbitration becomes admissible again. Poke a reconcile.
+                    reconcileAutoWindow()
                     if (cancelledMidFlight) {
                         // Reset stranded RUNNING on a NonCancellable child so the
                         // reset can't be torn down by the cancellation that triggered
@@ -440,6 +637,10 @@ class TranslationScheduler(
     private suspend fun markPageCancelled(chapter: Chapter, pageKey: String) {
         val chapterId = chapter.id ?: return
         val store = storeResolver.resolve(chapterId) ?: return
+        markPageCancelled(store, pageKey)
+    }
+
+    private suspend fun markPageCancelled(store: ChapterTranslationStore, pageKey: String) {
         // Peek first: if no entry or already terminal, nothing is stranded — skip
         // the write rather than creating a spurious FAILED entry.
         val existing = store.state.value[pageKey] ?: return
@@ -448,19 +649,52 @@ class TranslationScheduler(
         // auto can reschedule the page later.
         store.updatePage(pageKey) { current ->
             // Re-check inside the lock in case it changed between peek and write.
-            val cur = current ?: return@updatePage PageTranslation(
+            val cur = current ?: PageTranslation(
                 sourceFileName = pageKey,
                 ocrStatus = StageStatus.CANCELLED,
-                errorMessage = "Translation cancelled",
                 updatedAt = System.currentTimeMillis(),
-            )
+            ).also { it.ocrError = "Translation cancelled" }
             if (cur.hasRenderedResult || cur.isStageFailed) return@updatePage cur
             cur.apply {
                 cancelInFlightStages()
-                errorMessage = "Translation cancelled"
+                ocrError = "Translation cancelled"
                 updatedAt = System.currentTimeMillis()
             }
         }
+    }
+
+    /**
+     * TachiyomiAT bug 4 fix: synchronously flip every in-flight page in [chapterId]'s
+     * store to CANCELLED so the reader clears the dim/overlay immediately. The auto/
+     * master-toggle-off paths previously only cancelled the jobs (and relied on each
+     * job's finally block to reset the status), which left pages visibly RUNNING until
+     * the coroutine unwound — sometimes never, if the worker was past its suspension
+     * point in uncancellable native/HTTP code.
+     *
+     * Mirrors the proven per-page pattern in [cancelPageTranslation]: runBlocking on
+     * [immediateStoreResolver] is acceptable because callers run on the reader/UI
+     * scope and the store's own mutex is the only inner lock (no nested UI-thread
+     * concerns). Pages that already reached a rendered or failed terminal state are
+     * left untouched so accepted artifacts survive.
+     *
+     * Returns the number of pages that were flipped to CANCELLED.
+     */
+    fun markChapterCancelledSync(chapterId: Long): Int {
+        val store = immediateStoreResolver?.invoke(chapterId) ?: return 0
+        val runningKeys = store.state.value.entries
+            .asSequence()
+            .filter { (_, page) -> page != null && page!!.isStageRunning }
+            .map { it.key }
+            .toList()
+        if (runningKeys.isEmpty()) return 0
+        var flipped = 0
+        runBlocking {
+            runningKeys.forEach { key ->
+                markPageCancelled(store, key)
+                flipped++
+            }
+        }
+        return flipped
     }
 
     /**
@@ -473,7 +707,9 @@ class TranslationScheduler(
     fun markPageJobStuck(chapterId: Long, pageKey: String) {
         val jobKey = "$chapterId:$pageKey"
         val job = synchronized(activePageJobs) { activePageJobs.remove(jobKey) }
-        try { job?.cancel() } catch (_: Throwable) {}
+        try {
+            job?.cancel()
+        } catch (_: Throwable) {}
         queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") && it.endsWith(":${pageKey.replace(':', '_')}") }
         logcat(LogPriority.WARN) {
             "TachiyomiAT evicted stuck page job: jobKey=$jobKey (worker abandoned in native/HTTP code)"
@@ -495,6 +731,12 @@ class TranslationScheduler(
         val job = synchronized(activePageJobs) { activePageJobs.remove(jobKey) }
         job?.cancel()
         val autoCancelled = cancelAutoTranslations(chapterId)
+        // The reader's stop action is synchronous. Flip the shared store before
+        // returning so the UI cannot remain stuck on RUNNING while the cancelled
+        // worker is still unwinding its coroutine finally block.
+        immediateStoreResolver?.invoke(chapterId)?.let { store ->
+            runBlocking { markPageCancelled(store, pageKey) }
+        }
         return job != null || autoCancelled
     }
 
@@ -514,34 +756,46 @@ class TranslationScheduler(
      * TranslationManager. The caller evicts the store if needed.
      */
     suspend fun cancelPageTranslations(chapterId: Long) {
-        val prefix = "$chapterId:"
-        queuedPageKeys.removeIf { it.startsWith(prefix) }
-        queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
-        val toJoin = mutableListOf<Job>()
-        val autoIterator = activeAutoJobs.entries.iterator()
-        while (autoIterator.hasNext()) {
-            val (key, job) = autoIterator.next()
-            if (key.startsWith("auto:$chapterId:")) {
-                job.cancel()
-                toJoin.add(job)
-                autoIterator.remove()
-            }
-        }
-        synchronized(activePageJobs) {
-            val iterator = activePageJobs.entries.iterator()
-            while (iterator.hasNext()) {
-                val (key, job) = iterator.next()
-                if (key.startsWith(prefix)) {
+        // Ticket 03: stop the rolling coordinator's admission for the outgoing
+        // chapter. A new chapter's [updateAutoWindow] (new identity) cancels
+        // and resets it; cancelling here bounds the gap between navigate-away
+        // and that first window update so the old chapter cannot keep holding
+        // the executor permit. cancel (not shutdown) keeps the last snapshot
+        // for the brief handoff window.
+        val cancellation = beginAutoCancellation(chapterId)
+        try {
+            cancellation?.let(::performAutoCancellation)
+            val prefix = "$chapterId:"
+            queuedPageKeys.removeIf { it.startsWith(prefix) }
+            queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
+            val toJoin = mutableListOf<Job>()
+            val autoIterator = activeAutoJobs.entries.iterator()
+            while (autoIterator.hasNext()) {
+                val (key, job) = autoIterator.next()
+                if (key.startsWith("auto:$chapterId:")) {
                     job.cancel()
                     toJoin.add(job)
-                    iterator.remove()
+                    autoIterator.remove()
                 }
             }
-        }
-        if (toJoin.isNotEmpty()) {
-            withTimeoutOrNull(JOIN_TIMEOUT_MS) {
-                toJoin.joinAll()
+            synchronized(activePageJobs) {
+                val iterator = activePageJobs.entries.iterator()
+                while (iterator.hasNext()) {
+                    val (key, job) = iterator.next()
+                    if (key.startsWith(prefix)) {
+                        job.cancel()
+                        toJoin.add(job)
+                        iterator.remove()
+                    }
+                }
             }
+            if (toJoin.isNotEmpty()) {
+                withTimeoutOrNull(JOIN_TIMEOUT_MS) {
+                    toJoin.joinAll()
+                }
+            }
+        } finally {
+            finishAutoCancellation(cancellation)
         }
     }
 
@@ -549,22 +803,212 @@ class TranslationScheduler(
      * Cancels every in-flight single-page job and every auto-prefetch window.
      * Call on reader destroy or master translation toggle off so no orphaned work
      * keeps running.
+     *
+     * TachiyomiAT bug 4 fix: after cancelling jobs, synchronously flip every
+     * active store's in-flight pages to CANCELLED so reader overlays clear
+     * immediately. Callers that want to preserve artifacts should NOT call this;
+     * use the per-chapter paths instead. The durable CANCELLED write itself is
+     * owned by the caller via [ChapterTranslationStore.clearTransientQueuePages]
+     * — this method only guarantees the in-memory snapshot settles synchronously.
      */
     fun cancelAllPageTranslations() {
-        queuedPageKeys.clear()
-        val autoIterator = activeAutoJobs.entries.iterator()
-        while (autoIterator.hasNext()) {
-            val (_, job) = autoIterator.next()
-            job.cancel()
-            autoIterator.remove()
-        }
-        synchronized(activePageJobs) {
-            val iterator = activePageJobs.entries.iterator()
-            while (iterator.hasNext()) {
-                val (_, job) = iterator.next()
+        // Ticket 03: full reader-close / master-toggle-off teardown of the
+        // rolling coordinator. shutdown (not cancel) nulls the snapshot and
+        // drops scheduling state so no observer or coordinator lingers.
+        val cancellation = beginAutoCancellation(null)
+        try {
+            cancellation?.let(::performAutoCancellation)
+            shutdownAutoCoordinator()
+            queuedPageKeys.clear()
+            val affectedChapterIds = mutableSetOf<Long>()
+            val autoIterator = activeAutoJobs.entries.iterator()
+            while (autoIterator.hasNext()) {
+                val (key, job) = autoIterator.next()
                 job.cancel()
-                iterator.remove()
+                autoIterator.remove()
+                key.substringAfter("auto:").substringBefore(':').toLongOrNull()?.let {
+                    affectedChapterIds += it
+                }
+            }
+            synchronized(activePageJobs) {
+                val iterator = activePageJobs.entries.iterator()
+                while (iterator.hasNext()) {
+                    val (key, job) = iterator.next()
+                    job.cancel()
+                    iterator.remove()
+                    key.substringBefore(':').toLongOrNull()?.let { affectedChapterIds += it }
+                }
+            }
+            // TachiyomiAT bug 4 fix: flip every affected chapter's in-flight pages
+            // synchronously so the dim/overlay clears without waiting on each job's
+            // finally block.
+            affectedChapterIds.forEach { markChapterCancelledSync(it) }
+        } finally {
+            finishAutoCancellation(cancellation)
+        }
+    }
+
+    /**
+     * Reader-owned teardown boundary. Cancels and detaches every coordinator,
+     * auto-prefetch job, and single-page job, then joins the captured ownership
+     * outside all scheduler monitors. The returned suspension completes only
+     * after coordinator/native/page work capable of touching reader streams has
+     * terminated; the scheduler scope itself remains available for the next
+     * reader session.
+     */
+    suspend fun awaitReaderStop() {
+        synchronized(autoCoordinatorLock) {
+            readerStopInFlight = true
+        }
+        try {
+            val cancellation = beginAutoCancellation(null)
+            val jobsToJoin = LinkedHashSet<Job>()
+            val coordinatorsToJoin = LinkedHashSet<RollingAutoCoordinator>()
+            try {
+                cancellation?.let(::performAutoCancellation)
+                // Detach/publish the null owner before any suspension. This also
+                // calls shutdown() synchronously, while the actual join happens
+                // below without holding autoCoordinatorLock or callLock.
+                shutdownAutoCoordinator()
+                synchronized(autoCoordinatorLock) {
+                    coordinatorsToJoin += retiringAutoCoordinators
+                }
+                queuedPageKeys.clear()
+                val affectedChapterIds = mutableSetOf<Long>()
+                val autoIterator = activeAutoJobs.entries.iterator()
+                while (autoIterator.hasNext()) {
+                    val (key, job) = autoIterator.next()
+                    job.cancel()
+                    jobsToJoin += job
+                    autoIterator.remove()
+                    key.substringAfter("auto:").substringBefore(':').toLongOrNull()?.let {
+                        affectedChapterIds += it
+                    }
+                }
+                synchronized(activePageJobs) {
+                    val iterator = activePageJobs.entries.iterator()
+                    while (iterator.hasNext()) {
+                        val (key, job) = iterator.next()
+                        job.cancel()
+                        jobsToJoin += job
+                        iterator.remove()
+                        key.substringBefore(':').toLongOrNull()?.let { affectedChapterIds += it }
+                    }
+                }
+                affectedChapterIds.forEach { markChapterCancelledSync(it) }
+            } finally {
+                finishAutoCancellation(cancellation)
+            }
+
+            jobsToJoin.joinAll()
+            coordinatorsToJoin.forEach { it.awaitTermination() }
+        } finally {
+            synchronized(autoCoordinatorLock) {
+                readerStopInFlight = false
             }
         }
+    }
+
+    private fun beginAutoCancellation(chapterId: Long?): AutoCancellation? =
+        synchronized(autoCoordinatorLock) {
+            val owner = autoCoordinator?.takeIf { chapterId == null || it.identity.chapterId == chapterId }
+            if (chapterId != null && owner == null) return@synchronized null
+            val epoch = ++autoCancellationEpoch
+            val ownsGlobal = chapterId == null && !globalAutoCancellationInFlight
+            if (ownsGlobal) {
+                globalAutoCancellationInFlight = true
+                globalAutoCancellationEpoch = epoch
+            }
+            val ownsOwner = owner != null && !owner.cancellationInFlight
+            if (ownsOwner) {
+                owner!!.cancellationInFlight = true
+                owner.cancellationEpoch = epoch
+                if (chapterId != null) chapterCancellationEpochs[chapterId] = epoch
+            }
+            AutoCancellation(
+                owner = owner,
+                chapterId = chapterId,
+                invokeCoordinator = ownsOwner,
+                ownsOwnerCancellation = ownsOwner,
+                ownsGlobalCancellation = ownsGlobal,
+                epoch = epoch,
+            )
+        }
+
+    private fun performAutoCancellation(cancellation: AutoCancellation) {
+        if (!cancellation.invokeCoordinator) return
+        val owner = cancellation.owner ?: return
+        synchronized(owner.callLock) {
+            owner.coordinator.cancel()
+        }
+    }
+
+    private fun finishAutoCancellation(cancellation: AutoCancellation?) {
+        if (cancellation == null) return
+        synchronized(autoCoordinatorLock) {
+            if (cancellation.ownsOwnerCancellation &&
+                cancellation.owner?.cancellationEpoch == cancellation.epoch
+            ) {
+                cancellation.owner?.cancellationInFlight = false
+                cancellation.chapterId?.let { chapterId ->
+                    if (chapterCancellationEpochs[chapterId] == cancellation.epoch) {
+                        chapterCancellationEpochs.remove(chapterId)
+                    }
+                }
+            }
+            if (cancellation.ownsGlobalCancellation && globalAutoCancellationEpoch == cancellation.epoch) {
+                globalAutoCancellationInFlight = false
+            }
+        }
+    }
+
+    /** Caller holds [autoCoordinatorLock]. */
+    private fun retireLocked(owner: AutoCoordinatorOwner): AutoCoordinatorOwner {
+        owner.cancellationInFlight = true
+        retiringAutoCoordinators += owner.coordinator
+        return owner
+    }
+
+    /**
+     * Cancellation is deliberately initiated outside [autoCoordinatorLock]. The
+     * replacement coordinator already owns the retiring predecessor barrier, so
+     * it cannot admit native work until this coordinator has actually terminated.
+     */
+    private fun shutdownRetiringCoordinator(owner: AutoCoordinatorOwner) {
+        synchronized(owner.callLock) {
+            owner.coordinator.shutdown()
+        }
+        scope.launch {
+            owner.coordinator.awaitTermination()
+            synchronized(autoCoordinatorLock) {
+                retiringAutoCoordinators.remove(owner.coordinator)
+            }
+        }
+    }
+
+    private data class AutoCoordinatorUpdate(
+        val owner: AutoCoordinatorOwner,
+        val predecessorToShutdown: AutoCoordinatorOwner?,
+    )
+
+    private data class AutoCancellation(
+        val owner: AutoCoordinatorOwner?,
+        val chapterId: Long?,
+        val invokeCoordinator: Boolean,
+        val ownsOwnerCancellation: Boolean,
+        val ownsGlobalCancellation: Boolean,
+        val epoch: Long,
+    )
+
+    private class AutoCoordinatorOwner(
+        val identity: AutoChapterIdentity,
+        val sessionKey: String,
+        val store: ChapterTranslationStore,
+        val coordinator: RollingAutoCoordinator,
+        val ownerVersion: Long,
+    ) {
+        val callLock = Any()
+        var cancellationInFlight: Boolean = false
+        var cancellationEpoch: Long = 0L
     }
 }

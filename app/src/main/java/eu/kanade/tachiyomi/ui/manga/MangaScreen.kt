@@ -5,6 +5,9 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -33,10 +36,13 @@ import eu.kanade.presentation.manga.ChapterSettingsDialog
 import eu.kanade.presentation.manga.DuplicateMangaDialog
 import eu.kanade.presentation.manga.EditCoverAction
 import eu.kanade.presentation.manga.MangaScreen
+import eu.kanade.presentation.manga.components.ChapterResetSheet
 import eu.kanade.presentation.manga.components.ChapterTranslationAction
 import eu.kanade.presentation.manga.components.ConfirmTranslationDialog
 import eu.kanade.presentation.manga.components.DeleteChaptersDialog
 import eu.kanade.presentation.manga.components.MangaCoverDialog
+import eu.kanade.presentation.manga.components.RevisionConfirmDialog
+import eu.kanade.presentation.manga.components.RevisionResultSheet
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.manga.components.SetIntervalDialog
 import eu.kanade.presentation.manga.components.TranslationProgressSheet
@@ -69,6 +75,8 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.i18n.MR
+import tachiyomi.i18n.at.ATMR
+import tachiyomi.presentation.core.i18n.stringResource
 import tachiyomi.presentation.core.screens.LoadingScreen
 
 class MangaScreen(
@@ -283,16 +291,81 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.TranslationProgress -> {
                 val item = successState.chapters.firstOrNull { it.id == dialog.chapterId }
+                val showViewReport = item != null &&
+                    item.translationProgress?.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.FINISHED &&
+                    (item.translationProgress?.revision?.totalBlocks ?: 0) > 0
                 TranslationProgressSheet(
                     chapterName = item?.chapter?.name.orEmpty(),
                     snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
                     onDismissRequest = onDismissRequest,
+                    onReadNow = {
+                        if (item != null) {
+                            screenModel.dismissDialog()
+                            openChapter(context, item.chapter)
+                        }
+                    },
                     onCancel = {
                         if (item != null) {
                             screenModel.runChapterTranslationActions(item, ChapterTranslationAction.CANCEL)
                         }
                         screenModel.dismissDialog()
                     },
+                    onPauseResume = screenModel::setTranslationQueuePaused,
+                    onViewReport = if (showViewReport && item != null) {
+                        { screenModel.showRevisionResult(item) }
+                    } else {
+                        null
+                    },
+                )
+            }
+
+            is MangaScreenModel.Dialog.RevisionConfirm -> {
+                RevisionConfirmDialog(
+                    state = dialog.state,
+                    onScopeChange = { scope -> screenModel.changeRevisionScope(dialog.item, scope) },
+                    onReviewerPicked = { option -> screenModel.pickRevisionReviewer(dialog.item, option) },
+                    onOpenSettings = {
+                        screenModel.dismissDialog()
+                        navigator.push(SettingsScreen(SettingsScreen.Destination.Translation))
+                    },
+                    onConfirm = {
+                        val ready = dialog.state as? eu.kanade.translation.model.RevisionConfirmState.Ready
+                        if (ready != null) {
+                            screenModel.confirmStartRevision(dialog.item, ready.confirmation)
+                        }
+                    },
+                    onDismissRequest = onDismissRequest,
+                )
+            }
+
+            is MangaScreenModel.Dialog.RevisionResult -> {
+                RevisionResultSheet(
+                    chapterName = dialog.item.chapter.name,
+                    state = dialog.state,
+                    onDismissRequest = onDismissRequest,
+                )
+            }
+
+            is MangaScreenModel.Dialog.ChapterReset -> {
+                ChapterResetSheet(
+                    preflight = dialog.preflight,
+                    onResetTranslation = { preserveEdits ->
+                        screenModel.dismissDialog()
+                        screenModel.resetChapterTranslation(dialog.item, preserveEdits)
+                    },
+                    onResetInpaint = {
+                        screenModel.dismissDialog()
+                        screenModel.resetChapterInpaint(dialog.item)
+                    },
+                    onResetOcr = {
+                        screenModel.dismissDialog()
+                        screenModel.resetChapterOcr(dialog.item)
+                    },
+                    onDeleteEverything = {
+                        screenModel.dismissDialog()
+                        screenModel.deleteChapterTranslation(dialog.item)
+                    },
+                    onDismissRequest = onDismissRequest,
                 )
             }
 
@@ -308,6 +381,33 @@ class MangaScreen(
                     },
                     onConfirm = { screenModel.confirmChapterTranslation(dialog.item) },
                     onDismissRequest = onDismissRequest,
+                )
+            }
+
+            is MangaScreenModel.Dialog.RunningTranslationConflict -> {
+                AlertDialog(
+                    onDismissRequest = onDismissRequest,
+                    title = {
+                        Text(text = stringResource(ATMR.strings.manga_translate_conflict_title))
+                    },
+                    text = {
+                        Text(
+                            text = stringResource(
+                                ATMR.strings.manga_translate_conflict_body,
+                                dialog.conflict.chapterName,
+                            ),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { screenModel.confirmReplaceRunningChapter(dialog.item) }) {
+                            Text(text = stringResource(ATMR.strings.manga_translate_conflict_confirm))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = onDismissRequest) {
+                            Text(text = stringResource(MR.strings.action_cancel))
+                        }
+                    },
                 )
             }
 

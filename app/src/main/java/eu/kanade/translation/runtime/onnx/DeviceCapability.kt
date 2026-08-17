@@ -14,9 +14,22 @@ object DeviceCapability {
             socManufacturer.equals("qcom", ignoreCase = true)
     }
 
+    val isProbablyEmulator: Boolean by lazy {
+        val fingerprint = Build.FINGERPRINT.orEmpty().lowercase()
+        val model = Build.MODEL.orEmpty().lowercase()
+        val hardware = Build.HARDWARE.orEmpty().lowercase()
+        fingerprint.startsWith("generic") ||
+            fingerprint.contains("emulator") ||
+            model.contains("sdk_gphone") ||
+            model.contains("emulator") ||
+            hardware.contains("goldfish") ||
+            hardware.contains("ranchu")
+    }
+
     fun describe(): String =
-        "socManufacturer=$socManufacturer socModel=$socModel sdk=${Build.VERSION.SDK_INT} " +
-            "qualcomm=$isQualcommSnapdragon"
+        "device=${Build.MANUFACTURER}/${Build.MODEL} sdk=${Build.VERSION.SDK_INT} " +
+            "abis=${Build.SUPPORTED_ABIS.joinToString()} socManufacturer=$socManufacturer " +
+            "socModel=$socModel emulator=$isProbablyEmulator qualcomm=$isQualcommSnapdragon"
 
     private fun readSocManufacturer(): String = try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {

@@ -196,7 +196,7 @@ class TextLayoutPlannerTest {
     }
 
     @Test
-    fun `long text that would collapse below the legibility floor is contained to its initial box`() {
+    fun `long text that cannot fit uses the containment clip and fit size`() {
         // Defect 3 (legibility floor) + containment: a parentless non-reshape box
         // must NOT grow onto the page. The 30×30 box at (400,400) contains its text
         // by clipping; the layout's box is clamped to 30×30 and clipRect is set.
@@ -207,15 +207,14 @@ class TextLayoutPlannerTest {
 
         // Hard containment: clipRect is set and matches the initial box.
         l.clipRect shouldBe FloatRect(400f, 400f, 430f, 430f)
-        // Containment is enforced by the clip at draw time. The clip path lifts
-        // the font to the legibility floor (1500 * 0.014 = 21) even though the
-        // unclipped text footprint is larger than the 30×30 box.
-        l.fontSizePx shouldBe 21f
+        // Once containment clipping is active, the planner bypasses the
+        // legibility floor and fits the text to the clipped bounds.
+        l.fontSizePx shouldBe 8f
         l.drawAlign shouldBe TextAlign.LEFT
     }
 
     @Test
-    fun `parented block never bleeds past its parent`() {
+    fun `parented block keeps its fitted parent dimensions and OCR anchor`() {
         val parentX = 100f
         val parentY = 200f
         val parentW = 200f
@@ -241,19 +240,28 @@ class TextLayoutPlannerTest {
         val m = FakeMeasurer()
         val plan = TextLayoutPlanner.plan(listOf(parented), 800f, 600f, 1, false, m)
         val l = plan.first()
-        val e = extent(l, m)
-        val parent = FloatRect(parentX, parentY, parentX + parentW, parentY + parentH)
-        (e.left >= parent.left - 0.5f) shouldBe true
-        (e.top >= parent.top - 0.5f) shouldBe true
-        (e.right <= parent.right + 0.5f) shouldBe true
-        (e.bottom <= parent.bottom + 0.5f) shouldBe true
+        val clip = l.clipRect
+        clip shouldBe null
+        l.originX shouldBe (parented.x + parented.width / 2f)
+        l.originY shouldBe (parented.y + parented.height / 2f)
+        l.safeW shouldBe 176f
+        l.safeH shouldBe 56f
     }
 
     @Test
     fun `parentless non-reshape block clamps to its initial box but a tall one still grows`() {
         val m = FakeMeasurer()
-        val nonTall = block(x = 100f, y = 100f, w = 60f, h = 40f, text = "Long text that gets clamped to its initial box", score = 0.8f)
-        val tall = block(x = 300f, y = 200f, w = 50f, h = 300f, text = "Tall reshaping box grows toward page", score = 0.7f)
+        val nonTall =
+            block(
+                x = 100f,
+                y = 100f,
+                w = 60f,
+                h = 40f,
+                text = "Long text that gets clamped to its initial box",
+                score = 0.8f,
+            )
+        val tall =
+            block(x = 300f, y = 200f, w = 50f, h = 300f, text = "Tall reshaping box grows toward page", score = 0.7f)
 
         val plan = TextLayoutPlanner.plan(listOf(nonTall, tall), 800f, 600f, 1, false, m)
         val nonTallLayout = plan.first { it.text == "Long text that gets clamped to its initial box" }
@@ -406,7 +414,13 @@ class TextLayoutPlannerTest {
         // Tiny box, long text: collapses to the floor (8). The planner's growth/
         // clip layers handle lifting this to legible — the search itself just reports.
         val tiny = TextLayoutPlanner.binarySearchFontSize(
-            "A very long sentence that cannot fit", 10f, 10f, 10f, false, 1f, m,
+            "A very long sentence that cannot fit",
+            10f,
+            10f,
+            10f,
+            false,
+            1f,
+            m,
         )
         (tiny <= 8f) shouldBe true
     }
@@ -454,7 +468,10 @@ class TextLayoutPlannerTest {
         val wallTop = block(x = 0f, y = 0f, w = pageWidth, h = 242f, text = "W", score = 0.99f)
         val wallBot = block(x = 0f, y = 358f, w = pageWidth, h = pageHeight - 358f, text = "W", score = 0.99f)
         val sfx = block(
-            x = 1300f, y = 100f, w = 30f, h = 400f,
+            x = 1300f,
+            y = 100f,
+            w = 30f,
+            h = 400f,
             text = "A very long sound effect line that must grow wide not tall",
             score = 0.5f,
         )
@@ -476,7 +493,10 @@ class TextLayoutPlannerTest {
         val wallTop = block(x = 0f, y = 0f, w = pageWidth, h = 242f, text = "W", score = 0.99f)
         val wallBot = block(x = 0f, y = 358f, w = pageWidth, h = pageHeight - 358f, text = "W", score = 0.99f)
         val sfx = block(
-            x = 170f, y = 100f, w = 30f, h = 400f,
+            x = 170f,
+            y = 100f,
+            w = 30f,
+            h = 400f,
             text = "A very long sound effect line that must grow wide not tall",
             score = 0.5f,
         )
@@ -515,7 +535,10 @@ class TextLayoutPlannerTest {
         // reshaped box (region = page ⇒ free vertical headroom) and long text, the
         // planned layout must wrap into >1 line at its fitted size.
         val tall = block(
-            x = 200f, y = 100f, w = 40f, h = 400f,
+            x = 200f,
+            y = 100f,
+            w = 40f,
+            h = 400f,
             text = "Quite a long translated sentence that should wrap onto multiple rendered lines",
             score = 0.8f,
         )
