@@ -302,19 +302,14 @@ data class TranslationContextChunk(
 )
 
 interface ContextualTextTranslator : TextTranslator {
-    /** Capability is explicit so Pass 2 cannot target validation-only adapters. */
-    val contextualCapability: ContextualTranslationCapability
-
-    suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean = false)
+    suspend fun translateContextual(chunk: TranslationContextChunk)
 
     /**
      * Mandatory structured-result contract. Every contextual provider returns
-     * per-id results keyed by request-local IDs (e.g. `p0_b3` for Pass 2, `b0`
-     * for Pass 1) without mutating request blocks.
+     * per-id results keyed by request-local IDs without mutating request blocks.
      */
     suspend fun translateContextualStructured(
         chunk: TranslationContextChunk,
-        isPass2: Boolean,
     ): ContextualTranslationBatch
 
     /** Prompts the underlying model directly (used for glossary generation and summarization). */

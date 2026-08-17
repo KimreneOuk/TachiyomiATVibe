@@ -31,7 +31,6 @@ import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidge
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
-import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiModelFetcher
@@ -86,23 +85,6 @@ fun TranslationSettingsSheet(
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     translationCurrentPage: Int = 0,
     translationBatchProgress: TranslationProgressSnapshot? = null,
-    // TachiyomiAT CP7: standalone revision affordances. reviewAvailable drives
-    // the "Review this chapter" row; revisionActive swaps it for a cancel
-    // action; onReview/onCancelRevision/onViewLastReview are wired by the
-    // activity to the view-model.
-    reviewAvailable: Boolean = false,
-    revisionActive: Boolean = false,
-    hasRevisionReport: Boolean = false,
-    onReview: () -> Unit = {},
-    onCancelRevision: () -> Unit = {},
-    onViewLastReview: () -> Unit = {},
-    // TachiyomiAT: standalone-revision reviewer configuration. Exposed in the
-    // sheet so the in-reader recovery path ("Configure a reviewer") lands on a
-    // real control instead of looping back to the same sheet.
-    reviewerAuto: Boolean = true,
-    reviewerEngine: AiEngine = AiEngine.GEMINI,
-    onReviewerAutoChange: (Boolean) -> Unit = {},
-    onReviewerEngineChange: (AiEngine) -> Unit = {},
 ) {
     var showAdvanced by remember { mutableStateOf(false) }
 
@@ -129,14 +111,6 @@ fun TranslationSettingsSheet(
                 translationBatchProgress = translationBatchProgress,
             )
             StopAllSection(onStopAllTranslation)
-            ReviewSection(
-                reviewAvailable = reviewAvailable,
-                revisionActive = revisionActive,
-                hasRevisionReport = hasRevisionReport,
-                onReview = onReview,
-                onCancelRevision = onCancelRevision,
-                onViewLastReview = onViewLastReview,
-            )
             LanguagesSection(
                 translateFromLanguage = state.translateFromLanguage,
                 translateToLanguage = state.translateToLanguage,
@@ -175,12 +149,6 @@ fun TranslationSettingsSheet(
                     onTranslationAiModelChange = onTranslationAiModelChange,
                     onFetchAiModels = onFetchAiModels,
                 )
-                ReviewerConfigSection(
-                    reviewerAuto = reviewerAuto,
-                    reviewerEngine = reviewerEngine,
-                    onReviewerAutoChange = onReviewerAutoChange,
-                    onReviewerEngineChange = onReviewerEngineChange,
-                )
             }
         }
     }
@@ -202,33 +170,6 @@ private fun ColumnScope.StopAllSection(onStopAllTranslation: () -> Unit) {
  * review" (when a durable report exists). Mirrors the manga surface so both
  * dispatch the same manager request.
  */
-@Composable
-private fun ColumnScope.ReviewSection(
-    reviewAvailable: Boolean,
-    revisionActive: Boolean,
-    hasRevisionReport: Boolean,
-    onReview: () -> Unit,
-    onCancelRevision: () -> Unit,
-    onViewLastReview: () -> Unit,
-) {
-    if (revisionActive) {
-        TextPreferenceWidget(
-            title = stringResource(ATMR.strings.revision_cancel),
-            onPreferenceClick = { onCancelRevision() },
-        )
-    } else if (reviewAvailable) {
-        TextPreferenceWidget(
-            title = stringResource(ATMR.strings.reader_translation_review_chapter),
-            onPreferenceClick = { onReview() },
-        )
-    }
-    if (hasRevisionReport) {
-        TextPreferenceWidget(
-            title = stringResource(ATMR.strings.revision_view_last),
-            onPreferenceClick = { onViewLastReview() },
-        )
-    }
-}
 
 /**
  * TachiyomiAT: live view of the current chapter's translation queue. Shows a
@@ -250,7 +191,6 @@ private fun ColumnScope.QueueSection(
     val queued = queue.count {
         it.stage != eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueueStage.DONE
     }
-    val revision = translationBatchProgress?.revision
     val summary = when {
         total == 0 && queue.isEmpty() ->
             stringResource(ATMR.strings.reader_translation_queue_idle)
@@ -268,44 +208,6 @@ private fun ColumnScope.QueueSection(
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
     )
-
-    when (translationBatchProgress?.batchPhase) {
-        TranslationBatchPhase.REVISING -> Text(
-            text = stringResource(
-                ATMR.strings.reader_translation_revision_progress,
-                revision?.completedBlocks ?: 0,
-                revision?.totalBlocks ?: 0,
-            ),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-        )
-        TranslationBatchPhase.FINALIZING -> Text(
-            text = stringResource(ATMR.strings.reader_translation_revision_finalizing),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-        )
-        TranslationBatchPhase.FINISHED -> when {
-            (revision?.failedBlocks ?: 0) > 0 -> Text(
-                text = stringResource(
-                    ATMR.strings.reader_translation_revision_failed,
-                    revision?.failedBlocks ?: 0,
-                ),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-            )
-            (revision?.totalBlocks ?: 0) > 0 -> Text(
-                text = stringResource(ATMR.strings.manga_batch_revision_complete),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium),
-            )
-            else -> Unit
-        }
-        else -> Unit
-    }
 
     if (queue.isEmpty()) return
 
@@ -569,38 +471,6 @@ private fun ColumnScope.EngineSection(
             onTranslationAiBaseUrlChange = onTranslationAiBaseUrlChange,
             onTranslationAiModelChange = onTranslationAiModelChange,
             onFetchAiModels = onFetchAiModels,
-        )
-    }
-}
-
-/**
- * TachiyomiAT: standalone-revision reviewer configuration row. The Auto toggle
- * follows the Pass-1 translation engine (default); turning it off reveals the
- * explicit provider picker. The provider reuses its translation API key and
- * model, so only the engine choice is stored here. Mirrors the main Settings
- * reviewer group so the reader recovery path lands on a real control.
- */
-@Composable
-private fun ColumnScope.ReviewerConfigSection(
-    reviewerAuto: Boolean,
-    reviewerEngine: AiEngine,
-    onReviewerAutoChange: (Boolean) -> Unit,
-    onReviewerEngineChange: (AiEngine) -> Unit,
-) {
-    SwitchPreferenceWidget(
-        title = stringResource(ATMR.strings.pref_revision_reviewer_auto),
-        subtitle = stringResource(ATMR.strings.pref_revision_reviewer_auto_summary),
-        checked = reviewerAuto,
-        onCheckedChanged = onReviewerAutoChange,
-    )
-
-    if (!reviewerAuto) {
-        val providers = AiTranslatorKind.entries.associate { it.engine to it.label }.toImmutableMap()
-        EngineListRow(
-            title = stringResource(ATMR.strings.pref_revision_reviewer_engine),
-            entries = providers,
-            value = reviewerEngine,
-            onValueChange = onReviewerEngineChange,
         )
     }
 }

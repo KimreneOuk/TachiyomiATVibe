@@ -41,8 +41,6 @@ import eu.kanade.presentation.manga.components.ChapterTranslationAction
 import eu.kanade.presentation.manga.components.ConfirmTranslationDialog
 import eu.kanade.presentation.manga.components.DeleteChaptersDialog
 import eu.kanade.presentation.manga.components.MangaCoverDialog
-import eu.kanade.presentation.manga.components.RevisionConfirmDialog
-import eu.kanade.presentation.manga.components.RevisionResultSheet
 import eu.kanade.presentation.manga.components.ScanlatorFilterDialog
 import eu.kanade.presentation.manga.components.SetIntervalDialog
 import eu.kanade.presentation.manga.components.TranslationProgressSheet
@@ -291,9 +289,6 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.TranslationProgress -> {
                 val item = successState.chapters.firstOrNull { it.id == dialog.chapterId }
-                val showViewReport = item != null &&
-                    item.translationProgress?.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.FINISHED &&
-                    (item.translationProgress?.revision?.totalBlocks ?: 0) > 0
                 TranslationProgressSheet(
                     chapterName = item?.chapter?.name.orEmpty(),
                     snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
@@ -311,38 +306,6 @@ class MangaScreen(
                         screenModel.dismissDialog()
                     },
                     onPauseResume = screenModel::setTranslationQueuePaused,
-                    onViewReport = if (showViewReport && item != null) {
-                        { screenModel.showRevisionResult(item) }
-                    } else {
-                        null
-                    },
-                )
-            }
-
-            is MangaScreenModel.Dialog.RevisionConfirm -> {
-                RevisionConfirmDialog(
-                    state = dialog.state,
-                    onScopeChange = { scope -> screenModel.changeRevisionScope(dialog.item, scope) },
-                    onReviewerPicked = { option -> screenModel.pickRevisionReviewer(dialog.item, option) },
-                    onOpenSettings = {
-                        screenModel.dismissDialog()
-                        navigator.push(SettingsScreen(SettingsScreen.Destination.Translation))
-                    },
-                    onConfirm = {
-                        val ready = dialog.state as? eu.kanade.translation.model.RevisionConfirmState.Ready
-                        if (ready != null) {
-                            screenModel.confirmStartRevision(dialog.item, ready.confirmation)
-                        }
-                    },
-                    onDismissRequest = onDismissRequest,
-                )
-            }
-
-            is MangaScreenModel.Dialog.RevisionResult -> {
-                RevisionResultSheet(
-                    chapterName = dialog.item.chapter.name,
-                    state = dialog.state,
-                    onDismissRequest = onDismissRequest,
                 )
             }
 

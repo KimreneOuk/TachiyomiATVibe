@@ -48,29 +48,17 @@ import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.TranslationPipeline
-import eu.kanade.translation.model.ChapterRevisionEligibility
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.RevisionConfirmState
-import eu.kanade.translation.model.RevisionConfirmation
-import eu.kanade.translation.model.RevisionResultState
-import eu.kanade.translation.model.RevisionReviewerOption
-import eu.kanade.translation.model.RevisionScope
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
-import eu.kanade.translation.model.defaultScope
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.isTier1DisplayReady
-import eu.kanade.translation.model.resolveEffectiveReviewerEngine
 import eu.kanade.translation.model.shouldShowTranslationOverlay
-import eu.kanade.translation.model.toConfirmState
 import eu.kanade.translation.model.toPageView
-import eu.kanade.translation.model.toResultState
-import eu.kanade.translation.model.withReviewerPicked
-import eu.kanade.translation.model.withScopeChanged
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.AutoChapterIdentity
@@ -220,11 +208,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 translationPreferences.translationAiEngine().changes(),
             ) { a, b, c, d -> Quad(a, b, c, d) },
             aiModelFetchState,
-            combine(
-                translationPreferences.revisionReviewerAuto().changes(),
-                translationPreferences.revisionReviewerEngine().changes(),
-            ) { auto, engine -> auto to engine },
-        ) { q, fetchState, reviewer -> Triple(q, fetchState, reviewer) },
+        ) { q, fetchState -> Pair(q, fetchState) },
         translationPreferences.translateFromLanguage().changes().flatMapLatest { fromValue ->
             val language = TextRecognizerLanguage.entries.firstOrNull { it.name == fromValue } ?: TextRecognizerLanguage.CHINESE
             val ocrPref = OcrModelCatalog.preferenceFor(translationPreferences, language)
@@ -245,8 +229,7 @@ class ReaderViewModel @JvmOverloads constructor(
         },
     ) { part1, part2, ocrInfo, aiSubPrefs ->
         val (q1, q2) = part1
-        val (q3, fetchState, reviewer) = part2
-        val (reviewerAuto, reviewerEngine) = reviewer
+        val (q3, fetchState) = part2
         val (ocrModel, ocrModelEntries) = ocrInfo
 
         val recentLangsFrom = TranslationPreferences.decodeRecentLanguages(q2.a).toImmutableList()
@@ -273,8 +256,6 @@ class ReaderViewModel @JvmOverloads constructor(
             aiModel = aiSubPrefs.model,
             aiRecentModels = recentAiModels,
             aiModelFetchState = fetchState,
-            reviewerAuto = reviewerAuto,
-            reviewerEngine = reviewerEngine,
         )
     }.stateIn(
         viewModelScope,
@@ -1730,165 +1711,6 @@ class ReaderViewModel @JvmOverloads constructor(
         mutableState.update { it.copy(dialog = Dialog.TranslationSettings) }
     }
 
-    // TachiyomiAT CP7: standalone revision (review) of the current chapter.
-    // The reader mirrors the manga flow: preflight -> shared confirm dialog ->
-    // manager start. The manager owns the job; closing the reader does not
-    // cancel it. Reviewer engine/model come from the injected
-    // [translationPreferences] (the manager does not expose the pref setter).
-    private var revisionEligibility: ChapterRevisionEligibility? = null
-
-    private fun revisionChapterId(): Long? = getCurrentChapter()?.chapter?.id
-
-    private fun revisionReviewerEngine(): AiEngine =
-        translationPreferences.revisionReviewerEngine().get()
-
-    /**
-     * Snapshots eligibility for the current chapter so the reader translation
-     * sheet can offer "Review this chapter" / "View last review". Cheap and
-     * idempotent; reads durable state.
-     */
-    suspend fun snapshotRevisionEligibility(): ChapterRevisionEligibility? {
-        val chapterId = revisionChapterId() ?: return null
-        val eligibility = translationManager.snapshotRevisionEligibility(chapterId)
-        revisionEligibility = eligibility
-        return eligibility
-    }
-
-    /** The current chapter name for revision result sheet headers. */
-    fun currentChapterName(): String = getCurrentChapter()?.chapter?.name.orEmpty()
-
-    /** True when an active revision is running for the current chapter. */
-    fun isRevisionActive(): Boolean = revisionChapterId()?.let {
-        translationManager.isRevisionActive(it)
-    } ?: false
-
-    /**
-     * Runs preflight for the current chapter with [scope] (default FLAGGED when
-     * flagged targets exist, else ALL_TRANSLATED) and opens the shared confirm
-     * dialog with the typed outcome.
-     */
-    fun startRevisionPreflight(scope: RevisionScope? = null) {
-        val chapterId = revisionChapterId() ?: return
-        val manga = manga ?: return
-        val chapter = getCurrentChapter()?.chapter ?: return
-        val resolvedScope = scope ?: defaultScope(revisionEligibility)
-        mutableState.update { it.copy(dialog = Dialog.RevisionConfirm(RevisionConfirmState.Idle)) }
-        viewModelScope.launch {
-            // Resolve the reviewer engine: in Auto mode it follows the Pass-1
-            // translation engine (falling back to the first configured provider
-            // when Pass-1 is non-AI or its provider lacks a credential); in
-            // explicit mode it is the persisted reviewer engine. This keeps the
-            // common case from rejecting with NO_REVIEWER_CONFIGURED just
-            // because the persisted default (Gemini) has no key.
-            val reviewerOptions = revisionEligibility?.reviewerOptions
-                ?: translationManager.revisionReviewerOptions()
-            val engine = resolveEffectiveReviewerEngine(
-                auto = translationPreferences.revisionReviewerAuto().get(),
-                pass1Category = translationPreferences.translationEngineCategory().get(),
-                pass1AiEngine = translationPreferences.translationAiEngine().get(),
-                configuredOptions = reviewerOptions,
-                persistedEngine = revisionReviewerEngine(),
-            )
-            val model = translationPreferences.translationAiModel(engine).get()
-            val outcome = translationManager.runRevisionPreflight(
-                chapterId = chapterId,
-                chapterName = chapter.name,
-                scope = resolvedScope,
-                reviewerEngine = engine,
-                reviewerModel = model,
-            )
-            val state = outcome.toConfirmState(reviewerOptions, engine)
-            mutableState.update { it.copy(dialog = Dialog.RevisionConfirm(state)) }
-            manga // referenced to keep the captured manga for the start path
-        }
-    }
-
-    /**
-     * Persists the picked reviewer engine and updates the confirm selection. An
-     * explicit pick disables Auto mode so the chosen provider is honored instead
-     * of the Pass-1-derived default.
-     */
-    fun pickRevisionReviewer(option: RevisionReviewerOption) {
-        translationPreferences.revisionReviewerAuto().set(false)
-        translationPreferences.revisionReviewerEngine().set(option.engine)
-        updateRevisionConfirmState { state -> state.withReviewerPicked(option) }
-    }
-
-    /** Sets Auto reviewer mode (true = follow the Pass-1 translation engine). */
-    fun setRevisionReviewerAuto(auto: Boolean) {
-        translationPreferences.revisionReviewerAuto().set(auto)
-    }
-
-    /** Sets the explicit reviewer provider (used when Auto is off). */
-    fun setRevisionReviewerEngine(engine: AiEngine) {
-        translationPreferences.revisionReviewerEngine().set(engine)
-    }
-
-    /** Updates scope and re-runs preflight so counts reflect the new scope. */
-    fun changeRevisionScope(scope: RevisionScope) {
-        updateRevisionConfirmState { state -> state.withScopeChanged(scope) }
-        startRevisionPreflight(scope = scope)
-    }
-
-    private inline fun updateRevisionConfirmState(
-        crossinline transform: (RevisionConfirmState) -> RevisionConfirmState,
-    ) {
-        mutableState.update { state ->
-            val dialog = state.dialog as? Dialog.RevisionConfirm ?: return@update state
-            state.copy(dialog = Dialog.RevisionConfirm(transform(dialog.state)))
-        }
-    }
-
-    /**
-     * Confirms and starts the revision. Sends only scope + reviewer + language
-     * to the manager. The UI guard mirrors the manager's active-job admission.
-     */
-    fun confirmStartRevision(confirmation: RevisionConfirmation) {
-        val manga = manga ?: return
-        val dbChapter = getCurrentChapter()?.chapter ?: return
-        val chapter = dbChapter.toDomainChapter() ?: return
-        val chapterId = chapter.id ?: return
-        if (translationManager.isRevisionActive(chapterId)) {
-            logcat(LogPriority.WARN) { "Revision already active for chapter $chapterId; ignoring duplicate confirm" }
-            return
-        }
-        val flow = translationManager.startRevision(
-            manga = manga,
-            chapter = chapter,
-            scope = confirmation.scope,
-            reviewerEngine = confirmation.reviewerEngine,
-            reviewerModel = confirmation.reviewerModel,
-        ) ?: run {
-            logcat(LogPriority.WARN) { "startRevision returned null for chapter $chapterId" }
-            return
-        }
-        closeDialog()
-        viewModelScope.launch { flow.collect { /* snapshot flows through observeBatchProgress */ } }
-    }
-
-    /** Cancels an active revision for the current chapter. */
-    fun cancelRevision() {
-        val chapterId = revisionChapterId() ?: return
-        resetAutoTranslationState()
-        translationManager.cancelRevision(chapterId)
-    }
-
-    /**
-     * Opens the terminal result sheet for the current chapter, loading the
-     * latest durable report.
-     */
-    fun showRevisionResult() {
-        val chapterId = revisionChapterId() ?: return
-        mutableState.update {
-            it.copy(dialog = Dialog.RevisionResult(RevisionResultState.Loading))
-        }
-        viewModelScope.launch {
-            val report = translationManager.getLatestRevisionReport(chapterId)
-            val state = report?.toResultState() ?: RevisionResultState.Missing
-            mutableState.update { it.copy(dialog = Dialog.RevisionResult(state)) }
-        }
-    }
-
     fun closeDialog() {
         mutableState.update { it.copy(dialog = null) }
     }
@@ -2095,12 +1917,6 @@ class ReaderViewModel @JvmOverloads constructor(
         when (val preflight = translationManager.translateChapterPreflight(manga, domainChapter)) {
             is eu.kanade.translation.model.ChapterQueuePreflight.NoConflict -> {
                 resetAutoTranslationState()
-            }
-            is eu.kanade.translation.model.ChapterQueuePreflight.RevisionBlocked -> {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT reader translate blocked: revision active for chapter=${domainChapter.id}"
-                }
-                return
             }
             is eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict -> {
                 resetAutoTranslationState()
@@ -2316,10 +2132,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // under the wrong store key (skipped-pages bug) and register reader-page
         // streams for a chapter the translator can't match to disk files.
         val chapter = page.chapter.chapter
-        val chapterId = chapter.id ?: return
-        if (translationManager.isBatchTranslationActive(chapterId) ||
-            translationManager.isRevisionActive(chapterId)
-        ) {
+        if (translationManager.isBatchTranslationActive(chapterId)) {
             logcat(LogPriority.INFO) {
                 "TachiyomiAT manual translate suppressed: batch owns chapterId=$chapterId"
             }
@@ -2988,12 +2801,6 @@ class ReaderViewModel @JvmOverloads constructor(
         data object ReadingModeSelect : Dialog
         data object OrientationModeSelect : Dialog
         data class PageActions(val page: ReaderPage) : Dialog
-
-        // TachiyomiAT CP7: standalone revision confirmation + terminal result.
-        // Shares the same pure state types and composables as the manga screen
-        // so both surfaces dispatch one manager request and render one run.
-        data class RevisionConfirm(val state: RevisionConfirmState) : Dialog
-        data class RevisionResult(val state: RevisionResultState) : Dialog
     }
 
     sealed interface Event {
@@ -3030,8 +2837,6 @@ data class TranslationSettingsState(
     val aiModel: String = "",
     val aiRecentModels: ImmutableList<String> = persistentListOf(),
     val aiModelFetchState: AiModelListState = AiModelListState.Idle,
-    val reviewerAuto: Boolean = true,
-    val reviewerEngine: AiEngine = AiEngine.GEMINI,
 )
 
 private data class AiSubPrefs(

@@ -3,9 +3,9 @@ package eu.kanade.translation
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.model.Translation
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
-import kotlinx.serialization.json.encodeToStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -19,9 +19,7 @@ data class ChapterTranslationSummary(
     val formatVersion: Int = FORMAT_VERSION,
     val expectedPageCount: Int,
     val terminalOutcome: Int,
-    val unresolvedRevisionCount: Int,
     val updatedAtMillis: Long,
-    val latestRevisionReport: eu.kanade.translation.model.RevisionReport? = null,
 ) {
     fun outcome(): Translation.State? = Translation.State.entries.firstOrNull { it.value == terminalOutcome }
 
@@ -53,31 +51,21 @@ class ChapterTranslationSummaryStore(
         }
     }
 
-    /** Writes, decodes, then replaces the adjacent sidecar. Returns false on any publication failure. */
+    /** Writes adjacent sidecar. Returns false on any publication failure. */
     fun publish(summary: ChapterTranslationSummary): Boolean {
         val parent = pageFile.parentFile ?: return failure("page file has no parent")
         val targetName = summaryFileName(pageFile.name ?: return failure("page file has no name"))
-        val temporary = parent.createFile("$targetName.tmp") ?: return failure("cannot create temporary summary")
-        try {
-            temporary.openOutputStream().use { Json.encodeToStream(summary, it) }
-            val verified = temporary.openInputStream().use { Json.decodeFromStream<ChapterTranslationSummary>(it) }
-            if (verified != summary) return failure("temporary summary verification mismatch")
-
-            parent.findFile(targetName)?.let { existing ->
-                if (!existing.delete()) return failure("cannot replace existing summary")
-            }
-            if (!temporary.renameTo(targetName)) return failure("temporary summary rename failed")
-            return true
-        } catch (error: Exception) {
+        return runCatching {
+            val bytes = Json.encodeToString(summary).toByteArray(Charsets.UTF_8)
+            val target = parent.findFile(targetName) ?: parent.createFile(targetName)
+                ?: return failure("cannot create summary file")
+            target.openOutputStream().use { it.write(bytes) }
+            true
+        }.onFailure { error ->
             logcat(LogPriority.ERROR, error) {
                 "TachiyomiAT chapter summary publication failed: pageFile=${pageFile.name} reason=${error.message ?: error::class.java.simpleName}"
             }
-            return false
-        } finally {
-            if (temporary.exists()) {
-                runCatching { temporary.delete() }
-            }
-        }
+        }.getOrDefault(false)
     }
 
     private fun findSummaryFile(): UniFile? {

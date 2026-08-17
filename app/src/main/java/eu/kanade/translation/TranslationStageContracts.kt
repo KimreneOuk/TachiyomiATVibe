@@ -21,9 +21,7 @@ data class TranslationBlockPatch(
     val expectedSourceText: String,
     val expectedTranslation: String,
     val expectedUserEditedAt: Long?,
-    val expectedNeedsRevision: Boolean,
     val translation: String,
-    val needsRevision: Boolean,
 )
 
 /** Translation-owned fields and target-specific merge preconditions. */
@@ -71,20 +69,6 @@ data class RenderStagePatch(
     val errorMessage: String? = null,
 )
 
-/** Text/flag-only revision patch. A null replacement keeps the current draft (K). */
-data class RevisionStagePatch(
-    val pageKey: String,
-    val generation: Long,
-    val blockIndex: Int,
-    val expectedBlockFingerprint: String,
-    val expectedSourceText: String,
-    val expectedDraft: String,
-    val expectedNeedsRevision: Boolean,
-    val expectedUserEditedAt: Long?,
-    val replacementTranslation: String?,
-    val needsRevision: Boolean,
-)
-
 sealed interface StagePatch {
     val pageKey: String
     val generation: Long
@@ -100,11 +84,6 @@ sealed interface StagePatch {
     }
 
     data class Render(val value: RenderStagePatch) : StagePatch {
-        override val pageKey: String get() = value.pageKey
-        override val generation: Long get() = value.generation
-    }
-
-    data class Revision(val value: RevisionStagePatch) : StagePatch {
         override val pageKey: String get() = value.pageKey
         override val generation: Long get() = value.generation
     }

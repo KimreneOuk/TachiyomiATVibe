@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.translator
+package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -28,13 +28,12 @@ class OpenRouterTranslator(
             estimatedPromptTokens = 0,
             maxOutputTokens = maxOutputToken,
         )
-        translateContextual(chunk, isPass2 = false)
+        translateContextual(chunk)
     }
 
-    override suspend fun translateContextualStructured(chunk: TranslationContextChunk, isPass2: Boolean): ContextualTranslationBatch {
+    override suspend fun translateContextualStructured(chunk: TranslationContextChunk): ContextualTranslationBatch {
         return parseContextualCompletion(
             chunk = chunk,
-            isPass2 = isPass2,
             url = "https://openrouter.ai/api/v1/chat/completions",
             headers = mapOf("Authorization" to "Bearer $apiKey"),
             logTag = "OpenRouterTranslator",
@@ -53,38 +52,6 @@ class OpenRouterTranslator(
                     addJsonObject {
                         put("role", "user")
                         put("content", finalPrompt)
-                    }
-                }
-            }.toString()
-        }
-    }
-
-    /**
-     * Pass-2 (revision) adapter. Wires through [parseRevisionCompletion] with
-     * OpenRouter-specific endpoint / auth / payload. Returns a strict
-     * [ContextualTranslationBatch] (isPass2=true) for K/C/U accounting.
-     */
-    suspend fun translateRevision(group: RevisionPlanner.RequestGroup): ContextualTranslationBatch {
-        return parseRevisionCompletion(
-            group = group,
-            url = "https://openrouter.ai/api/v1/chat/completions",
-            headers = mapOf("Authorization" to "Bearer $apiKey"),
-            logTag = "OpenRouterTranslator",
-        ) { systemPrompt, userMessage ->
-            buildJsonObject {
-                put("model", modelName)
-                put("top_p", 0.5f)
-                put("top_k", 30)
-                put("temperature", temperature)
-                put("max_tokens", group.maxOutputTokens)
-                putJsonArray("messages") {
-                    addJsonObject {
-                        put("role", "system")
-                        put("content", systemPrompt)
-                    }
-                    addJsonObject {
-                        put("role", "user")
-                        put("content", userMessage)
                     }
                 }
             }.toString()

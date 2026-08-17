@@ -1924,7 +1924,6 @@ class TranslationPipeline(
                 ChapterTranslationSummary(
                     expectedPageCount = orderedStreams.map { it.first }.distinct().size,
                     terminalOutcome = reconciliation.chapterStatus.value,
-                    unresolvedRevisionCount = reconciliation.unresolvedRevisionCount,
                     updatedAtMillis = System.currentTimeMillis(),
                 ),
             )
@@ -1934,13 +1933,8 @@ class TranslationPipeline(
                 }
             }
             tracker?.finish(reconciliation)
-            val revision = tracker?.snapshot?.value?.revision
             logcat(LogPriority.INFO) {
-                "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} " +
-                    "revisionCompleted=${revision?.completedBlocks ?: 0} " +
-                    "revisionFailed=${revision?.failedBlocks ?: 0} " +
-                    "revisionSkipped=${revision?.skippedBlocks ?: 0} " +
-                    "revisionUserEdited=${revision?.userEditedBlocks ?: 0}"
+                "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
             }
         }
     }
@@ -2721,15 +2715,11 @@ class TranslationPipeline(
                 // require a prior batch run. Published as READY_WITH_WARNINGS (partial
                 // chapter). Non-fatal if the sidecar write fails.
                 val pageCount = store.state.value.size
-                val unresolvedFlags = store.state.value.values.count { p ->
-                    p.blocks.any { b -> b.needsRevision && b.userEditedAt == null }
-                }
                 runCatching {
                     store.publishSummary(
                         ChapterTranslationSummary(
                             expectedPageCount = pageCount.coerceAtLeast(1),
                             terminalOutcome = eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS.value,
-                            unresolvedRevisionCount = unresolvedFlags,
                             updatedAtMillis = System.currentTimeMillis(),
                         ),
                     )
@@ -2887,28 +2877,18 @@ class TranslationPipeline(
                 blockFingerprints = snapshot.blockFingerprints,
             )
         }
-        var tempName: String? = null
         val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
             override fun writeVerifiedVersionedFile(): String {
                 check(directory != null) { "translation output folder is unavailable" }
                 val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
                 val version = System.currentTimeMillis().toString(36) + "-" + System.nanoTime().toString(36).takeLast(6)
                 val finalName = "$safeName.cleaned.$version.jpg"
-                tempName = "$finalName.tmp"
-                val temp = directory.findFile(tempName!!)?.also { it.delete() } ?: directory.createFile(tempName!!)
-                check(temp != null) { "could not create temporary cleaned image" }
-                temp.openOutputStream().use { output ->
+                val finalFile = directory.findFile(finalName) ?: directory.createFile(finalName)
+                check(finalFile != null) { "could not create final cleaned image" }
+                finalFile.openOutputStream().use { output ->
                     check(cleanedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) { "JPEG encoding returned false" }
                 }
-                check(temp.exists() && temp.length() > 0L) { "encoded cleaned image is empty" }
-                if (!temp.renameTo(finalName)) {
-                    val finalFile = directory.createFile(finalName)
-                    check(finalFile != null) { "could not create final cleaned image" }
-                    temp.openInputStream().use { input -> finalFile.openOutputStream().use(input::copyTo) }
-                    temp.delete()
-                }
-                val finalFile = directory.findFile(finalName) ?: temp.takeIf { it.name == finalName }
-                check(finalFile?.exists() == true && finalFile.length() > 0L) { "published cleaned image is unavailable" }
+                check(finalFile.exists() && finalFile.length() > 0L) { "published cleaned image is unavailable" }
                 return finalName
             }
 
@@ -2937,7 +2917,6 @@ class TranslationPipeline(
             }
             is CleanedImagePublisher.Result.Rejected -> null
             is CleanedImagePublisher.Result.WriteFailed -> {
-                tempName?.let { directory?.findFile(it)?.delete() }
                 pageTranslation.inpaintStatus = StageStatus.FAILED
                 pageTranslation.recordAttemptFailure()
                 pageTranslation.errorMessage = "Could not save cleaned image — translation output folder is unavailable. Grant storage permission to the app and retry."

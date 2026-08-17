@@ -2,7 +2,6 @@ package eu.kanade.translation.batch
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.RevisionProgress
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationProgressStage
 import io.kotest.matchers.shouldBe
@@ -85,20 +84,5 @@ class TranslationBatchProgressReducerTest {
         )
         textless.pages.single().stage shouldBe TranslationProgressStage.DONE
         textless.perStage.getValue(BatchPhase.TRANSLATE).skipped shouldBe 1
-    }
-
-    @Test
-    fun `revision fraction processes completed and failed while retaining skipped edited`() {
-        val revision = RevisionProgress(
-            totalBlocks = 8,
-            correctedBlocks = 3,
-            unresolvedBlocks = 2,
-            keptBlocks = 1,
-            userEditedBlocks = 1,
-        )
-        revision.processedBlocks shouldBe 6
-        revision.fraction shouldBe 0.75f
-        revision.keptBlocks shouldBe 1
-        revision.userEditedBlocks shouldBe 1
     }
 }

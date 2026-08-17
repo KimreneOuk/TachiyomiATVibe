@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.translator
+package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -28,16 +28,15 @@ class DeepSeekTranslator(
             estimatedPromptTokens = 0,
             maxOutputTokens = maxOutputToken,
         )
-        translateContextual(chunk, isPass2 = false)
+        translateContextual(chunk)
     }
 
-    override suspend fun translateContextualStructured(chunk: TranslationContextChunk, isPass2: Boolean): ContextualTranslationBatch {
+    override suspend fun translateContextualStructured(chunk: TranslationContextChunk): ContextualTranslationBatch {
         if (apiKey.isBlank()) {
             throw IllegalArgumentException("DeepSeek API key is required")
         }
         return parseContextualCompletion(
             chunk = chunk,
-            isPass2 = isPass2,
             url = "https://api.deepseek.com/chat/completions",
             headers = mapOf("Authorization" to "Bearer $apiKey"),
             logTag = "DeepSeekTranslator",
@@ -54,39 +53,6 @@ class DeepSeekTranslator(
                     addJsonObject {
                         put("role", "user")
                         put("content", finalPrompt)
-                    }
-                }
-            }.toString()
-        }
-    }
-
-    /**
-     * Pass-2 (revision) adapter. Wires through [parseRevisionCompletion] with
-     * DeepSeek-specific endpoint / auth / payload. Returns a strict
-     * [ContextualTranslationBatch] (isPass2=true) for K/C/U accounting.
-     */
-    suspend fun translateRevision(group: RevisionPlanner.RequestGroup): ContextualTranslationBatch {
-        if (apiKey.isBlank()) {
-            throw IllegalArgumentException("DeepSeek API key is required")
-        }
-        return parseRevisionCompletion(
-            group = group,
-            url = "https://api.deepseek.com/chat/completions",
-            headers = mapOf("Authorization" to "Bearer $apiKey"),
-            logTag = "DeepSeekTranslator",
-        ) { systemPrompt, userMessage ->
-            buildJsonObject {
-                put("model", if (modelName.isBlank()) "deepseek-chat" else modelName)
-                put("temperature", temperature)
-                put("max_tokens", group.maxOutputTokens)
-                putJsonArray("messages") {
-                    addJsonObject {
-                        put("role", "system")
-                        put("content", systemPrompt)
-                    }
-                    addJsonObject {
-                        put("role", "user")
-                        put("content", userMessage)
                     }
                 }
             }.toString()

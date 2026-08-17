@@ -22,7 +22,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,7 +52,6 @@ fun TranslationProgressSheet(
     onReadNow: () -> Unit,
     onCancel: () -> Unit,
     onPauseResume: ((paused: Boolean) -> Unit)? = null,
-    onViewReport: (() -> Unit)? = null,
 ) {
     var paused by remember(snapshot.chapterId) { mutableStateOf(false) }
     val isTerminal = snapshot.batchPhase == TranslationBatchPhase.FINISHED
@@ -174,11 +172,6 @@ fun TranslationProgressSheet(
                         Text(stringResource(MR.strings.action_cancel))
                     }
                 } else {
-                    if (onViewReport != null && snapshot.revision.totalBlocks > 0) {
-                        TextButton(onClick = onViewReport) {
-                            Text(stringResource(ATMR.strings.revision_view_report))
-                        }
-                    }
                     Spacer(Modifier.weight(1f))
                     Button(onClick = onDismissRequest) {
                         Text(stringResource(MR.strings.action_close))
@@ -401,11 +394,6 @@ private fun batchStatusLabel(snapshot: TranslationProgressSnapshot): String = wh
         snapshot.activeStages.contains(TranslationProgressStage.RENDER) -> stringResource(ATMR.strings.manga_batch_status_render)
         else -> stringResource(ATMR.strings.manga_batch_first_pass, snapshot.donePages, snapshot.totalPages)
     }
-    TranslationBatchPhase.REVISING -> stringResource(
-        ATMR.strings.manga_batch_revision_progress,
-        snapshot.revision.processedBlocks,
-        snapshot.revision.totalBlocks,
-    )
     TranslationBatchPhase.FINALIZING -> stringResource(ATMR.strings.manga_batch_finalizing)
     TranslationBatchPhase.FINISHED -> stringResource(ATMR.strings.reader_translation_stage_done)
 }

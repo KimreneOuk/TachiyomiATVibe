@@ -45,9 +45,6 @@ enum class ChapterTranslationAction {
     DETAILS,
     CANCEL,
     DELETE,
-
-    // TachiyomiAT CP7: standalone revision (review) of already-translated text.
-    REVIEW,
 }
 
 @Composable
@@ -57,11 +54,6 @@ fun ChapterTranslationIndicator(
     onClick: (ChapterTranslationAction) -> Unit,
     // TachiyomiAT: batch translation progress snapshot for the indicator.
     translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
-    // TachiyomiAT CP7: exposes the standalone REVIEW action when the manager
-    // derived eligibility for this chapter. Independent of aggregate
-    // [Translation.State] and downloaded-image state (text-only review needs no
-    // download).
-    reviewAvailableProvider: () -> Boolean = { false },
     // TachiyomiAT: pre-translate is always reachable; when false the idle glyph
     // carries a "will download first" hint badge.
     downloadedProvider: () -> Boolean = { true },
@@ -87,7 +79,6 @@ fun ChapterTranslationIndicator(
             modifier = modifier,
             onClick = onClick,
             translationState = translationState,
-            reviewAvailable = reviewAvailableProvider(),
         )
         Translation.State.ERROR -> ErrorIndicator(
             enabled = enabled,
@@ -165,14 +156,7 @@ private fun TranslatingIndicator(
         }
         // TachiyomiAT: stage-based progress fraction
         val isDeterminate = snapshot != null && snapshot.totalStages > 0
-        val isRevising = snapshot?.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.REVISING
-        val progressFraction = when {
-            isRevising && snapshot!!.revision.totalBlocks > 0 -> {
-                snapshot.revision.fraction
-            }
-            isDeterminate -> snapshot!!.fraction
-            else -> 0f
-        }
+        val progressFraction = if (isDeterminate) snapshot!!.fraction else 0f
 
         CircularProgressIndicator(
             progress = { if (isDeterminate) progressFraction else 0f },
@@ -199,12 +183,8 @@ private fun TranslatingIndicator(
             tint = strokeColor,
         )
         // TachiyomiAT: stage-based percentage label under the icon
-        if (isDeterminate || isRevising) {
-            val percentageText = if (isRevising) {
-                stringResource(ATMR.strings.manga_batch_revision_percent, (progressFraction * 100).toInt())
-            } else {
-                "${(progressFraction * 100).toInt()}%"
-            }
+        if (isDeterminate) {
+            val percentageText = "${(progressFraction * 100).toInt()}%"
             Text(
                 text = percentageText,
                 modifier = Modifier
@@ -224,8 +204,6 @@ private fun TranslatedIndicator(
     modifier: Modifier = Modifier,
     onClick: (ChapterTranslationAction) -> Unit,
     translationState: Translation.State = Translation.State.TRANSLATED,
-    // TachiyomiAT CP7: renders REVIEW when manager-derived eligibility exists.
-    reviewAvailable: Boolean = false,
 ) {
     var isMenuExpanded by remember { mutableStateOf(false) }
     val tint = if (translationState == Translation.State.READY_WITH_WARNINGS) {
@@ -251,15 +229,6 @@ private fun TranslatedIndicator(
             tint = tint,
         )
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
-            if (reviewAvailable) {
-                DropdownMenuItem(
-                    text = { Text(text = stringResource(ATMR.strings.manga_translate_review)) },
-                    onClick = {
-                        onClick(ChapterTranslationAction.REVIEW)
-                        isMenuExpanded = false
-                    },
-                )
-            }
             DropdownMenuItem(
                 text = { Text(text = stringResource(ATMR.strings.manga_translate)) },
                 onClick = {

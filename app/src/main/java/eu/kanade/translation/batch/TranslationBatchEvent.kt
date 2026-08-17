@@ -25,15 +25,6 @@ sealed class TranslationBatchEvent {
         val heapMiB: Long? = null,
         val reason: String? = null,
     ) : TranslationBatchEvent()
-    data class RevisionStarted(
-        val totalBlocks: Int,
-        val skippedBlocks: Int,
-        val userEditedBlocks: Int,
-    ) : TranslationBatchEvent()
-    data class RevisionChunkRunning(val pageKeys: Set<String>, val blockCount: Int) : TranslationBatchEvent()
-    data class RevisionChunkCompleted(val completedBlocks: Int) : TranslationBatchEvent()
-    data class RevisionChunkFailed(val failedBlocks: Int) : TranslationBatchEvent()
-    data object RevisionFinished : TranslationBatchEvent()
     data class BatchAborted(val reason: String, val failedPageKeys: Set<String>) : TranslationBatchEvent()
     data class BatchFinished(
         val state: Translation.State,

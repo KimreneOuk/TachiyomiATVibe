@@ -8,7 +8,6 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.translator.TranslatorComputeClass
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.shouldBeGreaterThan
 import io.kotest.matchers.shouldNotBe
 import io.mockk.every
 import io.mockk.mockk
@@ -1127,7 +1126,7 @@ class RollingAutoCoordinatorTest {
             val replacement = withTimeout(5_000) {
                 stable.first { it != null && it.identity == oldIdentity && it.ownerVersion > firstOwnerVersion }
             }
-            replacement!!.ownerVersion shouldBeGreaterThan firstOwnerVersion
+            (replacement!!.ownerVersion > firstOwnerVersion) shouldBe true
 
             scheduler.updateAutoWindow(
                 newIdentity,

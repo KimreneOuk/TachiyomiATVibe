@@ -13,7 +13,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,7 +24,6 @@ import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationUiState
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderOrientation
 import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
@@ -119,24 +117,6 @@ fun BottomReaderBar(
                         )
                     }
                 }
-            }
-
-            val revision = translationBatchProgress?.revision
-            val revisionText = when (translationBatchProgress?.batchPhase) {
-                TranslationBatchPhase.REVISING -> stringResource(
-                    ATMR.strings.reader_translation_revision_progress,
-                    revision?.completedBlocks ?: 0,
-                    revision?.totalBlocks ?: 0,
-                )
-                TranslationBatchPhase.FINALIZING -> stringResource(ATMR.strings.reader_translation_revision_finalizing)
-                else -> null
-            }
-            if (revisionText != null) {
-                Text(
-                    text = revisionText,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
             }
 
             IconButton(onClick = onClickSettings) {

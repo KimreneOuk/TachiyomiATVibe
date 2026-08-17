@@ -59,7 +59,6 @@ object SettingsTranslationScreen : SearchableSettings {
             getTranslationLangGroup(translationPreferences),
             getInpaintingModeGroup(translationPreferences),
             getEngineGroup(translationPreferences),
-            getReviewerGroup(translationPreferences),
         )
     }
 
@@ -228,40 +227,6 @@ object SettingsTranslationScreen : SearchableSettings {
 
         return Preference.PreferenceGroup(
             title = stringResource(ATMR.strings.pref_group_engine),
-            preferenceItems = persistentListOf(*items.toTypedArray()),
-        )
-    }
-
-    /**
-     * Standalone-revision reviewer configuration. The default (Auto) follows the
-     * Pass-1 translation engine so a chapter translated by an AI provider is
-     * reviewed by that same provider, and falls back to the first configured
-     * provider when translation uses a non-AI engine. Disabling Auto exposes the
-     * explicit provider picker; the chosen provider reuses its translation
-     * API key and model, so there is no separate reviewer credential.
-     */
-    @Composable
-    private fun getReviewerGroup(
-        translationPreferences: TranslationPreferences,
-    ): Preference.PreferenceGroup {
-        val providers = AiTranslatorKind.entries.associate { it.engine to it.label }.toImmutableMap()
-
-        val items = mutableListOf<Preference.PreferenceItem<out Any>>(
-            Preference.PreferenceItem.SwitchPreference(
-                pref = translationPreferences.revisionReviewerAuto(),
-                title = stringResource(ATMR.strings.pref_revision_reviewer_auto),
-                subtitle = stringResource(ATMR.strings.pref_revision_reviewer_auto_summary),
-            ),
-            Preference.PreferenceItem.ListPreference(
-                pref = translationPreferences.revisionReviewerEngine(),
-                title = stringResource(ATMR.strings.pref_revision_reviewer_engine),
-                subtitle = stringResource(ATMR.strings.pref_revision_reviewer_engine_summary),
-                entries = providers,
-            ),
-        )
-
-        return Preference.PreferenceGroup(
-            title = stringResource(ATMR.strings.pref_group_reviewer),
             preferenceItems = persistentListOf(*items.toTypedArray()),
         )
     }

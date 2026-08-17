@@ -24,7 +24,7 @@ sealed interface MemoryPressureClass {
     /**
      * The process is going background-visible or releasing discretionary caches.
      * The OS is NOT under foreground memory pressure. Translation must release
-     * pooled caches/buffers but must NOT cancel, pause, or reset batch/revision work.
+     * pooled caches/buffers but must NOT cancel, pause, or reset batch work.
      */
     data object Benign : MemoryPressureClass
 
@@ -32,8 +32,7 @@ sealed interface MemoryPressureClass {
      * The OS is actively reclaiming memory to stay alive (foreground running low,
      * running critical, or background-complete where the process may be killed).
      * Translation must requeue in-flight batch pages back to QUEUE (not ERROR),
-     * stop a standalone revision terminally without replaying a possibly-billed
-     * provider request, and signal that a single foreground restart is expected.
+     * and signal that a single foreground restart is expected.
      */
     data object Critical : MemoryPressureClass
 }

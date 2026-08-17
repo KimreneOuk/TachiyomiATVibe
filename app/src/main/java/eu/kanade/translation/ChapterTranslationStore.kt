@@ -28,6 +28,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
@@ -238,7 +239,6 @@ class ChapterTranslationStore(
                 is StagePatch.Translation -> mergeTranslationLocked(current, patch.value, description)
                 is StagePatch.Inpaint -> mergeInpaintLocked(current, patch.value, description)
                 is StagePatch.Render -> mergeRenderLocked(current, patch.value, description)
-                is StagePatch.Revision -> mergeRevisionLocked(current, patch.value, description)
             }
         }
     }
@@ -257,11 +257,6 @@ class ChapterTranslationStore(
         patch: RenderStagePatch,
         description: String = "render stage merge",
     ): StagePatchResult = applyStagePatch(StagePatch.Render(patch), description)
-
-    suspend fun mergeRevision(
-        patch: RevisionStagePatch,
-        description: String = "revision stage merge",
-    ): StagePatchResult = applyStagePatch(StagePatch.Revision(patch), description)
 
     private fun mergeTranslationLocked(
         current: PageTranslation?,
@@ -288,15 +283,12 @@ class ChapterTranslationStore(
                     "block ${target.blockIndex} translation changed"
                 block.userEditedAt != target.expectedUserEditedAt ->
                     "block ${target.blockIndex} user edit changed"
-                block.needsRevision != target.expectedNeedsRevision ->
-                    "block ${target.blockIndex} revision flag changed"
                 else -> null
             }
             if (rejection != null) {
                 rejectedTargets += rejection
             } else {
                 block!!.translation = target.translation
-                block.needsRevision = target.needsRevision
                 applied += target.blockIndex
             }
         }
@@ -376,39 +368,6 @@ class ChapterTranslationStore(
         pages = pages.put(patch.pageKey, updated)
         publishLocked(current, updated)
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), patch.blocks.map { it.blockIndex })
-    }
-
-    private fun mergeRevisionLocked(
-        current: PageTranslation?,
-        patch: RevisionStagePatch,
-        description: String,
-    ): StagePatchResult {
-        val rejection = stageIdentityRejection(current, patch.generation)
-            ?: current?.blocks?.getOrNull(patch.blockIndex)?.let { block ->
-                when {
-                    block.stableFingerprint() != patch.expectedBlockFingerprint -> "revision block identity changed"
-                    block.text != patch.expectedSourceText -> "revision source changed"
-                    block.translation != patch.expectedDraft -> "revision draft changed"
-                    block.needsRevision != patch.expectedNeedsRevision -> "revision flag changed"
-                    block.userEditedAt != patch.expectedUserEditedAt -> "revision user edit changed"
-                    patch.replacementTranslation != null && patch.replacementTranslation.isBlank() ->
-                        "blank revision replacement"
-                    else -> null
-                }
-            } ?: "block index ${patch.blockIndex} missing"
-        if (rejection != null) return rejectedStage(patch.pageKey, description, rejection)
-
-        val updated = ownedPage(
-            patch.pageKey,
-            current!!.detachedCopy().apply {
-                val block = blocks[patch.blockIndex]
-                patch.replacementTranslation?.let { block.translation = it }
-                block.needsRevision = patch.needsRevision
-            },
-        )
-        pages = pages.put(patch.pageKey, updated)
-        publishLocked(current, updated)
-        return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), listOf(patch.blockIndex))
     }
 
     private fun stageIdentityRejection(page: PageTranslation?, expectedGeneration: Long): String? = when {
@@ -775,80 +734,15 @@ class ChapterTranslationStore(
             translationFile = fileCreator?.invoke()
         }
         val target = translationFile ?: return false
-        // SAF-backed (UniFile): a stale/revoked tree URI or moved folder can make
-        // openOutputStream() throw IOException. In-memory state is still correct
-        // and the reader gets live StateFlow updates, so a write failure must NOT
-        // kill the translation — log and continue (read path degrades the same way).
-        //
-        // Write atomically: openOutputStream(false) truncates BEFORE encoding, so
-        // a throw or low-memory kill mid-write leaves a truncated, unreadable store
-        // that on next open() wipes every page. Encode into a sibling temp and
-        // rename over the target only once bytes are fully flushed; a crash then
-        // leaves the previous good file untouched (same pattern as the Downloader).
         try {
             // Snapshot PersistentMap into a plain Map before encoding. Serializing
             // it directly makes kotlinx.serialization treat PersistentMap
             // polymorphically and fail at runtime ("subclass 'PersistentOrderedMap'
             // not found"), breaking every persist and reopen.
             val snapshot: Map<String, PageTranslation> = pages.toMap()
-            val parent = target.parentFile
-            if (parent == null) {
-                // Single-document URI (no sibling location): fall back to a direct
-                // truncating write — prefer liveness over corruption-risk.
-                target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
-                return true
-            }
-            val tempFile = parent.createFile(tempFileNameFor(target))
-            if (tempFile == null) {
-                target.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
-                return true
-            }
-            try {
-                tempFile.openOutputStream().use { output -> Json.encodeToStream(snapshot, output) }
-            } catch (e: Exception) {
-                try {
-                    tempFile.delete()
-                } catch (_: Exception) {}
-                throw e
-            }
-            // SAF DocumentsContract.renameDocument won't overwrite an existing name
-            // on most providers, so delete target first then rename. The
-            // delete-then-rename window is sub-millisecond; open() degrades a
-            // missing/corrupt file to empty, so the reader keeps working. If the
-            // rename still fails, fall back to a truncating copy of the already-
-            // encoded bytes so in-memory state isn't lost.
-            val targetName = target.name ?: DEFAULT_FILE_NAME
-            val renamed = try {
-                target.delete()
-                tempFile.renameTo(targetName)
-            } catch (e: Exception) {
-                logcat(LogPriority.WARN, e) { "Atomic rename of translation store failed; falling back to copy" }
-                false
-            }
-            if (renamed) {
-                // A SAF rename replaces the backing document. Keep a handle to
-                // that new document instead of retaining [target], whose URI now
-                // points at the deleted placeholder. Reusing the stale handle made
-                // every later persist fail: cleaned JPEGs survived, but the JSON
-                // never received translated blocks, so the reader had nothing to
-                // draw over the cleaned page.
-                translationFile = parent.findFile(targetName) ?: tempFile
-            } else {
-                // target may already have been deleted before renameTo() reported
-                // failure. Resolve or recreate it before copying the fully encoded
-                // temporary snapshot, then retain the fresh handle for future writes.
-                val replacement = parent.findFile(targetName) ?: parent.createFile(targetName)
-                check(replacement != null) { "could not recreate translation store after rename failure" }
-                try {
-                    tempFile.openInputStream().use { input ->
-                        replacement.openOutputStream().use { output -> input.copyTo(output) }
-                    }
-                    translationFile = replacement
-                } finally {
-                    try {
-                        tempFile.delete()
-                    } catch (_: Exception) {}
-                }
+            val jsonBytes = Json.encodeToString(snapshot).toByteArray(Charsets.UTF_8)
+            target.openOutputStream().use { output ->
+                output.write(jsonBytes)
             }
             return true
         } catch (e: Exception) {
