@@ -15,6 +15,16 @@ internal object AotPixelOps {
 
     internal fun maskValue(pixel: Int): Int = max(pixel and 0xFF, pixel ushr 24)
 
+    /**
+     * Fixed-512 model contract: the Qualcomm AI Hub AOT-GAN export takes
+     * [0,1] RGB pixels and applies the mask internally, so input channels are
+     * encoded without pre-masking and output values decode with a plain
+     * [decodeFixedChannel] scale-back.
+     */
+    internal fun encodeFixedImageChannel(channel: Int): Float = (channel and 0xFF) / 255.0f
+
+    internal fun decodeFixedChannel(value: Float): Int = (value * 255.0f).roundToInt().coerceIn(0, 255)
+
     internal fun histogramMedian(hist: IntArray, count: Int): Int {
         val half = count / 2
         var acc = 0

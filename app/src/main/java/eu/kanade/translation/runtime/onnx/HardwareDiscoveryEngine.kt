@@ -170,11 +170,12 @@ object HardwareDiscoveryEngine {
         var opts: ai.onnxruntime.OrtSession.SessionOptions? = null
         return try {
             opts = ai.onnxruntime.OrtSession.SessionOptions()
-            val qnnOptions = mapOf(
-                "backend_type" to "HTP",
-                "htp_performance_mode" to "burst",
-                "htp_graph_finalization_optimization_mode" to "3",
-            )
+            val qnnOptions = buildMap {
+                put("backend_type", "htp")
+                put("htp_performance_mode", "burst")
+                put("htp_graph_finalization_optimization_mode", "3")
+                DeviceCapability.qnnSocModel?.let { put("soc_model", it) }
+            }
             opts.addQnn(qnnOptions)
             logcat(LogPriority.INFO) { "[hardware_discovery] QNN HTP probe registered OK" }
             true

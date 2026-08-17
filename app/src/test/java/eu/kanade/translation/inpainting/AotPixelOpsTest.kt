@@ -92,6 +92,39 @@ class AotPixelOpsTest {
         AotPixelOps.avg4(a, b, c, d) shouldBe argb(3, 25, 102)
     }
 
+    @Test
+    fun `encodeFixedImageChannel maps byte range onto unit range`() {
+        AotPixelOps.encodeFixedImageChannel(0) shouldBe 0.0f
+        AotPixelOps.encodeFixedImageChannel(255) shouldBe 1.0f
+        AotPixelOps.encodeFixedImageChannel(128) shouldBe 128.0f / 255.0f
+    }
+
+    @Test
+    fun `encodeFixedImageChannel masks input to the low byte`() {
+        AotPixelOps.encodeFixedImageChannel(0x1FF) shouldBe 1.0f
+        AotPixelOps.encodeFixedImageChannel(0x100) shouldBe 0.0f
+    }
+
+    @Test
+    fun `decodeFixedChannel maps unit range onto byte range`() {
+        AotPixelOps.decodeFixedChannel(0.0f) shouldBe 0
+        AotPixelOps.decodeFixedChannel(1.0f) shouldBe 255
+        AotPixelOps.decodeFixedChannel(0.5f) shouldBe 128
+    }
+
+    @Test
+    fun `decodeFixedChannel clamps out-of-range values`() {
+        AotPixelOps.decodeFixedChannel(-0.5f) shouldBe 0
+        AotPixelOps.decodeFixedChannel(1.5f) shouldBe 255
+    }
+
+    @Test
+    fun `decodeFixedChannel inverts encodeFixedImageChannel for every byte value`() {
+        for (channel in 0..255) {
+            AotPixelOps.decodeFixedChannel(AotPixelOps.encodeFixedImageChannel(channel)) shouldBe channel
+        }
+    }
+
     private fun argb(r: Int, g: Int, b: Int): Int =
         (0xFF shl 24) or (r shl 16) or (g shl 8) or b
 }

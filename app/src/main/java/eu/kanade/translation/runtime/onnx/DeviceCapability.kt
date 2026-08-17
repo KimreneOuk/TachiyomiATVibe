@@ -13,10 +13,30 @@ object DeviceCapability {
         socManufacturer.contains("qualcomm", ignoreCase = true) ||
             socManufacturer.contains("qcom", ignoreCase = true) ||
             socManufacturer.contains("qti", ignoreCase = true) ||
-            Build.HARDWARE.contains("qcom", ignoreCase = true) ||
-            Build.BOARD.contains("qcom", ignoreCase = true) ||
+            Build.HARDWARE.orEmpty().contains("qcom", ignoreCase = true) ||
+            Build.BOARD.orEmpty().contains("qcom", ignoreCase = true) ||
             socModel.startsWith("sm", ignoreCase = true) ||
             socModel.startsWith("sdm", ignoreCase = true)
+    }
+
+    /**
+     * QNN_SOC_MODEL enum value (QnnTypes.h) for this SoC, or null when unknown.
+     * QNN's deviceCreate() SoC autodetection fails with
+     * QNN_DEVICE_ERROR_INVALID_CONFIG on some devices unless the soc_model
+     * provider option carries a recognized enum; ORT derives the HTP arch
+     * from it. P-variants map to their base family (SM8750P -> SM8750).
+     */
+    val qnnSocModel: String? by lazy {
+        when (socModel.trim().uppercase().trimEnd('P')) {
+            "SDM845" -> "1"
+            "SDM835" -> "2"
+            "SM8450", "SM8475" -> "36"
+            "SM8550" -> "43"
+            "SM8650" -> "57"
+            "SM8750" -> "69"
+            "SM8845" -> "97"
+            else -> null
+        }
     }
 
     val isProbablyEmulator: Boolean by lazy {

@@ -247,10 +247,25 @@ fail loudly). Both calls are wrapped in `runCatching` that logs at WARN if a
 future ORT version removes them — the session is still created, just with the
 default (arena-on) config, so a forward ORT bump cannot brick translation.
 
-All translation ONNX sessions are CPU-only. NNAPI/QNN registration is not used
-in the current runtime; stale execution-provider preferences are ignored.
-Future NPU support should be a separate Qualcomm QNN/QAIRT backend with
-converted models, not a generic NNAPI fallback.
+Hardware routing goes through `HardwareDiscoveryEngine` (session-scoped latching
+circuit breaker): physical arm64 Snapdragon devices probe QNN HTP once, other
+devices probe NNAPI, and everything else latches CPU/XNNPACK. Probing and any
+accelerator failure permanently demote the process to CPU.
+
+Two packaging/runtime constraints that are easy to get wrong:
+
+- The standard `com.microsoft.onnxruntime:onnxruntime-android` AAR has **no QNN
+  execution provider** — `addQnn()` always throws and the probe silently latches
+  CPU (skipping NNAPI on Snapdragon too). The QNN-enabled drop-in artifact is
+  `com.microsoft.onnxruntime:onnxruntime-android-qnn` (same Java API, arm64-v8a
+  only; it does not compile XNNPACK, which is why XNNPACK registration is
+  treated as optional). See `gradle/libs.versions.toml`.
+- The fixed-512 AOT model is the official Qualcomm AI Hub AOT-GAN export. Its
+  I/O contract is **[0,1]**: pixels feed as `channel/255` without pre-masking
+  (the graph masks internally) and output decodes as `value*255` — encoded via
+  `AotPixelOps.encodeFixedImageChannel`/`decodeFixedChannel`. The dynamic
+  `aot.onnx` export keeps the older [-1,1] pre-masked convention; the two paths
+  must not share math.
 
 The trade-off is a modest per-inference CPU cost (the arena also serves as a
 free-list, so without it each inference goes through malloc/free) in exchange

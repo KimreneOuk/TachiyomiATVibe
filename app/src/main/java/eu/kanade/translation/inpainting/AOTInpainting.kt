@@ -96,7 +96,8 @@ class AOTInpainting {
         fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
         dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
         if (HardwareDiscoveryEngine.resolveRoute() == HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP &&
-            fixedModelFile != null && fixedModelFile.exists()
+            fixedModelFile != null &&
+            fixedModelFile.exists()
         ) {
             fixedQnnSession = initializeQnnSession(fixedModelFile)
         }
@@ -111,7 +112,10 @@ class AOTInpainting {
         var opts: OrtSession.SessionOptions? = null
         var created: OrtSession? = null
         return try {
-            opts = OnnxRuntimeProvider.createQnnHtpSessionOptions()
+            // Persist compiled HTP graph binaries next to the models so the
+            // multi-second finalization is paid once per install, not per run.
+            val contextCacheDir = File(modelFile.parentFile, "qnn-cache")
+            opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(contextCacheDir)
             created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
             AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(created))
             logcat(LogPriority.INFO) {
@@ -755,11 +759,10 @@ class AOTInpainting {
             maskBuffer.limit(pixels)
             for (index in 0 until pixels) {
                 val pixel = paddedPixels[index]
-                val maskValue = if (AotPixelOps.maskValue(paddedMask[index]) > 127) 1.0f else 0.0f
-                maskBuffer.put(index, maskValue)
-                imageBuffer.put(index, ((pixel shr 16 and 0xFF) / 127.5f - 1.0f) * (1.0f - maskValue))
-                imageBuffer.put(pixels + index, ((pixel shr 8 and 0xFF) / 127.5f - 1.0f) * (1.0f - maskValue))
-                imageBuffer.put(2 * pixels + index, ((pixel and 0xFF) / 127.5f - 1.0f) * (1.0f - maskValue))
+                maskBuffer.put(index, if (AotPixelOps.maskValue(paddedMask[index]) > 127) 1.0f else 0.0f)
+                imageBuffer.put(index, AotPixelOps.encodeFixedImageChannel(pixel shr 16 and 0xFF))
+                imageBuffer.put(pixels + index, AotPixelOps.encodeFixedImageChannel(pixel shr 8 and 0xFF))
+                imageBuffer.put(2 * pixels + index, AotPixelOps.encodeFixedImageChannel(pixel and 0xFF))
             }
             val environment = OnnxRuntimeProvider.environment
             imageTensor = OnnxTensor.createTensor(environment, imageBuffer, longArrayOf(1, 3, 512, 512))
@@ -811,9 +814,9 @@ class AOTInpainting {
                 for (y in 0 until side) {
                     for (x in 0 until side) {
                         val outputIndex = (prepared.offset + y) * AotPadPath.SIZE + prepared.offset + x
-                        val red = ((buffer.get(outputIndex) + 1.0f) * 127.5f).roundToInt().coerceIn(0, 255)
-                        val green = ((buffer.get(channelSize + outputIndex) + 1.0f) * 127.5f).roundToInt().coerceIn(0, 255)
-                        val blue = ((buffer.get(2 * channelSize + outputIndex) + 1.0f) * 127.5f).roundToInt().coerceIn(0, 255)
+                        val red = AotPixelOps.decodeFixedChannel(buffer.get(outputIndex))
+                        val green = AotPixelOps.decodeFixedChannel(buffer.get(channelSize + outputIndex))
+                        val blue = AotPixelOps.decodeFixedChannel(buffer.get(2 * channelSize + outputIndex))
                         candidate[y * side + x] = if (prepared.grayscale) {
                             val luma = (0.299f * red + 0.587f * green + 0.114f * blue).roundToInt()
                             (0xFF shl 24) or (luma shl 16) or (luma shl 8) or luma

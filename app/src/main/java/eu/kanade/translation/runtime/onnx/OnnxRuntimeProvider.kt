@@ -73,46 +73,58 @@ object OnnxRuntimeProvider {
      * Dedicated QNN HTP session options for Qualcomm Snapdragon NPUs.
      * Configures HTP execution provider, burst performance mode, graph optimization mode,
      * and on-disk context binary caching if [contextCacheDir] is provided.
+     *
+     * A failed QNN registration propagates to the caller (options are closed
+     * first) so a CPU session can never be created here and masquerade as QNN;
+     * callers decide their own fallback and circuit-breaker policy.
      */
     fun createQnnHtpSessionOptions(
         contextCacheDir: File? = null,
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): OrtSession.SessionOptions {
         logcat(LogPriority.INFO) { "ONNX session options using Qualcomm QNN HTP NPU provider (contextCacheDir=$contextCacheDir)" }
-        return OrtSession.SessionOptions().apply {
-            val cpuCores = Runtime.getRuntime().availableProcessors()
-            val threads = (cpuCores / 2).coerceIn(2, 4)
-            setInterOpNumThreads(threads)
-            setIntraOpNumThreads(threads)
-            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-            runCatching { setCPUArenaAllocator(false) }
-                .onFailure { e ->
-                    logcat(LogPriority.WARN, e) { "setCPUArenaAllocator(false) rejected; arena will stay on" }
-                }
-            runCatching { setMemoryPatternOptimization(false) }
-                .onFailure { e ->
-                    logcat(LogPriority.WARN, e) { "setMemoryPatternOptimization(false) rejected; mem-pattern will stay on" }
-                }
+        val options = OrtSession.SessionOptions()
+        try {
+            options.apply {
+                val cpuCores = Runtime.getRuntime().availableProcessors()
+                val threads = (cpuCores / 2).coerceIn(2, 4)
+                setInterOpNumThreads(threads)
+                setIntraOpNumThreads(threads)
+                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                runCatching { setCPUArenaAllocator(false) }
+                    .onFailure { e ->
+                        logcat(LogPriority.WARN, e) { "setCPUArenaAllocator(false) rejected; arena will stay on" }
+                    }
+                runCatching { setMemoryPatternOptimization(false) }
+                    .onFailure { e ->
+                        logcat(LogPriority.WARN, e) { "setMemoryPatternOptimization(false) rejected; mem-pattern will stay on" }
+                    }
 
-            val qnnOptions = mutableMapOf<String, String>()
-            qnnOptions["backend_type"] = "HTP"
-            qnnOptions["htp_performance_mode"] = "burst"
-            qnnOptions["htp_graph_finalization_optimization_mode"] = "3"
-            if (contextCacheDir != null) {
-                if (!contextCacheDir.exists()) {
-                    contextCacheDir.mkdirs()
+                val qnnOptions = mutableMapOf<String, String>()
+                qnnOptions["backend_type"] = "htp"
+                qnnOptions["htp_performance_mode"] = "burst"
+                DeviceCapability.qnnSocModel?.let { qnnOptions["soc_model"] = it }
+                // Temporary on-device diagnosis: attribute per-run QNN cost.
+                qnnOptions["log_level"] = "5"
+                if (contextCacheDir != null) {
+                    if (!contextCacheDir.exists()) {
+                        contextCacheDir.mkdirs()
+                    }
+                    qnnOptions["qnn_context_cache_enable"] = "1"
+                    qnnOptions["qnn_context_cache_path"] = contextCacheDir.absolutePath
                 }
-                qnnOptions["qnn_context_cache_enable"] = "1"
-                qnnOptions["qnn_context_cache_path"] = contextCacheDir.absolutePath
-            }
-            try {
                 addQnn(qnnOptions)
                 logcat(LogPriority.INFO) { "Successfully added QNN HTP EP with options: $qnnOptions" }
-            } catch (e: Throwable) {
-                logcat(LogPriority.ERROR, e) { "Failed to add QNN HTP EP, falling back to CPU!" }
-                HardwareDiscoveryEngine.tripCircuitBreaker("qnn_htp_registration_failed", e)
+                configure(this)
             }
-            configure(this)
+            return options
+        } catch (error: Throwable) {
+            try {
+                options.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
+            throw error
         }
     }
 
@@ -231,10 +243,11 @@ object OnnxRuntimeProvider {
                 HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP -> {
                     runCatching {
                         val qnnOptions = mutableMapOf(
-                            "backend_type" to "HTP",
+                            "backend_type" to "htp",
                             "htp_performance_mode" to "burst",
                             "htp_graph_finalization_optimization_mode" to "3",
                         )
+                        DeviceCapability.qnnSocModel?.let { qnnOptions["soc_model"] = it }
                         if (contextCacheDir != null) {
                             if (!contextCacheDir.exists()) contextCacheDir.mkdirs()
                             qnnOptions["qnn_context_cache_enable"] = "1"
