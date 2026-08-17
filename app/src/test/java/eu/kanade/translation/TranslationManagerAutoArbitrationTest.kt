@@ -170,7 +170,6 @@ class TranslationManagerAutoArbitrationTest {
         ownership: RevisionOwnershipGate,
     ): TranslationManager {
         val unsafeClass = Class.forName("sun.misc.Unsafe")
-<<<<<<< HEAD
         val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
         val unsafe = theUnsafeField.get(null)
         val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
@@ -186,25 +185,6 @@ class TranslationManagerAutoArbitrationTest {
         while (cls != null) {
             try {
                 val field: Field = cls.getDeclaredField(fieldName)
-=======
-        val unsafeField = unsafeClass.getDeclaredField("theUnsafe")
-        unsafeField.isAccessible = true
-        val unsafeInstance = unsafeField.get(null)
-        val allocateMethod = unsafeClass.getMethod("allocateInstance", Class::class.java)
-        val manager = allocateMethod.invoke(unsafeInstance, TranslationManager::class.java) as TranslationManager
-
-        setPrivateField(manager, "scheduler", scheduler)
-        setPrivateField(manager, "translator", translator)
-        setPrivateField(manager, "revisionOwnership", ownership)
-        return manager
-    }
-
-    private fun setPrivateField(target: Any, fieldName: String, value: Any) {
-        var cls: Class<*>? = target.javaClass
-        while (cls != null) {
-            try {
-                val field = cls.getDeclaredField(fieldName)
->>>>>>> audit_webtoon_long_strip
                 field.isAccessible = true
                 field.set(target, value)
                 return
