@@ -1,6 +1,7 @@
 package eu.kanade.translation.rendering
 
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.segmentation.BubbleMaskRle
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -552,6 +553,121 @@ class TextLayoutPlannerTest {
         val e = extent(l, m)
         (e.right <= 1500f + 0.5f) shouldBe true
         (e.left >= -0.5f) shouldBe true
+    }
+
+    @Test
+    fun `conjoined double cloud bubbles anchor to their respective parentBoxes at legible font size`() {
+        val mask = BubbleMaskRle(
+            width = 1000,
+            height = 1000,
+            bounds = listOf(100, 100, 700, 450),
+            runs = emptyList(),
+            score = 0.95f,
+        )
+        val leftLobe = block(
+            x = 170f,
+            y = 220f,
+            w = 170f,
+            h = 120f,
+            text = "No way... To meet in a place like this...",
+            score = 0.9f,
+        ).copy(
+            parentX = 100f,
+            parentY = 130f,
+            parentWidth = 285f,
+            parentHeight = 320f,
+            segmentationMask = mask,
+        )
+
+        val rightLobe = block(
+            x = 460f,
+            y = 200f,
+            w = 190f,
+            h = 140f,
+            text = "I've been searching for you all along! Thank goodness you're safe!",
+            score = 0.9f,
+        ).copy(
+            parentX = 415f,
+            parentY = 95f,
+            parentWidth = 300f,
+            parentHeight = 350f,
+            segmentationMask = mask,
+        )
+
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(leftLobe, rightLobe), 1000f, 1000f, 1, false, m)
+
+        plan shouldHaveSize 2
+        (plan[0].fontSizePx >= 16f) shouldBe true
+        (plan[1].fontSizePx >= 16f) shouldBe true
+        // Center of left text is inside left parentBox
+        (plan[0].originX >= 100f && plan[0].originX <= 385f) shouldBe true
+        // Center of right text is inside right parentBox
+        (plan[1].originX >= 415f && plan[1].originX <= 715f) shouldBe true
+    }
+
+    @Test
+    fun `ultra thin tall oval utilizes vertical height with large font`() {
+        val tallOval = block(
+            x = 200f,
+            y = 160f,
+            w = 70f,
+            h = 300f,
+            text = "Something like that could never be forgiven by anyone at all!",
+            score = 0.9f,
+        ).copy(
+            parentX = 180f,
+            parentY = 100f,
+            parentWidth = 110f,
+            parentHeight = 420f,
+        )
+
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(tallOval), 1000f, 1000f, 1, false, m)
+
+        plan shouldHaveSize 1
+        val l = plan.first()
+        (l.fontSizePx >= 14f) shouldBe true
+        (l.lines.size >= 4) shouldBe true
+    }
+
+    @Test
+    fun `touching dialogue bubbles with 0px gap maintain clean non-overlapping text layout`() {
+        val leftSpeaker = block(
+            x = 150f,
+            y = 200f,
+            w = 180f,
+            h = 130f,
+            text = "What is this unbelievable power?!",
+            score = 0.9f,
+        ).copy(
+            parentX = 90f,
+            parentY = 120f,
+            parentWidth = 310f,
+            parentHeight = 340f,
+        )
+
+        val rightSpeaker = block(
+            x = 450f,
+            y = 200f,
+            w = 180f,
+            h = 130f,
+            text = "It broke through our defenses with ease!",
+            score = 0.9f,
+        ).copy(
+            parentX = 400f,
+            parentY = 110f,
+            parentWidth = 310f,
+            parentHeight = 345f,
+        )
+
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(leftSpeaker, rightSpeaker), 1000f, 1000f, 1, false, m)
+
+        plan shouldHaveSize 2
+        val ext0 = extentOfPublic(plan[0], m)
+        val ext1 = extentOfPublic(plan[1], m)
+        (ext0.right <= ext1.left) shouldBe true
     }
 }
 

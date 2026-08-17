@@ -242,20 +242,24 @@ object TextLayoutPlanner {
         var baseH = rect.baseH
         val safePad = max(0f, (baseW - rect.safeW) / 2f)
 
-        val hasParent = regionOverride == null && block.parentWidth > 0f && block.parentHeight > 0f
-        val anchorToOcrCenter = regionOverride != null ||
-            hasParent ||
-            block.label == 2 ||
-            (block.direction == "TTB" && !isVertical)
-        val region = if (regionOverride != null) {
-            regionOverride
-        } else if (hasParent) {
+        val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
+        val parentBox = if (hasParent) {
             FloatRect(
                 block.parentX,
                 block.parentY,
                 block.parentX + block.parentWidth,
                 block.parentY + block.parentHeight,
             )
+        } else null
+
+        val anchorToOcrCenter = regionOverride != null ||
+            hasParent ||
+            block.label == 2 ||
+            (block.direction == "TTB" && !isVertical)
+        val region = if (parentBox != null) {
+            parentBox
+        } else if (regionOverride != null) {
+            regionOverride
         } else if (rect.reshaped) {
             FloatRect(0f, 0f, pageWidth, pageHeight)
         } else {
@@ -417,47 +421,49 @@ object TextLayoutPlanner {
             }
         }
 
-        if (regionOverride != null) {
+        if (hasParent && parentBox != null && regionOverride != null) {
             val centerX = block.x + block.width / 2f
             val centerY = block.y + block.height / 2f
             originX = centerX
             originY = centerY
             drawAlign = TextAlign.CENTER
 
-            // The OCR centre may be off-centre inside a fused mask slice. Fit to
-            // the smaller side so centred text cannot be clipped on either edge.
-            var maskClip = FloatRect(
-                region.left + strokeWidth / 2f,
-                region.top + strokeWidth / 2f,
-                region.right - strokeWidth / 2f,
-                region.bottom - strokeWidth / 2f,
+            safeW = max(1f, parentBox.width() - 8f)
+            safeH = max(1f, parentBox.height() - 8f)
+            safeW = min(safeW, regionOverride.width() - 8f)
+            safeH = min(safeH, regionOverride.height() - 8f)
+            fontSize = binarySearchFontSize(
+                text,
+                safeW,
+                safeH,
+                safeW,
+                isVertical,
+                scale,
+                measurer,
             )
-            repeat(2) {
-                safeW = max(1f, 2f * min(centerX - maskClip.left, maskClip.right - centerX))
-                safeH = max(1f, 2f * min(centerY - maskClip.top, maskClip.bottom - centerY))
-                fontSize = binarySearchFontSize(
-                    text,
-                    safeW,
-                    safeH,
-                    safeW,
-                    isVertical,
-                    scale,
-                    measurer,
-                )
-                strokeWidth = computeStrokeWidth(fontSize, scale)
-                maskClip = FloatRect(
-                    region.left + strokeWidth / 2f,
-                    region.top + strokeWidth / 2f,
-                    region.right - strokeWidth / 2f,
-                    region.bottom - strokeWidth / 2f,
-                )
-            }
-            clipRect = maskClip
-        }
+            strokeWidth = computeStrokeWidth(fontSize, scale)
+            clipRect = null
+        } else if (regionOverride != null) {
+            val centerX = block.x + block.width / 2f
+            val centerY = block.y + block.height / 2f
+            originX = centerX
+            originY = centerY
+            drawAlign = TextAlign.CENTER
 
-        // Free text / parented translations remain visually attached to the OCR
-        // region even when the fitted container is larger than that source box.
-        if (anchorToOcrCenter) {
+            safeW = max(1f, regionOverride.width() - 8f)
+            safeH = max(1f, regionOverride.height() - 8f)
+            fontSize = binarySearchFontSize(
+                text,
+                safeW,
+                safeH,
+                safeW,
+                isVertical,
+                scale,
+                measurer,
+            )
+            strokeWidth = computeStrokeWidth(fontSize, scale)
+            clipRect = null
+        } else if (anchorToOcrCenter) {
             originX = block.x + block.width / 2f
             originY = block.y + block.height / 2f
             drawAlign = TextAlign.CENTER
