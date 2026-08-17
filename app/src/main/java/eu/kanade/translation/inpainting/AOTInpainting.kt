@@ -384,19 +384,34 @@ class AOTInpainting {
         val w = image.width
         val h = image.height
         val mask = ByteArray(w * h)
-        var hasMask = false
-        if (blocks != null) {
-            for (block in blocks) {
-                block.segmentationMask?.rasterizeOnto(mask)
-                if (block.segmentationMask != null) {
-                    hasMask = true
+
+        // 1. Rasterize segmentation masks from blocks that have one
+        val blocksWithSegMask = blocks?.filter { it.segmentationMask != null } ?: emptyList()
+        for (block in blocksWithSegMask) {
+            block.segmentationMask?.rasterizeOnto(mask)
+        }
+
+        // 2. For all boxes that are NOT covered by an existing segmentation mask, build a dynamic pill mask
+        val remainingBoxes = if (blocksWithSegMask.isEmpty()) {
+            boxes
+        } else {
+            boxes.filter { box ->
+                blocksWithSegMask.none { block ->
+                    val seg = block.segmentationMask
+                    seg != null && seg.overlapPixels(box[0], box[1], box[2], box[3]) > 0
                 }
             }
         }
-        if (!hasMask) {
-            val pillMask = BubbleMaskBuilder.buildDynamicPillMask(boxes, w, h, MASK_PAD)
-            System.arraycopy(pillMask, 0, mask, 0, mask.size)
+
+        if (remainingBoxes.isNotEmpty()) {
+            val pillMask = BubbleMaskBuilder.buildDynamicPillMask(remainingBoxes, w, h, MASK_PAD)
+            for (i in mask.indices) {
+                if (pillMask[i] != 0.toByte()) {
+                    mask[i] = 1
+                }
+            }
         }
+
         if (mask.none { it != 0.toByte() }) return image
         val pixels = IntArray(w * h)
         image.getPixels(pixels, 0, w, 0, 0, w, h)

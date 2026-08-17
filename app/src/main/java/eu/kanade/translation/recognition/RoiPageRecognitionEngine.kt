@@ -28,6 +28,7 @@ import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationSafetyPrimitives
+import eu.kanade.translation.webtoon.WebtoonSlidingDetector
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -282,9 +283,12 @@ class RoiPageRecognitionEngine(
         val analyzed = try {
             nativeGuard.withLock {
                 if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
-                val detections = localDetector.detect(bitmap)
-                val bubbleMasksRaw = bubbleSegmenter?.segment(bitmap) ?: emptyList()
-                val bubbleMasks = bubbleMasksRaw.map { eu.kanade.translation.segmentation.BubbleMaskRle.encode(it) }
+                val detections = WebtoonSlidingDetector.detectSliding(bitmap) { localDetector.detect(it) }
+                val bubbleMasks = if (bubbleSegmenter != null) {
+                    WebtoonSlidingDetector.segmentSliding(bitmap) { bubbleSegmenter?.segment(it) ?: emptyList() }
+                } else {
+                    emptyList()
+                }
                 val bubbles = detections.filter { it.label == 0 }
                 val textDetections = detections.filter { it.label == 1 || it.label == 2 }
                 val lockedPageTranslation = PageTranslation(
@@ -327,9 +331,11 @@ class RoiPageRecognitionEngine(
                     val bbox = detection.bbox
                     val boxWidthPre = (bbox[2] - bbox[0]).toFloat()
                     val boxHeightPre = (bbox[3] - bbox[1]).toFloat()
-                    val isVerticalLanguage = language == TextRecognizerLanguage.JAPANESE ||
-                        language == TextRecognizerLanguage.CHINESE ||
-                        language == TextRecognizerLanguage.KOREAN
+                    val isWebtoonMode = WebtoonSlidingDetector.isTallImage(bitmap.width, bitmap.height) ||
+                        language == TextRecognizerLanguage.KOREAN ||
+                        !resolveReadingOrderRtl()
+                    val isVerticalLanguage = (language == TextRecognizerLanguage.JAPANESE ||
+                        language == TextRecognizerLanguage.CHINESE) && !isWebtoonMode
                     val tallVertical = isVerticalLanguage && boxHeightPre > boxWidthPre * 1.5f
                     // TachiyomiAT: PaddleOCR rec reads a single horizontal strip, so any
                     // multi-line bubble must be split by the det model first. Run the
@@ -570,6 +576,13 @@ class RoiPageRecognitionEngine(
         // panel assignment (see assignBubbleIndices). Must run first so the
         // bubbleIndex is present on each block before panel fields are set.
         assignBubbleIndices(pageTranslation)
+        val isWebtoonMode = WebtoonSlidingDetector.isTallImage(bitmap.width, bitmap.height) ||
+            language == TextRecognizerLanguage.KOREAN ||
+            !resolveReadingOrderRtl()
+        if (isWebtoonMode) {
+            logcat(LogPriority.INFO) { "Panel detection bypassed for webtoon / LTR reading order" }
+            return
+        }
         val panels: List<FloatArray> = try {
             pd.detect(bitmap)
         } catch (e: Exception) {
