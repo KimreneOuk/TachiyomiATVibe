@@ -6,6 +6,7 @@ import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
+import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -13,12 +14,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
-import sun.misc.Unsafe
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.AiEngine
+import java.lang.reflect.Field
 
 /**
  * Production-path arbitration coverage. The fixture injects only the manager
@@ -43,7 +43,7 @@ class TranslationManagerAutoArbitrationTest {
         every { manga.source } returns 1L
         every { chapter.id } returns 10L
 
-        assertThrows<IllegalStateException> {
+        shouldThrow<IllegalStateException> {
             manager.startRevision(
                 manga = manga,
                 chapter = chapter,
@@ -169,23 +169,28 @@ class TranslationManagerAutoArbitrationTest {
         translator: ChapterTranslator,
         ownership: RevisionOwnershipGate,
     ): TranslationManager {
-        val manager = unsafe.allocateInstance(TranslationManager::class.java) as TranslationManager
-        putObject(manager, "scheduler", scheduler)
-        putObject(manager, "translator", translator)
-        putObject(manager, "revisionOwnership", ownership)
+        val unsafeClass = Class.forName("sun.misc.Unsafe")
+        val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
+        val unsafe = theUnsafeField.get(null)
+        val allocateInstance = unsafeClass.getMethod("allocateInstance", Class::class.java)
+        val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
+        setField(manager, "scheduler", scheduler)
+        setField(manager, "translator", translator)
+        setField(manager, "revisionOwnership", ownership)
         return manager
     }
 
-    private fun putObject(target: Any, fieldName: String, value: Any) {
-        val field = target.javaClass.getDeclaredField(fieldName)
-        unsafe.putObject(target, unsafe.objectFieldOffset(field), value)
-    }
-
-    private companion object {
-        val unsafe: Unsafe by lazy {
-            val field = Unsafe::class.java.getDeclaredField("theUnsafe")
-            field.isAccessible = true
-            field.get(null) as Unsafe
+    private fun setField(target: Any, fieldName: String, value: Any) {
+        var cls: Class<*>? = target.javaClass
+        while (cls != null) {
+            try {
+                val field: Field = cls.getDeclaredField(fieldName)
+                field.isAccessible = true
+                field.set(target, value)
+                return
+            } catch (_: NoSuchFieldException) {
+                cls = cls.superclass
+            }
         }
     }
 }

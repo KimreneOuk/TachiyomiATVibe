@@ -29,13 +29,14 @@ import tachiyomi.presentation.core.i18n.stringResource
 private val AutoStatusShape = RoundedCornerShape(12.dp)
 
 val ReaderAutoTranslationUiState.hasVisibleAutoFeedback: Boolean
-    get() = identity != null && (
-        configuredAheadTarget > 0 ||
-            foreground != null ||
-            aheadSlots.isNotEmpty() ||
-            pauseReason != null ||
-            failedAheadCount > 0
-        )
+    get() = identity != null &&
+        (
+            configuredAheadTarget > 0 ||
+                foreground != null ||
+                aheadSlots.isNotEmpty() ||
+                pauseReason != null ||
+                failedAheadCount > 0
+            )
 
 /** Pure reader status projection used by the composable and presentation tests. */
 data class ReaderAutoTranslationStatusSnapshot(
