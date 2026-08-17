@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import eu.kanade.translation.detection.Detection
 import eu.kanade.translation.recognition.BoxGeometry
 import eu.kanade.translation.segmentation.BubbleMaskRle
-import eu.kanade.translation.segmentation.BubbleSegmentationDecoder
 import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
@@ -181,10 +180,10 @@ object WebtoonSlidingDetector {
      */
     fun segmentSliding(
         bitmap: Bitmap,
-        segmentFn: (Bitmap) -> List<BubbleSegmentationDecoder.Mask>,
+        segmentFn: (Bitmap) -> List<BubbleMaskRle>,
     ): List<BubbleMaskRle> {
         if (!isTallImage(bitmap.width, bitmap.height)) {
-            return segmentFn(bitmap).map { BubbleMaskRle.encode(it) }
+            return segmentFn(bitmap)
         }
 
         val windows = calculateWindows(bitmap.width, bitmap.height)
@@ -201,7 +200,7 @@ object WebtoonSlidingDetector {
             try {
                 val windowMasks = segmentFn(crop)
                 for (mask in windowMasks) {
-                    allMasks.add(projectMask(mask, window.top, bitmap.width, bitmap.height))
+                    allMasks.add(projectRle(mask, window.top, bitmap.width, bitmap.height))
                 }
             } finally {
                 if (crop !== bitmap) {
@@ -214,49 +213,31 @@ object WebtoonSlidingDetector {
     }
 
     /**
-     * Projects a local window [BubbleSegmentationDecoder.Mask] into a global full-page [BubbleMaskRle].
+     * Projects a window-local [BubbleMaskRle] into page coordinates. Runs are
+     * page-flat (start,length) pairs over width*height, so a vertical window
+     * offset shifts each run start by windowTop * pageWidth and moves the
+     * bounds' y by the same offset; lengths and x stay untouched.
      */
-    fun projectMask(
-        mask: BubbleSegmentationDecoder.Mask,
+    fun projectRle(
+        mask: BubbleMaskRle,
         windowTop: Int,
         pageWidth: Int,
         pageHeight: Int,
     ): BubbleMaskRle {
         if (windowTop == 0 && mask.height == pageHeight) {
-            return BubbleMaskRle.encode(mask)
+            return mask
         }
-        val globalBounds = listOf(
-            mask.bounds[0],
-            mask.bounds[1] + windowTop,
-            mask.bounds[2],
-            min(pageHeight, mask.bounds[3] + windowTop),
+        val offset = windowTop * pageWidth
+        return mask.copy(
+            width = pageWidth,
+            height = pageHeight,
+            bounds = listOf(
+                mask.bounds[0],
+                mask.bounds[1] + windowTop,
+                mask.bounds[2],
+                min(pageHeight, mask.bounds[3] + windowTop),
+            ),
+            runs = mask.runs.mapIndexed { index, value -> if (index % 2 == 0) value + offset else value },
         )
-        val runs = ArrayList<Int>()
-        val maskW = mask.width
-        val maskH = mask.height
-
-        for (row in 0 until maskH) {
-            val globalRow = row + windowTop
-            if (globalRow >= pageHeight) break
-            val localRowOffset = row * maskW
-            val globalRowOffset = globalRow * pageWidth
-
-            var col = 0
-            while (col < maskW) {
-                val idx = localRowOffset + col
-                if (idx >= mask.pixels.size || mask.pixels[idx] == 0.toByte()) {
-                    col++
-                    continue
-                }
-                val startCol = col
-                while (col < maskW && (localRowOffset + col) < mask.pixels.size && mask.pixels[localRowOffset + col] != 0.toByte()) {
-                    col++
-                }
-                val length = col - startCol
-                runs.add(globalRowOffset + startCol)
-                runs.add(length)
-            }
-        }
-        return BubbleMaskRle(pageWidth, pageHeight, globalBounds, runs, mask.score)
     }
 }

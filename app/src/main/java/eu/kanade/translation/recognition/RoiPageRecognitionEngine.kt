@@ -291,8 +291,9 @@ class RoiPageRecognitionEngine(
                 detectMs = (System.nanoTime() - detectStart) / 1_000_000
 
                 val segmentStart = System.nanoTime()
-                val bubbleMasks = if (bubbleSegmenter != null) {
-                    WebtoonSlidingDetector.segmentSliding(bitmap) { bubbleSegmenter?.segment(it) ?: emptyList() }
+                val segmenter = bubbleSegmenter
+                val bubbleMasks = if (segmenter != null) {
+                    WebtoonSlidingDetector.segmentSliding(bitmap) { segmenter.segment(it) }
                 } else {
                     emptyList()
                 }
@@ -322,8 +323,11 @@ class RoiPageRecognitionEngine(
                 val isWebtoonMode = WebtoonSlidingDetector.isTallImage(bitmap.width, bitmap.height) ||
                     language == TextRecognizerLanguage.KOREAN ||
                     !resolveReadingOrderRtl()
-                val isVerticalLanguage = (language == TextRecognizerLanguage.JAPANESE ||
-                    language == TextRecognizerLanguage.CHINESE) && !isWebtoonMode
+                val isVerticalLanguage = (
+                    language == TextRecognizerLanguage.JAPANESE ||
+                        language == TextRecognizerLanguage.CHINESE
+                    ) &&
+                    !isWebtoonMode
 
                 val ocrStart = System.nanoTime()
                 if (!engine.prefersHorizontalText) {

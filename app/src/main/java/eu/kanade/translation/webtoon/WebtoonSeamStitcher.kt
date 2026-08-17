@@ -3,7 +3,6 @@ package eu.kanade.translation.webtoon
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Rect
-import eu.kanade.translation.detection.Detection
 import eu.kanade.translation.model.TranslationBlock
 import kotlin.math.max
 import kotlin.math.min
@@ -131,13 +130,17 @@ object WebtoonSeamStitcher {
             val pageNTop = pageNTotalHeight - pageNBottomHeight + y1
             val pageNBottom = min(pageNTotalHeight, pageNTotalHeight - pageNBottomHeight + min(y2, pageNBottomHeight))
             intArrayOf(x1, pageNTop, x2, pageNBottom)
-        } else null
+        } else {
+            null
+        }
 
         val pageNPlus1Box = if (spansPageNPlus1) {
             val pageNPlus1Top = max(0, y1 - pageNBottomHeight)
             val pageNPlus1Bottom = y2 - pageNBottomHeight
             intArrayOf(x1, pageNPlus1Top, x2, pageNPlus1Bottom)
-        } else null
+        } else {
+            null
+        }
 
         return PartitionedInpaintBoxes(pageNBox, pageNPlus1Box)
     }
