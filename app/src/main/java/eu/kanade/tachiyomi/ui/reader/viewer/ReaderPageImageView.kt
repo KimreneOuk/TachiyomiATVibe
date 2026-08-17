@@ -237,12 +237,12 @@ open class ReaderPageImageView @JvmOverloads constructor(
         onViewClicked?.invoke()
     }
 
-    // TachiyomiAT: compact, non-interactive stage feedback. This replaces the
-    // old full-page scrim/spinner; the image always remains at alpha 1f.
+    // TachiyomiAT: compact, non-interactive stage feedback.
     private var translationFeedbackView: TextView? = null
     private var feedbackHideRunnable: Runnable? = null
     private var feedbackRunnable: Runnable? = null
     private val feedbackCoalescer = ReaderTranslationFeedbackCoalescer()
+    private var translationDimScrim: View? = null
 
     // TachiyomiAT: optional muted chapter-context suffix ("· N ready ahead")
     // appended to the per-page pill when an auto run is active. Terminal states
@@ -516,10 +516,26 @@ open class ReaderPageImageView @JvmOverloads constructor(
      * [setImage] / second [setImage] re-adds the pageView as the LAST child,
      * repushing the translate button and the stage pill behind it.
      */
+    private fun ensureDimScrim() {
+        if (translationDimScrim != null) return
+        translationDimScrim = View(context).apply {
+            setBackgroundColor(android.graphics.Color.BLACK)
+            alpha = 0f
+            isClickable = false
+            isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT)
+        }
+        addView(translationDimScrim)
+        restoreOverlayOrder()
+    }
+
     private fun restoreOverlayOrder() {
-        // Overlay goes above the pageView
+        // Scrim above pageView
+        translationDimScrim?.bringToFront()
+        // Overlay goes above the scrim
         translationOverlay?.bringToFront()
-        // Button: must always be on top so it can receive taps.
+        // Button and pill: must always be on top
         translateButton?.bringToFront()
         translationFeedbackView?.bringToFront()
     }
@@ -583,10 +599,8 @@ open class ReaderPageImageView @JvmOverloads constructor(
     }
 
     /**
-     * Updates page feedback only. The image is never dimmed, animated, or
-     * blocked while a stage is running. Short stage changes are coalesced on
-     * the UI thread; terminal feedback is immediate and does not delay the
-     * translated-image crossfade.
+     * Updates page feedback. Short stage changes are coalesced on the UI thread;
+     * terminal feedback is immediate and does not delay the translated-image crossfade.
      */
     fun showTranslationFeedback(state: ReaderPageFeedbackState?, contextSuffix: String? = null) {
         feedbackContextSuffix = contextSuffix
@@ -620,6 +634,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
         feedbackCoalescer.reset()
         translationFeedbackView?.isVisible = false
         translationFeedbackView?.contentDescription = null
+        translationDimScrim?.animate()?.cancel()
+        translationDimScrim?.alpha = 0f
+        translationDimScrim?.isVisible = false
     }
 
     private fun scheduleFeedbackFlush(now: Long) {
@@ -641,7 +658,23 @@ open class ReaderPageImageView @JvmOverloads constructor(
         if (state == null) {
             translationFeedbackView?.isVisible = false
             translationFeedbackView?.contentDescription = null
+            translationDimScrim?.animate()?.alpha(0f)?.setDuration(250)?.withEndAction {
+                translationDimScrim?.isVisible = false
+            }?.start()
             return
+        }
+
+        val isRunningState = state !is ReaderPageFeedbackState.Translated &&
+            state !is ReaderPageFeedbackState.Failed
+
+        if (isRunningState) {
+            ensureDimScrim()
+            translationDimScrim?.isVisible = true
+            translationDimScrim?.animate()?.alpha(0.28f)?.setDuration(250)?.start()
+        } else {
+            translationDimScrim?.animate()?.alpha(0f)?.setDuration(250)?.withEndAction {
+                translationDimScrim?.isVisible = false
+            }?.start()
         }
 
         ensureTranslationFeedbackView()

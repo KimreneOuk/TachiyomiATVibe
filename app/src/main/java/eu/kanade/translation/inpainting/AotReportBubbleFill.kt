@@ -175,16 +175,23 @@ internal object AotReportBubbleFill {
                 median = (0xFF shl 24) or ((sr / sz).toInt() shl 16) or ((sg / sz).toInt() shl 8) or (sb / sz).toInt()
             }
 
+            val maxDist = component.maxOfOrNull { distances[it] } ?: 0
+            val effectiveInset = when {
+                maxDist >= 16 -> 4
+                maxDist >= 8 -> 2
+                else -> 0
+            }
+
             val fillComponent = ArrayList<Int>()
             for (idx in component) {
-                if (distances[idx] >= insetPx) {
+                if (distances[idx] >= effectiveInset) {
                     pixels[idx] = median
                     fillComponent.add(idx)
                 }
             }
 
             if (fillComponent.isNotEmpty() && smoothPasses > 0) {
-                smoothMaskedComponent(pixels, distances, fillComponent, width, height, smoothPasses, insetPx)
+                smoothMaskedComponent(pixels, distances, fillComponent, width, height, smoothPasses, effectiveInset)
             }
         }
     }

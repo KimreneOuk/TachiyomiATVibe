@@ -29,7 +29,7 @@ android {
     defaultConfig {
         applicationId = "app.kanade.tachiyomi.at"
 
-        versionCode = 10
+        versionCode = 20
         versionName = "0.17.1"
 
         buildConfigField("String", "COMMIT_COUNT", "\"${getCommitCount()}\"")
@@ -51,6 +51,15 @@ android {
             reset()
             include(*supportedAbis.toTypedArray())
             isUniversalApk = true
+        }
+    }
+
+    signingConfigs {
+        named("debug") {
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
         }
     }
 
