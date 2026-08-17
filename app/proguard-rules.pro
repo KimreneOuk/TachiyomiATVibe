@@ -1,3 +1,8 @@
+# ONNX Runtime: native code resolves OrtException and session classes via JNI
+# (constructors are never called from Java), so R8 tree-shaking breaks the
+# error path with a JNI "mid == null" abort in checkOrtStatus.
+-keep class ai.onnxruntime.** { *; }
+
 -dontobfuscate
 
 -keep,allowoptimization class eu.kanade.**

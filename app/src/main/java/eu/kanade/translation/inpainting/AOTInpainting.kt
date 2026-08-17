@@ -443,14 +443,7 @@ class AOTInpainting {
         if (mask.none { it != 0.toByte() }) return image
         val pixels = IntArray(w * h)
         image.getPixels(pixels, 0, w, 0, 0, w, h)
-        AotReportBubbleFill.reportBubbleFill(pixels, mask, w, h, REPORT_BUBBLE_SMOOTH_PASSES)
-        val alpha = BubbleMaskBuilder.featherAlphaField(mask, w, h, FEATHER_RAMP_PX)
-        val original = IntArray(w * h)
-        image.getPixels(original, 0, w, 0, 0, w, h)
-        for (i in pixels.indices) {
-            val a = alpha[i]
-            if (a > 0.0f) pixels[i] = AotPixelOps.blendPixel(original[i], pixels[i], a)
-        }
+        AotReportBubbleFill.fillAndBlend(pixels, mask, w, h, REPORT_BUBBLE_SMOOTH_PASSES, FEATHER_RAMP_PX)
         image.setPixels(pixels, 0, w, 0, 0, w, h)
         return image
     }

@@ -78,6 +78,37 @@ class AotReportBubbleFillTest {
         pixels[rightComponent] shouldBe argb(4, 5, 6)
     }
 
+    @Test
+    fun `fillAndBlend matches the legacy fill then blend sequence`() {
+        val width = 12
+        val height = 12
+        val pixels = IntArray(width * height) { i ->
+            argb((i * 7) % 256, (i * 13) % 256, (i * 29) % 256)
+        }
+        val mask = ByteArray(width * height)
+        for (y in 3 until 9) {
+            for (x in 3 until 9) mask[index(x, y, width)] = 1
+        }
+
+        val viaHelper = pixels.copyOf()
+        AotReportBubbleFill.fillAndBlend(viaHelper, mask, width, height, smoothPasses = 2, featherRampPx = 3)
+
+        // Legacy pipeline: fill a working copy, then blend against the untouched
+        // original values — what the old second full-page read produced.
+        val legacy = pixels.copyOf()
+        AotReportBubbleFill.reportBubbleFill(legacy, mask, width, height, smoothPasses = 2)
+        val alpha = BubbleMaskBuilder.featherAlphaField(mask, width, height, 3)
+        for (i in legacy.indices) {
+            val a = alpha[i]
+            if (a > 0.0f) legacy[i] = AotPixelOps.blendPixel(pixels[i], legacy[i], a)
+        }
+
+        viaHelper shouldBe legacy
+        for (i in pixels.indices) {
+            if (alpha[i] <= 0.0f) viaHelper[i] shouldBe pixels[i]
+        }
+    }
+
     private fun index(x: Int, y: Int, width: Int): Int = y * width + x
 
     private fun argb(r: Int, g: Int, b: Int): Int =

@@ -9,13 +9,22 @@ import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import tachiyomi.domain.translation.pools.BitmapPool
+import tachiyomi.domain.translation.pools.DirectBufferPool
 import java.io.File
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
+import java.nio.FloatBuffer
 
 /** ONNX session owner for the AGPL-3.0 manga109 YOLO11 bubble segmenter. */
 class OnnxBubbleSegmenter {
     private var session: OrtSession? = null
+
+    // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor; ORT
+    // consumes it in place so it MUST outlive the tensor. maxPoolSize=2 bounds
+    // resident native memory. Same contract as OnnxPageTextDetector.
+    private val inputBufferPool = DirectBufferPool(
+        bufferCapacityBytes = SEGMENTER_INPUT_FLOATS * Float.SIZE_BYTES,
+        maxPoolSize = 2,
+    )
 
     fun initialize(modelFile: File) {
         session = OnnxRuntimeProvider.createSessionWithFallback(
@@ -32,16 +41,16 @@ class OnnxBubbleSegmenter {
         }
     }
 
-    fun segment(bitmap: Bitmap): List<BubbleSegmentationDecoder.Mask> {
+    fun segment(bitmap: Bitmap): List<BubbleMaskRle> {
         val current = session ?: throw IllegalStateException("Bubble segmenter session is not initialized")
         val transform = BubbleSegmentationDecoder.letterboxFor(bitmap.width, bitmap.height)
-        val input = Bitmap.createBitmap(
+        val input = BitmapPool.getARGB8888(
             BubbleSegmentationDecoder.INPUT_SIZE,
             BubbleSegmentationDecoder.INPUT_SIZE,
-            Bitmap.Config.ARGB_8888,
         )
         var tensor: OnnxTensor? = null
         var result: OrtSession.Result? = null
+        var inputBuffer: FloatBuffer? = null
         try {
             Canvas(input).apply {
                 drawColor(0xFF727272.toInt())
@@ -57,11 +66,11 @@ class OnnxBubbleSegmenter {
                     Paint(Paint.FILTER_BITMAP_FLAG),
                 )
             }
-            val buffer = ByteBuffer.allocateDirect(
-                3 * BubbleSegmentationDecoder.INPUT_SIZE * BubbleSegmentationDecoder.INPUT_SIZE * Float.SIZE_BYTES,
-            )
-                .order(ByteOrder.nativeOrder())
-                .asFloatBuffer()
+            // TachiyomiAT: ORT consumes the direct buffer in place (no native copy),
+            // so it MUST outlive the tensor — keep referenced until the finally.
+            inputBuffer = inputBufferPool.acquire()
+            val buffer = inputBuffer
+            buffer.clear()
             val pixels = IntArray(BubbleSegmentationDecoder.INPUT_SIZE * BubbleSegmentationDecoder.INPUT_SIZE)
             input.getPixels(
                 pixels,
@@ -78,7 +87,8 @@ class OnnxBubbleSegmenter {
                 buffer.put(plane + i, (pixels[i] shr 8 and 0xFF) / 255f)
                 buffer.put(2 * plane + i, (pixels[i] and 0xFF) / 255f)
             }
-            buffer.rewind()
+            buffer.limit(3 * plane)
+            buffer.position(0)
             tensor = OnnxTensor.createTensor(OnnxRuntimeProvider.environment, buffer, longArrayOf(1, 3, 640, 640))
             result = current.run(mapOf("images" to tensor))
             val prediction = result[0] as? OnnxTensor ?: error("Bubble segmenter output0 is not a tensor")
@@ -93,7 +103,7 @@ class OnnxBubbleSegmenter {
             }
             val predictions = FloatArray(37 * 8400).also { prediction.floatBuffer.get(it) }
             val prototypes = FloatArray(32 * 160 * 160).also { prototype.floatBuffer.get(it) }
-            return BubbleSegmentationDecoder.decode(
+            return BubbleSegmentationDecoder.decodeRle(
                 predictions,
                 37,
                 8400,
@@ -106,12 +116,29 @@ class OnnxBubbleSegmenter {
         } finally {
             result?.close()
             tensor?.close()
-            input.recycle()
+            inputBuffer?.let { inputBufferPool.release(it) }
+            BitmapPool.putARGB8888(input)
         }
     }
 
     fun close() {
         session?.close()
         session = null
+        inputBufferPool.clear()
+    }
+
+    // TachiyomiAT: frees the pooled direct buffer without tearing down the ONNX
+    // session; wired into per-page OOM relief. Registered in
+    // RoiPageRecognitionEngine's reclaim fan-outs like the sibling engines.
+    fun reclaimPooledMemory() {
+        inputBufferPool.clear()
+    }
+
+    fun forceReleaseNativeBuffers() {
+        inputBufferPool.clear()
+    }
+
+    companion object {
+        private const val SEGMENTER_INPUT_FLOATS = 3 * BubbleSegmentationDecoder.INPUT_SIZE * BubbleSegmentationDecoder.INPUT_SIZE
     }
 }

@@ -34,7 +34,8 @@ import java.nio.FloatBuffer
  * Only class 0 (panel) is returned; class 1 (text) is dropped because the
  * production RT-DETR text detector is the source of truth for text/bubble boxes.
  *
- * CPU-only, like every other translation ONNX session. One cheap 640x640 pass
+ * Attempts NNAPI with a CPU retry via createSessionWithFallback, matching the
+ * other vision-side ONNX engines. One cheap 640x640 pass
  * per page; runs alongside the text detector during recognition.
  */
 class OnnxPanelDetector {

@@ -49,6 +49,34 @@ internal class ExtensionApi {
 
     private suspend fun getExtensions(extRepo: ExtensionRepo): List<Extension.Available> {
         val repoBaseUrl = extRepo.baseUrl
+        // 1. Try modern index.json (Keiyoushi and newer repositories)
+        try {
+            val response = networkService.client
+                .newCall(GET("$repoBaseUrl/index.json"))
+                .awaitSuccess()
+
+            val body = response.body.string()
+            with(json) {
+                if (body.contains("\"extensionList\"")) {
+                    val repoIndex = decodeFromString<RepoIndexJsonObject>(body)
+                    val extensions = repoIndex.extensionList?.extensions.orEmpty()
+                        .toExtensionsFromNewSchema(repoBaseUrl)
+                    if (extensions.isNotEmpty()) {
+                        return extensions
+                    }
+                } else {
+                    val extensions = decodeFromString<List<ExtensionJsonObject>>(body)
+                        .toExtensions(repoBaseUrl)
+                    if (extensions.isNotEmpty()) {
+                        return extensions
+                    }
+                }
+            }
+        } catch (e: Throwable) {
+            logcat(LogPriority.DEBUG, e) { "Failed to get index.json from $repoBaseUrl, attempting index.min.json" }
+        }
+
+        // 2. Fallback to legacy index.min.json
         return try {
             val response = networkService.client
                 .newCall(GET("$repoBaseUrl/index.min.json"))
@@ -110,13 +138,14 @@ internal class ExtensionApi {
 
     private fun List<ExtensionJsonObject>.toExtensions(repoUrl: String): List<Extension.Available> {
         return this
+            .filterNot { isDummyWarningExtension(it.pkg, it.name) }
             .filter {
                 val libVersion = it.extractLibVersion()
                 libVersion >= ExtensionLoader.LIB_VERSION_MIN && libVersion <= ExtensionLoader.LIB_VERSION_MAX
             }
             .map {
                 Extension.Available(
-                    name = it.name.substringAfter("Tachiyomi: "),
+                    name = it.name.substringAfter("Tachiyomi: ").substringAfter("Tachiyomix: "),
                     pkgName = it.pkg,
                     versionName = it.version,
                     versionCode = it.code,
@@ -131,14 +160,100 @@ internal class ExtensionApi {
             }
     }
 
+    private fun List<RepoExtensionEntryJsonObject>.toExtensionsFromNewSchema(repoUrl: String): List<Extension.Available> {
+        return this
+            .filterNot { isDummyWarningExtension(it.packageName, it.name) }
+            .filter {
+                val libVersion = it.extractLibVersion()
+                libVersion >= ExtensionLoader.LIB_VERSION_MIN && libVersion <= ExtensionLoader.LIB_VERSION_MAX
+            }
+            .map {
+                val lang = it.sources?.firstOrNull()?.language
+                    ?: it.packageName.substringAfter("eu.kanade.tachiyomi.extension.").substringBefore('.')
+                Extension.Available(
+                    name = it.name.substringAfter("Tachiyomi: ").substringAfter("Tachiyomix: "),
+                    pkgName = it.packageName,
+                    versionName = it.versionName,
+                    versionCode = it.versionCode?.toLongOrNull() ?: 0L,
+                    libVersion = it.extractLibVersion(),
+                    lang = lang,
+                    isNsfw = it.contentWarning?.contains("NSFW", ignoreCase = true) == true,
+                    sources = it.sources?.map { s ->
+                        Extension.Available.Source(
+                            id = s.id?.toLongOrNull() ?: 0L,
+                            lang = s.language.orEmpty(),
+                            name = s.name.orEmpty(),
+                            baseUrl = s.homeUrl.orEmpty(),
+                        )
+                    }.orEmpty(),
+                    apkName = it.resources?.apkUrl ?: "$repoUrl/apk/${it.packageName}.apk",
+                    iconUrl = it.resources?.iconUrl ?: "$repoUrl/icon/${it.packageName}.png",
+                    repoUrl = repoUrl,
+                )
+            }
+    }
+
     fun getApkUrl(extension: Extension.Available): String {
-        return "${extension.repoUrl}/apk/${extension.apkName}"
+        return if (extension.apkName.startsWith("http://") || extension.apkName.startsWith("https://")) {
+            extension.apkName
+        } else {
+            "${extension.repoUrl}/apk/${extension.apkName}"
+        }
     }
 
     private fun ExtensionJsonObject.extractLibVersion(): Double {
-        return version.substringBeforeLast('.').toDouble()
+        return libVersion ?: version.substringBeforeLast('.').toDoubleOrNull() ?: 0.0
+    }
+
+    private fun RepoExtensionEntryJsonObject.extractLibVersion(): Double {
+        return extensionLib?.toDoubleOrNull() ?: versionName.substringBeforeLast('.').toDoubleOrNull() ?: 0.0
+    }
+
+    private fun isDummyWarningExtension(pkg: String, name: String): Boolean {
+        return pkg == "eu.kanade.tachiyomi.extension.all.keiyoushi" ||
+            pkg == "eu.kanade.tachiyomi.extension.all.mihon" ||
+            name.contains("Outdated App", ignoreCase = true) ||
+            name.contains("Update to Mihon", ignoreCase = true)
     }
 }
+
+@Serializable
+private data class RepoIndexJsonObject(
+    val name: String? = null,
+    val extensionList: RepoExtensionListJsonObject? = null,
+)
+
+@Serializable
+private data class RepoExtensionListJsonObject(
+    val extensions: List<RepoExtensionEntryJsonObject> = emptyList(),
+)
+
+@Serializable
+private data class RepoExtensionEntryJsonObject(
+    val name: String,
+    val packageName: String,
+    val versionName: String,
+    val versionCode: String? = null,
+    val extensionLib: String? = null,
+    val contentWarning: String? = null,
+    val resources: RepoExtensionResourcesJsonObject? = null,
+    val sources: List<RepoExtensionSourceJsonObject>? = null,
+)
+
+@Serializable
+private data class RepoExtensionResourcesJsonObject(
+    val apkUrl: String? = null,
+    val iconUrl: String? = null,
+    val jarUrl: String? = null,
+)
+
+@Serializable
+private data class RepoExtensionSourceJsonObject(
+    val id: String? = null,
+    val name: String? = null,
+    val language: String? = null,
+    val homeUrl: String? = null,
+)
 
 @Serializable
 private data class ExtensionJsonObject(
@@ -150,6 +265,7 @@ private data class ExtensionJsonObject(
     val version: String,
     val nsfw: Int,
     val sources: List<ExtensionSourceJsonObject>?,
+    val libVersion: Double? = null,
 )
 
 @Serializable

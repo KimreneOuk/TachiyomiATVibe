@@ -25,7 +25,6 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
-import eu.kanade.translation.segmentation.BubbleMaskRle
 import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationSafetyPrimitives
@@ -291,9 +290,8 @@ class RoiPageRecognitionEngine(
                 detectMs = (System.nanoTime() - detectStart) / 1_000_000
 
                 val segmentStart = System.nanoTime()
-                val bubbleMasksRaw = bubbleSegmenter?.segment(bitmap) ?: emptyList()
+                val bubbleMasks = bubbleSegmenter?.segment(bitmap) ?: emptyList()
                 segmentMs = (System.nanoTime() - segmentStart) / 1_000_000
-                val bubbleMasks = bubbleMasksRaw.map { eu.kanade.translation.segmentation.BubbleMaskRle.encode(it) }
                 val bubbles = detections.filter { it.label == 0 }
                 val textDetections = detections.filter { it.label == 1 || it.label == 2 }
                 val lockedPageTranslation = PageTranslation(
@@ -859,6 +857,9 @@ class RoiPageRecognitionEngine(
         try {
             panelDetector?.reclaimPooledMemory()
         } catch (_: Exception) {}
+        try {
+            bubbleSegmenter?.reclaimPooledMemory()
+        } catch (_: Exception) {}
     }
 
     override fun forceReleaseNativeBuffers() {
@@ -886,6 +887,7 @@ class RoiPageRecognitionEngine(
                 paddleDet?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
                 inpainting?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
                 panelDetector?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
+                bubbleSegmenter?.let { TranslationSafetyPrimitives.ForceReleasable { it.forceReleaseNativeBuffers() } },
             )
             TranslationSafetyPrimitives.drainChildBuffersGuarded(lockHeld = false, engines = engines)
         } finally {

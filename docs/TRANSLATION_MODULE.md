@@ -267,6 +267,14 @@ Two packaging/runtime constraints that are easy to get wrong:
   `aot.onnx` export keeps the older [-1,1] pre-masked convention; the two paths
   must not share math.
 
+Per-model routing within that latch: the text detector, panel detector, bubble
+segmenter, and PaddleOCR det go through `createSessionWithFallback` (CPU retry
+when graph compilation fails). MangaOcr and PaddleOCR recognition stay CPU-only.
+AOT inpainting prefers XNNPACK, keeps a strict-NNAPI fixed-512 session behind
+`NnapiCapabilityGate`/`NnapiHealthMonitor`, and runs the QNN HTP fixed-512
+session ahead of both when the route latched Qualcomm, with a
+QNN -> XNNPACK -> push-pull fallback cascade.
+
 The trade-off is a modest per-inference CPU cost (the arena also serves as a
 free-list, so without it each inference goes through malloc/free) in exchange
 for a dramatically lower resident footprint — the correct trade-off for the

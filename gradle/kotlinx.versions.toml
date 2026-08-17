@@ -1,6 +1,6 @@
 [versions]
-kotlin_version = "2.1.0"
-serialization_version = "1.7.3"
+kotlin_version = "2.2.20"
+serialization_version = "1.11.0"
 xml_serialization_version = "0.90.3"
 
 [libraries]
