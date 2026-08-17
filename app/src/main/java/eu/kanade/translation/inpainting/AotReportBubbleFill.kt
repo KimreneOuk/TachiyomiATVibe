@@ -2,6 +2,28 @@ package eu.kanade.translation.inpainting
 
 internal object AotReportBubbleFill {
 
+    /**
+     * Single-source variant of the report bubble pass: fills [pixels] in place and
+     * feathers the result against a copy of the pre-fill values, so callers read
+     * the page bitmap once instead of twice.
+     */
+    internal fun fillAndBlend(
+        pixels: IntArray,
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        smoothPasses: Int,
+        featherRampPx: Int,
+    ) {
+        val original = pixels.copyOf()
+        reportBubbleFill(pixels, mask, width, height, smoothPasses)
+        val alpha = BubbleMaskBuilder.featherAlphaField(mask, width, height, featherRampPx)
+        for (i in pixels.indices) {
+            val a = alpha[i]
+            if (a > 0.0f) pixels[i] = AotPixelOps.blendPixel(original[i], pixels[i], a)
+        }
+    }
+
     internal fun reportBubbleFill(
         pixels: IntArray,
         mask: ByteArray,

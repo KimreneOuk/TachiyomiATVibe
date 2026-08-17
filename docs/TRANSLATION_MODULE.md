@@ -247,10 +247,15 @@ fail loudly). Both calls are wrapped in `runCatching` that logs at WARN if a
 future ORT version removes them — the session is still created, just with the
 default (arena-on) config, so a forward ORT bump cannot brick translation.
 
-All translation ONNX sessions are CPU-only. NNAPI/QNN registration is not used
-in the current runtime; stale execution-provider preferences are ignored.
-Future NPU support should be a separate Qualcomm QNN/QAIRT backend with
-converted models, not a generic NNAPI fallback.
+Execution providers are mixed and chosen per model in `OnnxRuntimeProvider`. The
+text detector, panel detector, bubble segmenter, and PaddleOCR det attempt NNAPI
+via `createSessionWithFallback` (which retries on CPU when NNAPI graph
+compilation fails, e.g. the detector's Split op). MangaOcr and PaddleOCR
+recognition stay CPU-only. AOT inpainting prefers XNNPACK and additionally keeps
+a strict-NNAPI fixed-512 session behind `NnapiCapabilityGate`/`NnapiHealthMonitor`
+with a NNAPI -> XNNPACK -> push-pull fallback cascade. GPU (OpenCL) EP is not
+shipped in `onnxruntime-android`; a future Qualcomm NPU backend still belongs in
+the separate `onnxruntime-android-qnn` artifact with converted models.
 
 The trade-off is a modest per-inference CPU cost (the arena also serves as a
 free-list, so without it each inference goes through malloc/free) in exchange
