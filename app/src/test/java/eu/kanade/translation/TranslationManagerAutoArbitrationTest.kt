@@ -17,7 +17,6 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.translation.AiEngine
 import java.lang.reflect.Field
 
 /**
@@ -30,36 +29,7 @@ import java.lang.reflect.Field
 class TranslationManagerAutoArbitrationTest {
 
     @Test
-    fun `scheduler cancellation failure releases pending revision reservation`() {
-        val failingScheduler = mockk<TranslationScheduler>()
-        every { failingScheduler.cancelAutoTranslations(10L) } throws IllegalStateException("cancel failed")
-        val queue = MutableStateFlow<List<Translation>>(emptyList())
-        val translator = mockk<ChapterTranslator>(relaxed = true)
-        every { translator.queueState } returns queue
-        val ownership = RevisionOwnershipGate()
-        val manager = uninitializedManager(failingScheduler, translator, ownership)
-        val manga = mockk<Manga>(relaxed = true)
-        val chapter = mockk<Chapter>(relaxed = true)
-        every { manga.source } returns 1L
-        every { chapter.id } returns 10L
-
-        shouldThrow<IllegalStateException> {
-            manager.startRevision(
-                manga = manga,
-                chapter = chapter,
-                scope = mockk(relaxed = true),
-                reviewerEngine = AiEngine.GEMINI,
-                reviewerModel = "fixture",
-            )
-        }
-
-        ownership.isActive(10L) shouldBe false
-        ownership.withLock { ownership.reserveLocked(10L) shouldBe true }
-        ownership.release(10L)
-    }
-
-    @Test
-    fun `manager batch and revision ownership suppress reconcile and rearm after release`() = runBlocking {
+    fun `manager batch ownership suppresses reconcile and rearm after release`() = runBlocking {
         val store = ChapterTranslationStore(
             translationFile = null,
             fileCreator = null,
@@ -90,8 +60,7 @@ class TranslationManagerAutoArbitrationTest {
         every { translator.start() } returns true
         val activeBatch = Translation(source, manga, chapter).also { it.status = Translation.State.QUEUE }
         every { translator.queueChapter(manga, chapter) } answers { queue.value = listOf(activeBatch) }
-        val ownership = RevisionOwnershipGate()
-        val manager = uninitializedManager(scheduler, translator, ownership)
+        val manager = uninitializedManager(scheduler, translator)
 
         try {
             manager.updateAutoWindow(
@@ -133,7 +102,6 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
 
-            ownership.withLock { ownership.reserveLocked(10L) shouldBe true }
             manager.reconcileAutoWindow()
             scheduler.autoSnapshot.value?.identity shouldBe identity
             manager.updateAutoWindow(
@@ -147,7 +115,6 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it == null } }
 
-            ownership.release(10L)
             manager.updateAutoWindow(
                 identity,
                 0,
@@ -159,7 +126,6 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
         } finally {
-            ownership.release(10L)
             scheduler.close()
         }
     }
@@ -167,7 +133,6 @@ class TranslationManagerAutoArbitrationTest {
     private fun uninitializedManager(
         scheduler: TranslationScheduler,
         translator: ChapterTranslator,
-        ownership: RevisionOwnershipGate,
     ): TranslationManager {
         val unsafeClass = Class.forName("sun.misc.Unsafe")
         val theUnsafeField = unsafeClass.getDeclaredField("theUnsafe").apply { isAccessible = true }
@@ -176,7 +141,6 @@ class TranslationManagerAutoArbitrationTest {
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
         setField(manager, "scheduler", scheduler)
         setField(manager, "translator", translator)
-        setField(manager, "revisionOwnership", ownership)
         return manager
     }
 

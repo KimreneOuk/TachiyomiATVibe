@@ -17,7 +17,6 @@ data class ReconciliationResult(
     val doneCount: Int,
     val failedCount: Int,
     val partialCount: Int,
-    val unresolvedRevisionCount: Int,
 )
 
 object BatchProgressReconciler {
@@ -42,7 +41,6 @@ object BatchProgressReconciler {
                 doneCount = 0,
                 failedCount = 0,
                 partialCount = 0,
-                unresolvedRevisionCount = 0,
             )
         }
 
@@ -50,7 +48,6 @@ object BatchProgressReconciler {
         var doneCount = 0
         var failedCount = 0
         var partialCount = 0
-        var unresolvedRevisionCount = 0
 
         for (pageKey in expectedKeys) {
             val page = pageMap[pageKey]
@@ -67,7 +64,6 @@ object BatchProgressReconciler {
                 failedCount++
                 continue
             }
-            unresolvedRevisionCount += page.blocks.count { it.needsRevision }
             when {
                 page.isStageFailed -> failedCount++
                 page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
@@ -88,7 +84,7 @@ object BatchProgressReconciler {
 
         val chapterStatus = when {
             failedCount > 0 -> Translation.State.ERROR
-            partialCount > 0 || unresolvedRevisionCount > 0 -> Translation.State.READY_WITH_WARNINGS
+            partialCount > 0 -> Translation.State.READY_WITH_WARNINGS
             else -> Translation.State.TRANSLATED
         }
 
@@ -99,7 +95,6 @@ object BatchProgressReconciler {
             doneCount = doneCount,
             failedCount = failedCount,
             partialCount = partialCount,
-            unresolvedRevisionCount = unresolvedRevisionCount,
         )
     }
 

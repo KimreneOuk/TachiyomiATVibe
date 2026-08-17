@@ -48,7 +48,6 @@ fun TranslationBlock.stableFingerprint(): String {
         appendField(panelAssignment)
         appendField(panelContainment.toRawBits())
         appendField(bubbleIndex)
-        appendField(needsRevision)
         appendField(userEditedAt)
         segmentationMask?.let { mask ->
             appendField(mask.width)

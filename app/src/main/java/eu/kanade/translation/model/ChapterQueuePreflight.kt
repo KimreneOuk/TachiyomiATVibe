@@ -27,10 +27,4 @@ sealed interface ChapterQueuePreflight {
         val chapterId: Long,
         val chapterName: String,
     ) : ChapterQueuePreflight
-
-    /**
-     * A standalone revision job is active for the requested chapter; batch
-     * translation cannot start until it finishes or is cancelled.
-     */
-    data class RevisionBlocked(val chapterId: Long) : ChapterQueuePreflight
 }

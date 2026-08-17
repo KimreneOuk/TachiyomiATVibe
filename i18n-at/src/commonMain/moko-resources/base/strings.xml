@@ -88,9 +88,6 @@
     <string name="reader_translation_stage_failed">Failed</string>
     <string name="reader_translation_stage_queued">Queued</string>
     <string name="reader_translation_page">Page %1$d</string>
-    <string name="reader_translation_revision_progress">Revising flagged text: %1$d/%2$d</string>
-    <string name="reader_translation_revision_finalizing">Finishing translation updates</string>
-    <string name="reader_translation_revision_failed">%1$d revisions failed</string>
 
     <!-- TachiyomiAT: live reader auto-translation feedback -->
     <string name="reader_auto_stage_queued">Queued</string>
@@ -146,16 +143,11 @@
     <string name="manga_batch_stage_color">Color</string>
     <string name="manga_batch_stage_display">Display</string>
     <string name="manga_batch_stage_count">%4$d/%5$d processed · %1$d succeeded · %2$d failed · %3$d skipped</string>
-    <string name="manga_batch_revision_percent">Revision %1$d%%</string>
-    <string name="manga_batch_revision_excluded">Revision skipped: %1$d · user edited: %2$d</string>
     <string name="manga_batch_partial">Partial pages: %1$d</string>
     <string name="manga_batch_aborted">Batch aborted: %1$s</string>
     <string name="manga_batch_failures">Failures</string>
     <string name="manga_batch_failure_group">• %1$s (pages: %2$s)</string>
     <string name="manga_batch_first_pass">Translating and rendering pages: %1$d/%2$d</string>
-    <string name="manga_batch_revision_progress">Revising flagged text: %1$d/%2$d</string>
-    <string name="manga_batch_revision_complete">Revision complete</string>
-    <string name="manga_batch_revision_failed">%1$d revisions failed</string>
     <string name="manga_batch_finalizing">Finishing translation updates</string>
     <string name="manga_batch_page_progress">Page %1$d of %2$d</string>
     <string name="manga_batch_percent">%1$d%%</string>
@@ -181,9 +173,6 @@
     <string name="manga_batch_status_inpaint">Cleaning original text</string>
     <string name="manga_batch_status_render">Preparing translated text overlay</string>
 
-    <!-- TachiyomiAT: standalone revision UI/UX (CP7). Manga and reader share
-         one confirmation/result flow; the manager owns counts and the work. -->
-    <string name="manga_translate_review">Review translations</string>
     <string name="manga_translate_download_first">Translate (will download first)</string>
     <string name="manga_translate_multi">Translate</string>
     <!-- TachiyomiAT bug 3: another chapter of the same source is actively
@@ -196,38 +185,4 @@
     <string name="auto_translation_disabled_toast">Auto translation disabled</string>
     <string name="batch_cancelled_toast">Batch translation cancelled</string>
     <string name="translation_cancelled_undo">Undo</string>
-    <string name="reader_translation_review_chapter">Review this chapter</string>
-    <string name="revision_confirm_title">Review translations</string>
-    <string name="revision_scope_flagged">Flagged text only</string>
-    <string name="revision_scope_all_translated">All translated text</string>
-    <string name="revision_scope_help">Flagged: only blocks the translator marked for review. All: every translated block.</string>
-    <string name="revision_reviewer">Reviewer</string>
-    <string name="revision_reviewer_none_configured">No contextual reviewer configured</string>
-    <string name="revision_reviewer_open_settings">Configure a reviewer</string>
-    <string name="pref_group_reviewer">Reviewer</string>
-    <string name="pref_revision_reviewer_auto">Use translation engine</string>
-    <string name="pref_revision_reviewer_auto_summary">Review with the same AI provider used for translation. Falls back to the first configured provider when translation uses a non-AI engine.</string>
-    <string name="pref_revision_reviewer_engine">Reviewer provider</string>
-    <string name="pref_revision_reviewer_engine_summary">Reuses this provider\'s API key and model from the translation settings.</string>
-    <string name="revision_targets">Targets: %1$d</string>
-    <string name="revision_exclusions">Excluded (user-edited): %1$d</string>
-    <string name="revision_coverage">Translated: %1$d / %2$s</string>
-    <string name="revision_request_estimate">Estimated requests: %1$d</string>
-    <string name="revision_partial_warning">Only part of this chapter is translated. Review covers existing text only.</string>
-    <string name="revision_rejection_no_targets">No reviewable text for this scope.</string>
-    <string name="revision_rejection_no_reviewer_configured">Configure a contextual reviewer (Gemini, OpenRouter, DeepSeek, or LM Studio) first.</string>
-    <string name="revision_rejection_active_batch">Translation in progress for this chapter.</string>
-    <string name="revision_rejection_revision_active">A review is already running for this chapter.</string>
-    <string name="revision_rejection_chapter_deleted">Chapter translation data is gone.</string>
-    <string name="revision_result_title">Review results</string>
-    <string name="revision_result_kept">Kept (K): %1$d</string>
-    <string name="revision_result_corrected">Corrected (C): %1$d</string>
-    <string name="revision_result_unresolved">Unresolved (U): %1$d</string>
-    <string name="revision_result_changes">Accepted changes</string>
-    <string name="revision_result_no_changes">No accepted changes.</string>
-    <string name="revision_result_more_changes">%1$d more</string>
-    <string name="revision_view_report">View full report</string>
-    <string name="revision_view_last">View last review</string>
-    <string name="revision_no_report">No review report available yet.</string>
-    <string name="revision_cancel">Cancel review</string>
 </resources>

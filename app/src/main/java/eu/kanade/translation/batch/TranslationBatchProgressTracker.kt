@@ -3,7 +3,6 @@ package eu.kanade.translation.batch
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.RevisionProgress
 import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -72,19 +71,6 @@ class TranslationBatchProgressTracker(
     fun emit(event: TranslationBatchEvent) {
         if (finished || !events.trySend(event).isSuccess) return
     }
-
-    fun beginRevision(totalBlocks: Int, skippedBlocks: Int = 0, userEditedBlocks: Int = 0) = emit(
-        TranslationBatchEvent.RevisionStarted(totalBlocks, skippedBlocks, userEditedBlocks),
-    )
-    fun markRevisionChunkRunning(
-        pageKeys: Collection<String>,
-        blockCount: Int,
-    ) = emit(TranslationBatchEvent.RevisionChunkRunning(pageKeys.toSet(), blockCount))
-    fun markRevisionChunkCompleted(
-        completedBlocks: Int,
-    ) = emit(TranslationBatchEvent.RevisionChunkCompleted(completedBlocks))
-    fun markRevisionChunkFailed(failedBlocks: Int) = emit(TranslationBatchEvent.RevisionChunkFailed(failedBlocks))
-    fun markRevisionFinished() = emit(TranslationBatchEvent.RevisionFinished)
 
     fun markOcrRunning(pageKey: String) = phase(pageKey, BatchPhase.OCR, PhaseStatus.RUNNING)
     fun markOcrDone(pageKey: String) = phase(pageKey, BatchPhase.OCR, PhaseStatus.DONE)
@@ -165,14 +151,12 @@ class TranslationBatchProgressTracker(
         indexResolver = indexResolver,
         permitHolderPageKey = permitHolderResolver?.invoke(),
         batchPhase = state.batchPhase,
-        revision = state.revision,
         chapterId = chapterId,
     ).copy(aborted = state.aborted, abortedReason = state.abortReason)
 
     data class Projection(
         val chapterState: Translation.State = Translation.State.TRANSLATING,
         val batchPhase: TranslationBatchPhase = TranslationBatchPhase.FIRST_PASS,
-        val revision: RevisionProgress = RevisionProgress(),
         val pagePhases: Map<String, Map<BatchPhase, String>> = emptyMap(),
         val aborted: Boolean = false,
         val abortReason: String? = null,
@@ -188,40 +172,9 @@ class TranslationBatchProgressTracker(
                         )
                     ),
             )
-            is TranslationBatchEvent.RevisionStarted -> previous.copy(
-                batchPhase = if (event.totalBlocks >
-                    0
-                ) {
-                    TranslationBatchPhase.REVISING
-                } else {
-                    TranslationBatchPhase.FINALIZING
-                },
-                revision = RevisionProgress(
-                    event.totalBlocks,
-                    keptBlocks = event.skippedBlocks,
-                    userEditedBlocks = event.userEditedBlocks,
-                ),
-            )
-            is TranslationBatchEvent.RevisionChunkRunning -> previous.copy(
-                revision = previous.revision.copy(
-                    activePageKey = event.pageKeys.firstOrNull(),
-                    activeChunkBlocks = event.blockCount,
-                ),
-            )
-            is TranslationBatchEvent.RevisionChunkCompleted -> previous.copy(
-                revision = previous.revision.advance(completed = event.completedBlocks),
-            )
-            is TranslationBatchEvent.RevisionChunkFailed -> previous.copy(
-                revision = previous.revision.advance(failed = event.failedBlocks),
-            )
-            TranslationBatchEvent.RevisionFinished -> previous.copy(
-                batchPhase = TranslationBatchPhase.FINALIZING,
-                revision = previous.revision.copy(activePageKey = null, activeChunkBlocks = 0),
-            )
             is TranslationBatchEvent.BatchFinished -> previous.copy(
                 chapterState = event.state,
                 batchPhase = TranslationBatchPhase.FINISHED,
-                revision = previous.revision.copy(activePageKey = null, activeChunkBlocks = 0),
             )
             is TranslationBatchEvent.BatchAborted -> previous.copy(
                 chapterState = Translation.State.ERROR,
@@ -240,19 +193,6 @@ class TranslationBatchProgressTracker(
             PhaseStatus.PARTIAL -> StageStatus.PARTIAL
         }
 
-        private fun RevisionProgress.advance(completed: Int = 0, failed: Int = 0): RevisionProgress {
-            val remaining = (totalBlocks - processedBlocks).coerceAtLeast(0)
-            val completedAdded = completed.coerceIn(0, remaining)
-            val failedAdded = failed.coerceIn(0, remaining - completedAdded)
-            return copy(
-                correctedBlocks = correctedBlocks + completedAdded,
-                unresolvedBlocks =
-                unresolvedBlocks + failedAdded,
-                activePageKey = null,
-                activeChunkBlocks = 0,
-            )
-        }
-
         fun computeSnapshot(
             pageMap: Map<String, PageTranslation>,
             chapterState: Translation.State,
@@ -268,7 +208,6 @@ class TranslationBatchProgressTracker(
             } else {
                 TranslationBatchPhase.IDLE
             },
-            revision: RevisionProgress = RevisionProgress(),
             chapterId: Long = 0,
         ): TranslationProgressSnapshot {
             val rows = pageMap.entries.mapIndexed { order, (key, page) ->
@@ -337,7 +276,8 @@ class TranslationBatchProgressTracker(
                 }.groupBy({
                     it.value.errorMessage ?: "Unknown error"
                 }, { it.key }),
-                System.currentTimeMillis(), batchPhase = batchPhase, revision = revision,
+                System.currentTimeMillis(),
+                batchPhase = batchPhase,
             )
         }
 

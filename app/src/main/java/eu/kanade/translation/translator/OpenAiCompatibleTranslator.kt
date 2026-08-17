@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.translator
+package eu.kanade.translation.translator
 
 import eu.kanade.tachiyomi.network.await
 import logcat.LogPriority
@@ -11,9 +11,6 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
-
-    override val contextualCapability: ContextualTranslationCapability =
-        ContextualTranslationCapability.CONTEXTUAL_REVIEW
 
     protected val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
@@ -67,29 +64,22 @@ abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
         return rawOutput
     }
 
-    override suspend fun translateContextual(chunk: TranslationContextChunk, isPass2: Boolean) {
-        // The legacy pipeline consumes detached chunks and reads their fields after
-        // this call. The provider-facing contract remains the structured method.
-        applyBatchToChunk(chunk, translateContextualStructured(chunk, isPass2), isPass2)
+    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+        applyBatchToChunk(chunk, translateContextualStructured(chunk))
     }
 
     protected suspend fun parseContextualCompletion(
         chunk: TranslationContextChunk,
-        isPass2: Boolean,
         url: String,
         headers: Map<String, String>,
         logTag: String,
         buildPayload: (systemPrompt: String, finalPrompt: String) -> String,
     ): ContextualTranslationBatch {
-        val request = ContextualRequestBuilder.build(chunk, isPass2, fromLang, toLang)
+        val request = ContextualRequestBuilder.build(chunk, fromLang, toLang)
         if (request.promptLines.isEmpty()) {
-            return ContextualRequestBuilder.toBatch(request, emptyList(), isPass2)
+            return ContextualRequestBuilder.toBatch(request, emptyList())
         }
-        val systemPrompt = if (isPass2) {
-            TranslationPrompts.pass2SystemPrompt(fromLang, toLang)
-        } else {
-            TranslationPrompts.pass1SystemPrompt(fromLang, toLang)
-        }
+        val systemPrompt = TranslationPrompts.pass1SystemPrompt(fromLang, toLang)
         val contextPrefix = TranslationPrompts.contextPrefix(chunk.rollingContext, chunk.glossary)
         val promptBody = request.promptLines.joinToString("\n")
         val finalPrompt = if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
@@ -98,46 +88,8 @@ abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
         val rawOutput = withTranslationRetry(logTag = logTag) {
             postChatCompletion(url, headers, payloadJson)
         }
-        val parsed = ContextualResponseParser.parse(rawOutput.lineSequence().toList(), request.idMap, isPass2)
-        return ContextualRequestBuilder.toBatch(request, parsed, isPass2)
-    }
-
-    /**
-     * Pass-2 (revision) base implementation. Subclasses provide the URL, headers,
-     * and JSON payload builder via [buildRevisionPayload]. Returns a strict
-     * [ContextualTranslationBatch] (isPass2=true) — no [OK]/[FLAG] tag logic.
-     *
-     * Invariants:
-     *  - Empty group (no targets) returns [ContextualTranslationBatch.EMPTY] without a
-     *    network call.
-     *  - Missing / blank / malformed / duplicate / unknown ids produce REJECTED results
-     *    via [ContextualResponseParser] with isPass2=true.
-     *  - Network or API errors propagate to the caller so every target is accounted as
-     *    unresolved without silent fallback.
-     */
-    protected suspend fun parseRevisionCompletion(
-        group: RevisionPlanner.RequestGroup,
-        url: String,
-        headers: Map<String, String>,
-        logTag: String,
-        buildRevisionPayload: (systemPrompt: String, userMessage: String) -> String,
-    ): ContextualTranslationBatch {
-        val request = RevisionRequestBuilder.build(group)
-        if (request.promptLines.isEmpty()) return ContextualTranslationBatch.EMPTY
-
-        val systemPrompt = TranslationPrompts.pass2SystemPrompt(fromLang, toLang)
-        val userMessage = RevisionRequestBuilder.buildUserMessage(request)
-        val payloadJson = buildRevisionPayload(systemPrompt, userMessage)
-
-        val rawOutput = withTranslationRetry(logTag = logTag) {
-            postChatCompletion(url, headers, payloadJson)
-        }
-        val parsed = ContextualResponseParser.parse(
-            rawLines = rawOutput.lineSequence().toList(),
-            idMap = request.idMap,
-            isPass2 = true,
-        )
-        return RevisionRequestBuilder.toRevisionBatch(request, parsed)
+        val parsed = ContextualResponseParser.parse(rawOutput.lineSequence().toList(), request.idMap)
+        return ContextualRequestBuilder.toBatch(request, parsed)
     }
 
     override fun close() {

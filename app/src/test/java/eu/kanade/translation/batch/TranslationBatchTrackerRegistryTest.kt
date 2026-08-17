@@ -16,7 +16,7 @@ class TranslationBatchTrackerRegistryTest {
         val registry = TranslationBatchTrackerRegistry()
         val tracker = registry.createTracker(1, ChapterTranslationStore(null, null), emptyList(), this)
 
-        tracker.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0, 0))
+        tracker.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0))
         runCurrent()
 
         registry.terminal.value.getValue(1).batchPhase shouldBe TranslationBatchPhase.FINISHED
@@ -70,14 +70,14 @@ class TranslationBatchTrackerRegistryTest {
         // Queue a real terminal event before replacement. The tracker keeps
         // that accepted event drainable after close so the production callback
         // runs against the newer registry owner and is identity-rejected.
-        old.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0, 0))
+        old.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0))
         val newer = registry.createTracker(7, ChapterTranslationStore(null, null), emptyList(), this)
         runCurrent()
 
         registry.getLive(7) shouldBe newer
         registry.terminalSnapshot(7) shouldBe null
 
-        newer.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0, 0))
+        newer.finish(ReconciliationResult(Translation.State.TRANSLATED, emptyMap(), emptySet(), 0, 0, 0))
         runCurrent()
         registry.getLive(7) shouldBe null
         registry.terminalSnapshot(7)!!.batchPhase shouldBe TranslationBatchPhase.FINISHED

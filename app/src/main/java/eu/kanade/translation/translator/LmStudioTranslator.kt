@@ -1,4 +1,4 @@
-﻿package eu.kanade.translation.translator
+package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -30,10 +30,10 @@ class LmStudioTranslator(
             estimatedPromptTokens = 0,
             maxOutputTokens = maxOutputToken,
         )
-        translateContextual(chunk, isPass2 = false)
+        translateContextual(chunk)
     }
 
-    override suspend fun translateContextualStructured(chunk: TranslationContextChunk, isPass2: Boolean): ContextualTranslationBatch {
+    override suspend fun translateContextualStructured(chunk: TranslationContextChunk): ContextualTranslationBatch {
         if (normalizedBaseUrl.isBlank()) {
             throw IllegalArgumentException("LM Studio base URL is required")
         }
@@ -42,7 +42,6 @@ class LmStudioTranslator(
         }
         return parseContextualCompletion(
             chunk = chunk,
-            isPass2 = isPass2,
             url = "$normalizedBaseUrl/chat/completions",
             headers = emptyMap(),
             logTag = "LmStudioTranslator",
@@ -59,42 +58,6 @@ class LmStudioTranslator(
                     addJsonObject {
                         put("role", "user")
                         put("content", finalPrompt)
-                    }
-                }
-            }.toString()
-        }
-    }
-
-    /**
-     * Pass-2 (revision) adapter. Wires through [parseRevisionCompletion] with
-     * LM Studio-specific local endpoint / no auth / payload. Returns a strict
-     * [ContextualTranslationBatch] (isPass2=true) for K/C/U accounting.
-     */
-    suspend fun translateRevision(group: RevisionPlanner.RequestGroup): ContextualTranslationBatch {
-        if (normalizedBaseUrl.isBlank()) {
-            throw IllegalArgumentException("LM Studio base URL is required")
-        }
-        if (modelName.isBlank()) {
-            throw IllegalArgumentException("LM Studio model is required")
-        }
-        return parseRevisionCompletion(
-            group = group,
-            url = "$normalizedBaseUrl/chat/completions",
-            headers = emptyMap(),
-            logTag = "LmStudioTranslator",
-        ) { systemPrompt, userMessage ->
-            buildJsonObject {
-                put("model", modelName)
-                put("temperature", temperature)
-                put("max_tokens", group.maxOutputTokens)
-                putJsonArray("messages") {
-                    addJsonObject {
-                        put("role", "system")
-                        put("content", systemPrompt)
-                    }
-                    addJsonObject {
-                        put("role", "user")
-                        put("content", userMessage)
                     }
                 }
             }.toString()

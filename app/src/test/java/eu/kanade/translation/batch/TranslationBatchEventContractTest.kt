@@ -21,11 +21,6 @@ class TranslationBatchEventContractTest {
 
         names shouldContainExactly setOf(
             "PagePhase",
-            "RevisionStarted",
-            "RevisionChunkRunning",
-            "RevisionChunkCompleted",
-            "RevisionChunkFailed",
-            "RevisionFinished",
             "BatchAborted",
             "BatchFinished",
         )
@@ -46,6 +41,16 @@ class TranslationBatchEventContractTest {
     }
 
     @Test
+    fun `Revision events are not members of the event surface`() {
+        val names = TranslationBatchEvent::class.sealedSubclasses.map { it.simpleName }.toSet()
+        names shouldNotContain "RevisionStarted"
+        names shouldNotContain "RevisionChunkRunning"
+        names shouldNotContain "RevisionChunkCompleted"
+        names shouldNotContain "RevisionChunkFailed"
+        names shouldNotContain "RevisionFinished"
+    }
+
+    @Test
     fun `PagePhase constructs with required fields and compiles as a subtype`() {
         val event = TranslationBatchEvent.PagePhase(
             pageKey = "001.jpg",
@@ -58,35 +63,6 @@ class TranslationBatchEventContractTest {
         event.heapMiB shouldBe null
         event.reason shouldBe null
         event shouldBe TranslationBatchEvent.PagePhase("001.jpg", 0, BatchPhase.OCR, PhaseStatus.RUNNING)
-    }
-
-    @Test
-    fun `RevisionStarted constructs with its block counts`() {
-        val event = TranslationBatchEvent.RevisionStarted(
-            totalBlocks = 10,
-            skippedBlocks = 2,
-            userEditedBlocks = 1,
-        )
-        event.totalBlocks shouldBe 10
-        event.skippedBlocks shouldBe 2
-        event.userEditedBlocks shouldBe 1
-    }
-
-    @Test
-    fun `RevisionChunkRunning and its Completed Failed siblings construct`() {
-        val running = TranslationBatchEvent.RevisionChunkRunning(setOf("001.jpg", "002.jpg"), blockCount = 5)
-        running.pageKeys shouldBe setOf("001.jpg", "002.jpg")
-        running.blockCount shouldBe 5
-
-        TranslationBatchEvent.RevisionChunkCompleted(completedBlocks = 3).completedBlocks shouldBe 3
-        TranslationBatchEvent.RevisionChunkFailed(failedBlocks = 1).failedBlocks shouldBe 1
-    }
-
-    @Test
-    fun `RevisionFinished data object is a member`() {
-        // Referenced as a singleton; no construction.
-        val event: TranslationBatchEvent = TranslationBatchEvent.RevisionFinished
-        event shouldBe TranslationBatchEvent.RevisionFinished
     }
 
     @Test

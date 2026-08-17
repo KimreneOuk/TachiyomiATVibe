@@ -14,32 +14,16 @@ object TranslationPrompts {
         return "$id|${block.text.replace("\n", " ")}"
     }
 
-    data class ParsedLine(val id: String, val text: String, val needsRevision: Boolean?)
+    data class ParsedLine(val id: String, val text: String)
 
-    /**
-     * TachiyomiAT: the id may be a Pass-1 per-chunk index `b\d+` OR a Pass-2
-     * anchored page-scoped id `p\d+_b\d+`. The pattern accepts both so the same
-     * parser serves every provider and both passes (Checkpoint 2 §4).
-     */
-    private val lineIdRegex: Regex = Regex("""\b(p\d+_b\d+|b\d+)[^\w]*(.*)""")
+    private val lineIdRegex: Regex = Regex("""\b(b\d+)[^\w]*(.*)""")
 
     fun parseLine(line: String): ParsedLine? {
         val cleanLine = line.trim(' ', '\t', '\r', '\n', '`', '*')
         val match = lineIdRegex.find(cleanLine) ?: return null
         val id = match.groupValues[1]
-        var content = match.groupValues[2].trim()
-
-        var needsRevision: Boolean? = null
-        if (content.contains("[FLAG]")) {
-            needsRevision = true
-            content = content.replace("[FLAG]", "")
-        } else if (content.contains("[OK]")) {
-            needsRevision = false
-            content = content.replace("[OK]", "")
-        }
-
-        content = content.trim().removePrefix("|").removeSuffix("|").trim()
-        return ParsedLine(id, content, needsRevision)
+        val content = match.groupValues[2].trim().removePrefix("|").removeSuffix("|").trim()
+        return ParsedLine(id, content)
     }
 
     /** Combined context prefix from a glossary (stable term renderings) and a
@@ -116,47 +100,20 @@ object TranslationPrompts {
             - Script fidelity: if the target is a Latin-script language, do NOT output Japanese/Chinese/Korean characters; localize markers like (笑) to "lol" / "(laugh)".
 
             OUTPUT FORMAT:
-            Output MUST be in the exact format: `ID|Translated Text|[STATUS]` where `[STATUS]` is either `[FLAG]` (needs revision/polishing) or `[OK]` (looks good). Output ONLY these lines, one per block. No preambles, notes, or explanations.
+            Output MUST be in the exact format: `ID|Translated Text`. Output ONLY these lines, one per block. No preambles, notes, or explanations.
 
             FEW-SHOT EXAMPLES:
             Input: b0|行く。
-            Output: b0|I'm going.|[OK]
-
-            Input: b1|あの日、彼と出会った。
-            Output: b1|That day, I met him.|[OK]
-
-            Input: b2|三年後、東京。
-            Output: b2|Three years later — Tokyo.|[OK]
-
-            Input: b3|彼は来ないと言っていた。
-            Output: b3|He said he wouldn't come.|[OK]
-
-            Input: b4|誰だ？
-            Output: b4|Who is it?|[FLAG]
-        """.trimIndent()
-    }
-
-    fun pass2SystemPrompt(from: TextRecognizerLanguage, to: TextTranslatorLanguage): String {
-        return """
-            You are an expert manga/manhwa/manhua translation reviewer. Review and correct draft translations from ${from.label} to ${to.label}.
-            Ensure the translations are natural, contextually accurate, and flow well.
-
-            INPUT FORMAT:
-            You will receive lines in the format: `ID|Source: <text> | Draft: <translation>`
-
-            OUTPUT FORMAT:
-            Output MUST be in the exact format: `ID|Corrected Text`
-            Output ONLY these lines, one per block. No preambles, notes, or explanations.
-
-            FEW-SHOT EXAMPLES:
-            Input: b0|Source: 行く。 | Draft: I'm going.
             Output: b0|I'm going.
 
-            Input: b1|Source: あの日、彼と出会った。 | Draft: That day, I met him.
+            Input: b1|あの日、彼と出会った。
             Output: b1|That day, I met him.
 
-            Input: b4|Source: 誰だ？ | Draft: Who is it?
-            Output: b4|Who goes there?
+            Input: b2|三年後、東京。
+            Output: b2|Three years later — Tokyo.
+
+            Input: b3|彼は来ないと言っていた。
+            Output: b3|He said he wouldn't come.
         """.trimIndent()
     }
 }

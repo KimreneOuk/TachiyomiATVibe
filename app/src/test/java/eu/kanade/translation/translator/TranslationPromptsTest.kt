@@ -98,46 +98,39 @@ class TranslationPromptsTest {
     }
 
     @Test
-    fun `pass 1 and pass 2 system prompts carry relevant instructions`() {
+    fun `system prompt carries relevant instructions`() {
         val from = TextRecognizerLanguage.JAPANESE
         val to = TextTranslatorLanguage.ENGLISH
-        val pass1 = TranslationPrompts.pass1SystemPrompt(from, to)
-        val pass2 = TranslationPrompts.pass2SystemPrompt(from, to)
+        val prompt = TranslationPrompts.pass1SystemPrompt(from, to)
 
-        pass1 shouldContain "Japanese"
-        pass1 shouldContain "English"
-        pass1 shouldContain "POINT OF VIEW"
-        pass1 shouldContain "pro-drop"
-        pass1 shouldContain "first-person"
-        pass1 shouldContain "ID|Translated Text|[STATUS]"
-
-        pass2 shouldContain "Japanese"
-        pass2 shouldContain "English"
-        pass2 shouldContain "Source:"
-        pass2 shouldContain "Draft:"
-        pass2 shouldContain "ID|Corrected Text"
+        prompt shouldContain "Japanese"
+        prompt shouldContain "English"
+        prompt shouldContain "POINT OF VIEW"
+        prompt shouldContain "pro-drop"
+        prompt shouldContain "first-person"
+        prompt shouldContain "ID|Translated Text"
     }
 
     @Test
-    fun `pass 1 prompt requires status-bearing pipe-delimited output`() {
+    fun `prompt requires pipe-delimited output`() {
         val prompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.CHINESE,
             TextTranslatorLanguage.ENGLISH,
         )
-        prompt shouldContain "[FLAG]"
-        prompt shouldContain "[OK]"
+        prompt shouldContain "ID|Translated Text"
         prompt shouldContain "Output ONLY these lines"
         prompt shouldNotContain "[SPEECH]"
+        prompt shouldNotContain "[FLAG]"
+        prompt shouldNotContain "[OK]"
     }
 
     @Test
     fun `parseLine parses different format variations correctly`() {
         with(TranslationPrompts) {
-            parseLine("b0|I'm going.|[OK]") shouldBe ParsedLine("b0", "I'm going.", false)
-            parseLine("b1| That day, I met him. | [FLAG] ") shouldBe ParsedLine("b1", "That day, I met him.", true)
-            parseLine("b2|Three years later — Tokyo.|") shouldBe ParsedLine("b2", "Three years later — Tokyo.", null)
-            parseLine("b3 | He said he wouldn't come.") shouldBe ParsedLine("b3", "He said he wouldn't come.", null)
-            parseLine("b4|Who is it?|[FLAG]") shouldBe ParsedLine("b4", "Who is it?", true)
+            parseLine("b0|I'm going.") shouldBe ParsedLine("b0", "I'm going.")
+            parseLine("b1| That day, I met him. ") shouldBe ParsedLine("b1", "That day, I met him.")
+            parseLine("b2|Three years later — Tokyo.|") shouldBe ParsedLine("b2", "Three years later — Tokyo.")
+            parseLine("b3 | He said he wouldn't come.") shouldBe ParsedLine("b3", "He said he wouldn't come.")
             parseLine("invalid") shouldBe null
         }
     }

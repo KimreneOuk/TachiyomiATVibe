@@ -17,27 +17,7 @@ data class StageCount(
     val fraction: Float get() = if (total == 0) 0f else processed.toFloat() / total
 }
 
-enum class TranslationBatchPhase { IDLE, FIRST_PASS, REVISING, FINALIZING, FINISHED }
-
-@Immutable
-data class RevisionProgress(
-    val totalBlocks: Int = 0,
-    val keptBlocks: Int = 0,
-    val correctedBlocks: Int = 0,
-    val unresolvedBlocks: Int = 0,
-    val userEditedBlocks: Int = 0,
-    val activePageKey: String? = null,
-    val activeChunkBlocks: Int = 0,
-) {
-    // Compatibility accessors for UI and old pipeline logic.
-    val completedBlocks: Int get() = correctedBlocks
-    val failedBlocks: Int get() = unresolvedBlocks
-    val skippedBlocks: Int get() = keptBlocks
-
-    val processedBlocks: Int get() = (keptBlocks + correctedBlocks + unresolvedBlocks).coerceAtMost(totalBlocks)
-    val fraction: Float get() = if (totalBlocks == 0) 0f else processedBlocks.toFloat() / totalBlocks
-    val isActive: Boolean get() = totalBlocks > 0 && processedBlocks < totalBlocks
-}
+enum class TranslationBatchPhase { IDLE, FIRST_PASS, FINALIZING, FINISHED }
 
 @Immutable
 data class TranslationProgressSnapshot(
@@ -60,7 +40,6 @@ data class TranslationProgressSnapshot(
     val aborted: Boolean = false,
     val abortedReason: String? = null,
     val batchPhase: TranslationBatchPhase = TranslationBatchPhase.IDLE,
-    val revision: RevisionProgress = RevisionProgress(),
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages
@@ -100,14 +79,12 @@ data class TranslationProgressSnapshot(
             } else {
                 TranslationBatchPhase.IDLE
             },
-            revision: RevisionProgress = RevisionProgress(),
         ): TranslationProgressSnapshot = eu.kanade.translation.batch.TranslationBatchProgressTracker.computeSnapshot(
             pageMap.orEmpty(),
             state,
             indexResolver = indexResolver,
             permitHolderPageKey = permitHolderPageKey,
             batchPhase = batchPhase,
-            revision = revision,
             chapterId = chapterId,
         )
     }

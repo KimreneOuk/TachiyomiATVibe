@@ -100,7 +100,7 @@ internal class ReaderAutoTranslationPageResolver(
     ): (Int) -> RollingAutoCoordinator.PageWorkItem? = bind(
         identity = identity,
         pages = pages,
-        ownerVersion = ownerVersion,
+        ownerVersion = ownerVersion as Long?,
         ownerToken = ownerToken,
     )
 

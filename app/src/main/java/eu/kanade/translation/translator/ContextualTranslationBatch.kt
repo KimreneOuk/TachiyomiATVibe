@@ -1,17 +1,9 @@
 package eu.kanade.translation.translator
 
 /**
- * TachiyomiAT: immutable, structured result of a single contextual translator
- * request (Pass 1 OR Pass 2). Replaces in-place [TranslationBlock] mutation so
- * the merge layer can re-check preconditions before applying any correction and
- * can log/account every rejected, missing, or duplicate id.
- *
- * A batch carries:
- *  - [idToBlockIndex]: maps each request-local id (`b0` Pass 1, `p0_b3` Pass 2)
- *    to the (pageKey, blockIndex) it refers to, in the order targets were added.
- *  - [results]: parsed per-id results, exactly one per model output line.
- *  - [preconditions]: snapshot of each target's draft/fingerprint/flags captured
- *    at request time, so a late response can detect a concurrent edit.
+ * TachiyomiAT: immutable, structured result of a single contextual translator request.
+ * Replaces in-place [TranslationBlock] mutation so caller can log/account every rejected,
+ * missing, or duplicate id.
  */
 data class ContextualTranslationBatch(
     /**
@@ -20,8 +12,6 @@ data class ContextualTranslationBatch(
      */
     val idToBlockIndex: Map<String, TargetLocation>,
     val results: List<ContextualTranslationResult>,
-    val preconditions: Map<String, TargetPrecondition>,
-    val isPass2: Boolean,
 ) {
     init {
         require(idToBlockIndex.keys.all { it.isNotBlank() }) { "Contextual target ids must not be blank" }
@@ -76,8 +66,6 @@ data class ContextualTranslationBatch(
         val EMPTY = ContextualTranslationBatch(
             idToBlockIndex = emptyMap(),
             results = emptyList(),
-            preconditions = emptyMap(),
-            isPass2 = false,
         )
     }
 }
@@ -95,16 +83,4 @@ data class ContextualTranslationAccounting(
 data class TargetLocation(
     val pageKey: String,
     val blockIndex: Int,
-)
-
-/**
- * Snapshot of a target block captured at request time. The merge layer compares
- * these against the live block to reject stale/duplicate/edited results. All
- * fields must match for a correction to apply.
- */
-data class TargetPrecondition(
-    val draft: String,
-    val fingerprint: String,
-    val needsRevision: Boolean,
-    val userEditedAt: Long?,
 )
