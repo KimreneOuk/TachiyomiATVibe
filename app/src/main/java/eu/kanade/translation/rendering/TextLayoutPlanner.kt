@@ -250,7 +250,9 @@ object TextLayoutPlanner {
                 block.parentX + block.parentWidth,
                 block.parentY + block.parentHeight,
             )
-        } else null
+        } else {
+            null
+        }
 
         val anchorToOcrCenter = regionOverride != null ||
             hasParent ||
@@ -421,17 +423,16 @@ object TextLayoutPlanner {
             }
         }
 
-        if (hasParent && parentBox != null && regionOverride != null) {
-            val centerX = block.x + block.width / 2f
-            val centerY = block.y + block.height / 2f
+        if (hasParent && parentBox != null) {
+            val targetRegion = regionOverride ?: parentBox
+            val centerX = targetRegion.left + targetRegion.width() / 2f
+            val centerY = targetRegion.top + targetRegion.height() / 2f
             originX = centerX
             originY = centerY
             drawAlign = TextAlign.CENTER
 
-            safeW = max(1f, parentBox.width() - 8f)
-            safeH = max(1f, parentBox.height() - 8f)
-            safeW = min(safeW, regionOverride.width() - 8f)
-            safeH = min(safeH, regionOverride.height() - 8f)
+            safeW = max(1f, targetRegion.width() - 8f)
+            safeH = max(1f, targetRegion.height() - 8f)
             fontSize = binarySearchFontSize(
                 text,
                 safeW,
@@ -444,8 +445,8 @@ object TextLayoutPlanner {
             strokeWidth = computeStrokeWidth(fontSize, scale)
             clipRect = null
         } else if (regionOverride != null) {
-            val centerX = block.x + block.width / 2f
-            val centerY = block.y + block.height / 2f
+            val centerX = regionOverride.left + regionOverride.width() / 2f
+            val centerY = regionOverride.top + regionOverride.height() / 2f
             originX = centerX
             originY = centerY
             drawAlign = TextAlign.CENTER
@@ -889,6 +890,22 @@ object TextLayoutPlanner {
                 continue
             }
 
+            // If blocks have distinct detected text_bubble boxes, use each block's own bubble box
+            val distinctParentBoxes = indexedBlocks.all { it.value.parentWidth > 0f && it.value.parentHeight > 0f }
+            val uniqueParents = indexedBlocks.map { "${it.value.parentX}_${it.value.parentY}_${it.value.parentWidth}_${it.value.parentHeight}" }.distinct()
+
+            if (distinctParentBoxes && uniqueParents.size == indexedBlocks.size) {
+                for (item in indexedBlocks) {
+                    regions[item.index] = FloatRect(
+                        item.value.parentX,
+                        item.value.parentY,
+                        item.value.parentX + item.value.parentWidth,
+                        item.value.parentY + item.value.parentHeight,
+                    )
+                }
+                continue
+            }
+
             val centers = indexedBlocks.associate { item ->
                 item.index to Pair(
                     item.value.x + item.value.width / 2f,
@@ -906,19 +923,30 @@ object TextLayoutPlanner {
             }
 
             ordered.forEachIndexed { position, item ->
+                val pBox = if (item.value.parentWidth > 0f && item.value.parentHeight > 0f) {
+                    FloatRect(
+                        item.value.parentX,
+                        item.value.parentY,
+                        item.value.parentX + item.value.parentWidth,
+                        item.value.parentY + item.value.parentHeight,
+                    )
+                } else {
+                    maskRect
+                }
+
                 val region = if (splitX) {
                     FloatRect(
-                        if (position == 0) maskRect.left else cuts[position - 1],
-                        maskRect.top,
-                        if (position == ordered.lastIndex) maskRect.right else cuts[position],
-                        maskRect.bottom,
+                        if (position == 0) pBox.left else cuts[position - 1],
+                        pBox.top,
+                        if (position == ordered.lastIndex) pBox.right else cuts[position],
+                        pBox.bottom,
                     )
                 } else {
                     FloatRect(
-                        maskRect.left,
-                        if (position == 0) maskRect.top else cuts[position - 1],
-                        maskRect.right,
-                        if (position == ordered.lastIndex) maskRect.bottom else cuts[position],
+                        pBox.left,
+                        if (position == 0) pBox.top else cuts[position - 1],
+                        pBox.right,
+                        if (position == ordered.lastIndex) pBox.bottom else cuts[position],
                     )
                 }
                 regions[item.index] = region

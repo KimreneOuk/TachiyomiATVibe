@@ -167,23 +167,23 @@ class TextLayoutPlannerTest {
     }
 
     @Test
-    fun `vertical source latin parented block stays anchored to OCR centre`() {
+    fun `vertical source latin parented block stays anchored to parentBox centre`() {
         val parented = TranslationBlock(
             text = "",
-            translation = "English translation",
+            translation = "Latin translated text",
             width = 50f,
-            height = 300f,
+            height = 200f,
             x = 200f,
-            y = 100f,
+            y = 150f,
             symHeight = 1f,
             symWidth = 1f,
             angle = 0f,
             label = 1,
             score = 0.8f,
-            parentX = 100f,
-            parentY = 50f,
-            parentWidth = 400f,
-            parentHeight = 400f,
+            parentX = 200f,
+            parentY = 150f,
+            parentWidth = 200f,
+            parentHeight = 200f,
             direction = "TTB",
         )
 
@@ -191,7 +191,7 @@ class TextLayoutPlannerTest {
         val l = plan.first()
 
         l.isVertical shouldBe false
-        l.originX shouldBe 225f
+        l.originX shouldBe 300f
         l.originY shouldBe 250f
         l.drawAlign shouldBe TextAlign.CENTER
     }
@@ -215,7 +215,7 @@ class TextLayoutPlannerTest {
     }
 
     @Test
-    fun `parented block keeps its fitted parent dimensions and OCR anchor`() {
+    fun `parented block keeps its fitted parent dimensions and parentBox anchor`() {
         val parentX = 100f
         val parentY = 200f
         val parentW = 200f
@@ -243,10 +243,10 @@ class TextLayoutPlannerTest {
         val l = plan.first()
         val clip = l.clipRect
         clip shouldBe null
-        l.originX shouldBe (parented.x + parented.width / 2f)
-        l.originY shouldBe (parented.y + parented.height / 2f)
-        l.safeW shouldBe 176f
-        l.safeH shouldBe 56f
+        l.originX shouldBe (parented.parentX + parented.parentWidth / 2f)
+        l.originY shouldBe (parented.parentY + parented.parentHeight / 2f)
+        l.safeW shouldBe 192f
+        l.safeH shouldBe 72f
     }
 
     @Test
