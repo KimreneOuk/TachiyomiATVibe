@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TachiyomiAT — Visual Detection & Reading Order Architecture Visualizer</title>
+    <title>TachiyomiAT — Typography & Bubble Mask Ceiling Visualizer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -20,46 +20,28 @@
                 </svg>
             </div>
             <div class="header-title-group">
-                <h1>TachiyomiAT Architecture Visualizer</h1>
-                <span class="version-tag">Stage 1 &amp; Stage 2: Visual Detection &amp; Reading Order</span>
+                <h1>TachiyomiAT Typography Visualizer</h1>
+                <span class="version-tag">Mask Ceiling &bull; Full-Height Expansion &bull; Multi-Lobe Solvers</span>
             </div>
         </div>
         <div class="header-controls">
             <div class="mode-switch-group">
-                <span class="control-label">View Mode:</span>
-                <button class="mode-btn" id="btn-view-single" onclick="setViewLayout('single')">
-                    Single View
-                </button>
+                <span class="control-label">Layout:</span>
                 <button class="mode-btn active" id="btn-view-dual" onclick="setViewLayout('dual')">
                     ⚡ Side-by-Side Comparison
                 </button>
-            </div>
-            <div class="mode-switch-group">
-                <span class="control-label">Reading Direction:</span>
-                <button class="mode-btn active" id="btn-rtl" onclick="setReadingDirection('RTL')">
-                    <span class="dot"></span> RTL Manga (JP)
-                </button>
-                <button class="mode-btn" id="btn-ltr" onclick="setReadingDirection('LTR')">
-                    <span class="dot"></span> LTR Webtoon
+                <button class="mode-btn" id="btn-view-single" onclick="setViewLayout('single')">
+                    Single Optimized
                 </button>
             </div>
-            <div class="layout-switch-group">
-                <span class="control-label">Sample:</span>
+            <div class="sample-select-wrapper">
                 <select id="sample-select" onchange="switchSample(this.value)">
-                    <option value="conjoined-thin-tall-ovals">⚡ Conjoined Thin Tall Ovals: Multi-Lobe Full Height Utilization</option>
-                    <option value="ultra-thin-tall-oval">📏 Ultra-Thin Tall Oval: Full Vertical Height Utilization</option>
-                    <option value="slim-oval-dialogue-pair">🗣️ Slim Tall Oval Dialogue Bubbles (Two Speakers Overlapping)</option>
+                    <option value="page2-huge-bubble" selected>📸 Real Page 2: Huge Bubble &amp; Conjoined Clouds (HotMilk Screenshot)</option>
+                    <option value="page1-tall-ovals">📸 Real Page 1: Tall Slim Ovals (HotMilk Screenshot)</option>
+                    <option value="conjoined-thin-tall-ovals">⚡ Conjoined Thin Tall Ovals: Multi-Lobe Height Utilization</option>
+                    <option value="ultra-thin-tall-oval">📏 Ultra-Thin Tall Oval: Full Vertical Span</option>
                     <option value="peanut-double-lobe">🥜 Double-Lobe Peanut Bubble (User Reference 1)</option>
-                    <option value="dialogue-overlapping-bubbles">👥 Dialogue Overlapping Bubbles (User Reference 2: Two Characters)</option>
-                    <option value="extreme-proximity-clouds">⚡ Extreme Proximity: 2 Cloud Heads Touching at Waist (Gap ≤ 5px)</option>
-                    <option value="conjoined-cloud-pair">☁️ User Reference: Conjoined Double-Cloud Speech Bubbles</option>
-                    <option value="screenshot-tall-bubble">📸 User Screenshot: Tall Bubble (Diagonal Stagger &amp; Truncation Fix)</option>
-                    <option value="conjoined-3-horizontal">⚠️ Conjoined Bubbles: 3 Connected Bubbles (Nearly Same Height)</option>
-                    <option value="conjoined-2-horizontal">⚠️ Conjoined Bubbles: 2 Connected Bubbles (Side-by-Side)</option>
-                    <option value="conjoined-3-diagonal">⚠️ Conjoined Bubbles: 3 Connected Bubbles (Cascading / Diagonal)</option>
-                    <option value="manga-4panel">Manga 4-Panel Page (Classic RTL)</option>
-                    <option value="manga-complex">Complex Asymmetric Panels with Spanning Bubble</option>
-                    <option value="webtoon-strip">Vertical Webtoon Strip (LTR)</option>
+                    <option value="dialogue-overlapping-bubbles">👥 Dialogue Overlapping Bubbles (User Reference 2)</option>
                 </select>
             </div>
         </div>
@@ -70,303 +52,143 @@
         <aside class="sidebar-panel">
             <div class="sidebar-section">
                 <h3>Pipeline Layers</h3>
-                <p class="section-desc">Toggle AI model detections &amp; spatial solvers in real time:</p>
+                <p class="section-desc">Toggle AI detection layers and mask overlays:</p>
                 <div class="layer-toggles">
-                    <label class="toggle-card panel-layer">
+                    <label class="toggle-card">
                         <input type="checkbox" id="toggle-panels" checked onchange="updateCanvas()">
-                        <div class="toggle-indicator"></div>
-                        <div class="toggle-content">
-                            <div class="toggle-title">
-                                <span class="layer-badge badge-panel">YOLO26-nano</span>
-                                Panel Detection
-                            </div>
-                            <span class="toggle-desc">OnnxPanelDetector &bull; manga_panel_detector_int8.onnx</span>
+                        <div class="toggle-title">
+                            <span class="layer-badge badge-panel">YOLO26</span> Panels
                         </div>
                     </label>
 
-                    <label class="toggle-card text-layer">
+                    <label class="toggle-card">
                         <input type="checkbox" id="toggle-text" checked onchange="updateCanvas()">
-                        <div class="toggle-indicator"></div>
-                        <div class="toggle-content">
-                            <div class="toggle-title">
-                                <span class="layer-badge badge-text">RT-DETR INT8</span>
-                                Text &amp; Bubble Regions
-                            </div>
-                            <span class="toggle-desc">OnnxPageTextDetector &bull; detector-v4-s_int8.onnx</span>
+                        <div class="toggle-title">
+                            <span class="layer-badge badge-text">Detector</span> Text &amp; Bubble Boxes
                         </div>
                     </label>
 
-                    <label class="toggle-card seg-layer">
+                    <label class="toggle-card">
                         <input type="checkbox" id="toggle-seg" checked onchange="updateCanvas()">
-                        <div class="toggle-indicator"></div>
-                        <div class="toggle-content">
-                            <div class="toggle-title">
-                                <span class="layer-badge badge-seg">YOLO11-seg</span>
-                                Bubble Segmentation
-                            </div>
-                            <span class="toggle-desc">OnnxBubbleSegmenter &bull; manga109_bubble_int8.onnx</span>
+                        <div class="toggle-title">
+                            <span class="layer-badge badge-seg">YOLO11</span> Segmentation Mask Ceiling
                         </div>
                     </label>
 
-                    <label class="toggle-card xycut-layer">
-                        <input type="checkbox" id="toggle-flow" checked onchange="updateCanvas()">
-                        <div class="toggle-indicator"></div>
-                        <div class="toggle-content">
-                            <div class="toggle-title">
-                                <span class="layer-badge badge-algo">XY-Cut Algorithm</span>
-                                Reading Order Flow
-                            </div>
-                            <span class="toggle-desc">ReadingOrderSorter.kt &bull; Gutter-split order paths</span>
-                        </div>
-                    </label>
-
-                    <label class="toggle-card assign-layer">
-                        <input type="checkbox" id="toggle-assign" checked onchange="updateCanvas()">
-                        <div class="toggle-indicator"></div>
-                        <div class="toggle-content">
-                            <div class="toggle-title">
-                                <span class="layer-badge badge-algo">Panel Assignment</span>
-                                Context Category
-                            </div>
-                            <span class="toggle-desc">PanelAssignment.kt &bull; OWNED, SPANNING, ORPHAN</span>
-                        </div>
-                    </label>
-
-                    <label class="toggle-card render-layer">
-                        <input type="checkbox" id="toggle-render" checked onchange="updateCanvas()">
-                        <div class="toggle-indicator"></div>
-                        <div class="toggle-content">
-                            <div class="toggle-title">
-                                <span class="layer-badge badge-text">Render Stage</span>
-                                English Text Overlay
-                            </div>
-                            <span class="toggle-desc">TextLayoutPlanner.kt &bull; Font fitting &amp; line wrapping</span>
-                        </div>
-                    </label>
-
-                    <label class="toggle-card cuts-layer">
-                        <input type="checkbox" id="toggle-cuts" checked onchange="updateCanvas()">
-                        <div class="toggle-indicator"></div>
-                        <div class="toggle-content">
-                            <div class="toggle-title">
-                                <span class="layer-badge badge-rose">Sub-Regions</span>
-                                Mask Partition Cut Lines
-                            </div>
-                            <span class="toggle-desc">buildMaskRegions &bull; Sliced midpoints causing tiny safeH</span>
+                    <label class="toggle-card">
+                        <input type="checkbox" id="toggle-typography" checked onchange="updateCanvas()">
+                        <div class="toggle-title">
+                            <span class="layer-badge badge-opt">Layout</span> Typography &amp; Baselines
                         </div>
                     </label>
                 </div>
             </div>
 
             <div class="sidebar-section">
-                <h3>Edge Case Engine Mode</h3>
-                <p class="section-desc">Toggle between current sliced behavior and unified fix:</p>
-                <div class="engine-mode-switcher">
-                    <button class="engine-mode-btn bug active" id="btn-mode-sliced" onclick="setEngineMode('sliced')">
-                        <span class="mode-icon">🔴</span>
-                        <div class="engine-mode-text">
-                            <strong>Current Engine (Bug)</strong>
-                            <span>buildMaskRegions slices mask &rarr; 8px font collapse</span>
+                <h3>Typography Tuning</h3>
+                <p class="section-desc">Live parameters for mask envelope expansion:</p>
+                <div class="slider-group">
+                    <div class="slider-item">
+                        <div class="slider-header">
+                            <span>Target Reading Size:</span>
+                            <span class="slider-val" id="val-font-target">19 px</span>
                         </div>
-                    </button>
-                    <button class="engine-mode-btn fixed" id="btn-mode-unified" onclick="setEngineMode('unified')">
-                        <span class="mode-icon">🟢</span>
-                        <div class="engine-mode-text">
-                            <strong>Unified Bubble Mode (Fix)</strong>
-                            <span>Fuses boxes &rarr; full 26px legible overlay</span>
+                        <input type="range" id="range-font-target" min="14" max="24" value="19" step="0.5" oninput="onSliderChange()">
+                    </div>
+
+                    <div class="slider-item">
+                        <div class="slider-header">
+                            <span>Height Fill Target:</span>
+                            <span class="slider-val" id="val-height-fill">85 %</span>
                         </div>
-                    </button>
+                        <input type="range" id="range-height-fill" min="60" max="95" value="85" step="5" oninput="onSliderChange()">
+                    </div>
+
+                    <div class="slider-item">
+                        <div class="slider-header">
+                            <span>Bubble Margin / Pad:</span>
+                            <span class="slider-val" id="val-padding">8 px</span>
+                        </div>
+                        <input type="range" id="range-padding" min="4" max="20" value="8" step="1" oninput="onSliderChange()">
+                    </div>
                 </div>
             </div>
 
             <div class="sidebar-section">
-                <h3>Step-by-Step Simulation</h3>
-                <div class="stepper-controls">
-                    <button class="step-btn" id="btn-step-prev" onclick="prevStep()">&larr; Prev</button>
-                    <span class="step-counter" id="step-counter">Step 6 / 6</span>
-                    <button class="step-btn" id="btn-step-next" onclick="nextStep()">Next &rarr;</button>
+                <h3>Key Principles</h3>
+                <div class="section-desc" style="display:flex;flex-direction:column;gap:8px;font-size:11px;">
+                    <div><b>1. Mask as Maximum Ceiling:</b> Text dynamically expands across the full continuous white bubble mask area.</div>
+                    <div><b>2. Height-First Line Flow:</b> In tall/wide bubbles, wrap into more vertical lines (1-3 words per line) so font size never collapses.</div>
+                    <div><b>3. Zero Scissor Cuts:</b> Hardware GPU clip replaces rectangular scissor clip mid-word.</div>
                 </div>
-                <div class="step-info-card" id="step-info-card">
-                    <h4 id="step-title">Stage 6: Contextual Prompt Assembly</h4>
-                    <p id="step-desc">All bubble groups and panel tags are combined with the 32-pair rolling context and chapter glossary into the LLM prompt payload.</p>
-                </div>
-            </div>
-
-            <div class="sidebar-section">
-                <h3>Model Pipeline Reference</h3>
-                <ul class="model-spec-list">
-                    <li>
-                        <span class="model-role">Panel Detector:</span>
-                        <code>manga_panel_detector_int8.onnx</code>
-                        <span class="model-meta">YOLO26-nano (2.87MB) &bull; Letterbox 640x640</span>
-                    </li>
-                    <li>
-                        <span class="model-role">Text Detector:</span>
-                        <code>detector-v4-s_int8.onnx</code>
-                        <span class="model-meta">RT-DETR (11.1MB) &bull; Cls 0:bubble, 1:text, 2:free</span>
-                    </li>
-                    <li>
-                        <span class="model-role">Bubble Segmenter:</span>
-                        <code>manga109_bubble_int8.onnx</code>
-                        <span class="model-meta">YOLO11-seg (3.44MB) &bull; Manga109 mask prototypes</span>
-                    </li>
-                    <li>
-                        <span class="model-role">Reading Order:</span>
-                        <code>ReadingOrderSorter.kt</code>
-                        <span class="model-meta">Recursive XY-Cut &bull; Widest empty gutter split</span>
-                    </li>
-                </ul>
             </div>
         </aside>
 
-        <!-- Center Interactive Stage / Canvas -->
-        <section class="stage-viewport">
-            <div class="stage-toolbar">
-                <div class="view-status" id="view-status-badge">
-                    <span class="status-indicator"></span> Live Interactive Canvas &bull; Hover or Click any element
+        <!-- Canvas Viewport -->
+        <section class="canvas-viewport">
+            <div class="canvas-toolbar">
+                <div class="toolbar-title" id="sample-title-display">
+                    📸 Real Page 2: Huge Bubble &amp; Conjoined Clouds
                 </div>
-                <div class="zoom-controls">
-                    <button onclick="zoomOut()" title="Zoom Out">&minus;</button>
-                    <button onclick="resetZoom()" title="Reset to 100%" id="btn-zoom-val">100%</button>
-                    <button onclick="zoomIn()" title="Zoom In">&plus;</button>
-                    <button onclick="fitHeight()" title="Fit Height">Fit Height</button>
-                    <button onclick="fitWidth()" title="Fit Width">Fit Width</button>
+                <div class="toolbar-actions">
+                    <button class="tool-btn" onclick="resetZoom()">🔍 Reset Zoom</button>
+                    <button class="tool-btn" onclick="toggleGrid()">📐 Toggle Grid</button>
                 </div>
             </div>
-            <div class="canvas-wrapper dual-view" id="canvas-wrapper">
-                <!-- Left: Standard Original Raw Detection & Placement -->
-                <div class="canvas-card" id="card-bug">
-                    <div class="canvas-card-header bug">
-                        <span class="card-badge bug">📍 Standard Original Raw Detection &amp; Placement</span>
-                        <span class="card-subtitle">Raw Detector v4 Boxes (Amber) &bull; text_bubble Boxes (Cyan) &bull; Original Text</span>
+
+            <div class="canvases-wrapper" id="canvases-container">
+                <!-- Left: Standard Output -->
+                <div class="canvas-card" id="card-standard">
+                    <div class="canvas-card-header">
+                        <div class="card-title-group">
+                            <span class="badge-standard">CURRENT DEFECT</span>
+                            <h4>Clustered &amp; Tiny Font (6-8px Squished)</h4>
+                        </div>
+                        <span class="card-stats" id="stats-left">Wasted Bubble Space: ~82%</span>
                     </div>
-                    <svg id="manga-svg-bug" viewBox="0 0 800 1100" class="manga-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+                    <canvas id="canvas-left" class="canvas-surface" width="550" height="820"></canvas>
                 </div>
 
-                <!-- Right: New Implementation Idea -->
-                <div class="canvas-card" id="card-fix">
-                    <div class="canvas-card-header fix">
-                        <span class="card-badge fix">✨ New Implementation (Starting Truth + Ceiling)</span>
-                        <span class="card-subtitle">text_bubble Starting Truth &bull; YOLO11 Mask Ceiling &bull; Clean Typography</span>
+                <!-- Right: Mask Ceiling & Full-Height Expansion -->
+                <div class="canvas-card" id="card-new">
+                    <div class="canvas-card-header">
+                        <div class="card-title-group">
+                            <span class="badge-new">PROPOSED SOLUTION</span>
+                            <h4>Mask Ceiling &amp; Full Height Expansion (18-20px)</h4>
+                        </div>
+                        <span class="card-stats" id="stats-right">Height Utilized: ~84% &bull; Font: 18.5px</span>
                     </div>
-                    <svg id="manga-svg-fix" viewBox="0 0 800 1100" class="manga-canvas" xmlns="http://www.w3.org/2000/svg"></svg>
+                    <canvas id="canvas-right" class="canvas-surface" width="550" height="820"></canvas>
+                </div>
+            </div>
+
+            <!-- Inspector Panel -->
+            <div class="inspector-panel">
+                <span class="inspector-title">Bubble Inspector</span>
+                <div class="inspector-grid">
+                    <div class="stat-item">
+                        <span class="stat-label">Bubble Bounds:</span>
+                        <span class="stat-val" id="insp-bounds">430 &times; 190 px</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Current Font (Defect):</span>
+                        <span class="stat-val warning" id="insp-old-font">7.5 px (Squished)</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Optimized Font (Mask):</span>
+                        <span class="stat-val highlight" id="insp-new-font">18.5 px (+146%)</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Height Fill:</span>
+                        <span class="stat-val highlight" id="insp-height-fill">84% of Mask</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Line Breakdown:</span>
+                        <span class="stat-val" id="insp-lines">6 lines &bull; 2-4 words/line</span>
+                    </div>
                 </div>
             </div>
         </section>
-
-        <!-- Right Inspector & LLM Prompt Payload Window -->
-        <aside class="inspector-panel">
-            <div class="inspector-tabs">
-                <button class="tab-btn active" id="tab-btn-compare" onclick="switchInspectorTab('compare')">⚡ Pillar Comparison</button>
-                <button class="tab-btn" id="tab-btn-inspect" onclick="switchInspectorTab('inspect')">Element Inspector</button>
-                <button class="tab-btn" id="tab-btn-prompt" onclick="switchInspectorTab('prompt')">LLM Prompt</button>
-                <button class="tab-btn" id="tab-btn-xycut" onclick="switchInspectorTab('xycut')">XY-Cut Tree</button>
-            </div>
-
-            <div class="tab-content" id="tab-compare">
-                <div class="comparison-panel">
-                    <div class="pillar-card">
-                        <div class="pillar-badge">Pillar 1</div>
-                        <h4>Geometric Visual Centroid</h4>
-                        <div class="compare-metric-row">
-                            <div class="metric-box bug">
-                                <span class="metric-label">Current Bug</span>
-                                <span class="metric-val">Double-Inset OCR Squeeze</span>
-                                <span class="metric-sub">safeW = 54px (68% void wasted)</span>
-                            </div>
-                            <div class="metric-box fix">
-                                <span class="metric-label">4-Pillar Fix</span>
-                                <span class="metric-val">Visual Centroid Anchoring</span>
-                                <span class="metric-sub">safeW = 112px (+107% usable width)</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="pillar-card">
-                        <div class="pillar-badge">Pillar 2</div>
-                        <h4>Component-Aware Oval Hulls</h4>
-                        <div class="compare-metric-row">
-                            <div class="metric-box bug">
-                                <span class="metric-label">Current Bug</span>
-                                <span class="metric-val">Straight Rect Cuts</span>
-                                <span class="metric-sub">Cuts across ovals &amp; destroys curves</span>
-                            </div>
-                            <div class="metric-box fix">
-                                <span class="metric-label">4-Pillar Fix</span>
-                                <span class="metric-val">Convex Oval Sub-Hulls</span>
-                                <span class="metric-sub">Fits each oval head independently</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="pillar-card">
-                        <div class="pillar-badge">Pillar 3</div>
-                        <h4>Harmonic Font Floor</h4>
-                        <div class="compare-metric-row">
-                            <div class="metric-box bug">
-                                <span class="metric-label">Current Bug</span>
-                                <span class="metric-val">minOf Cascading Collapse</span>
-                                <span class="metric-sub">1 tiny word collapses whole chain to 8px</span>
-                            </div>
-                            <div class="metric-box fix">
-                                <span class="metric-label">4-Pillar Fix</span>
-                                <span class="metric-val">Harmonic Resilient Scaling</span>
-                                <span class="metric-sub">Maintains natural 22px legible size</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="pillar-card">
-                        <div class="pillar-badge">Pillar 4</div>
-                        <h4>Hardware GPU Clip Trust</h4>
-                        <div class="compare-metric-row">
-                            <div class="metric-box bug">
-                                <span class="metric-label">Current Bug</span>
-                                <span class="metric-val">Over-Paranoid Shrink</span>
-                                <span class="metric-sub">Planner shrinks font to avoid leaks</span>
-                            </div>
-                            <div class="metric-box fix">
-                                <span class="metric-label">4-Pillar Fix</span>
-                                <span class="metric-val">canvas.clipPath(polygon)</span>
-                                <span class="metric-sub">GPU guarantees zero boundary bleed</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="tab-content hidden" id="tab-inspect">
-                <div id="inspector-placeholder" class="empty-state">
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/><path d="M3 9h18"/><path d="M3 15h18"/></svg>
-                    <p>Click on any Panel or Speech Bubble in the canvas to inspect its raw Kotlin bounding box &amp; assignment classification.</p>
-                </div>
-                <div id="inspector-details" class="inspector-data hidden">
-                    <!-- Dynamic details populated on element click -->
-                </div>
-            </div>
-
-            <div class="tab-content hidden" id="tab-prompt">
-                <div class="prompt-payload-viewer">
-                    <div class="payload-header">
-                        <span>Generated by TranslationPrompts.kt</span>
-                        <span class="badge-mini">Pass 1 Structured Request</span>
-                    </div>
-                    <pre><code id="prompt-code-block">Loading prompt payload...</code></pre>
-                </div>
-            </div>
-
-            <div class="tab-content hidden" id="tab-xycut">
-                <div class="xycut-tree-viewer">
-                    <div class="payload-header">
-                        <span>Recursive XY-Cut Hierarchy</span>
-                        <span id="xycut-direction-badge" class="badge-mini">RTL Mode</span>
-                    </div>
-                    <div id="xycut-tree-content" class="tree-nodes-container">
-                        <!-- Tree nodes inserted dynamically -->
-                    </div>
-                </div>
-            </div>
-        </aside>
     </main>
 
     <script src="app.js"></script>

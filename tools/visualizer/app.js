@@ -1,711 +1,517 @@
-/**
- * TachiyomiAT Visual Detection & Reading Order Structure Visualizer
- *
- * Side-by-Side Visual Comparison:
- * Left: Standard Original Raw Detection & Placement (Ground Truth)
- * Right: New Implementation (text_bubble as Starting Truth + YOLO11 Mask as Upper Ceiling + Height Maximization)
- */
+// TachiyomiAT Visualizer Engine — Strict Mask Ceiling & Koharu-Conformant Line Segmentation
 
-let currentRtl = true;
-let currentSample = 'conjoined-thin-tall-ovals';
-let currentStep = 6;
-let viewLayout = 'dual'; // 'dual' (side-by-side) or 'single'
-let selectedElement = null;
-let currentZoom = 1.0;
+let currentSample = "page1-tall-ovals";
+let viewLayout = "dual";
+let targetFontSize = 19.0;
+let heightFillTarget = 0.85;
+let bubblePadding = 6.0;
 
-// Sample Data Sets (Coordinates in [x1, y1, x2, y2] 800x1100 space)
+// State toggles
+let showPanels = true;
+let showText = true;
+let showSeg = true;
+let showTypography = true;
+let showBoxes = true;
+let selectedBubbleId = null;
+
+// Exact representation of user's uploaded HotMilk manga pages
 const SAMPLES = {
-    'conjoined-thin-tall-ovals': {
-        name: '⚡ Conjoined Thin Tall Ovals: Multi-Lobe Full Height Utilization',
-        width: 800,
-        height: 1100,
+    "page1-tall-ovals": {
+        title: "📸 Real Page 1: Tall Slim Ovals (HotMilk Screenshot)",
+        width: 550,
+        height: 820,
         panels: [
-            { id: 'p0', rawIdx: 0, box: [30, 30, 770, 700], desc: 'Dramatic Monologue Panel with Conjoined Thin Tall Ovals' },
-            { id: 'p1', rawIdx: 1, box: [30, 720, 770, 1070], desc: 'Bottom Wide Panel' }
+            { id: "p1_1", x: 40, y: 30, w: 200, h: 180, label: "Panel 1 (Boy Walking)" },
+            { id: "p1_2", x: 250, y: 30, w: 260, h: 480, label: "Panel 2 (Mother & Son Full View)" },
+            { id: "p1_3", x: 40, y: 220, w: 200, h: 140, label: "Panel 3 (Boy Profile)" },
+            { id: "p1_4", x: 40, y: 370, w: 200, h: 140, label: "Panel 4 (Tall Slim Bubbles)" },
+            { id: "p1_5", x: 40, y: 520, w: 200, h: 260, label: "Panel 5 (Boy Looking Back)" },
+            { id: "p1_6", x: 250, y: 520, w: 260, h: 260, label: "Panel 6 (Mother Surprised Close-up)" }
         ],
-        // Single Fused YOLO11-seg mask encompassing both connected tall lobes
-        fusedMask: {
-            bounds: [175, 95, 425, 570],
-            isConjoinedThinOvals: true,
-            pathD: `
-                M 245 100
-                C 285 100, 310 135, 310 200
-                C 310 215, 305 230, 300 245
-                C 340 180, 385 140, 410 160
-                C 435 180, 425 280, 420 380
-                C 415 480, 380 560, 340 560
-                C 310 560, 290 520, 285 480
-                L 270 590 L 260 480
-                C 230 520, 180 520, 180 440
-                C 180 340, 185 200, 205 130
-                C 215 105, 230 100, 245 100
-                Z
-            `
-        },
-        // 2 distinct tall, thin text_bubble bounding boxes from Detector v4 (Starting Truths!)
         bubbles: [
             {
-                id: 'det_box_left_lobe',
-                japaneseText: 'あいつの計画は最初から\n破綻していたんだ…',
-                translation: 'His entire\nplan had been\nfatally flawed\nfrom the very\nbeginning\nof all this!',
-                x: 195,
-                y: 150,
-                w: 80,
-                h: 300,
-                // Left Tall Lobe (w=125, h=420, aspect ratio 0.30)
-                parentBox: [180, 100, 305, 520],
-                direction: 'TTB',
-                bubbleGroupId: 'left_tall_lobe'
+                id: "b_tall_excuse",
+                panelId: "p1_4",
+                x: 48, y: 375, w: 55, h: 130,
+                parentBox: { x: 48, y: 375, w: 55, h: 130 },
+                maskPolygon: [[60, 375], [95, 410], [90, 490], [60, 505], [48, 450]],
+                text: "EXCUSE ME FOR A MOMENT.",
+                rawJp: "ちょっと\nすいません",
+                oldFont: 10.5
             },
             {
-                id: 'det_box_right_lobe',
-                japaneseText: 'それでも最後まで\n戦うしかなかったんだ！',
-                translation: 'Even so,\nthere was no\nchoice left but\nto fight until\nthe bitter end\nno matter what!',
-                x: 310,
-                y: 190,
-                w: 85,
-                h: 320,
-                // Right Tall Lobe (w=135, h=420, aspect ratio 0.32 - 25px waist overlap with left lobe!)
-                parentBox: [280, 140, 415, 560],
-                tail: [340, 555, 360, 610, 320, 550],
-                direction: 'TTB',
-                bubbleGroupId: 'right_tall_lobe'
+                id: "b_tall_um",
+                panelId: "p1_4",
+                x: 180, y: 400, w: 40, h: 75,
+                parentBox: { x: 180, y: 400, w: 40, h: 75 },
+                maskPolygon: [[195, 400], [218, 420], [215, 465], [195, 475], [182, 440]],
+                text: "UM...",
+                rawJp: "あの…",
+                oldFont: 11.0
             },
             {
-                id: 'det_box_reaction',
-                japaneseText: 'すべては終わったんだ…',
-                translation: 'Everything is over now...',
-                x: 180,
-                y: 840,
-                w: 440,
-                h: 120,
-                parentBox: [140, 780, 660, 990],
-                direction: 'LTR',
-                bubbleGroupId: 'solo_reaction'
+                id: "b_tall_possible",
+                panelId: "p1_5",
+                x: 155, y: 530, w: 55, h: 120,
+                parentBox: { x: 155, y: 530, w: 55, h: 120 },
+                maskPolygon: [[175, 530], [205, 560], [200, 640], [175, 650], [158, 600]],
+                text: "IS IT POSSIBLE THAT...",
+                rawJp: "もしかして…",
+                oldFont: 9.5
+            },
+            {
+                id: "b_tall_sister",
+                panelId: "p1_5",
+                x: 108, y: 545, w: 45, h: 110,
+                parentBox: { x: 108, y: 545, w: 45, h: 110 },
+                maskPolygon: [[125, 545], [150, 570], [145, 645], [125, 655], [110, 605]],
+                text: "HANAZUMI NEE-CHAN...",
+                rawJp: "花津美\n姉ちゃん…",
+                oldFont: 9.5
+            },
+            {
+                id: "b_tall_isit",
+                panelId: "p1_5",
+                x: 90, y: 625, w: 42, h: 60,
+                parentBox: { x: 90, y: 625, w: 42, h: 60 },
+                maskPolygon: [[105, 625], [128, 640], [125, 675], [105, 685], [92, 660]],
+                text: "IS IT?",
+                rawJp: "ですか？",
+                oldFont: 10.0
             }
         ]
     },
-    'ultra-thin-tall-oval': {
-        name: '📏 Ultra-Thin Tall Oval: Full Vertical Height Utilization',
-        width: 800,
-        height: 1100,
+
+    "page2-huge-bubble": {
+        title: "📸 Real Page 2: Huge Bubble & Conjoined Clouds (HotMilk Screenshot)",
+        width: 550,
+        height: 820,
         panels: [
-            { id: 'p0', rawIdx: 0, box: [30, 30, 770, 680], desc: 'Dramatic Vertical Dialogue Panel with Ultra-Thin Ovals' },
-            { id: 'p1', rawIdx: 1, box: [30, 700, 770, 1070], desc: 'Bottom Panel' }
+            { id: "p1", x: 40, y: 30, w: 230, h: 180, label: "Panel 1 (Top Left)" },
+            { id: "p2", x: 280, y: 30, w: 230, h: 180, label: "Panel 2 (Top Right)" },
+            { id: "p3", x: 40, y: 220, w: 470, h: 180, label: "Panel 3 (Middle)" },
+            { id: "p4", x: 40, y: 410, w: 470, h: 180, label: "Panel 4 (Huge Bubble & Face)" },
+            { id: "p5", x: 40, y: 600, w: 340, h: 190, label: "Panel 5 (Conjoined Clouds)" },
+            { id: "p6", x: 390, y: 600, w: 120, h: 190, label: "Panel 6 (Boy Reaction)" }
         ],
-        fusedMask: {
-            bounds: [170, 90, 450, 570],
-            isSlimOvalPair: true
-        },
         bubbles: [
             {
-                id: 'det_box_left_speaker',
-                japaneseText: 'そんな事…\n絶対に許されるはずがない！',
-                translation: 'Something\nlike that\ncould never\nbe forgiven\nby anyone\nat all!',
-                x: 200,
-                y: 160,
-                w: 70,
-                h: 300,
-                parentBox: [180, 100, 290, 520],
-                tail: [210, 510, 185, 570, 240, 505],
-                direction: 'TTB',
-                bubbleGroupId: 'speaker_left'
+                id: "b_cousin_right",
+                panelId: "p1",
+                x: 165, y: 40, w: 95, h: 155,
+                parentBox: { x: 165, y: 40, w: 95, h: 155 },
+                maskPolygon: [[175, 45], [255, 40], [260, 140], [220, 190], [175, 160]],
+                text: "IT'S ME!\nYOUR COUSIN\nHERE!",
+                rawJp: "俺だよ！\nいとこの貴敏！",
+                oldFont: 11.0
             },
             {
-                id: 'det_box_right_speaker',
-                japaneseText: '黙れ！\n勝者が全てを決めるのだ！',
-                translation: 'Silence!\nThe victor\nis the one\nwho decides\neverything\nin this world!',
-                x: 350,
-                y: 190,
-                w: 70,
-                h: 310,
-                parentBox: [330, 130, 440, 560],
-                tail: [405, 550, 435, 610, 375, 545],
-                direction: 'TTB',
-                bubbleGroupId: 'speaker_right'
-            }
-        ]
-    },
-    'slim-oval-dialogue-pair': {
-        name: '🗣️ Slim Tall Oval Dialogue Bubbles (Two Speakers Overlapping)',
-        width: 800,
-        height: 1100,
-        panels: [
-            { id: 'p0', rawIdx: 0, box: [30, 30, 770, 680], desc: 'Dialogue Panel with Slim Oval Bubbles' },
-            { id: 'p1', rawIdx: 1, box: [30, 700, 770, 1070], desc: 'Bottom Panel' }
-        ],
-        fusedMask: {
-            bounds: [180, 95, 455, 530],
-            isSlimOvalPair: true
-        },
-        bubbles: [
-            {
-                id: 'det_box_left_speaker',
-                japaneseText: 'まさか…\nあの男が犯人なのか？',
-                translation: 'Could that man\nreally be the\nculprit...?',
-                x: 215,
-                y: 190,
-                w: 90,
-                h: 180,
-                parentBox: [185, 100, 335, 460],
-                tail: [215, 450, 185, 510, 245, 445],
-                direction: 'TTB',
-                bubbleGroupId: 'speaker_left'
+                id: "b_cousin_left",
+                panelId: "p1",
+                x: 50, y: 45, w: 100, h: 150,
+                parentBox: { x: 50, y: 45, w: 100, h: 150 },
+                maskPolygon: [[60, 48], [145, 45], [140, 150], [90, 190], [55, 155]],
+                text: "IT'S TRUE\nAFTER ALL!",
+                rawJp: "やっぱり\nそうだ！",
+                oldFont: 11.5
             },
             {
-                id: 'det_box_right_speaker',
-                japaneseText: '証拠は全て揃っている！\n言い逃れはできないぞ！',
-                translation: 'All the evidence\npoints to him!\nHe cannot escape!',
-                x: 325,
-                y: 230,
-                w: 95,
-                h: 200,
-                parentBox: [290, 140, 450, 520],
-                tail: [420, 510, 450, 570, 390, 505],
-                direction: 'TTB',
-                bubbleGroupId: 'speaker_right'
-            }
-        ]
-    },
-    'peanut-double-lobe': {
-        name: '🥜 Double-Lobe Peanut Bubble (User Reference Image 1)',
-        width: 800,
-        height: 1100,
-        panels: [
-            { id: 'p0', rawIdx: 0, box: [30, 30, 770, 880], desc: 'Main Panel with Double-Lobe Peanut Bubble' },
-            { id: 'p1', rawIdx: 1, box: [30, 900, 770, 1070], desc: 'Bottom Reaction Panel' }
-        ],
-        fusedMask: {
-            bounds: [90, 80, 710, 850],
-            isPeanut: true,
-            pathD: `
-                M 450 90
-                C 570 90, 690 140, 690 250
-                C 690 330, 610 380, 520 400
-                C 590 440, 650 510, 640 620
-                C 630 730, 510 790, 380 780
-                L 440 855 L 340 780
-                C 220 770, 100 710, 100 580
-                C 100 460, 200 400, 290 380
-                C 220 350, 190 290, 190 230
-                C 190 130, 310 90, 450 90
-                Z
-            `
-        },
-        bubbles: [
-            {
-                id: 'det_box_top_lobe',
-                japaneseText: 'まさか…\nこんな所で会うとは',
-                translation: 'No way...\nTo meet in a place like this...',
-                x: 320,
-                y: 190,
-                w: 240,
-                h: 120,
-                parentBox: [210, 95, 680, 385],
-                direction: 'TTB',
-                bubbleGroupId: 'top_lobe'
+                id: "b_mother",
+                panelId: "p3",
+                x: 330, y: 225, w: 170, h: 165,
+                parentBox: { x: 330, y: 225, w: 170, h: 165 },
+                maskPolygon: [[340, 235], [490, 230], [495, 370], [350, 385]],
+                text: "YOU'RE OF SUCH HIGH RANK...? I DIDN'T REALIZE... IT'S BEEN SO LONG... YOU'VE GROWN UP COMPLETELY...",
+                rawJp: "貴敏…なの？\n分からなかったわ…\nあんまり久しぶりだから…\nすっかり大人になって…",
+                oldFont: 9.5
             },
             {
-                id: 'det_box_bot_lobe',
-                japaneseText: 'ずっと探していたんだ！\n無事でよかった…！',
-                translation: "I've been searching for you all along!\nThank goodness you're safe...!",
-                x: 230,
-                y: 510,
-                w: 320,
-                h: 140,
-                parentBox: [110, 395, 635, 775],
-                direction: 'TTB',
-                bubbleGroupId: 'bot_lobe'
-            }
-        ]
-    },
-    'dialogue-overlapping-bubbles': {
-        name: '👥 Dialogue Overlapping Bubbles (User Reference Image 2: Two Characters)',
-        width: 800,
-        height: 1100,
-        panels: [
-            { id: 'p0', rawIdx: 0, box: [40, 40, 760, 680], desc: 'Dialogue Panel with Overlapping Bubbles' },
-            { id: 'p1', rawIdx: 1, box: [40, 700, 760, 1060], desc: 'Bottom Wide Panel' }
-        ],
-        fusedMask: {
-            bounds: [140, 70, 670, 540],
-            isDialoguePair: true
-        },
-        bubbles: [
-            {
-                id: 'det_box_left_speaker',
-                japaneseText: 'プロジェクトの進捗は\nどうなっている？',
-                translation: 'How is the progress on the new project going?',
-                x: 200,
-                y: 160,
-                w: 220,
-                h: 120,
-                parentBox: [150, 80, 470, 390],
-                tail: [195, 385, 175, 430, 225, 380],
-                direction: 'TTB',
-                bubbleGroupId: 'speaker_left'
+                id: "b_huge_left",
+                panelId: "p4",
+                x: 50, y: 420, w: 95, h: 160,
+                parentBox: { x: 50, y: 420, w: 95, h: 160 },
+                maskPolygon: [[50, 420], [145, 420], [140, 575], [55, 580]],
+                text: "I MOVED HERE TO THE NEIGHBORHOOD RECENTLY, SO THIS IS A SURPRISE REUNION.",
+                rawJp: "…最近この近所に\n引っ越してきたんだ\nよもやの再会ってわけだ",
+                oldFont: 7.5
             },
             {
-                id: 'det_box_right_speaker',
-                japaneseText: '順調です！予定通り\n今週中に納品できます！',
-                translation: 'Everything is on track! We can deliver within this week!',
-                x: 390,
-                y: 280,
-                w: 230,
-                h: 130,
-                parentBox: [340, 190, 660, 500],
-                tail: [590, 495, 620, 540, 560, 490],
-                direction: 'TTB',
-                bubbleGroupId: 'speaker_right'
+                id: "b_huge_right",
+                panelId: "p4",
+                x: 150, y: 420, w: 115, h: 160,
+                parentBox: { x: 150, y: 420, w: 115, h: 160 },
+                maskPolygon: [[150, 420], [260, 420], [255, 575], [155, 580]],
+                text: "IT'S NO WONDER YOU DON'T RECOGNIZE ME, AFTER ALL, 20 YEARS HAS PASSED... BUT I KNEW RIGHT AWAY! AFTER ALL, HANAZUMI-NEE-SAN HASN'T CHANGED AT ALL FROM BEFORE!",
+                rawJp: "分からなくてもムリないさ\nもう20年も経つもんな…\nだけど俺にはすぐ分かったぜ\nだって花津美姉ちゃんは昔と\nちっとも変わってないもんな",
+                oldFont: 6.8
+            },
+            {
+                id: "b_cloud_1",
+                panelId: "p5",
+                x: 50, y: 605, w: 100, h: 175,
+                parentBox: { x: 50, y: 605, w: 100, h: 175 },
+                maskPolygon: [[50, 615], [145, 610], [140, 775], [55, 780]],
+                text: "AND I'LL HEAD BACK FIRST. YOU DON'T KNOW, DO YOU? THE LEFT AND RIGHT BRAINS SOMETIMES SHOW DIFFERENT COLORS... RIGHT?",
+                rawJp: "あっ 優は先に帰っててくれる？\n私はこのお兄ちゃんと\n色々積もる話があったりなんかしたりするから…ね？",
+                oldFont: 8.0
+            },
+            {
+                id: "b_cloud_2",
+                panelId: "p5",
+                x: 155, y: 605, w: 105, h: 175,
+                parentBox: { x: 155, y: 605, w: 105, h: 175 },
+                maskPolygon: [[155, 615], [255, 610], [250, 775], [160, 780]],
+                text: "YOU MOVED HERE NEARBY, DIDN'T YOU? THAT'S RIGHT! I'D LIKE TO SEE YOUR HOUSE!",
+                rawJp: "こっ この近くに越してきたんだったのよね？\nそうだ お宅を拝見したいわ！",
+                oldFont: 8.5
+            },
+            {
+                id: "b_cloud_3",
+                panelId: "p5",
+                x: 265, y: 605, w: 110, h: 175,
+                parentBox: { x: 265, y: 605, w: 110, h: 175 },
+                maskPolygon: [[265, 615], [370, 610], [365, 780], [270, 785]],
+                text: "NICE TO MEET YOU, YU-KUN... IT REMINDS ME... WHEN I WAS AROUND YOUR AGE, YOUR MOTHER AND I...",
+                rawJp: "はじめまして優君\n…思い出すなぁ 俺が君と同じくらいの頃\n君の母さんと俺は…",
+                oldFont: 8.0
             }
         ]
     }
 };
 
-// -------------------------------------------------------------
-// 1. RECURSIVE XY-CUT IMPLEMENTATION (ReadingOrderSorter.kt)
-// -------------------------------------------------------------
+/**
+ * Koharu-style Tokenizer:
+ * Breaks words on spaces, hyphens, and syllable points so compound words
+ * (like NEE-CHAN or HANAZUMI-NEE-SAN) can wrap cleanly across narrow lines.
+ */
+function tokenizeWrapUnits(text) {
+    const tokens = [];
+    const rawWords = text.replace(/\n/g, ' ').split(/\s+/).filter(Boolean);
 
-function readingOrderPanels(panels, rtl) {
-    if (panels.length <= 1) return panels;
-    const indices = xyCutOrder(panels, panels.map((_, i) => i), rtl);
-    return indices.map(i => panels[i]);
-}
-
-function xyCutOrder(panels, idxList, rtl) {
-    if (idxList.length <= 1) return idxList;
-    const hCut = widestGutterSplit(panels, idxList, 'y');
-    if (hCut !== null) {
-        return [...xyCutOrder(panels, hCut[0], rtl), ...xyCutOrder(panels, hCut[1], rtl)];
-    }
-    const vCut = widestGutterSplit(panels, idxList, 'x');
-    if (vCut !== null) {
-        if (rtl) {
-            return [...xyCutOrder(panels, vCut[1], rtl), ...xyCutOrder(panels, vCut[0], rtl)];
-        } else {
-            return [...xyCutOrder(panels, vCut[0], rtl), ...xyCutOrder(panels, vCut[1], rtl)];
-        }
-    }
-    return columnFallbackOrder(panels, idxList, rtl);
-}
-
-function widestGutterSplit(panels, idxList, axis) {
-    const events = [];
-    for (const i of idxList) {
-        const p = panels[i].box;
-        const lo = axis === 'y' ? p[1] : p[0];
-        const hi = axis === 'y' ? p[3] : p[2];
-        events.push([lo, 1]);
-        events.push([hi, -1]);
-    }
-    events.sort((a, b) => a[0] * 2 - a[1] - (b[0] * 2 - b[1]));
-
-    let bestStart = NaN;
-    let bestWidth = 1.0;
-    let count = 0;
-    let prev = NaN;
-    let bestFound = false;
-
-    for (const e of events) {
-        if (count === 0 && !isNaN(prev)) {
-            const w = e[0] - prev;
-            if (w >= 1.0 && w > bestWidth) {
-                bestWidth = w;
-                bestStart = prev;
-                bestFound = true;
-            }
-        }
-        count += e[1];
-        prev = e[0];
-    }
-
-    if (!bestFound) return null;
-    const cut = bestStart + bestWidth / 2.0;
-    const a = [];
-    const b = [];
-    for (const i of idxList) {
-        const p = panels[i].box;
-        const c = axis === 'y' ? (p[1] + p[3]) / 2.0 : (p[0] + p[2]) / 2.0;
-        if (c <= cut) a.push(i);
-        else b.push(i);
-    }
-    if (a.length === 0 || b.length === 0) return null;
-    return [a, b];
-}
-
-function columnFallbackOrder(panels, idxList, rtl) {
-    return [...idxList].sort((a, b) => {
-        const cxA = (panels[a].box[0] + panels[a].box[2]) / 2.0;
-        const cxB = (panels[b].box[0] + panels[b].box[2]) / 2.0;
-        if (rtl) {
-            if (cxB !== cxA) return cxB - cxA;
-        } else {
-            if (cxA !== cxB) return cxA - cxB;
-        }
-        return panels[a].box[1] - panels[b].box[1];
-    });
-}
-
-// -------------------------------------------------------------
-// 2. CANVAS RENDERING
-// -------------------------------------------------------------
-
-function renderRawPlacementSvg(svgId) {
-    const svg = document.getElementById(svgId);
-    if (!svg) return;
-    svg.innerHTML = '';
-
-    const data = SAMPLES[currentSample];
-    const rawPanels = data.panels.map(p => ({ ...p }));
-    const orderedPanels = readingOrderPanels(rawPanels, currentRtl);
-
-    // Background
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('width', '100%');
-    bg.setAttribute('height', '100%');
-    bg.setAttribute('fill', '#0d1117');
-    svg.appendChild(bg);
-
-    // Panels
-    orderedPanels.forEach(p => {
-        const [x1, y1, x2, y2] = p.box;
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', x1);
-        rect.setAttribute('y', y1);
-        rect.setAttribute('width', x2 - x1);
-        rect.setAttribute('height', y2 - y1);
-        rect.setAttribute('fill', 'rgba(59, 130, 246, 0.05)');
-        rect.setAttribute('stroke', '#3b82f6');
-        rect.setAttribute('stroke-width', '2');
-        svg.appendChild(rect);
-    });
-
-    // Bubble contours (Peanut, Overlapping Dialogue, Slim Ovals, Conjoined Thin Ovals)
-    if (data.fusedMask?.pathD) {
-        const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        pathEl.setAttribute('d', data.fusedMask.pathD.trim());
-        pathEl.setAttribute('fill', '#ffffff');
-        pathEl.setAttribute('stroke', '#000000');
-        pathEl.setAttribute('stroke-width', '5');
-        svg.appendChild(pathEl);
-    } else if (data.fusedMask?.isDialoguePair || data.fusedMask?.isSlimOvalPair) {
-        data.bubbles.forEach(b => {
-            if (b.parentBox) {
-                const [px1, py1, px2, py2] = b.parentBox;
-                const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-                ellipse.setAttribute('cx', (px1 + px2) / 2);
-                ellipse.setAttribute('cy', (py1 + py2) / 2);
-                ellipse.setAttribute('rx', (px2 - px1) / 2);
-                ellipse.setAttribute('ry', (py2 - py1) / 2);
-                ellipse.setAttribute('fill', '#ffffff');
-                ellipse.setAttribute('stroke', '#000000');
-                ellipse.setAttribute('stroke-width', '4');
-                svg.appendChild(ellipse);
-
-                if (b.tail) {
-                    const tailPoly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                    tailPoly.setAttribute('points', `${b.tail[0]},${b.tail[1]} ${b.tail[2]},${b.tail[3]} ${b.tail[4]},${b.tail[5]}`);
-                    tailPoly.setAttribute('fill', '#ffffff');
-                    tailPoly.setAttribute('stroke', '#000000');
-                    tailPoly.setAttribute('stroke-width', '4');
-                    svg.appendChild(tailPoly);
+    for (let word of rawWords) {
+        if (word.includes('-') && word.length > 3) {
+            const parts = word.split('-');
+            for (let i = 0; i < parts.length; i++) {
+                if (i < parts.length - 1) {
+                    tokens.push(parts[i] + '-');
+                } else {
+                    tokens.push(parts[i]);
                 }
             }
+        } else {
+            tokens.push(word);
+        }
+    }
+    return tokens;
+}
+
+/**
+ * Koharu-style Line Flow with Syllable Break Support:
+ * Wraps tokens to fit strictly inside availW. If a single word is wider than availW,
+ * it splits with a hyphen across multiple lines instead of blowing out the width!
+ */
+function formatLinesToWidth(tokens, fontSize, availW) {
+    const avgCharW = fontSize * 0.58;
+    const lines = [];
+    let cur = "";
+
+    for (let token of tokens) {
+        let test = cur ? (cur.endsWith('-') ? cur + token : cur + " " + token) : token;
+        let testW = test.length * avgCharW;
+
+        if (testW > availW && cur) {
+            lines.push(cur);
+            cur = token;
+            // If token alone exceeds width, split by syllable
+            while (cur.length * avgCharW > availW && cur.length > 3) {
+                const maxChars = Math.max(2, Math.floor((availW - avgCharW) / avgCharW));
+                lines.push(cur.slice(0, maxChars) + "-");
+                cur = cur.slice(maxChars);
+            }
+        } else if (testW > availW && !cur) {
+            let rem = token;
+            while (rem.length * avgCharW > availW && rem.length > 3) {
+                const maxChars = Math.max(2, Math.floor((availW - avgCharW) / avgCharW));
+                lines.push(rem.slice(0, maxChars) + "-");
+                rem = rem.slice(maxChars);
+            }
+            cur = rem;
+        } else {
+            cur = test;
+        }
+    }
+    if (cur) lines.push(cur);
+    return lines;
+}
+
+/**
+ * Strict Koharu Layout Solver:
+ * Probes largest fitting font size that strictly satisfies:
+ * 1. totalH <= availH * fillTarget (Strict Vertical Ceiling)
+ * 2. maxLineW <= availW (Strict Horizontal Ceiling with Syllable Break)
+ */
+function solveStrictKoharuLayout(bubble, targetFont, fillTarget, pad) {
+    const pBox = bubble.parentBox;
+    const availW = Math.max(10, pBox.w - pad * 2);
+    const availH = Math.max(10, pBox.h - pad * 2);
+    const tokens = tokenizeWrapUnits(bubble.text);
+
+    let bestFont = 8.0;
+    let bestLines = [];
+
+    // Probe from 22px down to 8px
+    for (let font = 22.0; font >= 8.0; font -= 0.25) {
+        const lineH = font * 1.22;
+        const lines = formatLinesToWidth(tokens, font, availW);
+        const totalH = lines.length * lineH;
+
+        if (totalH <= availH * fillTarget) {
+            bestFont = font;
+            bestLines = lines;
+            break;
+        }
+    }
+
+    if (!bestLines.length) {
+        bestFont = 8.0;
+        bestLines = formatLinesToWidth(tokens, 8.0, availW);
+    }
+
+    const lineH = bestFont * 1.22;
+    const totalH = bestLines.length * lineH;
+
+    return {
+        fontSize: bestFont,
+        lines: bestLines,
+        lineH: lineH,
+        totalH: totalH,
+        availH: availH,
+        availW: availW,
+        heightFillPct: Math.round((totalH / availH) * 100)
+    };
+}
+
+// Rendering routines
+function renderLeftCanvas(ctx, sample) {
+    ctx.clearRect(0, 0, sample.width, sample.height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, sample.width, sample.height);
+
+    if (showPanels) {
+        sample.panels.forEach(p => {
+            ctx.strokeStyle = "#94a3b8";
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
         });
     }
 
-    // 1. Draw distinct text_bubble bounding boxes (CYAN DASHED)
-    data.bubbles.forEach(b => {
-        if (b.parentBox) {
-            const [px1, py1, px2, py2] = b.parentBox;
-            const pw = px2 - px1;
-            const ph = py2 - py1;
-
-            const pRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            pRect.setAttribute('x', px1);
-            pRect.setAttribute('y', py1);
-            pRect.setAttribute('width', pw);
-            pRect.setAttribute('height', ph);
-            pRect.setAttribute('fill', 'rgba(6, 182, 212, 0.14)');
-            pRect.setAttribute('stroke', '#06b6d4');
-            pRect.setAttribute('stroke-width', '2.5');
-            pRect.setAttribute('stroke-dasharray', '5 4');
-            pRect.setAttribute('rx', '8');
-            svg.appendChild(pRect);
-
-            // Label
-            const pLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            pLabel.setAttribute('x', px1 + 6);
-            pLabel.setAttribute('y', py1 + 16);
-            pLabel.setAttribute('fill', '#0891b2');
-            pLabel.setAttribute('font-size', '11');
-            pLabel.setAttribute('font-weight', '800');
-            pLabel.textContent = `text_bubble [${pw}x${ph}]`;
-            svg.appendChild(pLabel);
+    sample.bubbles.forEach(b => {
+        if (showSeg && b.maskPolygon) {
+            ctx.beginPath();
+            b.maskPolygon.forEach((pt, idx) => {
+                if (idx === 0) ctx.moveTo(pt[0], pt[1]);
+                else ctx.lineTo(pt[0], pt[1]);
+            });
+            ctx.closePath();
+            ctx.fillStyle = "#ffffff";
+            ctx.fill();
+            ctx.strokeStyle = "#cbd5e1";
+            ctx.lineWidth = 1.5;
+            ctx.stroke();
         }
-    });
 
-    // 2. Draw raw Japanese OCR text detection boxes (AMBER)
-    data.bubbles.forEach(b => {
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', b.x);
-        rect.setAttribute('y', b.y);
-        rect.setAttribute('width', b.w);
-        rect.setAttribute('height', b.h);
-        rect.setAttribute('fill', 'rgba(245, 158, 11, 0.18)');
-        rect.setAttribute('stroke', '#f59e0b');
-        rect.setAttribute('stroke-width', '2');
-        rect.setAttribute('rx', '4');
-        svg.appendChild(rect);
+        if (showBoxes) {
+            ctx.strokeStyle = "rgba(6, 182, 212, 0.5)";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.strokeRect(b.parentBox.x, b.parentBox.y, b.parentBox.w, b.parentBox.h);
+            ctx.setLineDash([]);
+        }
 
-        // Original Text
-        const textG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        const lines = b.japaneseText.split('\n');
-        const fontSize = 16;
-        const lineH = fontSize * 1.3;
-        const startY = b.y + fontSize + 4;
+        if (showTypography) {
+            const font = b.oldFont;
+            ctx.font = `600 ${font}px "JetBrains Mono", sans-serif`;
+            ctx.fillStyle = "#0f172a";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
 
-        lines.forEach((line, lIdx) => {
-            const textNode = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            textNode.setAttribute('x', b.x + b.w / 2);
-            textNode.setAttribute('y', startY + lIdx * lineH);
-            textNode.setAttribute('fill', '#000000');
-            textNode.setAttribute('font-size', fontSize);
-            textNode.setAttribute('font-weight', '700');
-            textNode.setAttribute('text-anchor', 'middle');
-            textNode.textContent = line;
-            textG.appendChild(textNode);
-        });
-
-        svg.appendChild(textG);
-    });
-}
-
-function renderNewImplementationSvg(svgId) {
-    const svg = document.getElementById(svgId);
-    if (!svg) return;
-    svg.innerHTML = '';
-
-    const data = SAMPLES[currentSample];
-    const rawPanels = data.panels.map(p => ({ ...p }));
-    const orderedPanels = readingOrderPanels(rawPanels, currentRtl);
-
-    // Background
-    const bg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    bg.setAttribute('width', '100%');
-    bg.setAttribute('height', '100%');
-    bg.setAttribute('fill', '#0d1117');
-    svg.appendChild(bg);
-
-    // Panels
-    orderedPanels.forEach(p => {
-        const [x1, y1, x2, y2] = p.box;
-        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        rect.setAttribute('x', x1);
-        rect.setAttribute('y', y1);
-        rect.setAttribute('width', x2 - x1);
-        rect.setAttribute('height', y2 - y1);
-        rect.setAttribute('fill', 'rgba(59, 130, 246, 0.05)');
-        rect.setAttribute('stroke', '#3b82f6');
-        rect.setAttribute('stroke-width', '2');
-        svg.appendChild(rect);
-    });
-
-    // 1. Fused Segmentation Mask (UPPER CEILING - GREEN OUTLINE)
-    if (data.fusedMask?.pathD) {
-        const pathEl = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        pathEl.setAttribute('d', data.fusedMask.pathD.trim());
-        pathEl.setAttribute('fill', '#ffffff');
-        pathEl.setAttribute('stroke', '#10b981');
-        pathEl.setAttribute('stroke-width', '5');
-        svg.appendChild(pathEl);
-    } else if (data.fusedMask?.isDialoguePair || data.fusedMask?.isSlimOvalPair) {
-        data.bubbles.forEach(b => {
-            if (b.parentBox) {
-                const [px1, py1, px2, py2] = b.parentBox;
-                const ellipse = document.createElementNS('http://www.w3.org/2000/svg', 'ellipse');
-                ellipse.setAttribute('cx', (px1 + px2) / 2);
-                ellipse.setAttribute('cy', (py1 + py2) / 2);
-                ellipse.setAttribute('rx', (px2 - px1) / 2);
-                ellipse.setAttribute('ry', (py2 - py1) / 2);
-                ellipse.setAttribute('fill', '#ffffff');
-                ellipse.setAttribute('stroke', '#10b981');
-                ellipse.setAttribute('stroke-width', '4');
-                svg.appendChild(ellipse);
-
-                if (b.tail) {
-                    const tailPoly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-                    tailPoly.setAttribute('points', `${b.tail[0]},${b.tail[1]} ${b.tail[2]},${b.tail[3]} ${b.tail[4]},${b.tail[5]}`);
-                    tailPoly.setAttribute('fill', '#ffffff');
-                    tailPoly.setAttribute('stroke', '#10b981');
-                    tailPoly.setAttribute('stroke-width', '4');
-                    svg.appendChild(tailPoly);
+            const words = b.text.replace(/\n/g, ' ').split(/\s+/).filter(Boolean);
+            const lines = [];
+            let cur = "";
+            for (let w of words) {
+                let test = cur ? cur + " " + w : w;
+                if (test.length * font * 0.6 > b.parentBox.w * 0.75 && cur) {
+                    lines.push(cur);
+                    cur = w;
+                } else {
+                    cur = test;
                 }
             }
-        });
-    }
+            if (cur) lines.push(cur);
 
-    // Ceiling Badge
-    if (data.fusedMask?.bounds) {
-        const [fx1, fy1] = data.fusedMask.bounds;
-        const mLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        mLabel.setAttribute('x', fx1 + 10);
-        mLabel.setAttribute('y', fy1 - 10);
-        mLabel.setAttribute('fill', '#10b981');
-        mLabel.setAttribute('font-size', '12');
-        mLabel.setAttribute('font-weight', '800');
-        mLabel.textContent = '▲ YOLO11 Mask (Upper Growth & Clip Ceiling)';
-        svg.appendChild(mLabel);
-    }
+            const lineH = font * 1.2;
+            const startY = (b.parentBox.y + b.parentBox.h / 2) - ((lines.length - 1) * lineH) / 2;
 
-    // 2. Render each block rooted inside its OWN distinct text_bubble box (Starting Ground Truth)
-    // AND utilizing full vertical height!
-    data.bubbles.forEach(b => {
-        const pBox = b.parentBox || [b.x, b.y, b.x + b.w, b.y + b.h];
-        const pw = pBox[2] - pBox[0];
-        const ph = pBox[3] - pBox[1];
-        const pcx = (pBox[0] + pBox[2]) / 2;
-        const pcy = (pBox[1] + pBox[3]) / 2;
-
-        // Container boundary rooted in its text_bubble
-        const cRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-        cRect.setAttribute('x', pBox[0]);
-        cRect.setAttribute('y', pBox[1]);
-        cRect.setAttribute('width', pw);
-        cRect.setAttribute('height', ph);
-        cRect.setAttribute('fill', 'rgba(6, 182, 212, 0.06)');
-        cRect.setAttribute('stroke', '#06b6d4');
-        cRect.setAttribute('stroke-width', '2');
-        cRect.setAttribute('stroke-dasharray', '4 3');
-        cRect.setAttribute('rx', '10');
-        svg.appendChild(cRect);
-
-        // Render English Translated Text maximizing vertical height
-        const safeW = pw * 0.82;
-        const isTall = ph > pw * 1.8;
-        const fontSize = isTall ? 19.0 : (data.fusedMask?.isSlimOvalPair ? 18.0 : 21.0);
-        const textLines = wrapText(b.translation, safeW, fontSize);
-        const lineH = fontSize * 1.35;
-        const totalH = textLines.length * lineH;
-        const startY = pcy - totalH / 2 + fontSize * 0.9;
-
-        const textG = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        textLines.forEach((tLine, lIdx) => {
-            const textNode = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            textNode.setAttribute('x', pcx);
-            textNode.setAttribute('y', startY + lIdx * lineH);
-            textNode.setAttribute('fill', '#000000');
-            textNode.setAttribute('font-size', fontSize);
-            textNode.setAttribute('font-weight', '900');
-            textNode.setAttribute('text-anchor', 'middle');
-            textNode.textContent = tLine;
-            textG.appendChild(textNode);
-        });
-
-        // Status Badge
-        const badge = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        badge.setAttribute('x', pcx);
-        badge.setAttribute('y', pBox[3] - 8);
-        badge.setAttribute('fill', '#059669');
-        badge.setAttribute('font-size', '10');
-        badge.setAttribute('font-weight', '800');
-        badge.setAttribute('text-anchor', 'middle');
-        badge.textContent = `Full Height (${Math.round(totalH/ph*100)}%) • ${fontSize}px ✅`;
-        textG.appendChild(badge);
-
-        svg.appendChild(textG);
+            lines.forEach((line, idx) => {
+                ctx.fillText(line, b.parentBox.x + b.parentBox.w / 2, startY + idx * lineH);
+            });
+        }
     });
 }
 
-function wrapText(text, safeW, fontSize) {
-    const rawLines = text.split('\n');
-    const outLines = [];
-    const approxCharW = fontSize * 0.52;
-    const maxChars = Math.max(6, Math.floor(safeW / approxCharW));
+function renderRightCanvas(ctx, sample) {
+    ctx.clearRect(0, 0, sample.width, sample.height);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, sample.width, sample.height);
 
-    rawLines.forEach(rawLine => {
-        const words = rawLine.split(' ');
-        let cur = '';
-        words.forEach(w => {
-            if ((cur + ' ' + w).trim().length <= maxChars) {
-                cur = (cur + ' ' + w).trim();
-            } else {
-                if (cur) outLines.push(cur);
-                cur = w;
-            }
+    if (showPanels) {
+        sample.panels.forEach(p => {
+            ctx.strokeStyle = "#94a3b8";
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(p.x, p.y, p.w, p.h);
         });
-        if (cur) outLines.push(cur);
-    });
+    }
 
-    return outLines.length > 0 ? outLines : [text];
+    sample.bubbles.forEach(b => {
+        // Draw segmentation mask boundary
+        if (showSeg && b.maskPolygon) {
+            ctx.beginPath();
+            b.maskPolygon.forEach((pt, idx) => {
+                if (idx === 0) ctx.moveTo(pt[0], pt[1]);
+                else ctx.lineTo(pt[0], pt[1]);
+            });
+            ctx.closePath();
+            ctx.fillStyle = "#ffffff";
+            ctx.fill();
+            ctx.strokeStyle = "#10b981"; // Emerald mask ceiling outline
+            ctx.lineWidth = 2.0;
+            ctx.stroke();
+        }
+
+        // ParentBox ceiling boundary
+        if (showBoxes) {
+            ctx.strokeStyle = "rgba(59, 130, 246, 0.4)";
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.strokeRect(b.parentBox.x, b.parentBox.y, b.parentBox.w, b.parentBox.h);
+            ctx.setLineDash([]);
+        }
+
+        // Solve strictly contained layout
+        const layout = solveStrictKoharuLayout(b, targetFontSize, heightFillTarget, bubblePadding);
+
+        // Draw Typography strictly within mask ceiling
+        if (showTypography) {
+            ctx.font = `700 ${layout.fontSize}px "Plus Jakarta Sans", sans-serif`;
+            ctx.fillStyle = "#020617";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+
+            const cx = b.parentBox.x + b.parentBox.w / 2;
+            const cy = b.parentBox.y + b.parentBox.h / 2;
+            const startY = cy - ((layout.lines.length - 1) * layout.lineH) / 2;
+
+            layout.lines.forEach((line, idx) => {
+                // White outline stroke
+                ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+                ctx.lineWidth = layout.fontSize * 0.2;
+                ctx.strokeText(line, cx, startY + idx * layout.lineH);
+                ctx.fillText(line, cx, startY + idx * layout.lineH);
+            });
+        }
+    });
 }
 
 function updateCanvas() {
-    renderRawPlacementSvg('manga-svg-bug');
-    renderNewImplementationSvg('manga-svg-fix');
-}
+    const sample = SAMPLES[currentSample];
+    if (!sample) return;
 
-// -------------------------------------------------------------
-// UI CONTROLLERS
-// -------------------------------------------------------------
+    showPanels = document.getElementById("toggle-panels").checked;
+    showText = document.getElementById("toggle-text").checked;
+    showSeg = document.getElementById("toggle-seg").checked;
+    showTypography = document.getElementById("toggle-typography").checked;
 
-function setViewLayout(layout) {
-    viewLayout = layout;
-    const wrapper = document.getElementById('canvas-wrapper');
-    const cardBug = document.getElementById('card-bug');
-    const cardFix = document.getElementById('card-fix');
+    const cLeft = document.getElementById("canvas-left");
+    const cRight = document.getElementById("canvas-right");
 
-    document.getElementById('btn-view-single').classList.toggle('active', layout === 'single');
-    document.getElementById('btn-view-dual').classList.toggle('active', layout === 'dual');
-
-    if (layout === 'dual') {
-        wrapper.classList.add('dual-view');
-        cardBug.style.display = 'flex';
-        cardFix.style.display = 'flex';
-    } else {
-        wrapper.classList.remove('dual-view');
-        cardBug.style.display = 'flex';
-        cardFix.style.display = 'none';
+    if (cLeft) {
+        cLeft.width = sample.width;
+        cLeft.height = sample.height;
+        renderLeftCanvas(cLeft.getContext("2d"), sample);
     }
-    updateCanvas();
+    if (cRight) {
+        cRight.width = sample.width;
+        cRight.height = sample.height;
+        renderRightCanvas(cRight.getContext("2d"), sample);
+    }
+
+    updateInspector(sample);
 }
 
-function setReadingDirection(dir) {
-    currentRtl = dir === 'RTL';
-    document.getElementById('btn-rtl').classList.toggle('active', currentRtl);
-    document.getElementById('btn-ltr').classList.toggle('active', !currentRtl);
-    updateCanvas();
+function updateInspector(sample) {
+    const focusBubble = sample.bubbles.find(b => b.id === selectedBubbleId) || sample.bubbles[0];
+    if (!focusBubble) return;
+
+    const opt = solveStrictKoharuLayout(focusBubble, targetFontSize, heightFillTarget, bubblePadding);
+
+    document.getElementById("insp-bounds").textContent = `${focusBubble.parentBox.w} × ${focusBubble.parentBox.h} px`;
+    document.getElementById("insp-old-font").textContent = `${focusBubble.oldFont.toFixed(1)} px (Squished)`;
+    document.getElementById("insp-new-font").textContent = `${opt.fontSize.toFixed(1)} px (Contained)`;
+    document.getElementById("insp-height-fill").textContent = `${opt.heightFillPct}% of Bubble Box`;
+    document.getElementById("insp-lines").textContent = `${opt.lines.length} lines • Strict Mask Cap`;
 }
 
 function switchSample(sampleKey) {
     currentSample = sampleKey;
-    if (sampleKey === 'webtoon-strip') {
-        setReadingDirection('LTR');
-    } else {
-        setReadingDirection('RTL');
+    const sample = SAMPLES[sampleKey];
+    if (sample) {
+        document.getElementById("sample-title-display").textContent = sample.title;
     }
     updateCanvas();
 }
 
-function switchInspectorTab(tabKey) {
-    ['compare', 'inspect', 'prompt', 'xycut'].forEach(key => {
-        document.getElementById(`tab-${key}`).classList.toggle('hidden', key !== tabKey);
-        document.getElementById(`tab-btn-${key}`).classList.toggle('active', key === tabKey);
-    });
+function setViewLayout(mode) {
+    viewLayout = mode;
+    const cardStandard = document.getElementById("card-standard");
+    const btnDual = document.getElementById("btn-view-dual");
+    const btnSingle = document.getElementById("btn-view-single");
+
+    if (mode === "single") {
+        cardStandard.style.display = "none";
+        btnSingle.classList.add("active");
+        btnDual.classList.remove("active");
+    } else {
+        cardStandard.style.display = "flex";
+        btnDual.classList.add("active");
+        btnSingle.classList.remove("active");
+    }
 }
 
-function applyZoom(zoom) {
-    currentZoom = Math.max(0.4, Math.min(2.5, zoom));
-    document.getElementById('btn-zoom-val').textContent = `${Math.round(currentZoom * 100)}%`;
-}
+function onSliderChange() {
+    targetFontSize = parseFloat(document.getElementById("range-font-target").value);
+    heightFillTarget = parseFloat(document.getElementById("range-height-fill").value) / 100.0;
+    bubblePadding = parseFloat(document.getElementById("range-padding").value);
 
-function zoomIn() { applyZoom(currentZoom + 0.15); }
-function zoomOut() { applyZoom(currentZoom - 0.15); }
-function resetZoom() { applyZoom(1.0); }
-function fitHeight() { applyZoom(1.0); }
-function fitWidth() { applyZoom(1.0); }
+    document.getElementById("val-font-target").textContent = targetFontSize.toFixed(1) + " px";
+    document.getElementById("val-height-fill").textContent = Math.round(heightFillTarget * 100) + " %";
+    document.getElementById("val-padding").textContent = bubblePadding.toFixed(0) + " px";
 
-document.addEventListener('DOMContentLoaded', () => {
-    setViewLayout('dual');
     updateCanvas();
+}
+
+function resetZoom() {
+    const wrapper = document.getElementById("canvases-container");
+    if (wrapper) {
+        wrapper.scrollTo({ top: 0, left: 0, behavior: "smooth" });
+    }
+}
+
+function toggleGrid() {
+    showBoxes = !showBoxes;
+    updateCanvas();
+}
+
+// Init
+window.addEventListener("DOMContentLoaded", () => {
+    switchSample("page1-tall-ovals");
 });
