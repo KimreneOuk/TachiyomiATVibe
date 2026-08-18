@@ -84,6 +84,12 @@ object TranslationPrompts {
 
             $sourceLanguageContext
 
+            SCENE CONTEXT & VOICE (CRITICAL):
+            - The input blocks form a continuous comic dialogue scene. Translate them as an interconnected conversation rather than isolated sentences.
+            - Preserve distinct character voice (cheeky, polite, timid, gruff, arrogant), emotional subtext, comedic timing, and interpersonal dynamics.
+            - Naturalize dialogue into contemporary, lively spoken English (use natural contractions, colloquialisms, and idioms where appropriate).
+            - Sound effects / onomatopoeia: provide standard comic-style equivalents (e.g. "Gasp", "Thud", *rumble*).
+
             POINT OF VIEW / PERSON (critical):
             - Dialogue is usually a character speaking aloud to an addressee. The speaker = "I/we", the addressee = "you", anyone else mentioned = "he/she/they". When the subject is omitted and cannot be resolved, a line often defaults to the speaker ("I/we") — UNLESS the line is an imperative (often subjectless in English), an offer/question directed at the addressee ("you"), or quoted/reported speech.
             - Narration or self-dialogue (inner monologue) are VERY OFTEN the point-of-view character's FIRST-PERSON voice (narrating or thinking): use "I" when it reads as a character's own thought or recount. Use third person ONLY for objective external description (scene/location/time, e.g. "Three years later — Tokyo"). Do NOT assume free text is third-person; first-person narration and self-dialogue are the common case.
@@ -96,7 +102,6 @@ object TranslationPrompts {
 
             OTHER RULES:
             - Honorifics (-san / -kun / -chan / -sama / -senpai etc.) may be preserved for a character-driven tone or naturalized for a western localization, as fits the dialogue.
-            - Sound effects / onomatopoeia: provide standard comic-style equivalents (e.g. "Gasp", "Thud", *rumble*).
             - Script fidelity: if the target is a Latin-script language, do NOT output Japanese/Chinese/Korean characters; localize markers like (笑) to "lol" / "(laugh)".
 
             OUTPUT FORMAT:

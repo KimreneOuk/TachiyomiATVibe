@@ -669,6 +669,57 @@ class TextLayoutPlannerTest {
         val ext1 = extentOfPublic(plan[1], m)
         (ext0.right <= ext1.left) shouldBe true
     }
+
+    @Test
+    fun `cjkWrap splits on hyphens and breaks oversized words into narrow lines`() {
+        val m = FakeMeasurer(0.6f)
+        // 10px font => each char is 6px wide.
+        // "NEE-CHAN" is 8 chars = 48px wide. In maxWidth = 30px, "NEE-" is 4 chars = 24px <= 30px.
+        val wrapped = TextLayoutPlanner.cjkWrap("HANAZUMI NEE-CHAN", 10f, 30f, m)
+        wrapped.any { it.startsWith("NEE-") || it == "NEE-" } shouldBe true
+        wrapped.all { m.measureTextWidth(it, 10f) <= 30f } shouldBe true
+    }
+
+    @Test
+    fun `adjacent narrow bubbles wrap cleanly without horizontal collision`() {
+        val m = FakeMeasurer(0.6f)
+        val bubbleLeft = block(
+            x = 108f,
+            y = 545f,
+            w = 45f,
+            h = 110f,
+            text = "HANAZUMI NEE-CHAN...",
+            score = 0.95f,
+        ).copy(
+            parentX = 108f,
+            parentY = 545f,
+            parentWidth = 45f,
+            parentHeight = 110f,
+        )
+
+        val bubbleRight = block(
+            x = 155f,
+            y = 530f,
+            w = 55f,
+            h = 120f,
+            text = "IS IT POSSIBLE THAT...",
+            score = 0.90f,
+        ).copy(
+            parentX = 155f,
+            parentY = 530f,
+            parentWidth = 55f,
+            parentHeight = 120f,
+        )
+
+        val plan = TextLayoutPlanner.plan(listOf(bubbleLeft, bubbleRight), 1000f, 1000f, 1, false, m)
+        plan shouldHaveSize 2
+
+        val extLeft = extentOfPublic(plan[0], m)
+        val extRight = extentOfPublic(plan[1], m)
+
+        // Must not overlap horizontally
+        (extLeft.right <= extRight.left + 0.5f) shouldBe true
+    }
 }
 
 /**
