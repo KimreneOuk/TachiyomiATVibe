@@ -125,4 +125,30 @@ class WebtoonSlidingDetectorTest {
         val separate = merged.first { it.bbox[1] > 2000 }
         separate.bbox[1] shouldBe 3000
     }
+
+    @Test
+    fun `mergeDetections merges collinear seam slice detections on sliding window boundaries`() {
+        // Upper slice in Window 0 and lower slice in Window 1 touching at y=1300
+        val topHalf = Detection(
+            bbox = intArrayOf(150, 1180, 450, 1310),
+            label = 0,
+            score = 0.85f,
+            className = "bubble",
+        )
+        val bottomHalf = Detection(
+            bbox = intArrayOf(152, 1295, 448, 1420),
+            label = 0,
+            score = 0.89f,
+            className = "bubble",
+        )
+
+        val merged = WebtoonSlidingDetector.mergeDetections(listOf(topHalf, bottomHalf))
+        merged.size shouldBe 1
+        val unified = merged[0]
+        unified.bbox[0] shouldBe 150
+        unified.bbox[1] shouldBe 1180
+        unified.bbox[2] shouldBe 450
+        unified.bbox[3] shouldBe 1420
+        unified.score shouldBe 0.89f
+    }
 }

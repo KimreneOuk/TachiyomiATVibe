@@ -720,6 +720,37 @@ class TextLayoutPlannerTest {
         // Must not overlap horizontally
         (extLeft.right <= extRight.left + 0.5f) shouldBe true
     }
+
+    @Test
+    fun `wide horizontal webtoon ellipse contains text strictly within bubble height without vertical overflow`() {
+        val m = FakeMeasurer(0.6f)
+        val wideBubble = block(
+            x = 80f,
+            y = 120f,
+            w = 520f,
+            h = 140f,
+            text = "HE USED SOME WEIRD MARTIAL ARTS I'VE NEVER EVEN HEARD OF, CLAIMING IT WAS A SECRET TECHNIQUE.",
+            score = 0.98f,
+        ).copy(
+            parentX = 80f,
+            parentY = 120f,
+            parentWidth = 520f,
+            parentHeight = 140f,
+        )
+
+        val plan = TextLayoutPlanner.plan(listOf(wideBubble), 1000f, 2000f, 1, false, m)
+        plan shouldHaveSize 1
+        val layout = plan[0]
+
+        val ext = extentOfPublic(layout, m)
+
+        // Text must not overflow top or bottom of the bubble
+        (ext.top >= wideBubble.parentY - 1f) shouldBe true
+        (ext.bottom <= wideBubble.parentY + wideBubble.parentHeight + 1f) shouldBe true
+        // Text must not overflow left or right
+        (ext.left >= wideBubble.parentX - 1f) shouldBe true
+        (ext.right <= wideBubble.parentX + wideBubble.parentWidth + 1f) shouldBe true
+    }
 }
 
 /**

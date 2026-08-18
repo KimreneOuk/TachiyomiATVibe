@@ -116,7 +116,16 @@ object WebtoonSlidingDetector {
                 val minArea = min(BoxGeometry.bboxArea(current.bbox), BoxGeometry.bboxArea(candidate.bbox))
                 val containment = if (minArea > 0) interArea.toFloat() / minArea.toFloat() else 0f
 
-                if (iou >= iouThreshold || containment >= 0.70f) {
+                // Check for sliding window seam collinearity: two boxes sharing >60% horizontal span
+                // that meet or overlap along a vertical seam
+                val xOverlap = max(0, min(current.bbox[2], candidate.bbox[2]) - max(current.bbox[0], candidate.bbox[0]))
+                val minWidth = min(current.bbox[2] - current.bbox[0], candidate.bbox[2] - candidate.bbox[0])
+                val xOverlapRatio = if (minWidth > 0) xOverlap.toFloat() / minWidth.toFloat() else 0f
+                val yOverlap = max(0, min(current.bbox[3], candidate.bbox[3]) - max(current.bbox[1], candidate.bbox[1]))
+                val verticalGap = max(0, max(current.bbox[1], candidate.bbox[1]) - min(current.bbox[3], candidate.bbox[3]))
+                val isSeamCollinear = xOverlapRatio >= 0.60f && (yOverlap > 0 || verticalGap <= 20)
+
+                if (iou >= iouThreshold || containment >= 0.70f || isSeamCollinear) {
                     consumed[j] = true
                     // Merge into union bounding box
                     val unionBox = intArrayOf(

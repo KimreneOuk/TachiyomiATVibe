@@ -557,6 +557,33 @@ object TextLayoutPlanner {
         return (bound - origRight).coerceAtLeast(0f)
     }
 
+    /** Free vertical space ABOVE [origTop], bounded by the page top (0) and the nearest obstacle. */
+    private fun freeSpaceVerticalUp(
+        centerY: Float,
+        origTop: Float,
+        obstacles: List<FloatRect>,
+    ): Float {
+        var bound = 0f
+        for (obs in obstacles) {
+            if (obs.bottom <= centerY && obs.bottom > bound) bound = obs.bottom
+        }
+        return (origTop - bound).coerceAtLeast(0f)
+    }
+
+    /** Free vertical space BELOW [origBottom], bounded by [pageHeight] and the nearest obstacle. */
+    private fun freeSpaceVerticalDown(
+        centerY: Float,
+        origBottom: Float,
+        obstacles: List<FloatRect>,
+        pageHeight: Float,
+    ): Float {
+        var bound = pageHeight
+        for (obs in obstacles) {
+            if (obs.top >= centerY && obs.top < bound) bound = obs.top
+        }
+        return (bound - origBottom).coerceAtLeast(0f)
+    }
+
     /**
      * Grow the box into free space when the fit is undersized (below the legibility
      * floor) or the text overflows. Growth is only into the larger-free side,
@@ -578,6 +605,7 @@ object TextLayoutPlanner {
         minLegible: Float,
         currentFont: Float,
         measurer: TextMeasurer,
+        regionConstraint: FloatRect? = null,
     ): GrownBox {
         var bx = baseX
         var by = baseY
@@ -596,71 +624,136 @@ object TextLayoutPlanner {
         }
 
         if (!isVertical) {
-            // Grow HEIGHT first (taller ⇒ more wrap lines ⇒ narrower), then WIDTH
-            // for any residual, each into its larger free side so a box never
-            // crosses an obstacle.
-            val lineH = measurer.lineHeight(targetFont)
-            val centerY = by + bh / 2f
-            val safeTop = by + safePad
-            val safeBottom = by + bh - safePad
-            val freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
-            val freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
-
-            // (a) HEIGHT — reserve at least one line at the floor font (a box too
-            // short for one line could never reach the legibility floor no matter
-            // how wide, collapsing the fit to ~8 px — Defect 3). Then grow so text
-            // wraps into more lines (taller, narrower) instead of widening: pick
-            // the smallest line count within headroom whose wrapped width fits; if
-            // none fits, use all headroom and let the WIDTH step handle the residual.
-            val baseLines = max(1, (sh / lineH).toInt())
-            val maxLinesByHeight = max(baseLines, ((sh + max(freeUp, freeDown)) / lineH).toInt())
-            val swBeforeGrowth = sw
-            val fitLines = (baseLines..maxLinesByHeight).firstOrNull { n ->
-                minWidthForLines(text, targetFont, n, measurer) <= swBeforeGrowth
-            }
-            val targetLines = fitLines ?: maxLinesByHeight
-            val heightGrowthNeeded = (targetLines * lineH - sh).coerceAtLeast(0f)
-            if (heightGrowthNeeded > 0f) {
-                if (freeDown >= freeUp) {
-                    bh += min(freeDown, heightGrowthNeeded)
-                } else {
-                    val g = min(freeUp, heightGrowthNeeded)
-                    by -= g
-                    bh += g
+            val isHorizontalAspect = bw >= bh
+            if (isHorizontalAspect) {
+                // (a) For horizontal/wide bubbles (e.g. Webtoons / LTR dialogue): grow WIDTH first
+                // into the larger free side to wrap into wider proportional lines.
+                val lineH = measurer.lineHeight(targetFont)
+                val maxLines = max(1, (sh / lineH).toInt())
+                val safeLeft = bx + safePad
+                val safeRight = bx + bw - safePad
+                val centerX = bx + bw / 2f
+                var freeLeft = freeSpaceLeft(centerX, safeLeft, obstacles, pageWidth)
+                var freeRight = freeSpaceRight(centerX, safeRight, obstacles, pageWidth)
+                if (regionConstraint != null) {
+                    freeLeft = min(freeLeft, (safeLeft - regionConstraint.left).coerceAtLeast(0f))
+                    freeRight = min(freeRight, (regionConstraint.right - safeRight).coerceAtLeast(0f))
                 }
-                sh = max(1f, bh - safePad * 2f)
-            }
 
-            // (b) WIDTH — grow only for residual overflow into the larger free
-            // side; record which side so placeBlock can re-anchor at the original edge.
-            val maxLines = max(1, (sh / lineH).toInt())
-            val safeLeft = bx + safePad
-            val safeRight = bx + bw - safePad
-            val centerX = bx + bw / 2f
-            val freeLeft = freeSpaceLeft(centerX, safeLeft, obstacles, pageWidth)
-            val freeRight = freeSpaceRight(centerX, safeRight, obstacles, pageWidth)
-            val neededW = minWidthForLines(text, targetFont, maxLines, measurer)
-            val widthGrowthNeeded = (neededW - sw).coerceAtLeast(0f)
-            if (widthGrowthNeeded > 0f) {
-                if (freeRight >= freeLeft) {
-                    bw += min(freeRight, widthGrowthNeeded)
-                    grewRight = true
-                } else {
-                    val g = min(freeLeft, widthGrowthNeeded)
-                    bx -= g
-                    bw += g
-                    grewLeft = true
+                val neededW = minWidthForLines(text, targetFont, maxLines, measurer)
+                val widthGrowthNeeded = (neededW - sw).coerceAtLeast(0f)
+                if (widthGrowthNeeded > 0f) {
+                    if (freeRight >= freeLeft) {
+                        bw += min(freeRight, widthGrowthNeeded)
+                        grewRight = true
+                    } else {
+                        val g = min(freeLeft, widthGrowthNeeded)
+                        bx -= g
+                        bw += g
+                        grewLeft = true
+                    }
+                    sw = max(1f, bw - safePad * 2f)
                 }
-                sw = max(1f, bw - safePad * 2f)
+
+                // (b) Grow HEIGHT only for residual line wrapping within headroom
+                val centerY = by + bh / 2f
+                val safeTop = by + safePad
+                val safeBottom = by + bh - safePad
+                var freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
+                var freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
+                if (regionConstraint != null) {
+                    freeUp = min(freeUp, (safeTop - regionConstraint.top).coerceAtLeast(0f))
+                    freeDown = min(freeDown, (regionConstraint.bottom - safeBottom).coerceAtLeast(0f))
+                }
+
+                val baseLines = max(1, (sh / lineH).toInt())
+                val maxLinesByHeight = max(baseLines, ((sh + max(freeUp, freeDown)) / lineH).toInt())
+                val fitLines = (baseLines..maxLinesByHeight).firstOrNull { n ->
+                    minWidthForLines(text, targetFont, n, measurer) <= sw
+                }
+                val targetLines = fitLines ?: maxLinesByHeight
+                val heightGrowthNeeded = (targetLines * lineH - sh).coerceAtLeast(0f)
+                if (heightGrowthNeeded > 0f) {
+                    if (freeDown >= freeUp) {
+                        bh += min(freeDown, heightGrowthNeeded)
+                    } else {
+                        val g = min(freeUp, heightGrowthNeeded)
+                        by -= g
+                        bh += g
+                    }
+                    sh = max(1f, bh - safePad * 2f)
+                }
+            } else {
+                // (a) Tall/vertical boxes (Japanese vertical source text converted to horizontal English):
+                // Grow HEIGHT first (taller ⇒ more wrap lines ⇒ narrower), then WIDTH
+                val lineH = measurer.lineHeight(targetFont)
+                val centerY = by + bh / 2f
+                val safeTop = by + safePad
+                val safeBottom = by + bh - safePad
+                var freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
+                var freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
+                if (regionConstraint != null) {
+                    freeUp = min(freeUp, (safeTop - regionConstraint.top).coerceAtLeast(0f))
+                    freeDown = min(freeDown, (regionConstraint.bottom - safeBottom).coerceAtLeast(0f))
+                }
+
+                val baseLines = max(1, (sh / lineH).toInt())
+                val maxLinesByHeight = max(baseLines, ((sh + max(freeUp, freeDown)) / lineH).toInt())
+                val swBeforeGrowth = sw
+                val fitLines = (baseLines..maxLinesByHeight).firstOrNull { n ->
+                    minWidthForLines(text, targetFont, n, measurer) <= swBeforeGrowth
+                }
+                val targetLines = fitLines ?: maxLinesByHeight
+                val heightGrowthNeeded = (targetLines * lineH - sh).coerceAtLeast(0f)
+                if (heightGrowthNeeded > 0f) {
+                    if (freeDown >= freeUp) {
+                        bh += min(freeDown, heightGrowthNeeded)
+                    } else {
+                        val g = min(freeUp, heightGrowthNeeded)
+                        by -= g
+                        bh += g
+                    }
+                    sh = max(1f, bh - safePad * 2f)
+                }
+
+                // (b) WIDTH for residual overflow
+                val maxLines = max(1, (sh / lineH).toInt())
+                val safeLeft = bx + safePad
+                val safeRight = bx + bw - safePad
+                val centerX = bx + bw / 2f
+                var freeLeft = freeSpaceLeft(centerX, safeLeft, obstacles, pageWidth)
+                var freeRight = freeSpaceRight(centerX, safeRight, obstacles, pageWidth)
+                if (regionConstraint != null) {
+                    freeLeft = min(freeLeft, (safeLeft - regionConstraint.left).coerceAtLeast(0f))
+                    freeRight = min(freeRight, (regionConstraint.right - safeRight).coerceAtLeast(0f))
+                }
+
+                val neededW = minWidthForLines(text, targetFont, maxLines, measurer)
+                val widthGrowthNeeded = (neededW - sw).coerceAtLeast(0f)
+                if (widthGrowthNeeded > 0f) {
+                    if (freeRight >= freeLeft) {
+                        bw += min(freeRight, widthGrowthNeeded)
+                        grewRight = true
+                    } else {
+                        val g = min(freeLeft, widthGrowthNeeded)
+                        bx -= g
+                        bw += g
+                        grewLeft = true
+                    }
+                    sw = max(1f, bw - safePad * 2f)
+                }
             }
         } else {
-            // Vertical: growing HEIGHT fits more glyphs per column ⇒ fewer columns
-            // ⇒ narrower footprint, relieving horizontal neighbour pressure.
+            // Vertical text layout
             val safeTop = by + safePad
             val safeBottom = by + bh - safePad
             val centerY = by + bh / 2f
-            val freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
-            val freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
+            var freeUp = freeSpaceVerticalUp(centerY, safeTop, obstacles)
+            var freeDown = freeSpaceVerticalDown(centerY, safeBottom, obstacles, pageHeight)
+            if (regionConstraint != null) {
+                freeUp = min(freeUp, (safeTop - regionConstraint.top).coerceAtLeast(0f))
+                freeDown = min(freeDown, (regionConstraint.bottom - safeBottom).coerceAtLeast(0f))
+            }
 
             val charStep = targetFont * VERTICAL_CHAR_STEP
             val colStep = targetFont * VERTICAL_COL_STEP
@@ -710,27 +803,6 @@ object TextLayoutPlanner {
         val grewRight: Boolean,
         val grewLeft: Boolean,
     )
-
-    private fun freeSpaceVerticalUp(centerY: Float, origTop: Float, obstacles: List<FloatRect>): Float {
-        var bound = 0f
-        for (obs in obstacles) {
-            if (obs.bottom <= centerY && obs.bottom > bound) bound = obs.bottom
-        }
-        return (origTop - bound).coerceAtLeast(0f)
-    }
-
-    private fun freeSpaceVerticalDown(
-        centerY: Float,
-        origBottom: Float,
-        obstacles: List<FloatRect>,
-        pageHeight: Float,
-    ): Float {
-        var bound = pageHeight
-        for (obs in obstacles) {
-            if (obs.top >= centerY && obs.top < bound) bound = obs.top
-        }
-        return (bound - origBottom).coerceAtLeast(0f)
-    }
 
     /** True when the rendered text at [font] would exceed the safe rect. */
     private fun overflows(

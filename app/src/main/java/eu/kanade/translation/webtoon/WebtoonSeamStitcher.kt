@@ -255,7 +255,13 @@ object WebtoonSeamStitcher {
                         y = pBox[1].toFloat(),
                         width = (pBox[2] - pBox[0]).toFloat(),
                         height = (pBox[3] - pBox[1]).toFloat(),
-                        text = if (linesN.isNotEmpty()) linesN.joinToString("\n") else unified.text,
+                        text = unified.text, // Whole sentence preserved for translation engine
+                        translation = if (unified.translation.isNotBlank()) {
+                            val transLines = unified.translation.split("\n")
+                            partitionTextLines(transLines, fractionN).first.joinToString("\n")
+                        } else {
+                            ""
+                        },
                     )
                     newBlocksN.add(blockN)
                 }
@@ -267,7 +273,13 @@ object WebtoonSeamStitcher {
                         y = pBox[1].toFloat(),
                         width = (pBox[2] - pBox[0]).toFloat(),
                         height = (pBox[3] - pBox[1]).toFloat(),
-                        text = if (linesNPlus1.isNotEmpty()) linesNPlus1.joinToString("\n") else unified.text,
+                        text = unified.text, // Whole sentence preserved for translation engine
+                        translation = if (unified.translation.isNotBlank()) {
+                            val transLines = unified.translation.split("\n")
+                            partitionTextLines(transLines, fractionN).second.joinToString("\n")
+                        } else {
+                            ""
+                        },
                     )
                     newBlocksNPlus1.add(blockNPlus1)
                 }
