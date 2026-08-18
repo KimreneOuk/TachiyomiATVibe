@@ -31,6 +31,13 @@ class MangaOcrEngine : RoiOcrEngine {
     private var vocab: List<String> = emptyList()
     private var loggedTensorShapes = false
 
+    /**
+     * Always CPU: the autoregressive decoder loop runs many tiny per-step
+     * graphlets where NPU dispatch latency would dominate. Explicit override
+     * so perf logging composes it like the other engines.
+     */
+    override val executionProviderLabel: String = "cpu"
+
     private val decoderThreadCount = maxOf(1, minOf(Runtime.getRuntime().availableProcessors() / 2, 2))
     private val kCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)
     private val vCachePool = DirectBufferPool(4 * 1 * 4 * MAX_LEN * 64 * 4, maxPoolSize = 2)

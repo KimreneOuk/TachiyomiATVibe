@@ -134,6 +134,21 @@ android {
                 "assets/models/ocr/paddle-v6-small/inference.yml",
             ),
         )
+        // TachiyomiAT: the QNN debug override experiment — dropping newer QAIRT
+        // libQnn*.so files into app/src/debug/jniLibs/arm64-v8a/ lets a debug
+        // build ship a newer QNN runtime than the onnxruntime-android-qnn AAR
+        // bundles. Release builds carry no such files, so this never fires there.
+        jniLibs.pickFirsts.addAll(
+            listOf(
+                "**/libQnnHtp.so",
+                "**/libQnnHtpPrepare.so",
+                "**/libQnnSystem.so",
+                "**/libQnnGpu.so",
+                "**/libQnnDsp.so",
+                "**/libQnnHtpV*Stub.so",
+                "**/libQnnHtpV*Skel.so",
+            ),
+        )
     }
 
     dependenciesInfo {

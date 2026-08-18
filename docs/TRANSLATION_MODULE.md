@@ -249,17 +249,42 @@ default (arena-on) config, so a forward ORT bump cannot brick translation.
 
 Hardware routing goes through `HardwareDiscoveryEngine` (session-scoped latching
 circuit breaker): physical arm64 Snapdragon devices probe QNN HTP once, other
-devices probe NNAPI, and everything else latches CPU/XNNPACK. Probing and any
-accelerator failure permanently demote the process to CPU.
+devices probe NNAPI, and everything else latches CPU/XNNPACK. Probes are
+**end-to-end**: they create a real strict session (CPU fallback disabled) from
+the embedded 91-byte single-Relu `QnnProbeModel`, ordered over
+`soc_model+htp_arch -> soc_model -> autodetect` combos. This matters because
+merely registering the QNN EP on `SessionOptions` cannot fail — `libQnnHtp.so`
+is loaded and `QnnDevice_create()` runs only during session creation, where a
+QNN failure is non-fatal and silently assigns every node to the CPU EP (the
+root cause behind the app reporting `route=QUALCOMM_QNN_HTP` at CPU speeds on
+Android 16 Snapdragons; see
+`Plan/active/2026-08-17-npu-acceleration-architecture/progress.md` and upstream
+onnxruntime-qnn#715). Accelerator sessions are created strict as well, so a
+created "qnn_htp" session truly executes on the NPU and per-model partition
+failures fall back to CPU for that model alone without tripping the breaker.
+`[translation_perf]` logs therefore carry a `providers(...)` block naming the
+EP that actually served each engine, and debug builds dump a one-shot
+`[qnn_diagnostics]` report (probe matrix, ORT providers, packaged QNN libs,
+real-model strict run with context-cache timings).
 
-Two packaging/runtime constraints that are easy to get wrong:
+Three packaging/runtime constraints that are easy to get wrong:
 
 - The standard `com.microsoft.onnxruntime:onnxruntime-android` AAR has **no QNN
   execution provider** — `addQnn()` always throws and the probe silently latches
   CPU (skipping NNAPI on Snapdragon too). The QNN-enabled drop-in artifact is
   `com.microsoft.onnxruntime:onnxruntime-android-qnn` (same Java API, arm64-v8a
-  only; it does not compile XNNPACK, which is why XNNPACK registration is
-  treated as optional). See `gradle/libs.versions.toml`.
+  only; it compiles neither XNNPACK nor NNAPI, which is why XNNPACK
+  registration is treated as optional and the Settings picker hides NNAPI).
+  See `gradle/libs.versions.toml`.
+- ORT 1.27 parses QNN provider options strictly: `soc_model`/`htp_arch` are
+  **integer strings** (names like `"SM8650"` throw in `std::stoi`), `htp_arch`
+  accepts only `0/68/69/73/75/81` (v79/SM8750 is unparseable — PR #31638), and
+  context caching is **not** a provider option: `qnn_context_cache_enable`/
+  `qnn_context_cache_path` are silently ignored; caching must use the
+  `ep.context_enable` + `ep.context_file_path` session config entries with a
+  per-model file path. All of this lives in
+  `DeviceCapability.qnnSocModel/qnnHtpArch` and
+  `OnnxRuntimeProvider.buildQnnProviderOptions`.
 - The fixed-512 AOT model is the official Qualcomm AI Hub AOT-GAN export. Its
   I/O contract is **[0,1]**: pixels feed as `channel/255` without pre-masking
   (the graph masks internally) and output decodes as `value*255` — encoded via
@@ -269,11 +294,14 @@ Two packaging/runtime constraints that are easy to get wrong:
 
 Per-model routing within that latch: the text detector, panel detector, bubble
 segmenter, and PaddleOCR det go through `createSessionWithFallback` (CPU retry
-when graph compilation fails). MangaOcr and PaddleOCR recognition stay CPU-only.
-AOT inpainting prefers XNNPACK, keeps a strict-NNAPI fixed-512 session behind
-`NnapiCapabilityGate`/`NnapiHealthMonitor`, and runs the QNN HTP fixed-512
-session ahead of both when the route latched Qualcomm, with a
-QNN -> XNNPACK -> push-pull fallback cascade.
+when the strict accelerator session cannot take the graph). MangaOcr and
+PaddleOCR recognition stay CPU-only. AOT inpainting prefers XNNPACK (labeled
+CPU honestly when the artifact lacks it), keeps a strict-NNAPI fixed-512
+session behind `NnapiCapabilityGate`/`NnapiHealthMonitor`, and runs the strict
+QNN HTP fixed-512 session ahead of both when the route latched Qualcomm, with a
+QNN -> XNNPACK -> push-pull fallback cascade. For debug-only QAIRT
+runtime-override experiments (newer `libQnn*.so` than the AAR ships), see
+`app/src/debug/jniLibs/arm64-v8a/README.md`.
 
 The trade-off is a modest per-inference CPU cost (the arena also serves as a
 free-list, so without it each inference goes through malloc/free) in exchange

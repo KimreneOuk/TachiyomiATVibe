@@ -31,6 +31,10 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
     private var dictionary: List<String> = emptyList()
     private var inputName: String = "x"
 
+    /** Provider that actually serves this recognizer ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
+    override var executionProviderLabel: String = "uninitialized"
+        private set
+
     // TachiyomiAT: pooled DIRECT buffer for the rec input. The rec width is bucketed
     // to fixed shapes (640 or 1600), so the pool is sized for MAX_RECOGNITION_WIDTH (1600);
     // each call exposes only [width x height x 3] floats via the buffer limit.
@@ -52,6 +56,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
             session = OnnxRuntimeProvider.createSessionWithFallback(
                 modelFile.absolutePath,
                 useAccelerator = true,
+                providerSink = { executionProviderLabel = it },
             )
             inputName = session?.inputNames?.firstOrNull() ?: "x"
             logcat(LogPriority.INFO) {

@@ -11,13 +11,18 @@ import uy.kohesive.injekt.api.get
 /**
  * TachiyomiAT: Hardware Discovery Engine and Session-Scoped Latching Circuit Breaker.
  *
- * Resolves the optimal inference execution provider (QNN HTP NPU, NNAPI, or CPU XNNPACK)
- * during cold boot initialization and latches the decision in a volatile field.
- * Live page translations incur 0.0ms overhead on subsequent calls.
+ * Resolves the inference execution provider (QNN HTP NPU, NNAPI, or CPU) during cold
+ * boot initialization and latches the decision in a volatile field. Live page
+ * translations incur 0.0ms overhead on subsequent calls.
  *
- * If any hardware accelerator encounters fatal driver errors or compile failures during a
- * session, [tripCircuitBreaker] permanently latches [HardwareRoute.CPU_XNNPACK] for the
- * remaining process lifetime.
+ * Probes are end-to-end: they create a real strict session (CPU fallback disabled)
+ * from [QnnProbeModel], because merely registering an execution provider on
+ * SessionOptions cannot fail even when the accelerator backend is broken — the
+ * failure surfaces (non-fatally, as silent CPU execution) only during session
+ * creation. A latched route therefore means the accelerator genuinely engaged.
+ *
+ * If an accelerator hits fatal registration or runtime driver errors, the circuit
+ * breaker permanently latches [HardwareRoute.CPU_XNNPACK] for the process lifetime.
  */
 object HardwareDiscoveryEngine {
 
@@ -131,6 +136,7 @@ object HardwareDiscoveryEngine {
     }
 
     private fun discoverRoute(): HardwareRoute {
+        QnnDiagnostics.runOnce()
         val pref = try {
             Injekt.get<TranslationPreferences>()
                 .translationHardwareAccelerator()
@@ -167,34 +173,42 @@ object HardwareDiscoveryEngine {
     }
 
     private fun probeQnnHtp(): Boolean {
-        var opts: ai.onnxruntime.OrtSession.SessionOptions? = null
-        return try {
-            opts = ai.onnxruntime.OrtSession.SessionOptions()
-            val qnnOptions = buildMap {
-                put("backend_type", "htp")
-                put("htp_performance_mode", "burst")
-                put("htp_graph_finalization_optimization_mode", "3")
-                DeviceCapability.qnnSocModel?.let { put("soc_model", it) }
-            }
-            opts.addQnn(qnnOptions)
-            logcat(LogPriority.INFO) { "[hardware_discovery] QNN HTP probe registered OK" }
-            true
-        } catch (t: Throwable) {
-            logcat(LogPriority.WARN, t) { "[hardware_discovery] QNN HTP probe failed: ${t.message}" }
-            false
-        } finally {
+        for ((soc, arch) in qnnProbeCombos(DeviceCapability.qnnSocModel, DeviceCapability.qnnHtpArch)) {
+            var opts: ai.onnxruntime.OrtSession.SessionOptions? = null
             try {
-                opts?.close()
-            } catch (_: Throwable) {}
+                opts = ai.onnxruntime.OrtSession.SessionOptions()
+                opts.addQnn(OnnxRuntimeProvider.buildQnnProviderOptions(socModel = soc, htpArch = arch))
+                opts.addConfigEntry("session.disable_cpu_ep_fallback", "1")
+                OnnxRuntimeProvider.environment.createSession(QnnProbeModel.MODEL_BYTES, opts).use { session ->
+                    logcat(LogPriority.INFO) {
+                        "[hardware_discovery] QNN HTP probe OK (soc_model=$soc htp_arch=$arch): " +
+                            "strict session created end-to-end inputs=${session.inputNames}"
+                    }
+                }
+                return true
+            } catch (t: Throwable) {
+                logcat(LogPriority.WARN, t) {
+                    "[hardware_discovery] QNN HTP probe combo failed (soc_model=$soc htp_arch=$arch): ${t.message}"
+                }
+            } finally {
+                try {
+                    opts?.close()
+                } catch (_: Throwable) {}
+            }
         }
+        logcat(LogPriority.WARN) { "[hardware_discovery] All QNN HTP probe combos failed; HTP unusable with this device/runtime combination" }
+        return false
     }
 
     private fun probeNnapi(): Boolean {
         var opts: ai.onnxruntime.OrtSession.SessionOptions? = null
         return try {
             opts = ai.onnxruntime.OrtSession.SessionOptions()
+            opts.addConfigEntry("session.disable_cpu_ep_fallback", "1")
             opts.addNnapi()
-            logcat(LogPriority.INFO) { "[hardware_discovery] NNAPI probe registered OK" }
+            OnnxRuntimeProvider.environment.createSession(QnnProbeModel.MODEL_BYTES, opts).use {
+                logcat(LogPriority.INFO) { "[hardware_discovery] NNAPI probe OK: strict session created end-to-end" }
+            }
             true
         } catch (t: Throwable) {
             logcat(LogPriority.WARN, t) { "[hardware_discovery] NNAPI probe failed: ${t.message}" }
@@ -204,5 +218,11 @@ object HardwareDiscoveryEngine {
                 opts?.close()
             } catch (_: Throwable) {}
         }
+    }
+
+    internal fun qnnProbeCombos(socModel: String?, htpArch: String?): List<Pair<String?, String?>> = buildList {
+        if (socModel != null && htpArch != null) add(socModel to htpArch)
+        if (socModel != null) add(socModel to null)
+        add(null to null)
     }
 }

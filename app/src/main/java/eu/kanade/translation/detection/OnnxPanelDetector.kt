@@ -42,6 +42,10 @@ class OnnxPanelDetector {
 
     private var session: OrtSession? = null
 
+    /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
+    var executionProviderLabel: String = "uninitialized"
+        private set
+
     // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor. ORT
     // consumes it in place so it MUST outlive the tensor; maxPoolSize=2 bounds
     // native memory. Same contract as OnnxPageTextDetector.
@@ -58,6 +62,7 @@ class OnnxPanelDetector {
         session = OnnxRuntimeProvider.createSessionWithFallback(
             modelFile.absolutePath,
             useAccelerator = true,
+            providerSink = { executionProviderLabel = it },
         )
         logcat(LogPriority.INFO) {
             "PanelDetector session created from ${modelFile.name} " +

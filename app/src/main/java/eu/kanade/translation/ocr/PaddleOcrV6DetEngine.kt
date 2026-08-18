@@ -55,6 +55,10 @@ class PaddleOcrV6DetEngine : Closeable {
     private var session: OrtSession? = null
     private var inputName: String = "x"
 
+    /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
+    var executionProviderLabel: String = "uninitialized"
+        private set
+
     @Volatile
     private var closed: Boolean = false
 
@@ -71,6 +75,7 @@ class PaddleOcrV6DetEngine : Closeable {
         session = OnnxRuntimeProvider.createSessionWithFallback(
             modelFile.absolutePath,
             useAccelerator = true,
+            providerSink = { executionProviderLabel = it },
         )
         inputName = session?.inputNames?.firstOrNull() ?: "x"
         logcat(LogPriority.INFO) {

@@ -16,6 +16,10 @@ class OnnxPageTextDetector {
 
     private var session: OrtSession? = null
 
+    /** Provider that actually serves this detector ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
+    var executionProviderLabel: String = "uninitialized"
+        private set
+
     // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor (contract
     // #12). Heap-backed buffers caused a per-call native-copy leak; maxPoolSize=2
     // bounds resident memory to two ~4.8 MiB buffers regardless of chapter length.
@@ -34,11 +38,13 @@ class OnnxPageTextDetector {
         logcat(LogPriority.INFO) {
             "Detector init: ${modelFile.absolutePath} (${modelFile.length()}B exists=${modelFile.exists()})"
         }
-        // detector-v4: NNAPI graph-compile fails on Split op (AddNnapiSplit ORT_FAIL).
-        // Use the fallback wrapper: tries NNAPI, retries CPU on compile failure.
+        // detector-v4: the accelerator graph-compile can fail on unsupported ops
+        // (NNAPI rejects the Split op). The fallback wrapper creates a strict
+        // accelerator session first and retries the model on CPU on failure.
         session = OnnxRuntimeProvider.createSessionWithFallback(
             modelFile.absolutePath,
             useAccelerator = true,
+            providerSink = { executionProviderLabel = it },
         )
         logcat(LogPriority.INFO) {
             "Detector session created from ${modelFile.name} " +

@@ -6,6 +6,13 @@ import java.io.Closeable
 interface RoiOcrEngine : Closeable {
     suspend fun recognize(crop: Bitmap): String
 
+    /**
+     * Provider that actually serves this engine ("qnn_htp"/"nnapi"/"cpu"), for
+     * honest perf logging. Defaults to CPU; accelerator-backed engines
+     * override it after session creation.
+     */
+    val executionProviderLabel: String get() = "cpu"
+
     suspend fun recognizeWithConf(crop: Bitmap): Pair<String, Float> = recognize(crop) to 1f
 
     suspend fun recognizeBatch(crops: List<Bitmap>): List<String> = crops.map { recognize(it) }

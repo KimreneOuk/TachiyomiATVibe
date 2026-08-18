@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
+import tachiyomi.domain.translation.TranslationHardwareAccelerator
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.TranslationReadingOrder
 import tachiyomi.i18n.at.ATMR
@@ -58,7 +59,34 @@ object SettingsTranslationScreen : SearchableSettings {
             ),
             getTranslationLangGroup(translationPreferences),
             getInpaintingModeGroup(translationPreferences),
+            getHardwareAccelerationGroup(translationPreferences),
             getEngineGroup(translationPreferences),
+        )
+    }
+
+    @Composable
+    private fun getHardwareAccelerationGroup(
+        translationPreferences: TranslationPreferences,
+    ): Preference.PreferenceGroup {
+        // NNAPI is deliberately absent: the onnxruntime-android-qnn artifact does
+        // not compile the NNAPI execution provider, so offering it would be a lie.
+        val accelerators = mapOf(
+            TranslationHardwareAccelerator.AUTO to stringResource(ATMR.strings.pref_hardware_accelerator_auto),
+            TranslationHardwareAccelerator.QUALCOMM_NPU to stringResource(
+                ATMR.strings.pref_hardware_accelerator_qualcomm_npu,
+            ),
+            TranslationHardwareAccelerator.CPU_XNNPACK to stringResource(ATMR.strings.pref_hardware_accelerator_cpu),
+        )
+        return Preference.PreferenceGroup(
+            title = stringResource(ATMR.strings.pref_hardware_acceleration),
+            preferenceItems = persistentListOf(
+                Preference.PreferenceItem.ListPreference(
+                    pref = translationPreferences.translationHardwareAccelerator(),
+                    title = stringResource(ATMR.strings.pref_hardware_acceleration),
+                    subtitle = stringResource(ATMR.strings.pref_hardware_acceleration_summary),
+                    entries = accelerators.toImmutableMap(),
+                ),
+            ),
         )
     }
 

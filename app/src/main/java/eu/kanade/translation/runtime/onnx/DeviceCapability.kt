@@ -20,24 +20,51 @@ object DeviceCapability {
     }
 
     /**
-     * QNN_SOC_MODEL enum value (QnnTypes.h) for this SoC, or null when unknown.
-     * QNN's deviceCreate() SoC autodetection fails with
-     * QNN_DEVICE_ERROR_INVALID_CONFIG on some devices unless the soc_model
-     * provider option carries a recognized enum; ORT derives the HTP arch
-     * from it. P-variants map to their base family (SM8750P -> SM8750).
+     * QNN_SOC_MODEL enum value (QnnTypes.h, QAIRT SDK) for this SoC, or null when unknown.
+     * ORT 1.27's QNN EP parses soc_model as a plain integer (std::stoi), so string
+     * names like "SM8650" throw. P-variants map to their base family (SM8750P -> SM8750).
+     * The enum is deprecated upstream and has no entry for SoCs newer than SM8850,
+     * so newer chips return null and rely on the htp_arch fallback or QNN autodetection.
      */
-    val qnnSocModel: String? by lazy {
-        when (socModel.trim().uppercase().trimEnd('P')) {
+    val qnnSocModel: String? by lazy { qnnSocModelFor(socModel) }
+
+    /**
+     * HTP arch number for this SoC, or null when it cannot be expressed.
+     * ORT 1.27 parses htp_arch as one of 0/68/69/73/75/81. v79 (SM8750) is
+     * rejected by the parser (unmerged onnxruntime PR #31638), so SM8750
+     * deliberately omits the arch and the probe falls through to the
+     * soc_model-only and autodetect combos instead.
+     */
+    val qnnHtpArch: String? by lazy { qnnHtpArchFor(socModel) }
+
+    internal fun qnnSocModelFor(soc: String): String? =
+        when (soc.trim().uppercase().trimEnd('P')) {
             "SDM845" -> "1"
             "SDM835" -> "2"
-            "SM8450", "SM8475" -> "36"
+            "SM8350" -> "30"
+            "SM8450" -> "36"
+            "SM8475" -> "42"
             "SM8550" -> "43"
+            "SM6450" -> "50"
+            "SM7435" -> "61"
+            "SM7550" -> "64"
+            "SM8635" -> "68"
             "SM8650" -> "57"
             "SM8750" -> "69"
-            "SM8845" -> "97"
+            "SM7675" -> "70"
+            "SM8735" -> "85"
+            "SM8850" -> "87"
             else -> null
         }
-    }
+
+    internal fun qnnHtpArchFor(soc: String): String? =
+        when (soc.trim().uppercase().trimEnd('P')) {
+            "SM8350" -> "68"
+            "SM8450", "SM8475" -> "69"
+            "SM8550" -> "73"
+            "SM8650" -> "75"
+            else -> null
+        }
 
     val isProbablyEmulator: Boolean by lazy {
         val fingerprint = Build.FINGERPRINT.orEmpty().lowercase()

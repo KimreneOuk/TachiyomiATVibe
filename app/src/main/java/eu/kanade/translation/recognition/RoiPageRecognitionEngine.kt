@@ -557,6 +557,9 @@ class RoiPageRecognitionEngine(
         val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
         logcat(LogPriority.INFO) {
             "[translation_perf] route=${HardwareDiscoveryEngine.activeRoute.name} " +
+                "providers(detector=${detector?.executionProviderLabel ?: "n/a"}, " +
+                "segmenter=${bubbleSegmenter?.executionProviderLabel ?: "n/a"}, " +
+                "ocr=${localOcrEngine.executionProviderLabel}) " +
                 "stage=recognition total=${elapsedMs}ms detector=${detectMs}ms segmenter=${segmentMs}ms " +
                 "ocr=${ocrMs}ms (blocks=${pageTranslation.blocks.size} batched=${!localOcrEngine.prefersHorizontalText})"
         }
@@ -607,7 +610,8 @@ class RoiPageRecognitionEngine(
         val inpaintMs = (System.nanoTime() - inpaintStart) / 1_000_000
         logcat(LogPriority.INFO) {
             "[translation_perf] route=${HardwareDiscoveryEngine.activeRoute.name} " +
-                "stage=inpainting total=${inpaintMs}ms mode=$inpaintingMode maskBoxes=${pageTranslation.inpaintMaskBoxes.size}"
+                "stage=inpainting total=${inpaintMs}ms mode=$inpaintingMode maskBoxes=${pageTranslation.inpaintMaskBoxes.size} " +
+                "inpaintRoute=${inpainting?.lastAcceptedRoute ?: "n/a"}"
         }
         return result
     }

@@ -92,6 +92,15 @@ class AOTInpainting {
     private val bubbleCleaner = SmartBubbleTextCleaner()
     var paddleDetector: eu.kanade.translation.ocr.PaddleOcrV6DetEngine? = null
 
+    /**
+     * Route tag of the most recently accepted neural candidate
+     * (fixed_qnn_htp / fixed_nnapi / fixed / dynamic), for honest page-level
+     * perf logging. Null before the first acceptance.
+     */
+    @Volatile
+    var lastAcceptedRoute: String? = null
+        private set
+
     fun initialize(fixedModelFile: File?, dynamicModelFile: File?) {
         fixedSession = initializeSession(fixedModelFile, AotModelContract.Kind.FIXED_512, "fixed")
         dynamicSession = initializeSession(dynamicModelFile, AotModelContract.Kind.DYNAMIC, "dynamic")
@@ -114,8 +123,13 @@ class AOTInpainting {
         return try {
             // Persist compiled HTP graph binaries next to the models so the
             // multi-second finalization is paid once per install, not per run.
-            val contextCacheDir = File(modelFile.parentFile, "qnn-cache")
-            opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(contextCacheDir)
+            // The path must be a per-model FILE — ORT writes/loads the exact
+            // context binary at ep.context_file_path.
+            val contextCacheFile = File(File(modelFile.parentFile, "qnn-cache"), "${modelFile.name}.qnnctx.bin")
+            opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(
+                contextCacheFile = contextCacheFile,
+                strictCpuFallbackDisabled = true,
+            )
             created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
             AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(created))
             logcat(LogPriority.INFO) {
@@ -128,7 +142,10 @@ class AOTInpainting {
             } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
             }
-            HardwareDiscoveryEngine.tripCircuitBreaker("qnn_init_failed", error)
+            // Strict options mean this failure is real (HTP broken or the graph
+            // is not HTP-partitionable). Device health is gated by the hardware
+            // probe, so this is a per-model demotion: do not trip the breaker
+            // and cost every other engine its accelerator.
             logcat(LogPriority.ERROR, error) {
                 "[inpaint] route=qnn_htp init=failed model=${modelFile.name} ${DeviceCapability.describe()}"
             }
@@ -214,8 +231,11 @@ class AOTInpainting {
             }
             return null
         }
+        var xnnpackRegistered = false
         val opts = try {
-            OnnxRuntimeProvider.createRequiredXnnpackSessionOptions()
+            OnnxRuntimeProvider.createRequiredXnnpackSessionOptions { registered ->
+                xnnpackRegistered = registered
+            }
         } catch (error: Throwable) {
             logcat(LogPriority.ERROR, error) {
                 "[inpaint] route=$route init=failed provider=XNNPACK required=true model=${modelFile.name}"
@@ -228,7 +248,7 @@ class AOTInpainting {
             val contract = readContract(created)
             AotModelContract.validate(kind, contract)
             logcat(LogPriority.INFO) {
-                "[inpaint] route=$route init=ok provider=XNNPACK model=${modelFile.name} " +
+                "[inpaint] route=$route init=ok provider=${if (xnnpackRegistered) "XNNPACK" else "CPU"} model=${modelFile.name} " +
                     "image=${contract.imageShape.contentToString()} mask=${contract.maskShape.contentToString()} " +
                     "output=${contract.outputShape.contentToString()}"
             }
@@ -238,7 +258,7 @@ class AOTInpainting {
                 created?.close()
             } catch (_: Throwable) {}
             logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=$route init=failed provider=XNNPACK model=${modelFile.name}"
+                "[inpaint] route=$route init=failed provider=${if (xnnpackRegistered) "XNNPACK" else "CPU"} model=${modelFile.name}"
             }
             null
         } finally {
@@ -838,6 +858,7 @@ class AOTInpainting {
                     loggedFailure(route, "guard_rejected", crop, side, null, started, stats)
                     StrictNnapiFallback.Candidate.Rejected(stats)
                 } else {
+                    lastAcceptedRoute = route
                     logcat(LogPriority.INFO) {
                         "[inpaint] route=$route accepted totalMs=${elapsedMs(started)} crop=${side}x$side " +
                             "tensor=512x512 offset=${prepared.offset},${prepared.offset} guard=pass"
@@ -911,6 +932,7 @@ class AOTInpainting {
             )
             val pixels = IntArray(side * side)
             candidate.getPixels(pixels, 0, side, 0, 0, side, side)
+            lastAcceptedRoute = route
             logcat(LogPriority.INFO) {
                 "[inpaint] route=$route accepted totalMs=${elapsedMs(started)} crop=${side}x$side " +
                     "tensor=${if (fixedShape) "512x512" else "${side}x$side"} offset=${crop[0]},${crop[1]} guard=pass"

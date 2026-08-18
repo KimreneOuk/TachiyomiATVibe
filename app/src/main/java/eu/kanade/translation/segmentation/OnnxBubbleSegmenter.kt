@@ -18,6 +18,10 @@ import java.nio.FloatBuffer
 class OnnxBubbleSegmenter {
     private var session: OrtSession? = null
 
+    /** Provider that actually serves this segmenter ("qnn_htp"/"nnapi"/"cpu"), for honest perf logging. */
+    var executionProviderLabel: String = "uninitialized"
+        private set
+
     // TachiyomiAT: pooled DIRECT buffer for the fixed 1x3x640x640 tensor; ORT
     // consumes it in place so it MUST outlive the tensor. maxPoolSize=2 bounds
     // resident native memory. Same contract as OnnxPageTextDetector.
@@ -30,6 +34,7 @@ class OnnxBubbleSegmenter {
         session = OnnxRuntimeProvider.createSessionWithFallback(
             modelFile.absolutePath,
             useAccelerator = true,
+            providerSink = { executionProviderLabel = it },
         )
         val current = requireNotNull(session)
         require(current.inputNames == setOf("images")) {
