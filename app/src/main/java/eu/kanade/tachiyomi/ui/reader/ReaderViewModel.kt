@@ -671,7 +671,7 @@ class ReaderViewModel @JvmOverloads constructor(
             .map { s ->
                 val enabled = translationPreferences.translationEnabled().get()
                 val page = currentPageReaderPage(s)
-                val hasTranslation = page?.translatedStream != null
+                val hasTranslation = page?.translatedStream != null || page?.translation?.shouldShowTranslationOverlay == true
                 val showingTranslated = page?.showTranslatedImage == true
                 CompareState(
                     translationEnabled = enabled,
@@ -713,7 +713,7 @@ class ReaderViewModel @JvmOverloads constructor(
     fun setCurrentPageShowTranslated(showTranslated: Boolean) {
         val page = currentPageReaderPage() ?: return
         // Nothing to do (and nothing to show) if there's no translation to swap to.
-        if (showTranslated && page.translatedStream == null) return
+        if (showTranslated && page.translatedStream == null && page.translation?.shouldShowTranslationOverlay != true) return
         if (page.showTranslatedImage == showTranslated) return
         page.showTranslatedImage = showTranslated
         page.translationToggled = true

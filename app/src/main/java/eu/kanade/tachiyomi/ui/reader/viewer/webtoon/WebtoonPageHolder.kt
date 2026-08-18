@@ -23,6 +23,7 @@ import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
+import eu.kanade.translation.model.shouldShowTranslationOverlay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -354,7 +355,7 @@ class WebtoonPageHolder(
             viewer.activity.viewModel.attachTranslatedStreamForPage(boundPage)
         }
         if (!boundPage.translationToggled) {
-            boundPage.showTranslatedImage = showTranslations && boundPage.translatedStream != null
+            boundPage.showTranslatedImage = showTranslations && (boundPage.translatedStream != null || boundPage.translation?.shouldShowTranslationOverlay == true)
         }
         val streamFn = boundPage.stream ?: return
         frame.prepareTranslationImage(boundPage.showTranslatedImage)

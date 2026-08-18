@@ -20,6 +20,7 @@ import eu.kanade.tachiyomi.ui.webview.WebViewActivity
 import eu.kanade.tachiyomi.widget.ViewPagerAdapter
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
+import eu.kanade.translation.model.shouldShowTranslationOverlay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -342,7 +343,7 @@ class PagerPageHolder(
             viewer.activity.viewModel.attachTranslatedStreamForPage(page)
         }
         if (!page.translationToggled) {
-            page.showTranslatedImage = showTranslations && page.translatedStream != null
+            page.showTranslatedImage = showTranslations && (page.translatedStream != null || page.translation?.shouldShowTranslationOverlay == true)
         }
         val streamFn = page.stream ?: return
         prepareTranslationImage(page.showTranslatedImage)
