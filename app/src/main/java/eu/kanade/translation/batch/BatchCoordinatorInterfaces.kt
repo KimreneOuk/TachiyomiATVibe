@@ -29,6 +29,17 @@ interface TranslatorLaneWorker {
     suspend fun translate(ref: OcrReadyPageRef)
 }
 
+interface ChunkTranslatorLaneWorker : TranslatorLaneWorker {
+    /** Translate a whole chunk's Pass-1 work items with rolling context. */
+    suspend fun translateChunk(
+        chunk: PageChunk,
+        refs: List<OcrReadyPageRef>,
+        rollingContext: RollingContextPacket,
+    ): RollingContextPacket? = null
+
+    override suspend fun translate(ref: OcrReadyPageRef) {}
+}
+
 interface RenderJoinWorker {
     fun onNativeBranchDone(pageKey: String)
     fun onTranslationBranchDone(pageKey: String)

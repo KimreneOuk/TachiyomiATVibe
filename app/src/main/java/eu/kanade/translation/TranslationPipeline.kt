@@ -8,9 +8,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
-import eu.kanade.translation.batch.BatchCoordinator
 import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.BatchResumeGateDecider
+import eu.kanade.translation.batch.ChunkBatchCoordinator
 import eu.kanade.translation.batch.NativeLaneWorker
 import eu.kanade.translation.batch.OcrReadyPageRef
 import eu.kanade.translation.batch.RenderJoinWorker
@@ -210,6 +210,21 @@ class TranslationPipeline(
      */
     @Volatile
     var batchTrackerFactory: ((chapterId: Long, store: ChapterTranslationStore, orderedPageKeys: List<String>) -> TranslationBatchProgressTracker?)? = null
+
+    private val activeBatchCoordinators = ConcurrentHashMap<Long, ChunkBatchCoordinator>()
+
+    fun updateBatchViewportPriority(chapterId: Long, visiblePageIndex: Int) {
+        activeBatchCoordinators[chapterId]?.updateActiveViewport(visiblePageIndex)
+    }
+
+    fun updateActiveViewport(chapterId: Long, visiblePageIndex: Int) {
+        updateBatchViewportPriority(chapterId, visiblePageIndex)
+    }
+
+    fun clearBatchViewportPriority(chapterId: Long) {
+        activeBatchCoordinators[chapterId]?.clearActiveViewport()
+    }
+
 
     private suspend fun <T> withNativeLane(
         timeoutMs: Long,
@@ -1815,7 +1830,7 @@ class TranslationPipeline(
                 }
             }
 
-            val coordinator = BatchCoordinator(
+            val coordinator = ChunkBatchCoordinator(
                 nativeWorker = nativeWorker,
                 translatorWorker = translatorWorker,
                 renderJoin = renderJoin,
