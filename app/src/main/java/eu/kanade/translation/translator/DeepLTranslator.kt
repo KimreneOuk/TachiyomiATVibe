@@ -23,7 +23,7 @@ class DeepLTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
     private val apiKey: String,
-) : TextTranslator {
+) : BaseTranslator() {
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)

@@ -45,6 +45,25 @@ object TranslationPrompts {
         return sb.toString()
     }
 
+    /** Overload accepting a [eu.kanade.translation.batch.RollingContextPacket] directly. */
+    fun contextPrefix(
+        packet: eu.kanade.translation.batch.RollingContextPacket,
+        extraGlossary: String = "",
+    ): String {
+        val g = extraGlossary.trim()
+        val p = packet.toPromptContext().trim()
+        if (g.isEmpty() && p.isEmpty()) return ""
+        val sb = StringBuilder()
+        if (g.isNotEmpty()) {
+            sb.append("Established terms (reuse these exact English renderings; keep names consistent):\n")
+            sb.append(g).append("\n\n")
+        }
+        if (p.isNotEmpty()) {
+            sb.append(p).append("\n\n")
+        }
+        return sb.toString()
+    }
+
     /** Manga (Japanese) reads right-to-left; manhwa/manhua (Korean/Chinese) and
      *  Latin sources read left-to-right. Used to nudge reading-order inference. */
     fun readingDirectionHint(from: TextRecognizerLanguage): String = when (from) {

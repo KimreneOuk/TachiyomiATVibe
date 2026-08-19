@@ -14,7 +14,7 @@ import java.net.URLEncoder
 class GoogleTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
-) : TextTranslator {
+) : BaseTranslator() {
     private val client1 = "gtx"
     private val client2 = "webapp"
     val okHttpClient = OkHttpClient()

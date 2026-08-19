@@ -10,7 +10,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-abstract class OpenAiCompatibleTranslator : ContextualTextTranslator {
+abstract class OpenAiCompatibleTranslator : AITranslator() {
 
     protected val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)

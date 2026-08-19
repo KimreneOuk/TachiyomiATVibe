@@ -17,7 +17,7 @@ class GeminiTranslator(
     private val modelName: String,
     val maxOutputToken: Int,
     val temp: Float,
-) : ContextualTextTranslator {
+) : AITranslator() {
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)

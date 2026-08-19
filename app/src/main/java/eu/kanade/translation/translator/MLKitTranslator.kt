@@ -11,7 +11,7 @@ import eu.kanade.translation.util.await
 class MLKitTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
-) : TextTranslator {
+) : BaseTranslator() {
 
     private var translator = Translation.getClient(
         TranslatorOptions.Builder().setSourceLanguage(fromLang.code)
