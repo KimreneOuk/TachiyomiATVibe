@@ -21,6 +21,7 @@ class StreamingChunkPlanner(
     profile: TranslationContextChunkPlanner.Profile = TranslationContextChunkPlanner.Profile.DEFAULT,
     maxBlocksPerChunk: Int? = null,
     maxPagesPerChunk: Int? = null,
+    private val naturalPageIndexes: Map<String, Int> = emptyMap(),
 ) {
     /** One chunk flushed by the greedy buffer, plus page keys fully consumed by it.
      *  A page may span multiple chunks; it completes on the chunk holding its LAST
@@ -49,13 +50,16 @@ class StreamingChunkPlanner(
         )
     }
     private val outputUpperBound: Int = requestedOutputTokens.coerceAtLeast(constraints.minOutputTokens)
-    private val maxPromptTokens: Int =
-        constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
 
     private val emitted = mutableListOf<TranslationContextChunk>()
     private val rejected = linkedMapOf<String, String>()
     private var current = mutableListOf<BlockRef>()
     private var currentTokens = constraints.promptOverheadTokens
+    private val fallbackPageIndexes = linkedMapOf<String, Int>()
+    private val usedPageIndexes = naturalPageIndexes.values.toMutableSet()
+    private var nextFallbackPageIndex = naturalPageIndexes.values.maxOrNull()
+        ?.let { if (it == Int.MAX_VALUE) 0 else it + 1 }
+        ?: 0
 
     // A page completes once emittedRefs == totalRefs: every chunkable ref must be flushed
     // into an emitted chunk (refs still in the un-flushed buffer don't count). This lets a
@@ -72,6 +76,14 @@ class StreamingChunkPlanner(
      *  IDENTICAL points and with IDENTICAL chunk contents as
      *  [TranslationContextChunkPlanner.plan]. */
     fun accept(pageKey: String, page: PageTranslation): Emission? {
+        if (pageKey !in fallbackPageIndexes) {
+            while (nextFallbackPageIndex in usedPageIndexes) {
+                nextFallbackPageIndex = if (nextFallbackPageIndex == Int.MAX_VALUE) 0 else nextFallbackPageIndex + 1
+            }
+            fallbackPageIndexes[pageKey] = nextFallbackPageIndex
+            usedPageIndexes += nextFallbackPageIndex
+            nextFallbackPageIndex = if (nextFallbackPageIndex == Int.MAX_VALUE) 0 else nextFallbackPageIndex + 1
+        }
         val pageRefs = mutableListOf<Pair<BlockRef, Int>>()
         var rejectReason: String? = null
         var nonBlankSourceBlocks = 0
@@ -85,7 +97,7 @@ class StreamingChunkPlanner(
             }
             val ref = BlockRef(pageKey, blockIndex, block)
             val refTokens = estimateBlockTokens(ref)
-            if (constraints.promptOverheadTokens + refTokens > maxPromptTokens) {
+            if (constraints.promptOverheadTokens + refTokens > promptBudget(1, 1)) {
                 rejectReason = "Text block exceeds the ${constraints.maxContextTokens / 1024}k AI context budget"
                 return@forEachIndexed
             }
@@ -111,7 +123,7 @@ class StreamingChunkPlanner(
                     .size
                 if (current.isNotEmpty() &&
                     (
-                        currentTokens + refTokens > maxPromptTokens ||
+                        currentTokens + refTokens > promptBudget(current.size + 1, prospectivePageCount) ||
                             current.size >= constraints.maxBlocksPerChunk ||
                             prospectivePageCount > constraints.maxPagesPerChunk
                         )
@@ -192,13 +204,29 @@ class StreamingChunkPlanner(
             blockCount = refs.size,
             rollingContext = "",
             estimatedPromptTokens = promptTokens,
-            maxOutputTokens = effectiveOutputCap(promptTokens, requestedOutputTokens, constraints),
+            maxOutputTokens = effectiveOutputCap(
+                promptTokens,
+                requestedOutputTokens,
+                constraints,
+                protocol = ContextualRequestProtocol.BATCH_V1,
+                blockCount = refs.size,
+                pageCount = grouped.size,
+            ),
+            protocol = ContextualRequestProtocol.BATCH_V1,
+            pageIndexes = grouped.keys.associateWith { pageKey ->
+                naturalPageIndexes[pageKey] ?: fallbackPageIndexes.getValue(pageKey)
+            },
         )
     }
 
     private fun estimateBlockTokens(ref: BlockRef): Int {
         val keyOverhead = estimateTokens(ref.pageKey) + 8
         return keyOverhead + estimateTokens(ref.block.text)
+    }
+
+    private fun promptBudget(blockCount: Int, pageCount: Int): Int {
+        return constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens -
+            TranslationContextChunkPlanner.batchResponseOverheadTokens(blockCount, pageCount)
     }
 
     private data class BlockRef(
@@ -216,8 +244,16 @@ class StreamingChunkPlanner(
             promptTokens: Int,
             requestedOutputTokens: Int,
             constraints: Constraints,
+            protocol: ContextualRequestProtocol = ContextualRequestProtocol.LEGACY,
+            blockCount: Int = 0,
+            pageCount: Int = 0,
         ): Int {
-            val available = constraints.maxContextTokens - constraints.safetyMargin - promptTokens
+            val protocolReserve = if (protocol == ContextualRequestProtocol.BATCH_V1) {
+                TranslationContextChunkPlanner.batchResponseOverheadTokens(blockCount, pageCount)
+            } else {
+                0
+            }
+            val available = constraints.maxContextTokens - constraints.safetyMargin - promptTokens - protocolReserve
             return requestedOutputTokens
                 .coerceAtLeast(constraints.minOutputTokens)
                 .coerceAtMost(available)

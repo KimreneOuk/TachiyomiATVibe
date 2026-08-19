@@ -27,6 +27,7 @@ class DeepSeekTranslator(
             glossary = "",
             estimatedPromptTokens = 0,
             maxOutputTokens = maxOutputToken,
+            protocol = ContextualRequestProtocol.LEGACY,
         )
         translateContextual(chunk)
     }

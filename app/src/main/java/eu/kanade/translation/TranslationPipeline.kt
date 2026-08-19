@@ -45,12 +45,14 @@ import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
 import eu.kanade.translation.translator.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.ChapterGlossaryBuilder
+import eu.kanade.translation.translator.ContextualStructuralFailureException
 import eu.kanade.translation.translator.ContextualTextTranslator
 import eu.kanade.translation.translator.DeepSeekTranslator
 import eu.kanade.translation.translator.GeminiTranslator
 import eu.kanade.translation.translator.InactivityFlusher
 import eu.kanade.translation.translator.LmStudioTranslator
 import eu.kanade.translation.translator.OpenRouterTranslator
+import eu.kanade.translation.translator.StableBlockIds
 import eu.kanade.translation.translator.StreamingChunkPlanner
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage
@@ -59,6 +61,7 @@ import eu.kanade.translation.translator.TranslationContextChunk
 import eu.kanade.translation.translator.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.translator.translateAiChunkWithAdaptiveRetry
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
@@ -1015,8 +1018,18 @@ class TranslationPipeline(
         store: ChapterTranslationStore,
         orderedStreams: List<Pair<String, () -> InputStream>>,
         tracker: TranslationBatchProgressTracker? = null,
+        naturalPageIndexes: Map<String, Int> = emptyMap(),
     ) {
         if (orderedStreams.isEmpty()) return
+        val resolvedNaturalPageIndexes = if (naturalPageIndexes.isNotEmpty()) {
+            naturalPageIndexes
+        } else {
+            orderedStreams.map { it.first }
+                .distinct()
+                .sortedWith { left, right -> left.compareToCaseInsensitiveNaturalOrder(right) }
+                .mapIndexed { index, pageKey -> pageKey to index }
+                .toMap()
+        }
         val batchGeneration = store.beginGeneration("batch start chapter=${chapter.name}")
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
@@ -1401,8 +1414,15 @@ class TranslationPipeline(
                         markBatchTranslationFailed(store, pk, p, "AI chunk failed: $reason")
                         tracker?.markTranslateFailed(pk, "AI chunk failed: $reason")
                     }
-                    logcat(LogPriority.ERROR, e) {
-                        "TachiyomiAT contextual batch translate failed: chunk pages=${chunk.pages.keys}"
+                    if (e is ContextualStructuralFailureException) {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT contextual batch rejected: pages=${chunk.pages.size} " +
+                                e.failure.safeSummary()
+                        }
+                    } else {
+                        logcat(LogPriority.ERROR, e) {
+                            "TachiyomiAT contextual batch translate failed: chunk pages=${chunk.pages.keys}"
+                        }
                     }
                     return rolling to pastTranslations
                 }
@@ -1666,7 +1686,15 @@ class TranslationPipeline(
             val translatorWorker = object : TranslatorLaneWorker {
                 // AI contextual streaming state, owned by this lane.
                 val planner: StreamingChunkPlanner? =
-                    if (isAi) StreamingChunkPlanner(requestedOutputTokens, chunkProfile) else null
+                    if (isAi) {
+                        StreamingChunkPlanner(
+                            requestedOutputTokens = requestedOutputTokens,
+                            profile = chunkProfile,
+                            naturalPageIndexes = resolvedNaturalPageIndexes,
+                        )
+                    } else {
+                        null
+                    }
                 var rollingContext = ""
                 val analyticalMode = runCatching {
                     Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
@@ -1713,6 +1741,9 @@ class TranslationPipeline(
                     val p = translationRegistry[pageKey] ?: store.state.value[pageKey]?.detachedCopy()?.also {
                         translationRegistry[pageKey] = it
                     } ?: return
+                    // Persisted OCR order is the stable identity source. Assign IDs before the
+                    // user-selected reading-order sort so RTL/LTR changes never rename a block.
+                    StableBlockIds.assign(p, ref.pageIndex)
                     val readingOrder = translationPreferences.translationReadingOrder().get()
                     p.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(p.blocks, fromLang, readingOrder)
                     translationRegistry[pageKey] = p
@@ -1830,7 +1861,7 @@ class TranslationPipeline(
                         translatorWorker.planner?.flushRemaining() ?: eu.kanade.translation.translator.StreamingChunkPlanner.FlushResult(null, emptySet(), emptyMap())
                     }
                     val orderedPages = orderedStreams.mapIndexed { index, (pageKey, _) ->
-                        pageKey to index
+                        pageKey to (resolvedNaturalPageIndexes[pageKey] ?: index)
                     }
                     coordinator.runPass1(orderedPages, computeClass)
                     // Pass-1 barrier reached: every page's native work + translator-lane
@@ -1936,99 +1967,6 @@ class TranslationPipeline(
             logcat(LogPriority.INFO) {
                 "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
             }
-        }
-    }
-
-    private suspend fun translateAiChunkWithAdaptiveRetry(
-        translator: ContextualTextTranslator,
-        chunk: TranslationContextChunk,
-        requestedOutputTokens: Int,
-        profile: TranslationContextChunkPlanner.Profile,
-        allowFailureSplit: Boolean,
-        label: String,
-        retryDepth: Int,
-    ) {
-        coroutineContext.ensureActive()
-        try {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT batch stage2-AI request $label pass=$retryDepth: " +
-                    "pages=${chunk.pages.size} blocks=${chunk.blockCount} " +
-                    "promptTokens=${chunk.estimatedPromptTokens} maxOutput=${chunk.maxOutputTokens}"
-            }
-            translator.translateContextual(chunk)
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            if (!allowFailureSplit || chunk.blockCount <= 1) {
-                if (allowFailureSplit || retryDepth > 0) {
-                    logcat(LogPriority.WARN, e) {
-                        "TachiyomiAT batch stage2-AI terminal chunk failure $label pass=$retryDepth: " +
-                            "pages=${chunk.pages.keys} blocks=${chunk.blockCount}"
-                    }
-                    return
-                }
-                throw e
-            }
-            val split = AiTranslationRetryPlanner.planFailureSplit(
-                chunk = chunk,
-                requestedOutputTokens = requestedOutputTokens,
-                profile = profile,
-            )
-            if (split.chunks.isEmpty()) {
-                logcat(LogPriority.WARN, e) {
-                    "TachiyomiAT batch stage2-AI failed and produced no retry chunks $label pass=$retryDepth"
-                }
-                return
-            }
-            logcat(LogPriority.WARN, e) {
-                "TachiyomiAT batch stage2-AI splitting failed chunk $label pass=$retryDepth: " +
-                    "blocks=${chunk.blockCount} retryChunks=${split.chunks.size}"
-            }
-            split.chunks.forEachIndexed { index, retryChunk ->
-                translateAiChunkWithAdaptiveRetry(
-                    translator = translator,
-                    chunk = retryChunk,
-                    requestedOutputTokens = requestedOutputTokens,
-                    profile = profile,
-                    allowFailureSplit = allowFailureSplit,
-                    label = "$label.${index + 1}",
-                    retryDepth = retryDepth + 1,
-                )
-            }
-            return
-        }
-
-        val missingPages = AiTranslationRetryPlanner.untranslatedPages(chunk)
-        val missingBlocks = missingPages.values.sumOf { it.blocks.size }
-        if (missingBlocks == 0) return
-
-        if (chunk.blockCount <= 1) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT batch stage2-AI terminal partial $label pass=$retryDepth: " +
-                    "remainingBlocks=$missingBlocks"
-            }
-            return
-        }
-
-        val missingPlan = AiTranslationRetryPlanner.planMissingRetry(
-            chunk = chunk,
-            requestedOutputTokens = requestedOutputTokens,
-            profile = profile,
-        )
-        if (missingPlan.chunks.isEmpty()) return
-        logcat(LogPriority.WARN) {
-            "TachiyomiAT batch stage2-AI partial $label pass=$retryDepth: " +
-                "remainingBlocks=$missingBlocks retryChunks=${missingPlan.chunks.size}"
-        }
-        missingPlan.chunks.forEachIndexed { index, retryChunk ->
-            translateAiChunkWithAdaptiveRetry(
-                translator = translator,
-                chunk = retryChunk,
-                requestedOutputTokens = requestedOutputTokens,
-                profile = profile,
-                allowFailureSplit = allowFailureSplit,
-                label = "$label.missing${index + 1}",
-                retryDepth = retryDepth + 1,
-            )
         }
     }
 
@@ -2479,6 +2417,7 @@ class TranslationPipeline(
                     rollingContext = "",
                     estimatedPromptTokens = estPrompt,
                     maxOutputTokens = requestedOutputTokens,
+                    protocol = eu.kanade.translation.translator.ContextualRequestProtocol.LEGACY,
                 )
                 val withRolling = TranslationContextChunkPlanner.withRollingContext(
                     chunk = baseChunk,

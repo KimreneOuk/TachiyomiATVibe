@@ -21,6 +21,13 @@ object TranslationContextChunkPlanner {
     // Accounts for the unified system prompt + few-shot examples (TranslationPrompts).
     const val PROMPT_OVERHEAD_TOKENS = 1_100
 
+    // Deterministic reserve for the v1 response envelope. It covers the response header/footer,
+    // page and delta delimiters, canonical IDs, separators, and bounded provider whitespace.
+    const val BATCH_RESPONSE_FIXED_OVERHEAD_TOKENS = 32
+    const val BATCH_RESPONSE_PAGE_OVERHEAD_TOKENS = 24
+    const val BATCH_RESPONSE_BLOCK_OVERHEAD_TOKENS = 8
+    const val BATCH_RESPONSE_WHITESPACE_OVERHEAD_TOKENS = 2
+
     // Token budget for the combined rolling-context + chapter glossary injected
     // via TranslationPrompts.contextPrefix. Large enough for a small glossary
     // (~400) plus ~32 recent pairs; drops cleanly when exceeded.
@@ -62,8 +69,15 @@ object TranslationContextChunkPlanner {
         profile: Profile = Profile.DEFAULT,
         maxBlocksPerChunk: Int? = null,
         maxPagesPerChunk: Int? = null,
+        pageIndexes: Map<String, Int> = emptyMap(),
     ): Result {
-        val planner = StreamingChunkPlanner(requestedOutputTokens, profile, maxBlocksPerChunk, maxPagesPerChunk)
+        val planner = StreamingChunkPlanner(
+            requestedOutputTokens = requestedOutputTokens,
+            profile = profile,
+            maxBlocksPerChunk = maxBlocksPerChunk,
+            maxPagesPerChunk = maxPagesPerChunk,
+            naturalPageIndexes = pageIndexes,
+        )
         pages.forEach { (k, v) -> planner.accept(k, v) }
         val flush = planner.flushRemaining()
         val allChunks = planner.emittedChunks() + listOfNotNull(flush.finalChunk)
@@ -83,7 +97,7 @@ object TranslationContextChunkPlanner {
         if (trimmedRolling.isEmpty() && trimmedGlossary.isEmpty()) {
             return chunk.withOutputCap(requestedOutputTokens, constraints)
         }
-        val maxContextPrompt = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
+        val maxContextPrompt = maxPromptTokensFor(chunk, constraints)
         val rollingTokens = estimateTokens(trimmedRolling)
         val glossaryTokens = estimateTokens(trimmedGlossary)
 
@@ -223,7 +237,7 @@ object TranslationContextChunkPlanner {
         // the chunk's original rolling context (drop sliding sections) and re-derive
         // the output cap — preserves continuity while keeping the prompt in budget.
         val mergedTokens = estimateTokens(merged)
-        val maxContextPrompt = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens
+        val maxContextPrompt = maxPromptTokensFor(chunk, constraints)
         val overBudget = mergedTokens > constraints.maxRollingContextTokens ||
             chunk.estimatedPromptTokens + mergedTokens - estimateTokens(chunk.rollingContext) > maxContextPrompt
         if (overBudget) {
@@ -254,8 +268,33 @@ object TranslationContextChunkPlanner {
                 estimatedPromptTokens,
                 requestedOutputTokens,
                 constraints,
+                protocol = protocol,
+                blockCount = blockCount,
+                pageCount = pages.size,
             ),
         )
+
+    private fun maxPromptTokensFor(
+        chunk: TranslationContextChunk,
+        constraints: Constraints,
+    ): Int {
+        val responseReserve = if (chunk.protocol == ContextualRequestProtocol.BATCH_V1) {
+            batchResponseOverheadTokens(chunk.blockCount, chunk.pages.size)
+        } else {
+            0
+        }
+        return constraints.maxContextTokens - constraints.safetyMargin -
+            constraints.minOutputTokens - responseReserve
+    }
+
+    fun batchResponseOverheadTokens(blockCount: Int, pageCount: Int): Int {
+        val boundedBlocks = blockCount.coerceAtLeast(0)
+        val boundedPages = pageCount.coerceAtLeast(0)
+        return BATCH_RESPONSE_FIXED_OVERHEAD_TOKENS +
+            BATCH_RESPONSE_WHITESPACE_OVERHEAD_TOKENS +
+            boundedPages * BATCH_RESPONSE_PAGE_OVERHEAD_TOKENS +
+            boundedBlocks * BATCH_RESPONSE_BLOCK_OVERHEAD_TOKENS
+    }
 
     fun constraintsFor(profile: Profile): Constraints = when (profile) {
         Profile.DEFAULT -> Constraints(
@@ -292,6 +331,14 @@ object TranslationContextChunkPlanner {
     }
 }
 
+enum class ContextualRequestProtocol {
+    /** Strict, versioned envelope used only by chapter-batch AI translation. */
+    BATCH_V1,
+
+    /** Existing reader/single-page prompt and response behavior. */
+    LEGACY,
+}
+
 data class TranslationContextChunk(
     val pages: LinkedHashMap<String, PageTranslation>,
     val blockCount: Int,
@@ -299,10 +346,13 @@ data class TranslationContextChunk(
     val glossary: String = "",
     val estimatedPromptTokens: Int,
     val maxOutputTokens: Int,
+    val protocol: ContextualRequestProtocol = ContextualRequestProtocol.LEGACY,
+    val pageIndexes: Map<String, Int> = emptyMap(),
 )
 
 interface ContextualTextTranslator : TextTranslator {
-    suspend fun translateContextual(chunk: TranslationContextChunk)
+    /** Applies the returned batch exactly once and exposes it to the live retry controller. */
+    suspend fun translateContextual(chunk: TranslationContextChunk): ContextualTranslationBatch
 
     /**
      * Mandatory structured-result contract. Every contextual provider returns

@@ -447,6 +447,7 @@ class ChapterTranslator(
                 sharedArchive = null
                 streams = getChapterPages(chapterPath)
             }
+            val naturalPageIndexes = streams.mapIndexed { index, (pageKey, _) -> pageKey to index }.toMap()
 
             try {
                 val resumeIndex = translation.chapter.lastPageRead.toInt()
@@ -470,6 +471,7 @@ class ChapterTranslator(
                         store,
                         orderedStreams,
                         tracker,
+                        naturalPageIndexes,
                     )
                 }
             } finally {

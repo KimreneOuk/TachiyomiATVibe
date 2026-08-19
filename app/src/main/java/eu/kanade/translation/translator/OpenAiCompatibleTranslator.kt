@@ -64,8 +64,10 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         return rawOutput
     }
 
-    override suspend fun translateContextual(chunk: TranslationContextChunk) {
-        applyBatchToChunk(chunk, translateContextualStructured(chunk))
+    override suspend fun translateContextual(chunk: TranslationContextChunk): ContextualTranslationBatch {
+        val batch = translateContextualStructured(chunk)
+        applyBatchToChunk(chunk, batch)
+        return batch
     }
 
     protected suspend fun parseContextualCompletion(
@@ -75,21 +77,31 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         logTag: String,
         buildPayload: (systemPrompt: String, finalPrompt: String) -> String,
     ): ContextualTranslationBatch {
-        val request = ContextualRequestBuilder.build(chunk, fromLang, toLang)
+        val request = ContextualRequestBuilder.buildFor(chunk, fromLang, toLang)
         if (request.promptLines.isEmpty()) {
             return ContextualRequestBuilder.toBatch(request, emptyList())
         }
-        val systemPrompt = TranslationPrompts.pass1SystemPrompt(fromLang, toLang)
-        val contextPrefix = TranslationPrompts.contextPrefix(chunk.rollingContext, chunk.glossary)
-        val promptBody = request.promptLines.joinToString("\n")
-        val finalPrompt = if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
+        val systemPrompt = TranslationPrompts.pass1SystemPrompt(
+            fromLang,
+            toLang,
+            batchProtocol = request.protocol == ContextualRequestProtocol.BATCH_V1,
+        )
+        val finalPrompt = ContextualRequestBuilder.renderPrompt(
+            request = request,
+            rollingContext = chunk.rollingContext,
+            extraGlossary = chunk.glossary,
+        )
         val payloadJson = buildPayload(systemPrompt, finalPrompt)
 
         val rawOutput = withTranslationRetry(logTag = logTag) {
             postChatCompletion(url, headers, payloadJson)
         }
-        val parsed = ContextualResponseParser.parse(rawOutput.lineSequence().toList(), request.idMap)
-        return ContextualRequestBuilder.toBatch(request, parsed)
+        return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+            ContextualResponseParser.parseBatch(rawOutput, request)
+        } else {
+            val parsed = ContextualResponseParser.parse(rawOutput.lineSequence().toList(), request.idMap)
+            ContextualRequestBuilder.toBatch(request, parsed)
+        }
     }
 
     override fun close() {

@@ -144,7 +144,7 @@ abstract class AITranslator : BaseTranslator(), ContextualTextTranslator {
         rollingContext: RollingContextPacket = RollingContextPacket(),
         extraGlossary: String = "",
     ): String {
-        return Companion.buildPromptWithRollingContext(request, rollingContext, extraGlossary)
+        return ContextualRequestBuilder.renderPrompt(request, rollingContext, extraGlossary)
     }
 
     /**
@@ -163,47 +163,55 @@ abstract class AITranslator : BaseTranslator(), ContextualTextTranslator {
         chunk: TranslationContextChunk,
         rollingContext: RollingContextPacket,
     ): Pair<ContextualTranslationBatch, RollingContextPacket> {
-        val request = ContextualRequestBuilder.build(chunk, fromLang, toLang)
+        val request = ContextualRequestBuilder.buildFor(chunk, fromLang, toLang)
         if (request.promptLines.isEmpty()) {
             return ContextualRequestBuilder.toBatch(request, emptyList()) to rollingContext
         }
 
         val prompt = buildPromptWithRollingContext(request, rollingContext, chunk.glossary)
         val rawResponse = promptText(prompt)
-        val parsedChunk = parseChunkResponse(rawResponse)
-
-        val results = mutableListOf<ContextualTranslationResult>()
-        for (id in request.orderedIds) {
-            val text = parsedChunk.translations[id]
-            val target = request.idMap[id]
-            if (text != null && text.isNotBlank()) {
-                results.add(
+        val parsedChunk = if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+            null
+        } else {
+            parseChunkResponse(rawResponse)
+        }
+        val batch = if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+            ContextualResponseParser.parseBatch(rawResponse, request)
+        } else {
+            val results = request.orderedIds.map { id ->
+                val text = parsedChunk?.translations?.get(id)
+                val target = request.idMap[id]
+                if (text != null && text.isNotBlank()) {
                     ContextualTranslationResult(
                         id = id,
                         targetKey = target,
                         text = text,
                         status = ContextualTranslationResult.Status.TRANSLATED,
-                    ),
-                )
-            } else {
-                results.add(
+                    )
+                } else {
                     ContextualTranslationResult(
                         id = id,
                         targetKey = target,
                         text = "",
                         status = ContextualTranslationResult.Status.REJECTED,
-                    ),
-                )
+                    )
+                }
             }
+            ContextualRequestBuilder.toBatch(request, results)
         }
-
-        val batch = ContextualRequestBuilder.toBatch(request, results)
         applyBatchToChunk(chunk, batch)
 
-        val updatedContext = RollingContextPacket(
-            glossary = rollingContext.glossary + parsedChunk.updatedGlossary,
-            microSummary = if (parsedChunk.microSummary.isNotBlank()) parsedChunk.microSummary else rollingContext.microSummary,
-        )
+        val updatedContext = if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+            // Context-delta interpretation belongs to the later context-quality phase. A
+            // structurally invalid batch must never advance rolling state.
+            rollingContext
+        } else {
+            val legacyParsed = requireNotNull(parsedChunk)
+            RollingContextPacket(
+                glossary = rollingContext.glossary + legacyParsed.updatedGlossary,
+                microSummary = if (legacyParsed.microSummary.isNotBlank()) legacyParsed.microSummary else rollingContext.microSummary,
+            )
+        }
 
         return batch to updatedContext
     }
@@ -218,13 +226,15 @@ abstract class AITranslator : BaseTranslator(), ContextualTextTranslator {
             glossary = "",
             estimatedPromptTokens = 0,
             maxOutputTokens = 8192,
+            protocol = ContextualRequestProtocol.LEGACY,
         )
         translateContextual(chunk)
     }
 
-    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+    override suspend fun translateContextual(chunk: TranslationContextChunk): ContextualTranslationBatch {
         val batch = translateContextualStructured(chunk)
         applyBatchToChunk(chunk, batch)
+        return batch
     }
 
     companion object {
@@ -236,10 +246,7 @@ abstract class AITranslator : BaseTranslator(), ContextualTextTranslator {
             rollingContext: RollingContextPacket = RollingContextPacket(),
             extraGlossary: String = "",
         ): String {
-            val promptContext = rollingContext.toPromptContext()
-            val contextPrefix = TranslationPrompts.contextPrefix(promptContext, extraGlossary)
-            val promptBody = request.promptLines.joinToString("\n")
-            return if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
+            return ContextualRequestBuilder.renderPrompt(request, rollingContext, extraGlossary)
         }
     }
 }

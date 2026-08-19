@@ -29,28 +29,36 @@ class GeminiTranslator(
             glossary = "",
             estimatedPromptTokens = 0,
             maxOutputTokens = maxOutputToken,
+            protocol = ContextualRequestProtocol.LEGACY,
         )
         translateContextual(chunk)
     }
 
-    override suspend fun translateContextual(chunk: TranslationContextChunk) {
+    override suspend fun translateContextual(chunk: TranslationContextChunk): ContextualTranslationBatch {
         val batch = translateContextualStructured(chunk)
         applyBatchToChunk(chunk, batch)
+        return batch
     }
 
     override suspend fun translateContextualStructured(
         chunk: TranslationContextChunk,
     ): ContextualTranslationBatch {
-        val request = ContextualRequestBuilder.build(chunk, fromLang, toLang)
+        val request = ContextualRequestBuilder.buildFor(chunk, fromLang, toLang)
         if (request.promptLines.isEmpty()) {
             return ContextualRequestBuilder.toBatch(request, emptyList())
         }
 
         try {
-            val systemPrompt = TranslationPrompts.pass1SystemPrompt(fromLang, toLang)
-            val contextPrefix = TranslationPrompts.contextPrefix(chunk.rollingContext, chunk.glossary)
-            val promptBody = request.promptLines.joinToString("\n")
-            val finalPrompt = if (contextPrefix.isEmpty()) promptBody else contextPrefix + promptBody
+            val systemPrompt = TranslationPrompts.pass1SystemPrompt(
+                fromLang,
+                toLang,
+                batchProtocol = request.protocol == ContextualRequestProtocol.BATCH_V1,
+            )
+            val finalPrompt = ContextualRequestBuilder.renderPrompt(
+                request = request,
+                rollingContext = chunk.rollingContext,
+                extraGlossary = chunk.glossary,
+            )
 
             val activeModel = GenerativeModel(
                 modelName = modelName,
@@ -80,9 +88,12 @@ class GeminiTranslator(
                 )
             }
 
-            val lines = responseText.split("\n")
-            val parsed = ContextualResponseParser.parse(lines, request.idMap)
-            return ContextualRequestBuilder.toBatch(request, parsed)
+            return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+                ContextualResponseParser.parseBatch(responseText, request)
+            } else {
+                val parsed = ContextualResponseParser.parse(responseText.split("\n"), request.idMap)
+                ContextualRequestBuilder.toBatch(request, parsed)
+            }
         } catch (e: Exception) {
             logcat { "Image Translation Error : ${e.stackTraceToString()}" }
             throw e

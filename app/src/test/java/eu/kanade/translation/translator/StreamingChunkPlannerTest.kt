@@ -184,6 +184,21 @@ class StreamingChunkPlannerTest {
     }
 
     @Test
+    fun `fallback page indexes stay above supplied natural indexes`() {
+        val planner = StreamingChunkPlanner(
+            requestedOutputTokens = 8192,
+            profile = Profile.DEFAULT,
+            naturalPageIndexes = mapOf("natural" to 0),
+        )
+        planner.accept("fallback", page(block("fallback")))
+        planner.accept("natural", page(block("natural")))
+
+        val chunk = planner.flushRemaining().finalChunk!!
+        chunk.pageIndexes["fallback"] shouldBe 1
+        chunk.pageIndexes["natural"] shouldBe 0
+    }
+
+    @Test
     fun `a page spanning two chunks completes on the chunk holding its last block`() {
         // Each CJK block is large enough that the second one overflows the
         // budget, so the page splits: block 0 flushes during its own accept,

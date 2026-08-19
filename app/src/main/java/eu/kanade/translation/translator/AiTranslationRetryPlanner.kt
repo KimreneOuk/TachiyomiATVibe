@@ -48,6 +48,7 @@ object AiTranslationRetryPlanner {
             profile = profile,
             sourceBlockCount = chunk.blockCount,
             sourcePageCount = chunk.pages.size,
+            pageIndexes = chunk.pageIndexes,
         )
     }
 
@@ -63,6 +64,7 @@ object AiTranslationRetryPlanner {
             profile = profile,
             sourceBlockCount = chunk.blockCount,
             sourcePageCount = chunk.pages.size,
+            pageIndexes = chunk.pageIndexes,
         )
     }
 
@@ -72,6 +74,7 @@ object AiTranslationRetryPlanner {
         profile: TranslationContextChunkPlanner.Profile,
         sourceBlockCount: Int,
         sourcePageCount: Int,
+        pageIndexes: Map<String, Int>,
     ): TranslationContextChunkPlanner.Result {
         val nextMaxBlocks = (sourceBlockCount / 2).coerceAtLeast(1)
         val nextMaxPages = (sourcePageCount / 2).coerceAtLeast(1)
@@ -81,6 +84,7 @@ object AiTranslationRetryPlanner {
             profile = profile,
             maxBlocksPerChunk = nextMaxBlocks,
             maxPagesPerChunk = nextMaxPages,
+            pageIndexes = pageIndexes,
         )
     }
 }

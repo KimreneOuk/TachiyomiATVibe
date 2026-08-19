@@ -29,6 +29,8 @@ class TranslationPromptsTest {
             idMappedSourceLine("b0", block("こんにちは", inBubble = true)) shouldBe "b0|こんにちは"
             idMappedSourceLine("b1", block("三年後", inBubble = false)) shouldBe "b1|三年後"
             idMappedSourceLine("b2", block("第一行\n第二行", inBubble = false)) shouldBe "b2|第一行 第二行"
+            idMappedSourceLine("b3", block("第一行\r\n第二行\r第三行", inBubble = false)) shouldBe
+                "b3|第一行 第二行 第三行"
         }
     }
 

@@ -22,6 +22,18 @@ class TranslationContextChunkPlannerTest {
 
         result.rejectedPages shouldBe emptyMap()
         result.chunks.flatMap { it.pages.keys } shouldContainExactly listOf("003.jpg", "001.jpg", "002.jpg")
+        result.chunks.single().protocol shouldBe ContextualRequestProtocol.BATCH_V1
+    }
+
+    @Test
+    fun `unannotated chunks remain on legacy protocol`() {
+        TranslationContextChunk(
+            pages = linkedMapOf(),
+            blockCount = 0,
+            rollingContext = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = 256,
+        ).protocol shouldBe ContextualRequestProtocol.LEGACY
     }
 
     @Test
@@ -80,6 +92,32 @@ class TranslationContextChunkPlannerTest {
         (
             chunk.estimatedPromptTokens + chunk.maxOutputTokens +
                 TranslationContextChunkPlanner.SAFETY_MARGIN <=
+                TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
+            ) shouldBe true
+    }
+
+    @Test
+    fun `batch output cap reserves envelope overhead`() {
+        val pages = linkedMapOf("001.jpg" to page("hello"))
+        val chunk = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = 8192).chunks.single()
+        val constraints = TranslationContextChunkPlanner.constraintsFor(
+            TranslationContextChunkPlanner.Profile.DEFAULT,
+        )
+        val legacyCap = StreamingChunkPlanner.effectiveOutputCap(
+            promptTokens = chunk.estimatedPromptTokens,
+            requestedOutputTokens = 8192,
+            constraints = constraints,
+            protocol = ContextualRequestProtocol.LEGACY,
+        )
+        val envelopeReserve = TranslationContextChunkPlanner.batchResponseOverheadTokens(
+            blockCount = chunk.blockCount,
+            pageCount = chunk.pages.size,
+        )
+
+        (chunk.maxOutputTokens < legacyCap) shouldBe true
+        (
+            chunk.estimatedPromptTokens + chunk.maxOutputTokens +
+                TranslationContextChunkPlanner.SAFETY_MARGIN + envelopeReserve <=
                 TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
             ) shouldBe true
     }
