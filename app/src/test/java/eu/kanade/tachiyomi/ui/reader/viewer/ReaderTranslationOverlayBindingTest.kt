@@ -21,7 +21,7 @@ class ReaderTranslationOverlayBindingTest {
     )
 
     @Test
-    fun `translated image always rebuilds its text overlay binding`() {
+    fun `translated image without a current clean result has no overlay binding`() {
         val translation = PageTranslation(
             blocks = mutableListOf(translatedBlock),
             imgWidth = 1200f,
@@ -29,7 +29,7 @@ class ReaderTranslationOverlayBindingTest {
         )
 
         selectReaderTranslationOverlayBinding(true, translation) shouldBe
-            ReaderTranslationOverlayBinding(listOf(translatedBlock), 1200, 1800)
+            ReaderTranslationOverlayBinding(emptyList(), 0, 0)
     }
 
     @Test
@@ -41,7 +41,7 @@ class ReaderTranslationOverlayBindingTest {
     }
 
     @Test
-    fun `original image receives tier 1 translated text`() {
+    fun `original image does not receive tier 1 translated text`() {
         val translation = PageTranslation(
             blocks = mutableListOf(translatedBlock),
             imgWidth = 1200f,
@@ -52,7 +52,7 @@ class ReaderTranslationOverlayBindingTest {
         )
 
         selectReaderTranslationOverlayBinding(false, translation) shouldBe
-            ReaderTranslationOverlayBinding(listOf(translatedBlock), 1200, 1800)
+            ReaderTranslationOverlayBinding(emptyList(), 0, 0)
     }
 
     @Test

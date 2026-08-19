@@ -30,6 +30,27 @@ object OcrArtifactSanitizer {
     private val inlineRe = Regex("\\s+$ARTIFACT(?=\\s|$)")
     private val leadingRe = Regex("^$ARTIFACT\\s*")
 
+    private val xmlThinkingBlockRe = Regex(
+        "<(?:think|thought|reasoning|thought_process)[^>]*>[\\s\\S]*?</(?:think|thought|reasoning|thought_process)>",
+        RegexOption.IGNORE_CASE,
+    )
+    private val markdownThinkingBlockRe = Regex(
+        "`{3,}(?:thought|think|reasoning)\\b[\\s\\S]*?`{3,}",
+        RegexOption.IGNORE_CASE,
+    )
+    private val unclosedXmlThinkingRe = Regex(
+        "<(?:think|thought|reasoning|thought_process)[^>]*>[\\s\\S]*$",
+        RegexOption.IGNORE_CASE,
+    )
+    private val unclosedMarkdownThinkingRe = Regex(
+        "`{3,}(?:thought|think|reasoning)\\b[\\s\\S]*$",
+        RegexOption.IGNORE_CASE,
+    )
+    private val strayThinkingTagsRe = Regex(
+        "</?(?:think|thought|reasoning|thought_process)[^>]*>",
+        RegexOption.IGNORE_CASE,
+    )
+
     fun sanitize(text: String): String {
         var cleaned = leadingSpeechTagRe.replace(text, "")
         cleaned = beforePunctRe.replace(cleaned, "")
@@ -37,5 +58,20 @@ object OcrArtifactSanitizer {
         cleaned = leadingRe.replace(cleaned, "")
         cleaned = Regex("\\s{2,}").replace(cleaned, " ").trim()
         return cleaned
+    }
+
+    /**
+     * Strips reasoning / thinking blocks emitted by reasoning models before
+     * line-ID parsing. The pass order preserves the proven baseline behavior:
+     * closed blocks, markdown blocks, unclosed blocks, then stray tags.
+     */
+    fun stripThinkingTags(rawOutput: String): String {
+        if (rawOutput.isBlank()) return ""
+        var cleaned = xmlThinkingBlockRe.replace(rawOutput, "")
+        cleaned = markdownThinkingBlockRe.replace(cleaned, "")
+        cleaned = unclosedXmlThinkingRe.replace(cleaned, "")
+        cleaned = unclosedMarkdownThinkingRe.replace(cleaned, "")
+        cleaned = strayThinkingTagsRe.replace(cleaned, "")
+        return cleaned.trim()
     }
 }

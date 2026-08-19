@@ -211,21 +211,6 @@ class TranslationPipeline(
     @Volatile
     var batchTrackerFactory: ((chapterId: Long, store: ChapterTranslationStore, orderedPageKeys: List<String>) -> TranslationBatchProgressTracker?)? = null
 
-    private val activeBatchCoordinators = ConcurrentHashMap<Long, ChunkBatchCoordinator>()
-
-    fun updateBatchViewportPriority(chapterId: Long, visiblePageIndex: Int) {
-        activeBatchCoordinators[chapterId]?.updateActiveViewport(visiblePageIndex)
-    }
-
-    fun updateActiveViewport(chapterId: Long, visiblePageIndex: Int) {
-        updateBatchViewportPriority(chapterId, visiblePageIndex)
-    }
-
-    fun clearBatchViewportPriority(chapterId: Long) {
-        activeBatchCoordinators[chapterId]?.clearActiveViewport()
-    }
-
-
     private suspend fun <T> withNativeLane(
         timeoutMs: Long,
         chapterId: Long?,

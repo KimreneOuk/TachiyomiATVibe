@@ -27,22 +27,6 @@ class ChunkBatchCoordinator(
     val rollingContextManager: RollingContextManager = RollingContextManager(),
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
 ) {
-    @Volatile
-    private var activePriorityQueue: BatchPriorityQueue<PageKey>? = null
-
-    @Volatile
-    private var pendingVisibleIndex: Int? = null
-
-    fun updateActiveViewport(visiblePageIndex: Int) {
-        pendingVisibleIndex = visiblePageIndex
-        activePriorityQueue?.updateActiveViewport(visiblePageIndex)
-    }
-
-    fun clearActiveViewport() {
-        pendingVisibleIndex = null
-        activePriorityQueue?.clearViewport()
-    }
-
     suspend fun runChunkedBatch(
         orderedPages: List<PageKey>,
         computeClass: TranslatorComputeClass = TranslatorComputeClass.REMOTE_IO,

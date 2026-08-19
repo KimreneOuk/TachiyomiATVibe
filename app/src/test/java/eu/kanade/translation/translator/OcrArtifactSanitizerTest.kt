@@ -91,4 +91,17 @@ class OcrArtifactSanitizerTest {
         // left intact — the strip is a leading-prefix rule, not a global one.
         OcrArtifactSanitizer.sanitize("He said SPEECH: now") shouldBe "He said SPEECH: now"
     }
+
+    @Test
+    fun `closed XML and markdown thinking blocks are stripped`() {
+        OcrArtifactSanitizer.stripThinkingTags("<think>internal</think>Answer") shouldBe "Answer"
+        OcrArtifactSanitizer.stripThinkingTags("```thought\ninternal\n```\nAnswer") shouldBe "Answer"
+    }
+
+    @Test
+    fun `unclosed thinking blocks and stray tags are stripped`() {
+        OcrArtifactSanitizer.stripThinkingTags("Answer <think>internal") shouldBe "Answer"
+        OcrArtifactSanitizer.stripThinkingTags("Answer </think>") shouldBe "Answer"
+        OcrArtifactSanitizer.stripThinkingTags("   ") shouldBe ""
+    }
 }
