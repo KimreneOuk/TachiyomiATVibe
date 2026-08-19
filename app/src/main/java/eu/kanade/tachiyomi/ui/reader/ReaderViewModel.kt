@@ -56,7 +56,7 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.isTier1DisplayReady
+import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.shouldShowTranslationOverlay
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.ocr.OcrModelCatalog
@@ -2762,17 +2762,12 @@ class ReaderViewModel @JvmOverloads constructor(
                     return@onEach
                 }
                 val tier2Finished = updated.displayImageName != null && page.translatedStream == null
-                val wantsToShowOverlay = updated.shouldShowTranslationOverlay && !page.showTranslatedImage
-                val tier1Ready = updated.isTier1DisplayReady &&
-                    !page.showTranslatedImage &&
-                    page.translation?.isTier1DisplayReady != true
+                val wantsToShowOverlay = updated.isTranslationDisplayReady && !page.showTranslatedImage
                 page.translation = updated
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
                 if (translationPreferences.translationEnabled().get()) {
                     if (tier2Finished || wantsToShowOverlay) {
                         page.showTranslatedImage = true
-                        eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
-                    } else if (tier1Ready) {
                         eventChannel.trySend(Event.RefreshTranslationPages(setOf(page)))
                     }
                 }

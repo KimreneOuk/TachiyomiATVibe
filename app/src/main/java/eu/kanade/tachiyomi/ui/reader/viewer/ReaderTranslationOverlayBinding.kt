@@ -2,8 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.model.isTier1DisplayReady
-import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.model.isTranslationDisplayReady
 
 data class ReaderTranslationOverlayBinding(
     val blocks: List<TranslationBlock>,
@@ -23,18 +22,21 @@ fun selectReaderTranslationOverlayBinding(
     if (translation == null) {
         return ReaderTranslationOverlayBinding(emptyList(), 0, 0)
     }
-    if (showTranslatedImage && translation.shouldShowTranslationOverlay) {
-        return ReaderTranslationOverlayBinding(
-            blocks = translation.blocks,
-            pageWidth = translation.imgWidth.toInt(),
-            pageHeight = translation.imgHeight.toInt(),
-        )
+    val width = when {
+        translation.imgWidth > 0f -> translation.imgWidth.toInt()
+        translation.originalImgWidth > 0f -> translation.originalImgWidth.toInt()
+        else -> 0
     }
-    if (!showTranslatedImage && translation.isTier1DisplayReady) {
+    val height = when {
+        translation.imgHeight > 0f -> translation.imgHeight.toInt()
+        translation.originalImgHeight > 0f -> translation.originalImgHeight.toInt()
+        else -> 0
+    }
+    if (showTranslatedImage && translation.isTranslationDisplayReady) {
         return ReaderTranslationOverlayBinding(
             blocks = translation.blocks,
-            pageWidth = translation.imgWidth.toInt(),
-            pageHeight = translation.imgHeight.toInt(),
+            pageWidth = width,
+            pageHeight = height,
         )
     }
     return ReaderTranslationOverlayBinding(emptyList(), 0, 0)

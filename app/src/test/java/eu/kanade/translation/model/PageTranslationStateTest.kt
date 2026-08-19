@@ -6,46 +6,79 @@ import org.junit.jupiter.api.Test
 class PageTranslationStateTest {
 
     @Test
-    fun `tier 1 display is ready when OCR and translation are ready without cleaned image`() {
-        tier1Page().isTier1DisplayReady shouldBe true
-        tier1Page(translationStatus = StageStatus.PARTIAL).isTier1DisplayReady shouldBe true
-    }
-
-    @Test
-    fun `tier 1 display is not ready when cleaned image is ready`() {
-        tier1Page(
+    fun `isCleanedImageReady requires ready inpaint and current revision`() {
+        val cleanPage = PageTranslation(
             cleanedImageName = "page.cleaned.jpg",
             inpaintStatus = StageStatus.READY,
             inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
-        ).isTier1DisplayReady shouldBe false
+            blocks = mutableListOf(block()),
+        )
+        cleanPage.isCleanedImageReady shouldBe true
+
+        val pendingInpaint = cleanPage.copy(inpaintStatus = StageStatus.PENDING)
+        pendingInpaint.isCleanedImageReady shouldBe false
+
+        val staleInpaint = cleanPage.copy(inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1)
+        staleInpaint.isCleanedImageReady shouldBe false
+
+        val noCleanedImage = cleanPage.copy(cleanedImageName = null)
+        noCleanedImage.isCleanedImageReady shouldBe false
     }
 
     @Test
-    fun `tier 1 display is not ready when OCR is not ready`() {
-        tier1Page(ocrStatus = StageStatus.RUNNING).isTier1DisplayReady shouldBe false
+    fun `shouldSurfaceError only surfaces for terminal stage failures without cleaned result`() {
+        val failedPage = PageTranslation(
+            ocrStatus = StageStatus.FAILED,
+            ocrError = "OCR error",
+        )
+        failedPage.shouldSurfaceError shouldBe true
+
+        val cancelledPage = failedPage.copy(ocrStatus = StageStatus.CANCELLED)
+        cancelledPage.shouldSurfaceError shouldBe false
+
+        val cleanPageWithFailure = failedPage.copy(
+            cleanedImageName = "page.cleaned.jpg",
+            inpaintStatus = StageStatus.READY,
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            blocks = mutableListOf(block()),
+        )
+        cleanPageWithFailure.shouldSurfaceError shouldBe false
     }
 
     @Test
-    fun `tier 1 display is not ready when no translated blocks exist`() {
-        tier1Page(blocks = mutableListOf(block(translation = ""))).isTier1DisplayReady shouldBe false
-        tier1Page(translationStatus = StageStatus.PENDING).isTier1DisplayReady shouldBe false
+    fun `cancelInFlightStages flips running stages to cancelled`() {
+        val page = PageTranslation(
+            ocrStatus = StageStatus.RUNNING,
+            translationStatus = StageStatus.RUNNING,
+            inpaintStatus = StageStatus.RUNNING,
+            renderStatus = StageStatus.RUNNING,
+        )
+        page.cancelInFlightStages()
+
+        page.ocrStatus shouldBe StageStatus.CANCELLED
+        page.translationStatus shouldBe StageStatus.CANCELLED
+        page.inpaintStatus shouldBe StageStatus.CANCELLED
+        page.renderStatus shouldBe StageStatus.CANCELLED
     }
 
-    private fun tier1Page(
-        blocks: MutableList<TranslationBlock> = mutableListOf(block()),
-        cleanedImageName: String? = null,
-        ocrStatus: String = StageStatus.READY,
-        translationStatus: String = StageStatus.READY,
-        inpaintStatus: String = StageStatus.PENDING,
-        inpaintRevision: Int = 0,
-    ) = PageTranslation(
-        blocks = blocks,
-        cleanedImageName = cleanedImageName,
-        ocrStatus = ocrStatus,
-        translationStatus = translationStatus,
-        inpaintStatus = inpaintStatus,
-        inpaintRevision = inpaintRevision,
-    )
+    @Test
+    fun `recordAttemptFailure is idempotent per attempt`() {
+        val page = PageTranslation()
+        page.recordAttemptFailure()
+        page.attemptCount shouldBe 1
+        page.retryCount shouldBe 1
+
+        // Second failure in same attempt should not charge again
+        page.recordAttemptFailure()
+        page.attemptCount shouldBe 1
+        page.retryCount shouldBe 1
+
+        // Reset charge for next attempt
+        page.resetAttemptCharge()
+        page.recordAttemptFailure()
+        page.attemptCount shouldBe 2
+        page.retryCount shouldBe 2
+    }
 
     private fun block(translation: String = "translated") = TranslationBlock(
         text = "source",
