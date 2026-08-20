@@ -1,6 +1,16 @@
 package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
+import eu.kanade.translation.artifact.ChapterArtifactLayout
+import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.CleanedFileState
+import eu.kanade.translation.artifact.CleanedImageProbe
+import eu.kanade.translation.artifact.LegacyChapterSnapshot
+import eu.kanade.translation.artifact.LegacyPageFacts
+import eu.kanade.translation.artifact.LegacySourceIdentity
+import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
@@ -34,8 +44,10 @@ import kotlinx.serialization.json.decodeFromStream
 import kotlinx.serialization.json.encodeToStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.security.MessageDigest
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+import kotlin.math.abs
 
 class ChapterTranslationStore(
     // Mutable so persistLocked() caches the file materialized by fileCreator on
@@ -826,9 +838,17 @@ class ChapterTranslationStore(
 
         /** Opens an existing on-disk translation file into a store. */
         fun open(translationFile: UniFile): ChapterTranslationStore {
-            val existing = if (translationFile.exists()) {
+            var legacyCorrupt = false
+            val legacyBytes = if (translationFile.exists()) {
+                runCatching { translationFile.openInputStream().use { it.readBytes() } }
+                    .onFailure { legacyCorrupt = true }
+                    .getOrNull()
+            } else {
+                null
+            }
+            val existing = if (legacyBytes != null) {
                 try {
-                    val map = Json.decodeFromStream<Map<String, PageTranslation>>(translationFile.openInputStream())
+                    val map = Json.decodeFromStream<Map<String, PageTranslation>>(legacyBytes.inputStream())
                     map.values.forEach { page ->
                         if (page.errorMessage != null) {
                             if (page.ocrStatus == StageStatus.FAILED) page.ocrError = page.ocrError ?: page.errorMessage
@@ -851,16 +871,137 @@ class ChapterTranslationStore(
                     }
                     map
                 } catch (e: Exception) {
+                    legacyCorrupt = true
                     logcat(LogPriority.WARN, e) { "Failed to load existing translation store; starting empty" }
                     emptyMap()
                 }
             } else {
                 emptyMap()
             }
+            if (translationFile.exists()) {
+                runCatching {
+                    migrateArtifactManifest(translationFile, legacyBytes, existing, legacyCorrupt)
+                }.onFailure { error ->
+                    logcat(LogPriority.WARN, error) {
+                        "TachiyomiAT artifact manifest migration skipped: reason=open failure"
+                    }
+                }
+            }
             return ChapterTranslationStore(translationFile, fileCreator = null, existing).also {
                 it.loadGlossary()
             }
         }
+
+        /**
+         * TachiyomiAT: identity-aware, non-destructive migration/resync of the
+         * legacy flat translation record into the chapter artifact manifest.
+         * Reads the legacy file's exact identity and the companion cleaned
+         * images (bounded decode probe), then publishes the manifest and
+         * versioned glossary sidecar as sibling documents. Because the legacy
+         * file remains authoritative until the store-transaction phase, every
+         * open compares the stored identity and resyncs when the bytes
+         * changed. The legacy file itself is never modified, so the live
+         * reader keeps its current behavior. Chapters without a legacy
+         * translation file are left untouched.
+         */
+        private fun migrateArtifactManifest(
+            translationFile: UniFile,
+            legacyBytes: ByteArray?,
+            legacyPages: Map<String, PageTranslation>,
+            legacyCorrupt: Boolean,
+        ) {
+            val parent = translationFile.parentFile ?: return
+            val fileName = translationFile.name ?: return
+            val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
+            val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
+            val artifactStore = ChapterArtifactStore(documents, layout)
+            val identity = legacyIdentityOf(legacyBytes, translationFile.lastModified())
+            val companionImages = parent.findFile("${layout.chapterKey}_images")
+            val facts = legacyPages.mapValues { (_, page) ->
+                val cleaned = cleanedFileValidationOf(page, companionImages)
+                LegacyPageFacts(
+                    page = page,
+                    cleanedFileState = cleaned.state,
+                    cleanedImageDimensions = cleaned.dimensions,
+                )
+            }
+            val glossary = runCatching {
+                parent.findFile(((fileName.substringBeforeLast('.')) + ".glossary.json"))?.let { file ->
+                    file.openInputStream().use { input -> Json.decodeFromStream<Map<String, String>>(input) }
+                }
+            }.getOrNull().orEmpty()
+            synchronized(ARTIFACT_MIGRATION_LOCK) {
+                artifactStore.loadOrMigrate(
+                    LegacyChapterSnapshot(
+                        pages = facts,
+                        glossary = glossary,
+                        translationFileCorrupt = legacyCorrupt,
+                        legacyIdentity = identity,
+                        migratedAtEpochMs = System.currentTimeMillis(),
+                    ),
+                )
+            }
+        }
+
+        private fun legacyIdentityOf(bytes: ByteArray?, lastModifiedMs: Long): LegacySourceIdentity? = runCatching {
+            bytes ?: return null
+            LegacySourceIdentity(
+                sha256 = MessageDigest.getInstance("SHA-256")
+                    .digest(bytes)
+                    .joinToString("") { byte -> "%02x".format(byte) },
+                lengthBytes = bytes.size.toLong(),
+                lastModifiedMs = lastModifiedMs,
+            )
+        }.getOrNull()
+
+        /**
+         * Classifies a legacy cleaned-image reference with a bounded decode
+         * probe: existence and non-emptiness alone never qualify as VALID;
+         * the bytes must decode and match the page's recorded dimensions when
+         * they are known.
+         */
+        private data class CleanedFileValidation(
+            val state: CleanedFileState,
+            val dimensions: eu.kanade.translation.artifact.ProbedImage? = null,
+        )
+
+        private fun cleanedFileValidationOf(
+            page: PageTranslation,
+            companionImages: UniFile?,
+        ): CleanedFileValidation {
+            val cleanedName = page.cleanedImageName
+                ?: return CleanedFileValidation(CleanedFileState.NONE_RECORDED)
+            val file = companionImages?.findFile(cleanedName)
+            when {
+                file == null || !file.exists() -> return CleanedFileValidation(CleanedFileState.MISSING)
+                file.length() <= 0L -> return CleanedFileValidation(CleanedFileState.EMPTY)
+            }
+            val probed = runCatching {
+                file.openInputStream().use { input -> artifactImageProbe.probe(input) }
+            }.getOrNull() ?: return CleanedFileValidation(CleanedFileState.CORRUPT_BYTES)
+            val expectedWidth = page.imgWidth
+            val expectedHeight = page.imgHeight
+            if (expectedWidth > 0f && expectedHeight > 0f) {
+                val widthMatches = abs(probed.width - expectedWidth) <= IMAGE_DIMENSION_TOLERANCE_PX
+                val heightMatches = abs(probed.height - expectedHeight) <= IMAGE_DIMENSION_TOLERANCE_PX
+                if (!widthMatches || !heightMatches) {
+                    return CleanedFileValidation(CleanedFileState.DIMENSION_MISMATCH, probed)
+                }
+            }
+            return CleanedFileValidation(CleanedFileState.VALID, probed)
+        }
+
+        /**
+         * Test seam for the bounded cleaned-image probe. Production uses the
+         * BitmapFactory bounds-only probe; JVM tests inject a header-parsing
+         * fake because android.graphics is unavailable there.
+         */
+        @Volatile
+        internal var artifactImageProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe
+
+        private const val IMAGE_DIMENSION_TOLERANCE_PX = 1
+
+        private val ARTIFACT_MIGRATION_LOCK = Any()
 
         /**
          * Creates a store whose on-disk file is created lazily on the first
