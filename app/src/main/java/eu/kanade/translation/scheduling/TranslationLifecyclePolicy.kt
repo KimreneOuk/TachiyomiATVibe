@@ -1,7 +1,10 @@
 package eu.kanade.translation.scheduling
 
+import eu.kanade.translation.model.BatchPageWorkPlan
+import eu.kanade.translation.model.BatchPlannerInput
 import eu.kanade.translation.model.PageLifecycle
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.PageWorkPlanner
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCurrentInpaintMask
 import eu.kanade.translation.model.hasExhaustedRetries
@@ -44,6 +47,9 @@ import eu.kanade.translation.model.shouldSkipAutoScheduling
  * `current.shouldSkipAutoScheduling` checks in `TranslationManager`.
  */
 object TranslationLifecyclePolicy {
+
+    /** Canonical ordered-batch projection; reader scheduling still uses the legacy table below. */
+    fun planBatchPage(input: BatchPlannerInput): BatchPageWorkPlan = PageWorkPlanner.planPage(input)
 
     enum class NextStage {
         SKIP,

@@ -50,6 +50,17 @@ data class PageTranslation(
      * so existing chapters are not mass re-translated on the first QUALITY open.
      */
     var inpaintingModeUsed: String? = null,
+    /** Deterministic stage provenance used by ordered batch resume planning. */
+    var sourceFingerprint: String? = null,
+    var detectionFingerprint: String? = null,
+    var ocrFingerprint: String? = null,
+    var inpaintFingerprint: String? = null,
+    var translationFingerprint: String? = null,
+    var layoutFingerprint: String? = null,
+    /** Reader-ad-hoc output is displayable but never batch-context complete. */
+    var translationOrigin: String? = null,
+    var batchContextCheckpointHash: String? = null,
+    var batchContextComplete: Boolean = false,
     /**
      * TachiyomiAT: SERIALIZABLE inpaint mask captured at OCR time.
      *
@@ -163,6 +174,10 @@ data class PageTranslation(
     fun resetTranslation() {
         translationStatus = StageStatus.PENDING
         translationError = null
+        translationFingerprint = null
+        translationOrigin = null
+        batchContextCheckpointHash = null
+        batchContextComplete = false
         blocks.forEach {
             it.translation = ""
             it.userEditedAt = null
@@ -176,6 +191,7 @@ data class PageTranslation(
         cleanedBitmap = null
         inpaintRevision = 0
         inpaintingModeUsed = null
+        inpaintFingerprint = null
     }
 
     fun resetOcr() {
@@ -186,6 +202,9 @@ data class PageTranslation(
         detectionCount = 0
         ocrBlockCount = 0
         ocrArtifactId = null
+        sourceFingerprint = null
+        detectionFingerprint = null
+        ocrFingerprint = null
     }
 }
 

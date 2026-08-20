@@ -13,6 +13,7 @@ import eu.kanade.translation.artifact.LegacyChapterSnapshot
 import eu.kanade.translation.artifact.LegacyPageFacts
 import eu.kanade.translation.artifact.LegacySourceIdentity
 import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.PageStage
@@ -571,6 +572,15 @@ class ChapterTranslationStore(
             updated.ocrStatus = StageStatus.FAILED
             updated.errorMessage = patch.errorMessage ?: result.activeError
         } else {
+            val preserveReusableInpaint =
+                result.inpaintStatus == StageStatus.PENDING &&
+                    result.sourceFingerprint != null &&
+                    result.sourceFingerprint == current.sourceFingerprint &&
+                    result.detectionFingerprint != null &&
+                    result.detectionFingerprint == current.detectionFingerprint &&
+                    current.inpaintStatus == StageStatus.READY &&
+                    current.cleanedImageName != null &&
+                    current.inpaintRevision >= PageTranslation.CURRENT_INPAINT_REVISION
             val editedByIdentity = current.blocks
                 .filter { it.userEditedAt != null }
                 .associateBy { it.ocrFingerprint() }
@@ -595,6 +605,22 @@ class ChapterTranslationStore(
             updated.cleanedImageName = result.cleanedImageName ?: updated.cleanedImageName
             updated.inpaintRevision = result.inpaintRevision
             updated.inpaintingModeUsed = result.inpaintingModeUsed
+            updated.detectionFingerprint = result.detectionFingerprint
+            updated.ocrFingerprint = result.ocrFingerprint
+            if (preserveReusableInpaint) {
+                // OCR-only invalidation does not invalidate a mask/cleaned
+                // artifact derived from the unchanged detector. Keep that
+                // durable payload reusable while the new OCR result proceeds
+                // to translation; a detector or source change still takes the
+                // normal invalidation path above.
+                updated.inpaintMaskBoxes = current.inpaintMaskBoxes
+                updated.inpaintStatus = current.inpaintStatus
+                updated.inpaintError = current.inpaintError
+                updated.inpaintRevision = current.inpaintRevision
+                updated.inpaintingModeUsed = current.inpaintingModeUsed
+                updated.inpaintFingerprint = current.inpaintFingerprint
+                updated.cleanedImageName = current.cleanedImageName
+            }
             patch.errorMessage?.let { updated.errorMessage = it }
         }
         val owned = ownedPage(patch.pageKey, updated)
@@ -750,6 +776,7 @@ class ChapterTranslationStore(
             block.strokeWidth = target.strokeWidth
         }
         page.renderStatus = patch.renderStatus
+        patch.layoutFingerprint?.let { page.layoutFingerprint = it }
         page.errorMessage = patch.errorMessage
         val updated = ownedPage(patch.pageKey, page)
         pages = pages.put(patch.pageKey, updated)
@@ -1230,6 +1257,7 @@ class ChapterTranslationStore(
             expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
             pageSnapshot = updated,
             origin = origin,
+            sourceIdentity = updated.sourceIdentity(pageKey),
         )
         manifest = when (persisted) {
             is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
@@ -1250,6 +1278,7 @@ class ChapterTranslationStore(
                 expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
                 pageSnapshot = updated,
                 origin = origin,
+                sourceIdentity = updated.sourceIdentity(pageKey),
             )
             manifest = when (promoted) {
                 is ChapterArtifactStore.TransactionOutcome.Committed -> promoted.manifest
@@ -1306,6 +1335,16 @@ class ChapterTranslationStore(
         PageWriteOrigin.READER_ADHOC -> ArtifactOrigin.READER_ADHOC
         PageWriteOrigin.BATCH, null -> ArtifactOrigin.BATCH
     }
+
+    private fun PageTranslation.sourceIdentity(pageKey: String): SourceIdentity? =
+        sourceFingerprint?.let { fingerprint ->
+            SourceIdentity(
+                pageKey = pageKey,
+                sha256 = fingerprint,
+                width = imgWidth.takeIf { it > 0f }?.toInt(),
+                height = imgHeight.takeIf { it > 0f }?.toInt(),
+            )
+        }
 
     /**
      * Atomic committed-display promotion: when the page just reached a fully

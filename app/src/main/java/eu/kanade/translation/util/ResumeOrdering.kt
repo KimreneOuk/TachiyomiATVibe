@@ -1,8 +1,8 @@
 package eu.kanade.translation.util
 
 /**
- * Orders a chapter's pages for pre-translation so the user can resume reading
- * from their last-read position the soonest.
+ * Legacy page-order helpers. Chapter batches use [naturalOrder]; the reader's
+ * last-read position is not a batch scheduling input.
  *
  * Strategy (forward-first, then backfill): pages from [resumeIndex] to the end
  * are translated first (the user is about to read these), then pages before the
@@ -13,6 +13,9 @@ package eu.kanade.translation.util
  * Pure and side-effect-free so it is unit-testable without any engine/store.
  */
 object ResumeOrdering {
+
+    /** Stable natural order projection used by chapter batch entry points. */
+    fun <T> naturalOrder(items: List<T>): List<T> = items.toList()
 
     /**
      * Reorder [items] so that the element at [resumeIndex] comes first, followed

@@ -8,6 +8,11 @@ class ResumeOrderingTest {
     private fun pages(n: Int): List<String> = List(n) { (it + 1).toString() }
 
     @Test
+    fun `natural order ignores reader resume position`() {
+        ResumeOrdering.naturalOrder(pages(20)) shouldBe pages(20)
+    }
+
+    @Test
     fun `resume mid-chapter puts forward pages first then backfills`() {
         // 200 pages, resume at page 51 (index 50): expect 51..200 then 1..50.
         val ordered = ResumeOrdering.forwardFirstThenBackfill(pages(200), resumeIndex = 50)

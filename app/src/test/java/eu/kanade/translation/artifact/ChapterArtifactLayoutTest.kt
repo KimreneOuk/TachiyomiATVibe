@@ -103,6 +103,7 @@ class ChapterArtifactLayoutTest {
         layout.managedDirectories shouldBe listOf(
             "c_artifacts/artifacts",
             "c_artifacts/images",
+            "c_artifacts/pages",
             "c_artifacts/context",
             "c_artifacts/generations",
             "c_artifacts/glossary",

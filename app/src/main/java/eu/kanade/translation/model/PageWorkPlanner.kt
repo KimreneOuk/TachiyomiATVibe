@@ -1,8 +1,22 @@
 package eu.kanade.translation.model
 
+import eu.kanade.translation.artifact.ArtifactOrigin
+import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.PageArtifactRecord
+
+/**
+ * Pure lifecycle planner for chapter batches.
+ *
+ * The input list to [planChapter] is already natural page order.  This class
+ * deliberately has no reader position, viewport, or last-read-page input: a
+ * chapter batch always walks page 1 through page N and only reuses evidence
+ * whose payload, provenance, and dependency fingerprint are still valid.
+ */
 object PageWorkPlanner {
+
+    /** Compatibility projection for the older four-boolean API. */
     fun plan(page: PageTranslation?, force: Boolean = false): PageWorkPlan {
-        if (page == null || force) {
+        if (force || page == null) {
             return PageWorkPlan(
                 runOcr = true,
                 runTranslation = true,
@@ -11,47 +25,350 @@ object PageWorkPlanner {
             )
         }
 
-        val hasValidOcr = page.ocrStatus == StageStatus.READY || page.ocrStatus == StageStatus.TEXTLESS
-        val ocrFailed = page.ocrStatus == StageStatus.FAILED
-        val textless = page.ocrStatus == StageStatus.TEXTLESS
-
-        if (ocrFailed) {
-            return PageWorkPlan(
-                runOcr = true,
-                runTranslation = false,
-                runInpaint = false,
-                runRender = false,
-            )
-        }
-
-        if (!hasValidOcr) {
-            return PageWorkPlan(
-                runOcr = true,
-                runTranslation = true,
-                runInpaint = true,
-                runRender = true,
-            )
-        }
-
-        if (textless) {
-            return PageWorkPlan(
-                runOcr = false,
-                runTranslation = false,
-                runInpaint = false,
-                runRender = false,
-            )
-        }
-
-        val hasValidTranslation =
-            page.translationStatus == StageStatus.READY || page.translationStatus == StageStatus.PARTIAL
-        val hasValidInpaint = page.inpaintStatus == StageStatus.READY && page.cleanedImageName != null
-        val hasValidRender = page.renderStatus == StageStatus.READY
-
+        val batch = planPage(
+            BatchPlannerInput(
+                pageKey = page.sourceFileName.orEmpty(),
+                page = page,
+            ),
+        )
         return PageWorkPlan(
-            runOcr = false,
-            runTranslation = !hasValidTranslation,
-            runInpaint = !hasValidInpaint,
-            runRender = !hasValidTranslation || !hasValidInpaint || !hasValidRender,
+            runOcr = batch.shouldRun(BatchStage.OCR),
+            runTranslation = batch.shouldRun(BatchStage.TRANSLATION),
+            runInpaint = batch.shouldRun(BatchStage.INPAINT),
+            runRender = batch.shouldRun(BatchStage.LAYOUT),
+            stageDecisions = batch.stages,
+            displayReady = batch.displayReady,
+            batchContextComplete = batch.batchContextComplete,
         )
     }
+
+    fun planPage(input: BatchPlannerInput): BatchPageWorkPlan {
+        val page = input.page
+        val artifact = input.artifact
+        val expected = input.expectedFingerprints
+        val textless = page?.ocrStatus == StageStatus.TEXTLESS ||
+            page?.isTextlessTerminal == true ||
+            artifact?.ocr?.status == ArtifactStageStatus.TEXTLESS
+
+        val evidence = BatchStage.entries.associateWith { stage ->
+            stageEvidence(
+                stage,
+                page,
+                artifact,
+                expected,
+                input.translationOrigin,
+                input.sourceFingerprint,
+            )
+        }
+        val decisions = linkedMapOf<BatchStage, StageWorkDecision>()
+        BatchStage.entries.forEach { stage ->
+            val stageEvidence = evidence.getValue(stage)
+            val decision = decideStage(stage, stageEvidence, decisions, textless, input.contextCheckpoint)
+            decisions[stage] = decision
+        }
+
+        val displayReady = page?.isTranslationDisplayReady == true ||
+            artifact?.displayState in setOf(
+                PageDisplayState.DISPLAY_READY,
+                PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT,
+                PageDisplayState.FAILED_WITH_COMMITTED_RESULT,
+                PageDisplayState.TEXTLESS_COMPLETE,
+            )
+        val firstIncomplete = decisions.values.firstOrNull {
+            it.decision != StageDecision.REUSE && it.decision != StageDecision.TERMINAL_COMPLETE
+        }?.stage
+        val translation = decisions.getValue(BatchStage.TRANSLATION)
+        val batchContextComplete = translation.decision in setOf(
+            StageDecision.REUSE,
+            StageDecision.TERMINAL_COMPLETE,
+        ) &&
+            input.contextCheckpoint.state in setOf(
+                ContextCheckpointState.TRUSTED,
+                ContextCheckpointState.NOT_REQUIRED,
+            ) &&
+            input.translationOrigin != ArtifactOrigin.READER_ADHOC &&
+            artifact?.translation?.origin != ArtifactOrigin.READER_ADHOC
+
+        return BatchPageWorkPlan(
+            pageKey = input.pageKey,
+            stages = decisions.values.toList(),
+            displayReady = displayReady,
+            batchContextComplete = batchContextComplete,
+            firstIncompleteStage = firstIncomplete,
+        )
+    }
+
+    /**
+     * Plan a natural-order chapter. Once a page needs translation work (or has
+     * a failed translation/context checkpoint), later pages wait for that page
+     * so a corrupt checkpoint can never be skipped by a later reusable page.
+     * Native work on later pages remains independently reusable/runnable.
+     */
+    fun planChapter(pages: List<BatchPlannerInput>): BatchChapterWorkPlan {
+        var translationBlocked = false
+        val planned = pages.map { input ->
+            val page = planPage(input)
+            val index = page.stages.indexOfFirst { it.stage == BatchStage.TRANSLATION }
+            if (index < 0 || !translationBlocked) {
+                if (page.translationNeedsOrderedWork()) translationBlocked = true
+                page
+            } else {
+                val stages = page.stages.toMutableList()
+                val translation = stages[index]
+                if (translation.decision != StageDecision.FAILED &&
+                    translation.decision != StageDecision.TERMINAL_COMPLETE
+                ) {
+                    stages[index] = translation.copy(
+                        decision = StageDecision.WAIT_FOR_DEPENDENCY,
+                        reason = StageReasonCode.PRIOR_PAGE_INCOMPLETE,
+                    )
+                    val layoutIndex = stages.indexOfFirst { it.stage == BatchStage.LAYOUT }
+                    if (layoutIndex >= 0 && stages[layoutIndex].decision != StageDecision.FAILED) {
+                        stages[layoutIndex] = stages[layoutIndex].copy(
+                            decision = StageDecision.WAIT_FOR_DEPENDENCY,
+                            reason = StageReasonCode.DEPENDENCY_INCOMPLETE,
+                        )
+                    }
+                }
+                page.copy(
+                    stages = stages,
+                    batchContextComplete = false,
+                    firstIncompleteStage = stages.firstOrNull {
+                        it.decision != StageDecision.REUSE && it.decision != StageDecision.TERMINAL_COMPLETE
+                    }?.stage,
+                )
+            }
+        }
+        return BatchChapterWorkPlan(planned)
+    }
+
+    private fun BatchPageWorkPlan.translationNeedsOrderedWork(): Boolean {
+        val translation = stages.first { it.stage == BatchStage.TRANSLATION }
+        return translation.decision == StageDecision.RUN ||
+            translation.decision == StageDecision.FAILED ||
+            translation.decision == StageDecision.WAIT_FOR_DEPENDENCY
+    }
+
+    private fun BatchPageWorkPlan.shouldRun(stage: BatchStage): Boolean {
+        // FAILED is a terminal diagnostic for this attempt, but the legacy
+        // boolean projection means "eligible for the next retry".
+        return stages.first { it.stage == stage }.decision in setOf(
+            StageDecision.RUN,
+            StageDecision.FAILED,
+        )
+    }
+
+    private data class StageEvidence(
+        val status: String,
+        val fingerprint: String?,
+        val expectedFingerprint: String?,
+        val sourceFingerprint: String?,
+        val expectedSourceFingerprint: String?,
+        val payloadValid: Boolean,
+        val origin: ArtifactOrigin,
+        val skipReason: String? = null,
+    )
+
+    private fun decideStage(
+        stage: BatchStage,
+        evidence: StageEvidence,
+        prior: Map<BatchStage, StageWorkDecision>,
+        textless: Boolean,
+        checkpoint: BatchContextCheckpoint,
+    ): StageWorkDecision {
+        if (textless && stage != BatchStage.DETECTION && stage != BatchStage.OCR) {
+            return StageWorkDecision(
+                stage,
+                StageDecision.TERMINAL_COMPLETE,
+                if (stage == BatchStage.INPAINT && evidence.skipReason == NO_ERASE_REGIONS) {
+                    StageReasonCode.NO_ERASE_REGIONS
+                } else {
+                    StageReasonCode.TEXTLESS
+                },
+            )
+        }
+
+        if (stage == BatchStage.TRANSLATION && evidence.origin == ArtifactOrigin.READER_ADHOC) {
+            return dependencyOrRun(
+                stage,
+                StageReasonCode.READER_ADHOC_NOT_BATCH_COMPLETE,
+                prior,
+            )
+        }
+        if (stage == BatchStage.TRANSLATION &&
+            checkpoint.state in setOf(
+                ContextCheckpointState.MISSING,
+                ContextCheckpointState.CORRUPT,
+            )
+        ) {
+            return dependencyOrRun(stage, StageReasonCode.CONTEXT_CHECKPOINT_INVALID, prior)
+        }
+
+        val raw = when {
+            evidence.status == StageStatus.FAILED ||
+                evidence.status == ArtifactStageStatus.FAILED_RETRYABLE.name ||
+                evidence.status == ArtifactStageStatus.FAILED_TERMINAL.name ->
+                StageWorkDecision(stage, StageDecision.FAILED, StageReasonCode.FAILED_STAGE)
+
+            evidence.status == StageStatus.RUNNING || evidence.status == ArtifactStageStatus.RUNNING.name ->
+                dependencyOrRun(stage, StageReasonCode.INTERRUPTED_STAGE, prior)
+
+            evidence.status == StageStatus.CANCELLED ->
+                dependencyOrRun(stage, StageReasonCode.CANCELLED_STAGE, prior)
+
+            evidence.status == StageStatus.PARTIAL || evidence.status == ArtifactStageStatus.PARTIAL.name ->
+                dependencyOrRun(stage, StageReasonCode.PARTIAL_ARTIFACT, prior)
+
+            !isTerminalSuccess(evidence.status) ->
+                dependencyOrRun(stage, StageReasonCode.MISSING_ARTIFACT, prior)
+
+            !evidence.payloadValid ->
+                dependencyOrRun(stage, StageReasonCode.MISSING_PAYLOAD, prior)
+
+            evidence.expectedFingerprint != null && evidence.fingerprint == null ||
+                evidence.expectedSourceFingerprint != null && evidence.sourceFingerprint == null ->
+                dependencyOrRun(stage, StageReasonCode.UNKNOWN_PROVENANCE, prior)
+
+            !fingerprintMatches(evidence) ->
+                dependencyOrRun(stage, StageReasonCode.FINGERPRINT_MISMATCH, prior)
+
+            evidence.status == ArtifactStageStatus.SKIPPED.name ->
+                StageWorkDecision(stage, StageDecision.TERMINAL_COMPLETE, skipReason(stage, evidence))
+
+            else -> StageWorkDecision(stage, StageDecision.REUSE, StageReasonCode.VALID_ARTIFACT)
+        }
+
+        if (raw.decision == StageDecision.FAILED) return raw
+        val dependencies = dependencies(stage)
+        val blocked = dependencies.any { dependency ->
+            prior[dependency]?.decision !in setOf(StageDecision.REUSE, StageDecision.TERMINAL_COMPLETE)
+        }
+        return if (blocked) {
+            raw.copy(
+                decision = StageDecision.WAIT_FOR_DEPENDENCY,
+                reason = StageReasonCode.DEPENDENCY_INCOMPLETE,
+            )
+        } else {
+            raw
+        }
+    }
+
+    private fun dependencyOrRun(
+        stage: BatchStage,
+        reason: StageReasonCode,
+        prior: Map<BatchStage, StageWorkDecision>,
+    ): StageWorkDecision {
+        val blocked = dependencies(stage).any { dependency ->
+            prior[dependency]?.decision !in setOf(StageDecision.REUSE, StageDecision.TERMINAL_COMPLETE)
+        }
+        return StageWorkDecision(
+            stage,
+            if (blocked) StageDecision.WAIT_FOR_DEPENDENCY else StageDecision.RUN,
+            if (blocked) StageReasonCode.DEPENDENCY_INCOMPLETE else reason,
+        )
+    }
+
+    private fun dependencies(stage: BatchStage): List<BatchStage> = when (stage) {
+        BatchStage.DETECTION -> emptyList()
+        BatchStage.OCR -> listOf(BatchStage.DETECTION)
+        // OCR text changes do not invalidate a valid erase mask.
+        BatchStage.INPAINT -> listOf(BatchStage.DETECTION)
+        BatchStage.TRANSLATION -> listOf(BatchStage.OCR)
+        BatchStage.LAYOUT -> listOf(BatchStage.TRANSLATION, BatchStage.INPAINT)
+    }
+
+    private fun isTerminalSuccess(status: String): Boolean = status in setOf(
+        StageStatus.READY,
+        StageStatus.TEXTLESS,
+        StageStatus.SKIPPED,
+        ArtifactStageStatus.READY.name,
+        ArtifactStageStatus.TEXTLESS.name,
+        ArtifactStageStatus.SKIPPED.name,
+    )
+
+    private fun fingerprintMatches(evidence: StageEvidence): Boolean {
+        val configMatches = evidence.expectedFingerprint == null ||
+            evidence.fingerprint == evidence.expectedFingerprint
+        val sourceMatches = evidence.expectedSourceFingerprint == null ||
+            evidence.sourceFingerprint == evidence.expectedSourceFingerprint
+        return configMatches && sourceMatches
+    }
+
+    private fun skipReason(stage: BatchStage, evidence: StageEvidence): StageReasonCode =
+        if (stage == BatchStage.INPAINT && evidence.skipReason == NO_ERASE_REGIONS) {
+            StageReasonCode.NO_ERASE_REGIONS
+        } else {
+            StageReasonCode.TEXTLESS
+        }
+
+    private fun stageEvidence(
+        stage: BatchStage,
+        page: PageTranslation?,
+        artifact: PageArtifactRecord?,
+        expected: BatchExpectedFingerprints,
+        translationOrigin: ArtifactOrigin?,
+        sourceFingerprint: String?,
+    ): StageEvidence {
+        val record = when (stage) {
+            BatchStage.DETECTION -> artifact?.detection
+            BatchStage.OCR -> artifact?.ocr
+            BatchStage.INPAINT -> artifact?.inpaint
+            BatchStage.TRANSLATION -> artifact?.translation
+            BatchStage.LAYOUT -> artifact?.layout
+        }
+        val fallbackStatus = when (stage) {
+            BatchStage.DETECTION, BatchStage.OCR -> page?.ocrStatus ?: StageStatus.PENDING
+            BatchStage.INPAINT -> page?.inpaintStatus ?: StageStatus.PENDING
+            BatchStage.TRANSLATION -> page?.translationStatus ?: StageStatus.PENDING
+            BatchStage.LAYOUT -> page?.renderStatus ?: StageStatus.PENDING
+        }
+        val status = record?.status?.name ?: fallbackStatus
+        val fingerprint = record?.fingerprint ?: when (stage) {
+            BatchStage.DETECTION -> page?.detectionFingerprint
+            BatchStage.OCR -> page?.ocrFingerprint
+            BatchStage.INPAINT -> page?.inpaintFingerprint
+            BatchStage.TRANSLATION -> page?.translationFingerprint
+            BatchStage.LAYOUT -> page?.layoutFingerprint
+        }
+        val currentSourceFingerprint = artifact?.source?.sha256 ?: page?.sourceFingerprint
+        val expectedSourceFingerprint = sourceFingerprint.takeIf {
+            stage == BatchStage.DETECTION || stage == BatchStage.INPAINT
+        }
+        val expectedFingerprint = when (stage) {
+            BatchStage.DETECTION -> expected.detection
+            BatchStage.OCR -> expected.ocr
+            BatchStage.INPAINT -> expected.inpaint
+            BatchStage.TRANSLATION -> expected.translation
+            BatchStage.LAYOUT -> expected.layout
+        }
+        val payloadValid = when {
+            record != null -> record.artifactFileName != null || record.legacyPayloadReference != null
+            page == null -> false
+            stage == BatchStage.DETECTION || stage == BatchStage.OCR ->
+                page.ocrStatus == StageStatus.READY || page.ocrStatus == StageStatus.TEXTLESS
+            stage == BatchStage.INPAINT -> page.inpaintStatus == StageStatus.READY && page.cleanedImageName != null
+            stage == BatchStage.TRANSLATION ->
+                page.translationStatus == StageStatus.READY ||
+                    page.translationStatus == StageStatus.PARTIAL ||
+                    page.translationStatus == StageStatus.SKIPPED
+            stage == BatchStage.LAYOUT -> page.renderStatus == StageStatus.READY || page.renderStatus == StageStatus.SKIPPED
+            else -> false
+        }
+        return StageEvidence(
+            status = status,
+            fingerprint = fingerprint,
+            expectedFingerprint = expectedFingerprint.takeUnless {
+                !expected.provenanceRequired && record == null && fingerprint == null
+            },
+            sourceFingerprint = currentSourceFingerprint,
+            expectedSourceFingerprint = expectedSourceFingerprint,
+            payloadValid = payloadValid,
+            origin = record?.origin ?: translationOrigin ?: page?.translationOrigin?.let {
+                runCatching { ArtifactOrigin.valueOf(it) }.getOrDefault(ArtifactOrigin.UNKNOWN)
+            } ?: ArtifactOrigin.UNKNOWN,
+            skipReason = record?.skipReason,
+        )
+    }
+
+    private const val NO_ERASE_REGIONS = "NO_ERASE_REGIONS"
 }

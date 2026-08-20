@@ -1,5 +1,7 @@
 package eu.kanade.translation.batch
 
+import eu.kanade.translation.model.BatchPageWorkPlan
+import eu.kanade.translation.model.BatchPlannerInput
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageRunning
@@ -22,6 +24,10 @@ import eu.kanade.translation.scheduling.TranslationLifecyclePolicy
 internal object BatchResumeGateDecider {
 
     internal enum class Decision { SKIP_ALL, INPAINT_ONLY, FULL }
+
+    /** Canonical per-stage planner entry point for chapter batches. */
+    internal fun plan(input: BatchPlannerInput): BatchPageWorkPlan =
+        eu.kanade.translation.model.PageWorkPlanner.planPage(input)
 
     internal fun decide(
         page: PageTranslation?,

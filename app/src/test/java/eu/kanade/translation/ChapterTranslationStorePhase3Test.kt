@@ -159,6 +159,49 @@ class ChapterTranslationStorePhase3Test {
     }
 
     @Test
+    fun `ocr-only merge preserves reusable cleaned artifact`() = runTest {
+        val store = store()
+        store.updatePage("p1") { page ->
+            page!!.apply {
+                sourceFingerprint = "source-v1"
+                detectionFingerprint = "detector-v1"
+                ocrFingerprint = "ocr-v1"
+                inpaintFingerprint = "inpaint-v1"
+            }
+        }
+        val lease = store.tryAcquirePageStageLease(
+            "p1",
+            PageStage.Ocr,
+            PageWriteOrigin.BATCH,
+        ).shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val before = store.snapshot("p1")
+
+        val result = store.mergeOcr(
+            OcrStagePatch(
+                pageKey = "p1",
+                generation = before.generation,
+                expectedPageVersion = before.pageVersion,
+                expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
+                ocrResult = readyPage().copy(
+                    cleanedImageName = null,
+                    sourceFingerprint = "source-v1",
+                    inpaintStatus = StageStatus.PENDING,
+                    detectionFingerprint = "detector-v1",
+                    ocrFingerprint = "ocr-v2",
+                ),
+                expectedLeaseToken = lease.token,
+            ),
+        )
+
+        result.shouldBeInstanceOf<StagePatchResult.Accepted>()
+        val merged = store.snapshot("p1").page!!
+        merged.cleanedImageName shouldBe "old.jpg"
+        merged.inpaintStatus shouldBe StageStatus.READY
+        merged.inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
+        merged.inpaintFingerprint shouldBe "inpaint-v1"
+    }
+
+    @Test
     fun `cancelled transient candidate cannot hide committed display`() = runTest {
         val store = store()
         store.updatePage("p1") { page ->

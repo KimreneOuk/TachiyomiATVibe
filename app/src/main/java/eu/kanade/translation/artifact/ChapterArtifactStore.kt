@@ -290,6 +290,7 @@ class ChapterArtifactStore(
         expectedDependencyFingerprint: String,
         pageSnapshot: PageTranslation,
         origin: ArtifactOrigin,
+        sourceIdentity: SourceIdentity? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
     ): TransactionOutcome {
         val rejection = candidateWriteRejection(
@@ -314,6 +315,7 @@ class ChapterArtifactStore(
         val updated = manifest.copy(
             pages = manifest.pages + (
                 pageKey to page.copy(
+                    source = sourceIdentity ?: page.source,
                     candidate = page.candidate.copy(pageSnapshotFileName = fileName),
                     pageVersion = page.pageVersion + 1,
                 )
@@ -341,6 +343,7 @@ class ChapterArtifactStore(
         expectedDependencyFingerprint: String,
         pageSnapshot: PageTranslation,
         origin: ArtifactOrigin,
+        sourceIdentity: SourceIdentity? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
     ): TransactionOutcome {
         val rejection = candidateWriteRejection(
@@ -352,6 +355,7 @@ class ChapterArtifactStore(
         )
         if (rejection != null) return TransactionOutcome.Rejected(rejection)
         val page = manifest.pages.getValue(pageKey)
+        val resolvedPage = page.copy(source = sourceIdentity ?: page.source)
         val candidate = page.candidate
             ?: return TransactionOutcome.Rejected("candidate missing: pageKey=$pageKey")
         if (candidate.origin != origin) {
@@ -363,7 +367,7 @@ class ChapterArtifactStore(
             if (!ChapterArtifactLayout.isSafeSegment(cleanedName)) {
                 return TransactionOutcome.Rejected("unsafe cleaned display file name: pageKey=$pageKey")
             }
-            if (!displayBaseIsValid(layout.legacyCompanionImageFile(cleanedName), page.source)) {
+            if (!displayBaseIsValid(layout.legacyCompanionImageFile(cleanedName), resolvedPage.source)) {
                 return TransactionOutcome.Rejected(
                     "cleaned display base file missing, corrupt, or wrong-sized: pageKey=$pageKey file=$cleanedName",
                 )
@@ -387,7 +391,7 @@ class ChapterArtifactStore(
         val committed = CommittedBundleMetadata(
             generationId = generationId,
             bundleFingerprint = StageFingerprints.committedBundle(
-                sourceIdentity = page.source,
+                sourceIdentity = resolvedPage.source,
                 displayBase = displayBase,
                 translationFingerprint = StageFingerprints.pageSnapshot(pageSnapshot),
                 layoutFingerprint = null,
@@ -414,6 +418,7 @@ class ChapterArtifactStore(
         val updated = manifest.copy(
             pages = manifest.pages + (
                 pageKey to page.copy(
+                    source = resolvedPage.source,
                     committed = committed,
                     previousCommitted = page.committed,
                     candidate = null,

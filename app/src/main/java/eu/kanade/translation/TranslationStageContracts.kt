@@ -115,6 +115,7 @@ data class RenderStagePatch(
     val blocks: List<RenderBlockPatch>,
     val renderStatus: String,
     val errorMessage: String? = null,
+    val layoutFingerprint: String? = null,
     val expectedPageVersion: Long? = null,
     val expectedLeaseToken: Long? = null,
     val expectedCandidateGenerationId: String? = null,

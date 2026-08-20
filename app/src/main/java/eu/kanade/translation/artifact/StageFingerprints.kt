@@ -15,6 +15,14 @@ import java.security.MessageDigest
  */
 object StageFingerprints {
 
+    /**
+     * Fingerprint a stage configuration when the large content-addressed
+     * artifact is not available yet.  Keeping configuration fields length
+     * prefixed makes this safe for persisted page provenance and tests.
+     */
+    fun configuration(stage: ArtifactStage, vararg fields: Any?): String =
+        fingerprintIndexed(listOf("configuration", stage.name) + fields.toList())
+
     /** Detection, segmentation, masks, and reading order (contract §4). */
     fun detection(
         sourceHash: String,
@@ -169,6 +177,15 @@ object StageFingerprints {
         page.inpaintStatus,
         page.renderStatus,
         page.inpaintRevision,
+        page.sourceFingerprint,
+        page.detectionFingerprint,
+        page.ocrFingerprint,
+        page.inpaintFingerprint,
+        page.translationFingerprint,
+        page.layoutFingerprint,
+        page.translationOrigin,
+        page.batchContextCheckpointHash,
+        page.batchContextComplete,
         page.retryCount,
         page.attemptCount,
         page.errorMessage,

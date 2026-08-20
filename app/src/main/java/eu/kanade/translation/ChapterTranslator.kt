@@ -450,9 +450,11 @@ class ChapterTranslator(
             val naturalPageIndexes = streams.mapIndexed { index, (pageKey, _) -> pageKey to index }.toMap()
 
             try {
-                val resumeIndex = translation.chapter.lastPageRead.toInt()
-                val orderedStreams = eu.kanade.translation.util.ResumeOrdering
-                    .forwardFirstThenBackfill(streams, resumeIndex)
+                // Chapter batches are deterministic natural-order traversals.
+                // Reader viewport/last-read position is intentionally not a
+                // batch scheduling input; resume is decided per stage by the
+                // pipeline planner while pages remain 1..N.
+                val orderedStreams = eu.kanade.translation.util.ResumeOrdering.naturalOrder(streams)
                 batchOrderedPageKeys = orderedStreams.map { it.first }
                 store.preRegisterPages(batchOrderedPageKeys)
                 val chapterId = translation.chapter.id
