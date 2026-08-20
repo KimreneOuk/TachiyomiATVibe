@@ -1,5 +1,6 @@
 package eu.kanade.translation.translator
 
+import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import logcat.LogPriority
@@ -27,11 +28,14 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
 ): Map<String, String> {
     coroutineContext.ensureActive()
     val mergedDeltas = linkedMapOf<String, String>()
+    val safeLabel = ShortHash.hash(label).ifEmpty { "none" }
+    val pageSetHash = ShortHash.hash(chunk.pages.keys.joinToString("\u0000"))
     try {
         logcat(tag = "TranslationBatchRetry", priority = LogPriority.INFO) {
-            "TachiyomiAT batch stage2-AI request $label pass=$retryDepth: " +
+            "event=stage2_request label=$safeLabel pass=$retryDepth " +
                 "pages=${chunk.pages.size} blocks=${chunk.blockCount} " +
-                "promptTokens=${chunk.estimatedPromptTokens} maxOutput=${chunk.maxOutputTokens}"
+                "promptTokens=${chunk.estimatedPromptTokens} maxOutput=${chunk.maxOutputTokens} " +
+                "pageSetHash=$pageSetHash"
         }
         val batch = translator.translateContextual(chunk)
         batch.structuralFailure?.let { failure ->
@@ -49,8 +53,8 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
         if (!allowFailureSplit || chunk.blockCount <= 1) {
             if (allowFailureSplit || retryDepth > 0) {
                 logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
-                    "TachiyomiAT batch stage2-AI terminal chunk failure $label pass=$retryDepth: " +
-                        "pages=${chunk.pages.keys} blocks=${chunk.blockCount}"
+                    "event=stage2_failure reason=terminal label=$safeLabel pass=$retryDepth " +
+                        "pages=${chunk.pages.size} blocks=${chunk.blockCount} pageSetHash=$pageSetHash"
                 }
                 return mergedDeltas
             }
@@ -63,12 +67,12 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
         )
         if (split.chunks.isEmpty()) {
             logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
-                "TachiyomiAT batch stage2-AI failed and produced no retry chunks $label pass=$retryDepth"
+                "event=stage2_retry_plan reason=no_retry_chunks label=$safeLabel pass=$retryDepth"
             }
             return mergedDeltas
         }
         logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
-            "TachiyomiAT batch stage2-AI splitting failed chunk $label pass=$retryDepth: " +
+            "event=stage2_retry_plan reason=failure_split label=$safeLabel pass=$retryDepth " +
                 "blocks=${chunk.blockCount} retryChunks=${split.chunks.size}"
         }
         split.chunks.forEachIndexed { index, retryChunk ->
@@ -93,7 +97,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
 
     if (chunk.blockCount <= 1) {
         logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
-            "TachiyomiAT batch stage2-AI terminal partial $label pass=$retryDepth: " +
+            "event=stage2_retry_plan reason=terminal_partial label=$safeLabel pass=$retryDepth " +
                 "remainingBlocks=$missingBlocks"
         }
         return mergedDeltas
@@ -106,7 +110,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
     )
     if (missingPlan.chunks.isEmpty()) return mergedDeltas
     logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
-        "TachiyomiAT batch stage2-AI partial $label pass=$retryDepth: " +
+        "event=stage2_retry_plan reason=missing_blocks label=$safeLabel pass=$retryDepth " +
             "remainingBlocks=$missingBlocks retryChunks=${missingPlan.chunks.size}"
     }
     missingPlan.chunks.forEachIndexed { index, retryChunk ->

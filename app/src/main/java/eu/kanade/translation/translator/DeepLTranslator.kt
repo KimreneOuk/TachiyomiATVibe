@@ -4,6 +4,7 @@ import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
@@ -61,21 +62,21 @@ class DeepLTranslator(
         val responseString = body.string()
 
         // Shape-check: an API error (bad key, quota, unsupported lang, rate limit) returns a
-        // body with no "translations" array (or plain text); log code + body snippet for diagnosis.
+        // body with no "translations" array (or plain text); log status + a response fingerprint.
         val translations = try {
             JSONObject(responseString).optJSONArray("translations")
         } catch (e: Exception) {
-            val snippet = responseString.take(200)
-            logcat(LogPriority.WARN, e) {
-                "DeepLTranslator: parse failed code=${response.code} body=\"$snippet\""
+            logcat(LogPriority.WARN) {
+                "event=provider_response_invalid backend=deepl reason=parse_failure " +
+                    "status=${response.code} responseHash=${ShortHash.hash(responseString)}"
             }
             throw IllegalStateException("DeepL returned an unparseable response (code=${response.code})", e)
         }
         if (translations == null || translations.length() != flatBlocks.size) {
-            val snippet = responseString.take(200)
             logcat(LogPriority.WARN) {
-                "DeepLTranslator: count mismatch expected=${flatBlocks.size} " +
-                    "got=${translations?.length() ?: 0} code=${response.code} body=\"$snippet\""
+                "event=provider_response_invalid backend=deepl reason=count_mismatch " +
+                    "expected=${flatBlocks.size} got=${translations?.length() ?: 0} " +
+                    "status=${response.code} responseHash=${ShortHash.hash(responseString)}"
             }
             throw IllegalStateException(
                 "DeepL returned ${translations?.length() ?: 0} translations for ${flatBlocks.size} blocks (code=${response.code})",

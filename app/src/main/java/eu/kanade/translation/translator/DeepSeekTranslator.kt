@@ -80,7 +80,7 @@ class DeepSeekTranslator(
                 payloadJson = jsonObject,
             )
         } catch (e: Exception) {
-            logcat { "DeepSeek promptText Error : ${e.stackTraceToString()}" }
+            logcat { "event=provider_failure backend=deepseek stage=prompt error=${e::class.java.simpleName}" }
             ""
         }
     }

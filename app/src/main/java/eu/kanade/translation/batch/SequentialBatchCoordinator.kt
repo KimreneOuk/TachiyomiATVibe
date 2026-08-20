@@ -9,8 +9,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Semaphore
-import logcat.LogPriority
-import tachiyomi.core.common.util.system.logcat
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -43,11 +41,16 @@ class SequentialBatchCoordinator(
     suspend fun runPass1(
         orderedPages: List<PageKey>,
         computeClass: TranslatorComputeClass,
-    ): BatchCoordinator.Pass1Outcome = coroutineScope {
+    ): BatchPass1Outcome = coroutineScope {
         if (orderedPages.isEmpty()) {
-            return@coroutineScope BatchCoordinator.Pass1Outcome(emptyList())
+            return@coroutineScope BatchPass1Outcome(emptyList())
         }
         val remote = computeClass.mayOverlapNative
+        BatchTranslationDiagnostics.memorySnapshot(
+            stage = "pass1",
+            queueDepth = 0,
+            activePages = orderedPages.size,
+        )
 
         val translationEntries = Channel<TranslationPageEntry>(capacity = MAX_NATIVE_LOOKAHEAD_PAGES)
         val lookahead = Semaphore(permits = MAX_NATIVE_LOOKAHEAD_PAGES + 1)
@@ -71,13 +74,23 @@ class SequentialBatchCoordinator(
                         val ref = entry.ref
                         if (ref != null) {
                             listener.translationRequested(entry.pageKey)
+                            val startedAt = System.nanoTime()
                             try {
                                 translatorWorker.translate(ref)
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e
-                                logcat(LogPriority.ERROR, e) {
-                                    "TachiyomiAT batch translation failed: ${entry.pageKey}"
-                                }
+                                BatchTranslationDiagnostics.failure(
+                                    stage = BatchDiagnosticStage.TRANSLATION,
+                                    pageKey = entry.pageKey,
+                                    errorClass = e::class.java.simpleName,
+                                )
+                            } finally {
+                                BatchTranslationDiagnostics.timing(
+                                    stage = BatchDiagnosticStage.TRANSLATION,
+                                    pageKey = entry.pageKey,
+                                    durationMs = elapsedMs(startedAt),
+                                    itemCount = ref.blockFingerprints.size,
+                                )
                             }
                             listener.translationFinished(entry.pageKey)
                         }
@@ -96,12 +109,22 @@ class SequentialBatchCoordinator(
                 nativeGate(pageKey).await()
                 translationGate(pageKey).await()
                 listener.renderStarted(pageKey)
+                val startedAt = System.nanoTime()
                 try {
                     renderJoin.awaitAndRender(pageKey)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    logcat(LogPriority.ERROR, e) { "TachiyomiAT batch render failed: $pageKey" }
+                    BatchTranslationDiagnostics.failure(
+                        stage = BatchDiagnosticStage.RENDER,
+                        pageKey = pageKey,
+                        errorClass = e::class.java.simpleName,
+                    )
                 } finally {
+                    BatchTranslationDiagnostics.timing(
+                        stage = BatchDiagnosticStage.RENDER,
+                        pageKey = pageKey,
+                        durationMs = elapsedMs(startedAt),
+                    )
                     listener.renderFinished(pageKey)
                     nativeDone.remove(pageKey)
                     translationDone.remove(pageKey)
@@ -115,18 +138,43 @@ class SequentialBatchCoordinator(
                 lookahead.acquire()
                 var ref: OcrReadyPageRef? = null
                 listener.ocrStarted(pageKey)
+                val ocrStartedAt = System.nanoTime()
                 try {
                     ref = nativeWorker.runOcrStage(pageKey, pageIndex)
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
-                    logcat(LogPriority.ERROR, e) { "TachiyomiAT batch OCR failed: $pageKey" }
+                    BatchTranslationDiagnostics.failure(
+                        stage = BatchDiagnosticStage.OCR,
+                        pageKey = pageKey,
+                        errorClass = e::class.java.simpleName,
+                    )
                 } finally {
+                    BatchTranslationDiagnostics.timing(
+                        stage = BatchDiagnosticStage.OCR,
+                        pageKey = pageKey,
+                        durationMs = elapsedMs(ocrStartedAt),
+                    )
                     listener.ocrFinished(pageKey)
                 }
 
                 if (ref != null) {
+                    BatchTranslationDiagnostics.stageDecision(
+                        stage = BatchDiagnosticStage.OCR,
+                        pageKey = pageKey,
+                        decision = BatchDiagnosticDecision.EXECUTE,
+                        reason = BatchDiagnosticReason.REFERENCE_READY,
+                        fingerprint = ref.dependencyFingerprint,
+                        itemCount = ref.blockFingerprints.size,
+                    )
                     listener.ocrPublished(pageKey)
                     needsTranslation += pageKey
+                } else {
+                    BatchTranslationDiagnostics.stageDecision(
+                        stage = BatchDiagnosticStage.OCR,
+                        pageKey = pageKey,
+                        decision = BatchDiagnosticDecision.SKIP,
+                        reason = BatchDiagnosticReason.NO_REFERENCE,
+                    )
                 }
 
                 if (remote) {
@@ -134,13 +182,23 @@ class SequentialBatchCoordinator(
                 } else {
                     if (ref != null) {
                         listener.translationRequested(pageKey)
+                        val startedAt = System.nanoTime()
                         try {
                             translatorWorker.translate(ref)
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
-                            logcat(LogPriority.ERROR, e) {
-                                "TachiyomiAT batch translation failed: $pageKey"
-                            }
+                            BatchTranslationDiagnostics.failure(
+                                stage = BatchDiagnosticStage.TRANSLATION,
+                                pageKey = pageKey,
+                                errorClass = e::class.java.simpleName,
+                            )
+                        } finally {
+                            BatchTranslationDiagnostics.timing(
+                                stage = BatchDiagnosticStage.TRANSLATION,
+                                pageKey = pageKey,
+                                durationMs = elapsedMs(startedAt),
+                                itemCount = ref.blockFingerprints.size,
+                            )
                         }
                         listener.translationFinished(pageKey)
                     }
@@ -150,12 +208,22 @@ class SequentialBatchCoordinator(
 
                 if (ref != null) {
                     listener.inpaintStarted(pageKey)
+                    val startedAt = System.nanoTime()
                     try {
                         nativeWorker.runInpaintStage(pageKey)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        logcat(LogPriority.ERROR, e) { "TachiyomiAT batch inpaint failed: $pageKey" }
+                        BatchTranslationDiagnostics.failure(
+                            stage = BatchDiagnosticStage.INPAINT,
+                            pageKey = pageKey,
+                            errorClass = e::class.java.simpleName,
+                        )
                     } finally {
+                        BatchTranslationDiagnostics.timing(
+                            stage = BatchDiagnosticStage.INPAINT,
+                            pageKey = pageKey,
+                            durationMs = elapsedMs(startedAt),
+                        )
                         listener.inpaintFinished(pageKey)
                     }
                 }
@@ -170,8 +238,16 @@ class SequentialBatchCoordinator(
         renderJob.await()
 
         listener.pass1BarrierReleased()
-        BatchCoordinator.Pass1Outcome(needsTranslation = needsTranslation.toList())
+        BatchTranslationDiagnostics.memorySnapshot(
+            stage = "pass1",
+            queueDepth = 0,
+            activePages = 0,
+        )
+        BatchPass1Outcome(needsTranslation = needsTranslation.toList())
     }
+
+    private fun elapsedMs(startedAt: Long): Long =
+        ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(0L)
 
     private data class TranslationPageEntry(
         val pageKey: String,

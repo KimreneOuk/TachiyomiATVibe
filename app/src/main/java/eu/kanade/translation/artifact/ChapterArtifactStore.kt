@@ -1,5 +1,8 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.batch.BatchDiagnosticReason
+import eu.kanade.translation.batch.BatchDiagnosticStage
+import eu.kanade.translation.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.detachedCopy
@@ -86,6 +89,11 @@ class ChapterArtifactStore(
         val existing = primary
             ?: recoverPrimaryFromBackupOrNull(backup)
         if (existing != null) {
+            // Load is a reconciliation boundary: after a crash or cancelled
+            // stream, remove only unreachable managed artifacts. Legacy
+            // companion images remain outside the managed tree and are owned
+            // by the reader stream registry.
+            reconcileRetention(existing)
             if (existing.authority == ManifestAuthority.ARTIFACTS) {
                 // Phase 3 cutover: transactional writes own this manifest.
                 // Legacy bytes (still written by the live pipeline) must never
@@ -113,6 +121,7 @@ class ChapterArtifactStore(
                 return LoadResult(existing, migratedFromLegacy = false, resyncedFromLegacy = false)
             }
             val (merged, published) = resyncAndPublish(existing, legacy)
+            reconcileRetention(merged)
             return LoadResult(merged, migratedFromLegacy = false, resyncedFromLegacy = published)
         }
 
@@ -130,6 +139,7 @@ class ChapterArtifactStore(
                     "chapter=${layout.chapterKey}"
             }
         }
+        reconcileRetention(withGlossary)
         return LoadResult(withGlossary, migratedFromLegacy = published, resyncedFromLegacy = false)
     }
 
@@ -545,7 +555,15 @@ class ChapterArtifactStore(
             existing != null &&
                 existing.origin == origin &&
                 existing.origin != ArtifactOrigin.LEGACY &&
-                existing.dependencyFingerprint == dependencyFingerprint -> existing.generationId
+                existing.dependencyFingerprint == dependencyFingerprint -> {
+                BatchTranslationDiagnostics.reuse(
+                    stage = BatchDiagnosticStage.ARTIFACT,
+                    pageKey = pageKey,
+                    reason = BatchDiagnosticReason.CANDIDATE_ACTIVE,
+                    fingerprint = dependencyFingerprint,
+                )
+                existing.generationId
+            }
             existing != null && existing.origin == ArtifactOrigin.LEGACY -> newGenerationId(pageKey, nowEpochMs)
             existing != null ->
                 return TransactionOutcome.Rejected(
@@ -633,6 +651,12 @@ class ChapterArtifactStore(
         page.stage(stage)?.let { record ->
             if (record.status == ArtifactStageStatus.READY && record.fingerprint == fingerprint) {
                 return if (stagePayloadIsValid(record)) {
+                    BatchTranslationDiagnostics.reuse(
+                        stage = BatchDiagnosticStage.ARTIFACT,
+                        pageKey = pageKey,
+                        reason = BatchDiagnosticReason.CACHE_HIT,
+                        fingerprint = fingerprint,
+                    )
                     TransactionOutcome.Committed(manifest, generationId)
                 } else {
                     TransactionOutcome.Rejected("existing stage payload is missing or invalid: pageKey=$pageKey stage=$stage")

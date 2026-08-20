@@ -10,8 +10,12 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.batch.BatchDiagnosticDecision
+import eu.kanade.translation.batch.BatchDiagnosticReason
+import eu.kanade.translation.batch.BatchDiagnosticStage
 import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.BatchResumeGateDecider
+import eu.kanade.translation.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.batch.NativeLaneWorker
 import eu.kanade.translation.batch.OcrReadyPageRef
 import eu.kanade.translation.batch.RenderJoinWorker
@@ -3143,20 +3147,19 @@ class TranslationPipeline(
             coroutineContext.ensureActive()
 
             if (pageTranslation.blocks.isNotEmpty()) {
-                val transDiag = translationPreferences.translationDiagnostics().get()
                 val nonEmptyBlocks = pageTranslation.blocks.count { it.text.isNotBlank() }
                 logcat(LogPriority.INFO) {
-                    "TachiyomiAT translate step START: pageKey=$pageKey " +
+                    "TachiyomiAT translate step START: pageHash=${ShortHash.hash(pageKey)} " +
                         "translator=${activeTranslator::class.simpleName} " +
                         "blocks=${pageTranslation.blocks.size} nonEmptyText=$nonEmptyBlocks"
                 }
-                if (transDiag) {
-                    pageTranslation.blocks.forEachIndexed { idx, b ->
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT translate INPUT [$idx] text=\"${b.text}\""
-                        }
-                    }
-                }
+                BatchTranslationDiagnostics.stageDecision(
+                    stage = BatchDiagnosticStage.TRANSLATION,
+                    pageKey = pageKey,
+                    decision = BatchDiagnosticDecision.EXECUTE,
+                    reason = BatchDiagnosticReason.REFERENCE_READY,
+                    itemCount = pageTranslation.blocks.size,
+                )
                 try {
                     val readingOrder = translationPreferences.translationReadingOrder().get()
                     pageTranslation.blocks = eu.kanade.translation.util.TranslationBlockSorter.sort(
@@ -3195,17 +3198,10 @@ class TranslationPipeline(
                     }
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
-                        "TachiyomiAT translate step DONE: pageKey=$pageKey " +
+                        "TachiyomiAT translate step DONE: pageHash=${ShortHash.hash(pageKey)} " +
                             "translated=$translatedCount/${pageTranslation.blocks.size} " +
                             "status=${pageTranslation.translationStatus}" +
                             (if (singlePageRetry > 0) " partialRetries=$singlePageRetry" else "")
-                    }
-                    if (transDiag) {
-                        pageTranslation.blocks.forEachIndexed { idx, b ->
-                            logcat(LogPriority.INFO) {
-                                "TachiyomiAT translate OUTPUT [$idx] \"${b.text}\" -> \"${b.translation}\""
-                            }
-                        }
                     }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e

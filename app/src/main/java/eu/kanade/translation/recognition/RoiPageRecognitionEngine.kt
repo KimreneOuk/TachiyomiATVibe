@@ -353,8 +353,8 @@ class RoiPageRecognitionEngine(
                         if (resolveDiagnostics()) {
                             logcat(LogPriority.INFO) {
                                 "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
-                                    "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
-                                    "rotated=no text=\"$text\""
+                                    "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} rotated=no " +
+                                    "chars=${text.length}"
                             }
                         }
                         val boxWidth = (bbox[2] - bbox[0]).toFloat()
@@ -460,7 +460,7 @@ class RoiPageRecognitionEngine(
                             logcat(LogPriority.INFO) {
                                 "[ocr_block] box=[${bbox[0].toInt()},${bbox[1].toInt()},${bbox[2].toInt()},${bbox[3].toInt()}] " +
                                     "size=${(bbox[2] - bbox[0]).toInt()}x${(bbox[3] - bbox[1]).toInt()} " +
-                                    "rotated=${if (rotatedForOcr) "90ccw" else "no"} text=\"$text\""
+                                    "rotated=${if (rotatedForOcr) "90ccw" else "no"} chars=${text.length}"
                             }
                         }
                         val boxWidth = (bbox[2] - bbox[0]).toFloat()

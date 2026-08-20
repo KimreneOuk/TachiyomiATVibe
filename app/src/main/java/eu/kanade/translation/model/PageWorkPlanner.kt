@@ -67,13 +67,8 @@ object PageWorkPlanner {
             decisions[stage] = decision
         }
 
-        val displayReady = page?.isTranslationDisplayReady == true ||
-            artifact?.displayState in setOf(
-                PageDisplayState.DISPLAY_READY,
-                PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT,
-                PageDisplayState.FAILED_WITH_COMMITTED_RESULT,
-                PageDisplayState.TEXTLESS_COMPLETE,
-            )
+        val displayReady = page?.toPageDisplayProjection()?.displayReady == true ||
+            artifact?.let { PageDisplayProjection.from(it).displayReady } == true
         val firstIncomplete = decisions.values.firstOrNull {
             it.decision != StageDecision.REUSE && it.decision != StageDecision.TERMINAL_COMPLETE
         }?.stage

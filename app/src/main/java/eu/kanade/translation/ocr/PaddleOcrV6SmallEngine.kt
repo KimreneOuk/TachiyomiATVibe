@@ -102,7 +102,7 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
                 logcat(LogPriority.INFO) {
                     "[paddle_ocr] total=${(System.nanoTime() - start) / 1_000_000.0}ms " +
                         "crop=${crop.width}x${crop.height} input=${width}x$RECOGNITION_HEIGHT " +
-                        "chars=${text.length} text=\"$text\""
+                        "chars=${text.length}"
                 }
             }
             return text to conf

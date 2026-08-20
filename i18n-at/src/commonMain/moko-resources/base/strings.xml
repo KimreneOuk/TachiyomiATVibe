@@ -168,13 +168,13 @@
     <string name="manga_batch_legend_active">translating</string>
     <string name="manga_batch_legend_pending">pending</string>
     <!-- TachiyomiAT: tier-led progress chips. Each page chip carries two
-         tier blocks; tier-1 (Readable) is OCR+translate done, tier-2 (Final)
-         is the cleaned/rendered image. Working = not readable yet. -->
-    <string name="manga_batch_tier_readable">Readable</string>
-    <string name="manga_batch_tier_final">Final</string>
+         stage blocks; Ready is the committed reader display projection, while
+         Processed includes terminal failures and textless pages. -->
+    <string name="manga_batch_tier_readable">Ready</string>
+    <string name="manga_batch_tier_final">Processed</string>
     <string name="manga_batch_tier_working">Working</string>
     <string name="manga_batch_tier_failed">Failed</string>
-    <string name="manga_batch_tier_hint">Readable pages can be read now while cleaning finishes. Final pages have the original text cleaned away.</string>
+    <string name="manga_batch_tier_hint">Ready pages have a committed cleaned image and translated text. Processed pages also include terminal failures and textless pages.</string>
     <string name="manga_batch_warnings">%1$d warnings</string>
     <string name="manga_batch_read_now">Read now</string>
     <string name="manga_batch_status_ocr">Reading page text</string>

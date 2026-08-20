@@ -1,5 +1,6 @@
 package eu.kanade.translation.translator
 
+import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -64,7 +65,8 @@ object AiModelFetcher {
         } catch (e: Exception) {
             if (engine == AiEngine.LMSTUDIO) {
                 logcat(LogPriority.ERROR) {
-                    "LM Studio model fetch failed for '${normalizeBaseUrl(baseUrl)}/models': ${e.stackTraceToString()}"
+                    "event=model_fetch_failure backend=lm_studio baseHash=${ShortHash.hash(normalizeBaseUrl(baseUrl))} " +
+                        "error=${e::class.java.simpleName}"
                 }
             }
             Result.Error("${e::class.java.simpleName}: ${e.message ?: "Network error"}")

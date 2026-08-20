@@ -1,6 +1,7 @@
 package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -36,13 +37,18 @@ object GlossaryExtractor {
         return try {
             val response = translator.promptText(prompt)
             if (response.isNotBlank()) {
-                logcat(LogPriority.INFO) { "Extracted glossary:\n$response" }
+                logcat(LogPriority.INFO) {
+                    "event=glossary_extracted pages=${pages.size} chars=${response.length} " +
+                        "fingerprint=${ShortHash.hash(response)}"
+                }
                 "[GLOSSARY]\n$response\n[END GLOSSARY]\n"
             } else {
                 ""
             }
         } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to extract glossary" }
+            logcat(LogPriority.ERROR) {
+                "event=glossary_failure reason=provider_error error=${e::class.java.simpleName}"
+            }
             ""
         }
     }

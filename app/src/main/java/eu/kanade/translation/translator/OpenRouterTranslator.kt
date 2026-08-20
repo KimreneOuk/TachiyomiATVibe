@@ -81,7 +81,7 @@ class OpenRouterTranslator(
                 payloadJson = jsonObject,
             )
         } catch (e: Exception) {
-            logcat { "OpenRouter promptText Error : ${e.stackTraceToString()}" }
+            logcat { "event=provider_failure backend=openrouter stage=prompt error=${e::class.java.simpleName}" }
             ""
         }
     }

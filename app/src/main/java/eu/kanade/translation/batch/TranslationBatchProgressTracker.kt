@@ -9,9 +9,9 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
-import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.toPageDisplayProjection
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -147,6 +147,9 @@ class TranslationBatchProgressTracker(
                     )
             }
         }.toMap(),
+        displayPageMap = orderedPageKeys.distinct().mapNotNull { pageKey ->
+            store.display.value[pageKey]?.let { pageKey to it }
+        }.toMap(),
         chapterState = state.chapterState,
         indexResolver = indexResolver,
         permitHolderPageKey = permitHolderResolver?.invoke(),
@@ -209,9 +212,13 @@ class TranslationBatchProgressTracker(
                 TranslationBatchPhase.IDLE
             },
             chapterId: Long = 0,
+            /** Reader-facing committed pages; defaults to the live map for pure callers. */
+            displayPageMap: Map<String, PageTranslation>? = null,
         ): TranslationProgressSnapshot {
+            val committedPages = displayPageMap ?: pageMap
             val rows = pageMap.entries.mapIndexed { order, (key, page) ->
                 val stage = progressStage(page)
+                val display = page.toPageDisplayProjection(committedPages[key])
                 TranslationProgressSnapshot.Page(
                     pageKey = key,
                     index = PageIndexResolver.resolve(key, order, indexResolver),
@@ -230,9 +237,15 @@ class TranslationBatchProgressTracker(
                     inpaintDone = page.inpaintStatus == StageStatus.READY,
                     renderDone = page.renderStatus == StageStatus.READY,
                     errorMessage = page.activeError,
+                    displayState = display.state,
+                    displayReady = display.displayReady,
+                    processed = display.processed,
+                    batchContextComplete = display.batchContextComplete,
                 )
             }.sortedWith(compareBy<TranslationProgressSnapshot.Page> { it.index }.thenBy { it.pageKey })
-            val stageCounts = BatchPhase.entries.associateWith { phase -> count(pageMap.values, phase) }
+            val stageCounts = BatchPhase.entries.associateWith { phase ->
+                count(pageMap, phase, committedPages)
+            }
             val processedStages = stageCounts.values.sumOf { it.processed }
             val activeStages = pageMap.values.flatMap { page -> runningStages(page) }.toSet()
             val failed = if (forcedFailedCount >=
@@ -281,22 +294,29 @@ class TranslationBatchProgressTracker(
             )
         }
 
-        private fun count(pages: Collection<PageTranslation>, phase: BatchPhase): StageCount {
+        private fun count(
+            pages: Map<String, PageTranslation>,
+            phase: BatchPhase,
+            displayPages: Map<String, PageTranslation> = pages,
+        ): StageCount {
             // TachiyomiAT bug 2 fix: RENDER (color estimation) and DISPLAY are
             // reported separately so the indicator stops claiming a page is
             // rendered when only its fill colors were computed. DISPLAY success
-            // is derived from hasRenderedResult (cleaned file + translation
-            // displayable + renderStatus READY + non-empty translated blocks),
-            // which is exactly the reader's translatedStream gate. RENDER stays
-            // keyed on renderStatus == READY/PARTIAL (color estimation done).
+            // is derived from the same PageDisplayProjection used by the reader.
+            // RENDER stays keyed on renderStatus == READY/PARTIAL (color
+            // estimation done).
             if (phase == BatchPhase.DISPLAY) {
                 val total = pages.size
-                val succeeded = pages.count { it.hasRenderedResult }
-                val failed = pages.count { it.isStageFailed && !it.hasRenderedResult }
-                val skipped = pages.count { it.isTextlessTerminal }
+                val succeeded = pages.count { (key, page) ->
+                    page.toPageDisplayProjection(displayPages[key]).displayReady
+                }
+                val failed = pages.count { (key, page) ->
+                    page.isStageFailed && !page.toPageDisplayProjection(displayPages[key]).displayReady
+                }
+                val skipped = pages.count { it.value.isTextlessTerminal }
                 return StageCount(succeeded, failed, skipped, total)
             }
-            val statuses = pages.map {
+            val statuses = pages.values.map {
                 when (phase) {
                     BatchPhase.OCR -> it.ocrStatus
                     BatchPhase.TRANSLATE -> it.translationStatus
@@ -322,7 +342,7 @@ class TranslationBatchProgressTracker(
             if (page.renderStatus == StageStatus.RUNNING) add(TranslationProgressStage.RENDER)
         }
         private fun progressStage(page: PageTranslation): TranslationProgressStage = when {
-            page.hasRenderedResult || page.isTextlessTerminal -> TranslationProgressStage.DONE
+            page.toPageDisplayProjection().displayReady || page.isTextlessTerminal -> TranslationProgressStage.DONE
             page.isStageFailed -> TranslationProgressStage.FAILED
             page.renderStatus == StageStatus.RUNNING -> TranslationProgressStage.RENDER
             page.translationStatus == StageStatus.RUNNING -> TranslationProgressStage.TRANSLATE

@@ -285,7 +285,7 @@ class SequentialBatchCoordinatorTest {
         val pages = (0 until pageCount).map { "p$it" to it }
         val native = ImmediateNativeWorker()
 
-        suspend fun runOnce(): Triple<RecordingListener, RecordingRenderJoin, BatchCoordinator.Pass1Outcome> {
+        suspend fun runOnce(): Triple<RecordingListener, RecordingRenderJoin, BatchPass1Outcome> {
             val events = RecordingListener()
             val translator = object : TranslatorLaneWorker {
                 override suspend fun translate(ref: OcrReadyPageRef) {

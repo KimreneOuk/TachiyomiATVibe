@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
+import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
@@ -145,6 +146,7 @@ fun TranslationProgressSheet(
             ) {
                 OutlinedButton(
                     onClick = onReadNow,
+                    enabled = snapshot.canReadTranslated,
                     modifier = Modifier.weight(1f),
                 ) {
                     Text(stringResource(ATMR.strings.manga_batch_read_now))
@@ -184,25 +186,44 @@ fun TranslationProgressSheet(
 
 @Composable
 private fun TierStatusBar(snapshot: TranslationProgressSnapshot) {
-    val readable = snapshot.pages.count {
-        it.ocrDone &&
-            it.translateDone &&
-            it.stage != TranslationProgressStage.DONE &&
-            it.stage != TranslationProgressStage.FAILED
-    }
-    val finalDone = snapshot.pages.count { it.stage == TranslationProgressStage.DONE }
+    val readable = snapshot.displayReadyPages
+    val finalDone = snapshot.processedPages
     val working = snapshot.pages.count {
-        it.stage == TranslationProgressStage.OCR || it.stage == TranslationProgressStage.TRANSLATE
+        it.displayState == PageDisplayState.CANDIDATE_RUNNING ||
+            it.displayState == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT
     }
-    val failed = snapshot.pages.count { it.stage == TranslationProgressStage.FAILED }
+    val failed = snapshot.pages.count {
+        it.displayState == PageDisplayState.FAILED_NO_RESULT ||
+            it.displayState == PageDisplayState.FAILED_WITH_COMMITTED_RESULT
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        TierStatCell(BatchDone, stringResource(ATMR.strings.manga_batch_tier_readable), readable, Modifier.weight(1f))
-        TierStatCell(TierFinalColor, stringResource(ATMR.strings.manga_batch_tier_final), finalDone, Modifier.weight(1f))
-        TierStatCell(MaterialTheme.colorScheme.primary, stringResource(ATMR.strings.manga_batch_tier_working), working, Modifier.weight(1f))
-        TierStatCell(MaterialTheme.colorScheme.error, stringResource(ATMR.strings.manga_batch_tier_failed), failed, Modifier.weight(1f))
+        TierStatCell(
+            BatchDone,
+            stringResource(ATMR.strings.manga_batch_tier_readable),
+            readable,
+            Modifier.weight(1f),
+        )
+        TierStatCell(
+            TierFinalColor,
+            stringResource(ATMR.strings.manga_batch_tier_final),
+            finalDone,
+            Modifier.weight(1f),
+        )
+        TierStatCell(
+            MaterialTheme.colorScheme.primary,
+            stringResource(ATMR.strings.manga_batch_tier_working),
+            working,
+            Modifier.weight(1f),
+        )
+        TierStatCell(
+            MaterialTheme.colorScheme.error,
+            stringResource(ATMR.strings.manga_batch_tier_failed),
+            failed,
+            Modifier.weight(1f),
+        )
     }
 }
 
@@ -245,10 +266,13 @@ private fun PageTierChipGrid(pages: List<TranslationProgressSnapshot.Page>) {
 
 @Composable
 private fun PageTierChip(page: TranslationProgressSnapshot.Page, modifier: Modifier = Modifier) {
-    val failed = page.stage == TranslationProgressStage.FAILED
-    val isFinal = page.stage == TranslationProgressStage.DONE
-    val readable = page.ocrDone && page.translateDone
-    val working = page.stage.isRunning
+    val failed = page.displayState == PageDisplayState.FAILED_NO_RESULT ||
+        page.displayState == PageDisplayState.FAILED_WITH_COMMITTED_RESULT
+    val isFinal = page.processed
+    val readable = page.displayReady
+    val working = page.stage.isRunning ||
+        page.displayState == PageDisplayState.CANDIDATE_RUNNING ||
+        page.displayState == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT
     val container = when {
         failed -> MaterialTheme.colorScheme.errorContainer
         isFinal -> TierFinalColor.copy(alpha = 0.16f)
@@ -292,13 +316,15 @@ private enum class TierBlockKind { TIER1, TIER2 }
 
 private fun tier1State(page: TranslationProgressSnapshot.Page): TierBlockState = when {
     page.ocrDone && page.translateDone -> TierBlockState.DONE
-    page.stage == TranslationProgressStage.OCR || page.stage == TranslationProgressStage.TRANSLATE -> TierBlockState.ACTIVE
+    page.stage == TranslationProgressStage.OCR ||
+        page.stage == TranslationProgressStage.TRANSLATE -> TierBlockState.ACTIVE
     else -> TierBlockState.PENDING
 }
 
 private fun tier2State(page: TranslationProgressSnapshot.Page): TierBlockState = when {
     page.stage == TranslationProgressStage.DONE -> TierBlockState.DONE
-    page.stage == TranslationProgressStage.INPAINT || page.stage == TranslationProgressStage.RENDER -> TierBlockState.ACTIVE
+    page.stage == TranslationProgressStage.INPAINT ||
+        page.stage == TranslationProgressStage.RENDER -> TierBlockState.ACTIVE
     else -> TierBlockState.PENDING
 }
 

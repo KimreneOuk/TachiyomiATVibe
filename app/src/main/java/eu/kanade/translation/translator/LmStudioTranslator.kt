@@ -85,7 +85,7 @@ class LmStudioTranslator(
                 payloadJson = jsonObject,
             )
         } catch (e: Exception) {
-            logcat { "LM Studio promptText Error : ${e.stackTraceToString()}" }
+            logcat { "event=provider_failure backend=lm_studio stage=prompt error=${e::class.java.simpleName}" }
             ""
         }
     }

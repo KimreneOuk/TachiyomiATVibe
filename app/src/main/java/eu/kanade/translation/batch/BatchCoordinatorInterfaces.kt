@@ -4,6 +4,9 @@ package eu.kanade.translation.batch
  * TachiyomiAT: testable batch coordinator interfaces.
  */
 
+/** Natural-order page identity retained by the live sequential coordinator. */
+typealias PageKey = Pair<String, Int>
+
 data class OcrReadyPageRef(
     val pageKey: String,
     val pageIndex: Int,
@@ -37,22 +40,14 @@ interface TranslatorLaneWorker {
     suspend fun translate(ref: OcrReadyPageRef)
 }
 
-interface ChunkTranslatorLaneWorker : TranslatorLaneWorker {
-    /** Translate a whole chunk's Pass-1 work items with rolling context. */
-    suspend fun translateChunk(
-        chunk: PageChunk,
-        refs: List<OcrReadyPageRef>,
-        rollingContext: RollingContextPacket,
-    ): RollingContextPacket? = null
-
-    override suspend fun translate(ref: OcrReadyPageRef) {}
-}
-
 interface RenderJoinWorker {
     fun onNativeBranchDone(pageKey: String)
     fun onTranslationBranchDone(pageKey: String)
     suspend fun awaitAndRender(pageKey: String)
 }
+
+/** Result of the only live batch coordinator's first pass. */
+data class BatchPass1Outcome(val needsTranslation: List<String>)
 
 open class BatchScheduleListener {
     open fun ocrStarted(pageKey: String) {}

@@ -3,6 +3,7 @@ package eu.kanade.translation.translator
 import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -39,7 +40,8 @@ class GoogleTranslator(
         val body = response.body
             ?: run {
                 logcat(LogPriority.WARN) {
-                    "GoogleTranslator: empty response body for lang=$lang text=\"$text\" code=${response.code}"
+                    "event=provider_response_empty backend=google reason=empty_body lang=$lang " +
+                        "inputChars=${text.length} status=${response.code}"
                 }
                 return ""
             }
@@ -50,11 +52,10 @@ class GoogleTranslator(
         } catch (e: Exception) {
             // Google's free endpoint returns 429/HTML (not JSON) on rate-limiting or bot-detection,
             // which this catch previously turned into "" with no visible error — blank pages with
-            // no cause. Log the code + a body snippet so the real cause is diagnosable.
-            val snippet = if (string.length > 200) string.substring(0, 200) else string
-            logcat(LogPriority.WARN, e) {
-                "GoogleTranslator: parse failed for lang=$lang text=\"$text\" " +
-                    "code=${response.code} body=\"$snippet\""
+            // no cause. Log only status, counts, and a response fingerprint.
+            logcat(LogPriority.WARN) {
+                "event=provider_response_invalid backend=google reason=parse_failure lang=$lang " +
+                    "inputChars=${text.length} status=${response.code} responseHash=${ShortHash.hash(string)}"
             }
         }
         return ""

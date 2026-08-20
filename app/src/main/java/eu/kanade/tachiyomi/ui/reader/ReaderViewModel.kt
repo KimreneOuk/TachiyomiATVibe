@@ -60,8 +60,8 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isTextlessTerminal
-import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -2647,8 +2647,11 @@ class ReaderViewModel @JvmOverloads constructor(
                             runningPageIndex = oneBased
                         }
                     }
-                    val displayImageName = updated.displayImageName
-                    val hasCleaned = displayImageName != null
+                    // The committed display projection is the reader authority;
+                    // the live candidate still drives stage/error feedback.
+                    val resolvedDisplay = store.resolveDisplayPage(pageKey) ?: updated
+                    val display = resolvedDisplay.toPageDisplayProjection()
+                    val hasCleaned = display.displayReady
                     val isFailed = updated.ocrStatus == eu.kanade.translation.model.StageStatus.FAILED ||
                         updated.inpaintStatus == eu.kanade.translation.model.StageStatus.FAILED ||
                         updated.translationStatus == eu.kanade.translation.model.StageStatus.FAILED ||
@@ -2680,9 +2683,8 @@ class ReaderViewModel @JvmOverloads constructor(
                     // committed display bundle when one exists — a candidate
                     // retry emission can replace the live entry but never
                     // nulls the committed translated page.
-                    val resolvedDisplay = store.resolveDisplayPage(pageKey) ?: updated
-                    if (resolvedDisplay.displayImageName != null || resolvedDisplay.isTextlessTerminal) translatedCount++
-                    if (isFailed && resolvedDisplay.displayImageName == null) translatedCount++
+                    if (display.displayReady || display.isTextless) translatedCount++
+                    if (isFailed && !display.displayReady && !display.isTextless) translatedCount++
                     readerPage.translation = resolvedDisplay
                 }
                 state.value.viewerChapters?.currChapter?.let { current ->
@@ -2788,7 +2790,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     return@onEach
                 }
                 val tier2Finished = updated.displayImageName != null && page.translatedStream == null
-                val wantsToShowOverlay = updated.isTranslationDisplayReady && !page.showTranslatedImage
+                val wantsToShowOverlay = updated.toPageDisplayProjection().displayReady && !page.showTranslatedImage
                 page.translation = updated
                 attachTranslatedStreamIfWarm(page, manga, page.chapter, source)
                 if (translationPreferences.translationEnabled().get()) {

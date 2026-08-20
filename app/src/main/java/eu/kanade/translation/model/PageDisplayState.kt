@@ -6,8 +6,9 @@ package eu.kanade.translation.model
  * progress tracker, and reader must all consume this state instead of inferring
  * readiness from OCR or translation flags (batch plan §6).
  *
- * Phase 2 introduces the vocabulary and records the migration-time initial state
- * in the chapter artifact manifest; UI consumers switch to it in a later phase.
+ * The artifact manifest records this state durably, while the live store and
+ * progress projection reconstruct it from the committed pointer plus candidate
+ * metadata. UI consumers must not infer readiness from an intermediate stage.
  */
 enum class PageDisplayState {
     /** No committed bundle; the original page is displayed. */
@@ -31,3 +32,9 @@ enum class PageDisplayState {
     /** OCR-confirmed textless page; terminally complete without translation. */
     TEXTLESS_COMPLETE,
 }
+
+/** States whose committed bundle can be shown as translated by the reader. */
+val PageDisplayState.hasCommittedDisplay: Boolean
+    get() = this == PageDisplayState.DISPLAY_READY ||
+        this == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT ||
+        this == PageDisplayState.FAILED_WITH_COMMITTED_RESULT

@@ -7,7 +7,7 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasExhaustedRetries
 import eu.kanade.translation.model.isStageCancelled
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isTranslationDisplayReady
+import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import tachiyomi.core.common.i18n.stringResource
@@ -62,7 +62,7 @@ fun AutoSlotState.toReaderPageFeedback(): ReaderPageFeedbackState = when (this) 
  * result.
  */
 fun PageTranslation.toReaderPageFeedback(): ReaderPageFeedbackState? = when {
-    isTranslationDisplayReady -> ReaderPageFeedbackState.Translated
+    toPageDisplayProjection().displayReady -> ReaderPageFeedbackState.Translated
     isStageFailed -> ReaderPageFeedbackState.Failed(!hasExhaustedRetries)
     renderStatus == StageStatus.RUNNING -> ReaderPageFeedbackState.FinishingPage
     inpaintStatus == StageStatus.RUNNING -> ReaderPageFeedbackState.CleaningBubbles

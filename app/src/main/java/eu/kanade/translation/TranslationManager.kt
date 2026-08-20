@@ -15,9 +15,8 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.findRunningSameSourceConflict
-import eu.kanade.translation.model.hasRecognizedTranslation
-import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.staleQueuedChaptersToEvict
+import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.toQueuedChapterView
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
@@ -351,8 +350,11 @@ class TranslationManager(
         val translation = getQueuedTranslationOrNull(chapterId)
         if (translation != null) return translation.status
         activeStores.get(chapterId)?.let { store ->
-            val pages = store.state.value
-            if (pages.values.any { it.hasRenderedResult || it.hasRecognizedTranslation }) {
+            // The reader-facing committed projection is authoritative. A live
+            // OCR/translation candidate must not make the chapter appear ready
+            // or hide an older committed bundle while it is being refreshed.
+            val pages = store.display.value
+            if (pages.values.any { it.toPageDisplayProjection().displayReady }) {
                 val summary = kotlinx.coroutines.runBlocking(Dispatchers.IO) { store.readSummary() }
                 return when {
                     summary == null || summary.expectedPageCount != pages.size -> Translation.State.READY_WITH_WARNINGS
@@ -380,7 +382,7 @@ class TranslationManager(
         val activeStoreStateFlow = activeStores.snapshots.flatMapLatest { map ->
             val store = map[chapterId]
             if (store != null) {
-                store.state.map {
+                combine(store.state, store.display) { _, _ ->
                     getChapterTranslationStatus(chapterId, chapterName, scanlator, title, sourceId)
                 }
             } else {
@@ -414,7 +416,7 @@ class TranslationManager(
         if (!file.exists() || file.length() <= 2L) return@runBlocking null
         try {
             val pages = Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
-            val readable = pages.values.any { it.hasRenderedResult || it.hasRecognizedTranslation }
+            val readable = pages.values.any { it.toPageDisplayProjection().displayReady }
             if (!readable) return@runBlocking null
 
             val summary = ChapterTranslationSummaryStore(file).read()
@@ -822,14 +824,20 @@ class TranslationManager(
                     } else {
                         val state = getQueuedTranslationOrNull(chapterId)?.status
                             ?: Translation.State.NOT_TRANSLATED
-                        flowOf(
-                            TranslationProgressSnapshot.compute(
-                                chapterId = chapterId,
-                                state = state,
-                                pageMap = activeStores.get(chapterId)?.state?.value,
-                                permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
-                            ),
-                        )
+                        val store = activeStores.get(chapterId)
+                        if (store == null) {
+                            flowOf(TranslationProgressSnapshot.empty(chapterId, state))
+                        } else {
+                            combine(store.state, store.display) { pages, display ->
+                                TranslationProgressSnapshot.compute(
+                                    chapterId = chapterId,
+                                    state = state,
+                                    pageMap = pages,
+                                    displayPageMap = display,
+                                    permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -924,11 +932,12 @@ class TranslationManager(
                 if (store == null) {
                     flowOf(TranslationProgressSnapshot.empty(chapterId, state))
                 } else {
-                    store.state.map { pages ->
+                    combine(store.state, store.display) { pages, display ->
                         TranslationProgressSnapshot.compute(
                             chapterId = chapterId,
                             state = getQueuedTranslationOrNull(chapterId)?.status ?: state,
                             pageMap = pages,
+                            displayPageMap = display,
                             permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
                         )
                     }

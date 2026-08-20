@@ -7,6 +7,7 @@ import eu.kanade.translation.model.isStageCancelled
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 
@@ -30,7 +31,7 @@ object BatchProgressReconciler {
         val unexpectedPageKeys = pageMap.keys - expectedKeys.toSet()
         unexpectedPageKeys.forEach { pageKey ->
             logcat(LogPriority.WARN) {
-                "TachiyomiAT batch reconciliation unexpected page: pageKey=$pageKey reason=not in authoritative ordered keys"
+                "event=batch_reconciliation reason=unexpected_page pageHash=${ShortHash.hash(pageKey)}"
             }
         }
         if (expectedKeys.isEmpty()) {

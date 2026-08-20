@@ -1,5 +1,6 @@
 package eu.kanade.translation.translator
 
+import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import logcat.LogPriority
@@ -36,23 +37,27 @@ internal suspend inline fun <T> withTranslationRetry(
             throw e
         } catch (e: Exception) {
             lastError = e
+            val backend = ShortHash.hash(logTag).ifEmpty { "unknown" }
             if (attempt >= maxAttempts) {
                 logcat(tag = "TranslationRetry", priority = LogPriority.ERROR) {
-                    "$logTag FAILED after $attempt attempts: ${e::class.java.simpleName} ${e.message}"
+                    "backend=$backend event=translation_failure reason=retry_exhausted " +
+                        "attempt=$attempt error=${e::class.java.simpleName}"
                 }
                 throw e
             }
             if (!e.isTransientRateOrServerError()) {
                 logcat(tag = "TranslationRetry", priority = LogPriority.ERROR) {
-                    "$logTag non-transient failure: ${e::class.java.simpleName} ${e.message}"
+                    "backend=$backend event=translation_failure reason=terminal " +
+                        "attempt=$attempt error=${e::class.java.simpleName}"
                 }
                 throw e
             }
             val backoff = (baseDelayMs * (1L shl (attempt - 1))) + Random.nextLong(0, 500)
             val capped = backoff.coerceAtMost(30_000L)
             logcat(tag = "TranslationRetry", priority = LogPriority.WARN) {
-                "$logTag retry $attempt/$maxAttempts after ${e::class.java.simpleName}: " +
-                    "${e.message}, backoff=${capped}ms"
+                "backend=$backend event=translation_retry reason=transient " +
+                    "attempt=$attempt maxAttempts=$maxAttempts error=${e::class.java.simpleName} " +
+                    "backoffMs=$capped"
             }
             delay(capped)
         }

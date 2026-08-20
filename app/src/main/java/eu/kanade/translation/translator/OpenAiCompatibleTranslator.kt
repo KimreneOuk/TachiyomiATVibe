@@ -1,6 +1,7 @@
 package eu.kanade.translation.translator
 
 import eu.kanade.tachiyomi.network.await
+import eu.kanade.translation.util.ShortHash
 import logcat.LogPriority
 import logcat.logcat
 import okhttp3.MediaType.Companion.toMediaType
@@ -43,7 +44,7 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         val request = requestBuilder.build()
         val response = okHttpClient.newCall(request).await()
 
-        val responseBody = response.body ?: throw IllegalStateException("Empty response body from $url")
+        val responseBody = response.body ?: throw IllegalStateException("Empty response body (reason=empty_body)")
         val responseString = responseBody.string()
         val responseJson = JSONObject(responseString)
 
@@ -51,14 +52,12 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         val rawOutput = choicesArray?.optJSONObject(0)?.optJSONObject("message")?.optString("content")
 
         if (rawOutput.isNullOrBlank()) {
-            val snippet = if (responseString.length > 300) responseString.substring(0, 300) else responseString
             logcat(LogPriority.WARN) {
-                "API returned no usable content. Raw response snippet: $snippet"
+                "event=provider_response_empty reason=no_content status=${response.code} " +
+                    "chars=${responseString.length} responseHash=${ShortHash.hash(responseString)} " +
+                    "choices=${choicesArray?.length() ?: 0}"
             }
-            throw IllegalStateException(
-                "API returned no content (choices missing or empty): " +
-                    responseJson.optString("error", responseJson.toString()),
-            )
+            throw IllegalStateException("API returned no content (reason=no_content)")
         }
 
         return rawOutput

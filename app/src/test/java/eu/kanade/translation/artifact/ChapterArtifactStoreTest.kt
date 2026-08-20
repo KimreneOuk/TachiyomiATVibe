@@ -401,6 +401,88 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
+    fun `artifact load removes corrupt and orphan managed temp files but keeps active candidate`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val opened = store.openCandidate(
+            migrated,
+            "page.jpg",
+            ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = 500L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val candidateImage = layout.imageFile("page.jpg", generationId, "candidate", "jpg")
+        io.write(candidateImage, byteArrayOf(1, 2, 3))
+
+        val orphanStage = layout.stageArtifactFile("page.jpg", ArtifactStage.OCR, "orphan")
+        val orphanGeneration = layout.generationFile("orphan-generation")
+        io.write("$orphanStage.tmp", byteArrayOf(4))
+        io.write(orphanGeneration, byteArrayOf(5))
+        io.write(AtomicChapterDocuments.tempNameFor(layout.manifestFileName), byteArrayOf(6))
+
+        val reloaded = ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+            .loadOrMigrate(legacySnapshot())
+
+        reloaded.manifest.authority shouldBe ManifestAuthority.ARTIFACTS
+        io.files.containsKey(candidateImage) shouldBe true
+        io.files.containsKey("$orphanStage.tmp") shouldBe false
+        io.files.containsKey(orphanGeneration) shouldBe false
+        io.files.containsKey(AtomicChapterDocuments.tempNameFor(layout.manifestFileName)) shouldBe false
+    }
+
+    @Test
+    fun `generation retention stays bounded across repeated reruns`() {
+        val io = FakeChapterDocumentIo()
+        val committed = layout.imageFile("page.jpg", "g20", "fp20", "jpg")
+        val previous = layout.imageFile("page.jpg", "g19", "fp19", "jpg")
+        val candidate = layout.imageFile("page.jpg", "g21", "fp21", "jpg")
+        val manifest = ChapterArtifactManifest(
+            chapterKey = "Chapter 1",
+            pages = mapOf(
+                "page.jpg" to PageArtifactRecord(
+                    pageKey = "page.jpg",
+                    committed = CommittedBundleMetadata(
+                        generationId = "g20",
+                        displayBase = DisplayBaseReference(
+                            kind = DisplayBaseKind.CLEANED_IMAGE,
+                            fileName = committed,
+                        ),
+                    ),
+                    previousCommitted = CommittedBundleMetadata(
+                        generationId = "g19",
+                        displayBase = DisplayBaseReference(
+                            kind = DisplayBaseKind.CLEANED_IMAGE,
+                            fileName = previous,
+                        ),
+                    ),
+                    candidate = CandidateGenerationMetadata(generationId = "g21"),
+                ),
+            ),
+        )
+        (0..100).forEach { generation ->
+            io.write(
+                layout.imageFile("page.jpg", "g$generation", "fp$generation", "jpg"),
+                byteArrayOf(generation.toByte()),
+            )
+        }
+
+        artifactStore(io).reconcileRetention(manifest)
+
+        val retainedGenerationIds = io.files.keys
+            .filter { it.startsWith("${layout.imagesRootDirectory}/") }
+            .map { it.substringAfterLast('/').substringBefore("-f-") }
+            .toSet()
+        retainedGenerationIds shouldBe setOf(
+            layout.generationSegment("g19"),
+            layout.generationSegment("g20"),
+            layout.generationSegment("g21"),
+        )
+    }
+
+    @Test
     fun `candidate generation retention uses an exact encoded identity`() {
         val io = FakeChapterDocumentIo()
         val kept = layout.imageFile("p", "g", "keep", "jpg")

@@ -95,7 +95,7 @@ class GeminiTranslator(
                 ContextualRequestBuilder.toBatch(request, parsed)
             }
         } catch (e: Exception) {
-            logcat { "Image Translation Error : ${e.stackTraceToString()}" }
+            logcat { "event=provider_failure backend=gemini stage=contextual error=${e::class.java.simpleName}" }
             throw e
         }
     }
@@ -122,7 +122,7 @@ class GeminiTranslator(
             val response = textModel.generateContent(prompt)
             response.text ?: ""
         } catch (e: Exception) {
-            logcat { "Gemini promptText Error : ${e.stackTraceToString()}" }
+            logcat { "event=provider_failure backend=gemini stage=prompt error=${e::class.java.simpleName}" }
             ""
         }
     }

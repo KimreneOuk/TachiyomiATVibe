@@ -45,6 +45,22 @@ data class TranslationProgressSnapshot(
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages
     val countPair: Pair<Int, Int> get() = donePages to totalPages
 
+    /** Exact count of pages whose committed display bundle can be read now. */
+    val displayReadyPages: Int get() = pages.count { it.displayReady }
+
+    /** Terminal page work, including failures and textless pages. */
+    val processedPages: Int get() = pages.count {
+        it.processed ||
+            it.stage == TranslationProgressStage.DONE ||
+            it.stage == TranslationProgressStage.FAILED
+    }
+
+    /** Pages whose batch context is trusted and reusable for the next page. */
+    val batchCompletePages: Int get() = pages.count { it.batchContextComplete }
+
+    /** Read Now/Open Translated actions are valid only when a result exists. */
+    val canReadTranslated: Boolean get() = displayReadyPages > 0
+
     @Immutable
     data class Page(
         val pageKey: String,
@@ -55,6 +71,10 @@ data class TranslationProgressSnapshot(
         val inpaintDone: Boolean = false,
         val renderDone: Boolean = false,
         val errorMessage: String? = null,
+        val displayState: PageDisplayState = PageDisplayState.ORIGINAL_ONLY,
+        val displayReady: Boolean = false,
+        val processed: Boolean = false,
+        val batchContextComplete: Boolean = false,
     )
 
     companion object {
@@ -72,6 +92,7 @@ data class TranslationProgressSnapshot(
             pageMap: Map<String, PageTranslation>?,
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
+            displayPageMap: Map<String, PageTranslation>? = null,
             batchPhase: TranslationBatchPhase = if (state ==
                 Translation.State.TRANSLATING
             ) {
@@ -84,6 +105,7 @@ data class TranslationProgressSnapshot(
             state,
             indexResolver = indexResolver,
             permitHolderPageKey = permitHolderPageKey,
+            displayPageMap = displayPageMap,
             batchPhase = batchPhase,
             chapterId = chapterId,
         )

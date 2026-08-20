@@ -39,10 +39,7 @@ val PageTranslation.isCleanedImageReady: Boolean
  * over the original image while inpaint is still pending or failed.
  */
 val PageTranslation.isTranslationDisplayReady: Boolean
-    get() = isCleanedImageReady &&
-        (translationStatus == StageStatus.READY || translationStatus == StageStatus.PARTIAL) &&
-        renderStatus == StageStatus.READY &&
-        blocks.any { it.translation.isNotBlank() }
+    get() = toPageDisplayProjection().displayReady
 
 val PageTranslation.shouldShowTranslationOverlay: Boolean
     get() = blocks.any { it.translation.isNotBlank() }
