@@ -1,8 +1,13 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.OcrStagePatch
+import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.ocrBlockFingerprints
+import logcat.LogPriority
+import logcat.logcat
 
 /**
  * Production boundary helper: persists the in-memory OCR result (blocks,
@@ -14,8 +19,13 @@ import eu.kanade.translation.model.StageStatus
  * after the cleaned image is published. It is extracted as a top-level internal
  * function so pure-JVM regression tests can drive the REAL durability write
  * without instantiating the full Android-bound pipeline. A test that removes
- * the `store.updatePage` call below will fail because the durable snapshot will
- * have empty blocks and `ocrStatus = RUNNING` instead of `READY`.
+ * the durable write below will fail because the durable snapshot will have
+ * empty blocks and `ocrStatus = RUNNING` instead of `READY`.
+ *
+ * Phase 3: the persist is a preconditioned detection/OCR stage merge carrying
+ * the page version observed before the native pass, so a stale worker cannot
+ * clobber a page a newer writer owns. A rejection is logged and the durable
+ * winner's snapshot is returned — the reader observes the winner's progress.
  */
 internal suspend fun publishPreparedPageFromOcr(
     store: ChapterTranslationStore,
@@ -24,26 +34,29 @@ internal suspend fun publishPreparedPageFromOcr(
     chapterId: Long?,
     mangaId: Long,
     sourceId: Long,
+    expectedPageVersion: Long,
+    expectedGeneration: Long,
+    expectedLeaseToken: Long? = null,
 ): PreparedPage {
-    store.updatePage(pageKey) { existing ->
-        (existing ?: ocrResult).apply {
-            sourceFileName = ocrResult.sourceFileName
-            blocks = ocrResult.blocks
-            allTextDetections = ocrResult.allTextDetections
-            inpaintMaskBoxes = ocrResult.inpaintMaskBoxes
-            ocrStatus = ocrResult.ocrStatus
-            inpaintStatus = ocrResult.inpaintStatus
-            renderStatus = ocrResult.renderStatus
-            recognitionEngine = ocrResult.recognitionEngine
-            decodeSampleSize = ocrResult.decodeSampleSize
-            originalImgWidth = ocrResult.originalImgWidth
-            originalImgHeight = ocrResult.originalImgHeight
-            imgWidth = ocrResult.imgWidth
-            imgHeight = ocrResult.imgHeight
-            inpaintingModeUsed = ocrResult.inpaintingModeUsed
-            cleanedImageName = ocrResult.cleanedImageName ?: cleanedImageName
-            inpaintRevision = ocrResult.inpaintRevision
-            updatedAt = System.currentTimeMillis()
+    val prior = store.snapshot(pageKey)
+    val merge = store.mergeOcr(
+        OcrStagePatch(
+            pageKey = pageKey,
+            generation = expectedGeneration,
+            expectedPageVersion = expectedPageVersion,
+            expectedPriorOcrFingerprints = prior.page?.ocrBlockFingerprints().orEmpty(),
+            ocrResult = ocrResult,
+            expectedLeaseToken = expectedLeaseToken,
+            expectedCandidateGenerationId = prior.candidateGenerationId,
+            expectedDependencyFingerprint = prior.dependencyFingerprint,
+            expectedArtifactPageVersion = prior.artifactPageVersion,
+        ),
+        description = "prepared-page detection/ocr persist",
+    )
+    if (merge is StagePatchResult.Rejected) {
+        logcat(tag = "PreparedPageBoundary", priority = LogPriority.WARN) {
+            "TachiyomiAT prepared-page OCR persist rejected (stale writer): " +
+                "pageKey=$pageKey reason=${merge.reason}"
         }
     }
 

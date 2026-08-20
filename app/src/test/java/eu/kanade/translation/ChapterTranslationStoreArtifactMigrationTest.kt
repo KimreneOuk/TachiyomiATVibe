@@ -6,13 +6,16 @@ import eu.kanade.translation.artifact.ChapterGlossary
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -23,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.util.zip.CRC32
@@ -143,6 +147,17 @@ class ChapterTranslationStoreArtifactMigrationTest {
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
     )
 
+    private fun ChapterTranslationStore.PageSnapshot.precondition() =
+        ChapterTranslationStore.PatchPrecondition(
+            generation = generation,
+            pageVersion = pageVersion,
+            blockFingerprints = blockFingerprints,
+            leaseToken = leaseToken,
+            candidateGenerationId = candidateGenerationId,
+            dependencyFingerprint = dependencyFingerprint,
+            artifactPageVersion = artifactPageVersion,
+        )
+
     private fun writeLegacyChapter(cleanedBytes: ByteArray = pngBytes(100, 100)) {
         File(mangaDir, "Chapter 1_images").mkdirs()
         File(mangaDir, "Chapter 1_images/page.cleaned.abc.jpg").writeBytes(cleanedBytes)
@@ -155,9 +170,9 @@ class ChapterTranslationStoreArtifactMigrationTest {
     private fun translationFile(): UniFile =
         com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")!!
 
-    private fun readManifest(): ChapterArtifactManifest =
+    private fun readManifest(chapterName: String = "Chapter 1"): ChapterArtifactManifest =
         Json.decodeFromStream<ChapterArtifactManifest>(
-            File(mangaDir, "Chapter 1.manifest.json").inputStream(),
+            File(mangaDir, "$chapterName.manifest.json").inputStream(),
         )
 
     @Test
@@ -190,37 +205,36 @@ class ChapterTranslationStoreArtifactMigrationTest {
     }
 
     @Test
-    fun `legacy store mutation and persist forces a resync on reopen`() = runTest {
+    fun `first live mutation cuts over to artifact authority and legacy bytes cannot resync`() = runTest {
         installPngHeaderProbe()
         writeLegacyChapter()
+        val legacyBytes = File(mangaDir, "Chapter 1.json").readBytes()
         // First open performs the initial migration.
         ChapterTranslationStore.open(translationFile()).closeAndFlush()
         val firstManifest = readManifest()
 
-        // Production mutation through the still-authoritative flat store:
-        // a manual edit on an existing block.
+        // The first production mutation is the Phase 3 authority cutover. The
+        // manual edit is written to a candidate snapshot and promoted without
+        // rewriting the legacy flat file.
         val store = ChapterTranslationStore.open(translationFile())
         store.updatePage("page.jpg") { page ->
             page!!.apply { blocks[0].userEditedAt = 4242L }
         }
         store.flush()
         store.closeAndFlush()
-        val mutatedBytes = File(mangaDir, "Chapter 1.json").readBytes()
+        val legacyBytesAfterCutover = File(mangaDir, "Chapter 1.json").readBytes()
 
-        // Reopen: the changed authoritative identity must trigger a resync.
-        ChapterTranslationStore.open(translationFile())
+        // Reopen: artifact authority ignores the unchanged legacy document and
+        // reconstructs the promoted committed snapshot.
+        val reopened = ChapterTranslationStore.open(translationFile())
 
-        val resynced = readManifest()
-        resynced.legacySource shouldNotBe firstManifest.legacySource
-        val committed = resynced.pages.getValue("page.jpg").committed.shouldNotBeNull()
+        val cutOver = readManifest()
+        cutOver.authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
+        cutOver.legacySource shouldBe firstManifest.legacySource
+        val committed = cutOver.pages.getValue("page.jpg").committed.shouldNotBeNull()
         committed.hasManualEdits shouldBe true
-        // The resynced manifest describes the newest legacy bytes, not the
-        // stale first-migration snapshot.
-        mutatedBytes.size shouldBe resynced.legacySource!!.lengthBytes.toInt()
-        // Idempotence: reopening again without further mutation is stable.
-        val stable = readManifest()
-        ChapterTranslationStore.open(translationFile())
-        readManifest() shouldBe stable
+        reopened.display.value.getValue("page.jpg").blocks.single().userEditedAt shouldBe 4242L
+        legacyBytesAfterCutover shouldBe legacyBytes
     }
 
     @Test
@@ -301,5 +315,239 @@ class ChapterTranslationStoreArtifactMigrationTest {
         manifest.pages.isEmpty() shouldBe true
         manifest.migratedFromLegacyAtEpochMs shouldNotBe null
         File(mangaDir, "Chapter 1.json").readText() shouldBe "{ not json"
+    }
+
+    @Test
+    fun `artifact-authoritative reopen keeps committed display while incomplete candidate resumes`() = runTest {
+        installPngHeaderProbe()
+        writeLegacyChapter()
+        val first = ChapterTranslationStore.open(translationFile())
+        first.updatePage("page.jpg") { page ->
+            page!!.copy(
+                cleanedImageName = null,
+                ocrStatus = StageStatus.RUNNING,
+                translationStatus = StageStatus.PENDING,
+                inpaintStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+            )
+        }
+        first.flush()
+        first.closeAndFlush()
+
+        val afterProcessDeath = ChapterTranslationStore.open(translationFile())
+        afterProcessDeath.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
+        afterProcessDeath.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.RUNNING
+
+        File(mangaDir, "Chapter 1_images/page.cleaned.retried.jpg").writeBytes(pngBytes(100, 100))
+
+        afterProcessDeath.updatePage("page.jpg") { page ->
+            page!!.copy(
+                cleanedImageName = "page.cleaned.retried.jpg",
+                ocrStatus = StageStatus.READY,
+                translationStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.READY,
+                renderStatus = StageStatus.READY,
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            )
+        }
+        afterProcessDeath.flush()
+        afterProcessDeath.closeAndFlush()
+
+        val promotedReopen = ChapterTranslationStore.open(translationFile())
+        promotedReopen.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.retried.jpg"
+        promotedReopen.drainRetiredCleanedImages("page.jpg") shouldBe listOf("page.cleaned.abc.jpg")
+    }
+
+    @Test
+    fun `artifact candidate cancel and failure reopen retain committed display`() = runTest {
+        installPngHeaderProbe()
+        writeLegacyChapter()
+        val first = ChapterTranslationStore.open(translationFile())
+        first.updatePage("page.jpg") { page ->
+            page!!.copy(
+                cleanedImageName = null,
+                ocrStatus = StageStatus.RUNNING,
+                translationStatus = StageStatus.PENDING,
+                inpaintStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+            )
+        }
+        first.clearTransientQueuePages("test cancel")
+        first.flush()
+        first.closeAndFlush()
+        val afterCancel = ChapterTranslationStore.open(translationFile())
+        afterCancel.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
+
+        afterCancel.updatePage("page.jpg") { page ->
+            page!!.copy(
+                cleanedImageName = null,
+                ocrStatus = StageStatus.FAILED,
+                translationStatus = StageStatus.PENDING,
+                inpaintStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+            )
+        }
+        afterCancel.flush()
+        afterCancel.closeAndFlush()
+        val afterFailure = ChapterTranslationStore.open(translationFile())
+        afterFailure.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.abc.jpg"
+        afterFailure.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.FAILED
+    }
+
+    @Test
+    fun `released batch callbacks cannot overwrite a reacquired artifact candidate`() = runTest {
+        installPngHeaderProbe()
+        writeLegacyChapter()
+        val store = ChapterTranslationStore.open(translationFile())
+        val pageKey = "page.jpg"
+
+        val writerA = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val aSnapshot = store.snapshot(pageKey)
+        val aPrecondition = aSnapshot.precondition()
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+
+        val writerB = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        writerB.token shouldNotBe writerA.token
+        val bSnapshot = store.snapshot(pageKey)
+        store.updatePageGuarded(pageKey, bSnapshot.precondition(), "batch B partial candidate") { page ->
+            page!!.copy(
+                blocks = mutableListOf(block("B")),
+                cleanedImageName = null,
+                ocrStatus = StageStatus.RUNNING,
+                translationStatus = StageStatus.RUNNING,
+                inpaintStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+            )
+        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+
+        store.display.value.getValue(pageKey).cleanedImageName shouldBe "page.cleaned.abc.jpg"
+        store.state.value.getValue(pageKey).blocks.single().translation shouldBe "B"
+        val manifestAfterB = File(mangaDir, "Chapter 1.manifest.json").readBytes()
+
+        val lateRender = store.updatePageGuarded(pageKey, aPrecondition, "late A render RUNNING") { page ->
+            page!!.copy(renderStatus = StageStatus.RUNNING)
+        }
+        lateRender.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+        val lateTranslation = store.updatePageGuarded(pageKey, aPrecondition, "late A final translation") { page ->
+            page!!.copy(
+                blocks = mutableListOf(block("late-A")),
+                translationStatus = StageStatus.READY,
+            )
+        }
+        lateTranslation.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
+
+        store.state.value.getValue(pageKey).blocks.single().translation shouldBe "B"
+        store.display.value.getValue(pageKey).cleanedImageName shouldBe "page.cleaned.abc.jpg"
+        store.committedDisplayPage(pageKey)?.cleanedImageName shouldBe "page.cleaned.abc.jpg"
+        File(mangaDir, "Chapter 1.manifest.json").readBytes() shouldBe manifestAfterB
+
+        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+        store.closeAndFlush()
+        val reopened = ChapterTranslationStore.open(translationFile())
+        reopened.display.value.getValue(pageKey).cleanedImageName shouldBe "page.cleaned.abc.jpg"
+        reopened.state.value.getValue(pageKey).blocks.single().translation shouldBe "B"
+        File(mangaDir, "Chapter 1.manifest.json").readBytes() shouldBe manifestAfterB
+        reopened.closeAndFlush()
+    }
+
+    @Test
+    fun `production promotion retains a held previous cleaned stream until release`() = runTest {
+        installPngHeaderProbe()
+        writeLegacyChapter()
+        val store = ChapterTranslationStore.open(translationFile())
+        val imageDir = File(mangaDir, "Chapter 1_images")
+        val previous = File(imageDir, "page.cleaned.abc.jpg")
+        val next = File(imageDir, "page.cleaned.promoted.jpg").also { it.writeBytes(pngBytes(100, 100)) }
+        val registry = TranslationStreamRegistry(cleanedRetirementGraceMs = 60_000L)
+        val held = registry.openCleanedImageStream(
+            sourceId = 1L,
+            mangaId = 2L,
+            chapterId = 3L,
+            pageKey = "page.jpg",
+            imageName = previous.name,
+        ) { FileInputStream(previous) }
+
+        store.updatePage("page.jpg") { page ->
+            page!!.copy(
+                cleanedImageName = next.name,
+                ocrStatus = StageStatus.READY,
+                translationStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.READY,
+                renderStatus = StageStatus.READY,
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            )
+        }
+        store.flush()
+        store.display.value.getValue("page.jpg").cleanedImageName shouldBe next.name
+
+        store.drainRetiredCleanedImages("page.jpg") shouldBe listOf(previous.name)
+        registry.retireCleanedImage(
+            sourceId = 1L,
+            mangaId = 2L,
+            chapterId = 3L,
+            pageKey = "page.jpg",
+            imageName = previous.name,
+        ) { previous.delete() }
+        held.read() shouldBe 0x89
+        previous.exists() shouldBe true
+        next.exists() shouldBe true
+
+        held.close()
+        previous.exists() shouldBe false
+        next.exists() shouldBe true
+        store.closeAndFlush()
+        ChapterTranslationStore.open(translationFile()).display.value.getValue("page.jpg").cleanedImageName shouldBe next.name
+    }
+
+    @Test
+    fun `lazy store cuts over before first candidate and reopens from artifact pointers`() = runTest {
+        installPngHeaderProbe()
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        val store = ChapterTranslationStore.lazy { root.createFile("Chapter 2.json")!! }
+        store.updatePage("page.jpg") {
+            PageTranslation(
+                blocks = mutableListOf(block()),
+                imgWidth = 100f,
+                imgHeight = 100f,
+                ocrStatus = StageStatus.RUNNING,
+                translationStatus = StageStatus.PENDING,
+                inpaintStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+            )
+        }
+        store.flush()
+        store.closeAndFlush()
+
+        val flatFile = File(mangaDir, "Chapter 2.json")
+        flatFile.readBytes() shouldBe ByteArray(0)
+        val candidateManifest = readManifest("Chapter 2")
+        candidateManifest.authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
+        candidateManifest.pages.getValue("page.jpg").committed shouldBe null
+        candidateManifest.pages.getValue("page.jpg").candidate?.pageSnapshotFileName shouldNotBe null
+
+        val reopened = ChapterTranslationStore.open(root.findFile("Chapter 2.json")!!)
+        reopened.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.RUNNING
+
+        File(mangaDir, "Chapter 2_images").mkdirs()
+        File(mangaDir, "Chapter 2_images/page.cleaned.retry.jpg").writeBytes(pngBytes(100, 100))
+        reopened.updatePage("page.jpg") { page ->
+            page!!.copy(
+                cleanedImageName = "page.cleaned.retry.jpg",
+                ocrStatus = StageStatus.READY,
+                translationStatus = StageStatus.READY,
+                inpaintStatus = StageStatus.READY,
+                renderStatus = StageStatus.READY,
+                inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            )
+        }
+        reopened.flush()
+        reopened.closeAndFlush()
+
+        val promoted = ChapterTranslationStore.open(root.findFile("Chapter 2.json")!!)
+        promoted.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.retry.jpg"
+        readManifest("Chapter 2").pages.getValue("page.jpg").committed shouldNotBe null
+        flatFile.readBytes() shouldBe ByteArray(0)
     }
 }

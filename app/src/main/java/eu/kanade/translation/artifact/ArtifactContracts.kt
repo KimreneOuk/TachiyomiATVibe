@@ -95,6 +95,20 @@ enum class DisplayBaseKind {
 }
 
 /**
+ * Which document owns this chapter's artifact metadata (Phase 3 store
+ * transactions). A manifest starts [LEGACY]-authoritative: the legacy flat
+ * translation file remains authoritative and every open may resync the
+ * manifest from its bytes. The first Phase 3 candidate/promotion transaction
+ * flips the manifest to [ARTIFACTS]; from that point on, open-time legacy
+ * resync is disabled so it can never overwrite transactional manifest writes
+ * (committed pointers, candidates, generation records).
+ */
+enum class ManifestAuthority {
+    LEGACY,
+    ARTIFACTS,
+}
+
+/**
  * Stable page source identity (lifecycle contract §3).
  *
  * Complete only when the byte hash and decoded geometry are recorded. Legacy
@@ -157,6 +171,11 @@ data class StageArtifactRecord(
     val artifactFileName: String? = null,
     /** Legacy payload reference (e.g. the flat record's cleaned image name), if any. */
     val legacyPayloadReference: String? = null,
+    /**
+     * Candidate generation that wrote this record, when it came from a Phase 3
+     * transaction. Cancel uses this to remove only candidate-owned records.
+     */
+    val generationId: String? = null,
     val updatedAtEpochMs: Long = 0L,
 )
 

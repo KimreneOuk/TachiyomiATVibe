@@ -44,11 +44,15 @@ import eu.kanade.tachiyomi.util.lang.takeBytes
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.cacheImageDir
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.PageIndexResolver
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
@@ -796,6 +800,9 @@ class ReaderViewModel @JvmOverloads constructor(
                 chapter.chapter.name,
                 chapter.chapter.scanlator,
                 translation.displayImageName!!,
+                pageKey = resolvePageKey(page),
+                mangaId = manga.id,
+                chapterId = chapter.chapter.id,
             )
             else -> null
         }
@@ -2505,7 +2512,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * touches a page that already produced a result (rendered/cleaned) or
      * already reached FAILED. Idempotent.
      */
-    private suspend fun sweepStrandedPageStatus(store: eu.kanade.translation.ChapterTranslationStore) {
+    private suspend fun sweepStrandedPageStatus(store: ChapterTranslationStore) {
         val now = System.currentTimeMillis()
         val staleAfterMs = TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS
         val snapshot = store.state.value
@@ -2532,32 +2539,38 @@ class ReaderViewModel @JvmOverloads constructor(
                 "TachiyomiAT stranded-page sweep: healing $pageKey " +
                     "(ocr=${pt.ocrStatus} inpaint=${pt.inpaintStatus} age=${age / 1000}s)"
             }
-            store.updatePage(pageKey) { existing ->
-                val safe = existing ?: return@updatePage pt
-                if (safe.runGeneration != store.currentGeneration) return@updatePage safe
-                val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
-                    safe.inpaintStatus == StageStatus.FAILED ||
-                    safe.translationStatus == StageStatus.FAILED ||
-                    safe.renderStatus == StageStatus.FAILED ||
-                    safe.displayImageName != null ||
-                    safe.isTextlessTerminal
-                if (safeTerminal) return@updatePage safe
-                safe.apply {
-                    if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
-                        ocrStatus = StageStatus.CANCELLED
+            val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.READER_ADHOC)
+            if (lease !is LeaseAcquisition.Granted) continue
+            try {
+                store.updatePageFromCurrentSnapshot(pageKey, "reader stranded-page sweep") { existing ->
+                    val safe = existing ?: return@updatePageFromCurrentSnapshot pt
+                    if (safe.runGeneration != store.currentGeneration) return@updatePageFromCurrentSnapshot safe
+                    val safeTerminal = safe.ocrStatus == StageStatus.FAILED ||
+                        safe.inpaintStatus == StageStatus.FAILED ||
+                        safe.translationStatus == StageStatus.FAILED ||
+                        safe.renderStatus == StageStatus.FAILED ||
+                        safe.displayImageName != null ||
+                        safe.isTextlessTerminal
+                    if (safeTerminal) return@updatePageFromCurrentSnapshot safe
+                    safe.apply {
+                        if (ocrStatus == StageStatus.RUNNING || ocrStatus == StageStatus.PENDING) {
+                            ocrStatus = StageStatus.CANCELLED
+                        }
+                        if (inpaintStatus == StageStatus.RUNNING || inpaintStatus == StageStatus.PENDING) {
+                            inpaintStatus = StageStatus.CANCELLED
+                        }
+                        if (translationStatus == StageStatus.RUNNING || translationStatus == StageStatus.PENDING) {
+                            translationStatus = StageStatus.CANCELLED
+                        }
+                        if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
+                            renderStatus = StageStatus.CANCELLED
+                        }
+                        errorMessage = activeError ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
+                        updatedAt = System.currentTimeMillis()
                     }
-                    if (inpaintStatus == StageStatus.RUNNING || inpaintStatus == StageStatus.PENDING) {
-                        inpaintStatus = StageStatus.CANCELLED
-                    }
-                    if (translationStatus == StageStatus.RUNNING || translationStatus == StageStatus.PENDING) {
-                        translationStatus = StageStatus.CANCELLED
-                    }
-                    if (renderStatus == StageStatus.RUNNING || renderStatus == StageStatus.PENDING) {
-                        renderStatus = StageStatus.CANCELLED
-                    }
-                    errorMessage = activeError ?: "Page was stranded mid-translation; reset as cancelled on chapter reopen"
-                    updatedAt = System.currentTimeMillis()
                 }
+            } finally {
+                store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC)
             }
         }
     }
@@ -2582,6 +2595,7 @@ class ReaderViewModel @JvmOverloads constructor(
             chapter.scanlator,
             manga.title,
             source,
+            manga.id,
         ) ?: return
         val storeState = store.state
         translationBatchProgressJob = viewModelScope.launchIO {
@@ -2662,9 +2676,14 @@ class ReaderViewModel @JvmOverloads constructor(
                                 "error=${updated.activeError}"
                         }
                     }
-                    if (displayImageName != null || updated.isTextlessTerminal) translatedCount++
-                    if (isFailed && !hasCleaned) translatedCount++
-                    readerPage.translation = updated
+                    // TachiyomiAT (Phase 3): the reader page observes the
+                    // committed display bundle when one exists — a candidate
+                    // retry emission can replace the live entry but never
+                    // nulls the committed translated page.
+                    val resolvedDisplay = store.resolveDisplayPage(pageKey) ?: updated
+                    if (resolvedDisplay.displayImageName != null || resolvedDisplay.isTextlessTerminal) translatedCount++
+                    if (isFailed && resolvedDisplay.displayImageName == null) translatedCount++
+                    readerPage.translation = resolvedDisplay
                 }
                 state.value.viewerChapters?.currChapter?.let { current ->
                     updateTranslationWorkingSet(current, chapterPageIndex, dispatchRefresh = false)
@@ -2727,6 +2746,7 @@ class ReaderViewModel @JvmOverloads constructor(
             chapter.scanlator,
             manga.title,
             source,
+            manga.id,
         ) ?: run {
             logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: store null (pageIdx=${page.index})" }
             return null
@@ -2749,7 +2769,13 @@ class ReaderViewModel @JvmOverloads constructor(
                     "entryCleaned=${entry?.cleanedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus} render=${it.renderStatus}" }}"
             }
         }
-        return store.state
+        // TachiyomiAT (Phase 3): the page view observes the store's committed
+        // display projection. Each emission resolves to the immutable
+        // committed display bundle when one exists (candidate retries never
+        // null it) and to the live candidate entry otherwise, so the holder's
+        // overlay binding can never flip a translated page back to the
+        // original mid-refresh.
+        return store.display
             .map { pages -> pages[pageKey] }
             .distinctUntilChanged()
             .onEach { updated ->

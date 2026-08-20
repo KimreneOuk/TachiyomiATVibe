@@ -45,6 +45,7 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     private val artifactDirectoryName = "$artifactRootDirectoryName/artifacts"
     private val imageDirectoryName = "$artifactRootDirectoryName/images"
+    private val pageSnapshotDirectoryName = "$artifactRootDirectoryName/pages"
     private val contextDirectoryName = "$artifactRootDirectoryName/context"
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
     private val glossaryDirectoryName = "$artifactRootDirectoryName/glossary"
@@ -66,6 +67,16 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     fun imageDirectory(pageKey: String): String = "$imageDirectoryName/${pageSegment(pageKey)}"
 
+    /** Relative path for a legacy companion image still produced by the live pipeline. */
+    fun legacyCompanionImageFile(fileName: String): String = "${chapterKey}_images/$fileName"
+
+    /** Durable complete page snapshots used by the live store bridge. */
+    fun committedPageSnapshotFile(pageKey: String, generationId: String): String =
+        "$artifactRootDirectoryName/pages/${pageSegment(pageKey)}/committed-${generationSegment(generationId)}.json"
+
+    fun candidatePageSnapshotFile(pageKey: String, generationId: String): String =
+        "$artifactRootDirectoryName/pages/${pageSegment(pageKey)}/candidate-${generationSegment(generationId)}.json"
+
     val imagesRootDirectory: String get() = imageDirectoryName
     val stageArtifactsRootDirectory: String get() = artifactDirectoryName
     val contextRootDirectory: String get() = contextDirectoryName
@@ -84,6 +95,7 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     val managedDirectories: List<String> = listOf(
         artifactDirectoryName,
         imageDirectoryName,
+        pageSnapshotDirectoryName,
         contextDirectoryName,
         generationDirectoryName,
         glossaryDirectoryName,

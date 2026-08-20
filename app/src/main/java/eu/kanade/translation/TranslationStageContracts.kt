@@ -1,10 +1,22 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.security.MessageDigest
+
+/**
+ * Provenance of a page write (Phase 3 reader-path interoperability, lifecycle
+ * contract §12). Reader-originated work carries [READER_ADHOC]: it may be
+ * committed and displayed, but it never advances ordered batch context and the
+ * batch retranslates the page under the batch protocol when it reaches it.
+ */
+enum class PageWriteOrigin {
+    BATCH,
+    READER_ADHOC,
+}
 
 /** Small immutable reference queued after OCR has committed and native resources are released. */
 data class OcrReadyPageRef(
@@ -12,6 +24,32 @@ data class OcrReadyPageRef(
     val pageIndex: Int,
     val generation: Long,
     val blockFingerprints: List<String>,
+)
+
+/**
+ * Detection/OCR-owned fields and the preconditions captured before the native
+ * recognition pass (Phase 3). The live pipeline fuses detection and OCR into
+ * one recognition pass; this patch carries both. A stale worker — wrong
+ * generation, wrong page version, or a changed prior OCR identity — is
+ * rejected and cannot clobber newer work.
+ */
+data class OcrStagePatch(
+    val pageKey: String,
+    val generation: Long,
+    /** Page version observed before the native pass started. */
+    val expectedPageVersion: Long,
+    /** OCR identity of the blocks being replaced, translation-independent. */
+    val expectedPriorOcrFingerprints: List<String>,
+    val ocrResult: PageTranslation,
+    val errorMessage: String? = null,
+    /** Lease fencing token captured before native recognition began. */
+    val expectedLeaseToken: Long? = null,
+    /** Artifact candidate generation captured before native recognition began. */
+    val expectedCandidateGenerationId: String? = null,
+    /** Artifact dependency fingerprint captured before native recognition began. */
+    val expectedDependencyFingerprint: String? = null,
+    /** Artifact-manifest page version captured before native recognition began. */
+    val expectedArtifactPageVersion: Long? = null,
 )
 
 /** One detached Pass-1 target and the preconditions captured before the request. */
@@ -33,6 +71,11 @@ data class TranslationStagePatch(
     val blocks: List<TranslationBlockPatch>,
     val translationStatus: String,
     val errorMessage: String? = null,
+    val expectedPageVersion: Long? = null,
+    val expectedLeaseToken: Long? = null,
+    val expectedCandidateGenerationId: String? = null,
+    val expectedDependencyFingerprint: String? = null,
+    val expectedArtifactPageVersion: Long? = null,
 )
 
 /** Inpaint-owned fields and the durable OCR/mask identity they were derived from. */
@@ -46,6 +89,11 @@ data class InpaintStagePatch(
     val inpaintingModeUsed: String?,
     val inpaintStatus: String,
     val errorMessage: String? = null,
+    val expectedPageVersion: Long? = null,
+    val expectedLeaseToken: Long? = null,
+    val expectedCandidateGenerationId: String? = null,
+    val expectedDependencyFingerprint: String? = null,
+    val expectedArtifactPageVersion: Long? = null,
 )
 
 /** Render-owned colors for one block. No image or bitmap is retained. */
@@ -67,11 +115,21 @@ data class RenderStagePatch(
     val blocks: List<RenderBlockPatch>,
     val renderStatus: String,
     val errorMessage: String? = null,
+    val expectedPageVersion: Long? = null,
+    val expectedLeaseToken: Long? = null,
+    val expectedCandidateGenerationId: String? = null,
+    val expectedDependencyFingerprint: String? = null,
+    val expectedArtifactPageVersion: Long? = null,
 )
 
 sealed interface StagePatch {
     val pageKey: String
     val generation: Long
+
+    data class Ocr(val value: OcrStagePatch) : StagePatch {
+        override val pageKey: String get() = value.pageKey
+        override val generation: Long get() = value.generation
+    }
 
     data class Translation(val value: TranslationStagePatch) : StagePatch {
         override val pageKey: String get() = value.pageKey
@@ -96,6 +154,36 @@ sealed interface StagePatchResult {
     ) : StagePatchResult
 
     data class Rejected(val reason: String) : StagePatchResult
+}
+
+/**
+ * One owner's exclusive work lease over a page (lifecycle contract §12). The
+ * lease bundles the ownership token with the fencing preconditions the holder
+ * must present on every write: the store generation and the page version at
+ * acquisition. Batch and reader share this discipline — a page owned by one
+ * origin cannot be opened by the other until the owner releases it at an
+ * atomic stage boundary.
+ */
+data class PageStageLease(
+    val pageKey: String,
+    val stage: PageStage,
+    val origin: PageWriteOrigin,
+    val generation: Long,
+    val pageVersion: Long,
+    val token: Long,
+    /** Artifact candidate generation observed at acquisition, when present. */
+    val candidateGenerationId: String? = null,
+    /** Artifact dependency fingerprint observed at acquisition, when present. */
+    val dependencyFingerprint: String? = null,
+    /** Artifact-manifest page version observed at acquisition, when present. */
+    val artifactPageVersion: Long? = null,
+)
+
+/** Result of a lease acquisition; only [Granted] carries write ownership. */
+sealed interface LeaseAcquisition {
+    data class Granted(val lease: PageStageLease) : LeaseAcquisition
+
+    data class Denied(val reason: String, val owner: PageWriteOrigin?) : LeaseAcquisition
 }
 
 /**

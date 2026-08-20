@@ -1,5 +1,7 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.stableFingerprint
 import java.security.MessageDigest
 
 /**
@@ -155,6 +157,22 @@ object StageFingerprints {
         displayBase.fileName ?: "",
         translationFingerprint ?: "",
         layoutFingerprint ?: "",
+    )
+
+    /** Fingerprint of the complete live-store page snapshot used by Phase 3. */
+    fun pageSnapshot(page: PageTranslation): String = fingerprintIndexed(
+        "page-snapshot",
+        page.sourceFileName,
+        page.cleanedImageName,
+        page.ocrStatus,
+        page.translationStatus,
+        page.inpaintStatus,
+        page.renderStatus,
+        page.inpaintRevision,
+        page.retryCount,
+        page.attemptCount,
+        page.errorMessage,
+        page.blocks.map { it.stableFingerprint() },
     )
 
     private fun fingerprint(vararg fields: Any?): String = fingerprintIndexed(fields.toList())

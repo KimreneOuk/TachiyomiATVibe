@@ -9,6 +9,14 @@ data class OcrReadyPageRef(
     val pageIndex: Int,
     val generation: Long,
     val blockFingerprints: List<String>,
+    /** Exact batch lease token held across the translation boundary. */
+    val leaseToken: Long? = null,
+    /** Artifact candidate generation observed at OCR publication. */
+    val candidateGenerationId: String? = null,
+    /** Artifact dependency fingerprint observed at OCR publication. */
+    val dependencyFingerprint: String? = null,
+    /** Artifact-manifest page version observed at OCR publication. */
+    val artifactPageVersion: Long? = null,
 )
 
 interface NativeLaneWorker {

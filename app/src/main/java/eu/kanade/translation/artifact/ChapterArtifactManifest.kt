@@ -27,6 +27,15 @@ data class ChapterArtifactManifest(
      * never matches a live identity, forcing one conservative resync.
      */
     val legacySource: LegacySourceIdentity? = null,
+    /**
+     * Which document owns this manifest's metadata (Phase 3 cutover). While
+     * [ManifestAuthority.LEGACY], opens may resync from the authoritative
+     * legacy bytes; once a Phase 3 transaction flips this to
+     * [ManifestAuthority.ARTIFACTS], legacy resync never rewrites the
+     * manifest.
+     */
+    val authority: ManifestAuthority = ManifestAuthority.LEGACY,
+    val cutoverAtEpochMs: Long? = null,
     val migratedFromLegacyAtEpochMs: Long? = null,
     val updatedAtEpochMs: Long = 0L,
 ) {
@@ -91,6 +100,8 @@ data class CommittedBundleMetadata(
     /** True when any block in the bundle carries a manual target edit. */
     val hasManualEdits: Boolean = false,
     val promotedAtEpochMs: Long = 0L,
+    /** Complete live-store page snapshot for durable reader reconstruction. */
+    val pageSnapshotFileName: String? = null,
 )
 
 /** Candidate work generation attached to one page (lifecycle contract §§1, 13). */
@@ -98,7 +109,17 @@ data class CommittedBundleMetadata(
 data class CandidateGenerationMetadata(
     val generationId: String,
     val origin: ArtifactOrigin = ArtifactOrigin.BATCH,
+    /**
+     * Dependency fingerprint the candidate was opened against. A candidate
+     * write is stale when the page's dependency fingerprint no longer matches
+     * this value (lifecycle contract §13 candidate-write preconditions).
+     */
+    val dependencyFingerprint: String? = null,
     val createdAtEpochMs: Long = 0L,
+    /** Display state to restore if this candidate is canceled before promotion. */
+    val priorDisplayState: PageDisplayState? = null,
+    /** Complete live-store candidate snapshot; never used as the display pointer. */
+    val pageSnapshotFileName: String? = null,
 )
 
 /** Pointer to the versioned vocabulary glossary sidecar (lifecycle contract §14.8). */

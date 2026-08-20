@@ -7,6 +7,7 @@ import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.ByteArrayOutputStream
+import java.io.InputStream
 
 /**
  * TachiyomiAT: chapter document access rooted at the chapter's manga directory.
@@ -19,6 +20,9 @@ interface ChapterDocumentIo {
     fun exists(name: String): Boolean
     fun length(name: String): Long
     fun read(name: String): ByteArray?
+
+    /** Opens [name] without forcing callers to retain the whole payload in memory. */
+    fun openInputStream(name: String): InputStream? = read(name)?.inputStream()
 
     /** Creates or overwrites [name], creating parent directories as needed. */
     fun write(name: String, bytes: ByteArray): Boolean
@@ -62,6 +66,10 @@ class UniFileChapterDocumentIo(
             input.copyTo(output)
             output.toByteArray()
         }
+    }.getOrNull()
+
+    override fun openInputStream(name: String): InputStream? = runCatching {
+        resolve(name)?.takeIf { it.isFile }?.openInputStream()
     }.getOrNull()
 
     override fun write(name: String, bytes: ByteArray): Boolean = runCatching {

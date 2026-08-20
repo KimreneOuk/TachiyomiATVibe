@@ -1,5 +1,6 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
@@ -10,7 +11,13 @@ import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Test
+import java.io.InputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class ChapterArtifactStoreTest {
 
@@ -60,6 +67,16 @@ class ChapterArtifactStoreTest {
 
     private fun artifactStore(io: FakeChapterDocumentIo) =
         ChapterArtifactStore(AtomicChapterDocuments(io), layout)
+
+    private fun transactionStore(io: FakeChapterDocumentIo) =
+        ChapterArtifactStore(
+            AtomicChapterDocuments(io),
+            layout,
+            object : CleanedImageProbe {
+                override fun probe(input: InputStream): ProbedImage? =
+                    if (input.read() == 1) null else ProbedImage(100, 100)
+            },
+        )
 
     private val json = Json {
         encodeDefaults = true
@@ -460,5 +477,365 @@ class ChapterArtifactStoreTest {
         val result = artifactStore(io).loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
         result.manifest.pages.isEmpty() shouldBe true
         result.manifest.glossary.shouldBeNull()
+    }
+
+    @Test
+    fun `candidate promotion is atomic and legacy changes cannot overwrite artifact authority`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot(identityTag = "v1")).manifest
+        val opened = store.openCandidate(
+            manifest = migrated,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps-v1",
+            nowEpochMs = 100L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        opened.manifest.authority shouldBe ManifestAuthority.ARTIFACTS
+        opened.manifest.cutoverAtEpochMs shouldBe 100L
+        val generationId = opened.generationId.shouldNotBeNull()
+
+        val translation = store.commitStagePayload(
+            manifest = opened.manifest,
+            pageKey = "page.jpg",
+            stage = ArtifactStage.TRANSLATION,
+            generationId = generationId,
+            expectedPageVersion = 1L,
+            expectedDependencyFingerprint = "deps-v1",
+            fingerprint = "translation-v1",
+            payload = buildJsonObject { put("stage", "translation") },
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 101L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val layoutCommit = store.commitStagePayload(
+            manifest = translation.manifest,
+            pageKey = "page.jpg",
+            stage = ArtifactStage.LAYOUT,
+            generationId = generationId,
+            expectedPageVersion = 2L,
+            expectedDependencyFingerprint = "deps-v1",
+            fingerprint = "layout-v1",
+            payload = buildJsonObject { put("stage", "layout") },
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 102L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        val corruptDisplay = "corrupt-image.jpg"
+        io.write(corruptDisplay, byteArrayOf(1))
+        val rejectedPromotion = store.promoteCandidate(
+            manifest = layoutCommit.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = 3L,
+            expectedDependencyFingerprint = "deps-v1",
+            bundle = ChapterArtifactStore.PromotionBundle(
+                displayBaseKind = DisplayBaseKind.CLEANED_IMAGE,
+                displayBaseFileName = corruptDisplay,
+                translationFingerprint = "translation-v1",
+                layoutFingerprint = "layout-v1",
+            ),
+            nowEpochMs = 103L,
+        )
+        rejectedPromotion.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        store.readManifest() shouldBe layoutCommit.manifest
+
+        val display = "valid-image.jpg"
+        io.write(display, byteArrayOf(2, 3, 4))
+        val promoted = store.promoteCandidate(
+            manifest = layoutCommit.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = 3L,
+            expectedDependencyFingerprint = "deps-v1",
+            bundle = ChapterArtifactStore.PromotionBundle(
+                displayBaseKind = DisplayBaseKind.CLEANED_IMAGE,
+                displayBaseFileName = display,
+                translationFingerprint = "translation-v1",
+                layoutFingerprint = "layout-v1",
+            ),
+            nowEpochMs = 104L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val promotedPage = promoted.manifest.pages.getValue("page.jpg")
+        promotedPage.candidate.shouldBeNull()
+        promotedPage.committed.shouldNotBeNull().origin shouldBe ArtifactOrigin.BATCH
+        promotedPage.previousCommitted.shouldNotBeNull().origin shouldBe ArtifactOrigin.LEGACY
+
+        val reopened = store.loadOrMigrate(
+            legacySnapshot(identityTag = "v2", page = displayablePage().copy(blocks = mutableListOf(block(), block()))),
+        )
+        reopened.resyncedFromLegacy shouldBe false
+        reopened.manifest.pages.getValue("page.jpg").committed?.generationId shouldBe generationId
+        reopened.manifest.legacySource shouldBe identity("v1")
+    }
+
+    @Test
+    fun `concurrent candidate opens serialize against the same manifest snapshot`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val futures = (0 until 2).map {
+                executor.submit<ChapterArtifactStore.TransactionOutcome> {
+                    check(start.await(5, TimeUnit.SECONDS))
+                    store.openCandidate(
+                        manifest = migrated,
+                        pageKey = "page.jpg",
+                        origin = ArtifactOrigin.BATCH,
+                        expectedPageVersion = 0L,
+                        dependencyFingerprint = "concurrent-deps",
+                    )
+                }
+            }
+            start.countDown()
+
+            val outcomes = futures.map { it.get(5, TimeUnit.SECONDS) }
+            outcomes.count { it is ChapterArtifactStore.TransactionOutcome.Committed } shouldBe 1
+            outcomes.count { it is ChapterArtifactStore.TransactionOutcome.Rejected } shouldBe 1
+            store.readManifest()?.pages?.getValue("page.jpg")?.candidate.shouldNotBeNull()
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `running stage recovers after process death and stale worker cannot commit`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val opened = store.openCandidate(
+            migrated,
+            "page.jpg",
+            ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = 200L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val running = store.beginStage(
+            opened.manifest,
+            "page.jpg",
+            ArtifactStage.OCR,
+            generationId,
+            expectedPageVersion = 1L,
+            expectedDependencyFingerprint = "deps",
+            fingerprint = "ocr-v1",
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 201L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        val recovered = store.loadOrMigrate(legacySnapshot(identityTag = "changed")).manifest
+        recovered.authority shouldBe ManifestAuthority.ARTIFACTS
+        recovered.pages.getValue("page.jpg").ocr?.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+        recovered.pages.getValue("page.jpg").candidate.shouldNotBeNull()
+        recovered.pages.getValue("page.jpg").committed.shouldNotBeNull()
+
+        val stale = store.commitStagePayload(
+            running.manifest,
+            "page.jpg",
+            ArtifactStage.OCR,
+            generationId,
+            expectedPageVersion = 2L,
+            expectedDependencyFingerprint = "deps",
+            fingerprint = "ocr-v1",
+            payload = buildJsonObject { put("stage", "ocr") },
+            origin = ArtifactOrigin.BATCH,
+        )
+        stale.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        store.readManifest() shouldBe recovered
+
+        val retried = store.commitStagePayload(
+            recovered,
+            "page.jpg",
+            ArtifactStage.OCR,
+            generationId,
+            expectedPageVersion = 3L,
+            expectedDependencyFingerprint = "deps",
+            fingerprint = "ocr-v1",
+            payload = buildJsonObject { put("stage", "ocr") },
+            origin = ArtifactOrigin.BATCH,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        retried.manifest.pages.getValue("page.jpg").ocr?.status shouldBe ArtifactStageStatus.READY
+    }
+
+    @Test
+    fun `failed interrupted-stage recovery preserves the crash-safe backup`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val opened = store.openCandidate(
+            migrated,
+            "page.jpg",
+            ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val running = store.beginStage(
+            opened.manifest,
+            "page.jpg",
+            ArtifactStage.OCR,
+            generationId,
+            expectedPageVersion = 1L,
+            expectedDependencyFingerprint = "deps",
+            fingerprint = "ocr",
+            origin = ArtifactOrigin.BATCH,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val backupName = AtomicChapterDocuments.backupNameFor(layout.manifestFileName)
+        io.files.containsKey(backupName) shouldBe true
+
+        io.failWrites = true
+        val recovered = store.loadOrMigrate(legacySnapshot(identityTag = "changed")).manifest
+
+        recovered.pages.getValue("page.jpg").ocr?.status shouldBe ArtifactStageStatus.RUNNING
+        io.files.containsKey(backupName) shouldBe true
+        running.manifest shouldBe recovered
+    }
+
+    @Test
+    fun `cancel restores a textless display state captured before candidate open`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val textless = PageTranslation(
+            sourceFileName = "page.jpg",
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.SKIPPED,
+            inpaintStatus = StageStatus.SKIPPED,
+            renderStatus = StageStatus.SKIPPED,
+        )
+        val migrated = store.loadOrMigrate(legacySnapshot(page = textless)).manifest
+        migrated.pages.getValue("page.jpg").displayState shouldBe PageDisplayState.TEXTLESS_COMPLETE
+        val opened = store.openCandidate(
+            migrated,
+            "page.jpg",
+            ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        val cancelled = store.cancelCandidate(
+            opened.manifest,
+            "page.jpg",
+            opened.generationId.shouldNotBeNull(),
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        cancelled.manifest.pages.getValue("page.jpg").displayState shouldBe PageDisplayState.TEXTLESS_COMPLETE
+    }
+
+    @Test
+    fun `reader adhoc can display a candidate but cannot publish batch context`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val opened = store.openCandidate(
+            migrated,
+            "page.jpg",
+            ArtifactOrigin.READER_ADHOC,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "reader-deps",
+            nowEpochMs = 300L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val context = store.commitContextCheckpoint(
+            manifest = opened.manifest,
+            pageKey = "page.jpg",
+            naturalPageIndex = 0,
+            checkpointHash = "reader-context",
+            payload = buildJsonObject { put("context", "must-not-write") },
+            generationId = generationId,
+            origin = ArtifactOrigin.READER_ADHOC,
+            expectedPageVersion = 1L,
+            expectedDependencyFingerprint = "reader-deps",
+        )
+        context.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+        io.files.keys.none { it.contains("reader-context") } shouldBe true
+
+        val translation = store.commitStagePayload(
+            opened.manifest,
+            "page.jpg",
+            ArtifactStage.TRANSLATION,
+            generationId,
+            expectedPageVersion = 1L,
+            expectedDependencyFingerprint = "reader-deps",
+            fingerprint = "reader-translation",
+            payload = buildJsonObject { put("stage", "translation") },
+            origin = ArtifactOrigin.READER_ADHOC,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val layoutCommit = store.commitStagePayload(
+            translation.manifest,
+            "page.jpg",
+            ArtifactStage.LAYOUT,
+            generationId,
+            expectedPageVersion = 2L,
+            expectedDependencyFingerprint = "reader-deps",
+            fingerprint = "reader-layout",
+            payload = buildJsonObject { put("stage", "layout") },
+            origin = ArtifactOrigin.READER_ADHOC,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val display = "reader-image.jpg"
+        io.write(display, byteArrayOf(5, 6, 7))
+        val promoted = store.promoteCandidate(
+            layoutCommit.manifest,
+            "page.jpg",
+            generationId,
+            expectedPageVersion = 3L,
+            expectedDependencyFingerprint = "reader-deps",
+            bundle = ChapterArtifactStore.PromotionBundle(
+                displayBaseKind = DisplayBaseKind.CLEANED_IMAGE,
+                displayBaseFileName = display,
+                translationFingerprint = "reader-translation",
+                layoutFingerprint = "reader-layout",
+            ),
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        promoted.manifest.pages.getValue("page.jpg").committed?.origin shouldBe ArtifactOrigin.READER_ADHOC
+    }
+
+    @Test
+    fun `cancel rejects stale snapshot and removes only candidate-owned files`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val opened = store.openCandidate(
+            migrated,
+            "page.jpg",
+            ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = 400L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val running = store.beginStage(
+            opened.manifest,
+            "page.jpg",
+            ArtifactStage.OCR,
+            generationId,
+            expectedPageVersion = 1L,
+            expectedDependencyFingerprint = "deps",
+            fingerprint = "ocr",
+            origin = ArtifactOrigin.BATCH,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val sidecar = store.commitStagePayload(
+            running.manifest,
+            "page.jpg",
+            ArtifactStage.OCR,
+            generationId,
+            expectedPageVersion = 2L,
+            expectedDependencyFingerprint = "deps",
+            fingerprint = "ocr",
+            payload = buildJsonObject { put("stage", "ocr") },
+            origin = ArtifactOrigin.BATCH,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val staleCancel = store.cancelCandidate(opened.manifest, "page.jpg", generationId)
+        staleCancel.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
+
+        val cancelled = store.cancelCandidate(sidecar.manifest, "page.jpg", generationId)
+            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val page = cancelled.manifest.pages.getValue("page.jpg")
+        page.candidate.shouldBeNull()
+        page.committed?.origin shouldBe ArtifactOrigin.LEGACY
+        cancelled.deletedFiles.any { it.endsWith(".json") } shouldBe true
+        store.readManifest() shouldBe cancelled.manifest
     }
 }

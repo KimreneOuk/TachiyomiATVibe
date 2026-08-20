@@ -94,6 +94,7 @@ class TranslationManager(
                 translation.chapter.scanlator,
                 translation.manga.title,
                 translation.source,
+                translation.manga.id,
             )
         }
         // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
@@ -570,9 +571,13 @@ class TranslationManager(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
+        mangaId: Long? = null,
     ): ChapterTranslationStore? = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         synchronized(activeStores) {
-            activeStores.get(chapterId)?.let { return@runBlocking it }
+            activeStores.get(chapterId)?.let {
+                scheduleRetiredCleanedImageCleanup(it, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
+                return@runBlocking it
+            }
             val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
             val store = if (file != null && file.exists()) {
                 ChapterTranslationStore.open(file)
@@ -586,8 +591,101 @@ class TranslationManager(
                         ?: throw java.io.IOException("Cannot create translation file for $chapterName")
                 }
             }
+            scheduleRetiredCleanedImageCleanup(store, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
             registerActiveTranslationStore(chapterId, store)
             return@runBlocking store
+        }
+    }
+
+    /**
+     * Reclaims previous committed cleaned images discovered while opening a
+     * chapter. The store only exposes names after its committed pointer is
+     * reconstructed; deletion still goes through the stream registry so a
+     * reader stream held across a reopen cannot be invalidated.
+     */
+    private fun scheduleRetiredCleanedImageCleanup(
+        store: ChapterTranslationStore,
+        chapterId: Long,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+        mangaId: Long?,
+    ) {
+        val stableMangaId = mangaId ?: return
+        store.state.value.keys.forEach { pageKey ->
+            store.drainRetiredCleanedImages(pageKey).forEach { imageName ->
+                streamRegistry.retireCleanedImage(
+                    sourceId = source.id,
+                    mangaId = stableMangaId,
+                    chapterId = chapterId,
+                    pageKey = pageKey,
+                    imageName = imageName,
+                ) {
+                    if (!store.mayDeleteCleanedImage(pageKey, imageName)) return@retireCleanedImage
+                    val deleted = provider.findPageCleanedImage(
+                        mangaTitle,
+                        source,
+                        chapterName,
+                        scanlator,
+                        imageName,
+                    )?.delete() == true
+                    logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
+                        "TachiyomiAT chapter-load retired cleaned image drain: " +
+                            "pageKey=$pageKey file=$imageName deleted=$deleted"
+                    }
+                }
+            }
+        }
+    }
+
+    private fun retireChapterCompanionImages(
+        manga: Manga,
+        chapter: Chapter,
+        source: Source,
+    ) {
+        val chapterId = chapter.id ?: return
+        val directory = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
+        val namesAtRetirement = directory
+            ?.listFiles()
+            ?.asSequence()
+            ?.mapNotNull { it.name }
+            ?.filterNot { it == ".nomedia" }
+            ?.toSet()
+            .orEmpty()
+        streamRegistry.retireCleanedImagesForChapter(
+            sourceId = source.id,
+            mangaId = manga.id,
+            chapterId = chapterId,
+        ) {
+            namesAtRetirement.forEach { imageName ->
+                directory?.findFile(imageName)?.delete()
+            }
+        }
+    }
+
+    private fun retirePageCompanionImage(
+        manga: Manga,
+        chapter: Chapter,
+        source: Source,
+        pageKey: String,
+        imageName: String,
+    ) {
+        val chapterId = chapter.id ?: return
+        streamRegistry.retireCleanedImage(
+            sourceId = source.id,
+            mangaId = manga.id,
+            chapterId = chapterId,
+            pageKey = pageKey,
+            imageName = imageName,
+        ) {
+            provider.findPageCleanedImage(
+                manga.title,
+                source,
+                chapter.name,
+                chapter.scanlator,
+                imageName,
+            )?.delete()
         }
     }
 
@@ -608,6 +706,7 @@ class TranslationManager(
             chapter.scanlator,
             manga.title,
             source,
+            manga.id,
         ) ?: return null
         val key = "${source.id}:${manga.id}:$chapterId"
         return TranslationSession(key, manga, chapter, source, store)
@@ -674,6 +773,10 @@ class TranslationManager(
     }
 
     fun observeActiveStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? = activeStores.observe(chapterId)
+
+    /** Reader-facing projection with the committed display pointer applied. */
+    fun observeActiveDisplayStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? =
+        activeStores.get(chapterId)?.display
 
     /**
      * Chapter-keyed active page source for reader state. Unlike a global active-store stream,
@@ -835,7 +938,7 @@ class TranslationManager(
     }
 
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {
-        return observeActiveStore(chapterId)
+        return observeActiveDisplayStore(chapterId)
             ?.map { pages -> pages[pageKey].toPageView() }
             ?.distinctUntilChanged()
     }
@@ -873,7 +976,7 @@ class TranslationManager(
             val name = nonNullFile.name ?: return@let
             nonNullFile.parentFile?.findFile(ChapterTranslationSummaryStore.summaryFileName(name))?.delete()
         }
-        provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
+        retireChapterCompanionImages(manga, chapter, source)
     }
 
     suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
@@ -935,7 +1038,7 @@ class TranslationManager(
                 it.renderError = null
             }
         }
-        provider.deleteCompanionImages(manga.title, source, chapter.name, chapter.scanlator)
+        retireChapterCompanionImages(manga, chapter, source)
     }
 
     suspend fun resetChapterOcrData(chapter: Chapter, manga: Manga, source: Source) {
@@ -958,7 +1061,10 @@ class TranslationManager(
         val activeStore = activeStores.get(chapterId)
         if (activeStore != null) {
             activeStore.state.value.keys.forEach { pageKey ->
-                activeStore.updatePage(pageKey) { page -> page?.let(transform) ?: PageTranslation.EMPTY }
+                activeStore.updatePageFromCurrentSnapshot(pageKey, "chapter data reset") { page -> page?.let(transform) ?: PageTranslation.EMPTY }
+                // Phase 3: an explicit user reset drops the committed display
+                // pointer too, so the reader stops showing the cleared bundle.
+                activeStore.demoteCommittedDisplay(pageKey, "chapter data reset")
             }
             activeStore.flush()
         } else {
@@ -966,7 +1072,8 @@ class TranslationManager(
             if (file?.exists() == true) {
                 val store = ChapterTranslationStore.open(file)
                 store.state.value.keys.forEach { pageKey ->
-                    store.updatePage(pageKey) { page -> page?.let(transform) ?: PageTranslation.EMPTY }
+                    store.updatePageFromCurrentSnapshot(pageKey, "chapter data reset") { page -> page?.let(transform) ?: PageTranslation.EMPTY }
+                    store.demoteCommittedDisplay(pageKey, "chapter data reset")
                 }
                 store.flush()
             }
@@ -981,8 +1088,8 @@ class TranslationManager(
 
         val store = activeStores.get(chapterId)
         if (store != null) {
-            store.updatePage(pageKey) { page ->
-                page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+            store.updatePageFromCurrentSnapshot(pageKey, "translation data reset") { page ->
+                page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                 val newBlocks = page.blocks.map { block ->
                     if (preserveEdits && block.userEditedAt != null) {
                         block
@@ -1005,13 +1112,14 @@ class TranslationManager(
                     it.renderError = null
                 }
             }
+            store.demoteCommittedDisplay(pageKey, "translation data reset")
             store.flush()
         } else {
             val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
             if (file?.exists() == true) {
                 val s = ChapterTranslationStore.open(file)
-                s.updatePage(pageKey) { page ->
-                    page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+                s.updatePageFromCurrentSnapshot(pageKey, "translation data reset") { page ->
+                    page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                     val newBlocks = page.blocks.map { block ->
                         if (preserveEdits && block.userEditedAt != null) {
                             block
@@ -1034,6 +1142,7 @@ class TranslationManager(
                         it.renderError = null
                     }
                 }
+                s.demoteCommittedDisplay(pageKey, "translation data reset")
                 s.flush()
             }
         }
@@ -1050,8 +1159,8 @@ class TranslationManager(
         val store = activeStores.get(chapterId)
         val persistedCleanedName = store?.state?.value?.get(pageKey)?.cleanedImageName
         if (store != null) {
-            store.updatePage(pageKey) { page ->
-                page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+            store.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
+                page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                 page.copy(
                     cleanedImageName = null,
                     inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
@@ -1061,13 +1170,14 @@ class TranslationManager(
                     it.renderError = null
                 }
             }
+            store.demoteCommittedDisplay(pageKey, "inpaint data reset")
             store.flush()
         } else {
             val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
             if (file?.exists() == true) {
                 val s = ChapterTranslationStore.open(file)
-                s.updatePage(pageKey) { page ->
-                    page ?: return@updatePage eu.kanade.translation.model.PageTranslation.EMPTY
+                s.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
+                    page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                     page.copy(
                         cleanedImageName = null,
                         inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
@@ -1077,20 +1187,27 @@ class TranslationManager(
                         it.renderError = null
                     }
                 }
+                s.demoteCommittedDisplay(pageKey, "inpaint data reset")
                 s.flush()
             }
         }
 
-        val companionDir = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
-        if (companionDir != null) {
-            persistedCleanedName?.let { companionDir.findFile(it)?.delete() }
-            val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            companionDir.findFile("$safePageKey.cleaned.png")?.delete()
-            companionDir.findFile("$safePageKey.cleaned.jpg")?.delete()
-            companionDir.findFile("$safePageKey.rendered.png")?.delete()
-            companionDir.listFiles()?.asSequence().orEmpty()
-                .filter { it.name?.startsWith("$safePageKey.cleaned.") == true }
-                .forEach { it.delete() }
+        val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val retiredNames = buildSet {
+            persistedCleanedName?.let(::add)
+            add("$safePageKey.cleaned.png")
+            add("$safePageKey.cleaned.jpg")
+            add("$safePageKey.rendered.png")
+            provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
+                ?.listFiles()
+                ?.asSequence()
+                .orEmpty()
+                .mapNotNull { it.name }
+                .filter { it.startsWith("$safePageKey.cleaned.") }
+                .forEach(::add)
+        }
+        retiredNames.forEach { imageName ->
+            retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
         }
 
         reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
@@ -1115,18 +1232,24 @@ class TranslationManager(
             }
         }
 
-        val companionDir = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
-        if (companionDir != null) {
-            persistedCleanedName?.let { companionDir.findFile(it)?.delete() }
-            val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-            companionDir.findFile("$safePageKey.cleaned.png")?.delete()
-            companionDir.findFile("$safePageKey.cleaned.jpg")?.delete()
-            companionDir.findFile("$safePageKey.rendered.png")?.delete()
+        val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val retiredNames = buildSet {
+            persistedCleanedName?.let(::add)
+            add("$safePageKey.cleaned.png")
+            add("$safePageKey.cleaned.jpg")
+            add("$safePageKey.rendered.png")
             // Versioned publication names are unique per replacement attempt;
             // remove any orphaned versions left after a deleted store entry.
-            companionDir.listFiles()?.asSequence().orEmpty()
-                .filter { it.name?.startsWith("$safePageKey.cleaned.") == true }
-                .forEach { it.delete() }
+            provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
+                ?.listFiles()
+                ?.asSequence()
+                .orEmpty()
+                .mapNotNull { it.name }
+                .filter { it.startsWith("$safePageKey.cleaned.") }
+                .forEach(::add)
+        }
+        retiredNames.forEach { imageName ->
+            retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
         }
     }
 
@@ -1177,11 +1300,32 @@ class TranslationManager(
         }
     }
 
-    fun getCleanedImageStream(mangaTitle: String, source: Source, chapterName: String, chapterScanlator: String?, cleanedImageName: String): (() -> java.io.InputStream)? {
+    fun getCleanedImageStream(
+        mangaTitle: String,
+        source: Source,
+        chapterName: String,
+        chapterScanlator: String?,
+        cleanedImageName: String,
+        pageKey: String? = null,
+        mangaId: Long? = null,
+        chapterId: Long? = null,
+    ): (() -> java.io.InputStream)? {
         return {
             val file = provider.findPageCleanedImage(mangaTitle, source, chapterName, chapterScanlator, cleanedImageName)
             if (file?.exists() == true) {
-                file.openInputStream()
+                val raw = { file.openInputStream() }
+                if (pageKey == null || mangaId == null || chapterId == null) {
+                    raw()
+                } else {
+                    streamRegistry.openCleanedImageStream(
+                        sourceId = source.id,
+                        mangaId = mangaId,
+                        chapterId = chapterId,
+                        pageKey = pageKey,
+                        imageName = cleanedImageName,
+                        open = raw,
+                    )
+                }
             } else {
                 throw java.io.FileNotFoundException("Cleaned image not found: $cleanedImageName")
             }

@@ -114,6 +114,9 @@ internal class DownloadPageLoader(
                 chapter.chapter.name,
                 chapter.chapter.scanlator,
                 displayImageName,
+                pageKey = pageTranslation.sourceFileName,
+                mangaId = manga.id,
+                chapterId = chapter.chapter.id,
             )
         }
         return null

@@ -1,8 +1,14 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import java.io.FilterInputStream
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 
@@ -23,9 +29,28 @@ import java.util.concurrent.ConcurrentHashMap
  * `"$sourceId:$mangaId:$chapterId:$pageKey"`, so the prefix-based chapter
  * eviction continues to match the same entries it did before.
  */
-class TranslationStreamRegistry {
+class TranslationStreamRegistry(
+    private val cleanedRetirementGraceMs: Long = DEFAULT_CLEANED_RETIREMENT_GRACE_MS,
+) {
 
     private val streams = ConcurrentHashMap<String, () -> InputStream>()
+
+    private data class CleanedLeaseKey(
+        val sourceId: Long,
+        val mangaId: Long,
+        val chapterId: Long,
+        val pageKey: String,
+        val imageName: String,
+    )
+
+    private data class CleanedLeaseRecord(
+        var readers: Int = 0,
+        val pendingDeletes: MutableList<() -> Unit> = mutableListOf(),
+    )
+
+    private val cleanedLeases = mutableMapOf<CleanedLeaseKey, CleanedLeaseRecord>()
+    private val cleanedLeaseLock = Any()
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private fun key(
         sourceId: Long,
@@ -132,5 +157,155 @@ class TranslationStreamRegistry {
      */
     fun clearAll() {
         streams.clear()
+    }
+
+    /**
+     * Opens a cleaned-image stream under a bounded reader lease. Retired files
+     * may be queued for deletion while the stream is open; the close callback
+     * releases the lease and runs deletion immediately, while the grace job
+     * provides a hard upper bound if a decoder never closes its stream.
+     */
+    fun openCleanedImageStream(
+        sourceId: Long,
+        mangaId: Long,
+        chapterId: Long,
+        pageKey: String,
+        imageName: String,
+        open: () -> InputStream,
+    ): InputStream {
+        val key = CleanedLeaseKey(sourceId, mangaId, chapterId, pageKey, imageName)
+        synchronized(cleanedLeaseLock) {
+            cleanedLeases.getOrPut(key) { CleanedLeaseRecord() }.readers++
+        }
+        val input = try {
+            open()
+        } catch (error: Throwable) {
+            releaseCleanedImageLease(key)
+            throw error
+        }
+        return object : FilterInputStream(input) {
+            private var released = false
+
+            override fun close() {
+                if (!released) {
+                    try {
+                        super.close()
+                    } finally {
+                        released = true
+                        releaseCleanedImageLease(key)
+                    }
+                    return
+                }
+                super.close()
+            }
+        }
+    }
+
+    /**
+     * Queues a retired image for deletion. No deletion occurs while a reader
+     * lease is held; once the last lease closes it runs immediately. The grace
+     * timeout is the bounded fallback for a leaked decoder/stream.
+     */
+    fun retireCleanedImage(
+        sourceId: Long,
+        mangaId: Long,
+        chapterId: Long,
+        pageKey: String,
+        imageName: String,
+        delete: () -> Unit,
+    ) {
+        val key = CleanedLeaseKey(sourceId, mangaId, chapterId, pageKey, imageName)
+        val deleteNow = synchronized(cleanedLeaseLock) {
+            val record = cleanedLeases[key]
+            if (record == null || record.readers == 0) {
+                cleanedLeases.remove(key)
+                true
+            } else {
+                record.pendingDeletes += delete
+                false
+            }
+        }
+        if (deleteNow) {
+            runCatching(delete)
+        } else {
+            cleanupScope.launch {
+                delay(cleanedRetirementGraceMs)
+                expireCleanedImageLease(key)
+            }
+        }
+    }
+
+    /**
+     * Defers a destructive chapter-image-directory removal until every cleaned
+     * stream currently held for the chapter has closed or reached the bounded
+     * grace deadline. Explicit reset/delete paths use this alongside the
+     * per-image retirement used by normal promotion.
+     */
+    fun retireCleanedImagesForChapter(
+        sourceId: Long,
+        mangaId: Long,
+        chapterId: Long,
+        deleteChapter: () -> Unit,
+    ) {
+        val keys = synchronized(cleanedLeaseLock) {
+            cleanedLeases.keys.filter {
+                it.sourceId == sourceId && it.mangaId == mangaId && it.chapterId == chapterId
+            }
+        }
+        if (keys.isEmpty()) {
+            runCatching(deleteChapter)
+            return
+        }
+        val remaining = java.util.concurrent.atomic.AtomicInteger(keys.size)
+        val deleteWhenReleased = {
+            if (remaining.decrementAndGet() == 0) runCatching(deleteChapter)
+        }
+        keys.forEach { key ->
+            retireCleanedImage(
+                sourceId = key.sourceId,
+                mangaId = key.mangaId,
+                chapterId = key.chapterId,
+                pageKey = key.pageKey,
+                imageName = key.imageName,
+                delete = deleteWhenReleased,
+            )
+        }
+    }
+
+    fun activeCleanedImageReaders(
+        sourceId: Long,
+        mangaId: Long,
+        chapterId: Long,
+        pageKey: String,
+        imageName: String,
+    ): Int = synchronized(cleanedLeaseLock) {
+        cleanedLeases[CleanedLeaseKey(sourceId, mangaId, chapterId, pageKey, imageName)]?.readers ?: 0
+    }
+
+    private fun releaseCleanedImageLease(key: CleanedLeaseKey) {
+        val deletes = synchronized(cleanedLeaseLock) {
+            val record = cleanedLeases[key] ?: return
+            record.readers = (record.readers - 1).coerceAtLeast(0)
+            if (record.readers == 0 && record.pendingDeletes.isNotEmpty()) {
+                val callbacks = record.pendingDeletes.toList()
+                cleanedLeases.remove(key)
+                callbacks
+            } else {
+                emptyList()
+            }
+        }
+        deletes.forEach { callback -> runCatching(callback) }
+    }
+
+    private fun expireCleanedImageLease(key: CleanedLeaseKey) {
+        val deletes = synchronized(cleanedLeaseLock) {
+            val record = cleanedLeases.remove(key) ?: return
+            record.pendingDeletes.toList()
+        }
+        deletes.forEach { callback -> runCatching(callback) }
+    }
+
+    companion object {
+        const val DEFAULT_CLEANED_RETIREMENT_GRACE_MS = 30_000L
     }
 }

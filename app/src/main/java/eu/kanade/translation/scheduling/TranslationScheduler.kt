@@ -502,9 +502,9 @@ class TranslationScheduler(
         current: PageTranslation?,
     ) {
         if (!TranslationLifecyclePolicy.shouldSchedule(current)) return
-        store.updatePage(pageKey) { existing ->
+        store.updatePageFromCurrentSnapshot(pageKey, "auto page starting") { existing ->
             val page = existing ?: PageTranslation(sourceFileName = pageKey)
-            if (page.renderStatus == StageStatus.READY && page.isCleanedImageReady) return@updatePage page
+            if (page.renderStatus == StageStatus.READY && page.isCleanedImageReady) return@updatePageFromCurrentSnapshot page
             page.apply {
                 sourceFileName = pageKey
                 errorMessage = null
@@ -535,13 +535,13 @@ class TranslationScheduler(
     }
 
     private suspend fun markPageAutoSoftSkipped(store: ChapterTranslationStore, pageKey: String) {
-        store.updatePage(pageKey) { existing ->
+        store.updatePageFromCurrentSnapshot(pageKey, "auto page soft skip") { existing ->
             val page = existing ?: PageTranslation(
                 sourceFileName = pageKey,
                 ocrStatus = StageStatus.CANCELLED,
                 updatedAt = System.currentTimeMillis(),
             )
-            if (page.renderStatus == StageStatus.READY) return@updatePage page
+            if (page.renderStatus == StageStatus.READY) return@updatePageFromCurrentSnapshot page
             page.apply {
                 cancelInFlightStages()
                 updatedAt = System.currentTimeMillis()
@@ -647,14 +647,14 @@ class TranslationScheduler(
         if (existing.hasRenderedResult || existing.isStageFailed) return
         // Flip in-flight stages to CANCELLED so the reader clears the overlay and
         // auto can reschedule the page later.
-        store.updatePage(pageKey) { current ->
+        store.updatePageFromCurrentSnapshot(pageKey, "auto page cancelled") { current ->
             // Re-check inside the lock in case it changed between peek and write.
             val cur = current ?: PageTranslation(
                 sourceFileName = pageKey,
                 ocrStatus = StageStatus.CANCELLED,
                 updatedAt = System.currentTimeMillis(),
             ).also { it.ocrError = "Translation cancelled" }
-            if (cur.hasRenderedResult || cur.isStageFailed) return@updatePage cur
+            if (cur.hasRenderedResult || cur.isStageFailed) return@updatePageFromCurrentSnapshot cur
             cur.apply {
                 cancelInFlightStages()
                 ocrError = "Translation cancelled"

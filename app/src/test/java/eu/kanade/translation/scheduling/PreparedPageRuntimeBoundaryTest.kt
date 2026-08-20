@@ -80,8 +80,9 @@ class PreparedPageRuntimeBoundaryTest {
         }
 
         // Call the PRODUCTION helper — this is the exact code path
-        // prepareSinglePage runs. If the durability write is removed from
-        // this function, the assertions below fail.
+        // prepareSinglePage runs. The merge carries the post-publish
+        // precondition captured from the durable snapshot. If the durability
+        // write is removed from this function, the assertions below fail.
         val prepared = publishPreparedPageFromOcr(
             store = store,
             pageKey = "p0",
@@ -89,6 +90,8 @@ class PreparedPageRuntimeBoundaryTest {
             chapterId = 1L,
             mangaId = 10L,
             sourceId = 20L,
+            expectedPageVersion = store.snapshot("p0").pageVersion,
+            expectedGeneration = store.snapshot("p0").generation,
         )
 
         // The PreparedPage must carry durable identity, not in-memory state.
@@ -130,7 +133,7 @@ class PreparedPageRuntimeBoundaryTest {
             blocks = mutableListOf(block("a"), block("b"))
             cleanedImageName = "p0.cleaned.v1.jpg"
         }
-        val prepared = publishPreparedPageFromOcr(store, "p0", ocrResult, 1L, 1L, 1L)
+        val prepared = publishPreparedPageFromOcr(store, "p0", ocrResult, 1L, 1L, 1L, expectedPageVersion = store.snapshot("p0").pageVersion, expectedGeneration = store.snapshot("p0").generation)
         val durableFingerprints = store.state.value["p0"]!!.blockFingerprints()
         prepared.blockFingerprints shouldBe durableFingerprints
     }
@@ -188,7 +191,7 @@ class PreparedPageRuntimeBoundaryTest {
             renderStatus = StageStatus.SKIPPED
             blocks = mutableListOf()
         }
-        val prepared = publishPreparedPageFromOcr(store, "p-tl", textlessOcr, 1L, 1L, 1L)
+        val prepared = publishPreparedPageFromOcr(store, "p-tl", textlessOcr, 1L, 1L, 1L, expectedPageVersion = store.snapshot("p-tl").pageVersion, expectedGeneration = store.snapshot("p-tl").generation)
         prepared.isTerminal shouldBe true
         prepared.cleanedImageName shouldBe null
         prepared.blockFingerprints shouldBe emptyList()
@@ -210,7 +213,7 @@ class PreparedPageRuntimeBoundaryTest {
             blocks = mutableListOf(block("original"))
             cleanedImageName = "p0.cleaned.v1.jpg"
         }
-        val prepared = publishPreparedPageFromOcr(store, "p0", ocrResult, 1L, 1L, 1L)
+        val prepared = publishPreparedPageFromOcr(store, "p0", ocrResult, 1L, 1L, 1L, expectedPageVersion = store.snapshot("p0").pageVersion, expectedGeneration = store.snapshot("p0").generation)
         val preparedFingerprints = prepared.blockFingerprints
 
         // Simulate a re-OCR that changed the blocks
@@ -234,7 +237,7 @@ class PreparedPageRuntimeBoundaryTest {
             // cleanedBitmap is null in pure JVM (no Android Bitmap); the helper
             // still calls recycle() safely (null-safe) and nulls the field.
         }
-        publishPreparedPageFromOcr(store, "p0", ocrResult, 1L, 1L, 1L)
+        publishPreparedPageFromOcr(store, "p0", ocrResult, 1L, 1L, 1L, expectedPageVersion = store.snapshot("p0").pageVersion, expectedGeneration = store.snapshot("p0").generation)
         ocrResult.cleanedBitmap shouldBe null
     }
 }
