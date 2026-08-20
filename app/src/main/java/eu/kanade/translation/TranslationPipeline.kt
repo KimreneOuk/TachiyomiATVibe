@@ -12,10 +12,10 @@ import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.BatchResumeGateDecider
-import eu.kanade.translation.batch.ChunkBatchCoordinator
 import eu.kanade.translation.batch.NativeLaneWorker
 import eu.kanade.translation.batch.OcrReadyPageRef
 import eu.kanade.translation.batch.RenderJoinWorker
+import eu.kanade.translation.batch.SequentialBatchCoordinator
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslatorLaneWorker
 import eu.kanade.translation.data.TranslationProvider
@@ -631,9 +631,9 @@ class TranslationPipeline(
      * prefetch page's ONNX overlap this page's network call — the same asymmetry
      * benefit the batch path already derives.
      *
-     * Scheduling scope: this single-page path bypasses the batch coordinator's
-     * all-OCR barrier (`BatchCoordinator.runPass1`) by design — it processes
-     * exactly one page, so there is no chapter-wide OCR set to wait for. The
+     * Scheduling scope: this single-page path bypasses the batch coordinator
+     * (`SequentialBatchCoordinator.runPass1`) by design — it processes
+     * exactly one page, so there is no chapter-wide pass to join. The
      * chapter-level "no inpaint before all OCR terminal" invariant only applies
      * to batch/pre-translation; here OCR and inpaint of the same single page run
      * sequentially inside this function.
@@ -1206,8 +1206,9 @@ class TranslationPipeline(
                 }
 
                 // Lane A (OCR+inpaint, permit-bound) feeds Lane B (translate, HTTP-bound)
-                // through an UNLIMITED channel; render is a join (tryRender) that reuses the
-                // in-memory cleaned bitmap when it fits the byte budget.
+                // through a channel bounded to the native lookahead window; render is a
+                // join (tryRender) that reuses the in-memory cleaned bitmap when it fits
+                // the byte budget.
                 val isAi = translationPreferences.translationEngineCategory().get() == TranslationEngineCategory.AI_MODEL &&
                     textTranslator is ContextualTextTranslator
                 val contextualTranslator = textTranslator as? ContextualTextTranslator
@@ -1833,14 +1834,16 @@ class TranslationPipeline(
                     tryRender(pk)
                 }
 
-                // ---- TachiyomiAT Checkpoint 2 integration: coordinated Pass-1 ----
-                // The batch schedule is now driven by [BatchCoordinator] (bounded channel
-                // cap 2, serialized native lane, REMOTE_IO translation overlapping same-page
-                // inpaint, LOCAL_COMPUTE translation serialized with native, per-page render
-                // join, Pass-1 barrier). The pipeline supplies real adapter implementations of
-                // [NativeLaneWorker] / [TranslatorLaneWorker] / [RenderJoinWorker] that reuse
-                // the existing OCR/inpaint/persist/translate/render helpers above, so the heavy
-                // Android/ONNX/HTTP logic is unchanged — only the schedule is centralized.
+                // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
+                // The batch schedule is driven by [SequentialBatchCoordinator] (one
+                // serialized native lane per page's OCR then inpaint, a bounded page
+                // channel, native lookahead capped at three pages beyond the
+                // translation frontier, one ordered translation lane, and a per-page
+                // render join). The pipeline supplies the adapter implementations of
+                // [NativeLaneWorker] / [TranslatorLaneWorker] / [RenderJoinWorker] that
+                // reuse the existing OCR/inpaint/persist/translate/render helpers above,
+                // so the heavy Android/ONNX/HTTP logic is unchanged — only the schedule
+                // is centralized.
                 //
                 // TranslatorComputeClass drives lane routing: ML Kit (LOCAL_COMPUTE) is kept
                 // inline on the native lane so its on-device inference never overlaps native
@@ -1920,6 +1923,14 @@ class TranslationPipeline(
                                 producedTarget = p
                                 return@withNativeLane
                             }
+                            if (innerGate == BatchResumeGate.INPAINT_ONLY) {
+                                // OCR artifacts are planned for reuse: no decode or
+                                // recognition runs here. The page's single remaining
+                                // decode happens in the inpaint stage.
+                                translationRegistry[pageKey] = latest ?: PageTranslation(sourceFileName = pageKey)
+                                producedTarget = translationRegistry[pageKey]
+                                return@withNativeLane
+                            }
                             try {
                                 val decoded = try {
                                     decodePageBitmapForTranslation(pageKey, streamFn)
@@ -1956,20 +1967,16 @@ class TranslationPipeline(
                                 // persists blocks + ocrStatus BEFORE inpaint), closing the OCR crash
                                 // window first and producing the immutable work item offered to the
                                 // translation lane below.
-                                if (innerGate == BatchResumeGate.INPAINT_ONLY) {
-                                    translationRegistry[pageKey] = latest ?: PageTranslation(sourceFileName = pageKey)
-                                } else {
-                                    tracker?.markOcrRunning(pageKey)
-                                    val analyzed = analyzePage(
-                                        pageKey,
-                                        decoded.bitmap,
-                                        decoded,
-                                        store,
-                                        expectedBatchFingerprints,
-                                    )
-                                    tracker?.markOcrDone(pageKey)
-                                    translationRegistry[pageKey] = analyzed
-                                }
+                                tracker?.markOcrRunning(pageKey)
+                                val analyzed = analyzePage(
+                                    pageKey,
+                                    decoded.bitmap,
+                                    decoded,
+                                    store,
+                                    expectedBatchFingerprints,
+                                )
+                                tracker?.markOcrDone(pageKey)
+                                translationRegistry[pageKey] = analyzed
                                 producedTarget = translationRegistry[pageKey]
                             } catch (deferred: LowMemoryRecognitionDeferredException) {
                                 val t = translationRegistry[pageKey]
@@ -2169,6 +2176,8 @@ class TranslationPipeline(
                                 requestedOutputTokens = requestedOutputTokens,
                                 profile = chunkProfile,
                                 naturalPageIndexes = resolvedNaturalPageIndexes,
+                                maxBlocksPerChunk = SequentialBatchCoordinator.MAX_AI_ENVELOPE_BLOCKS,
+                                maxPagesPerChunk = SequentialBatchCoordinator.MAX_AI_ENVELOPE_PAGES,
                             )
                         } else {
                             null
@@ -2362,7 +2371,7 @@ class TranslationPipeline(
                     }
                 }
 
-                val coordinator = ChunkBatchCoordinator(
+                val coordinator = SequentialBatchCoordinator(
                     nativeWorker = nativeWorker,
                     translatorWorker = translatorWorker,
                     renderJoin = renderJoin,
