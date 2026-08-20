@@ -15,6 +15,9 @@ import eu.kanade.translation.batch.BatchResumeGateDecider
 import eu.kanade.translation.batch.NativeLaneWorker
 import eu.kanade.translation.batch.OcrReadyPageRef
 import eu.kanade.translation.batch.RenderJoinWorker
+import eu.kanade.translation.batch.SceneCardState
+import eu.kanade.translation.batch.SceneContextEngine
+import eu.kanade.translation.batch.ScenePrefixPlanner
 import eu.kanade.translation.batch.SequentialBatchCoordinator
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslatorLaneWorker
@@ -53,6 +56,7 @@ import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
 import eu.kanade.translation.translator.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.AiTranslatorKind
+import eu.kanade.translation.translator.BatchTranslationProtocol
 import eu.kanade.translation.translator.ChapterGlossaryBuilder
 import eu.kanade.translation.translator.ContextualStructuralFailureException
 import eu.kanade.translation.translator.ContextualTextTranslator
@@ -69,6 +73,7 @@ import eu.kanade.translation.translator.TranslationBlockValidation
 import eu.kanade.translation.translator.TranslationContextChunk
 import eu.kanade.translation.translator.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.TranslationEngineBuilder
+import eu.kanade.translation.translator.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.translator.translateAiChunkWithAdaptiveRetry
 import eu.kanade.translation.util.ShortHash
@@ -1247,7 +1252,16 @@ class TranslationPipeline(
                 val batchWriteIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
                 val renderMutexes = ConcurrentHashMap<String, Mutex>()
                 val aborted = AtomicBoolean(false)
-                val expectedBatchFingerprints = batchExpectedFingerprints(fromLang, toLang)
+                // Batch-only relationship ambiguity prior (Phase 6): part of the
+                // translation provenance fingerprint so switching it invalidates
+                // translation/layout only. Reader single-page paths never read it.
+                val ambiguityPrior = when (translationPreferences.batchRelationshipAmbiguityPrior().get()) {
+                    tachiyomi.domain.translation.BatchRelationshipAmbiguityPrior.NEUTRAL ->
+                        SceneContextEngine.PriorSetting.NEUTRAL
+                    tachiyomi.domain.translation.BatchRelationshipAmbiguityPrior.MALE_FEMALE ->
+                        SceneContextEngine.PriorSetting.MALE_FEMALE
+                }
+                val expectedBatchFingerprints = batchExpectedFingerprints(fromLang, toLang, ambiguityPrior)
 
                 // Source identity is a direct input to detection and inpaint.
                 // Hash the downloaded bytes before planning so replacing a
@@ -1287,6 +1301,18 @@ class TranslationPipeline(
                     }
                 }
 
+                // Scene context chain (Phase 6): replay the persisted page-scoped
+                // trusted checkpoints from page 1 and stop at the first break.
+                // A batch-context-complete page whose serialized scene checkpoint
+                // is missing or unparseable marks the chain corrupt from that
+                // page; the planner then schedules a translation-only suffix
+                // rebuild while committed displays stay visible. Legacy pages
+                // completed before scene checkpoints existed keep their reuse
+                // decision (no mass retranslation) and rebuild context from the
+                // last trusted scene checkpoint for prompting only.
+                val sceneChainReplay = replaySceneCheckpoints(orderedStreams.map { it.first }, store)
+                var sceneState = sceneChainReplay.state
+
                 // Plan the complete chapter once, in the same natural order
                 // passed to the coordinator.  Native resume gates consume this
                 // snapshot; they never derive work from lastPageRead or the
@@ -1299,10 +1325,12 @@ class TranslationPipeline(
                             page = persisted,
                             expectedFingerprints = expectedBatchFingerprints,
                             sourceFingerprint = sourceFingerprints[pageKey],
-                            contextCheckpoint = if (persisted?.batchContextComplete == true) {
-                                BatchContextCheckpoint(ContextCheckpointState.TRUSTED, persisted.batchContextCheckpointHash)
-                            } else {
-                                BatchContextCheckpoint(ContextCheckpointState.NOT_REQUIRED)
+                            contextCheckpoint = when {
+                                persisted?.batchContextComplete == true && sceneChainReplay.corruptFrom == pageKey ->
+                                    BatchContextCheckpoint(ContextCheckpointState.CORRUPT, null)
+                                persisted?.batchContextComplete == true ->
+                                    BatchContextCheckpoint(ContextCheckpointState.TRUSTED, persisted.batchContextCheckpointHash)
+                                else -> BatchContextCheckpoint(ContextCheckpointState.NOT_REQUIRED)
                             },
                         )
                     },
@@ -1707,7 +1735,7 @@ class TranslationPipeline(
                         tracker?.markTranslateRunning(pk)
                     }
                     try {
-                        translateAiChunkWithAdaptiveRetry(
+                        val contextDeltas = translateAiChunkWithAdaptiveRetry(
                             translator = ct,
                             chunk = contextualChunk,
                             requestedOutputTokens = requestedOutputTokens,
@@ -1716,61 +1744,91 @@ class TranslationPipeline(
                             label = "stream-${chunkCounter.incrementAndGet()}",
                             retryDepth = 0,
                         )
-                        var newRolling = TranslationContextChunkPlanner.updateRollingContext(
-                            rolling,
-                            contextualChunk.pages,
-                        )
                         // Accumulate target-side past translations for the Analytical-Mode sliding
-                        // window. Left as-is when off so the non-analytical path is unchanged.
-                        var newPast = if (analyticalMode) {
+                        // window. Voice examples only — never scene evidence.
+                        val newPast = if (analyticalMode) {
                             val combined = if (pastTranslations.isBlank()) {
                                 TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
                             } else {
                                 pastTranslations + "\n" +
                                     TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
                             }
-                            // Bound to the last N lines (MAX_PAST_TRANSLATION_PAIRS) by
-                            // taking the tail after splitting on newlines.
                             val lines = combined.lineSequence().filter { it.isNotBlank() }.toList()
                             lines.takeLast(TranslationContextChunkPlanner.MAX_PAST_TRANSLATION_PAIRS)
                                 .joinToString("\n")
                         } else {
                             pastTranslations
                         }
-                        val estimatedRollingTokens = TranslationContextChunkPlanner.estimateTokens(newRolling)
-                        val maxTokens = TranslationContextChunkPlanner.constraintsFor(chunkProfile).maxRollingContextTokens
-                        if (estimatedRollingTokens > maxTokens) {
-                            val summaryPrompt = "Summarize the following manga dialogue context into a dense 2-3 sentence paragraph focusing on current plot and speakers:\n\n$newRolling"
-                            val summary = ct.promptText(summaryPrompt)
-                            if (summary.isNotBlank()) {
-                                logcat(LogPriority.INFO) { "Summarized rolling context ($estimatedRollingTokens tokens -> ${TranslationContextChunkPlanner.estimateTokens(summary)} tokens)" }
-                                newRolling = "[SUMMARY] $summary"
+                        // Page-prefix commit (Phase 6 §9): validate committed pages in
+                        // natural order and stop at the first page that refuses, fails
+                        // validation, or carries an invalid context delta. No later page
+                        // or checkpoint from this envelope may promote.
+                        val knownCitationIds = buildSet {
+                            contextualChunk.pages.values.forEach { page ->
+                                page.blocks.forEach { block ->
+                                    if (block.text.isNotBlank() && !block.blockId.isNullOrBlank()) add(block.blockId!!)
+                                }
+                            }
+                            sceneState.recentTurns.forEach { add(it.blockId) }
+                        }
+                        val orderedCompletion = completedPages.sortedBy { pk ->
+                            resolvedNaturalPageIndexes[pk] ?: Int.MAX_VALUE
+                        }
+                        val refusalPages = orderedCompletion.filterTo(mutableSetOf()) { pk ->
+                            translationRegistry[pk]?.blocks.orEmpty().any { block ->
+                                block.text.isNotBlank() &&
+                                    TranslationResponseFaithfulness.isStructuralRefusal(block.translation)
                             }
                         }
-                        // Accumulate this chunk's translated pairs into the chapter glossary and
-                        // persist it. Keep the metric tied to the current pipe-delimited protocol;
-                        // legacy speech-role tags are no longer part of the prompt contract.
-                        var translatedPairs = 0
-                        contextualChunk.pages.values.forEach { page ->
-                            page.blocks.forEach { b ->
-                                glossaryStats.add(b.text, b.translation)
-                                if (b.translation.isNotBlank()) translatedPairs++
+                        val prefixPlan = ScenePrefixPlanner.plan(
+                            orderedPages = orderedCompletion,
+                            deltas = contextDeltas,
+                            pageIds = orderedCompletion.associateWith { pk ->
+                                BatchTranslationProtocol.pageId(resolvedNaturalPageIndexes[pk] ?: 0)
+                            },
+                            knownBlockIds = knownCitationIds,
+                            refusalPages = refusalPages,
+                        )
+                        val committedPages = mutableListOf<String>()
+                        for (pk in orderedCompletion) {
+                            val p = translationRegistry[pk] ?: continue
+                            val pageIndex = resolvedNaturalPageIndexes[pk] ?: continue
+                            val pageId = BatchTranslationProtocol.pageId(pageIndex)
+                            if (prefixPlan.stopPageKey != null) {
+                                val reason = if (pk == prefixPlan.stopPageKey) {
+                                    prefixPlan.stopReason!!
+                                } else {
+                                    "context stopped at earlier page: ${prefixPlan.stopReason}"
+                                }
+                                markBatchTranslationFailed(
+                                    store,
+                                    pk,
+                                    p,
+                                    reason,
+                                    expectedPrecondition = batchWritePrecondition(pk) ?: continue,
+                                )
+                                tracker?.markTranslateFailed(pk, reason)
+                                continue
                             }
-                        }
-                        val newGlossary = glossaryStats.build()
-                        store.updateGlossary(newGlossary)
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT batch stage2-AI chunk: translatedPairs=$translatedPairs " +
-                                "glossaryEntries=${newGlossary.size}"
-                        }
-                        completedPages.forEach { pk ->
-                            val p = translationRegistry[pk] ?: return@forEach
+                            // Commit this page: translations, then the trusted
+                            // page-scoped scene checkpoint.
+                            val commit = prefixPlan.commits.firstOrNull { it.pageKey == pk } ?: continue
                             val status = TranslationBlockValidation.applyTo(p)
+                            val sceneCommit = SceneContextEngine.commitPage(
+                                state = sceneState,
+                                pageIndex = pageIndex,
+                                pageId = pageId,
+                                blocks = p.blocks.mapNotNull { block ->
+                                    block.blockId?.takeIf { block.text.isNotBlank() }?.let { it to block.text }
+                                },
+                                delta = commit.delta,
+                            )
                             when (status) {
                                 StageStatus.READY -> tracker?.markTranslateDone(pk)
                                 StageStatus.PARTIAL -> tracker?.markTranslatePartial(pk)
                                 StageStatus.FAILED -> tracker?.markTranslateFailed(pk, p.errorMessage ?: "Validation failed")
                             }
+                            val sceneCheckpointJson = SceneCardState.encode(sceneCommit.state)
                             guardedBatchUpdate(pk, "batch translation chunk commit") {
                                 (it ?: p).apply {
                                     translationStatus = p.translationStatus
@@ -1779,14 +1837,67 @@ class TranslationPipeline(
                                         retryCount = p.retryCount
                                         attemptCount = p.attemptCount
                                     }
+                                    batchSceneCheckpoint = sceneCheckpointJson
                                     if (it != null && it !== p) {
                                         blocks = p.blocks.toMutableList()
                                     }
                                     updatedAt = System.currentTimeMillis()
                                 }
                             }
+                            sceneState = sceneCommit.state
+                            committedPages += pk
+                            // Late correction of a durable fact: invalidate every
+                            // downstream translation that depended on the old value.
+                            // Translation/layout only — native artifacts stay reusable
+                            // and manual edits (userEditedAt) are never overwritten.
+                            sceneCommit.correction?.let { correction ->
+                                logcat(LogPriority.WARN) {
+                                    "TachiyomiAT scene fact corrected: key=${correction.factKey} " +
+                                        "invalidatedPages=${correction.invalidatedPages}"
+                                }
+                                correction.invalidatedPages.forEach { dependentIndex ->
+                                    val dependentKey = resolvedNaturalPageIndexes.entries
+                                        .firstOrNull { it.value == dependentIndex }?.key ?: return@forEach
+                                    val precondition = batchWritePrecondition(dependentKey) ?: return@forEach
+                                    store.updatePageGuarded(
+                                        dependentKey,
+                                        precondition,
+                                        "batch context correction invalidation",
+                                    ) { current ->
+                                        (current ?: PageTranslation(sourceFileName = dependentKey)).apply {
+                                            if (translationStatus == StageStatus.READY ||
+                                                translationStatus == StageStatus.PARTIAL
+                                            ) {
+                                                translationStatus = StageStatus.PENDING
+                                                batchContextComplete = false
+                                                batchContextCheckpointHash = null
+                                                batchSceneCheckpoint = null
+                                                errorMessage = "context correction: ${correction.factKey}"
+                                                updatedAt = System.currentTimeMillis()
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             tryRender(pk)
                         }
+                        // Accumulate this envelope's committed pairs into the chapter
+                        // glossary and persist it.
+                        var translatedPairs = 0
+                        committedPages.forEach { pk ->
+                            translationRegistry[pk]?.blocks?.forEach { b ->
+                                glossaryStats.add(b.text, b.translation)
+                                if (b.translation.isNotBlank()) translatedPairs++
+                            }
+                        }
+                        val newGlossary = glossaryStats.build()
+                        store.updateGlossary(newGlossary)
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT batch stage2-AI chunk: translatedPairs=$translatedPairs " +
+                                "glossaryEntries=${newGlossary.size} committed=${committedPages.size} " +
+                                "of ${orderedCompletion.size}"
+                        }
+                        val newRolling = SceneContextEngine.renderPromptCard(sceneState, ambiguityPrior)
                         return newRolling to newPast
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
@@ -2182,7 +2293,16 @@ class TranslationPipeline(
                         } else {
                             null
                         }
-                    var rollingContext = ""
+
+                    // The rolling context is the deterministic scene card rendered
+                    // from the replayed trusted checkpoint chain — never a prose
+                    // summary of prior model output. It advances page by page
+                    // inside [translateChunkAi]'s prefix commit.
+                    var rollingContext = if (isAi) {
+                        SceneContextEngine.renderPromptCard(sceneState, ambiguityPrior)
+                    } else {
+                        ""
+                    }
                     val analyticalMode = runCatching {
                         Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
                             .translationAnalyticalMode().get()
@@ -4310,33 +4430,89 @@ class TranslationPipeline(
     private fun batchExpectedFingerprints(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
-    ): BatchExpectedFingerprints = BatchExpectedFingerprints(
-        detection = StageFingerprints.configuration(
-            ArtifactStage.DETECTION,
-            currentOcrModel.name,
-            currentReadingOrder.name,
-        ),
-        ocr = StageFingerprints.configuration(
-            ArtifactStage.OCR,
-            currentOcrModel.name,
-            fromLang.name,
-        ),
-        inpaint = StageFingerprints.configuration(
-            ArtifactStage.INPAINT,
-            currentInpaintingMode.name,
-            PageTranslation.CURRENT_INPAINT_REVISION,
-        ),
-        translation = StageFingerprints.configuration(
-            ArtifactStage.TRANSLATION,
-            currentTranslatorSignature.toString(),
-            fromLang.name,
-            toLang.name,
-        ),
-        layout = StageFingerprints.configuration(
-            ArtifactStage.LAYOUT,
-            currentReadingOrder.name,
-        ),
+        ambiguityPrior: SceneContextEngine.PriorSetting? = null,
+    ): BatchExpectedFingerprints {
+        // The batch relationship prior is part of translation provenance: a
+        // switch invalidates translation/layout only (planner fingerprint),
+        // never the native stages, and never rebuilds the translator object.
+        val translationInput = buildString {
+            append(currentTranslatorSignature.toString())
+            ambiguityPrior?.let { append("|prior=").append(it.name) }
+        }
+        return BatchExpectedFingerprints(
+            detection = StageFingerprints.configuration(
+                ArtifactStage.DETECTION,
+                currentOcrModel.name,
+                currentReadingOrder.name,
+            ),
+            ocr = StageFingerprints.configuration(
+                ArtifactStage.OCR,
+                currentOcrModel.name,
+                fromLang.name,
+            ),
+            inpaint = StageFingerprints.configuration(
+                ArtifactStage.INPAINT,
+                currentInpaintingMode.name,
+                PageTranslation.CURRENT_INPAINT_REVISION,
+            ),
+            translation = StageFingerprints.configuration(
+                ArtifactStage.TRANSLATION,
+                translationInput,
+                fromLang.name,
+                toLang.name,
+            ),
+            layout = StageFingerprints.configuration(
+                ArtifactStage.LAYOUT,
+                currentReadingOrder.name,
+            ),
+        )
+    }
+
+    private data class SceneChainReplay(
+        val state: SceneCardState,
+        /** First batch-context-complete page whose checkpoint broke the chain, if any. */
+        val corruptFrom: String? = null,
     )
+
+    /**
+     * Replays the persisted page-scoped scene checkpoint chain in natural
+     * order and returns the latest trusted state. The chain breaks at the
+     * first batch-context-complete page whose serialized checkpoint is missing
+     * or unparseable — that page (and the translation suffix behind it, via
+     * the planner) reruns translation-only while committed displays remain.
+     *
+     * Legacy pages completed before scene checkpoints existed do not break the
+     * chain: their reuse decision stands and context prompting resumes from
+     * the latest scene checkpoint that does exist.
+     */
+    private fun replaySceneCheckpoints(
+        orderedPageKeys: List<String>,
+        store: ChapterTranslationStore,
+    ): SceneChainReplay {
+        var frontier = SceneCardState.genesis()
+        var corruptFrom: String? = null
+        for (pageKey in orderedPageKeys) {
+            val page = store.state.value[pageKey] ?: continue
+            if (!page.batchContextComplete) continue
+            val serialized = page.batchSceneCheckpoint
+            if (serialized.isNullOrBlank()) {
+                // Legacy checkpoint: no scene data. Keep reuse (no mass rerun);
+                // a legacy chain simply has no scene state to resume from.
+                continue
+            }
+            val decoded = SceneCardState.decode(serialized)
+            if (decoded == null || decoded.inputCheckpointHash != frontier.checkpointHash) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT scene checkpoint chain break: pageKey=$pageKey " +
+                        "reason=${if (decoded == null) "unparseable" else "hash mismatch"}"
+                }
+                corruptFrom = pageKey
+                break
+            }
+            frontier = decoded
+        }
+        return SceneChainReplay(state = frontier, corruptFrom = corruptFrom)
+    }
 
     private data class DecodedPage(
         val bitmap: Bitmap,

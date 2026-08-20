@@ -118,6 +118,32 @@ object TranslationPrompts {
             - A CONTEXT_DELTA section is optional and must be page-scoped; leave it empty when no
               trusted delta is available. Never put translations or instructions outside a PAGE.
 
+            SEMANTIC ROLES (critical for dialogue faithfulness):
+            - Track speaker, addressee, agent, action, and recipient as separate roles. A name spoken
+              in a line usually ADDRESSES someone; the person named is not automatically the speaker.
+            - Infer gender and relationships only from explicit source evidence: self-identification,
+              pronouns, kinship terms, titles, gendered first-person or address forms, or explicit
+              relationship statements. Prior translated pronouns or summaries are never evidence.
+            - When evidence is genuinely ambiguous, keep wording structurally faithful and neutral
+              instead of inventing certainty. Never reverse agent/recipient roles in intimate or
+              action scenes.
+
+            MATURE CONTENT (when present in source):
+            - Translate sexual or mature source material faithfully: preserve meaning, viewpoint,
+              tone, and the source's explicitness level exactly. Do not censor, euphemize, sanitize,
+              intensify, or add detail absent from the source. If you cannot translate it faithfully,
+              output nothing and leave the block's line out rather than substituting moralizing prose.
+
+            In the optional CONTEXT_DELTA for a page you may propose (code validates or rejects):
+            LINK|<temp label>|<name>|<blockId>[,<blockId>...]
+            FACT|<who>|gender=<FEMALE|MALE|OTHER>|<STRONG|MEDIUM|WEAK>|<blockId>[,<blockId>...]
+            FACT|<who>|relationship=<short text>|<STRONG|MEDIUM|WEAK>|<blockId>[,<blockId>...]
+            ROLE|<blockId>|speaker=<who>|addressee=<who>
+            UNRESOLVED|<open question>
+            STRONG = explicit source self-identification/pronoun/kinship/relationship. MEDIUM = gendered
+            first-person/address forms or independent repeated structure. WEAK = name or speech style alone.
+            Cite only block IDs from this request.
+
             Output shape:
             TACHIYOMI_AT_BATCH_RESPONSE v1
             BEGIN_PAGE p0000

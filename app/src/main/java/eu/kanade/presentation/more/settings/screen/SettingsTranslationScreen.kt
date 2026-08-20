@@ -26,6 +26,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.BatchRelationshipAmbiguityPrior
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationHardwareAccelerator
@@ -51,6 +52,19 @@ object SettingsTranslationScreen : SearchableSettings {
                 pref = translationPreferences.translationConfirmPretranslate(),
                 title = stringResource(ATMR.strings.pref_confirm_pretranslate),
                 subtitle = stringResource(ATMR.strings.pref_confirm_pretranslate_summary),
+            ),
+            Preference.PreferenceItem.ListPreference(
+                pref = translationPreferences.batchRelationshipAmbiguityPrior(),
+                title = stringResource(ATMR.strings.pref_batch_relationship_prior),
+                subtitle = stringResource(ATMR.strings.pref_batch_relationship_prior_summary),
+                entries = mapOf(
+                    BatchRelationshipAmbiguityPrior.MALE_FEMALE to stringResource(
+                        ATMR.strings.pref_batch_relationship_prior_male_female,
+                    ),
+                    BatchRelationshipAmbiguityPrior.NEUTRAL to stringResource(
+                        ATMR.strings.pref_batch_relationship_prior_neutral,
+                    ),
+                ).toImmutableMap(),
             ),
             Preference.PreferenceItem.ListPreference(
                 pref = translationPreferences.translationFont(),

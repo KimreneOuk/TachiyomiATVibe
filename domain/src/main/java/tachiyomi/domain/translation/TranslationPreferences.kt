@@ -53,6 +53,22 @@ enum class TranslationHardwareAccelerator { AUTO, QUALCOMM_NPU, NNAPI, CPU_XNNPA
 
 enum class TranslationReadingOrder { AUTO, RTL_MANGA, LTR_COMIC }
 
+/**
+ * TachiyomiAT: batch-only tie-break preference for genuinely ambiguous
+ * romantic/intimate relationships during chapter batch AI translation.
+ *
+ * - [MALE_FEMALE]: default. When source evidence, scene roles, and profile
+ *   evidence remain tied, resolve gendered pronouns toward a male/female
+ *   pairing. Explicit source evidence always overrides it.
+ * - [NEUTRAL]: keep the relationship prior inactive; ambiguous roles stay
+ *   neutrally phrased.
+ *
+ * This never applies to reader single-page translation, is never persisted as
+ * profile evidence, and is part of the batch translation provenance
+ * fingerprint so switching it invalidates translation/layout only.
+ */
+enum class BatchRelationshipAmbiguityPrior { NEUTRAL, MALE_FEMALE }
+
 class TranslationPreferences(
     private val preferenceStore: PreferenceStore,
 ) {
@@ -227,6 +243,17 @@ class TranslationPreferences(
      * default to keep the non-analytical path (and its token budget) unchanged.
      */
     fun translationAnalyticalMode() = preferenceStore.getBoolean("translation_analytical_mode", false)
+
+    /**
+     * TachiyomiAT: batch-only relationship ambiguity prior for chapter batch
+     * AI translation. Defaults to MALE_FEMALE for this product decision;
+     * explicit source evidence always wins and the prior is applied only as a
+     * final tie-break. Reader single-page translation never reads it.
+     */
+    fun batchRelationshipAmbiguityPrior() = preferenceStore.getEnum(
+        "batch_relationship_ambiguity_prior",
+        BatchRelationshipAmbiguityPrior.MALE_FEMALE,
+    )
 
     /**
      * TachiyomiAT: source-page reading order (RTL manga / LTR comic / auto from

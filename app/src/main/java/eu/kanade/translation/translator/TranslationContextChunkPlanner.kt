@@ -18,8 +18,9 @@ object TranslationContextChunkPlanner {
     const val SAFETY_MARGIN = 512
     const val MIN_OUTPUT_TOKENS = 256
 
-    // Accounts for the unified system prompt + few-shot examples (TranslationPrompts).
-    const val PROMPT_OVERHEAD_TOKENS = 1_100
+    // Accounts for the unified system prompt + few-shot examples (TranslationPrompts),
+    // including the Phase 6 batch semantic-role/mature-content/delta guidance.
+    const val PROMPT_OVERHEAD_TOKENS = 1_400
 
     // Deterministic reserve for the v1 response envelope. It covers the response header/footer,
     // page and delta delimiters, canonical IDs, separators, and bounded provider whitespace.

@@ -62,6 +62,14 @@ data class PageTranslation(
     var batchContextCheckpointHash: String? = null,
     var batchContextComplete: Boolean = false,
     /**
+     * Compact serialized [eu.kanade.translation.batch.SceneCardState] trusted
+     * checkpoint stored when this page's batch context committed. Forms a
+     * hash-chained, page-scoped context chain: a page's state links to the
+     * previous page's checkpoint hash. Unparseable/missing on a
+     * batch-context-complete page marks the chain corrupt from that page.
+     */
+    var batchSceneCheckpoint: String? = null,
+    /**
      * TachiyomiAT: SERIALIZABLE inpaint mask captured at OCR time.
      *
      * This is the durable record of every region the inpainter must erase: the

@@ -136,6 +136,10 @@
     <string name="translation_confirm_open_settings">Translation settings</string>
     <string name="pref_confirm_pretranslate">Confirm before batch translation</string>
     <string name="pref_confirm_pretranslate_summary">Show a settings review popup before translating a chapter from the manga screen</string>
+    <string name="pref_batch_relationship_prior">Ambiguous romance resolution (batch)</string>
+    <string name="pref_batch_relationship_prior_summary">Applies only to chapter batch AI translation; explicit source evidence always wins</string>
+    <string name="pref_batch_relationship_prior_neutral">Neutral (keep ambiguity)</string>
+    <string name="pref_batch_relationship_prior_male_female">Prefer male/female pairing</string>
 
     <!-- TachiyomiAT: redesigned batch progress sheet (§12 layout) -->
     <string name="manga_batch_stage_ocr">OCR/Detection</string>
