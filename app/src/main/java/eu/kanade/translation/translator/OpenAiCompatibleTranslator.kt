@@ -96,7 +96,14 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
             postChatCompletion(url, headers, payloadJson)
         }
         return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
-            ContextualResponseParser.parseBatch(rawOutput, request)
+            ContextualResponseParser.parseBatch(rawOutput, request).also { batch ->
+                if (batch.framingRecovered) {
+                    logcat(LogPriority.WARN) {
+                        "event=contextual_framing_recovered requested=${batch.requestedIds.size} " +
+                            "warnings=${batch.validationErrors.size}"
+                    }
+                }
+            }
         } else {
             val parsed = ContextualResponseParser.parse(rawOutput.lineSequence().toList(), request.idMap)
             ContextualRequestBuilder.toBatch(request, parsed)

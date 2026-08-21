@@ -9,6 +9,12 @@ data class PageChunk(
 object DynamicPageChunker {
     private const val MAX_BUBBLES_PER_CHUNK = 35
 
+    fun targetPageCount(totalPages: Int): Int = when {
+        totalPages <= 35 -> 5
+        totalPages <= 60 -> 7
+        else -> 10
+    }
+
     fun computeChunks(
         pageKeys: List<String>,
         bubbleCountByPage: Map<String, Int> = emptyMap(),
@@ -16,11 +22,7 @@ object DynamicPageChunker {
         if (pageKeys.isEmpty()) return emptyList()
         val totalPages = pageKeys.size
 
-        val defaultTargetSize = when {
-            totalPages <= 35 -> 5
-            totalPages <= 60 -> 7
-            else -> 10
-        }
+        val defaultTargetSize = targetPageCount(totalPages)
 
         val chunks = mutableListOf<PageChunk>()
         var currentChunkPages = mutableListOf<String>()

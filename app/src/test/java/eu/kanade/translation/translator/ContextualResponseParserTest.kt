@@ -422,7 +422,7 @@ class ContextualResponseParserTest {
     }
 
     @Test
-    fun `strict batch rejects unclosed page and delta sections`() {
+    fun `strict batch rejects an unclosed page but recovers exact ids from an unclosed delta`() {
         val page = PageTranslation(blocks = mutableListOf(block("first")))
         val chunk = TranslationContextChunk(
             pages = linkedMapOf("page.jpg" to page),
@@ -458,8 +458,70 @@ class ContextualResponseParserTest {
 
         assertFalse(pageBatch.isStructurallyValid)
         assertTrue(pageBatch.validationErrors.any { it.contains("Unclosed page section") })
-        assertFalse(deltaBatch.isStructurallyValid)
-        assertTrue(deltaBatch.validationErrors.any { it.contains("Unclosed context delta") })
+        assertTrue(deltaBatch.isStructurallyValid)
+        assertTrue(deltaBatch.framingRecovered)
+        applyBatchToChunk(chunk, deltaBatch)
+        page.blocks.single().translation shouldBe "First"
+    }
+
+    @Test
+    fun `exact requested ids recover without protocol framing`() {
+        val page = PageTranslation(blocks = mutableListOf(block("first"), block("second", x = 20f)))
+        val chunk = TranslationContextChunk(
+            pages = linkedMapOf("page.jpg" to page),
+            blockCount = 2,
+            rollingContext = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = 256,
+            pageIndexes = mapOf("page.jpg" to 0),
+        )
+        val request = ContextualRequestBuilder.build(
+            chunk,
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.ENGLISH,
+        )
+
+        val batch = ContextualResponseParser.parseBatch(
+            "p0000_b0000|First translation\np0000_b0001|Second translation",
+            request,
+        )
+
+        assertTrue(batch.isStructurallyValid)
+        assertTrue(batch.framingRecovered)
+        applyBatchToChunk(chunk, batch)
+        page.blocks.map { it.translation } shouldBe listOf("First translation", "Second translation")
+    }
+
+    @Test
+    fun `framing recovery remains fail closed for missing duplicate and unknown ids`() {
+        val page = PageTranslation(blocks = mutableListOf(block("first"), block("second", x = 20f)))
+        val chunk = TranslationContextChunk(
+            pages = linkedMapOf("page.jpg" to page),
+            blockCount = 2,
+            rollingContext = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = 256,
+            pageIndexes = mapOf("page.jpg" to 0),
+        )
+        val request = ContextualRequestBuilder.build(
+            chunk,
+            TextRecognizerLanguage.JAPANESE,
+            TextTranslatorLanguage.ENGLISH,
+        )
+
+        val missing = ContextualResponseParser.parseBatch("p0000_b0000|Only one", request)
+        val duplicate = ContextualResponseParser.parseBatch(
+            "p0000_b0000|First\np0000_b0000|Again\np0000_b0001|Second",
+            request,
+        )
+        val unknown = ContextualResponseParser.parseBatch(
+            "p0000_b0000|First\np0000_b0001|Second\np0000_b9999|Unknown",
+            request,
+        )
+
+        assertFalse(missing.isStructurallyValid)
+        assertFalse(duplicate.isStructurallyValid)
+        assertFalse(unknown.isStructurallyValid)
     }
 
     @Test

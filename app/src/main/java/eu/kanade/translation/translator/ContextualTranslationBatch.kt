@@ -20,6 +20,8 @@ data class ContextualTranslationBatch(
     val contextDeltas: Map<String, String> = emptyMap(),
     /** Structural/cardinality errors found before any result may be promoted. */
     val validationErrors: List<String> = emptyList(),
+    /** Exact requested IDs were recovered from a response with malformed or omitted framing. */
+    val framingRecovered: Boolean = false,
 ) {
     init {
         require(idToBlockIndex.keys.all { it.isNotBlank() }) { "Contextual target ids must not be blank" }
@@ -75,15 +77,16 @@ data class ContextualTranslationBatch(
      * one non-blank target and no unknown/extra/malformed protocol content was observed.
      */
     val isStructurallyValid: Boolean
-        get() = !strictValidation || (
-            protocolVersion == BatchTranslationProtocol.VERSION &&
-                validationErrors.isEmpty() &&
-                duplicateIds.isEmpty() &&
-                missingIds.isEmpty() &&
-                unknownIds.isEmpty() &&
-                rejected.isEmpty() &&
-                accepted.size == requestedIds.size
-            )
+        get() = !strictValidation ||
+            (
+                protocolVersion == BatchTranslationProtocol.VERSION &&
+                    (validationErrors.isEmpty() || framingRecovered) &&
+                    duplicateIds.isEmpty() &&
+                    missingIds.isEmpty() &&
+                    unknownIds.isEmpty() &&
+                    rejected.isEmpty() &&
+                    accepted.size == requestedIds.size
+                )
 
     /**
      * Typed, privacy-safe failure information for the live retry controller. The parser keeps

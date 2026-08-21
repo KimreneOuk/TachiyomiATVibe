@@ -7,6 +7,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Chapter-keyed owner of active translation stores.
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.flowOf
  */
 internal class ActiveChapterStoreRegistry {
     private val stores = LinkedHashMap<Long, ChapterTranslationStore>()
+    private val openingLocks = LinkedHashMap<Long, Mutex>()
     private val _snapshots = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _snapshots.asStateFlow()
 
@@ -25,10 +28,30 @@ internal class ActiveChapterStoreRegistry {
 
     @Synchronized
     fun register(chapterId: Long, store: ChapterTranslationStore): Boolean {
-        if (stores[chapterId] === store) return false
+        if (stores.containsKey(chapterId)) return false
         stores[chapterId] = store
         publish()
         return true
+    }
+
+    /**
+     * Opens one chapter store without holding the registry monitor across disk I/O.
+     * Concurrent reader and batch callers share the same per-chapter opening lock,
+     * then recheck the registry before invoking [create].
+     */
+    suspend fun getOrCreate(
+        chapterId: Long,
+        create: suspend () -> ChapterTranslationStore?,
+    ): ChapterTranslationStore? {
+        get(chapterId)?.let { return it }
+        val openingLock = synchronized(this) {
+            openingLocks.getOrPut(chapterId) { Mutex() }
+        }
+        return openingLock.withLock {
+            get(chapterId)?.let { return@withLock it }
+            val created = create() ?: return@withLock null
+            if (register(chapterId, created)) created else get(chapterId)
+        }
     }
 
     @Synchronized

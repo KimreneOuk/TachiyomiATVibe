@@ -365,6 +365,20 @@ class ChapterTranslationStore(
         }
     }
 
+    /** Cancels the active artifact candidate and releases its matching writer lease. */
+    suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
+        withContext(NonCancellable) {
+            mutex.withLock {
+                val lease = pageLeases[pageKey]
+                if (lease?.origin != origin) return@withLock false
+                val cancelled = cancelArtifactCandidateLocked(pageKey)
+                if (cancelled && pageLeases[pageKey]?.origin == origin) {
+                    pageLeases.remove(pageKey)
+                }
+                cancelled
+            }
+        }
+
     /** Releases every lease held by [origin]; used at batch teardown so no lease outlives its run. */
     suspend fun releaseAllPageLeases(origin: PageWriteOrigin) {
         withContext(NonCancellable) {
@@ -1459,18 +1473,20 @@ class ChapterTranslationStore(
         }
     }
 
-    private fun cancelArtifactCandidateLocked(pageKey: String) {
-        val store = artifactStore ?: return
-        val manifest = artifactManifest ?: return
-        val candidate = manifest.pages[pageKey]?.candidate ?: return
+    private fun cancelArtifactCandidateLocked(pageKey: String): Boolean {
+        val store = artifactStore ?: return true
+        val manifest = artifactManifest ?: return true
+        val candidate = manifest.pages[pageKey]?.candidate ?: return true
         val outcome = store.cancelLiveCandidate(manifest, pageKey, candidate.generationId)
         if (outcome is ChapterArtifactStore.TransactionOutcome.Committed) {
             artifactManifest = outcome.manifest
+            return true
         } else if (outcome is ChapterArtifactStore.TransactionOutcome.Rejected) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact candidate cancel rejected: pageKey=$pageKey reason=${outcome.reason}"
             }
         }
+        return false
     }
 
     private fun demoteArtifactPageLocked(pageKey: String) {

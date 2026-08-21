@@ -7,6 +7,16 @@ import org.junit.jupiter.api.Test
 class DynamicPageChunkerTest {
 
     @Test
+    fun `target page count follows chapter size bands`() {
+        assertEquals(5, DynamicPageChunker.targetPageCount(1))
+        assertEquals(5, DynamicPageChunker.targetPageCount(35))
+        assertEquals(7, DynamicPageChunker.targetPageCount(36))
+        assertEquals(7, DynamicPageChunker.targetPageCount(60))
+        assertEquals(10, DynamicPageChunker.targetPageCount(61))
+        assertEquals(10, DynamicPageChunker.targetPageCount(67))
+    }
+
+    @Test
     fun `short manga chapter uses 5-6 page chunks`() {
         val pages = (1..20).map { "page_$it.jpg" }
         val chunks = DynamicPageChunker.computeChunks(pages)

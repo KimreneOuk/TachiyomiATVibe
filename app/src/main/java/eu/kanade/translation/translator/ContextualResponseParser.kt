@@ -225,6 +225,13 @@ object ContextualResponseParser {
             }
 
             if (currentDelta != null) {
+                if (line == BatchTranslationProtocol.RESPONSE_END) {
+                    errors += "Unclosed context delta '$currentDelta'"
+                    footerSeen = true
+                    currentDelta = null
+                    deltaLines.clear()
+                    return@forEachIndexed
+                }
                 val endDelta = parsePageToken(line, BatchTranslationProtocol.CONTEXT_DELTA_END)
                 if (endDelta != null || line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_END} ")) {
                     if (endDelta != currentDelta) {
@@ -274,13 +281,81 @@ object ContextualResponseParser {
         val missingPages = expectedPageIds - seenPages
         missingPages.forEach { errors += "Missing page section '$it'" }
 
-        return ContextualTranslationBatch(
+        val strictBatch = ContextualTranslationBatch(
             idToBlockIndex = request.locations,
             results = results,
             strictValidation = true,
             protocolVersion = BatchTranslationProtocol.VERSION,
             contextDeltas = contextDeltas,
             validationErrors = errors.distinct(),
+        )
+        if (strictBatch.isStructurallyValid) return strictBatch
+        return recoverExactIdRecords(rawResponse, request, strictBatch) ?: strictBatch
+    }
+
+    /**
+     * Recovers translation payloads from provider output that omitted or damaged
+     * protocol framing. Only byte-exact canonical IDs are considered, and every
+     * requested ID must occur exactly once with a non-blank target. Unknown,
+     * duplicate, missing, or blank records keep the strict response invalid.
+     */
+    private fun recoverExactIdRecords(
+        rawResponse: String,
+        request: ContextualRequestBuilder.Request,
+        strictBatch: ContextualTranslationBatch,
+    ): ContextualTranslationBatch? {
+        val hasProtocolFraming = rawResponse.lineSequence().any { rawLine ->
+            val line = rawLine.removeSuffix("\r")
+            line == BatchTranslationProtocol.RESPONSE_HEADER ||
+                line == BatchTranslationProtocol.RESPONSE_END ||
+                line.startsWith("${BatchTranslationProtocol.PAGE_START} ") ||
+                line.startsWith("${BatchTranslationProtocol.PAGE_END} ") ||
+                line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_START} ") ||
+                line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_END} ")
+        }
+        val recoverableFramingErrors = strictBatch.validationErrors.all { error ->
+            error == "Missing batch response footer" ||
+                error.startsWith("Unclosed context delta '")
+        }
+        if (hasProtocolFraming && !recoverableFramingErrors) return null
+
+        val recovered = mutableListOf<ContextualTranslationResult>()
+        val seen = HashSet<String>()
+        var unsafe = false
+        rawResponse.lineSequence().forEach { rawLine ->
+            val line = rawLine.removeSuffix("\r")
+            val separator = line.indexOf('|')
+            if (separator <= 0) return@forEach
+            val id = line.substring(0, separator)
+            if (!canonicalBatchIdRegex.matches(id)) return@forEach
+            val target = request.idMap[id]
+            val text = line.substring(separator + 1).trimEnd()
+            if (target == null || !seen.add(id) || text.isBlank()) {
+                unsafe = true
+                recovered += ContextualTranslationResult(
+                    id = id,
+                    targetKey = target,
+                    text = text,
+                    status = ContextualTranslationResult.Status.REJECTED,
+                )
+            } else {
+                recovered += ContextualTranslationResult(
+                    id = id,
+                    targetKey = target,
+                    text = text,
+                    status = ContextualTranslationResult.Status.TRANSLATED,
+                )
+            }
+        }
+        if (unsafe || seen != request.orderedIds.toSet()) return null
+        return ContextualTranslationBatch(
+            idToBlockIndex = request.locations,
+            results = recovered,
+            strictValidation = true,
+            protocolVersion = BatchTranslationProtocol.VERSION,
+            contextDeltas = strictBatch.contextDeltas,
+            validationErrors = strictBatch.validationErrors,
+            framingRecovered = true,
         )
     }
 }

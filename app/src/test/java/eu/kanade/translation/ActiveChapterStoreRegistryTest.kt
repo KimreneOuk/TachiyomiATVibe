@@ -2,6 +2,9 @@ package eu.kanade.translation
 
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runCurrent
@@ -9,6 +12,43 @@ import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
 class ActiveChapterStoreRegistryTest {
+    @Test
+    fun `concurrent reader and batch open share one chapter store`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        var createCount = 0
+
+        val stores = listOf(
+            async {
+                registry.getOrCreate(101) {
+                    createCount++
+                    delay(10)
+                    ChapterTranslationStore(null, null)
+                }
+            },
+            async {
+                registry.getOrCreate(101) {
+                    createCount++
+                    ChapterTranslationStore(null, null)
+                }
+            },
+        ).awaitAll()
+
+        createCount shouldBe 1
+        (stores[0] === stores[1]) shouldBe true
+        stores[0] shouldBe registry.get(101)
+    }
+
+    @Test
+    fun `register never replaces an existing chapter authority`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        val first = ChapterTranslationStore(null, null)
+        val competing = ChapterTranslationStore(null, null)
+
+        registry.register(101, first) shouldBe true
+        registry.register(101, competing) shouldBe false
+        registry.get(101) shouldBe first
+    }
+
     @Test
     fun `chapter selection remains isolated across alternating active stores and clears after removal`() = runTest {
         val registry = ActiveChapterStoreRegistry()

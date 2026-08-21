@@ -159,6 +159,22 @@ class ChapterTranslationStorePhase3Test {
     }
 
     @Test
+    fun `aborting batch work releases only the matching page lease`() = runTest {
+        val store = store()
+        store.tryAcquirePageStageLease(
+            "p1",
+            PageStage.Ocr,
+            PageWriteOrigin.BATCH,
+        ).shouldBeInstanceOf<LeaseAcquisition.Granted>()
+
+        store.cancelPageStageWork("p1", PageWriteOrigin.READER_ADHOC) shouldBe false
+        store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.BATCH
+
+        store.cancelPageStageWork("p1", PageWriteOrigin.BATCH) shouldBe true
+        store.pageLeaseOwner("p1") shouldBe null
+    }
+
+    @Test
     fun `ocr-only merge preserves reusable cleaned artifact`() = runTest {
         val store = store()
         store.updatePage("p1") { page ->

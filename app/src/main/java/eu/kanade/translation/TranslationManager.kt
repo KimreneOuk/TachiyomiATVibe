@@ -617,7 +617,7 @@ class TranslationManager(
      * through the registry's keep-existing [registerActiveTranslationStore]
      * semantics: exactly one instance survives and both callers observe it.
      */
-    private fun openOrCreateActiveChapterTranslationStoreImpl(
+    private suspend fun openOrCreateActiveChapterTranslationStoreImpl(
         chapterId: Long,
         chapterName: String,
         scanlator: String?,
@@ -625,27 +625,21 @@ class TranslationManager(
         source: Source,
         mangaId: Long?,
     ): ChapterTranslationStore? {
-        activeStores.get(chapterId)?.let {
-            scheduleRetiredCleanedImageCleanup(it, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
-            return it
-        }
-        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
-        val store = if (file != null && file.exists()) {
-            ChapterTranslationStore.open(file)
-        } else {
-            // Create a LAZY store: the on-disk file materializes only on the first real write
-            // (persistLocked), so merely opening a chapter never leaves an empty file behind that
-            // would make isChapterTranslated report a false TRANSLATED state.
-            val saveFile = provider.getTranslationFileName(chapterName, scanlator)
-            ChapterTranslationStore.lazy {
-                provider.getMangaDir(mangaTitle, source)?.createFile(saveFile)
-                    ?: throw java.io.IOException("Cannot create translation file for $chapterName")
+        val registered = activeStores.getOrCreate(chapterId) {
+            val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+            if (file != null && file.exists()) {
+                ChapterTranslationStore.open(file)
+            } else {
+                // Create a LAZY store: the on-disk file materializes only on the first real write
+                // (persistLocked), so merely opening a chapter never leaves an empty file behind that
+                // would make isChapterTranslated report a false TRANSLATED state.
+                val saveFile = provider.getTranslationFileName(chapterName, scanlator)
+                ChapterTranslationStore.lazy {
+                    provider.getMangaDir(mangaTitle, source)?.createFile(saveFile)
+                        ?: throw java.io.IOException("Cannot create translation file for $chapterName")
+                }
             }
-        }
-        registerActiveTranslationStore(chapterId, store)
-        // Another thread may have won the registration race while this store
-        // was opening; every caller must observe the registered instance.
-        val registered = activeStores.get(chapterId) ?: store
+        } ?: return null
         scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
         return registered
     }
