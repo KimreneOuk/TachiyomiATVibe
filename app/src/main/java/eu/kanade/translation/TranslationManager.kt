@@ -575,28 +575,79 @@ class TranslationManager(
         source: Source,
         mangaId: Long? = null,
     ): ChapterTranslationStore? = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-        synchronized(activeStores) {
-            activeStores.get(chapterId)?.let {
-                scheduleRetiredCleanedImageCleanup(it, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
-                return@runBlocking it
-            }
-            val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
-            val store = if (file != null && file.exists()) {
-                ChapterTranslationStore.open(file)
-            } else {
-                // Create a LAZY store: the on-disk file materializes only on the first real write
-                // (persistLocked), so merely opening a chapter never leaves an empty file behind that
-                // would make isChapterTranslated report a false TRANSLATED state.
-                val saveFile = provider.getTranslationFileName(chapterName, scanlator)
-                ChapterTranslationStore.lazy {
-                    provider.getMangaDir(mangaTitle, source)?.createFile(saveFile)
-                        ?: throw java.io.IOException("Cannot create translation file for $chapterName")
-                }
-            }
-            scheduleRetiredCleanedImageCleanup(store, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
-            registerActiveTranslationStore(chapterId, store)
-            return@runBlocking store
+        openOrCreateActiveChapterTranslationStoreImpl(
+            chapterId,
+            chapterName,
+            scanlator,
+            mangaTitle,
+            source,
+            mangaId,
+        )
+    }
+
+    /**
+     * Non-blocking variant of [openOrCreateActiveChapterTranslationStore] for
+     * coroutine callers (reader loadChapter / per-page view subscription).
+     * Opening a store for the first time performs legacy artifact migration
+     * with SAF binder I/O; callers must never runBlocking on that path from
+     * the main thread (reader-entry ANR) — they should suspend on IO instead.
+     */
+    suspend fun openOrCreateActiveChapterTranslationStoreSuspend(
+        chapterId: Long,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+        mangaId: Long? = null,
+    ): ChapterTranslationStore? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        openOrCreateActiveChapterTranslationStoreImpl(
+            chapterId,
+            chapterName,
+            scanlator,
+            mangaTitle,
+            source,
+            mangaId,
+        )
+    }
+
+    /**
+     * Shared open-or-create body. The registry monitor is held only for the
+     * map operations themselves — never across store open / artifact
+     * migration / SAF I/O. A concurrent open for the same chapter resolves
+     * through the registry's keep-existing [registerActiveTranslationStore]
+     * semantics: exactly one instance survives and both callers observe it.
+     */
+    private fun openOrCreateActiveChapterTranslationStoreImpl(
+        chapterId: Long,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+        mangaId: Long?,
+    ): ChapterTranslationStore? {
+        activeStores.get(chapterId)?.let {
+            scheduleRetiredCleanedImageCleanup(it, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
+            return it
         }
+        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+        val store = if (file != null && file.exists()) {
+            ChapterTranslationStore.open(file)
+        } else {
+            // Create a LAZY store: the on-disk file materializes only on the first real write
+            // (persistLocked), so merely opening a chapter never leaves an empty file behind that
+            // would make isChapterTranslated report a false TRANSLATED state.
+            val saveFile = provider.getTranslationFileName(chapterName, scanlator)
+            ChapterTranslationStore.lazy {
+                provider.getMangaDir(mangaTitle, source)?.createFile(saveFile)
+                    ?: throw java.io.IOException("Cannot create translation file for $chapterName")
+            }
+        }
+        registerActiveTranslationStore(chapterId, store)
+        // Another thread may have won the registration race while this store
+        // was opening; every caller must observe the registered instance.
+        val registered = activeStores.get(chapterId) ?: store
+        scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
+        return registered
     }
 
     /**
@@ -604,6 +655,11 @@ class TranslationManager(
      * chapter. The store only exposes names after its committed pointer is
      * reconstructed; deletion still goes through the stream registry so a
      * reader stream held across a reopen cannot be invalidated.
+     *
+     * Launched on the application IO scope: the registry executes a retired
+     * image's delete callback inline when no lease is held, which is SAF
+     * binder I/O — it must never run on the caller's thread (the reader
+     * resolves stores from page binds).
      */
     private fun scheduleRetiredCleanedImageCleanup(
         store: ChapterTranslationStore,
@@ -615,26 +671,28 @@ class TranslationManager(
         mangaId: Long?,
     ) {
         val stableMangaId = mangaId ?: return
-        store.state.value.keys.forEach { pageKey ->
-            store.drainRetiredCleanedImages(pageKey).forEach { imageName ->
-                streamRegistry.retireCleanedImage(
-                    sourceId = source.id,
-                    mangaId = stableMangaId,
-                    chapterId = chapterId,
-                    pageKey = pageKey,
-                    imageName = imageName,
-                ) {
-                    if (!store.mayDeleteCleanedImage(pageKey, imageName)) return@retireCleanedImage
-                    val deleted = provider.findPageCleanedImage(
-                        mangaTitle,
-                        source,
-                        chapterName,
-                        scanlator,
-                        imageName,
-                    )?.delete() == true
-                    logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                        "TachiyomiAT chapter-load retired cleaned image drain: " +
-                            "pageKey=$pageKey file=$imageName deleted=$deleted"
+        applicationScope.launch {
+            store.state.value.keys.forEach { pageKey ->
+                store.drainRetiredCleanedImages(pageKey).forEach { imageName ->
+                    streamRegistry.retireCleanedImage(
+                        sourceId = source.id,
+                        mangaId = stableMangaId,
+                        chapterId = chapterId,
+                        pageKey = pageKey,
+                        imageName = imageName,
+                    ) {
+                        if (!store.mayDeleteCleanedImage(pageKey, imageName)) return@retireCleanedImage
+                        val deleted = provider.findPageCleanedImage(
+                            mangaTitle,
+                            source,
+                            chapterName,
+                            scanlator,
+                            imageName,
+                        )?.delete() == true
+                        logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
+                            "TachiyomiAT chapter-load retired cleaned image drain: " +
+                                "pageKey=$pageKey file=$imageName deleted=$deleted"
+                        }
                     }
                 }
             }

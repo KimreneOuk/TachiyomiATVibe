@@ -85,9 +85,12 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
@@ -2575,7 +2578,7 @@ class ReaderViewModel @JvmOverloads constructor(
         }
     }
 
-    fun observeLiveTranslationStore() {
+    suspend fun observeLiveTranslationStore() {
         translationStoreJob?.cancel()
         translationBatchProgressJob?.cancel()
         val manga = manga ?: return
@@ -2589,7 +2592,10 @@ class ReaderViewModel @JvmOverloads constructor(
         // overlay/dim/spinner even though the pipeline ran. openOrCreate...
         // returns the exact same shared instance the translator resolves to,
         // so the reader observes the RUNNING write live.
-        val store = translationManager.openOrCreateActiveChapterTranslationStore(
+        // TachiyomiAT (ANR fix): suspend variant — a first open runs legacy
+        // artifact migration with SAF I/O and must not runBlocking a
+        // dispatcher thread while holding readers waiting on the same store.
+        val store = translationManager.openOrCreateActiveChapterTranslationStoreSuspend(
             chapter.id!!,
             chapter.name,
             chapter.scanlator,
@@ -2742,44 +2748,57 @@ class ReaderViewModel @JvmOverloads constructor(
             logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: source null (pageIdx=${page.index})" }
             return null
         }
-        val store = translationManager.openOrCreateActiveChapterTranslationStore(
-            chapterId,
-            chapter.name,
-            chapter.scanlator,
-            manga.title,
-            source,
-            manga.id,
-        ) ?: run {
-            logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: store null (pageIdx=${page.index})" }
-            return null
-        }
         val pageKey = resolvePageKey(page)
         // TachiyomiAT (diagnostic): log the lookup so a chapter-open capture can
         // name exactly why a pre-translated page shows its original image. Gated
         // behind translation_diagnostics (already a cached pref read) so there's
         // zero overhead in production. Remove once the display-path bug is fixed.
         val diag = translationDiagnosticsEnabled
-        if (diag) {
-            val storeSize = store.state.value.size
-            val hasKey = store.state.value.containsKey(pageKey)
-            val sampleKeys = store.state.value.keys.take(3)
-            val entry = store.state.value[pageKey]
-            logcat(LogPriority.INFO) {
-                "[reader_translate_diag] observePageView pageIdx=${page.index} pageKey=$pageKey " +
-                    "sourceFileName=${page.sourceFileName} storeSize=$storeSize hasKey=$hasKey " +
-                    "sampleKeys=$sampleKeys " +
-                    "entryCleaned=${entry?.cleanedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus} render=${it.renderStatus}" }}"
+        // TachiyomiAT (ANR fix): the store is resolved lazily inside this cold
+        // flow on Dispatchers.IO. observePageView is called from page-holder
+        // bind on the MAIN thread; the first open of a chapter store performs
+        // legacy artifact migration with synchronous SAF binder I/O, so a
+        // blocking resolution here froze RecyclerView layout and ANR'd the
+        // reader on entry. Holders subscribe exactly as before; the first
+        // emission simply arrives after the IO resolution completes.
+        return flow {
+            val store = translationManager.openOrCreateActiveChapterTranslationStoreSuspend(
+                chapterId,
+                chapter.name,
+                chapter.scanlator,
+                manga.title,
+                source,
+                manga.id,
+            )
+            if (store == null) {
+                logcat(LogPriority.WARN) { "[reader_translate_diag] observePageView BAIL: store null (pageIdx=${page.index})" }
+                return@flow
             }
+            if (diag) {
+                val storeSize = store.state.value.size
+                val hasKey = store.state.value.containsKey(pageKey)
+                val sampleKeys = store.state.value.keys.take(3)
+                val entry = store.state.value[pageKey]
+                logcat(LogPriority.INFO) {
+                    "[reader_translate_diag] observePageView pageIdx=${page.index} pageKey=$pageKey " +
+                        "sourceFileName=${page.sourceFileName} storeSize=$storeSize hasKey=$hasKey " +
+                        "sampleKeys=$sampleKeys " +
+                        "entryCleaned=${entry?.cleanedImageName} entryStatus=${entry?.let { "ocr=${it.ocrStatus} render=${it.renderStatus}" }}"
+                }
+            }
+            // TachiyomiAT (Phase 3): the page view observes the store's committed
+            // display projection. Each emission resolves to the immutable
+            // committed display bundle when one exists (candidate retries never
+            // null it) and to the live candidate entry otherwise, so the holder's
+            // overlay binding can never flip a translated page back to the
+            // original mid-refresh.
+            emitAll(
+                store.display
+                    .map { pages -> pages[pageKey] }
+                    .distinctUntilChanged(),
+            )
         }
-        // TachiyomiAT (Phase 3): the page view observes the store's committed
-        // display projection. Each emission resolves to the immutable
-        // committed display bundle when one exists (candidate retries never
-        // null it) and to the live candidate entry otherwise, so the holder's
-        // overlay binding can never flip a translated page back to the
-        // original mid-refresh.
-        return store.display
-            .map { pages -> pages[pageKey] }
-            .distinctUntilChanged()
+            .flowOn(Dispatchers.IO)
             .onEach { updated ->
                 if (updated == null) {
                     if (diag) {
