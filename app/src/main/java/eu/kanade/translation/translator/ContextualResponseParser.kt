@@ -92,270 +92,83 @@ object ContextualResponseParser {
         rawResponse: String,
         request: ContextualRequestBuilder.Request,
     ): ContextualTranslationBatch {
+        val sanitizedResponse = OcrArtifactSanitizer.stripThinkingTags(rawResponse)
         val results = mutableListOf<ContextualTranslationResult>()
         val errors = mutableListOf<String>()
         val seenIds = HashSet<String>()
-        val seenPages = HashSet<String>()
-        val seenDeltas = HashSet<String>()
         val contextDeltas = linkedMapOf<String, String>()
-        // Every page present in the request has exactly one required PAGE section, including a
-        // textless/empty page. Block cardinality is still derived solely from orderedIds, so an
-        // empty page is valid when represented by an empty section and cannot create unknown IDs.
-        val expectedPageIds = request.pageOrder.mapNotNull { pageKey ->
-            request.pageIndexes[pageKey]?.let(BatchTranslationProtocol::pageId)
-        }.toSet().ifEmpty {
-            request.orderedIds
-                .mapNotNull { it.substringBefore("_b", missingDelimiterValue = "").takeIf(String::isNotBlank) }
-                .toSet()
-        }
 
-        var headerSeen = false
-        var footerSeen = false
-        var currentPage: String? = null
-        var currentDelta: String? = null
-        val deltaLines = mutableListOf<String>()
+        sanitizedResponse.lineSequence().forEachIndexed { lineNumber, rawLine ->
+            val line = rawLine.removeSuffix("\r").trim()
+            if (line.isBlank() || line.startsWith("```") || line == "```") return@forEachIndexed
 
-        fun rejected(
-            id: String,
-            text: String = "",
-            target: AnchoredTargetKey? = null,
-        ) {
-            results += ContextualTranslationResult(
-                id = id,
-                targetKey = target,
-                text = text,
-                status = ContextualTranslationResult.Status.REJECTED,
-            )
-        }
-
-        fun parsePageToken(line: String, marker: String): String? {
-            val prefix = "$marker "
-            if (!line.startsWith(prefix)) return null
-            val token = line.removePrefix(prefix)
-            if (token.isBlank() || token.any(Char::isWhitespace)) {
-                errors += "Invalid $marker marker: '$line'"
-                return token.ifBlank { null }
-            }
-            return token
-        }
-
-        fun parseTranslationLine(line: String, pageId: String) {
-            if (line.firstOrNull()?.isWhitespace() == true) {
-                errors += "Normalized translation line at page $pageId"
-            }
             val separator = line.indexOf('|')
             if (separator <= 0) {
-                errors += "Malformed translation line at page $pageId"
-                rejected(line.trim().take(64))
-                return
+                // Ignore envelope markers or comment lines gracefully
+                if (!line.startsWith("TACHIYOMI_") && !line.startsWith("BEGIN_") && !line.startsWith("END_") && !line.startsWith("Response schema")) {
+                    errors += "Malformed line at line ${lineNumber + 1}: '$line'"
+                }
+                return@forEachIndexed
             }
-            val id = line.substring(0, separator)
-            // IDs remain byte-exact; provider-added whitespace at the end of the target is
-            // harmless and is removed only from the target tail.
-            val text = line.substring(separator + 1).trimEnd()
+
+            val id = line.substring(0, separator).trim()
+            val text = line.substring(separator + 1).trim()
             val target = request.idMap[id]
-            val canonical = canonicalBatchIdRegex.matches(id)
-            if (!canonical) {
-                errors += "Normalized or malformed id '$id'"
-            }
+
             if (target == null) {
                 errors += "Unknown id '$id'"
-                rejected(id, text)
-                return
-            }
-            val expectedPage = id.substringBefore("_b")
-            if (expectedPage != pageId) {
-                errors += "Id '$id' is outside page section $pageId"
-            }
-            if (!seenIds.add(id)) {
-                errors += "Duplicate id '$id'"
-                rejected(id, text, target)
-                return
-            }
-            if (text.isBlank()) {
-                errors += "Blank required output for '$id'"
-                rejected(id, text, target)
-                return
-            }
-            if (canonical) {
                 results += ContextualTranslationResult(
                     id = id,
-                    targetKey = target,
+                    targetKey = null,
                     text = text,
-                    status = ContextualTranslationResult.Status.TRANSLATED,
+                    status = ContextualTranslationResult.Status.REJECTED,
                 )
-            } else {
-                rejected(id, text, target)
-            }
-        }
-
-        rawResponse.lineSequence().forEachIndexed { lineNumber, rawLine ->
-            val line = rawLine.removeSuffix("\r")
-            if (line.isBlank()) return@forEachIndexed
-            if (footerSeen) {
-                errors += "Extra content after response footer at line ${lineNumber + 1}"
                 return@forEachIndexed
             }
 
-            if (!headerSeen) {
-                if (line == BatchTranslationProtocol.RESPONSE_HEADER) {
-                    headerSeen = true
-                } else {
-                    errors += "Missing batch response header"
-                }
-                return@forEachIndexed
-            }
-
-            if (currentPage != null) {
-                val endPage = parsePageToken(line, BatchTranslationProtocol.PAGE_END)
-                if (endPage != null || line.startsWith("${BatchTranslationProtocol.PAGE_END} ")) {
-                    if (endPage != currentPage) {
-                        errors += "Mismatched page section end '$line'"
-                    }
-                    currentPage = null
-                } else {
-                    if (line.startsWith("BEGIN_") || line.startsWith("END_")) {
-                        errors += "Nested or extra section inside page $currentPage"
-                        rejected(line.take(64))
-                    } else {
-                        parseTranslationLine(line, currentPage!!)
-                    }
-                }
-                return@forEachIndexed
-            }
-
-            if (currentDelta != null) {
-                if (line == BatchTranslationProtocol.RESPONSE_END) {
-                    errors += "Unclosed context delta '$currentDelta'"
-                    footerSeen = true
-                    currentDelta = null
-                    deltaLines.clear()
-                    return@forEachIndexed
-                }
-                val endDelta = parsePageToken(line, BatchTranslationProtocol.CONTEXT_DELTA_END)
-                if (endDelta != null || line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_END} ")) {
-                    if (endDelta != currentDelta) {
-                        errors += "Mismatched context delta end '$line'"
-                    }
-                    contextDeltas[currentDelta!!] = deltaLines.joinToString("\n")
-                    currentDelta = null
-                    deltaLines.clear()
-                } else {
-                    if (line.startsWith("BEGIN_") || line.startsWith("END_")) {
-                        errors += "Nested or extra section inside context delta $currentDelta"
-                    } else {
-                        deltaLines += line
-                    }
-                }
-                return@forEachIndexed
-            }
-
-            when {
-                line == BatchTranslationProtocol.RESPONSE_END -> footerSeen = true
-                BatchTranslationProtocol.isPageStart(line) -> {
-                    val pageId = parsePageToken(line, BatchTranslationProtocol.PAGE_START)
-                    if (pageId == null) return@forEachIndexed
-                    if (!seenPages.add(pageId)) errors += "Duplicate page section '$pageId'"
-                    if (pageId !in expectedPageIds) errors += "Unknown page section '$pageId'"
-                    currentPage = pageId
-                }
-                BatchTranslationProtocol.isContextDeltaStart(line) -> {
-                    val pageId = parsePageToken(line, BatchTranslationProtocol.CONTEXT_DELTA_START)
-                    if (pageId == null) return@forEachIndexed
-                    if (!seenDeltas.add(pageId)) errors += "Duplicate context delta '$pageId'"
-                    if (pageId !in expectedPageIds) errors += "Unknown context delta page '$pageId'"
-                    currentDelta = pageId
-                    deltaLines.clear()
-                }
-                line.startsWith("BEGIN_") || line.startsWith("END_") -> {
-                    errors += "Unknown response section '$line'"
-                }
-                else -> errors += "Unexpected response content at line ${lineNumber + 1}"
-            }
-        }
-
-        if (!headerSeen) errors += "Missing batch response header"
-        if (!footerSeen) errors += "Missing batch response footer"
-        if (currentPage != null) errors += "Unclosed page section '$currentPage'"
-        if (currentDelta != null) errors += "Unclosed context delta '$currentDelta'"
-        val missingPages = expectedPageIds - seenPages
-        missingPages.forEach { errors += "Missing page section '$it'" }
-
-        val strictBatch = ContextualTranslationBatch(
-            idToBlockIndex = request.locations,
-            results = results,
-            strictValidation = true,
-            protocolVersion = BatchTranslationProtocol.VERSION,
-            contextDeltas = contextDeltas,
-            validationErrors = errors.distinct(),
-        )
-        if (strictBatch.isStructurallyValid) return strictBatch
-        return recoverExactIdRecords(rawResponse, request, strictBatch) ?: strictBatch
-    }
-
-    /**
-     * Recovers translation payloads from provider output that omitted or damaged
-     * protocol framing. Only byte-exact canonical IDs are considered, and every
-     * requested ID must occur exactly once with a non-blank target. Unknown,
-     * duplicate, missing, or blank records keep the strict response invalid.
-     */
-    private fun recoverExactIdRecords(
-        rawResponse: String,
-        request: ContextualRequestBuilder.Request,
-        strictBatch: ContextualTranslationBatch,
-    ): ContextualTranslationBatch? {
-        val hasProtocolFraming = rawResponse.lineSequence().any { rawLine ->
-            val line = rawLine.removeSuffix("\r")
-            line == BatchTranslationProtocol.RESPONSE_HEADER ||
-                line == BatchTranslationProtocol.RESPONSE_END ||
-                line.startsWith("${BatchTranslationProtocol.PAGE_START} ") ||
-                line.startsWith("${BatchTranslationProtocol.PAGE_END} ") ||
-                line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_START} ") ||
-                line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_END} ")
-        }
-        val recoverableFramingErrors = strictBatch.validationErrors.all { error ->
-            error == "Missing batch response footer" ||
-                error.startsWith("Unclosed context delta '")
-        }
-        if (hasProtocolFraming && !recoverableFramingErrors) return null
-
-        val recovered = mutableListOf<ContextualTranslationResult>()
-        val seen = HashSet<String>()
-        var unsafe = false
-        rawResponse.lineSequence().forEach { rawLine ->
-            val line = rawLine.removeSuffix("\r")
-            val separator = line.indexOf('|')
-            if (separator <= 0) return@forEach
-            val id = line.substring(0, separator)
-            if (!canonicalBatchIdRegex.matches(id)) return@forEach
-            val target = request.idMap[id]
-            val text = line.substring(separator + 1).trimEnd()
-            if (target == null || !seen.add(id) || text.isBlank()) {
-                unsafe = true
-                recovered += ContextualTranslationResult(
+            if (!seenIds.add(id)) {
+                errors += "Duplicate id '$id'"
+                results += ContextualTranslationResult(
                     id = id,
                     targetKey = target,
                     text = text,
                     status = ContextualTranslationResult.Status.REJECTED,
                 )
-            } else {
-                recovered += ContextualTranslationResult(
+                return@forEachIndexed
+            }
+
+            if (text.isBlank()) {
+                errors += "Blank required output for '$id'"
+                results += ContextualTranslationResult(
                     id = id,
                     targetKey = target,
                     text = text,
-                    status = ContextualTranslationResult.Status.TRANSLATED,
+                    status = ContextualTranslationResult.Status.REJECTED,
                 )
+                return@forEachIndexed
             }
+
+            results += ContextualTranslationResult(
+                id = id,
+                targetKey = target,
+                text = text,
+                status = ContextualTranslationResult.Status.TRANSLATED,
+            )
         }
-        if (unsafe || seen != request.orderedIds.toSet()) return null
+
+        val missingIds = request.orderedIds.toSet() - seenIds
+        missingIds.forEach { errors += "Missing translation for '$it'" }
+
+        val isStrictValid = missingIds.isEmpty() && errors.isEmpty() && results.all { it.status == ContextualTranslationResult.Status.TRANSLATED }
+
         return ContextualTranslationBatch(
             idToBlockIndex = request.locations,
-            results = recovered,
-            strictValidation = true,
+            results = results,
+            strictValidation = isStrictValid,
             protocolVersion = BatchTranslationProtocol.VERSION,
-            contextDeltas = strictBatch.contextDeltas,
-            validationErrors = strictBatch.validationErrors,
-            framingRecovered = true,
+            contextDeltas = contextDeltas,
+            validationErrors = errors.distinct(),
+            framingRecovered = false,
         )
     }
 }

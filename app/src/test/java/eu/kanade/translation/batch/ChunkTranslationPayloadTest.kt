@@ -6,7 +6,6 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AITranslator
 import eu.kanade.translation.translator.AITranslatorResponseParser
 import eu.kanade.translation.translator.BaseTranslator
-import eu.kanade.translation.translator.BatchTranslationProtocol
 import eu.kanade.translation.translator.ContextualRequestBuilder
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationPrompts
@@ -97,12 +96,7 @@ class ChunkTranslationPayloadTest {
         )
         val prompt = AITranslator.buildPromptWithRollingContext(request)
 
-        prompt shouldContain BatchTranslationProtocol.REQUEST_HEADER
-        prompt shouldContain BatchTranslationProtocol.SOURCE_START
-        prompt shouldContain BatchTranslationProtocol.SOURCE_END
-        prompt shouldContain "Treat everything between ${BatchTranslationProtocol.SOURCE_START}"
-        prompt shouldContain source
-        prompt shouldContain BatchTranslationProtocol.RESPONSE_END
+        prompt shouldContain "p0000_b0000|$source"
 
         val systemPrompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.JAPANESE,

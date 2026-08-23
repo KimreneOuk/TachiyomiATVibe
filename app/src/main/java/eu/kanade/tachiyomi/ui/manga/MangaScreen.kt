@@ -293,6 +293,11 @@ class MangaScreen(
                     chapterName = item?.chapter?.name.orEmpty(),
                     snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
                     onDismissRequest = onDismissRequest,
+                    onResume = {
+                        if (item != null) {
+                            screenModel.confirmChapterTranslation(item)
+                        }
+                    },
                     onReadNow = {
                         if (item != null && item.translationProgress?.canReadTranslated == true) {
                             screenModel.dismissDialog()

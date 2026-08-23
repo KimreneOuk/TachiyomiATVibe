@@ -1151,11 +1151,16 @@ class ChapterTranslationStore(
         expected: PatchPrecondition? = null,
     ) {
         val pageKey = updated.sourceFileName ?: ""
-        val artifactAccepted = persistArtifactMutationLocked(pageKey, previous, updated, expected)
+        val isDurable = shouldPersistUpdate(previous, updated)
+        val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
+            persistArtifactMutationLocked(pageKey, previous, updated, expected)
+        } else {
+            true
+        }
         if (artifactAccepted) {
             promoteDisplayIfReadyLocked(pageKey, updated)
         }
-        if (shouldPersistUpdate(previous, updated) && artifactManifest?.authority != ManifestAuthority.ARTIFACTS) {
+        if (isDurable && artifactManifest?.authority != ManifestAuthority.ARTIFACTS) {
             schedulePersist()
         }
         _state.value = snapshotPages()
@@ -1236,12 +1241,20 @@ class ChapterTranslationStore(
         val dependencyFingerprint = expected?.dependencyFingerprint
             ?: candidate?.dependencyFingerprint
             ?: StageFingerprints.pageSnapshot(previous ?: updated)
-        if (candidate == null) {
+        if (candidate == null || candidate.origin != origin) {
+            val baseManifest = if (candidate != null && candidate.origin != origin) {
+                when (val cancelled = store.cancelLiveCandidate(manifest, pageKey, candidate.generationId)) {
+                    is ChapterArtifactStore.TransactionOutcome.Committed -> cancelled.manifest
+                    else -> manifest
+                }
+            } else {
+                manifest
+            }
             val opened = store.openCandidate(
-                manifest = manifest,
+                manifest = baseManifest,
                 pageKey = pageKey,
                 origin = origin,
-                expectedPageVersion = record.pageVersion,
+                expectedPageVersion = baseManifest.pages[pageKey]?.pageVersion ?: record.pageVersion,
                 dependencyFingerprint = dependencyFingerprint,
             )
             manifest = when (opened) {
@@ -1254,12 +1267,6 @@ class ChapterTranslationStore(
                 }
             }
             artifactManifest = manifest
-        } else if (candidate.origin != origin) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact candidate provenance conflict: pageKey=$pageKey " +
-                    "candidate=${candidate.origin} writer=$origin"
-            }
-            return false
         }
         val currentCandidate = manifest.pages.getValue(pageKey).candidate ?: return false
         val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion

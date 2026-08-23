@@ -256,12 +256,12 @@ class SequentialBatchCoordinator(
 
     companion object {
         /** Native work may run at most this many pages beyond the translation frontier. */
-        const val MAX_NATIVE_LOOKAHEAD_PAGES = 3
+        const val MAX_NATIVE_LOOKAHEAD_PAGES = 6
 
         /** Post-OCR AI request envelopes cover at most this many consecutive pages. */
         const val MAX_AI_ENVELOPE_PAGES = 4
 
         /** Post-OCR AI request envelopes carry at most this many accepted blocks. */
-        const val MAX_AI_ENVELOPE_BLOCKS = 24
+        const val MAX_AI_ENVELOPE_BLOCKS = 28
     }
 }

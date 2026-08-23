@@ -7,13 +7,9 @@ data class PageChunk(
 )
 
 object DynamicPageChunker {
-    private const val MAX_BUBBLES_PER_CHUNK = 35
+    private const val MAX_BUBBLES_PER_CHUNK = 28
 
-    fun targetPageCount(totalPages: Int): Int = when {
-        totalPages <= 35 -> 5
-        totalPages <= 60 -> 7
-        else -> 10
-    }
+    fun targetPageCount(totalPages: Int): Int = 4
 
     fun computeChunks(
         pageKeys: List<String>,

@@ -2515,11 +2515,16 @@ class ReaderViewModel @JvmOverloads constructor(
      * touches a page that already produced a result (rendered/cleaned) or
      * already reached FAILED. Idempotent.
      */
-    private suspend fun sweepStrandedPageStatus(store: ChapterTranslationStore) {
+    private suspend fun sweepStrandedPageStatus(store: ChapterTranslationStore, chapterId: Long) {
+        if (translationManager.isBatchTranslationActive(chapterId)) {
+            return
+        }
+        val currentGen = store.currentGeneration
         val now = System.currentTimeMillis()
         val staleAfterMs = TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS
         val snapshot = store.state.value
         for ((pageKey, pt) in snapshot) {
+            if (pt.runGeneration == currentGen) continue
             val isTerminal = pt.ocrStatus == StageStatus.FAILED ||
                 pt.inpaintStatus == StageStatus.FAILED ||
                 pt.translationStatus == StageStatus.FAILED ||
@@ -2621,7 +2626,7 @@ class ReaderViewModel @JvmOverloads constructor(
             // treated as abandoned and flipped to CANCELLED. Runs once per
             // chapter open. Never clobbers a page that produced a result or
             // reached FAILED.
-            sweepStrandedPageStatus(store)
+            sweepStrandedPageStatus(store, chapter.id!!)
             storeState.collect { pageMap ->
                 val pages = state.value.viewerChapters?.currChapter?.pages ?: return@collect
                 var translatedCount = 0

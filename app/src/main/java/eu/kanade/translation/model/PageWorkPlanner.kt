@@ -16,12 +16,26 @@ object PageWorkPlanner {
 
     /** Compatibility projection for the older four-boolean API. */
     fun plan(page: PageTranslation?, force: Boolean = false): PageWorkPlan {
-        if (force || page == null) {
+        if (page == null) {
             return PageWorkPlan(
                 runOcr = true,
                 runTranslation = true,
                 runInpaint = true,
                 runRender = true,
+            )
+        }
+
+        if (force) {
+            val ocrReady = page.ocrStatus == StageStatus.READY && page.blocks.isNotEmpty()
+            val inpaintReady = page.inpaintStatus == StageStatus.READY && page.cleanedImageName != null
+            val canReuseNative = ocrReady && inpaintReady
+            return PageWorkPlan(
+                runOcr = !canReuseNative,
+                runTranslation = true,
+                runInpaint = !canReuseNative,
+                runRender = true,
+                displayReady = false,
+                batchContextComplete = false,
             )
         }
 
@@ -183,7 +197,7 @@ object PageWorkPlanner {
             )
         }
 
-        if (stage == BatchStage.TRANSLATION && evidence.origin == ArtifactOrigin.READER_ADHOC) {
+        if (stage == BatchStage.TRANSLATION && evidence.origin == ArtifactOrigin.READER_ADHOC && !isTerminalSuccess(evidence.status)) {
             return dependencyOrRun(
                 stage,
                 StageReasonCode.READER_ADHOC_NOT_BATCH_COMPLETE,
@@ -194,7 +208,8 @@ object PageWorkPlanner {
             checkpoint.state in setOf(
                 ContextCheckpointState.MISSING,
                 ContextCheckpointState.CORRUPT,
-            )
+            ) &&
+            !isTerminalSuccess(evidence.status)
         ) {
             return dependencyOrRun(stage, StageReasonCode.CONTEXT_CHECKPOINT_INVALID, prior)
         }
@@ -220,8 +235,10 @@ object PageWorkPlanner {
             !evidence.payloadValid ->
                 dependencyOrRun(stage, StageReasonCode.MISSING_PAYLOAD, prior)
 
-            evidence.expectedFingerprint != null && evidence.fingerprint == null ||
-                evidence.expectedSourceFingerprint != null && evidence.sourceFingerprint == null ->
+            evidence.expectedFingerprint != null &&
+                evidence.fingerprint == null ||
+                evidence.expectedSourceFingerprint != null &&
+                evidence.sourceFingerprint == null ->
                 dependencyOrRun(stage, StageReasonCode.UNKNOWN_PROVENANCE, prior)
 
             !fingerprintMatches(evidence) ->

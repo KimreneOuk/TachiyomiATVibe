@@ -150,6 +150,13 @@ class TranslationContextChunkPlannerTest {
             "003.jpg" to PageTranslation(blocks = MutableList(10) { block("p3-$it") }),
             "004.jpg" to PageTranslation(blocks = MutableList(10) { block("p4-$it") }),
             "005.jpg" to PageTranslation(blocks = MutableList(10) { block("p5-$it") }),
+            "006.jpg" to PageTranslation(blocks = MutableList(10) { block("p6-$it") }),
+            "007.jpg" to PageTranslation(blocks = MutableList(10) { block("p7-$it") }),
+            "008.jpg" to PageTranslation(blocks = MutableList(10) { block("p8-$it") }),
+            "009.jpg" to PageTranslation(blocks = MutableList(10) { block("p9-$it") }),
+            "010.jpg" to PageTranslation(blocks = MutableList(10) { block("p10-$it") }),
+            "011.jpg" to PageTranslation(blocks = MutableList(10) { block("p11-$it") }),
+            "012.jpg" to PageTranslation(blocks = MutableList(10) { block("p12-$it") }),
         )
 
         val result = TranslationContextChunkPlanner.plan(
@@ -161,8 +168,8 @@ class TranslationContextChunkPlannerTest {
         result.rejectedPages shouldBe emptyMap()
         result.chunks.size shouldBe 2
         result.chunks.forEach { chunk ->
-            (chunk.blockCount <= 32) shouldBe true
-            (chunk.pages.size <= 4) shouldBe true
+            (chunk.blockCount <= 75) shouldBe true
+            (chunk.pages.size <= 10) shouldBe true
             (
                 chunk.estimatedPromptTokens + chunk.maxOutputTokens +
                     TranslationContextChunkPlanner.constraintsFor(

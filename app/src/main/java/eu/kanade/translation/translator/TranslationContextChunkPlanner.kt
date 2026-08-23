@@ -308,12 +308,12 @@ object TranslationContextChunkPlanner {
             maxPagesPerChunk = Int.MAX_VALUE,
         )
         Profile.LM_STUDIO -> Constraints(
-            maxContextTokens = 10_000,
+            maxContextTokens = 16_000,
             safetyMargin = SAFETY_MARGIN,
             minOutputTokens = MIN_OUTPUT_TOKENS,
             promptOverheadTokens = PROMPT_OVERHEAD_TOKENS,
-            maxRollingContextTokens = 768,
-            maxBlocksPerChunk = 32,
+            maxRollingContextTokens = 1_024,
+            maxBlocksPerChunk = 28,
             maxPagesPerChunk = 4,
         )
     }

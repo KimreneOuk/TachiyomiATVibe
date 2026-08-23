@@ -13,6 +13,13 @@ import kotlin.math.max
 
 object TranslationMemoryBudget {
     private const val MIB = 1024L * 1024L
+    private const val GIB = 1024L * MIB
+
+    enum class DeviceMemoryTier {
+        BASELINE,
+        HIGH,
+        FLAGSHIP,
+    }
 
     // Keep one translation page well below the app heap cap. Android heap is much smaller than physical RAM.
     private const val MAX_SINGLE_PAGE_BUDGET_BYTES = 384L * MIB
@@ -25,6 +32,35 @@ object TranslationMemoryBudget {
     // AOT currently keeps the fixed and dynamic graphs alive independently.
     internal const val AOT_NATIVE_RESERVE_PER_SESSION_BYTES = 96L * MIB
     internal const val AOT_INFERENCE_SYSTEM_RESERVE_BYTES = 64L * MIB
+
+    fun deviceMemoryTier(): DeviceMemoryTier {
+        val app = try {
+            Injekt.get<Application>()
+        } catch (_: Throwable) {
+            return DeviceMemoryTier.BASELINE
+        }
+        val activityManager = app.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return DeviceMemoryTier.BASELINE
+        val memInfo = ActivityManager.MemoryInfo()
+        activityManager.getMemoryInfo(memInfo)
+        val totalMem = memInfo.totalMem
+        return when {
+            totalMem >= 14L * GIB -> DeviceMemoryTier.FLAGSHIP
+            totalMem >= 7L * GIB -> DeviceMemoryTier.HIGH
+            else -> DeviceMemoryTier.BASELINE
+        }
+    }
+
+    fun recommendedPrefetchCapacity(): Int = when (deviceMemoryTier()) {
+        DeviceMemoryTier.FLAGSHIP -> 6
+        DeviceMemoryTier.HIGH -> 4
+        DeviceMemoryTier.BASELINE -> 2
+    }
+
+    fun heldBitmapByteCeiling(): Long = when (deviceMemoryTier()) {
+        DeviceMemoryTier.FLAGSHIP -> 384L * MIB
+        DeviceMemoryTier.HIGH -> 192L * MIB
+        DeviceMemoryTier.BASELINE -> 48L * MIB
+    }
 
     sealed interface MemoryPreflightDecision {
         object Proceed : MemoryPreflightDecision
@@ -351,7 +387,13 @@ object TranslationMemoryBudget {
      */
     fun hasHeadroomForPrefetch(): Boolean {
         val snapshot = snapshot()
-        val minimum = max(64L * MIB, snapshot.maxHeapBytes / 6L)
+        val sysHeadroom = systemHeadroomBytes()
+        if (sysHeadroom != null && sysHeadroom < 100L * MIB) return false
+        val minimum = if (sysHeadroom != null && sysHeadroom > 400L * MIB) {
+            max(32L * MIB, snapshot.maxHeapBytes / 10L)
+        } else {
+            max(64L * MIB, snapshot.maxHeapBytes / 6L)
+        }
         return snapshot.availableHeapBytes >= minimum
     }
 

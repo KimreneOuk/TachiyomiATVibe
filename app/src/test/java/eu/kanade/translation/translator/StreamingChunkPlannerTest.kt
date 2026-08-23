@@ -81,20 +81,20 @@ class StreamingChunkPlannerTest {
     }
 
     @Test
-    fun `LM_STUDIO caps pages per chunk at 4`() {
-        val pages = linkedMapOf(*Array(6) { i -> "p$i" to page(block("x$i")) })
+    fun `LM_STUDIO caps pages per chunk at 10`() {
+        val pages = linkedMapOf(*Array(14) { i -> "p$i" to page(block("x$i")) })
         val r = streamRun(pages, 8192, Profile.LM_STUDIO)
 
-        r.chunks.map { it.pages.size } shouldContainExactly listOf(4, 2)
-        r.chunks.forEach { chunk -> (chunk.pages.size <= 4) shouldBe true }
+        r.chunks.map { it.pages.size } shouldContainExactly listOf(10, 4)
+        r.chunks.forEach { chunk -> (chunk.pages.size <= 10) shouldBe true }
     }
 
     @Test
-    fun `LM_STUDIO caps blocks per chunk at 32`() {
-        val pages = linkedMapOf("p" to PageTranslation(blocks = MutableList(40) { block("b$it") }))
+    fun `LM_STUDIO caps blocks per chunk at 75`() {
+        val pages = linkedMapOf("p" to PageTranslation(blocks = MutableList(90) { block("b$it") }))
         val r = streamRun(pages, 8192, Profile.LM_STUDIO)
 
-        r.chunks.map { it.blockCount } shouldContainExactly listOf(32, 8)
+        r.chunks.map { it.blockCount } shouldContainExactly listOf(75, 15)
     }
 
     @Test

@@ -202,7 +202,7 @@ class ContextualResponseParserTest {
     }
 
     @Test
-    fun `strict batch response rejects missing and normalized ids`() {
+    fun `strict batch response rejects missing and unknown ids`() {
         val page = PageTranslation(
             blocks = mutableListOf(block("first"), block("second", x = 20f)),
         )
@@ -220,22 +220,18 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
             p0_b0|Normalized id
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.RESPONSE_END}
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)
         assertFalse(batch.isStructurallyValid)
         assertTrue(batch.missingIds.contains("p0000_b0000"))
         assertTrue(batch.missingIds.contains("p0000_b0001"))
-        assertTrue(batch.validationErrors.any { it.contains("Normalized") })
+        assertTrue(batch.unknownIds.contains("p0_b0"))
     }
 
     @Test
-    fun `valid batch response applies every page block and keeps page scoped delta`() {
+    fun `valid batch response applies every page block`() {
         val page = PageTranslation(
             blocks = mutableListOf(block("first"), block("second", x = 20f)),
         )
@@ -253,20 +249,12 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
             p0000_b0000|First translation
             p0000_b0001|Second translation
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.CONTEXT_DELTA_START} p0000
-            future delta data
-            ${BatchTranslationProtocol.CONTEXT_DELTA_END} p0000
-            ${BatchTranslationProtocol.RESPONSE_END}
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)
         assertTrue(batch.isStructurallyValid)
-        batch.contextDeltas["p0000"] shouldBe "future delta data"
         applyBatchToChunk(chunk, batch)
         page.blocks[0].translation shouldBe "First translation"
         page.blocks[1].translation shouldBe "Second translation"
@@ -289,11 +277,7 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
             p0000_b0000|Translated target${"   \t"}
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.RESPONSE_END}
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)
@@ -304,54 +288,11 @@ class ContextualResponseParserTest {
     }
 
     @Test
-    fun `strict batch requires every requested page section`() {
+    fun `strict batch requires all requested ids across pages`() {
         val first = PageTranslation(blocks = mutableListOf(block("first")))
-        val empty = PageTranslation(blocks = mutableListOf())
+        val second = PageTranslation(blocks = mutableListOf(block("second")))
         val chunk = TranslationContextChunk(
-            pages = linkedMapOf("first.jpg" to first, "empty.jpg" to empty),
-            blockCount = 1,
-            rollingContext = "",
-            estimatedPromptTokens = 0,
-            maxOutputTokens = 256,
-            pageIndexes = mapOf("first.jpg" to 0, "empty.jpg" to 1),
-        )
-        val request = ContextualRequestBuilder.build(
-            chunk,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        val missingEmptyPage = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
-            p0000_b0000|First
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.RESPONSE_END}
-        """.trimIndent()
-        val validEmptyPage = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
-            p0000_b0000|First
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.PAGE_START} p0001
-            ${BatchTranslationProtocol.PAGE_END} p0001
-            ${BatchTranslationProtocol.RESPONSE_END}
-        """.trimIndent()
-
-        val missingBatch = ContextualResponseParser.parseBatch(missingEmptyPage, request)
-        val validBatch = ContextualResponseParser.parseBatch(validEmptyPage, request)
-
-        assertFalse(missingBatch.isStructurallyValid)
-        assertTrue(missingBatch.validationErrors.any { it.contains("Missing page section 'p0001'") })
-        assertTrue(validBatch.isStructurallyValid)
-    }
-
-    @Test
-    fun `strict batch rejects wrong page ids`() {
-        val chunk = TranslationContextChunk(
-            pages = linkedMapOf(
-                "first.jpg" to PageTranslation(blocks = mutableListOf(block("first"))),
-                "second.jpg" to PageTranslation(blocks = mutableListOf(block("second"))),
-            ),
+            pages = linkedMapOf("first.jpg" to first, "second.jpg" to second),
             blockCount = 2,
             rollingContext = "",
             estimatedPromptTokens = 0,
@@ -363,105 +304,20 @@ class ContextualResponseParserTest {
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
         )
-        val rawResponse = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
-            p0001_b0000|Wrong page
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.PAGE_START} p0001
+        val missingSecondPage = """
+            p0000_b0000|First
+        """.trimIndent()
+        val completeResponse = """
+            p0000_b0000|First
             p0001_b0000|Second
-            ${BatchTranslationProtocol.PAGE_END} p0001
-            ${BatchTranslationProtocol.RESPONSE_END}
         """.trimIndent()
 
-        val batch = ContextualResponseParser.parseBatch(rawResponse, request)
+        val missingBatch = ContextualResponseParser.parseBatch(missingSecondPage, request)
+        val validBatch = ContextualResponseParser.parseBatch(completeResponse, request)
 
-        assertFalse(batch.isStructurallyValid)
-        assertTrue(batch.validationErrors.any { it.contains("outside page section") })
-    }
-
-    @Test
-    fun `strict batch rejects footer trailing content and missing header`() {
-        val page = PageTranslation(blocks = mutableListOf(block("first")))
-        val chunk = TranslationContextChunk(
-            pages = linkedMapOf("page.jpg" to page),
-            blockCount = 1,
-            rollingContext = "",
-            estimatedPromptTokens = 0,
-            maxOutputTokens = 256,
-            pageIndexes = mapOf("page.jpg" to 0),
-        )
-        val request = ContextualRequestBuilder.build(
-            chunk,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        val afterFooter = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
-            p0000_b0000|First
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.RESPONSE_END}
-            extra content
-        """.trimIndent()
-        val wrongHeader = """
-            WRONG_HEADER
-            ${BatchTranslationProtocol.PAGE_START} p0000
-            p0000_b0000|First
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.RESPONSE_END}
-        """.trimIndent()
-
-        val footerBatch = ContextualResponseParser.parseBatch(afterFooter, request)
-        val headerBatch = ContextualResponseParser.parseBatch(wrongHeader, request)
-
-        assertFalse(footerBatch.isStructurallyValid)
-        assertTrue(footerBatch.validationErrors.any { it.contains("after response footer") })
-        assertFalse(headerBatch.isStructurallyValid)
-        assertTrue(headerBatch.validationErrors.any { it.contains("Missing batch response header") })
-    }
-
-    @Test
-    fun `strict batch rejects an unclosed page but recovers exact ids from an unclosed delta`() {
-        val page = PageTranslation(blocks = mutableListOf(block("first")))
-        val chunk = TranslationContextChunk(
-            pages = linkedMapOf("page.jpg" to page),
-            blockCount = 1,
-            rollingContext = "",
-            estimatedPromptTokens = 0,
-            maxOutputTokens = 256,
-            pageIndexes = mapOf("page.jpg" to 0),
-        )
-        val request = ContextualRequestBuilder.build(
-            chunk,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        val unclosedPage = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
-            p0000_b0000|First
-            ${BatchTranslationProtocol.RESPONSE_END}
-        """.trimIndent()
-        val unclosedDelta = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
-            p0000_b0000|First
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.CONTEXT_DELTA_START} p0000
-            delta
-            ${BatchTranslationProtocol.RESPONSE_END}
-        """.trimIndent()
-
-        val pageBatch = ContextualResponseParser.parseBatch(unclosedPage, request)
-        val deltaBatch = ContextualResponseParser.parseBatch(unclosedDelta, request)
-
-        assertFalse(pageBatch.isStructurallyValid)
-        assertTrue(pageBatch.validationErrors.any { it.contains("Unclosed page section") })
-        assertTrue(deltaBatch.isStructurallyValid)
-        assertTrue(deltaBatch.framingRecovered)
-        applyBatchToChunk(chunk, deltaBatch)
-        page.blocks.single().translation shouldBe "First"
+        assertFalse(missingBatch.isStructurallyValid)
+        assertTrue(missingBatch.missingIds.contains("p0001_b0000"))
+        assertTrue(validBatch.isStructurallyValid)
     }
 
     @Test

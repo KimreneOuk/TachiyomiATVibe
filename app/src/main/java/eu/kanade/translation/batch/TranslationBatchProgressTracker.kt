@@ -217,7 +217,7 @@ class TranslationBatchProgressTracker(
         ): TranslationProgressSnapshot {
             val committedPages = displayPageMap ?: pageMap
             val rows = pageMap.entries.mapIndexed { order, (key, page) ->
-                val stage = progressStage(page)
+                val stage = progressStage(page, committedPages[key])
                 val display = page.toPageDisplayProjection(committedPages[key])
                 TranslationProgressSnapshot.Page(
                     pageKey = key,
@@ -341,8 +341,8 @@ class TranslationBatchProgressTracker(
             if (page.translationStatus == StageStatus.RUNNING) add(TranslationProgressStage.TRANSLATE)
             if (page.renderStatus == StageStatus.RUNNING) add(TranslationProgressStage.RENDER)
         }
-        private fun progressStage(page: PageTranslation): TranslationProgressStage = when {
-            page.toPageDisplayProjection().displayReady || page.isTextlessTerminal -> TranslationProgressStage.DONE
+        private fun progressStage(page: PageTranslation, committed: PageTranslation? = null): TranslationProgressStage = when {
+            page.toPageDisplayProjection(committed).displayReady || page.isTextlessTerminal -> TranslationProgressStage.DONE
             page.isStageFailed -> TranslationProgressStage.FAILED
             page.renderStatus == StageStatus.RUNNING -> TranslationProgressStage.RENDER
             page.translationStatus == StageStatus.RUNNING -> TranslationProgressStage.TRANSLATE

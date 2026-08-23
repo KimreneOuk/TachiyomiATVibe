@@ -91,6 +91,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
@@ -1049,41 +1051,25 @@ class TranslationPipeline(
             // currentChapterTranslation pointer was removed entirely (R3 cleanup).
 
             val pageTranslation = pageState.detachedCopy()
-            pageTranslation.cleanedBitmap = loadPersistedCleanedBitmap(manga, chapter, source, cleanedImageName)
-            if (pageTranslation.cleanedBitmap == null) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT translatePreparedPage: cleaned image unreadable pageKey=${prepared.pageKey} " +
-                        "cleaned=$cleanedImageName"
-                }
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.renderStatus = StageStatus.FAILED
-                pageTranslation.cleanedImageName = null
-                pageTranslation.recordAttemptFailure()
-                pageTranslation.errorMessage = "Cleaned image is missing or unreadable; retry inpainting"
-                persistPageWithOomRecovery(
-                    store,
-                    prepared.pageKey,
-                    pageTranslation,
-                    expectedPrecondition = snapshot.toPrecondition(),
-                )
-                throw java.io.IOException(pageTranslation.errorMessage)
-            }
+            pageTranslation.cleanedBitmap = null
 
             // The prepared-page boundary does not re-decode the source on the
             // translation side: the cleaned image is the durable artifact. An empty
             // streams list steers the render-retry path away from source re-decode.
             val streams = emptyList<Pair<String, () -> InputStream>>()
-            val loadedBitmap = pageTranslation.cleanedBitmap!!
+            val origW = if (pageTranslation.originalImgWidth > 0f) pageTranslation.originalImgWidth.toInt() else (pageTranslation.imgWidth.toInt().coerceAtLeast(1))
+            val origH = if (pageTranslation.originalImgHeight > 0f) pageTranslation.originalImgHeight.toInt() else (pageTranslation.imgHeight.toInt().coerceAtLeast(1))
+            val dummyBitmap = Bitmap.createBitmap(1, 1, Bitmap.Config.ALPHA_8)
             val decoded = DecodedPage(
-                bitmap = loadedBitmap,
+                bitmap = dummyBitmap,
                 sampleSize = pageTranslation.decodeSampleSize.coerceAtLeast(1),
-                originalWidth = (if (pageTranslation.originalImgWidth > 0f) pageTranslation.originalImgWidth.toInt() else loadedBitmap.width),
-                originalHeight = (if (pageTranslation.originalImgHeight > 0f) pageTranslation.originalImgHeight.toInt() else loadedBitmap.height),
+                originalWidth = origW,
+                originalHeight = origH,
                 decodeDecision = DecodeDecision(
                     kind = DecodeDecisionKind.FULL,
                     sampleSize = pageTranslation.decodeSampleSize.coerceAtLeast(1),
-                    rawBitmapBytes = loadedBitmap.byteCount.toLong(),
-                    sampledBitmapBytes = loadedBitmap.byteCount.toLong(),
+                    rawBitmapBytes = 0L,
+                    sampledBitmapBytes = 0L,
                     sourcePixels = 0L,
                     sampledPixels = 0L,
                     snapshot = eu.kanade.translation.util.TranslationMemoryBudget.snapshot(),
@@ -1266,10 +1252,12 @@ class TranslationPipeline(
                 // page under the same natural key cannot reuse old artifacts.
                 // This is an I/O-only preflight; no detector/OCR/inpaint or
                 // translator work is invoked for a matching completed page.
-                val sourceFingerprints = buildMap {
-                    orderedStreams.forEach { (pageKey, streamFn) ->
-                        put(pageKey, computeSourceFingerprint(streamFn) ?: UNKNOWN_SOURCE_FINGERPRINT)
-                    }
+                val sourceFingerprints = coroutineScope {
+                    orderedStreams.map { (pageKey, streamFn) ->
+                        async(Dispatchers.IO) {
+                            pageKey to (computeSourceFingerprint(streamFn) ?: UNKNOWN_SOURCE_FINGERPRINT)
+                        }
+                    }.awaitAll().toMap()
                 }
 
                 fun stampBatchProvenance(page: PageTranslation, description: String): PageTranslation = page.apply {
@@ -1644,7 +1632,7 @@ class TranslationPipeline(
                                 expectedLeaseToken = renderInput.leaseToken,
                                 expectedCleanedImageName = renderInput.page?.cleanedImageName ?: "",
                                 expectedInpaintRevision = renderInput.page?.inpaintRevision ?: 0,
-                                expectedOcrBlockFingerprints = renderInput.blockFingerprints,
+                                expectedOcrBlockFingerprints = renderInput.page?.ocrBlockFingerprints().orEmpty(),
                                 expectedCandidateGenerationId = renderInput.candidateGenerationId,
                                 expectedDependencyFingerprint = renderInput.dependencyFingerprint,
                                 expectedArtifactPageVersion = renderInput.artifactPageVersion,
@@ -2595,6 +2583,13 @@ class TranslationPipeline(
                                     val ref = nativeWorker.runOcrStage(pageKey, pageIndex)
                                     if (ref != null) {
                                         pendingRefs.addLast(ref)
+                                        val p = translationRegistry[pageKey] ?: store.state.value[pageKey]
+                                        if (p?.isTextlessTerminal != true &&
+                                            p?.inpaintStatus != StageStatus.READY &&
+                                            p?.inpaintStatus != StageStatus.SKIPPED
+                                        ) {
+                                            nativeWorker.runInpaintStage(pageKey)
+                                        }
                                     } else {
                                         tryRender(pageKey)
                                     }
@@ -2648,21 +2643,22 @@ class TranslationPipeline(
                                 selectedRefs.forEach { translatorWorker.translate(it) }
                                 flushAiPlanner()
 
-                                // Barrier 2: translation is terminal before any selected page
-                                // starts inpaint. Each rendered page is published immediately,
-                                // then and only then may the next logical chunk begin.
+                                // Barrier 2: translation is terminal before rendering. If inpaint
+                                // was not already completed during lookahead, run it now.
                                 selectedRefs.forEach { ref ->
                                     val latest = store.state.value[ref.pageKey]
                                     val translationReady = latest?.translationStatus == StageStatus.READY ||
                                         latest?.translationStatus == StageStatus.PARTIAL
                                     if (latest?.isTextlessTerminal != true &&
                                         translationReady &&
-                                        translationRegistry.containsKey(ref.pageKey)
+                                        translationRegistry.containsKey(ref.pageKey) &&
+                                        latest?.inpaintStatus != StageStatus.READY &&
+                                        latest?.inpaintStatus != StageStatus.SKIPPED
                                     ) {
                                         nativeWorker.runInpaintStage(ref.pageKey)
                                     }
                                     tryRender(ref.pageKey)
-                                    pendingRefs.removeFirst()
+                                    pendingRefs.remove(ref)
                                 }
                                 logcat(LogPriority.INFO) {
                                     "TachiyomiAT sequential chunk complete: chapter=${chapter.name} " +
@@ -3349,13 +3345,16 @@ class TranslationPipeline(
                         pageTranslation.translationStatus == StageStatus.PARTIAL
                     )
             ) {
-                val hasCleaned = pageTranslation.cleanedBitmap != null
-                if (hasCleaned) {
-                    val cleanedBitmap = pageTranslation.cleanedBitmap!!
+                val hasCleanedBitmap = pageTranslation.cleanedBitmap != null
+                val hasCleanedOnDisk = pageTranslation.cleanedImageName != null && pageTranslation.inpaintStatus == StageStatus.READY
+                if (hasCleanedBitmap || hasCleanedOnDisk) {
+                    val cleanedBitmap = pageTranslation.cleanedBitmap
                     try {
                         pageTranslation.renderStatus = StageStatus.RUNNING
                         stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
-                        RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
+                        if (cleanedBitmap != null) {
+                            RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
+                        }
                         pageTranslation.renderStatus = StageStatus.READY
                         pageTranslation.updatedAt = System.currentTimeMillis()
                     } catch (e: Exception) {
@@ -3365,9 +3364,11 @@ class TranslationPipeline(
                         pageTranslation.errorMessage = e.message
                         logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
                     } finally {
-                        try {
-                            cleanedBitmap.recycle()
-                        } catch (_: Exception) {}
+                        if (cleanedBitmap != null) {
+                            try {
+                                cleanedBitmap.recycle()
+                            } catch (_: Exception) {}
+                        }
                     }
                 } else {
                     logcat(LogPriority.WARN) {
@@ -4266,6 +4267,11 @@ class TranslationPipeline(
             try {
                 preflightInpaintGate(bitmap, fileName)
                 pageTranslation.cleanedBitmap = recognitionEngine.inpaint(bitmap, pageTranslation)
+                pageTranslation.cleanedBitmap?.let { cleaned ->
+                    try {
+                        RenderColorEstimator.recomputeFor(cleaned, pageTranslation.blocks)
+                    } catch (_: Exception) {}
+                }
             } catch (deferred: LowMemoryRecognitionDeferredException) {
                 logcat(LogPriority.WARN) {
                     "Low memory deferred inpainting $fileName: ${deferred.message}"

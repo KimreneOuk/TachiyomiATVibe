@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
@@ -874,10 +875,36 @@ class TranslationManager(
                     if (terminal != null) {
                         flowOf(terminal)
                     } else {
-                        val state = getQueuedTranslationOrNull(chapterId)?.status
-                            ?: Translation.State.NOT_TRANSLATED
+                        val queued = getQueuedTranslationOrNull(chapterId)
+                        val state = queued?.status ?: Translation.State.NOT_TRANSLATED
                         val store = activeStores.get(chapterId)
-                        if (store == null) {
+                        if (store == null && queued != null) {
+                            flow {
+                                val s = openOrCreateActiveChapterTranslationStoreSuspend(
+                                    chapterId = chapterId,
+                                    chapterName = queued.chapter.name,
+                                    scanlator = queued.chapter.scanlator,
+                                    mangaTitle = queued.manga.title,
+                                    source = queued.source,
+                                    mangaId = queued.manga.id,
+                                )
+                                if (s == null) {
+                                    emit(TranslationProgressSnapshot.empty(chapterId, state))
+                                } else {
+                                    emitAll(
+                                        combine(s.state, s.display) { pages, display ->
+                                            TranslationProgressSnapshot.compute(
+                                                chapterId = chapterId,
+                                                state = state,
+                                                pageMap = pages,
+                                                displayPageMap = display,
+                                                permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
+                                            )
+                                        },
+                                    )
+                                }
+                            }
+                        } else if (store == null) {
                             flowOf(TranslationProgressSnapshot.empty(chapterId, state))
                         } else {
                             combine(store.state, store.display) { pages, display ->

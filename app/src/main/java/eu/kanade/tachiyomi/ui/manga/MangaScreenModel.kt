@@ -53,13 +53,11 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -543,16 +541,21 @@ class MangaScreenModel(
     private fun observeTranslationProgress(chapterId: Long) {
         if (translationProgressJobs[chapterId]?.isActive == true) return
         translationProgressJobs[chapterId] = screenModelScope.launchIO {
+            val chapterItem = successState?.chapters?.firstOrNull { it.id == chapterId }
+            val manga = successState?.manga
+            val currentSource = successState?.source
+            if (chapterItem != null && manga != null && currentSource != null) {
+                translationManager.openOrCreateActiveChapterTranslationStoreSuspend(
+                    chapterId = chapterId,
+                    chapterName = chapterItem.chapter.name,
+                    scanlator = chapterItem.chapter.scanlator,
+                    mangaTitle = manga.title,
+                    source = currentSource,
+                    mangaId = manga.id,
+                )
+            }
             translationManager.observeBatchProgress(chapterId)
-                // Sample nonterminal updates, but deliver terminal snapshots immediately.
-                .transformLatest { progress ->
-                    if (progress.batchPhase == eu.kanade.translation.model.TranslationBatchPhase.FINISHED) {
-                        emit(progress)
-                    } else {
-                        delay(200)
-                        emit(progress)
-                    }
-                }
+                .distinctUntilChanged()
                 .catch { error -> logcat(LogPriority.ERROR, error) }
                 .flowWithLifecycle(lifecycle)
                 .collect { progress ->

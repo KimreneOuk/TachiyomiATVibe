@@ -259,7 +259,7 @@ class RollingAutoCoordinator(
         }
 
         val predecessors = ownedCoordinationJobs
-            .filter { it !== existing && !it.isCompleted }
+            .filter { !it.isCompleted }
         val job = coordinationScope.launch(start = CoroutineStart.LAZY) {
             predecessors.joinAll()
             predecessorCoordinators.forEach { it.awaitTermination() }
@@ -295,7 +295,8 @@ class RollingAutoCoordinator(
             currentSpec?.takeIf { it.generation == activeGeneration }?.generation
         } ?: return@coroutineScope
         val computeGate = if (computeClass.mayOverlapNative) null else Semaphore(1)
-        val preparedChannel = Channel<PreparedWork>(capacity = 1)
+        val channelCapacity = eu.kanade.translation.util.TranslationMemoryBudget.recommendedPrefetchCapacity()
+        val preparedChannel = Channel<PreparedWork>(capacity = channelCapacity)
 
         // Translate/render consumer. Launched as a child of this coroutine so
         // cancel() propagates to it and coroutineScope joins it before return.

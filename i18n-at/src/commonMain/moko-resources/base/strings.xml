@@ -194,4 +194,18 @@
     <string name="auto_translation_disabled_toast">Auto translation disabled</string>
     <string name="batch_cancelled_toast">Batch translation cancelled</string>
     <string name="translation_cancelled_undo">Undo</string>
+    <string name="pref_enable_reasoning">AI Model Reasoning Mode</string>
+    <string name="pref_enable_reasoning_summary">Enables deep contextual reasoning and sanitizes thought blocks for thinking-enabled AI models.</string>
+    <string name="pref_rate_limit_safe">15 RPM Safe Pacing</string>
+    <string name="pref_rate_limit_safe_summary">Paces AI translation requests to avoid HTTP 429 rate limit errors on free-tier API keys.</string>
+    <string name="manga_batch_stage_ocr_name">Detection &amp; OCR</string>
+    <string name="manga_batch_stage_ai_name">AI Translation</string>
+    <string name="manga_batch_stage_inpaint_name">Bubble Cleaning</string>
+    <string name="manga_batch_stage_render_name">Text Overlay</string>
+    <string name="manga_batch_read_now_count">Read now (%1$d ready)</string>
+    <string name="manga_batch_pages_ready_hint">%1$d of %2$d pages ready to read</string>
+    <string name="manga_batch_resume">Resume Translation</string>
+    <string name="manga_batch_cancel_safe_hint">Cancelling only stops background processing. Saved pages and translations are kept intact.</string>
+    <string name="manga_batch_status_queued">Queued / Ready to resume</string>
+    <string name="manga_batch_status_paused">Paused</string>
 </resources>
