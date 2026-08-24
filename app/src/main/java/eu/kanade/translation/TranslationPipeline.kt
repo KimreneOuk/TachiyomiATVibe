@@ -10,30 +10,26 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.batch.BatchContextFrontier
 import eu.kanade.translation.batch.BatchDiagnosticDecision
 import eu.kanade.translation.batch.BatchDiagnosticReason
 import eu.kanade.translation.batch.BatchDiagnosticStage
+import eu.kanade.translation.batch.BatchEnvelopeLifecycle
 import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.BatchResumeGateDecider
 import eu.kanade.translation.batch.BatchTranslationDiagnostics
-import eu.kanade.translation.batch.DynamicPageChunker
+import eu.kanade.translation.batch.ChunkAdmission
 import eu.kanade.translation.batch.NativeLaneWorker
 import eu.kanade.translation.batch.OcrReadyPageRef
-import eu.kanade.translation.batch.PageAtomicChunkPlanner
 import eu.kanade.translation.batch.RenderJoinWorker
-import eu.kanade.translation.batch.SceneCardState
-import eu.kanade.translation.batch.SceneContextEngine
-import eu.kanade.translation.batch.ScenePrefixPlanner
 import eu.kanade.translation.batch.SequentialBatchCoordinator
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslatorLaneWorker
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
-import eu.kanade.translation.model.BatchContextCheckpoint
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchPlannerInput
 import eu.kanade.translation.model.BatchStage
-import eu.kanade.translation.model.ContextCheckpointState
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageWorkPlanner
@@ -63,9 +59,7 @@ import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
 import eu.kanade.translation.translator.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.AiTranslatorKind
-import eu.kanade.translation.translator.BatchTranslationProtocol
 import eu.kanade.translation.translator.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.ContextualStructuralFailureException
 import eu.kanade.translation.translator.ContextualTextTranslator
 import eu.kanade.translation.translator.DeepSeekTranslator
 import eu.kanade.translation.translator.GeminiTranslator
@@ -295,10 +289,10 @@ class TranslationPipeline(
 
     // Snapshot of EVERY config dimension used to build textTranslator. The rebuild gate
     // compares a fresh signature so changing engine category, provider, key, model, temp,
-    // max-tokens, analytical-mode, reading-order, or languages forces a rebuild — not just
+    // max-tokens, reading-order, or languages forces a rebuild — not just
     // language changes. Without this the cached AI translator (which captures key/model/temp
-    // at construction and never re-reads prefs) survives a stop+reconfigure+restart. analyticalMode
-    // and readingOrder MUST be included because they're cached at construction too. apiKeyHash is a
+    // at construction and never re-reads prefs) survives a stop+reconfigure+restart. readingOrder
+    // MUST be included because it's cached at construction too. apiKeyHash is a
     // short non-reversible digest so secrets are never stored/logged.
     @Volatile
     private var currentTranslatorSignature: EngineSignature
@@ -317,7 +311,6 @@ class TranslationPipeline(
         val modelName: String,
         val temperature: String,
         val maxTokens: String,
-        val analyticalMode: Boolean,
         val readingOrder: tachiyomi.domain.translation.TranslationReadingOrder,
         val fromLang: TextRecognizerLanguage,
         val toLang: TextTranslatorLanguage,
@@ -343,7 +336,6 @@ class TranslationPipeline(
             modelName = translationPreferences.translationAiModel(aiEngine).get(),
             temperature = translationPreferences.translationAiTemperature().get(),
             maxTokens = translationPreferences.translationAiOutputTokens().get(),
-            analyticalMode = translationPreferences.translationAnalyticalMode().get(),
             readingOrder = translationPreferences.translationReadingOrder().get(),
             fromLang = fromLang,
             toLang = toLang,
@@ -1203,10 +1195,10 @@ class TranslationPipeline(
                         "engine=${recognitionEngine::class.simpleName} translator=${textTranslator::class.simpleName}"
                 }
 
-                // Lane A (OCR+inpaint, permit-bound) feeds Lane B (translate, HTTP-bound)
-                // through a channel bounded to the native lookahead window; render is a
-                // join (tryRender) that reuses the in-memory cleaned bitmap when it fits
-                // the byte budget.
+                // SequentialBatchCoordinator owns the phase barriers. AI admission feeds
+                // the token planner without provider calls; one overflow page may be kept
+                // as an OCR-only probe. Each actual chunk OCRs completely before its AI
+                // request and native inpaint branches overlap, and render joins both.
                 val isAi = translationPreferences.translationEngineCategory().get() == TranslationEngineCategory.AI_MODEL &&
                     textTranslator is ContextualTextTranslator
                 val contextualTranslator = textTranslator as? ContextualTextTranslator
@@ -1236,16 +1228,23 @@ class TranslationPipeline(
                 val translationRegistry = ConcurrentHashMap<String, PageTranslation>()
                 val renderMutexes = ConcurrentHashMap<String, Mutex>()
                 val aborted = AtomicBoolean(false)
-                // Batch-only relationship ambiguity prior (Phase 6): part of the
-                // translation provenance fingerprint so switching it invalidates
-                // translation/layout only. Reader single-page paths never read it.
-                val ambiguityPrior = when (translationPreferences.batchRelationshipAmbiguityPrior().get()) {
-                    tachiyomi.domain.translation.BatchRelationshipAmbiguityPrior.NEUTRAL ->
-                        SceneContextEngine.PriorSetting.NEUTRAL
-                    tachiyomi.domain.translation.BatchRelationshipAmbiguityPrior.MALE_FEMALE ->
-                        SceneContextEngine.PriorSetting.MALE_FEMALE
+                val expectedBatchFingerprints = batchExpectedFingerprints(fromLang, toLang)
+
+                // Resume context is a natural-order frontier, never a chapter-wide
+                // unordered snapshot. Pages after the first missing/failed predecessor
+                // remain durable and reusable, but cannot become context until traversal
+                // reaches them; a non-textless terminal gap blocks later AI admission.
+                val contextFrontier = BatchContextFrontier(resolvedNaturalPageIndexes)
+                var rollingContext = contextFrontier.rollingContext
+
+                fun recordContextPage(
+                    pageKey: String,
+                    page: PageTranslation,
+                    terminalFailure: Boolean = false,
+                ) {
+                    contextFrontier.record(pageKey, page, terminalFailure)
+                    rollingContext = contextFrontier.rollingContext
                 }
-                val expectedBatchFingerprints = batchExpectedFingerprints(fromLang, toLang, ambiguityPrior)
 
                 // Source identity is a direct input to detection and inpaint.
                 // Hash the downloaded bytes before planning so replacing a
@@ -1260,44 +1259,21 @@ class TranslationPipeline(
                     }.awaitAll().toMap()
                 }
 
-                fun stampBatchProvenance(page: PageTranslation, description: String): PageTranslation = page.apply {
-                    when {
-                        description.contains("ocr", ignoreCase = true) ||
-                            description.contains("decode", ignoreCase = true) -> {
+                fun stampBatchProvenance(page: PageTranslation, stage: BatchStage?): PageTranslation = page.apply {
+                    when (stage) {
+                        BatchStage.OCR -> {
                             detectionFingerprint = expectedBatchFingerprints.detection
                             ocrFingerprint = expectedBatchFingerprints.ocr
                         }
-                        description.contains("inpaint", ignoreCase = true) -> {
-                            inpaintFingerprint = expectedBatchFingerprints.inpaint
-                        }
-                        description.contains("translation", ignoreCase = true) -> {
+                        BatchStage.INPAINT -> inpaintFingerprint = expectedBatchFingerprints.inpaint
+                        BatchStage.TRANSLATION -> {
                             translationFingerprint = expectedBatchFingerprints.translation
                             translationOrigin = PageWriteOrigin.BATCH.name
-                            if (translationStatus == StageStatus.READY ||
-                                translationStatus == StageStatus.PARTIAL ||
-                                translationStatus == StageStatus.SKIPPED
-                            ) {
-                                batchContextComplete = true
-                                batchContextCheckpointHash = StageFingerprints.pageSnapshot(this)
-                            }
                         }
-                        description.contains("render", ignoreCase = true) -> {
-                            layoutFingerprint = expectedBatchFingerprints.layout
-                        }
+                        BatchStage.LAYOUT -> layoutFingerprint = expectedBatchFingerprints.layout
+                        else -> {}
                     }
                 }
-
-                // Scene context chain (Phase 6): replay the persisted page-scoped
-                // trusted checkpoints from page 1 and stop at the first break.
-                // A batch-context-complete page whose serialized scene checkpoint
-                // is missing or unparseable marks the chain corrupt from that
-                // page; the planner then schedules a translation-only suffix
-                // rebuild while committed displays stay visible. Legacy pages
-                // completed before scene checkpoints existed keep their reuse
-                // decision (no mass retranslation) and rebuild context from the
-                // last trusted scene checkpoint for prompting only.
-                val sceneChainReplay = replaySceneCheckpoints(orderedStreams.map { it.first }, store)
-                var sceneState = sceneChainReplay.state
 
                 // Plan the complete chapter once, in the same natural order
                 // passed to the coordinator.  Native resume gates consume this
@@ -1305,28 +1281,68 @@ class TranslationPipeline(
                 // reader viewport.
                 fun buildBatchPagePlans() = PageWorkPlanner.planChapter(
                     orderedStreams.map { (pageKey, _) ->
-                        val persisted = store.state.value[pageKey]
                         BatchPlannerInput(
                             pageKey = pageKey,
-                            page = persisted,
+                            page = store.state.value[pageKey],
                             expectedFingerprints = expectedBatchFingerprints,
                             sourceFingerprint = sourceFingerprints[pageKey],
-                            contextCheckpoint = when {
-                                persisted?.batchContextComplete == true && sceneChainReplay.corruptFrom == pageKey ->
-                                    BatchContextCheckpoint(ContextCheckpointState.CORRUPT, null)
-                                persisted?.batchContextComplete == true ->
-                                    BatchContextCheckpoint(ContextCheckpointState.TRUSTED, persisted.batchContextCheckpointHash)
-                                else -> BatchContextCheckpoint(ContextCheckpointState.NOT_REQUIRED)
-                            },
                         )
                     },
                 ).pages.associateBy { it.pageKey }
 
-                var batchPagePlans = buildBatchPagePlans()
-                val targetChunkPages = DynamicPageChunker.targetPageCount(orderedStreams.size)
+                val batchPagePlans = buildBatchPagePlans()
+
+                // Only seed from pages whose current translation plan still proves that
+                // their persisted result is reusable/terminal. A stale page snapshot must
+                // not become a context predecessor merely because its old status is READY.
+                contextFrontier.seed(
+                    pages = store.state.value,
+                    eligible = { pageKey, _ ->
+                        batchPagePlans[pageKey]
+                            ?.stages
+                            ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
+                            ?.decision in setOf(
+                            eu.kanade.translation.model.StageDecision.REUSE,
+                            eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE,
+                            eu.kanade.translation.model.StageDecision.FAILED,
+                        )
+                    },
+                    terminalFailure = { pageKey, page ->
+                        page.translationStatus == StageStatus.FAILED ||
+                            batchPagePlans[pageKey]
+                                ?.stages
+                                ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
+                                ?.decision == eu.kanade.translation.model.StageDecision.FAILED &&
+                            !page.isTextlessTerminal
+                    },
+                )
+                rollingContext = contextFrontier.rollingContext
 
                 fun plannedTranslationDecision(pageKey: String) =
                     batchPagePlans[pageKey]?.stages?.firstOrNull { it.stage == BatchStage.TRANSLATION }?.decision
+
+                fun recordReusableContextPage(pageKey: String, page: PageTranslation) {
+                    if (!isAi ||
+                        plannedTranslationDecision(pageKey) !in setOf(
+                            eu.kanade.translation.model.StageDecision.REUSE,
+                            eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE,
+                        )
+                    ) {
+                        return
+                    }
+                    if (page.ocrStatus in setOf(StageStatus.READY, StageStatus.TEXTLESS) &&
+                        page.translationStatus in setOf(
+                            StageStatus.READY,
+                            StageStatus.PARTIAL,
+                            StageStatus.SKIPPED,
+                        )
+                    ) {
+                        // A reused page becomes context only when natural traversal reaches it.
+                        // Pages after a missing predecessor remain retained by the frontier until
+                        // that predecessor resolves, so they cannot leak into an earlier request.
+                        recordContextPage(pageKey, page)
+                    }
+                }
 
                 fun plannedTranslationNeedsWork(pageKey: String): Boolean =
                     plannedTranslationDecision(pageKey) == eu.kanade.translation.model.StageDecision.RUN
@@ -1356,6 +1372,7 @@ class TranslationPipeline(
                 suspend fun guardedBatchUpdate(
                     pageKey: String,
                     description: String,
+                    stage: BatchStage?,
                     update: (PageTranslation?) -> PageTranslation,
                 ): ChapterTranslationStore.PatchResult {
                     val identity = batchWriteIdentities[pageKey]
@@ -1371,7 +1388,7 @@ class TranslationPipeline(
                             artifactPageVersion = identity.artifactPageVersion,
                         ),
                         description = description,
-                        update = { current -> stampBatchProvenance(update(current), description) },
+                        update = { current -> stampBatchProvenance(update(current), stage) },
                     )
                     if (result is ChapterTranslationStore.PatchResult.Accepted) {
                         identity.pageVersion = result.snapshot.pageVersion
@@ -1607,7 +1624,7 @@ class TranslationPipeline(
                         var renderPersisted = false
                         try {
                             tracker?.markRenderRunning(pageKey)
-                            val running = guardedBatchUpdate(pageKey, "batch render running") {
+                            val running = guardedBatchUpdate(pageKey, "batch render running", BatchStage.LAYOUT) {
                                 (it ?: page).apply {
                                     renderStatus = StageStatus.RUNNING
                                     updatedAt = System.currentTimeMillis()
@@ -1691,59 +1708,61 @@ class TranslationPipeline(
                 }
 
                 val chunkCounter = AtomicLong(0L)
-                var dynamicGlossary = ""
-                var dynamicGlossaryExtracted = false
 
+                /**
+                 * Translates one AI envelope and commits its completed pages in
+                 * natural order. The rolling context is the bounded window of
+                 * recent source=>target pairs (voice/terminology continuity);
+                 * a page whose output is a structural refusal fails alone — it
+                 * never cascades to later pages of the envelope.
+                 */
                 suspend fun translateChunkAi(
                     chunk: TranslationContextChunk,
                     completedPages: Set<String>,
                     rolling: String,
-                    pastTranslations: String = "",
-                    analyticalMode: Boolean = false,
-                ): Pair<String, String> {
+                ): String {
                     coroutineContext.ensureActive()
-                    val ct = contextualTranslator ?: return rolling to pastTranslations
+                    val ct = contextualTranslator ?: return rolling
 
-                    if (!dynamicGlossaryExtracted) {
-                        dynamicGlossaryExtracted = true
-                        dynamicGlossary = eu.kanade.translation.translator.GlossaryExtractor.extractGlossary(ct, chunk.pages.values.toList())
-                    }
-
-                    val glossaryText = dynamicGlossary + "\n" + ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
-                    // Build future OCR context from pages already OCR'd but not yet
-                    // translated (in the registry, no translation yet). Empty when
-                    // Analytical Mode is off or no upcoming pages exist.
-                    val futureContext = if (analyticalMode) {
-                        val upcoming = translationRegistry.values
-                            .filter { pg ->
-                                pg.blocks.any { it.translation.isBlank() && it.text.isNotBlank() }
+                    contextFrontier.gapIndex?.let { gapIndex ->
+                        val blocked = chunk.pages.keys.filter { pageKey ->
+                            contextFrontier.blocksLaterAi(pageKey)
+                        }
+                        if (blocked.isNotEmpty()) {
+                            val reason = "blocked by non-textless terminal context gap at index $gapIndex"
+                            blocked.forEach { pageKey ->
+                                val page = translationRegistry[pageKey] ?: return@forEach
+                                val failed = markBatchTranslationFailed(
+                                    store,
+                                    pageKey,
+                                    page,
+                                    reason,
+                                    expectedPrecondition = batchWritePrecondition(pageKey) ?: return@forEach,
+                                )
+                                if (failed is ChapterTranslationStore.PatchResult.Accepted) {
+                                    refreshBatchIdentity(pageKey, failed.snapshot)
+                                }
+                                tracker?.markTranslateFailed(pageKey, reason)
+                                tracker?.markAiFailed(pageKey, reason)
+                                abortBatchCandidate(pageKey, reason)
+                                recordContextPage(pageKey, page, terminalFailure = true)
                             }
-                        TranslationContextChunkPlanner.buildFutureContext(upcoming)
-                    } else {
-                        ""
+                            return rolling
+                        }
                     }
-                    val withRolling = TranslationContextChunkPlanner.withRollingContext(
+
+                    val glossaryText = ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
+                    val contextualChunk = TranslationContextChunkPlanner.withRollingContext(
                         chunk = chunk,
                         rollingContext = rolling,
                         requestedOutputTokens = requestedOutputTokens,
                         profile = chunkProfile,
                         glossary = glossaryText,
                     )
-                    val contextualChunk = if (analyticalMode) {
-                        TranslationContextChunkPlanner.withSlidingContext(
-                            chunk = withRolling,
-                            pastTranslations = pastTranslations,
-                            futureContext = futureContext,
-                            requestedOutputTokens = requestedOutputTokens,
-                            profile = chunkProfile,
-                        )
-                    } else {
-                        withRolling
-                    }
                     var admissionFailure: String? = null
                     chunk.pages.keys.forEach { pk ->
                         val p = translationRegistry[pk] ?: return@forEach
-                        val running = guardedBatchUpdate(pk, "batch translation running") {
+                        val running = guardedBatchUpdate(pk, "batch translation running", BatchStage.TRANSLATION) {
                             (it ?: p).apply {
                                 translationStatus = StageStatus.RUNNING
                                 errorMessage = null
@@ -1754,107 +1773,80 @@ class TranslationPipeline(
                             admissionFailure = "translation admission rejected for $pk: ${running.reason}"
                         }
                         tracker?.markTranslateRunning(pk)
+                        tracker?.markAiRunning(pk)
                     }
                     admissionFailure?.let { reason ->
-                        chunk.pages.keys.forEach { abortBatchCandidate(it, reason) }
+                        BatchTranslationDiagnostics.envelopeLifecycle(
+                            phase = BatchEnvelopeLifecycle.FAILED,
+                            pageKeys = chunk.pages.keys,
+                            expectedItemCount = chunk.blockCount,
+                            reason = BatchDiagnosticReason.TERMINAL_FAILURE,
+                        )
+                        chunk.pages.keys.forEach {
+                            tracker?.markTranslateFailed(it, reason)
+                            tracker?.markAiFailed(it, reason)
+                            abortBatchCandidate(it, reason)
+                        }
                         throw BatchPersistenceRejectedException(reason)
                     }
+                    BatchTranslationDiagnostics.envelopeLifecycle(
+                        phase = BatchEnvelopeLifecycle.ADMITTED,
+                        pageKeys = chunk.pages.keys,
+                        expectedItemCount = chunk.blockCount,
+                    )
+                    var envelopeFailed = false
                     try {
-                        val contextDeltas = translateAiChunkWithAdaptiveRetry(
+                        translateAiChunkWithAdaptiveRetry(
                             translator = ct,
                             chunk = contextualChunk,
                             requestedOutputTokens = requestedOutputTokens,
                             profile = chunkProfile,
-                            allowFailureSplit = ct is LmStudioTranslator,
                             label = "stream-${chunkCounter.incrementAndGet()}",
                             retryDepth = 0,
                         )
-                        // Accumulate target-side past translations for the Analytical-Mode sliding
-                        // window. Voice examples only — never scene evidence.
-                        val newPast = if (analyticalMode) {
-                            val combined = if (pastTranslations.isBlank()) {
-                                TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
-                            } else {
-                                pastTranslations + "\n" +
-                                    TranslationContextChunkPlanner.buildPastTranslations(contextualChunk.pages)
-                            }
-                            val lines = combined.lineSequence().filter { it.isNotBlank() }.toList()
-                            lines.takeLast(TranslationContextChunkPlanner.MAX_PAST_TRANSLATION_PAIRS)
-                                .joinToString("\n")
-                        } else {
-                            pastTranslations
-                        }
-                        // Page-prefix commit (Phase 6 §9): validate committed pages in
-                        // natural order and stop at the first page that refuses, fails
-                        // validation, or carries an invalid context delta. No later page
-                        // or checkpoint from this envelope may promote.
-                        val knownCitationIds = buildSet {
-                            contextualChunk.pages.values.forEach { page ->
-                                page.blocks.forEach { block ->
-                                    if (block.text.isNotBlank() && !block.blockId.isNullOrBlank()) add(block.blockId!!)
-                                }
-                            }
-                            sceneState.recentTurns.forEach { add(it.blockId) }
-                        }
                         val orderedCompletion = completedPages.sortedBy { pk ->
                             resolvedNaturalPageIndexes[pk] ?: Int.MAX_VALUE
                         }
-                        val refusalPages = orderedCompletion.filterTo(mutableSetOf()) { pk ->
-                            translationRegistry[pk]?.blocks.orEmpty().any { block ->
+                        val committedPages = linkedMapOf<String, PageTranslation>()
+                        for (pk in orderedCompletion) {
+                            val p = translationRegistry[pk] ?: continue
+                            val refused = p.blocks.any { block ->
                                 block.text.isNotBlank() &&
                                     TranslationResponseFaithfulness.isStructuralRefusal(block.translation)
                             }
-                        }
-                        val prefixPlan = ScenePrefixPlanner.plan(
-                            orderedPages = orderedCompletion,
-                            deltas = contextDeltas,
-                            pageIds = orderedCompletion.associateWith { pk ->
-                                BatchTranslationProtocol.pageId(resolvedNaturalPageIndexes[pk] ?: 0)
-                            },
-                            knownBlockIds = knownCitationIds,
-                            refusalPages = refusalPages,
-                        )
-                        val committedPages = mutableListOf<String>()
-                        for (pk in orderedCompletion) {
-                            val p = translationRegistry[pk] ?: continue
-                            val pageIndex = resolvedNaturalPageIndexes[pk] ?: continue
-                            val pageId = BatchTranslationProtocol.pageId(pageIndex)
-                            if (prefixPlan.stopPageKey != null) {
-                                val reason = if (pk == prefixPlan.stopPageKey) {
-                                    prefixPlan.stopReason!!
-                                } else {
-                                    "context stopped at earlier page: ${prefixPlan.stopReason}"
-                                }
-                                markBatchTranslationFailed(
+                            if (refused) {
+                                envelopeFailed = true
+                                val failed = markBatchTranslationFailed(
                                     store,
                                     pk,
                                     p,
-                                    reason,
+                                    "provider refusal",
                                     expectedPrecondition = batchWritePrecondition(pk) ?: continue,
                                 )
-                                tracker?.markTranslateFailed(pk, reason)
+                                if (failed is ChapterTranslationStore.PatchResult.Accepted) {
+                                    refreshBatchIdentity(pk, failed.snapshot)
+                                }
+                                tracker?.markTranslateFailed(pk, "provider refusal")
+                                tracker?.markAiFailed(pk, "provider refusal")
+                                abortBatchCandidate(pk, "provider refusal")
+                                recordContextPage(pk, p, terminalFailure = true)
                                 continue
                             }
-                            // Commit this page: translations, then the trusted
-                            // page-scoped scene checkpoint.
-                            val commit = prefixPlan.commits.firstOrNull { it.pageKey == pk } ?: continue
                             val status = TranslationBlockValidation.applyTo(p)
-                            val sceneCommit = SceneContextEngine.commitPage(
-                                state = sceneState,
-                                pageIndex = pageIndex,
-                                pageId = pageId,
-                                blocks = p.blocks.mapNotNull { block ->
-                                    block.blockId?.takeIf { block.text.isNotBlank() }?.let { it to block.text }
-                                },
-                                delta = commit.delta,
-                            )
                             when (status) {
-                                StageStatus.READY -> tracker?.markTranslateDone(pk)
-                                StageStatus.PARTIAL -> tracker?.markTranslatePartial(pk)
-                                StageStatus.FAILED -> tracker?.markTranslateFailed(pk, p.errorMessage ?: "Validation failed")
+                                StageStatus.READY -> {
+                                    tracker?.markTranslateDone(pk)
+                                }
+                                StageStatus.PARTIAL -> {
+                                    tracker?.markTranslatePartial(pk)
+                                }
+                                StageStatus.FAILED -> {
+                                    envelopeFailed = true
+                                    tracker?.markTranslateFailed(pk, p.errorMessage ?: "Validation failed")
+                                    tracker?.markAiFailed(pk, p.errorMessage ?: "Validation failed")
+                                }
                             }
-                            val sceneCheckpointJson = SceneCardState.encode(sceneCommit.state)
-                            val persisted = guardedBatchUpdate(pk, "batch translation chunk commit") {
+                            val persisted = guardedBatchUpdate(pk, "batch translation chunk commit", BatchStage.TRANSLATION) {
                                 (it ?: p).apply {
                                     translationStatus = p.translationStatus
                                     if (status == StageStatus.FAILED) {
@@ -1862,7 +1854,6 @@ class TranslationPipeline(
                                         retryCount = p.retryCount
                                         attemptCount = p.attemptCount
                                     }
-                                    batchSceneCheckpoint = sceneCheckpointJson
                                     if (it != null && it !== p) {
                                         blocks = p.blocks.toMutableList()
                                     }
@@ -1870,53 +1861,26 @@ class TranslationPipeline(
                                 }
                             }
                             if (persisted is ChapterTranslationStore.PatchResult.Rejected) {
+                                val reason = "translation commit rejected: ${persisted.reason}"
+                                tracker?.markTranslateFailed(pk, reason)
+                                tracker?.markAiFailed(pk, reason)
                                 abortBatchCandidate(pk, "translation commit rejected: ${persisted.reason}")
                                 throw BatchPersistenceRejectedException(
                                     "translation commit rejected for $pk: ${persisted.reason}",
                                 )
                             }
-                            sceneState = sceneCommit.state
-                            committedPages += pk
-                            // Late correction of a durable fact: invalidate every
-                            // downstream translation that depended on the old value.
-                            // Translation/layout only — native artifacts stay reusable
-                            // and manual edits (userEditedAt) are never overwritten.
-                            sceneCommit.correction?.let { correction ->
-                                logcat(LogPriority.WARN) {
-                                    "TachiyomiAT scene fact corrected: key=${correction.factKey} " +
-                                        "invalidatedPages=${correction.invalidatedPages}"
-                                }
-                                correction.invalidatedPages.forEach { dependentIndex ->
-                                    val dependentKey = resolvedNaturalPageIndexes.entries
-                                        .firstOrNull { it.value == dependentIndex }?.key ?: return@forEach
-                                    val precondition = batchWritePrecondition(dependentKey) ?: return@forEach
-                                    store.updatePageGuarded(
-                                        dependentKey,
-                                        precondition,
-                                        "batch context correction invalidation",
-                                    ) { current ->
-                                        (current ?: PageTranslation(sourceFileName = dependentKey)).apply {
-                                            if (translationStatus == StageStatus.READY ||
-                                                translationStatus == StageStatus.PARTIAL
-                                            ) {
-                                                translationStatus = StageStatus.PENDING
-                                                batchContextComplete = false
-                                                batchContextCheckpointHash = null
-                                                batchSceneCheckpoint = null
-                                                errorMessage = "context correction: ${correction.factKey}"
-                                                updatedAt = System.currentTimeMillis()
-                                            }
-                                        }
-                                    }
-                                }
+                            if (status == StageStatus.READY || status == StageStatus.PARTIAL) {
+                                tracker?.markAiSucceeded(pk)
                             }
+                            recordContextPage(pk, p, terminalFailure = status == StageStatus.FAILED)
+                            committedPages[pk] = p
                             tryRender(pk)
                         }
                         // Accumulate this envelope's committed pairs into the chapter
                         // glossary and persist it.
                         var translatedPairs = 0
-                        committedPages.forEach { pk ->
-                            translationRegistry[pk]?.blocks?.forEach { b ->
+                        committedPages.values.forEach { page ->
+                            page.blocks.forEach { b ->
                                 glossaryStats.add(b.text, b.translation)
                                 if (b.translation.isNotBlank()) translatedPairs++
                             }
@@ -1928,11 +1892,36 @@ class TranslationPipeline(
                                 "glossaryEntries=${newGlossary.size} committed=${committedPages.size} " +
                                 "of ${orderedCompletion.size}"
                         }
-                        val newRolling = SceneContextEngine.renderPromptCard(sceneState, ambiguityPrior)
-                        return newRolling to newPast
+                        BatchTranslationDiagnostics.envelopeLifecycle(
+                            phase = if (envelopeFailed) {
+                                BatchEnvelopeLifecycle.FAILED
+                            } else {
+                                BatchEnvelopeLifecycle.SUCCEEDED
+                            },
+                            pageKeys = chunk.pages.keys,
+                            expectedItemCount = chunk.blockCount,
+                            receivedItemCount = committedPages.values.sumOf { page ->
+                                page.blocks.count { block -> block.translation.isNotBlank() }
+                            },
+                            reason = if (envelopeFailed) {
+                                BatchDiagnosticReason.TERMINAL_FAILURE
+                            } else {
+                                BatchDiagnosticReason.SUCCESS
+                            },
+                        )
+                        return rollingContext
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        if (e is BatchPersistenceRejectedException) throw e
+                        if (e is BatchPersistenceRejectedException) {
+                            BatchTranslationDiagnostics.envelopeLifecycle(
+                                phase = BatchEnvelopeLifecycle.FAILED,
+                                pageKeys = chunk.pages.keys,
+                                expectedItemCount = chunk.blockCount,
+                                reason = BatchDiagnosticReason.TERMINAL_FAILURE,
+                            )
+                            throw e
+                        }
+                        envelopeFailed = true
                         val reason = e.message ?: e.javaClass.simpleName
                         chunk.pages.keys.forEach { pk ->
                             val p = translationRegistry[pk] ?: return@forEach
@@ -1947,19 +1936,22 @@ class TranslationPipeline(
                                 refreshBatchIdentity(pk, failed.snapshot)
                             }
                             tracker?.markTranslateFailed(pk, "AI chunk failed: $reason")
+                            tracker?.markAiFailed(pk, "AI chunk failed: $reason")
                             abortBatchCandidate(pk, "AI chunk failed: $reason")
+                            recordContextPage(pk, p, terminalFailure = true)
                         }
-                        if (e is ContextualStructuralFailureException) {
-                            logcat(LogPriority.WARN) {
-                                "TachiyomiAT contextual batch rejected: pages=${chunk.pages.size} " +
-                                    e.failure.safeSummary()
-                            }
-                        } else {
-                            logcat(LogPriority.ERROR, e) {
-                                "TachiyomiAT contextual batch translate failed: chunk pages=${chunk.pages.keys}"
-                            }
+                        logcat(LogPriority.ERROR, e) {
+                            "TachiyomiAT contextual batch translate failed: envelope=${
+                                BatchTranslationDiagnostics.envelopeId(chunk.pages.keys)
+                            }"
                         }
-                        return rolling to pastTranslations
+                        BatchTranslationDiagnostics.envelopeLifecycle(
+                            phase = BatchEnvelopeLifecycle.FAILED,
+                            pageKeys = chunk.pages.keys,
+                            expectedItemCount = chunk.blockCount,
+                            reason = BatchDiagnosticReason.TERMINAL_FAILURE,
+                        )
+                        return rolling
                     }
                 }
 
@@ -1967,7 +1959,7 @@ class TranslationPipeline(
                     val p = translationRegistry[pk] ?: return
                     TranslationBlockValidation.applyTo(p)
                     p.translationStatus = StageStatus.READY
-                    guardedBatchUpdate(pk, "batch chunkless translation commit") {
+                    val persisted = guardedBatchUpdate(pk, "batch chunkless translation commit", BatchStage.TRANSLATION) {
                         (it ?: p).apply {
                             translationStatus = StageStatus.READY
                             translationError = null
@@ -1977,26 +1969,33 @@ class TranslationPipeline(
                             updatedAt = System.currentTimeMillis()
                         }
                     }
+                    if (persisted is ChapterTranslationStore.PatchResult.Rejected) {
+                        val reason = "chunkless translation commit rejected: ${persisted.reason}"
+                        tracker?.markTranslateFailed(pk, reason)
+                        tracker?.markAiFailed(pk, reason)
+                        abortBatchCandidate(pk, reason)
+                        return
+                    }
                     tracker?.markTranslateDone(pk)
+                    tracker?.markAiSucceeded(pk)
+                    recordContextPage(pk, p)
                     tryRender(pk)
                 }
 
                 // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
                 // The batch schedule is driven by [SequentialBatchCoordinator] (one
-                // serialized native lane per page's OCR then inpaint, a bounded page
-                // channel, native lookahead capped at three pages beyond the
-                // translation frontier, one ordered translation lane, and a per-page
+                // serialized native lane, token-adaptive whole-page AI chunks with one
+                // retained OCR-only probe, one ordered translation lane, and a per-page
                 // render join). The pipeline supplies the adapter implementations of
                 // [NativeLaneWorker] / [TranslatorLaneWorker] / [RenderJoinWorker] that
                 // reuse the existing OCR/inpaint/persist/translate/render helpers above,
                 // so the heavy Android/ONNX/HTTP logic is unchanged — only the schedule
-                // is centralized.
+                // is centralized. Both AI and standard translators use this schedule.
                 //
                 // TranslatorComputeClass drives lane routing: ML Kit (LOCAL_COMPUTE) is kept
                 // inline on the native lane so its on-device inference never overlaps native
                 // OCR/inpaint; remote providers (REMOTE_IO) overlap their network wait with
-                // same-page inpaint because the work item is offered to the bounded channel
-                // AFTER OCR persistence and BEFORE inpaint completes.
+                // the current chunk's native inpaint after the OCR barrier has released.
                 val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
 
                 val streamsByKey = LinkedHashMap(orderedStreams.toMap())
@@ -2034,7 +2033,10 @@ class TranslationPipeline(
                             val p = existing!!
                             translationRegistry[pageKey] = p
                             val translationNeedsWork = plannedTranslationNeedsWork(pageKey)
-                            if (!translationNeedsWork) tryRender(pageKey)
+                            if (!translationNeedsWork) {
+                                tryRender(pageKey)
+                                recordReusableContextPage(pageKey, p)
+                            }
                             val translationTerminal = p.translationStatus == StageStatus.READY ||
                                 p.translationStatus == StageStatus.PARTIAL ||
                                 p.translationStatus == StageStatus.SKIPPED
@@ -2066,7 +2068,10 @@ class TranslationPipeline(
                             if (innerGate == BatchResumeGate.SKIP_ALL) {
                                 val p = latest!!
                                 translationRegistry[pageKey] = p
-                                if (!plannedTranslationNeedsWork(pageKey)) tryRender(pageKey)
+                                if (!plannedTranslationNeedsWork(pageKey)) {
+                                    tryRender(pageKey)
+                                    recordReusableContextPage(pageKey, p)
+                                }
                                 producedTarget = p
                                 return@withNativeLane
                             }
@@ -2083,7 +2088,7 @@ class TranslationPipeline(
                                     decodePageBitmapForTranslation(pageKey, streamFn)
                                 } catch (deferred: LowMemoryDecodeDeferredException) {
                                     tracker?.markOcrFailed(pageKey, deferred.message ?: "Decode deferred")
-                                    val deferredWrite = guardedBatchUpdate(pageKey, "batch decode deferred") {
+                                    val deferredWrite = guardedBatchUpdate(pageKey, "batch decode deferred", BatchStage.OCR) {
                                         (it ?: PageTranslation()).apply {
                                             sourceFileName = pageKey
                                             ocrStatus = StageStatus.FAILED
@@ -2099,7 +2104,7 @@ class TranslationPipeline(
                                     return@withNativeLane
                                 } ?: run {
                                     tracker?.markOcrFailed(pageKey, "Failed to decode page: null bitmap")
-                                    val failedWrite = guardedBatchUpdate(pageKey, "batch decode failed") {
+                                    val failedWrite = guardedBatchUpdate(pageKey, "batch decode failed", BatchStage.OCR) {
                                         (it ?: PageTranslation()).apply {
                                             sourceFileName = pageKey
                                             ocrStatus = StageStatus.FAILED
@@ -2143,18 +2148,10 @@ class TranslationPipeline(
                                 abortBatchCandidate(pageKey, rejected.message ?: "OCR persistence rejected")
                             }
                         }
-                        val target = producedTarget ?: return null
-
-                        // Recycle bitmap immediately for OCR-first barrier (Checkpoint 3)
-                        if (producedDecoded != null) {
-                            try {
-                                producedDecoded!!.bitmap.recycle()
-                            } catch (_: Exception) {}
+                        val target = producedTarget ?: run {
+                            releaseDecodedPage(producedDecoded)
+                            return null
                         }
-                        BitmapPool.releaseAll()
-                        try {
-                            recognitionEngine.reclaimPooledMemory()
-                        } catch (_: Exception) {}
 
                         val persisted = store.snapshot(pageKey)
                         refreshBatchIdentity(pageKey, persisted)
@@ -2167,11 +2164,15 @@ class TranslationPipeline(
                             candidateGenerationId = persisted.candidateGenerationId,
                             dependencyFingerprint = persisted.dependencyFingerprint,
                             artifactPageVersion = persisted.artifactPageVersion,
+                            nativeHandoff = producedDecoded,
                         )
                     }
 
                     override suspend fun runInpaintStage(pageKey: String) {
-                        val streamFn = streamsByKey[pageKey] ?: return
+                        runInpaintStage(pageKey, null)
+                    }
+
+                    override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
                         val latest = store.state.value[pageKey] ?: return
                         val target = translationRegistry[pageKey] ?: latest
                         val plannedInpaint = batchPagePlans[pageKey]?.stages?.firstOrNull {
@@ -2226,12 +2227,16 @@ class TranslationPipeline(
                                 pageKey = pageKey,
                                 onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                             ) {
-                                var decoded: DecodedPage? = null
+                                val handedOffDecoded = nativeHandoff as? DecodedPage
+                                var decoded: DecodedPage? = handedOffDecoded
                                 try {
                                     tracker?.markInpaintRunning(pageKey)
-                                    decoded = decodePageBitmapForTranslation(pageKey, streamFn)
                                     if (decoded == null) {
-                                        tracker?.markInpaintFailed(pageKey, "Null bitmap on re-decode")
+                                        val streamFn = streamsByKey[pageKey] ?: return@withNativeLane
+                                        decoded = decodePageBitmapForTranslation(pageKey, streamFn)
+                                    }
+                                    if (decoded == null) {
+                                        tracker?.markInpaintFailed(pageKey, "Null bitmap for inpaint")
                                         return@withNativeLane
                                     }
                                     preflightInpaintGate(decoded.bitmap, pageKey)
@@ -2241,7 +2246,7 @@ class TranslationPipeline(
                                         pageTranslation = target,
                                         batchFingerprint = expectedBatchFingerprints.inpaint,
                                         guardedWrite = { description, update ->
-                                            val result = guardedBatchUpdate(pageKey, description, update)
+                                            val result = guardedBatchUpdate(pageKey, description, BatchStage.INPAINT, update)
                                             if (result is ChapterTranslationStore.PatchResult.Rejected) {
                                                 throw BatchPersistenceRejectedException(
                                                     "$description rejected for $pageKey: ${result.reason}",
@@ -2277,15 +2282,7 @@ class TranslationPipeline(
                                     target.errorMessage = deferred.message
                                     tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
                                 } finally {
-                                    if (decoded != null) {
-                                        try {
-                                            decoded.bitmap.recycle()
-                                        } catch (_: Exception) {}
-                                    }
-                                    BitmapPool.releaseAll()
-                                    try {
-                                        recognitionEngine.reclaimPooledMemory()
-                                    } catch (_: Exception) {}
+                                    if (handedOffDecoded == null) releaseDecodedPage(decoded)
                                 }
                             }
                         } catch (rejected: BatchPersistenceRejectedException) {
@@ -2321,7 +2318,7 @@ class TranslationPipeline(
                                 return
                             }
                         } else {
-                            val terminal = guardedBatchUpdate(pageKey, "batch inpaint terminal state") {
+                            val terminal = guardedBatchUpdate(pageKey, "batch inpaint terminal state", BatchStage.INPAINT) {
                                 (it ?: target).apply {
                                     inpaintStatus = target.inpaintStatus
                                     errorMessage = target.errorMessage
@@ -2336,14 +2333,33 @@ class TranslationPipeline(
                         holdCleaned(pageKey, target.cleanedBitmap)
                         target.cleanedBitmap = null
                     }
+
+                    override fun releaseNativeHandoff(ref: OcrReadyPageRef) {
+                        val decoded = ref.nativeHandoff as? DecodedPage ?: return
+                        releaseDecodedPage(decoded)
+                    }
+
+                    private fun releaseDecodedPage(decoded: DecodedPage?) {
+                        if (decoded != null) {
+                            try {
+                                decoded.bitmap.recycle()
+                            } catch (_: Exception) {}
+                        }
+                        BitmapPool.releaseAll()
+                        try {
+                            recognitionEngine.reclaimPooledMemory()
+                        } catch (_: Exception) {}
+                    }
                 }
 
                 // The translator lane owns the streaming AI chunk planner (contextual path) or
                 // performs per-page translation (standard path). Either way it is a SINGLE
-                // serialized lane so only one provider request is in flight at a time. For the
-                // AI path, pages complete on chunk flush and render through tryRender; for the
-                // standard path, each page translates, validates, and renders per item.
+                // serialized lane so only one provider request is in flight at a time. AI pages
+                // are admitted into the token planner during OCR, but planner emissions remain
+                // buffered until the coordinator's chunk barrier calls completeChunk.
                 val translatorWorker = object : TranslatorLaneWorker {
+                    override val usesChunkAdmission: Boolean = isAi
+
                     // AI contextual streaming state, owned by this lane.
                     val planner: StreamingChunkPlanner? =
                         if (isAi) {
@@ -2351,27 +2367,20 @@ class TranslationPipeline(
                                 requestedOutputTokens = requestedOutputTokens,
                                 profile = chunkProfile,
                                 naturalPageIndexes = resolvedNaturalPageIndexes,
-                                maxBlocksPerChunk = SequentialBatchCoordinator.MAX_AI_ENVELOPE_BLOCKS,
-                                maxPagesPerChunk = targetChunkPages,
                             )
                         } else {
                             null
                         }
 
-                    // The rolling context is the deterministic scene card rendered
-                    // from the replayed trusted checkpoint chain — never a prose
-                    // summary of prior model output. It advances page by page
-                    // inside [translateChunkAi]'s prefix commit.
-                    var rollingContext = if (isAi) {
-                        SceneContextEngine.renderPromptCard(sceneState, ambiguityPrior)
-                    } else {
-                        ""
+                    private val pendingAiEmissions = mutableListOf<StreamingChunkPlanner.Emission>()
+                    private val handledRejectedPages = mutableSetOf<String>()
+                    private var lastAdmission: ChunkAdmission = ChunkAdmission.ACCEPT
+
+                    override suspend fun admit(ref: OcrReadyPageRef): ChunkAdmission {
+                        lastAdmission = ChunkAdmission.ACCEPT
+                        translate(ref)
+                        return lastAdmission
                     }
-                    val analyticalMode = runCatching {
-                        Injekt.get<tachiyomi.domain.translation.TranslationPreferences>()
-                            .translationAnalyticalMode().get()
-                    }.getOrDefault(false)
-                    var pastTranslations = ""
 
                     override suspend fun translate(ref: OcrReadyPageRef) {
                         val pageKey = ref.pageKey
@@ -2396,10 +2405,19 @@ class TranslationPipeline(
                             p.ocrStatus == StageStatus.TEXTLESS
                         val priorPageBlocksStandardTranslation = !isAi &&
                             plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE
+                        val completedAiPageAfterPriorGap = isAi &&
+                            plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
+                            plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                            p.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED) &&
+                            (
+                                expectedBatchFingerprints.translation == null ||
+                                    p.translationFingerprint == expectedBatchFingerprints.translation
+                                )
                         val shouldSkipTranslation = plannedTranslation?.decision ==
                             eu.kanade.translation.model.StageDecision.REUSE ||
                             plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE ||
                             plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.FAILED ||
+                            completedAiPageAfterPriorGap ||
                             plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
                             (
                                 priorPageBlocksStandardTranslation ||
@@ -2409,6 +2427,25 @@ class TranslationPipeline(
                             // Native/layout-only resume, an ordered context wait,
                             // or a failed page never invokes the provider. The
                             // render join still receives its branch completion.
+                            when {
+                                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.FAILED ||
+                                    p.translationStatus == StageStatus.FAILED -> tracker?.markAiFailed(
+                                    pageKey,
+                                    p.activeError ?: "Translation stage failed",
+                                )
+                                p.translationStatus == StageStatus.READY ||
+                                    p.translationStatus == StageStatus.PARTIAL ||
+                                    p.translationStatus == StageStatus.SKIPPED -> tracker?.markAiSucceeded(pageKey)
+                            }
+                            if (isAi) {
+                                recordContextPage(
+                                    pageKey,
+                                    p,
+                                    terminalFailure = plannedTranslation?.decision ==
+                                        eu.kanade.translation.model.StageDecision.FAILED ||
+                                        p.translationStatus == StageStatus.FAILED,
+                                )
+                            }
                             return
                         }
                         // Persisted OCR order is the stable identity source. Assign IDs before the
@@ -2421,12 +2458,13 @@ class TranslationPipeline(
                         if (sourceBlocks == 0) {
                             p.translationStatus = StageStatus.SKIPPED
                             p.renderStatus = StageStatus.SKIPPED
-                            val textless = guardedBatchUpdate(pageKey, "batch textless translation commit") { p }
+                            val textless = guardedBatchUpdate(pageKey, "batch textless translation commit", BatchStage.TRANSLATION) { p }
                             if (textless is ChapterTranslationStore.PatchResult.Rejected) {
                                 abortBatchCandidate(pageKey, "textless commit rejected: ${textless.reason}")
                                 return
                             }
                             tracker?.markTranslateSkipped(pageKey)
+                            tracker?.markAiSucceeded(pageKey)
                             tracker?.markRenderSkipped(pageKey)
                             if (p.inpaintStatus == StageStatus.SKIPPED || p.inpaintStatus == StageStatus.READY) {
                                 recycleHeld(pageKey)
@@ -2436,30 +2474,50 @@ class TranslationPipeline(
                             return
                         }
                         if (isAi && planner != null) {
-                            // Contextual path: accept this page into the streaming planner and
-                            // process every emission (chunk flush / chunkless completion). A page
-                            // may complete on a chunk that flushes when a LATER page is accepted,
-                            // so completed pages are rendered here via tryRender as chunks flush.
-                            eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
-                                val emission = planner.accept(pageKey, p)
-                                if (emission != null && emission.chunk != null) {
-                                    val (newRolling, newPast) = translateChunkAi(
-                                        emission.chunk!!,
-                                        emission.completedPages,
-                                        rollingContext,
-                                        pastTranslations,
-                                        analyticalMode,
-                                    )
-                                    rollingContext = newRolling
-                                    pastTranslations = newPast
-                                } else if (emission != null) {
-                                    emission.completedPages.forEach { pk -> completeChunklessPage(pk) }
+                            if (contextFrontier.blocksLaterAi(pageKey)) {
+                                val gapIndex = contextFrontier.gapIndex
+                                val reason = "blocked by non-textless terminal context gap at index $gapIndex"
+                                val failed = markBatchTranslationFailed(
+                                    store,
+                                    pageKey,
+                                    p,
+                                    reason,
+                                    expectedPrecondition = batchWritePrecondition(pageKey) ?: return,
+                                )
+                                if (failed is ChapterTranslationStore.PatchResult.Accepted) {
+                                    refreshBatchIdentity(pageKey, failed.snapshot)
+                                }
+                                tracker?.markTranslateFailed(pageKey, reason)
+                                tracker?.markAiFailed(pageKey, reason)
+                                abortBatchCandidate(pageKey, reason)
+                                recordContextPage(pageKey, p, terminalFailure = true)
+                                return
+                            }
+                            // Contextual path: accept this page into the streaming planner,
+                            // but retain every emission until the coordinator releases the
+                            // current OCR barrier. Buffering is not translation completion.
+                            val emission = planner.accept(pageKey, p)
+                            planner.rejectedPages[pageKey]?.let { reason ->
+                                tracker?.markAiFailed(pageKey, reason)
+                            } ?: run {
+                                tracker?.markAiBuffered(pageKey)
+                            }
+                            emission?.let { emission ->
+                                pendingAiEmissions += emission
+                                if (emission.chunk != null) {
+                                    // The page that caused the prior whole-page envelope to
+                                    // flush is the one allowed OCR-only probe. It has already
+                                    // been admitted to the planner, but cannot enter any later
+                                    // stage until the coordinator starts the next chunk.
+                                    lastAdmission = ChunkAdmission.PROBE
                                 }
                             }
                         } else {
                             // Standard (per-page) path: translate, validate, persist, render.
+                            var aiSucceeded = false
                             try {
                                 eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
+                                    tracker?.markAiRunning(pageKey)
                                     tracker?.markTranslateRunning(pageKey)
                                     textTranslator.translatePage(pageKey, p)
                                 }
@@ -2470,14 +2528,19 @@ class TranslationPipeline(
                                     StageStatus.PARTIAL -> tracker?.markTranslatePartial(pageKey)
                                     else -> tracker?.markTranslateFailed(pageKey, p.errorMessage ?: "Translate unknown state")
                                 }
+                                when (s) {
+                                    StageStatus.READY, StageStatus.PARTIAL -> aiSucceeded = true
+                                    else -> tracker?.markAiFailed(pageKey, p.errorMessage ?: "Translate unknown state")
+                                }
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e
                                 p.translationStatus = StageStatus.FAILED
                                 p.errorMessage = e.message
                                 tracker?.markTranslateFailed(pageKey, e.message ?: e::class.java.simpleName)
+                                tracker?.markAiFailed(pageKey, e.message ?: e::class.java.simpleName)
                                 logcat(LogPriority.ERROR, e) { "TachiyomiAT batch translate failed: $pageKey" }
                             } finally {
-                                guardedBatchUpdate(pageKey, "batch translation final commit") {
+                                val persisted = guardedBatchUpdate(pageKey, "batch translation final commit", BatchStage.TRANSLATION) {
                                     (it ?: p).apply {
                                         translationStatus = p.translationStatus
                                         translationError = p.translationError
@@ -2487,8 +2550,77 @@ class TranslationPipeline(
                                         }
                                     }
                                 }
+                                if (persisted is ChapterTranslationStore.PatchResult.Rejected) {
+                                    val reason = "translation commit rejected: ${persisted.reason}"
+                                    tracker?.markTranslateFailed(pageKey, reason)
+                                    tracker?.markAiFailed(pageKey, reason)
+                                } else if (aiSucceeded) {
+                                    tracker?.markAiSucceeded(pageKey)
+                                }
                             }
                         }
+                    }
+
+                    private suspend fun processAiEmission(emission: StreamingChunkPlanner.Emission) {
+                        if (emission.chunk != null) {
+                            eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
+                                rollingContext = translateChunkAi(
+                                    emission.chunk,
+                                    emission.completedPages,
+                                    rollingContext,
+                                )
+                            }
+                        } else {
+                            emission.completedPages
+                                .sortedBy { pk -> resolvedNaturalPageIndexes[pk] ?: Int.MAX_VALUE }
+                                .forEach { pk -> completeChunklessPage(pk) }
+                        }
+                    }
+
+                    override suspend fun completeChunk(finalChunk: Boolean) {
+                        val planner = planner ?: return
+                        try {
+                            pendingAiEmissions.toList().forEach { processAiEmission(it) }
+                        } finally {
+                            pendingAiEmissions.clear()
+                        }
+
+                        if (finalChunk) {
+                            val flush = planner.flushRemaining()
+                            if (flush.finalChunk != null) {
+                                processAiEmission(
+                                    StreamingChunkPlanner.Emission(
+                                        chunk = flush.finalChunk,
+                                        completedPages = flush.completedPages,
+                                    ),
+                                )
+                            } else {
+                                flush.completedPages
+                                    .sortedBy { pk -> resolvedNaturalPageIndexes[pk] ?: Int.MAX_VALUE }
+                                    .forEach { pk -> completeChunklessPage(pk) }
+                            }
+                        }
+
+                        planner.rejectedPages
+                            .filterKeys { it !in handledRejectedPages }
+                            .forEach { (pk, reason) ->
+                                handledRejectedPages += pk
+                                val rejectedPage = translationRegistry[pk] ?: return@forEach
+                                val failed = markBatchTranslationFailed(
+                                    store,
+                                    pk,
+                                    rejectedPage,
+                                    reason,
+                                    expectedPrecondition = batchWritePrecondition(pk) ?: return@forEach,
+                                )
+                                if (failed is ChapterTranslationStore.PatchResult.Accepted) {
+                                    refreshBatchIdentity(pk, failed.snapshot)
+                                }
+                                tracker?.markTranslateFailed(pk, reason)
+                                tracker?.markAiFailed(pk, reason)
+                                abortBatchCandidate(pk, reason)
+                                recordContextPage(pk, rejectedPage, terminalFailure = true)
+                            }
                     }
                 }
 
@@ -2533,141 +2665,8 @@ class TranslationPipeline(
                         val orderedPages = orderedStreams.mapIndexed { index, (pageKey, _) ->
                             pageKey to (resolvedNaturalPageIndexes[pageKey] ?: index)
                         }
-                        if (isAi) {
-                            val pendingRefs = java.util.ArrayDeque<OcrReadyPageRef>()
-                            var nextPage = 0
-                            var logicalChunk = 0
 
-                            suspend fun flushAiPlanner() {
-                                val planner = translatorWorker.planner ?: return
-                                eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
-                                    val flush = planner.flushRemaining()
-                                    if (flush.finalChunk != null) {
-                                        val (newRolling, newPast) = translateChunkAi(
-                                            flush.finalChunk,
-                                            flush.completedPages,
-                                            translatorWorker.rollingContext,
-                                            translatorWorker.pastTranslations,
-                                            translatorWorker.analyticalMode,
-                                        )
-                                        translatorWorker.rollingContext = newRolling
-                                        translatorWorker.pastTranslations = newPast
-                                    } else {
-                                        flush.completedPages.forEach { pk -> completeChunklessPage(pk) }
-                                    }
-                                    flush.rejectedPages.forEach { (pk, reason) ->
-                                        val rp = translationRegistry[pk]
-                                        if (rp != null) {
-                                            markBatchTranslationFailed(
-                                                store,
-                                                pk,
-                                                rp,
-                                                reason,
-                                                expectedPrecondition = batchWritePrecondition(pk)
-                                                    ?: return@forEach,
-                                            )
-                                            tracker?.markTranslateFailed(pk, reason)
-                                        }
-                                    }
-                                }
-                            }
-
-                            while (nextPage < orderedPages.size || pendingRefs.isNotEmpty()) {
-                                coroutineContext.ensureActive()
-
-                                // OCR fills one bounded target window. If the post-OCR provider
-                                // envelope shrinks it, the overflow references remain lightweight
-                                // persisted work for the following logical chunk.
-                                while (pendingRefs.size < targetChunkPages && nextPage < orderedPages.size) {
-                                    val (pageKey, pageIndex) = orderedPages[nextPage++]
-                                    val ref = nativeWorker.runOcrStage(pageKey, pageIndex)
-                                    if (ref != null) {
-                                        pendingRefs.addLast(ref)
-                                        val p = translationRegistry[pageKey] ?: store.state.value[pageKey]
-                                        if (p?.isTextlessTerminal != true &&
-                                            p?.inpaintStatus != StageStatus.READY &&
-                                            p?.inpaintStatus != StageStatus.SKIPPED
-                                        ) {
-                                            nativeWorker.runInpaintStage(pageKey)
-                                        }
-                                    } else {
-                                        tryRender(pageKey)
-                                    }
-                                }
-
-                                batchPagePlans = buildBatchPagePlans()
-                                val candidates = pendingRefs.take(targetChunkPages)
-                                val candidatePages = linkedMapOf<String, PageTranslation>()
-                                candidates.forEach { ref ->
-                                    (translationRegistry[ref.pageKey] ?: store.state.value[ref.pageKey])?.let {
-                                        candidatePages[ref.pageKey] = it
-                                    }
-                                }
-                                if (candidatePages.isEmpty()) {
-                                    pendingRefs.pollFirst()
-                                    continue
-                                }
-
-                                val pagePlan = PageAtomicChunkPlanner.plan(
-                                    pages = candidatePages,
-                                    requestedOutputTokens = requestedOutputTokens,
-                                    profile = chunkProfile,
-                                    maxBlocksPerRequest = SequentialBatchCoordinator.MAX_AI_ENVELOPE_BLOCKS,
-                                    maxPagesPerRequest = targetChunkPages,
-                                    pageIndexes = resolvedNaturalPageIndexes,
-                                )
-                                val selectedKeys = pagePlan.pageKeys.toSet()
-                                val selectedRefs = candidates.filter { it.pageKey in selectedKeys }
-                                if (selectedRefs.isEmpty()) {
-                                    pendingRefs.pollFirst()
-                                    continue
-                                }
-
-                                logicalChunk++
-                                val selectedBlockCount = selectedRefs.sumOf { ref ->
-                                    candidatePages[ref.pageKey]?.blocks?.count { it.text.isNotBlank() } ?: 0
-                                }
-                                logcat(LogPriority.INFO) {
-                                    "TachiyomiAT sequential chunk start: chapter=${chapter.name} " +
-                                        "chunk=$logicalChunk target=$targetChunkPages " +
-                                        "range=${selectedRefs.first().pageKey}..${selectedRefs.last().pageKey} " +
-                                        "pageCount=${selectedRefs.size} blockCount=$selectedBlockCount " +
-                                        "pages=${selectedRefs.map { it.pageKey }} " +
-                                        "transportRequests=${pagePlan.transportChunks.size} " +
-                                        "oversizedSinglePage=${pagePlan.oversizedSinglePage}"
-                                }
-
-                                // Barrier 1: every selected page has durable OCR above. The
-                                // happy path accepts the whole logical chunk and explicitly
-                                // flushes exactly one provider request.
-                                selectedRefs.forEach { translatorWorker.translate(it) }
-                                flushAiPlanner()
-
-                                // Barrier 2: translation is terminal before rendering. If inpaint
-                                // was not already completed during lookahead, run it now.
-                                selectedRefs.forEach { ref ->
-                                    val latest = store.state.value[ref.pageKey]
-                                    val translationReady = latest?.translationStatus == StageStatus.READY ||
-                                        latest?.translationStatus == StageStatus.PARTIAL
-                                    if (latest?.isTextlessTerminal != true &&
-                                        translationReady &&
-                                        translationRegistry.containsKey(ref.pageKey) &&
-                                        latest?.inpaintStatus != StageStatus.READY &&
-                                        latest?.inpaintStatus != StageStatus.SKIPPED
-                                    ) {
-                                        nativeWorker.runInpaintStage(ref.pageKey)
-                                    }
-                                    tryRender(ref.pageKey)
-                                    pendingRefs.remove(ref)
-                                }
-                                logcat(LogPriority.INFO) {
-                                    "TachiyomiAT sequential chunk complete: chapter=${chapter.name} " +
-                                        "chunk=$logicalChunk pages=${selectedRefs.map { it.pageKey }}"
-                                }
-                            }
-                        } else {
-                            coordinator.runPass1(orderedPages, computeClass)
-                        }
+                        coordinator.runPass1(orderedPages, computeClass)
                     }
                 } finally {
                     // Only the registry's REMAINING entries need a release here: consumed/
@@ -2710,7 +2709,7 @@ class TranslationPipeline(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT batch stranded page: chapter=${chapter.name} pageKey=$pageKey reason=$reason"
                     }
-                    guardedBatchUpdate(pageKey, "batch stranded page") { existing ->
+                    guardedBatchUpdate(pageKey, "batch stranded page", null) { existing ->
                         (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
                             ocrStatus = StageStatus.FAILED
                             errorMessage = reason
@@ -3173,11 +3172,9 @@ class TranslationPipeline(
         stageListener: TranslationStageListener? = null,
     ) {
         val pageTranslation = ctx.pageTranslation
-        // Reader-ad-hoc output is displayable, but never advances ordered
-        // chapter context. A later batch must retranslate it in sequence.
+        // Reader-ad-hoc output is displayable; a later batch reuses it when
+        // its fingerprints still match.
         pageTranslation.translationOrigin = PageWriteOrigin.READER_ADHOC.name
-        pageTranslation.batchContextComplete = false
-        pageTranslation.batchContextCheckpointHash = null
         val store = ctx.store
         val fromLang = ctx.fromLang
         val syntheticTranslation = ctx.syntheticTranslation
@@ -3232,37 +3229,22 @@ class TranslationPipeline(
                     maxOutputTokens = requestedOutputTokens,
                     protocol = eu.kanade.translation.translator.ContextualRequestProtocol.LEGACY,
                 )
-                val withRolling = TranslationContextChunkPlanner.withRollingContext(
+                // Recent translated pairs give on-demand single-page translation the
+                // same voice/speaker continuity the batch path gets.
+                val recentPairs = store.translatedPairs()
+                    .mapNotNull { (src, tgt) ->
+                        val t = tgt.trim()
+                        if (t.isBlank() || t == src.trim()) null else "$src => $t"
+                    }
+                    .takeLast(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS)
+                    .joinToString("\n")
+                val chunk = TranslationContextChunkPlanner.withRollingContext(
                     chunk = baseChunk,
-                    rollingContext = "",
+                    rollingContext = recentPairs,
                     requestedOutputTokens = requestedOutputTokens,
                     profile = singlePageProfile,
                     glossary = glossaryText,
                 )
-                // Analytical Mode single-page path: past translations come from the chapter
-                // store so on-demand translation gets voice/speaker continuity. Future context
-                // is empty (single page has no queue). Skipped entirely when off.
-                val analyticalMode = translationPreferences.translationAnalyticalMode().get()
-                val chunk = if (analyticalMode) {
-                    val pastPairs = store.translatedPairs()
-                        .let { pairs ->
-                            val mapped = pairs.mapNotNull { (src, tgt) ->
-                                val t = tgt.trim()
-                                if (t.isBlank() || t == src.trim()) null else t
-                            }
-                            mapped.takeLast(TranslationContextChunkPlanner.MAX_PAST_TRANSLATION_PAIRS)
-                                .joinToString("\n")
-                        }
-                    TranslationContextChunkPlanner.withSlidingContext(
-                        chunk = withRolling,
-                        pastTranslations = pastPairs,
-                        futureContext = "",
-                        requestedOutputTokens = requestedOutputTokens,
-                        profile = singlePageProfile,
-                    )
-                } else {
-                    withRolling
-                }
                 ct.translateContextual(chunk)
             } else {
                 activeTranslator.translatePage(pageKey, targetPage)
@@ -3616,7 +3598,15 @@ class TranslationPipeline(
         val temperature = translationPreferences.translationAiTemperature().get().toFloatOrNull() ?: 0.3f
 
         val translator = when (kind) {
-            AiTranslatorKind.GEMINI -> GeminiTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
+            AiTranslatorKind.GEMINI -> GeminiTranslator(
+                fromLang,
+                toLang,
+                apiKey,
+                model,
+                maxOutputTokens,
+                temperature,
+                translationPreferences.translationGeminiThinkingMode().get(),
+            )
             AiTranslatorKind.OPENROUTER -> OpenRouterTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
             AiTranslatorKind.DEEPSEEK -> DeepSeekTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
             AiTranslatorKind.LMSTUDIO -> LmStudioTranslator(
@@ -4552,15 +4542,8 @@ class TranslationPipeline(
     private fun batchExpectedFingerprints(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
-        ambiguityPrior: SceneContextEngine.PriorSetting? = null,
     ): BatchExpectedFingerprints {
-        // The batch relationship prior is part of translation provenance: a
-        // switch invalidates translation/layout only (planner fingerprint),
-        // never the native stages, and never rebuilds the translator object.
-        val translationInput = buildString {
-            append(currentTranslatorSignature.toString())
-            ambiguityPrior?.let { append("|prior=").append(it.name) }
-        }
+        val translationInput = currentTranslatorSignature.toString()
         return BatchExpectedFingerprints(
             detection = StageFingerprints.configuration(
                 ArtifactStage.DETECTION,
@@ -4588,52 +4571,6 @@ class TranslationPipeline(
                 currentReadingOrder.name,
             ),
         )
-    }
-
-    private data class SceneChainReplay(
-        val state: SceneCardState,
-        /** First batch-context-complete page whose checkpoint broke the chain, if any. */
-        val corruptFrom: String? = null,
-    )
-
-    /**
-     * Replays the persisted page-scoped scene checkpoint chain in natural
-     * order and returns the latest trusted state. The chain breaks at the
-     * first batch-context-complete page whose serialized checkpoint is missing
-     * or unparseable — that page (and the translation suffix behind it, via
-     * the planner) reruns translation-only while committed displays remain.
-     *
-     * Legacy pages completed before scene checkpoints existed do not break the
-     * chain: their reuse decision stands and context prompting resumes from
-     * the latest scene checkpoint that does exist.
-     */
-    private fun replaySceneCheckpoints(
-        orderedPageKeys: List<String>,
-        store: ChapterTranslationStore,
-    ): SceneChainReplay {
-        var frontier = SceneCardState.genesis()
-        var corruptFrom: String? = null
-        for (pageKey in orderedPageKeys) {
-            val page = store.state.value[pageKey] ?: continue
-            if (!page.batchContextComplete) continue
-            val serialized = page.batchSceneCheckpoint
-            if (serialized.isNullOrBlank()) {
-                // Legacy checkpoint: no scene data. Keep reuse (no mass rerun);
-                // a legacy chain simply has no scene state to resume from.
-                continue
-            }
-            val decoded = SceneCardState.decode(serialized)
-            if (decoded == null || decoded.inputCheckpointHash != frontier.checkpointHash) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT scene checkpoint chain break: pageKey=$pageKey " +
-                        "reason=${if (decoded == null) "unparseable" else "hash mismatch"}"
-                }
-                corruptFrom = pageKey
-                break
-            }
-            frontier = decoded
-        }
-        return SceneChainReplay(state = frontier, corruptFrom = corruptFrom)
     }
 
     private data class DecodedPage(

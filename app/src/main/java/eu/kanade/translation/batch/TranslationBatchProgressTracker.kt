@@ -1,6 +1,8 @@
 package eu.kanade.translation.batch
 
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.model.AiBatchProgress
+import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.PageIndexResolver
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageCount
@@ -83,6 +85,11 @@ class TranslationBatchProgressTracker(
     ) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.FAILED, reason)
     fun markTranslatePartial(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.PARTIAL)
     fun markTranslateSkipped(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.SKIPPED)
+    fun markAiPending(pageKey: String) = aiProgress(pageKey, AiPageProgressState.PENDING)
+    fun markAiBuffered(pageKey: String) = aiProgress(pageKey, AiPageProgressState.BUFFERED)
+    fun markAiRunning(pageKey: String) = aiProgress(pageKey, AiPageProgressState.RUNNING)
+    fun markAiSucceeded(pageKey: String) = aiProgress(pageKey, AiPageProgressState.SUCCEEDED)
+    fun markAiFailed(pageKey: String, reason: String) = aiProgress(pageKey, AiPageProgressState.FAILED, reason)
     fun markInpaintRunning(pageKey: String) = phase(pageKey, BatchPhase.INPAINT, PhaseStatus.RUNNING)
     fun markInpaintDone(pageKey: String) = phase(pageKey, BatchPhase.INPAINT, PhaseStatus.DONE)
     fun markInpaintFailed(
@@ -99,6 +106,14 @@ class TranslationBatchProgressTracker(
 
     private fun phase(pageKey: String, phase: BatchPhase, status: PhaseStatus, reason: String? = null) = emit(
         TranslationBatchEvent.PagePhase(pageKey, indexResolver[pageKey] ?: 0, phase, status, reason = reason),
+    )
+
+    private fun aiProgress(
+        pageKey: String,
+        state: AiPageProgressState,
+        reason: String? = null,
+    ) = emit(
+        TranslationBatchEvent.AiPageProgress(pageKey, indexResolver[pageKey] ?: 0, state, reason),
     )
 
     fun finish(result: ReconciliationResult) {
@@ -155,12 +170,14 @@ class TranslationBatchProgressTracker(
         permitHolderPageKey = permitHolderResolver?.invoke(),
         batchPhase = state.batchPhase,
         chapterId = chapterId,
+        aiPageStates = state.aiPageStates,
     ).copy(aborted = state.aborted, abortedReason = state.abortReason)
 
     data class Projection(
         val chapterState: Translation.State = Translation.State.TRANSLATING,
         val batchPhase: TranslationBatchPhase = TranslationBatchPhase.FIRST_PASS,
         val pagePhases: Map<String, Map<BatchPhase, String>> = emptyMap(),
+        val aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
         val aborted: Boolean = false,
         val abortReason: String? = null,
     )
@@ -173,6 +190,11 @@ class TranslationBatchProgressTracker(
                     event.pageKey to (
                         previous.pagePhases[event.pageKey].orEmpty() + (event.phase to event.status.toStageStatus())
                         )
+                    ),
+            )
+            is TranslationBatchEvent.AiPageProgress -> previous.copy(
+                aiPageStates = previous.aiPageStates + (
+                    event.pageKey to nextAiState(previous.aiPageStates[event.pageKey], event.state)
                     ),
             )
             is TranslationBatchEvent.BatchFinished -> previous.copy(
@@ -204,6 +226,7 @@ class TranslationBatchProgressTracker(
             forcedDoneCount: Int = -1,
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
+            aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
             batchPhase: TranslationBatchPhase = if (chapterState ==
                 Translation.State.TRANSLATING
             ) {
@@ -219,6 +242,7 @@ class TranslationBatchProgressTracker(
             val rows = pageMap.entries.mapIndexed { order, (key, page) ->
                 val stage = progressStage(page, committedPages[key])
                 val display = page.toPageDisplayProjection(committedPages[key])
+                val aiState = aiPageStates[key] ?: inferAiState(page)
                 TranslationProgressSnapshot.Page(
                     pageKey = key,
                     index = PageIndexResolver.resolve(key, order, indexResolver),
@@ -240,7 +264,7 @@ class TranslationBatchProgressTracker(
                     displayState = display.state,
                     displayReady = display.displayReady,
                     processed = display.processed,
-                    batchContextComplete = display.batchContextComplete,
+                    aiState = aiState,
                 )
             }.sortedWith(compareBy<TranslationProgressSnapshot.Page> { it.index }.thenBy { it.pageKey })
             val stageCounts = BatchPhase.entries.associateWith { phase ->
@@ -265,6 +289,13 @@ class TranslationBatchProgressTracker(
             val active =
                 rows.firstOrNull { it.stage.isRunning }
                     ?: rows.firstOrNull { it.stage == TranslationProgressStage.QUEUED }
+            val aiProgress = AiBatchProgress(
+                pending = rows.count { it.aiState == AiPageProgressState.PENDING },
+                buffered = rows.count { it.aiState == AiPageProgressState.BUFFERED },
+                running = rows.count { it.aiState == AiPageProgressState.RUNNING },
+                succeeded = rows.count { it.aiState == AiPageProgressState.SUCCEEDED },
+                failed = rows.count { it.aiState == AiPageProgressState.FAILED },
+            )
             return TranslationProgressSnapshot(
                 chapterId, chapterState, done + failed, rows.size, active?.index ?: 0, active?.pageKey, activeStages,
                 rows.count {
@@ -291,6 +322,7 @@ class TranslationBatchProgressTracker(
                 }, { it.key }),
                 System.currentTimeMillis(),
                 batchPhase = batchPhase,
+                aiProgress = aiProgress,
             )
         }
 
@@ -349,6 +381,26 @@ class TranslationBatchProgressTracker(
             page.inpaintStatus == StageStatus.RUNNING -> TranslationProgressStage.INPAINT
             page.ocrStatus == StageStatus.RUNNING -> TranslationProgressStage.OCR
             else -> TranslationProgressStage.QUEUED
+        }
+
+        private fun inferAiState(page: PageTranslation): AiPageProgressState = when {
+            page.translationStatus == StageStatus.READY ||
+                page.translationStatus == StageStatus.PARTIAL ||
+                page.translationStatus == StageStatus.SKIPPED -> AiPageProgressState.SUCCEEDED
+            page.translationStatus == StageStatus.FAILED -> AiPageProgressState.FAILED
+            page.translationStatus == StageStatus.RUNNING -> AiPageProgressState.RUNNING
+            else -> AiPageProgressState.PENDING
+        }
+
+        private fun nextAiState(
+            previous: AiPageProgressState?,
+            next: AiPageProgressState,
+        ): AiPageProgressState = if (
+            previous == AiPageProgressState.SUCCEEDED || previous == AiPageProgressState.FAILED
+        ) {
+            previous
+        } else {
+            next
         }
     }
 }

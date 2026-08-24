@@ -2,7 +2,7 @@
 set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
 set "PATH=%PATH%;C:\Users\ADMIN\AppData\Local\Android\Sdk\platform-tools"
 echo === BUILD ===
-call gradlew.bat :app:assembleStandardDebug --no-daemon > _build.log 2>&1
+call gradlew.bat :app:assembleStandardDebug > _build.log 2>&1
 echo BUILD_EXITCODE=%ERRORLEVEL% >> _build.log
 findstr /C:"BUILD SUCCESSFUL" /C:"BUILD FAILED" /C:"e: file" _build.log
 echo === INSTALL ===

@@ -4,7 +4,6 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.string.shouldContain
 import org.junit.jupiter.api.Test
 
@@ -46,30 +45,25 @@ class TranslationContextChunkPlannerTest {
     }
 
     @Test
-    fun `large pages split by block without exceeding context`() {
+    fun `large page is rejected whole instead of splitting its blocks`() {
         val pages = linkedMapOf(
             "001.jpg" to PageTranslation(
-                blocks = MutableList(20) { index -> block("block-$index " + "x".repeat(10_000)) },
+                // CJK text tokenizes at roughly one token per character, so
+                // the complete page cannot fit one MAX_CONTEXT_TOKENS envelope.
+                blocks = MutableList(20) { index -> block("block-$index " + "\u65e5".repeat(TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS / 6)) },
             ),
         )
 
         val result = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = 8192)
 
-        result.rejectedPages shouldBe emptyMap()
-        result.chunks.size shouldNotBe 1
-        result.chunks.forEach { chunk ->
-            (
-                chunk.estimatedPromptTokens + chunk.maxOutputTokens +
-                    TranslationContextChunkPlanner.SAFETY_MARGIN <=
-                    TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
-                ) shouldBe true
-        }
+        result.rejectedPages.keys shouldContainExactly listOf("001.jpg")
+        result.chunks shouldBe emptyList()
     }
 
     @Test
     fun `single oversized block is rejected instead of planned`() {
         val pages = linkedMapOf(
-            "001.jpg" to page("x".repeat(100_000)),
+            "001.jpg" to page("\u65e5".repeat(TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS)),
             "002.jpg" to page("small"),
         )
 
@@ -82,13 +76,14 @@ class TranslationContextChunkPlannerTest {
     @Test
     fun `output cap is upper bound and shrinks to fit budget`() {
         val pages = linkedMapOf(
-            "001.jpg" to page("x".repeat(20_000)),
+            "001.jpg" to page("\u65e5".repeat(TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS / 2)),
         )
 
-        val result = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = 8192)
+        val requested = TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
+        val result = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = requested)
         val chunk = result.chunks.single()
 
-        (chunk.maxOutputTokens < 8192) shouldBe true
+        (chunk.maxOutputTokens < requested) shouldBe true
         (
             chunk.estimatedPromptTokens + chunk.maxOutputTokens +
                 TranslationContextChunkPlanner.SAFETY_MARGIN <=
@@ -99,13 +94,16 @@ class TranslationContextChunkPlannerTest {
     @Test
     fun `batch output cap reserves envelope overhead`() {
         val pages = linkedMapOf("001.jpg" to page("hello"))
-        val chunk = TranslationContextChunkPlanner.plan(pages, requestedOutputTokens = 8192).chunks.single()
+        val chunk = TranslationContextChunkPlanner.plan(
+            pages,
+            requestedOutputTokens = TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS,
+        ).chunks.single()
         val constraints = TranslationContextChunkPlanner.constraintsFor(
             TranslationContextChunkPlanner.Profile.DEFAULT,
         )
         val legacyCap = StreamingChunkPlanner.effectiveOutputCap(
             promptTokens = chunk.estimatedPromptTokens,
-            requestedOutputTokens = 8192,
+            requestedOutputTokens = TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS,
             constraints = constraints,
             protocol = ContextualRequestProtocol.LEGACY,
         )
@@ -143,7 +141,7 @@ class TranslationContextChunkPlannerTest {
     }
 
     @Test
-    fun `lm studio profile limits pages and blocks per chunk`() {
+    fun `lm studio profile retains complete pages while respecting the token budget`() {
         val pages = linkedMapOf(
             "001.jpg" to PageTranslation(blocks = MutableList(10) { block("p1-$it") }),
             "002.jpg" to PageTranslation(blocks = MutableList(10) { block("p2-$it") }),
@@ -165,21 +163,19 @@ class TranslationContextChunkPlannerTest {
             profile = TranslationContextChunkPlanner.Profile.LM_STUDIO,
         )
 
+        val constraints = TranslationContextChunkPlanner.constraintsFor(
+            TranslationContextChunkPlanner.Profile.LM_STUDIO,
+        )
         result.rejectedPages shouldBe emptyMap()
-        result.chunks.size shouldBe 2
         result.chunks.forEach { chunk ->
-            (chunk.blockCount <= 75) shouldBe true
-            (chunk.pages.size <= 10) shouldBe true
             (
                 chunk.estimatedPromptTokens + chunk.maxOutputTokens +
-                    TranslationContextChunkPlanner.constraintsFor(
-                        TranslationContextChunkPlanner.Profile.LM_STUDIO,
-                    ).safetyMargin <=
-                    TranslationContextChunkPlanner.constraintsFor(
-                        TranslationContextChunkPlanner.Profile.LM_STUDIO,
-                    ).maxContextTokens
+                    constraints.safetyMargin <= constraints.maxContextTokens
                 ) shouldBe true
         }
+        // Every accepted block is planned exactly once across the chunks.
+        result.chunks.sumOf { it.blockCount } shouldBe 120
+        result.chunks.flatMap { it.pages.keys }.distinct().size shouldBe 12
     }
 
     @Test
@@ -203,33 +199,6 @@ class TranslationContextChunkPlannerTest {
         retryPages.keys.toList() shouldContainExactly listOf("001.jpg", "002.jpg")
         retryPages["001.jpg"]!!.blocks shouldContainExactly listOf(missing)
         retryPages["002.jpg"]!!.blocks shouldContainExactly listOf(sourceEqual)
-    }
-
-    @Test
-    fun `retry planner splits thrown chunks smaller until single block`() {
-        val chunk = TranslationContextChunk(
-            pages = linkedMapOf(
-                "001.jpg" to PageTranslation(blocks = MutableList(4) { block("b$it") }),
-            ),
-            blockCount = 4,
-            rollingContext = "",
-            estimatedPromptTokens = 1000,
-            maxOutputTokens = 1024,
-        )
-
-        val split = AiTranslationRetryPlanner.planFailureSplit(
-            chunk = chunk,
-            requestedOutputTokens = 1024,
-            profile = TranslationContextChunkPlanner.Profile.LM_STUDIO,
-        )
-        val terminal = AiTranslationRetryPlanner.planFailureSplit(
-            chunk = split.chunks.first(),
-            requestedOutputTokens = 1024,
-            profile = TranslationContextChunkPlanner.Profile.LM_STUDIO,
-        )
-
-        split.chunks.map { it.blockCount } shouldContainExactly listOf(2, 2)
-        terminal.chunks.map { it.blockCount } shouldContainExactly listOf(1, 1)
     }
 
     @Test

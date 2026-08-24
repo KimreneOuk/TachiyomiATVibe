@@ -26,7 +26,7 @@ This doc gives each subagent a concrete, falsifiable target: **write this test f
 - **No MockWebServer.** HTTP code cannot be tested without adding the dep.
 - **No `androidTest/` dir.** Zero instrumented tests exist.
 
-**Run command:** `./gradlew :app:testDebugUnitTest` (full suite). Targeted: `./gradlew :app:testDebugUnitTest --tests "eu.kanade.translation.*"`.
+**Run command:** `./gradlew :app:testStandardDebugUnitTest` (full suite). Targeted: `./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.*"`.
 
 **Existing test count:** 57 files under `app/src/test/java/eu/kanade/translation/`.
 
@@ -367,7 +367,7 @@ class AotFeedingBufferPoolingTest {
 **New test:** none (this is a build config change).
 
 **Verification:**
-1. `./gradlew :app:testDebugUnitTest` — all 57+ tests pass.
+1. `./gradlew :app:testStandardDebugUnitTest` — all 57+ tests pass.
 2. `./gradlew :app:assembleDebug` — build succeeds.
 3. **Manual on-device smoke:** load each model (detector, OCR, inpaint, panel, segmenter, paddle). Confirm no load-time crash. This is the gate — ORT upgrades can break native loading.
 
@@ -982,7 +982,7 @@ fun `aggregate health monitor disables NNAPI after threshold`() {
 
 # Anti-Breakage Protocol (applies to every subagent)
 
-1. **Before writing any production code:** run `./gradlew :app:testDebugUnitTest`. Capture the green baseline. If it's already red, STOP and report — the subagent's branch has a pre-existing failure.
+1. **Before writing any production code:** run `./gradlew :app:testStandardDebugUnitTest`. Capture the green baseline. If it's already red, STOP and report — the subagent's branch has a pre-existing failure.
 2. **Write the new test first.** Run it. Confirm it FAILS for the right reason (RED). If it passes immediately, the test is wrong or the bug is already fixed.
 3. **Implement the fix.** Run the new test. Confirm GREEN.
 4. **Run the full suite.** All previously-green tests must stay green. Any regression = the subagent broke something.

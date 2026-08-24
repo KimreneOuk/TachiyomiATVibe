@@ -1,14 +1,29 @@
 package eu.kanade.translation.translator
 
-import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.BlockThreshold
-import com.google.ai.client.generativeai.type.HarmCategory
-import com.google.ai.client.generativeai.type.SafetySetting
-import com.google.ai.client.generativeai.type.content
-import com.google.ai.client.generativeai.type.generationConfig
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.util.ShortHash
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import logcat.LogPriority
 import logcat.logcat
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import tachiyomi.domain.translation.GeminiThinkingMode
+import java.util.concurrent.TimeUnit
 
 class GeminiTranslator(
     override val fromLang: TextRecognizerLanguage,
@@ -17,21 +32,29 @@ class GeminiTranslator(
     private val modelName: String,
     val maxOutputToken: Int,
     val temp: Float,
+    private val thinkingMode: GeminiThinkingMode = GeminiThinkingMode.DISABLED,
 ) : AITranslator() {
+
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
         val blockCount = linkedPages.values.sumOf { it.blocks.size }
-        val chunk = TranslationContextChunk(
-            pages = linkedPages,
-            blockCount = blockCount,
-            rollingContext = "",
-            glossary = "",
-            estimatedPromptTokens = 0,
-            maxOutputTokens = maxOutputToken,
-            protocol = ContextualRequestProtocol.LEGACY,
+        translateContextual(
+            TranslationContextChunk(
+                pages = linkedPages,
+                blockCount = blockCount,
+                rollingContext = "",
+                glossary = "",
+                estimatedPromptTokens = 0,
+                maxOutputTokens = maxOutputToken,
+                protocol = ContextualRequestProtocol.LEGACY,
+            ),
         )
-        translateContextual(chunk)
     }
 
     override suspend fun translateContextual(chunk: TranslationContextChunk): ContextualTranslationBatch {
@@ -44,95 +67,231 @@ class GeminiTranslator(
         chunk: TranslationContextChunk,
     ): ContextualTranslationBatch {
         val request = ContextualRequestBuilder.buildFor(chunk, fromLang, toLang)
-        if (request.promptLines.isEmpty()) {
-            return ContextualRequestBuilder.toBatch(request, emptyList())
+        if (request.promptLines.isEmpty()) return ContextualRequestBuilder.toBatch(request, emptyList())
+
+        val systemPrompt = TranslationPrompts.pass1SystemPrompt(
+            fromLang,
+            toLang,
+            batchProtocol = request.protocol == ContextualRequestProtocol.BATCH_V1,
+        )
+        val finalPrompt = ContextualRequestBuilder.renderPrompt(
+            request = request,
+            rollingContext = chunk.rollingContext,
+            extraGlossary = chunk.glossary,
+        )
+        val responseText = withTranslationRetry(
+            logTag = "gemini",
+            envelopePageKeys = chunk.pages.keys,
+        ) {
+            generateContent(
+                systemPrompt = systemPrompt,
+                prompt = finalPrompt,
+                maxOutputTokens = chunk.maxOutputTokens,
+            )
         }
-
-        try {
-            val systemPrompt = TranslationPrompts.pass1SystemPrompt(
-                fromLang,
-                toLang,
-                batchProtocol = request.protocol == ContextualRequestProtocol.BATCH_V1,
+        return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
+            ContextualResponseParser.parseBatch(responseText, request)
+        } else {
+            ContextualRequestBuilder.toBatch(
+                request,
+                ContextualResponseParser.parse(responseText.lineSequence().toList(), request.idMap),
             )
-            val finalPrompt = ContextualRequestBuilder.renderPrompt(
-                request = request,
-                rollingContext = chunk.rollingContext,
-                extraGlossary = chunk.glossary,
-            )
-
-            val activeModel = GenerativeModel(
-                modelName = modelName,
-                apiKey = apiKey,
-                generationConfig = generationConfig {
-                    topK = 30
-                    topP = 0.5f
-                    temperature = temp
-                    maxOutputTokens = chunk.maxOutputTokens
-                },
-                safetySettings = listOf(
-                    SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.NONE),
-                    SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.NONE),
-                    SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, BlockThreshold.NONE),
-                    SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.NONE),
-                ),
-                systemInstruction = content {
-                    text(systemPrompt)
-                },
-            )
-
-            val response = activeModel.generateContent(finalPrompt)
-            val responseText = response.text
-            if (responseText.isNullOrBlank()) {
-                throw GeminiEmptyResponseException(
-                    "Gemini returned an empty response (refused, safety-filtered, or error).",
-                )
-            }
-
-            return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
-                ContextualResponseParser.parseBatch(responseText, request)
-            } else {
-                val parsed = ContextualResponseParser.parse(responseText.split("\n"), request.idMap)
-                ContextualRequestBuilder.toBatch(request, parsed)
-            }
-        } catch (e: Exception) {
-            logcat { "event=provider_failure backend=gemini stage=contextual error=${e::class.java.simpleName}" }
-            throw e
         }
     }
 
-    private val textModel: GenerativeModel = GenerativeModel(
-        modelName = modelName,
-        apiKey = apiKey,
-        generationConfig = generationConfig {
-            topK = 30
-            topP = 0.5f
-            temperature = temp
-            maxOutputTokens = maxOutputToken
-        },
-        safetySettings = listOf(
-            SafetySetting(HarmCategory.HARASSMENT, BlockThreshold.NONE),
-            SafetySetting(HarmCategory.HATE_SPEECH, BlockThreshold.NONE),
-            SafetySetting(HarmCategory.SEXUALLY_EXPLICIT, BlockThreshold.NONE),
-            SafetySetting(HarmCategory.DANGEROUS_CONTENT, BlockThreshold.NONE),
-        ),
-    )
-
-    override suspend fun promptText(prompt: String): String {
-        return try {
-            val response = textModel.generateContent(prompt)
-            response.text ?: ""
+    override suspend fun promptText(prompt: String): String =
+        try {
+            withTranslationRetry(logTag = "gemini") {
+                generateContent(systemPrompt = null, prompt = prompt, maxOutputTokens = maxOutputToken)
+            }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
-            logcat { "event=provider_failure backend=gemini stage=prompt error=${e::class.java.simpleName}" }
+            logProviderFailure(stage = "prompt", error = e)
             ""
+        }
+
+    private suspend fun generateContent(
+        systemPrompt: String?,
+        prompt: String,
+        maxOutputTokens: Int,
+    ): String {
+        val requestConfig = GeminiRequestPayload.create(
+            modelName = modelName,
+            systemPrompt = systemPrompt,
+            prompt = prompt,
+            maxOutputTokens = maxOutputTokens,
+            temperature = temp,
+            thinkingMode = thinkingMode,
+        )
+        return try {
+            post(requestConfig.payload)
+        } catch (e: GeminiApiException) {
+            if (e.statusCode != 400 || !requestConfig.hasThinkingConfig) throw e
+            logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
+                "event=gemini_thinking_fallback model=${ShortHash.hash(modelName)} status=${e.statusCode}"
+            }
+            post(requestConfig.payloadWithoutThinking)
+        }
+    }
+
+    private suspend fun post(payload: String): String {
+        val request = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent")
+            .header("x-goog-api-key", apiKey)
+            .header("Content-Type", "application/json")
+            .post(payload.toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+        val response = client.newCall(request).await()
+        val body = response.body?.string().orEmpty()
+        if (!response.isSuccessful) {
+            val retryAfterMillis = response.header("Retry-After")?.toLongOrNull()?.times(1_000)
+            val error = body.toGeminiErrorSummary()
+            logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
+                "event=provider_http_failure backend=gemini status=${response.code} " +
+                    "retryAfterMs=${retryAfterMillis ?: 0} code=${error.code ?: 0} " +
+                    "statusName=${error.statusName ?: "none"} responseHash=${ShortHash.hash(body)}"
+            }
+            throw GeminiApiException(response.code, retryAfterMillis, error.code, error.statusName)
+        }
+        return body.extractGeminiText()
+    }
+
+    private fun logProviderFailure(stage: String, error: Exception) {
+        val status = (error as? GeminiApiException)?.statusCode ?: 0
+        val retryAfter = (error as? GeminiApiException)?.retryAfterMillis ?: 0
+        logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
+            "event=provider_failure backend=gemini stage=$stage status=$status retryAfterMs=$retryAfter " +
+                "error=${error::class.java.simpleName}"
         }
     }
 
     override fun close() {
+        client.connectionPool.evictAll()
+        client.dispatcher.executorService.shutdown()
+    }
+
+    private companion object {
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
 
-/**
- * TachiyomiAT: thrown when Gemini returns no usable text (refusal, safety filter, or internal error).
- * Distinct from a generic [Exception] so the caller can report a clear cause instead of a low-level JSON error.
- */
+internal data class GeminiPayload(
+    val payload: String,
+    val payloadWithoutThinking: String,
+    val hasThinkingConfig: Boolean,
+)
+
+internal object GeminiRequestPayload {
+    fun create(
+        modelName: String,
+        systemPrompt: String?,
+        prompt: String,
+        maxOutputTokens: Int,
+        temperature: Float,
+        thinkingMode: GeminiThinkingMode,
+    ): GeminiPayload {
+        val thinkingConfig = thinkingConfig(modelName, thinkingMode)
+        fun payload(includeThinking: Boolean): String = Json.encodeToString(
+            JsonObject.serializer(),
+            buildJsonObject {
+                put("contents", buildJsonArray { add(content(prompt)) })
+                put(
+                    "generationConfig",
+                    buildJsonObject {
+                        put("temperature", JsonPrimitive(temperature))
+                        put("topP", JsonPrimitive(0.5))
+                        put("topK", JsonPrimitive(30))
+                        put("maxOutputTokens", JsonPrimitive(maxOutputTokens))
+                        thinkingConfig?.takeIf { includeThinking }?.let { put("thinkingConfig", it) }
+                    },
+                )
+                put("safetySettings", safetySettings())
+                systemPrompt?.let { put("systemInstruction", content(it)) }
+            },
+        )
+
+        val hasThinkingConfig = thinkingConfig != null
+        return GeminiPayload(
+            payload = payload(includeThinking = true),
+            payloadWithoutThinking = payload(includeThinking = false),
+            hasThinkingConfig = hasThinkingConfig,
+        )
+    }
+
+    private fun thinkingConfig(modelName: String, mode: GeminiThinkingMode): JsonObject? {
+        val normalized = modelName.lowercase()
+        return when {
+            mode == GeminiThinkingMode.AUTO -> null
+            normalized.startsWith("gemini-3") && mode == GeminiThinkingMode.LOW ->
+                buildJsonObject { put("thinkingLevel", JsonPrimitive("low")) }
+            normalized.startsWith("gemini-2.5-flash") && mode == GeminiThinkingMode.DISABLED ->
+                buildJsonObject { put("thinkingBudget", JsonPrimitive(0)) }
+            normalized.startsWith("gemini-2.5") && mode == GeminiThinkingMode.LOW ->
+                buildJsonObject { put("thinkingBudget", JsonPrimitive(1_024)) }
+            else -> null
+        }
+    }
+
+    private fun content(text: String): JsonObject = buildJsonObject {
+        put("parts", buildJsonArray { add(buildJsonObject { put("text", JsonPrimitive(text)) }) })
+    }
+
+    private fun safetySettings(): JsonArray = buildJsonArray {
+        listOf(
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+        ).forEach { category ->
+            add(
+                buildJsonObject {
+                    put("category", JsonPrimitive(category))
+                    put("threshold", JsonPrimitive("BLOCK_NONE"))
+                },
+            )
+        }
+    }
+}
+
+internal class GeminiApiException(
+    val statusCode: Int,
+    val retryAfterMillis: Long?,
+    val providerCode: Int?,
+    val providerStatus: String?,
+) : Exception("Gemini HTTP $statusCode${providerStatus?.let { " ($it)" }.orEmpty()}")
+
+private data class GeminiErrorSummary(val code: Int?, val statusName: String?)
+
+private fun String.toGeminiErrorSummary(): GeminiErrorSummary = runCatching {
+    val error = Json.parseToJsonElement(this).jsonObject["error"]?.jsonObject
+        ?: return@runCatching GeminiErrorSummary(null, null)
+    GeminiErrorSummary(
+        code = error["code"]?.jsonPrimitive?.contentOrNull?.toIntOrNull(),
+        statusName = error["status"]?.jsonPrimitive?.contentOrNull,
+    )
+}.getOrDefault(GeminiErrorSummary(null, null))
+
+internal fun String.extractGeminiText(): String {
+    val parts = Json.parseToJsonElement(this).jsonObject["candidates"]
+        ?.jsonArray
+        ?.firstOrNull()
+        ?.jsonObject
+        ?.get("content")
+        ?.jsonObject
+        ?.get("parts")
+        ?.jsonArray
+        ?: throw GeminiEmptyResponseException("Gemini returned no response candidate")
+    val text = buildString {
+        parts.forEach { part ->
+            val partObject = part.jsonObject
+            if (partObject["thought"]?.jsonPrimitive?.booleanOrNull != true) {
+                append(partObject["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
+            }
+        }
+    }.trim()
+    if (text.isBlank()) throw GeminiEmptyResponseException("Gemini returned no usable text")
+    return text
+}
+
 class GeminiEmptyResponseException(message: String) : Exception(message)

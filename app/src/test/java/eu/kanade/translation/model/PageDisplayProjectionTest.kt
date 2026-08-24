@@ -30,7 +30,6 @@ class PageDisplayProjectionTest {
         val committed = readyPage().copy(
             pageVersion = 3,
             translationOrigin = ArtifactOrigin.BATCH.name,
-            batchContextComplete = true,
         )
         val candidate = committed.copy(
             pageVersion = 4,
@@ -38,7 +37,6 @@ class PageDisplayProjectionTest {
             inpaintStatus = StageStatus.PENDING,
             translationStatus = StageStatus.RUNNING,
             renderStatus = StageStatus.PENDING,
-            batchContextComplete = false,
         )
 
         val projection = candidate.toPageDisplayProjection(committed)
@@ -46,7 +44,6 @@ class PageDisplayProjectionTest {
         projection.state shouldBe PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT
         projection.displayReady shouldBe true
         projection.processed shouldBe false
-        projection.batchContextComplete shouldBe false
     }
 
     @Test
@@ -70,16 +67,12 @@ class PageDisplayProjectionTest {
     }
 
     @Test
-    fun `reader adhoc result is display-ready but not batch-complete`() {
+    fun `reader adhoc result is display-ready`() {
         val page = readyPage().copy(
             translationOrigin = ArtifactOrigin.READER_ADHOC.name,
-            batchContextComplete = false,
         )
 
-        page.toPageDisplayProjection().let {
-            it.displayReady shouldBe true
-            it.batchContextComplete shouldBe false
-        }
+        page.toPageDisplayProjection().displayReady shouldBe true
     }
 
     @Test
@@ -157,7 +150,7 @@ class PageDisplayProjectionTest {
     }
 
     @Test
-    fun `artifact projection requires validated committed base and separates adhoc context`() {
+    fun `artifact projection requires validated committed base`() {
         val record = PageArtifactRecord(
             pageKey = "page-1.jpg",
             displayState = PageDisplayState.DISPLAY_READY,
@@ -175,10 +168,7 @@ class PageDisplayProjectionTest {
             layout = StageArtifactRecord(ArtifactStageStatus.READY, artifactFileName = "layout.json"),
         )
 
-        PageDisplayProjection.from(record).let {
-            it.displayReady shouldBe true
-            it.batchContextComplete shouldBe false
-        }
+        PageDisplayProjection.from(record).displayReady shouldBe true
         PageDisplayProjection.from(
             record.copy(layout = StageArtifactRecord(ArtifactStageStatus.ABSENT)),
         ).displayReady shouldBe false

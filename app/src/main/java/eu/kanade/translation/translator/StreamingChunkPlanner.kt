@@ -12,20 +12,18 @@ import eu.kanade.translation.translator.TranslationContextChunkPlanner.estimateT
  * with IDENTICAL contents as the greedy batch planner, so a concurrent pipeline
  * can translate each chunk as it fills instead of planning everything up front.
  *
- * The only behaviour added over the batch path is completion tracking: because a
- * page may span several chunks, a page "completes" on the flush that emits its
- * LAST chunkable source block (see [Emission.completedPages]).
+ * Pages are atomic: all unfinished text blocks from a page stay in one
+ * envelope. The greedy admission rule adds complete pages until the provider
+ * token budget is reached, then flushes before the next page. This prevents a
+ * dense page from losing its intra-page context across separate requests.
  */
 class StreamingChunkPlanner(
     requestedOutputTokens: Int,
     profile: TranslationContextChunkPlanner.Profile = TranslationContextChunkPlanner.Profile.DEFAULT,
-    maxBlocksPerChunk: Int? = null,
-    maxPagesPerChunk: Int? = null,
     private val naturalPageIndexes: Map<String, Int> = emptyMap(),
 ) {
     /** One chunk flushed by the greedy buffer, plus page keys fully consumed by it.
-     *  A page may span multiple chunks; it completes on the chunk holding its LAST
-     *  source block. `chunk` is null ONLY for a "chunkless completion" — a page whose
+     *  `chunk` is null ONLY for a "chunkless completion" — a page whose
      *  non-blank source blocks are ALL already translated (resume case), needing no
      *  chunk but still reported downstream to be marked READY. A textless page (zero
      *  non-blank blocks) is NEVER completed. When a single [accept] flushes several
@@ -43,12 +41,7 @@ class StreamingChunkPlanner(
         val rejectedPages: Map<String, String>,
     )
 
-    private val constraints: Constraints = constraintsFor(profile).let {
-        it.copy(
-            maxBlocksPerChunk = maxBlocksPerChunk ?: it.maxBlocksPerChunk,
-            maxPagesPerChunk = maxPagesPerChunk ?: it.maxPagesPerChunk,
-        )
-    }
+    private val constraints: Constraints = constraintsFor(profile)
     private val outputUpperBound: Int = requestedOutputTokens.coerceAtLeast(constraints.minOutputTokens)
 
     private val emitted = mutableListOf<TranslationContextChunk>()
@@ -61,13 +54,7 @@ class StreamingChunkPlanner(
         ?.let { if (it == Int.MAX_VALUE) 0 else it + 1 }
         ?: 0
 
-    // A page completes once emittedRefs == totalRefs: every chunkable ref must be flushed
-    // into an emitted chunk (refs still in the un-flushed buffer don't count). This lets a
-    // downstream pipeline mark a page READY exactly when its last source block is handed off.
-    private val totalRefs = linkedMapOf<String, Int>()
-    private val emittedRefs = linkedMapOf<String, Int>()
-
-    /** Accumulating rejection map (page rejected because one block alone
+    /** Accumulating rejection map (page rejected because all of its unfinished blocks together
      *  exceeds the context budget). Finalized after [flushRemaining]. */
     val rejectedPages: Map<String, String> get() = rejected
 
@@ -116,25 +103,29 @@ class StreamingChunkPlanner(
             // A rejected page contributes no refs and is intentionally never
             // reported as completed.
         } else {
-            totalRefs[pageKey] = pageRefs.size
-            pageRefs.forEach { (ref, refTokens) ->
-                val prospectivePageCount = current.mapTo(linkedSetOf()) { it.pageKey }
-                    .also { it += ref.pageKey }
-                    .size
+            val pageTokens = pageRefs.sumOf { it.second }
+            if (pageRefs.isNotEmpty() &&
+                constraints.promptOverheadTokens + pageTokens > promptBudget(pageRefs.size, 1)
+            ) {
+                flushForAccept()?.let {
+                    lastChunk = it.chunk
+                    completed += it.completed
+                }
+                rejected[pageKey] = "Page text exceeds the ${constraints.maxContextTokens / 1024}k AI context budget"
+            } else if (pageRefs.isNotEmpty()) {
+                val prospectivePageCount = current.mapTo(linkedSetOf()) { it.pageKey }.size + 1
                 if (current.isNotEmpty() &&
-                    (
-                        currentTokens + refTokens > promptBudget(current.size + 1, prospectivePageCount) ||
-                            current.size >= constraints.maxBlocksPerChunk ||
-                            prospectivePageCount > constraints.maxPagesPerChunk
-                        )
+                    currentTokens + pageTokens > promptBudget(current.size + pageRefs.size, prospectivePageCount)
                 ) {
                     flushForAccept()?.let {
                         lastChunk = it.chunk
                         completed += it.completed
                     }
                 }
-                current += ref
-                currentTokens += refTokens
+                pageRefs.forEach { (ref, refTokens) ->
+                    current += ref
+                    currentTokens += refTokens
+                }
             }
             // Chunkless (resume) completion: only non-blank already-translated blocks, so no
             // chunk is needed but the page must still surface downstream to be marked READY.
@@ -170,11 +161,7 @@ class StreamingChunkPlanner(
         val refs = current
         val chunk = buildChunk(refs, outputUpperBound, constraints)
         val completed = linkedSetOf<String>()
-        refs.groupBy { it.pageKey }.forEach { (pageKey, blockRefs) ->
-            val newCount = (emittedRefs[pageKey] ?: 0) + blockRefs.size
-            emittedRefs[pageKey] = newCount
-            if (newCount == totalRefs[pageKey]) completed += pageKey
-        }
+        completed += refs.mapTo(linkedSetOf()) { it.pageKey }
         current = mutableListOf()
         currentTokens = constraints.promptOverheadTokens
         return BuiltChunk(chunk, completed)

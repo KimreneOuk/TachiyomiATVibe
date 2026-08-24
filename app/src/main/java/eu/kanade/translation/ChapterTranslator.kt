@@ -199,8 +199,10 @@ class ChapterTranslator(
 
     fun stop(reason: String? = null, closeEngines: Boolean = false) {
         cancelTranslatorJob()
+        // Interrupted chapters stay resumable: their per-page artifacts are
+        // durable, so a later Start continues from the planner's reuse scan.
         queueState.value.filter { it.status == Translation.State.TRANSLATING }
-            .forEach { it.status = Translation.State.ERROR }
+            .forEach { it.status = Translation.State.QUEUE }
 
         if (reason == "reader backgrounded") {
             try {
@@ -296,8 +298,13 @@ class ChapterTranslator(
             }
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
+            // One chapter's unexpected failure must not kill the rest of the
+            // queue: mark the chapter failed so the queue loop advances.
             logcat(LogPriority.ERROR, e)
-            stop()
+            translation.status = Translation.State.ERROR
+            if (areAllTranslationsFinished()) {
+                stop()
+            }
         }
     }
 
@@ -463,6 +470,10 @@ class ChapterTranslator(
                 } else {
                     null
                 }
+                // Publish durable page progress before resumed work can emit
+                // new phase events. Reuse-only pages may otherwise leave the
+                // live tracker at its empty 0/0 snapshot until batch finish.
+                tracker?.rebuildFromStore()
                 if (translationJob?.isActive != true) {
                     logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
                 } else {

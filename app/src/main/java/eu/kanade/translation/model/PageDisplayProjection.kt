@@ -1,6 +1,5 @@
 package eu.kanade.translation.model
 
-import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.PageArtifactRecord
 
@@ -16,7 +15,6 @@ data class PageDisplayProjection(
     val displayReady: Boolean,
     /** The current candidate attempt reached a terminal page outcome. */
     val processed: Boolean,
-    val batchContextComplete: Boolean,
 ) {
     /** Alias used by action/readability callers. */
     val canReadTranslated: Boolean get() = displayReady
@@ -66,27 +64,11 @@ data class PageDisplayProjection(
                         PageDisplayState.FAILED_NO_RESULT,
                         PageDisplayState.TEXTLESS_COMPLETE,
                     )
-            val contextStagesComplete =
-                record.displayState == PageDisplayState.TEXTLESS_COMPLETE ||
-                    (
-                        record.translation?.status in
-                            setOf(
-                                ArtifactStageStatus.READY,
-                                ArtifactStageStatus.PARTIAL,
-                            ) &&
-                            record.layout?.status == ArtifactStageStatus.READY
-                        )
-            val batchContextComplete =
-                committed != null &&
-                    committed.origin != ArtifactOrigin.READER_ADHOC &&
-                    record.contextCheckpointFileName != null &&
-                    contextStagesComplete
 
             return PageDisplayProjection(
                 state = committedDisplayState,
                 displayReady = hasCommittedDisplay,
                 processed = processed,
-                batchContextComplete = batchContextComplete,
             )
         }
     }
@@ -117,10 +99,6 @@ fun PageTranslation.toPageDisplayProjection(committed: PageTranslation? = null):
             else -> PageDisplayState.ORIGINAL_ONLY
         }
     val displayReady = committedReady || (!candidateChanged && isTranslationDisplayShapeReady())
-    val contextPage = if (candidateChanged) this else committed
-    val batchContextComplete =
-        contextPage.batchContextComplete &&
-            contextPage.translationOrigin != ArtifactOrigin.READER_ADHOC.name
 
     return PageDisplayProjection(
         state = state,
@@ -133,7 +111,6 @@ fun PageTranslation.toPageDisplayProjection(committed: PageTranslation? = null):
                 PageDisplayState.FAILED_NO_RESULT,
                 PageDisplayState.TEXTLESS_COMPLETE,
             ),
-        batchContextComplete = batchContextComplete,
     )
 }
 
@@ -157,9 +134,6 @@ private fun PageTranslation.singlePageProjection(): PageDisplayProjection {
                 PageDisplayState.FAILED_NO_RESULT,
                 PageDisplayState.TEXTLESS_COMPLETE,
             ),
-        batchContextComplete =
-        batchContextComplete &&
-            translationOrigin != ArtifactOrigin.READER_ADHOC.name,
     )
 }
 
@@ -178,5 +152,4 @@ private fun PageTranslation.differsFromCommitted(committed: PageTranslation): Bo
         renderStatus != committed.renderStatus ||
         cleanedImageName != committed.cleanedImageName ||
         translationOrigin != committed.translationOrigin ||
-        batchContextComplete != committed.batchContextComplete ||
         blocks != committed.blocks

@@ -39,10 +39,10 @@ class Checkpoint2IntegrationTest {
         ai shouldBe TranslatorComputeClass.REMOTE_IO
     }
 
-    // ---- InactivityFlusher preserves chunk budget when wired to the planner ----
+    // ---- Streaming planner tail flush stays within the context budget ----
 
     @Test
-    fun `inactivity flush of the streaming planner stays within the context budget`() = runTest {
+    fun `tail flush of the streaming planner stays within the context budget`() = runTest {
         val planner = StreamingChunkPlanner(8192, TranslationContextChunkPlanner.Profile.DEFAULT)
         val big = "\u65e5".repeat(3000)
         val page = PageTranslation(

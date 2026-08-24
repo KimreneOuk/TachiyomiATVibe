@@ -46,6 +46,19 @@ class TranslationRetryTest {
     }
 
     @Test
+    fun `Gemini 429 retries the unchanged request using its retry hint`() = runTest {
+        var calls = 0
+        val result = withTranslationRetry(maxAttempts = 2, baseDelayMs = 60_000, logTag = "gemini") {
+            calls++
+            if (calls == 1) throw GeminiApiException(429, 0, 429, "RESOURCE_EXHAUSTED")
+            "ok"
+        }
+
+        result shouldBe "ok"
+        calls shouldBe 2
+    }
+
+    @Test
     fun `exhaustion throws last transient error`() = runTest {
         var calls = 0
         val thrown = runCatching {

@@ -75,6 +75,35 @@ object BatchTranslationDiagnostics {
         }
     }
 
+    /** Emits a bounded lifecycle event for one provider envelope. */
+    fun envelopeLifecycle(
+        phase: BatchEnvelopeLifecycle,
+        pageKeys: Collection<String>,
+        attempt: Int = 0,
+        expectedItemCount: Int? = null,
+        receivedItemCount: Int? = null,
+        reason: BatchDiagnosticReason? = null,
+    ) {
+        val priority = when (phase) {
+            BatchEnvelopeLifecycle.FAILED -> LogPriority.ERROR
+            BatchEnvelopeLifecycle.RETRY -> LogPriority.WARN
+            else -> LogPriority.INFO
+        }
+        logcat(tag = TAG, priority = priority) {
+            envelopeLifecycleMessage(
+                phase = phase,
+                pageKeys = pageKeys,
+                attempt = attempt,
+                expectedItemCount = expectedItemCount,
+                receivedItemCount = receivedItemCount,
+                reason = reason,
+            )
+        }
+    }
+
+    /** Stable opaque id for an envelope; page keys never appear in diagnostics. */
+    fun envelopeId(pageKeys: Collection<String>): String = opaque(pageKeys.joinToString("\u0000"))
+
     internal fun stageDecisionMessage(
         stage: BatchDiagnosticStage,
         pageKey: String,
@@ -129,6 +158,21 @@ object BatchTranslationDiagnostics {
             "maxBytes=${maxBytes.coerceAtLeast(0L)} queueDepth=${queueDepth.coerceAtLeast(0)} " +
             "activePages=${activePages.coerceAtLeast(0)}"
 
+    internal fun envelopeLifecycleMessage(
+        phase: BatchEnvelopeLifecycle,
+        pageKeys: Collection<String>,
+        attempt: Int,
+        expectedItemCount: Int?,
+        receivedItemCount: Int?,
+        reason: BatchDiagnosticReason?,
+    ): String =
+        "event=envelope_lifecycle phase=${phase.name.lowercase()} " +
+            "envelope=${envelopeId(pageKeys)} pages=${pageKeys.size.coerceAtLeast(0)} " +
+            "attempt=${attempt.coerceAtLeast(0)} " +
+            "expectedItems=${expectedItemCount?.coerceAtLeast(0) ?: "none"} " +
+            "receivedItems=${receivedItemCount?.coerceAtLeast(0) ?: "none"} " +
+            "reason=${reason?.name?.lowercase() ?: "none"}"
+
     private fun opaque(value: String?): String =
         value?.takeIf { it.isNotEmpty() }?.let { "h#${ShortHash.hash(it)}" } ?: "none"
 
@@ -158,6 +202,7 @@ enum class BatchDiagnosticDecision {
 }
 
 enum class BatchDiagnosticReason {
+    SUCCESS,
     REFERENCE_READY,
     NO_REFERENCE,
     CACHE_HIT,
@@ -168,4 +213,13 @@ enum class BatchDiagnosticReason {
     CANCELLED,
     CORRUPT_ARTIFACT,
     ORPHAN_ARTIFACT,
+}
+
+enum class BatchEnvelopeLifecycle {
+    ADMITTED,
+    PROVIDER_REQUEST,
+    RETRY,
+    PARSED,
+    SUCCEEDED,
+    FAILED,
 }

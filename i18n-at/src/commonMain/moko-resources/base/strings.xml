@@ -36,6 +36,10 @@
     <string name="pref_engine_model">LLM Model</string>
     <string name="pref_engine_temperature">LLM Temperature</string>
     <string name="pref_engine_max_output">LLM Max Output Token Count</string>
+    <string name="pref_gemini_thinking_mode">Gemini reasoning</string>
+    <string name="pref_gemini_thinking_disabled">Disabled</string>
+    <string name="pref_gemini_thinking_auto">Automatic</string>
+    <string name="pref_gemini_thinking_low">Low</string>
 
     <!-- Translation engine refactor: two-family architecture -->
     <string name="pref_translation_type">Translator type</string>

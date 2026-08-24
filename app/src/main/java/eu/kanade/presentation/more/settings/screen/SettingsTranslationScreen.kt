@@ -26,7 +26,7 @@ import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.toImmutableMap
 import kotlinx.coroutines.launch
 import tachiyomi.domain.translation.AiEngine
-import tachiyomi.domain.translation.BatchRelationshipAmbiguityPrior
+import tachiyomi.domain.translation.GeminiThinkingMode
 import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationHardwareAccelerator
@@ -52,19 +52,6 @@ object SettingsTranslationScreen : SearchableSettings {
                 pref = translationPreferences.translationConfirmPretranslate(),
                 title = stringResource(ATMR.strings.pref_confirm_pretranslate),
                 subtitle = stringResource(ATMR.strings.pref_confirm_pretranslate_summary),
-            ),
-            Preference.PreferenceItem.ListPreference(
-                pref = translationPreferences.batchRelationshipAmbiguityPrior(),
-                title = stringResource(ATMR.strings.pref_batch_relationship_prior),
-                subtitle = stringResource(ATMR.strings.pref_batch_relationship_prior_summary),
-                entries = mapOf(
-                    BatchRelationshipAmbiguityPrior.MALE_FEMALE to stringResource(
-                        ATMR.strings.pref_batch_relationship_prior_male_female,
-                    ),
-                    BatchRelationshipAmbiguityPrior.NEUTRAL to stringResource(
-                        ATMR.strings.pref_batch_relationship_prior_neutral,
-                    ),
-                ).toImmutableMap(),
             ),
             Preference.PreferenceItem.ListPreference(
                 pref = translationPreferences.translationFont(),
@@ -464,6 +451,21 @@ object SettingsTranslationScreen : SearchableSettings {
             )
 
             // Shared AI generation params
+            if (aiEngine == AiEngine.GEMINI) {
+                add(
+                    Preference.PreferenceItem.ListPreference(
+                        pref = translationPreferences.translationGeminiThinkingMode(),
+                        title = stringResource(ATMR.strings.pref_gemini_thinking_mode),
+                        entries = mapOf(
+                            GeminiThinkingMode.DISABLED to stringResource(
+                                ATMR.strings.pref_gemini_thinking_disabled,
+                            ),
+                            GeminiThinkingMode.AUTO to stringResource(ATMR.strings.pref_gemini_thinking_auto),
+                            GeminiThinkingMode.LOW to stringResource(ATMR.strings.pref_gemini_thinking_low),
+                        ).toImmutableMap(),
+                    ),
+                )
+            }
             add(
                 Preference.PreferenceItem.EditTextPreference(
                     pref = translationPreferences.translationAiTemperature(),

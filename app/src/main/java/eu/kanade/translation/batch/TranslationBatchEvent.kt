@@ -1,5 +1,6 @@
 package eu.kanade.translation.batch
 
+import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.Translation
 
 enum class BatchPhase { OCR, TRANSLATE, INPAINT, RENDER, DISPLAY }
@@ -23,6 +24,12 @@ sealed class TranslationBatchEvent {
         val status: PhaseStatus,
         val elapsedMs: Long = 0L,
         val heapMiB: Long? = null,
+        val reason: String? = null,
+    ) : TranslationBatchEvent()
+    data class AiPageProgress(
+        val pageKey: String,
+        val pageIndex: Int,
+        val state: AiPageProgressState,
         val reason: String? = null,
     ) : TranslationBatchEvent()
     data class BatchAborted(val reason: String, val failedPageKeys: Set<String>) : TranslationBatchEvent()

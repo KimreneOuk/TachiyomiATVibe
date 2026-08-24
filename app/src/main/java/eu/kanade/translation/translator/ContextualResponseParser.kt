@@ -159,16 +159,18 @@ object ContextualResponseParser {
         val missingIds = request.orderedIds.toSet() - seenIds
         missingIds.forEach { errors += "Missing translation for '$it'" }
 
-        val isStrictValid = missingIds.isEmpty() && errors.isEmpty() && results.all { it.status == ContextualTranslationResult.Status.TRANSLATED }
+        val contentValid = missingIds.isEmpty() &&
+            errors.isEmpty() &&
+            results.all { it.status == ContextualTranslationResult.Status.TRANSLATED }
 
         return ContextualTranslationBatch(
             idToBlockIndex = request.locations,
             results = results,
-            strictValidation = isStrictValid,
+            strictValidation = true,
             protocolVersion = BatchTranslationProtocol.VERSION,
             contextDeltas = contextDeltas,
             validationErrors = errors.distinct(),
-            framingRecovered = false,
+            framingRecovered = contentValid,
         )
     }
 }

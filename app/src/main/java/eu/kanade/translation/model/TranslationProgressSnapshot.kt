@@ -17,6 +17,26 @@ data class StageCount(
     val fraction: Float get() = if (total == 0) 0f else processed.toFloat() / total
 }
 
+enum class AiPageProgressState {
+    PENDING,
+    BUFFERED,
+    RUNNING,
+    SUCCEEDED,
+    FAILED,
+}
+
+@Immutable
+data class AiBatchProgress(
+    val pending: Int = 0,
+    val buffered: Int = 0,
+    val running: Int = 0,
+    val succeeded: Int = 0,
+    val failed: Int = 0,
+) {
+    val total: Int get() = pending + buffered + running + succeeded + failed
+    val processed: Int get() = succeeded + failed
+}
+
 enum class TranslationBatchPhase { IDLE, FIRST_PASS, FINALIZING, FINISHED }
 
 @Immutable
@@ -40,10 +60,18 @@ data class TranslationProgressSnapshot(
     val aborted: Boolean = false,
     val abortedReason: String? = null,
     val batchPhase: TranslationBatchPhase = TranslationBatchPhase.IDLE,
+    val aiProgress: AiBatchProgress = AiBatchProgress(),
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages
     val countPair: Pair<Int, Int> get() = donePages to totalPages
+
+    val aiPendingPages: Int get() = aiProgress.pending
+    val aiBufferedPages: Int get() = aiProgress.buffered
+    val aiRunningPages: Int get() = aiProgress.running
+    val aiSucceededPages: Int get() = aiProgress.succeeded
+    val aiFailedPages: Int get() = aiProgress.failed
+    val aiTotalPages: Int get() = aiProgress.total
 
     /** Exact count of pages whose committed display bundle can be read now. */
     val displayReadyPages: Int get() = pages.count { it.displayReady }
@@ -54,9 +82,6 @@ data class TranslationProgressSnapshot(
             it.stage == TranslationProgressStage.DONE ||
             it.stage == TranslationProgressStage.FAILED
     }
-
-    /** Pages whose batch context is trusted and reusable for the next page. */
-    val batchCompletePages: Int get() = pages.count { it.batchContextComplete }
 
     /** Read Now/Open Translated actions are valid only when a result exists. */
     val canReadTranslated: Boolean get() = displayReadyPages > 0
@@ -74,7 +99,7 @@ data class TranslationProgressSnapshot(
         val displayState: PageDisplayState = PageDisplayState.ORIGINAL_ONLY,
         val displayReady: Boolean = false,
         val processed: Boolean = false,
-        val batchContextComplete: Boolean = false,
+        val aiState: AiPageProgressState = AiPageProgressState.PENDING,
     )
 
     companion object {
@@ -92,6 +117,7 @@ data class TranslationProgressSnapshot(
             pageMap: Map<String, PageTranslation>?,
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
+            aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
             displayPageMap: Map<String, PageTranslation>? = null,
             batchPhase: TranslationBatchPhase = if (state ==
                 Translation.State.TRANSLATING
@@ -105,6 +131,7 @@ data class TranslationProgressSnapshot(
             state,
             indexResolver = indexResolver,
             permitHolderPageKey = permitHolderPageKey,
+            aiPageStates = aiPageStates,
             displayPageMap = displayPageMap,
             batchPhase = batchPhase,
             chapterId = chapterId,

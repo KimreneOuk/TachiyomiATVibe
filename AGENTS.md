@@ -17,15 +17,24 @@ TachiyomiAT is a Kotlin Android manga/manhwa/manhua reader based on Mihon. The a
 
 ## Build and validation
 
-Use the Gradle wrapper from the repository root:
+Use the Gradle wrapper from the repository root. A configured JDK and Android SDK are required; do not infer build success when `JAVA_HOME` or `java` is unavailable. `spotlessCheck` runs ktlint-based Kotlin/Kotlin-script formatting and XML formatting.
 
-```bash
-./gradlew spotlessCheck assembleStandardRelease testReleaseUnitTest testStandardReleaseUnitTest
-```
+The app module has `standard` and `dev` flavors plus `debug`, `release`, `preview`, and `benchmark` build types. Test task names must include the flavor (`testStandardDebugUnitTest`, not `testDebugUnitTest`). The standard application ID is `app.kanade.tachiyomi.at`; debug/preview variants add `.debug`.
 
-For focused app unit tests, use the matching Gradle test task (for example, `./gradlew :app:testDevDebugUnitTest --tests 'fully.qualified.TestName'`). `spotlessCheck` runs ktlint-based Kotlin/Kotlin-script formatting and XML formatting. A configured JDK and Android SDK are required; do not infer build success when `JAVA_HOME` or `java` is unavailable.
+Validate in tiers — run the narrowest tier that covers the change:
 
-The app module has `standard` and `dev` flavors plus `debug`, `release`, `preview`, and `benchmark` build types. The standard application ID is `app.kanade.tachiyomi.at`; debug/preview variants add `.debug`.
+1. Per change (default): focused unit tests for the touched area on the debug variant, for example `./gradlew :app:testStandardDebugUnitTest --tests 'eu.kanade.translation.rendering.*'` (or a single fully qualified class name). Test classes mirror source packages 1:1, so map the touched source package to the same test package:
+
+   | Touched source | Test filter / task |
+   |---|---|
+   | `app/src/main/java/eu/kanade/translation/<subpkg>/**` | `:app:testStandardDebugUnitTest --tests "eu.kanade.translation.<subpkg>.*"` |
+   | `app/src/main/java/eu/kanade/translation/model/**` or shared root files (`TranslationManager`, `TranslationPipeline`, store types) | widen the filter to `--tests "eu.kanade.translation.*"` |
+   | `app/src/main/java/eu/kanade/tachiyomi/ui/reader/**` | `:app:testStandardDebugUnitTest --tests "eu.kanade.tachiyomi.ui.reader.*"` plus any translation packages it calls |
+   | `domain/src/main/java/**` | `:domain:testReleaseUnitTest --tests "<matching package>.*"` |
+
+2. Before finishing a task: `./gradlew spotlessCheck :app:testStandardDebugUnitTest :domain:testReleaseUnitTest`.
+
+3. Full gate (CI / pre-merge only — not a per-change gate): `./gradlew spotlessCheck assembleStandardRelease testReleaseUnitTest testStandardReleaseUnitTest`. This assembles the release APK and runs release-variant tests in every module; CI runs it on every PR and push, so it does not need to be repeated locally per change.
 
 ## Architecture and editing rules
 

@@ -16,7 +16,6 @@ data class PageWorkPlan(
     val stageDecisions: List<StageWorkDecision> = emptyList(),
     /** Display readiness is intentionally independent from batch completeness. */
     val displayReady: Boolean = false,
-    val batchContextComplete: Boolean = false,
 )
 
 /** Stages are ordered by their dependency graph, not by the reader viewport. */
@@ -51,8 +50,6 @@ enum class StageReasonCode {
     PARTIAL_ARTIFACT,
     TEXTLESS,
     NO_ERASE_REGIONS,
-    CONTEXT_CHECKPOINT_INVALID,
-    READER_ADHOC_NOT_BATCH_COMPLETE,
 }
 
 data class StageWorkDecision(
@@ -72,18 +69,6 @@ data class BatchExpectedFingerprints(
     val provenanceRequired: Boolean = false,
 )
 
-enum class ContextCheckpointState {
-    TRUSTED,
-    MISSING,
-    CORRUPT,
-    NOT_REQUIRED,
-}
-
-data class BatchContextCheckpoint(
-    val state: ContextCheckpointState = ContextCheckpointState.NOT_REQUIRED,
-    val hash: String? = null,
-)
-
 /** Input to the pure chapter planner. [pages] must already be natural order. */
 data class BatchPlannerInput(
     val pageKey: String,
@@ -92,7 +77,6 @@ data class BatchPlannerInput(
     val expectedFingerprints: BatchExpectedFingerprints = BatchExpectedFingerprints(),
     /** Current source bytes hash, when the batch could read the page source. */
     val sourceFingerprint: String? = null,
-    val contextCheckpoint: BatchContextCheckpoint = BatchContextCheckpoint(),
     val translationOrigin: ArtifactOrigin? = null,
 )
 
@@ -100,7 +84,6 @@ data class BatchPageWorkPlan(
     val pageKey: String,
     val stages: List<StageWorkDecision>,
     val displayReady: Boolean,
-    val batchContextComplete: Boolean,
     val firstIncompleteStage: BatchStage?,
 ) {
     val firstIncompleteDecision: StageWorkDecision?

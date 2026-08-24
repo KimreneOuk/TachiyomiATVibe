@@ -89,27 +89,6 @@ class StageFingerprintsTest {
     }
 
     @Test
-    fun `translation fingerprint includes context checkpoint and glossary version`() {
-        fun fp(checkpoint: String, glossary: String) = StageFingerprints.translation(
-            orderedOcrBlockIdsAndTextHashes = listOf("id1"),
-            sourceLanguage = "ja",
-            targetLanguage = "en",
-            provider = "p",
-            model = "m",
-            modelSettings = "s",
-            promptProtocolVersion = 1,
-            contextInputCheckpointHash = checkpoint,
-            glossaryVersion = glossary,
-            profileLedgerVersion = "v1",
-            batchRelationshipAmbiguityPriorValue = "MALE_FEMALE",
-            ambiguityPriorSchemaVersion = 1,
-        )
-        fp("cp1", "g1") shouldBe fp("cp1", "g1")
-        fp("cp2", "g1") shouldNotBe fp("cp1", "g1")
-        fp("cp1", "g2") shouldNotBe fp("cp1", "g1")
-    }
-
-    @Test
     fun `glossary version is order-independent and content-sensitive`() {
         val one = StageFingerprints.glossaryVersion(mapOf("a" to "1", "b" to "2"))
         val reordered = StageFingerprints.glossaryVersion(mapOf("b" to "2", "a" to "1"))
@@ -125,27 +104,6 @@ class StageFingerprintsTest {
         val one = StageFingerprints.glossaryVersion(mapOf("a" to "b,c=d"))
         val two = StageFingerprints.glossaryVersion(mapOf("a" to "b", "c" to "d"))
         one shouldNotBe two
-    }
-
-    @Test
-    fun `ordered-list composites cannot collide across element splits`() {
-        fun fp(ids: List<String>) = StageFingerprints.translation(
-            orderedOcrBlockIdsAndTextHashes = ids,
-            sourceLanguage = "ja",
-            targetLanguage = "en",
-            provider = "p",
-            model = "m",
-            modelSettings = "s",
-            promptProtocolVersion = 1,
-            contextInputCheckpointHash = "cp",
-            glossaryVersion = "g",
-            profileLedgerVersion = "v",
-            batchRelationshipAmbiguityPriorValue = "NEUTRAL",
-            ambiguityPriorSchemaVersion = 1,
-        )
-        // A comma join would make both lists the string "a,b,c".
-        fp(listOf("a,b", "c")) shouldNotBe fp(listOf("a", "b,c"))
-        fp(listOf("a", "b")) shouldBe fp(listOf("a", "b"))
     }
 
     @Test

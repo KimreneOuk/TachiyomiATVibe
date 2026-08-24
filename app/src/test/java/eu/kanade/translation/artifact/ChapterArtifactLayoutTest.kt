@@ -51,10 +51,6 @@ class ChapterArtifactLayoutTest {
         traversing.startsWith("c_artifacts/generations/g-") shouldBe true
         ChapterArtifactLayout.isSafeSegment(traversing.substringAfterLast('/').removeSuffix(".json")) shouldBe true
         layout.isManagedPath(traversing) shouldBe true
-
-        val control = layout.contextCheckpointFile(1, "cp\n\r\u0000")
-        control.startsWith("c_artifacts/context/1-c-") shouldBe true
-        layout.isManagedPath(control) shouldBe true
     }
 
     @Test
@@ -80,10 +76,9 @@ class ChapterArtifactLayoutTest {
     }
 
     @Test
-    fun `glossary and checkpoint names follow the layout contract`() {
+    fun `glossary names follow the layout contract`() {
         val layout = ChapterArtifactLayout("c")
         layout.glossaryFile(2) shouldBe "c_artifacts/glossary/chapter.glossary.2.json"
-        layout.contextCheckpointFile(7, "cphash").startsWith("c_artifacts/context/7-c-") shouldBe true
         layout.generationFile("gen1") shouldBe "c_artifacts/generations/${layout.generationSegment("gen1")}.json"
     }
 

@@ -89,6 +89,18 @@ class ChapterArtifactStore(
         val existing = primary
             ?: recoverPrimaryFromBackupOrNull(backup)
         if (existing != null) {
+            // A backup can be parsed successfully even when the SAF rename
+            // that promotes it to the primary document fails. Keep that
+            // recoverable copy read-only until a valid primary is durable;
+            // retention and recovery publications must not delete or replace
+            // the only known-good manifest.
+            if (readManifestDocument(layout.manifestFileName) == null) {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT artifact manifest primary recovery incomplete; backup preserved: " +
+                        "chapter=${layout.chapterKey}"
+                }
+                return LoadResult(existing, migratedFromLegacy = false, resyncedFromLegacy = false)
+            }
             // Load is a reconciliation boundary: after a crash or cancelled
             // stream, remove only unreachable managed artifacts. Legacy
             // companion images remain outside the managed tree and are owned
@@ -989,64 +1001,6 @@ class ChapterArtifactStore(
         return TransactionOutcome.Committed(updated, generationId)
     }
 
-    /**
-     * Publishes a page-scoped trusted context checkpoint. Reader ad-hoc
-     * provenance is rejected outright: a `READER_ADHOC` result may be committed
-     * and displayed, but it never advances ordered batch context (lifecycle
-     * contract §12).
-     */
-    @Synchronized
-    fun commitContextCheckpoint(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        naturalPageIndex: Int,
-        checkpointHash: String,
-        payload: JsonObject,
-        generationId: String,
-        origin: ArtifactOrigin,
-        expectedPageVersion: Long,
-        expectedDependencyFingerprint: String,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome {
-        if (origin == ArtifactOrigin.READER_ADHOC) {
-            return TransactionOutcome.Rejected("READER_ADHOC writes never advance batch context: pageKey=$pageKey")
-        }
-        val page = manifest.pages[pageKey]
-            ?: return TransactionOutcome.Rejected("page missing: pageKey=$pageKey")
-        candidateWriteRejection(
-            manifest,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-        )?.let { return TransactionOutcome.Rejected(it) }
-        if (page.candidate?.origin != origin) {
-            return TransactionOutcome.Rejected(
-                "candidate provenance mismatch: pageKey=$pageKey expected=${page.candidate?.origin} actual=$origin",
-            )
-        }
-        if (page.candidate?.origin == ArtifactOrigin.READER_ADHOC) {
-            return TransactionOutcome.Rejected("reader-adhoc candidate cannot write batch context: pageKey=$pageKey")
-        }
-        val checkpointFile = layout.contextCheckpointFile(naturalPageIndex, checkpointHash)
-        if (!documents.publishJson(checkpointFile, payload)) {
-            return TransactionOutcome.Rejected("checkpoint sidecar publication failed: pageKey=$pageKey")
-        }
-        val updated = manifest.copy(
-            pages = manifest.pages + (
-                pageKey to page.copy(
-                    contextCheckpointFileName = checkpointFile,
-                    pageVersion = page.pageVersion + 1,
-                )
-                ),
-            updatedAtEpochMs = nowEpochMs,
-        )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; checkpoint not recorded")
-        }
-        return TransactionOutcome.Committed(updated, generationId)
-    }
-
     private fun candidateWriteRejection(
         manifest: ChapterArtifactManifest,
         pageKey: String,
@@ -1257,7 +1211,6 @@ class ChapterArtifactStore(
                 add(layout.generationFile(it.generationId))
                 it.pageSnapshotFileName?.let(::add)
             }
-            page.contextCheckpointFileName?.let(::add)
             listOf(
                 page.detection,
                 page.ocr,

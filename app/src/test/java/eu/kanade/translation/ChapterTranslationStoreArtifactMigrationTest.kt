@@ -19,7 +19,12 @@ import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.decodeFromStream
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -158,14 +163,24 @@ class ChapterTranslationStoreArtifactMigrationTest {
             artifactPageVersion = artifactPageVersion,
         )
 
-    private fun writeLegacyChapter(cleanedBytes: ByteArray = pngBytes(100, 100)) {
+    private fun writeLegacyChapter(
+        cleanedBytes: ByteArray = pngBytes(100, 100),
+        pageJson: JsonObject = Json.encodeToJsonElement(displayablePage()).jsonObject,
+    ) {
         File(mangaDir, "Chapter 1_images").mkdirs()
         File(mangaDir, "Chapter 1_images/page.cleaned.abc.jpg").writeBytes(cleanedBytes)
         File(mangaDir, "Chapter 1.glossary.json").writeText("""{"sensei":"teacher"}""")
         File(mangaDir, "Chapter 1.json").writeText(
-            Json.encodeToString(mapOf("page.jpg" to displayablePage())),
+            buildJsonObject { put("page.jpg", pageJson) }.toString(),
         )
     }
+
+    private fun legacyPageWithRemovedBatchContextFields(): JsonObject =
+        Json.encodeToJsonElement(displayablePage()).jsonObject.toMutableMap().apply {
+            put("batchContextCheckpointHash", JsonPrimitive("legacy-checkpoint"))
+            put("batchContextComplete", JsonPrimitive(true))
+            put("batchSceneCheckpoint", JsonPrimitive("legacy-scene"))
+        }.let(::JsonObject)
 
     private fun translationFile(): UniFile =
         com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")!!
@@ -201,6 +216,24 @@ class ChapterTranslationStoreArtifactMigrationTest {
         glossary.kind shouldBe ChapterGlossary.KIND_VOCABULARY_HINTS
         glossary.entries shouldBe mapOf("sensei" to "teacher")
 
+        File(mangaDir, "Chapter 1.json").readBytes() shouldBe legacyBytes
+    }
+
+    @Test
+    fun `opening a legacy chapter with removed batch context fields preserves page progress`() {
+        installPngHeaderProbe()
+        writeLegacyChapter(pageJson = legacyPageWithRemovedBatchContextFields())
+        val legacyBytes = File(mangaDir, "Chapter 1.json").readBytes()
+
+        val store = ChapterTranslationStore.open(translationFile())
+        val page = store.state.value.getValue("page.jpg")
+
+        page.blocks.single().translation shouldBe "hello"
+        page.ocrStatus shouldBe StageStatus.READY
+        page.translationStatus shouldBe StageStatus.READY
+        page.inpaintStatus shouldBe StageStatus.READY
+        page.renderStatus shouldBe StageStatus.READY
+        readManifest().pages.keys shouldBe setOf("page.jpg")
         File(mangaDir, "Chapter 1.json").readBytes() shouldBe legacyBytes
     }
 

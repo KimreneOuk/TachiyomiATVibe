@@ -1913,43 +1913,6 @@ class ReaderViewModel @JvmOverloads constructor(
             get() = currentChapter?.pages?.size ?: -1
     }
 
-    fun startCurrentChapterTranslation() {
-        val manga = manga ?: return
-        val chapter = getCurrentChapter()?.chapter ?: return
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
-        val domainChapter = chapter.toDomainChapter() ?: return
-        // TachiyomiAT bug 3 fix: surface a running same-source conflict before
-        // queueing. The reader does not host a confirmation dialog as rich as
-        // the manga screen's, so on conflict we cancel the old chapter outright
-        // (preserving its artifacts) and proceed. This matches the user's
-        // explicit "translate current chapter" intent in the reader, where the
-        // previous chapter is no longer visible anyway.
-        when (val preflight = translationManager.translateChapterPreflight(manga, domainChapter)) {
-            is eu.kanade.translation.model.ChapterQueuePreflight.NoConflict -> {
-                resetAutoTranslationState()
-            }
-            is eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict -> {
-                resetAutoTranslationState()
-                translationManager.cancelRunningChapterForReplace(preflight.chapterId)
-            }
-        }
-        // Batch owns this chapter once explicitly started. Stop reader Auto's
-        // rolling admission while preserving its durable page artifacts; the
-        // separate batch progress state continues through observeTranslationState.
-        translationManager.cancelAutoTranslations(chapter.id)
-        viewModelScope.launchIO {
-            translationManager.translateChapter(manga, domainChapter)
-            observeTranslationState()
-        }
-    }
-
-    fun cancelCurrentChapterTranslation() {
-        val chapter = getCurrentChapter()?.chapter ?: return
-        val queued = translationManager.getQueuedTranslationOrNull(chapter.id!!) ?: return
-        resetAutoTranslationState()
-        translationManager.cancelQueuedTranslation(queued)
-    }
-
     /**
      * TachiyomiAT: cancels reader-owned translation work tied to [chapter] so navigating
      * away from it cannot leave orphaned single-page jobs running on the singleton
@@ -2483,8 +2446,8 @@ class ReaderViewModel @JvmOverloads constructor(
     }
 
     private fun observeTranslationState() {
-        // TachiyomiAT: cancel any prior collector first. loadChapter() and
-        // startCurrentChapterTranslation() both call this, so without cancelling
+        // TachiyomiAT: cancel any prior collector first. loadChapter() calls
+        // this, so without cancelling
         // each chapter change stacked another statusFlow().launchIn(viewModelScope)
         // collector (the translationStateJob field was declared but never
         // assigned). They filtered by a captured chapterId and so no-op'd for

@@ -21,15 +21,14 @@ class StreamingChunkPlannerTest {
     }
 
     @Test
-    fun `streaming equals batch plan with explicit per-chunk limits`() {
+    fun `streaming equals batch plan with dense and multi-page inputs`() {
         val fortyBlocks = linkedMapOf(
             "001" to PageTranslation(blocks = MutableList(40) { block("b$it") }),
         )
-        assertParity(fortyBlocks, 4096, Profile.LM_STUDIO, maxBlocksPerChunk = 10)
-        assertParity(fortyBlocks, 4096, Profile.LM_STUDIO, maxPagesPerChunk = 1)
+        assertParity(fortyBlocks, 4096, Profile.LM_STUDIO)
 
         val manyPages = linkedMapOf(*Array(8) { i -> "p$i" to page(block("x$i")) })
-        assertParity(manyPages, 4096, Profile.DEFAULT, maxBlocksPerChunk = 3, maxPagesPerChunk = 2)
+        assertParity(manyPages, 4096, Profile.DEFAULT)
     }
 
     @Test
@@ -53,25 +52,20 @@ class StreamingChunkPlannerTest {
     }
 
     @Test
-    fun `long CJK text splits a page across multiple chunks within budget`() {
-        val pages = linkedMapOf("001" to page(*Array(6) { block(cjk(2500)) }))
+    fun `page whose combined source exceeds the budget is rejected whole`() {
+        val pages = linkedMapOf(
+            "001" to page(*Array(6) { block(cjk(TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS / 6)) }),
+        )
         val r = streamRun(pages, 8192, Profile.DEFAULT)
 
-        r.chunks.size shouldNotBe 1
-        r.rejectedPages shouldBe emptyMap()
-        r.chunks.forEach { chunk ->
-            (
-                chunk.estimatedPromptTokens + chunk.maxOutputTokens +
-                    TranslationContextChunkPlanner.SAFETY_MARGIN <=
-                    TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
-                ) shouldBe true
-        }
+        r.chunks shouldBe emptyList()
+        r.rejectedPages.keys shouldContainExactly listOf("001")
     }
 
     @Test
     fun `single oversized block page is rejected, others still planned`() {
         val pages = linkedMapOf(
-            "big" to page(block(cjk(7000))),
+            "big" to page(block(cjk(TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS))),
             "ok" to page(block("small")),
         )
         val r = streamRun(pages, 8192, Profile.DEFAULT)
@@ -81,20 +75,20 @@ class StreamingChunkPlannerTest {
     }
 
     @Test
-    fun `LM_STUDIO caps pages per chunk at 10`() {
+    fun `LM_STUDIO packs more than four complete pages when the token budget allows`() {
         val pages = linkedMapOf(*Array(14) { i -> "p$i" to page(block("x$i")) })
         val r = streamRun(pages, 8192, Profile.LM_STUDIO)
-
-        r.chunks.map { it.pages.size } shouldContainExactly listOf(10, 4)
-        r.chunks.forEach { chunk -> (chunk.pages.size <= 10) shouldBe true }
+        r.chunks.size shouldBe 1
+        r.chunks.single().pages.keys.toList() shouldContainExactly pages.keys.toList()
     }
 
     @Test
-    fun `LM_STUDIO caps blocks per chunk at 75`() {
+    fun `dense page is never split by the historical block limit`() {
         val pages = linkedMapOf("p" to PageTranslation(blocks = MutableList(90) { block("b$it") }))
         val r = streamRun(pages, 8192, Profile.LM_STUDIO)
-
-        r.chunks.map { it.blockCount } shouldContainExactly listOf(75, 15)
+        r.chunks.size shouldBe 1
+        r.chunks.single().blockCount shouldBe 90
+        r.chunks.single().pages.keys shouldContainExactly listOf("p")
     }
 
     @Test
@@ -199,33 +193,17 @@ class StreamingChunkPlannerTest {
     }
 
     @Test
-    fun `a page spanning two chunks completes on the chunk holding its last block`() {
-        // Each CJK block is large enough that the second one overflows the
-        // budget, so the page splits: block 0 flushes during its own accept,
-        // block 1 stays buffered and only completes on a later flush.
+    fun `complete dense page stays intact in its batch envelope`() {
         val pages = linkedMapOf(
-            "span" to page(block(cjk(4000)), block(cjk(4000))),
-            "flusher" to page(block(cjk(4000))),
+            "dense" to page(*Array(11) { block("text $it") }),
         )
         val planner = StreamingChunkPlanner(8192, Profile.DEFAULT)
 
-        val spanEmission = planner.accept("span", pages.getValue("span"))
-        // First block flushed mid-page; the page is NOT complete yet because
-        // its last block is still buffered.
-        spanEmission shouldNotBe null
-        spanEmission!!.chunk!!.pages.keys shouldContainExactly listOf("span")
-        spanEmission.chunk!!.blockCount shouldBe 1
-        ("span" in spanEmission.completedPages) shouldBe false
-
-        val flusherEmission = planner.accept("flusher", pages.getValue("flusher"))
-        // The flusher's block overflows, flushing a chunk holding "span"'s LAST
-        // block -> "span" completes here, on a chunk whose sole page is "span".
-        flusherEmission shouldNotBe null
-        flusherEmission!!.chunk!!.pages.keys shouldContainExactly listOf("span")
-        ("span" in flusherEmission.completedPages) shouldBe true
-
+        planner.accept("dense", pages.getValue("dense")) shouldBe null
         val flush = planner.flushRemaining()
-        ("flusher" in flush.completedPages) shouldBe true
+        flush.finalChunk!!.pages.keys shouldContainExactly listOf("dense")
+        flush.finalChunk!!.blockCount shouldBe 11
+        flush.completedPages shouldBe setOf("dense")
         flush.rejectedPages shouldBe emptyMap()
     }
 
@@ -238,10 +216,8 @@ class StreamingChunkPlannerTest {
         pages: LinkedHashMap<String, PageTranslation>,
         requestedOutputTokens: Int,
         profile: Profile,
-        maxBlocksPerChunk: Int? = null,
-        maxPagesPerChunk: Int? = null,
     ): StreamOutcome {
-        val planner = StreamingChunkPlanner(requestedOutputTokens, profile, maxBlocksPerChunk, maxPagesPerChunk)
+        val planner = StreamingChunkPlanner(requestedOutputTokens, profile)
         pages.forEach { (k, v) -> planner.accept(k, v) }
         val flush = planner.flushRemaining()
         val chunks = planner.emittedChunks() + listOfNotNull(flush.finalChunk)
@@ -252,17 +228,13 @@ class StreamingChunkPlannerTest {
         pages: LinkedHashMap<String, PageTranslation>,
         requestedOutputTokens: Int,
         profile: Profile,
-        maxBlocksPerChunk: Int? = null,
-        maxPagesPerChunk: Int? = null,
     ) {
         val batch = TranslationContextChunkPlanner.plan(
             pages,
             requestedOutputTokens,
             profile,
-            maxBlocksPerChunk,
-            maxPagesPerChunk,
         )
-        val stream = streamRun(pages, requestedOutputTokens, profile, maxBlocksPerChunk, maxPagesPerChunk)
+        val stream = streamRun(pages, requestedOutputTokens, profile)
 
         // Data-class equality pins page keys (ordered), blockCount,
         // estimatedPromptTokens and maxOutputTokens element-by-element.

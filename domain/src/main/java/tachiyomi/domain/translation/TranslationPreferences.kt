@@ -25,6 +25,8 @@ enum class StandardEngine { MLKIT, GOOGLE, DEEPL }
  */
 enum class AiEngine { GEMINI, OPENROUTER, DEEPSEEK, LMSTUDIO }
 
+enum class GeminiThinkingMode { DISABLED, AUTO, LOW }
+
 /**
  * OCR backends used before translation. Stored separately from translator
  * engines because OCR reads the source page language, not the target language.
@@ -52,22 +54,6 @@ enum class OcrModel { MLKIT, MANGAOCR, PADDLEOCR_V6_SMALL }
 enum class TranslationHardwareAccelerator { AUTO, QUALCOMM_NPU, NNAPI, CPU_XNNPACK }
 
 enum class TranslationReadingOrder { AUTO, RTL_MANGA, LTR_COMIC }
-
-/**
- * TachiyomiAT: batch-only tie-break preference for genuinely ambiguous
- * romantic/intimate relationships during chapter batch AI translation.
- *
- * - [MALE_FEMALE]: default. When source evidence, scene roles, and profile
- *   evidence remain tied, resolve gendered pronouns toward a male/female
- *   pairing. Explicit source evidence always overrides it.
- * - [NEUTRAL]: keep the relationship prior inactive; ambiguous roles stay
- *   neutrally phrased.
- *
- * This never applies to reader single-page translation, is never persisted as
- * profile evidence, and is part of the batch translation provenance
- * fingerprint so switching it invalidates translation/layout only.
- */
-enum class BatchRelationshipAmbiguityPrior { NEUTRAL, MALE_FEMALE }
 
 class TranslationPreferences(
     private val preferenceStore: PreferenceStore,
@@ -223,6 +209,10 @@ class TranslationPreferences(
 
     fun translationAiTemperature() = preferenceStore.getString("translation_ai_temperature", "0.3")
     fun translationAiOutputTokens() = preferenceStore.getString("translation_ai_output_tokens", "8192")
+    fun translationGeminiThinkingMode() = preferenceStore.getEnum(
+        "translation_gemini_thinking_mode",
+        GeminiThinkingMode.DISABLED,
+    )
 
     /**
      * TachiyomiAT: opt-in verbose logging for the translation pipeline. When on,
@@ -233,27 +223,6 @@ class TranslationPreferences(
      * translation run without rebuilding.
      */
     fun translationDiagnostics() = preferenceStore.getBoolean("translation_diagnostics", false)
-
-    /**
-     * TachiyomiAT: opt-in "Analytical Mode" for AI translation. When enabled,
-     * the translation pipeline assembles extra context for each chunk — past
-     * translated pairs from earlier pages (speaker/voice continuity) and future
-     * OCR'd-but-not-yet-translated source text (so the model can see what comes
-     * next) — and injects it via the sliding-window context planner. Off by
-     * default to keep the non-analytical path (and its token budget) unchanged.
-     */
-    fun translationAnalyticalMode() = preferenceStore.getBoolean("translation_analytical_mode", false)
-
-    /**
-     * TachiyomiAT: batch-only relationship ambiguity prior for chapter batch
-     * AI translation. Defaults to MALE_FEMALE for this product decision;
-     * explicit source evidence always wins and the prior is applied only as a
-     * final tie-break. Reader single-page translation never reads it.
-     */
-    fun batchRelationshipAmbiguityPrior() = preferenceStore.getEnum(
-        "batch_relationship_ambiguity_prior",
-        BatchRelationshipAmbiguityPrior.MALE_FEMALE,
-    )
 
     /**
      * TachiyomiAT: source-page reading order (RTL manga / LTR comic / auto from

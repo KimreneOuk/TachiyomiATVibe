@@ -28,3 +28,6 @@
 
 # ONNX models (protobuf binary - must not be line-ending normalized)
 *.onnx binary
+
+# PyTorch models (pickle/ZIP binary - must not be line-ending normalized)
+*.pt binary

@@ -5,13 +5,12 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
 class AiTranslationRetryControllerTest {
 
     @Test
-    fun `strict structural failure stops live retry before missing split`() {
+    fun `structural failure keeps the page envelope intact without throwing`() = runTest {
         val translator = StructuralFailureTranslator()
         val page = PageTranslation(
             blocks = mutableListOf(block("first"), block("second")),
@@ -26,21 +25,48 @@ class AiTranslationRetryControllerTest {
             pageIndexes = mapOf("page.jpg" to 0),
         )
 
-        assertThrows(ContextualStructuralFailureException::class.java) {
-            runTest {
-                translateAiChunkWithAdaptiveRetry(
-                    translator = translator,
-                    chunk = chunk,
-                    requestedOutputTokens = 256,
-                    profile = TranslationContextChunkPlanner.Profile.DEFAULT,
-                    allowFailureSplit = true,
-                    label = "test",
-                    retryDepth = 0,
-                )
-            }
-        }
+        val deltas = translateAiChunkWithAdaptiveRetry(
+            translator = translator,
+            chunk = chunk,
+            requestedOutputTokens = 256,
+            profile = TranslationContextChunkPlanner.Profile.DEFAULT,
+            label = "test",
+            retryDepth = 0,
+        )
+
         translator.calls shouldBe 1
+        deltas.isEmpty() shouldBe true
         page.blocks.forEach { it.translation shouldBe "" }
+    }
+
+    @Test
+    fun `terminal single-block failure returns quietly for per-page validation`() = runTest {
+        val translator = StructuralFailureTranslator()
+        val page = PageTranslation(
+            blocks = mutableListOf(block("only")),
+        )
+        val chunk = TranslationContextChunk(
+            pages = linkedMapOf("page.jpg" to page),
+            blockCount = 1,
+            rollingContext = "",
+            estimatedPromptTokens = 0,
+            maxOutputTokens = 256,
+            protocol = ContextualRequestProtocol.BATCH_V1,
+            pageIndexes = mapOf("page.jpg" to 0),
+        )
+
+        val deltas = translateAiChunkWithAdaptiveRetry(
+            translator = translator,
+            chunk = chunk,
+            requestedOutputTokens = 256,
+            profile = TranslationContextChunkPlanner.Profile.DEFAULT,
+            label = "test",
+            retryDepth = 0,
+        )
+
+        translator.calls shouldBe 1
+        deltas.isEmpty() shouldBe true
+        page.blocks.single().translation shouldBe ""
     }
 
     private class StructuralFailureTranslator : AITranslator() {
@@ -62,7 +88,7 @@ class AiTranslationRetryControllerTest {
                 results = emptyList(),
                 strictValidation = true,
                 protocolVersion = BatchTranslationProtocol.VERSION,
-                validationErrors = listOf("Missing batch response footer"),
+                validationErrors = listOf("Missing translation for 'p0000_b0000'"),
             )
         }
 
@@ -75,8 +101,8 @@ class AiTranslationRetryControllerTest {
         height = 10f,
         x = 0f,
         y = 0f,
-        symHeight = 1f,
-        symWidth = 1f,
+        symHeight = 10f,
+        symWidth = 10f,
         angle = 0f,
     )
 }

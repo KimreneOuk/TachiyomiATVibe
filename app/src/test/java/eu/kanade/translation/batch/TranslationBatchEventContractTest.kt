@@ -1,5 +1,6 @@
 package eu.kanade.translation.batch
 
+import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.Translation
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldNotContain
@@ -21,6 +22,7 @@ class TranslationBatchEventContractTest {
 
         names shouldContainExactly setOf(
             "PagePhase",
+            "AiPageProgress",
             "BatchAborted",
             "BatchFinished",
         )
@@ -63,6 +65,19 @@ class TranslationBatchEventContractTest {
         event.heapMiB shouldBe null
         event.reason shouldBe null
         event shouldBe TranslationBatchEvent.PagePhase("001.jpg", 0, BatchPhase.OCR, PhaseStatus.RUNNING)
+    }
+
+    @Test
+    fun `AiPageProgress constructs every observable provider state`() {
+        val event = TranslationBatchEvent.AiPageProgress(
+            pageKey = "001.jpg",
+            pageIndex = 0,
+            state = AiPageProgressState.BUFFERED,
+            reason = "barrier",
+        )
+
+        event.state shouldBe AiPageProgressState.BUFFERED
+        event.reason shouldBe "barrier"
     }
 
     @Test

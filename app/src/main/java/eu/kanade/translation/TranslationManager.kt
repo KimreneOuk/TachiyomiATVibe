@@ -2,6 +2,7 @@ package eu.kanade.translation
 
 import android.content.Context
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationSummary
@@ -40,6 +41,9 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
@@ -70,6 +74,9 @@ class TranslationManager(
      * failure in restoreQueue does not cancel unrelated work; IO dispatcher because restoreQueue does DB reads.
      */
     private val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** Serializes reader lifecycle teardown so pause/finish cannot race store eviction. */
+    private val readerTeardownMutex = Mutex()
 
     /**
      * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
@@ -132,17 +139,11 @@ class TranslationManager(
     private val activeStores = ActiveChapterStoreRegistry()
     private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
     private val translateAfterDownload = ConcurrentHashMap<Long, TranslationRequest>()
-    private val workMetadata = ConcurrentHashMap<Long, TranslationWorkMetadata>()
+    private val legacyPageJson = Json { ignoreUnknownKeys = true }
 
     private data class TranslationRequest(
         val manga: Manga,
         val chapter: Chapter,
-    )
-
-    private data class TranslationWorkMetadata(
-        val mangaId: Long,
-        val mangaTitle: String,
-        val chapterName: String,
     )
 
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
@@ -169,9 +170,16 @@ class TranslationManager(
     }
 
     fun stopReaderTranslations(reason: String) {
-        cancelAllPageTranslations(cancelBatchQueue = false)
-        if (!isAnyBatchTranslationActive) {
-            translatorStop(reason, closeEngines = false)
+        // The cancellation path includes synchronous runBlocking bridges for durable store
+        // cleanup and bounded persist joins. Keep the entire chain on the manager's IO scope so
+        // ReaderActivity lifecycle callbacks return without touching those bridges on main.
+        applicationScope.launch(start = CoroutineStart.DEFAULT) {
+            readerTeardownMutex.withLock {
+                cancelAllPageTranslations(cancelBatchQueue = false)
+                if (!isAnyBatchTranslationActive) {
+                    translatorStop(reason, closeEngines = false)
+                }
+            }
         }
     }
 
@@ -181,16 +189,22 @@ class TranslationManager(
      * coordinator/native/page jobs have joined and reader stores are evicted.
      */
     fun requestReaderStop(reason: String): Deferred<Unit> =
-        applicationScope.async(start = CoroutineStart.UNDISPATCHED) {
+        applicationScope.async(start = CoroutineStart.DEFAULT) {
             awaitReaderStop(reason)
         }
 
     /** Joined counterpart for callers that already own a non-cancelled scope. */
     suspend fun awaitReaderStop(reason: String) {
-        scheduler.awaitReaderStop()
-        val chapterIdsToEvict = activeStores.chapterIds()
-            .filter { !isBatchTranslationActive(it) }
-        chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
+        // This method is also called directly by chapter-switch work. Enforce the same IO fence
+        // here so a future lifecycle caller cannot reintroduce a main-thread synchronous prefix.
+        withContext(Dispatchers.IO) {
+            readerTeardownMutex.withLock {
+                scheduler.awaitReaderStop()
+                val chapterIdsToEvict = activeStores.chapterIds()
+                    .filter { !isBatchTranslationActive(it) }
+                chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
+            }
+        }
     }
 
     fun isTranslating(): Boolean = queueState.value.isNotEmpty()
@@ -226,8 +240,12 @@ class TranslationManager(
     }
 
     fun startTranslation() {
-        if (translator.isRunning) return
-        translator.start()
+        if (!translator.isRunning) {
+            translator.start()
+        }
+        if (isAnyBatchTranslationActive) {
+            TranslationForegroundService.start(context)
+        }
     }
 
     fun pauseTranslation() {
@@ -416,7 +434,7 @@ class TranslationManager(
             ?: return@runBlocking null
         if (!file.exists() || file.length() <= 2L) return@runBlocking null
         try {
-            val pages = Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
+            val pages = legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
             val readable = pages.values.any { it.toPageDisplayProjection().displayReady }
             if (!readable) return@runBlocking null
 
@@ -484,7 +502,7 @@ class TranslationManager(
         file: UniFile,
     ): Map<String, PageTranslation> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         try {
-            return@runBlocking Json.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
+            return@runBlocking legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
         } catch (e: Exception) {
             file.delete()
         }
@@ -783,16 +801,7 @@ class TranslationManager(
     val autoSnapshot: kotlinx.coroutines.flow.StateFlow<eu.kanade.translation.scheduling.AutoTranslationSnapshot?> =
         scheduler.autoSnapshot
 
-    /**
-     * Ticket 03: rolling coordinator window update. Accepts a desired-window
-     * spec and delegates to the scheduler, which owns the coordinator.
-     *
-     * Batch arbitration: batch chapter translation owns the chapter and
-     * suppresses auto (same rule the legacy path enforces). While a batch job
-     * is queued or translating for this chapter, the rolling coordinator is
-     * shut down and this call is a no-op; it re-arms on the next window update
-     * once batch is no longer active.
-     */
+    /** Ticket 03: rolling coordinator window update. The scheduler owns the coordinator. */
     fun updateAutoWindow(
         identity: eu.kanade.translation.scheduling.AutoChapterIdentity,
         visiblePageIndex: Int,
@@ -802,11 +811,6 @@ class TranslationManager(
         pageResolver: (Int) -> eu.kanade.translation.scheduling.RollingAutoCoordinator.PageWorkItem?,
         computeClass: eu.kanade.translation.translator.TranslatorComputeClass,
     ) {
-        val chapterId = session.chapter.id
-        if (chapterId != null && isBatchTranslationActive(chapterId)) {
-            scheduler.shutdownAutoCoordinator(chapterId)
-            return
-        }
         scheduler.updateAutoWindow(
             identity,
             visiblePageIndex,
@@ -822,9 +826,7 @@ class TranslationManager(
 
     /** Reconciles the active rolling window after a reader lifecycle/memory signal. */
     fun reconcileAutoWindow() {
-        scheduler.reconcileAutoWindow { chapterId ->
-            !isBatchTranslationActive(chapterId)
-        }
+        scheduler.reconcileAutoWindow()
     }
 
     fun observeActiveStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? = activeStores.observe(chapterId)
@@ -922,81 +924,6 @@ class TranslationManager(
             }
             .distinctUntilChanged()
     }
-
-    fun observeAllTranslationWork(): Flow<List<TranslationWorkItem>> {
-        val queueChanges = queueState.flatMapLatest { queue ->
-            queue.forEach { translation ->
-                translation.chapter.id?.let { chapterId ->
-                    workMetadata[chapterId] = TranslationWorkMetadata(
-                        mangaId = translation.manga.id,
-                        mangaTitle = translation.manga.title,
-                        chapterName = translation.chapter.name,
-                    )
-                }
-            }
-            val statusChanges = queue.map { translation ->
-                translation.statusFlow.map { queue }
-            }
-            if (statusChanges.isEmpty()) flowOf(queue) else statusChanges.merge().onStart { emit(queue) }
-        }
-        return combine(queueChanges, batchTrackerRegistry.live, batchTrackerRegistry.terminal) { queue, live, terminal ->
-            Triple(queue, live, terminal)
-        }.flatMapLatest { (queue, live, terminal) ->
-            val trackerFlows = live.map { (chapterId, tracker) ->
-                tracker.snapshot.map { chapterId to it }.onStart {
-                    emit(chapterId to tracker.snapshot.value)
-                }
-            }
-            val snapshots = if (trackerFlows.isEmpty()) {
-                flowOf(emptyMap())
-            } else {
-                combine(trackerFlows) { entries -> entries.toMap() }
-            }
-            snapshots.map { liveSnapshots ->
-                val queuedIds = queue.mapNotNull { it.chapter.id }.toSet()
-                val queuedItems = queue.mapNotNull { translation ->
-                    val chapterId = translation.chapter.id ?: return@mapNotNull null
-                    val snapshot = liveSnapshots[chapterId]
-                    TranslationWorkItem(
-                        mangaId = translation.manga.id,
-                        mangaTitle = translation.manga.title,
-                        chapterId = chapterId,
-                        chapterName = translation.chapter.name,
-                        state = when (translation.status) {
-                            Translation.State.QUEUE -> TranslationWorkState.Queued
-                            Translation.State.ERROR -> TranslationWorkState.Failed
-                            else -> TranslationWorkState.InProgress
-                        },
-                        progress = snapshot?.progressFraction() ?: 0f,
-                    )
-                }
-                val recentItems = terminal.values
-                    .filter { it.chapterId !in queuedIds }
-                    .map { snapshot ->
-                        val metadata = workMetadata[snapshot.chapterId]
-                        TranslationWorkItem(
-                            mangaId = metadata?.mangaId ?: 0L,
-                            mangaTitle = metadata?.mangaTitle.orEmpty(),
-                            chapterId = snapshot.chapterId,
-                            chapterName = metadata?.chapterName ?: snapshot.chapterId.toString(),
-                            state = if (snapshot.state == Translation.State.ERROR || snapshot.aborted) {
-                                TranslationWorkState.Failed
-                            } else {
-                                TranslationWorkState.Recent
-                            },
-                            progress = snapshot.progressFraction(),
-                        )
-                    }
-                queuedItems + recentItems
-            }
-        }.distinctUntilChanged()
-    }
-
-    private fun TranslationProgressSnapshot.progressFraction(): Float = when {
-        totalStages > 0 -> doneStages.toFloat() / totalStages
-        totalPages > 0 -> donePages.toFloat() / totalPages
-        else -> 0f
-    }.coerceIn(0f, 1f)
 
     /**
      * Per-chapter batch progress (done/total) for the manga-screen chapter-list indicator, so

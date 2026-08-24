@@ -10,6 +10,7 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.yield
 import org.junit.jupiter.api.Test
+import java.io.ByteArrayInputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -21,6 +22,44 @@ import java.util.concurrent.atomic.AtomicInteger
  * cancellation release, and chapter-length-independent in-flight bounds.
  */
 class SequentialBatchCoordinatorTest {
+
+    @Test
+    fun `same visit hands one source decode from ocr to inpaint`() = runTest {
+        val sourceOpens = AtomicInteger(0)
+        val released = AtomicInteger(0)
+        val sourceStreamFactory = { pageKey: String ->
+            sourceOpens.incrementAndGet()
+            ByteArrayInputStream("source:$pageKey".toByteArray())
+        }
+        val native = object : NativeLaneWorker {
+            override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef {
+                val decoded = sourceStreamFactory(pageKey).readBytes()
+                return OcrReadyPageRef(pageKey, pageIndex, 0L, emptyList(), nativeHandoff = decoded)
+            }
+
+            override suspend fun runInpaintStage(pageKey: String) {}
+
+            override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
+                nativeHandoff shouldBe "source:$pageKey".toByteArray()
+            }
+
+            override fun releaseNativeHandoff(ref: OcrReadyPageRef) {
+                released.incrementAndGet()
+            }
+        }
+        val coordinator = SequentialBatchCoordinator(
+            native,
+            object : TranslatorLaneWorker {
+                override suspend fun translate(ref: OcrReadyPageRef) {}
+            },
+            RecordingRenderJoin(),
+        )
+
+        coordinator.runPass1(listOf("p0" to 0), TranslatorComputeClass.REMOTE_IO)
+
+        sourceOpens.get() shouldBe 1
+        released.get() shouldBe 1
+    }
 
     @Test
     fun `every page invokes ocr and inpaint exactly once and renders in natural order`() = runTest {
@@ -59,35 +98,86 @@ class SequentialBatchCoordinatorTest {
     }
 
     @Test
-    fun `native lookahead never exceeds three pages beyond the translation frontier`() = runTest {
+    fun `adaptive probe is the only native lookahead and waits for prior chunk terminal`() = runTest {
         val events = RecordingListener()
         val native = ImmediateNativeWorker()
-        val translator = GatedTranslatorWorker()
+        val translator = ProbeChunkTranslator(probePage = "p2", gateFirstChunk = true)
         val render = RecordingRenderJoin()
-
+        val pages = (0 until 4).map { "p$it" to it }
         val coordinator = SequentialBatchCoordinator(native, translator, render, events)
-        val pages = (0 until 8).map { "p$it" to it }
 
         val pass1 = async { coordinator.runPass1(pages, TranslatorComputeClass.REMOTE_IO) }
+        translator.awaitFirstChunkStarted()
         advanceUntilIdle()
 
-        // The translator holds p0 unsettled, so the native lane may start at
-        // most p0..p3 (current page plus three lookahead pages).
-        events.count("ocrStarted:") shouldBe SequentialBatchCoordinator.MAX_NATIVE_LOOKAHEAD_PAGES + 1
-        events.contains("ocrStarted:p4") shouldBe false
-        translator.awaitTranslationStarted("p0")
-        events.count("inpaintFinished:") shouldBe 4
-
-        // Settling p0 lets the native lane advance exactly one more page.
-        translator.allowTranslationToFinish("p0")
+        events.count("ocrStarted:") shouldBe 3
+        events.contains("ocrStarted:p3") shouldBe false
+        events.contains("inpaintStarted:p2") shouldBe false
+        translator.allowFirstChunkToFinish()
         advanceUntilIdle()
-        events.contains("ocrStarted:p4") shouldBe true
-        events.contains("ocrStarted:p5") shouldBe false
-
-        (1 until 8).forEach { translator.allowTranslationToFinish("p$it") }
         pass1.await()
-        events.count("ocrStarted:") shouldBe 8
-        render.rendered.size shouldBe 8
+
+        events.contains("ocrStarted:p3") shouldBe true
+        render.rendered shouldBe pages.map { it.first }
+        translator.admitted shouldContainExactly listOf("p0", "p1", "p2", "p3")
+        translator.admissionCalls.count { it == "p2" } shouldBe 1
+    }
+
+    @Test
+    fun `adaptive AI completion overlaps inpaint only after full chunk OCR`() = runTest {
+        val events = RecordingListener()
+        val native = GatedNativeWorker()
+        val translator = ProbeChunkTranslator(probePage = "never", gateFirstChunk = true)
+        val render = RecordingRenderJoin()
+        val coordinator = SequentialBatchCoordinator(
+            native,
+            translator,
+            render,
+            events,
+        )
+
+        val pass1 = async {
+            coordinator.runPass1(
+                listOf("p0" to 0, "p1" to 1),
+                TranslatorComputeClass.REMOTE_IO,
+            )
+        }
+        native.allowOcrToFinish("p0")
+        native.allowOcrToFinish("p1")
+        translator.awaitFirstChunkStarted()
+        native.awaitInpaintStarted("p0")
+
+        events.filter("ocrFinished:") shouldContainExactly listOf("ocrFinished:p0", "ocrFinished:p1")
+        events.contains("inpaintStarted:p0") shouldBe true
+        translator.allowFirstChunkToFinish()
+        native.allowInpaintToFinish("p0")
+        native.allowInpaintToFinish("p1")
+        pass1.await()
+        render.rendered shouldContainExactly listOf("p0", "p1")
+    }
+
+    @Test
+    fun `terminal provider failure releases current chunk before next OCR`() = runTest {
+        val events = RecordingListener()
+        val native = ImmediateNativeWorker()
+        val translator = ProbeChunkTranslator(
+            probePage = "p1",
+            gateFirstChunk = false,
+            failFirstChunk = true,
+        )
+        val render = RecordingRenderJoin()
+        val coordinator = SequentialBatchCoordinator(native, translator, render, events)
+
+        coordinator.runPass1(
+            listOf("p0" to 0, "p1" to 1, "p2" to 2),
+            TranslatorComputeClass.REMOTE_IO,
+        )
+
+        val firstRender = events.log.indexOf("renderFinished:p0")
+        val nextOcr = events.log.indexOf("ocrStarted:p2")
+        (firstRender >= 0) shouldBe true
+        (nextOcr > firstRender) shouldBe true
+        render.rendered shouldContainExactly listOf("p0", "p1", "p2")
     }
 
     @Test
@@ -417,6 +507,45 @@ class SequentialBatchCoordinatorTest {
 
         fun allowInpaintToFinish(pageKey: String) {
             inpaintFinishGates.getOrPut(pageKey) { CompletableDeferred() }.complete(Unit)
+        }
+    }
+
+    private class ProbeChunkTranslator(
+        private val probePage: String,
+        private val gateFirstChunk: Boolean,
+        private val failFirstChunk: Boolean = false,
+    ) : TranslatorLaneWorker {
+        override val usesChunkAdmission: Boolean = true
+        val admitted = mutableListOf<String>()
+        val admissionCalls = mutableListOf<String>()
+        private val firstChunkStarted = CompletableDeferred<Unit>()
+        private val firstChunkFinish = CompletableDeferred<Unit>()
+        private var completionCount = 0
+
+        override suspend fun admit(ref: OcrReadyPageRef): ChunkAdmission {
+            synchronized(admitted) {
+                admissionCalls += ref.pageKey
+                if (ref.pageKey !in admitted) admitted += ref.pageKey
+            }
+            return if (ref.pageKey == probePage) ChunkAdmission.PROBE else ChunkAdmission.ACCEPT
+        }
+
+        override suspend fun translate(ref: OcrReadyPageRef) {
+            error("adaptive test translator must complete buffered chunks")
+        }
+
+        override suspend fun completeChunk(finalChunk: Boolean) {
+            completionCount++
+            if (completionCount != 1) return
+            firstChunkStarted.complete(Unit)
+            if (failFirstChunk) error("provider 429")
+            if (gateFirstChunk) firstChunkFinish.await()
+        }
+
+        suspend fun awaitFirstChunkStarted() = firstChunkStarted.await()
+
+        fun allowFirstChunkToFinish() {
+            firstChunkFinish.complete(Unit)
         }
     }
 

@@ -9,7 +9,6 @@ sqldelight = "2.0.2"
 sqlite = "2.4.0"
 mlkit-text-recognition-version = "16.0.1"
 mlkit-text-translate-version = "17.0.3"
-google-generativeai-version = "0.9.0"
 voyager = "1.0.1"
 spotless = "7.0.0.BETA4"
 ktlint-core = "1.5.0"
@@ -40,7 +39,6 @@ mlkit-text-recognition-chinese = { module = "com.google.mlkit:text-recognition-c
 mlkit-text-recognition-japanese = { module = "com.google.mlkit:text-recognition-japanese", version.ref = "mlkit-text-recognition-version" }
 mlkit-text-recognition-korean = { module = "com.google.mlkit:text-recognition-korean", version.ref = "mlkit-text-recognition-version" }
 mlkit-text-translate = { module = "com.google.mlkit:translate", version.ref = "mlkit-text-translate-version" }
-google-generativeai = { module = "com.google.ai.client.generativeai:generativeai", version.ref = "google-generativeai-version" }
 onnxruntime-android = { module = "com.microsoft.onnxruntime:onnxruntime-android-qnn", version.ref = "onnxruntime-android-version" }
 jtokkit = { module = "com.knuddels:jtokkit", version.ref = "jtokkit_version" }
 

@@ -28,7 +28,7 @@ import java.lang.reflect.Field
 class TranslationManagerAutoArbitrationTest {
 
     @Test
-    fun `manager batch ownership suppresses reconcile and rearm after release`() = runBlocking {
+    fun `manager keeps auto window active while the chapter batch is queued`() = runBlocking {
         val store = ChapterTranslationStore(
             translationFile = null,
             fileCreator = null,
@@ -73,23 +73,11 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
 
-            // The real manager batch acquisition shuts down Auto and queues a
-            // live Translation.State. A recovery reconcile and update cannot
-            // resurrect the coordinator while that ownership remains active.
+            // Queueing a batch retires the old coordinator, but subsequent
+            // reader-window updates must re-arm it while the batch is active.
             manager.translateChapter(manga, chapter)
             manager.reconcileAutoWindow()
-            manager.updateAutoWindow(
-                identity,
-                0,
-                0,
-                1,
-                session,
-                { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
-            )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it == null } }
-
-            queue.value = emptyList()
             manager.updateAutoWindow(
                 identity,
                 0,
@@ -103,6 +91,19 @@ class TranslationManagerAutoArbitrationTest {
 
             manager.reconcileAutoWindow()
             scheduler.autoSnapshot.value?.identity shouldBe identity
+
+            queue.value = emptyList()
+            manager.updateAutoWindow(
+                identity,
+                0,
+                0,
+                1,
+                session,
+                { RollingAutoCoordinator.PageWorkItem("p0", null) },
+                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
+            )
+            withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
+
             manager.updateAutoWindow(
                 identity,
                 0,

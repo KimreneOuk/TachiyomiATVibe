@@ -15,7 +15,6 @@ class PageWorkPlannerTest {
                 pageKey = key,
                 page = completePage(key, expected),
                 expectedFingerprints = expected,
-                contextCheckpoint = BatchContextCheckpoint(ContextCheckpointState.TRUSTED, "ctx-$key"),
             )
         }
 
@@ -25,7 +24,6 @@ class PageWorkPlannerTest {
         plan.firstWorkPageKey shouldBe null
         plan.pages.forEach { page ->
             page.stages.map { it.decision } shouldContainExactly List(5) { StageDecision.REUSE }
-            page.batchContextComplete shouldBe true
             page.displayReady shouldBe true
         }
     }
@@ -39,7 +37,6 @@ class PageWorkPlannerTest {
                 pageKey = "page-1",
                 page = completePage("page-1", old),
                 expectedFingerprints = current,
-                contextCheckpoint = trustedCheckpoint(),
             ),
         )
         plan.decisions() shouldBe mapOf(
@@ -60,7 +57,6 @@ class PageWorkPlannerTest {
                 pageKey = "page-1",
                 page = completePage("page-1", old),
                 expectedFingerprints = current,
-                contextCheckpoint = trustedCheckpoint(),
             ),
         )
 
@@ -82,7 +78,6 @@ class PageWorkPlannerTest {
                 pageKey = "page-1",
                 page = completePage("page-1", old),
                 expectedFingerprints = current,
-                contextCheckpoint = trustedCheckpoint(),
             ),
         )
 
@@ -106,7 +101,6 @@ class PageWorkPlannerTest {
                 },
                 expectedFingerprints = expected,
                 sourceFingerprint = "source-new",
-                contextCheckpoint = trustedCheckpoint(),
             ),
         )
         plan.decisions() shouldBe mapOf(
@@ -128,7 +122,6 @@ class PageWorkPlannerTest {
                     detectionFingerprint = null
                 },
                 expectedFingerprints = expected,
-                contextCheckpoint = trustedCheckpoint(),
             ),
         )
 
@@ -145,7 +138,6 @@ class PageWorkPlannerTest {
                 pageKey = "page-1",
                 page = completePage("page-1", old),
                 expectedFingerprints = current,
-                contextCheckpoint = trustedCheckpoint(),
             ),
         )
 
@@ -159,59 +151,21 @@ class PageWorkPlannerTest {
     }
 
     @Test
-    fun `reader ad hoc translation is visible but never batch complete`() {
+    fun `reader ad hoc translation with current fingerprints is reused by batch`() {
         val expected = fingerprints()
         val page = completePage("page-1", expected).apply {
             translationOrigin = ArtifactOrigin.READER_ADHOC.name
-            batchContextComplete = false
         }
         val plan = PageWorkPlanner.planPage(
             BatchPlannerInput(
                 pageKey = "page-1",
                 page = page,
                 expectedFingerprints = expected,
-                contextCheckpoint = trustedCheckpoint(),
             ),
         )
 
         plan.displayReady shouldBe true
-        plan.batchContextComplete shouldBe false
-        plan.stage(BatchStage.TRANSLATION).decision shouldBe StageDecision.RUN
-        plan.stage(BatchStage.TRANSLATION).reason shouldBe StageReasonCode.READER_ADHOC_NOT_BATCH_COMPLETE
-    }
-
-    @Test
-    fun `corrupt context rebuilds suffix without crossing the first incomplete page`() {
-        val expected = fingerprints()
-        val chapter = listOf(
-            BatchPlannerInput(
-                pageKey = "page-1",
-                page = completePage("page-1", expected),
-                expectedFingerprints = expected,
-                contextCheckpoint = trustedCheckpoint(),
-            ),
-            BatchPlannerInput(
-                pageKey = "page-2",
-                page = completePage("page-2", expected),
-                expectedFingerprints = expected,
-                contextCheckpoint = BatchContextCheckpoint(ContextCheckpointState.CORRUPT),
-            ),
-            BatchPlannerInput(
-                pageKey = "page-3",
-                page = completePage("page-3", expected),
-                expectedFingerprints = expected,
-                contextCheckpoint = trustedCheckpoint(),
-            ),
-        )
-
-        val plan = PageWorkPlanner.planChapter(chapter)
-
-        plan.firstWorkPageKey shouldBe "page-2"
-        plan.pages[0].stages.map { it.decision } shouldContainExactly List(5) { StageDecision.REUSE }
-        plan.pages[1].stage(BatchStage.TRANSLATION).decision shouldBe StageDecision.RUN
-        plan.pages[1].stage(BatchStage.TRANSLATION).reason shouldBe StageReasonCode.CONTEXT_CHECKPOINT_INVALID
-        plan.pages[2].stage(BatchStage.TRANSLATION).decision shouldBe StageDecision.WAIT_FOR_DEPENDENCY
-        plan.pages[2].stage(BatchStage.INPAINT).decision shouldBe StageDecision.REUSE
+        plan.stage(BatchStage.TRANSLATION).decision shouldBe StageDecision.REUSE
     }
 
     @Test
@@ -229,7 +183,6 @@ class PageWorkPlannerTest {
         plan.firstWorkPageKey shouldBe "page-2"
         plan.pages[1].stage(BatchStage.OCR).decision shouldBe StageDecision.FAILED
         plan.pages[2].stage(BatchStage.TRANSLATION).decision shouldBe StageDecision.WAIT_FOR_DEPENDENCY
-        plan.pages[2].batchContextComplete shouldBe false
     }
 
     private fun BatchPageWorkPlan.stage(stage: BatchStage): StageWorkDecision =
@@ -237,8 +190,6 @@ class PageWorkPlannerTest {
 
     private fun BatchPageWorkPlan.decisions(): Map<BatchStage, StageDecision> =
         stages.associate { it.stage to it.decision }
-
-    private fun trustedCheckpoint() = BatchContextCheckpoint(ContextCheckpointState.TRUSTED, "ctx")
 
     private fun fingerprints() = BatchExpectedFingerprints(
         detection = "detection",
@@ -263,7 +214,6 @@ class PageWorkPlannerTest {
         translationFingerprint = fingerprints.translation,
         layoutFingerprint = fingerprints.layout,
         translationOrigin = ArtifactOrigin.BATCH.name,
-        batchContextComplete = true,
         blocks = mutableListOf(
             TranslationBlock(
                 text = "source",

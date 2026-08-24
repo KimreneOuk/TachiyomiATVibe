@@ -1,5 +1,8 @@
 package eu.kanade.translation.translator
 
+import eu.kanade.translation.batch.BatchDiagnosticReason
+import eu.kanade.translation.batch.BatchEnvelopeLifecycle
+import eu.kanade.translation.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -17,13 +20,14 @@ import kotlin.random.Random
  * are logged so failures stay visible (no silent suppression).
  *
  * Centralised here so all four translator backends (DeepSeek/OpenRouter/
- * LmStudio via OkHttp, Gemini via SDK) get uniform retry behaviour without
+ * LmStudio and Gemini via OkHttp) get uniform retry behaviour without
  * per-translator duplication.
  */
 internal suspend inline fun <T> withTranslationRetry(
     maxAttempts: Int = 3,
     baseDelayMs: Long = 1000L,
     logTag: String,
+    envelopePageKeys: Collection<String>? = null,
     crossinline block: suspend () -> T,
 ): T {
     require(maxAttempts > 0) { "maxAttempts must be > 0" }
@@ -31,6 +35,14 @@ internal suspend inline fun <T> withTranslationRetry(
     var lastError: Throwable? = null
     while (attempt < maxAttempts) {
         attempt++
+        envelopePageKeys?.let { pageKeys ->
+            BatchTranslationDiagnostics.envelopeLifecycle(
+                phase = BatchEnvelopeLifecycle.PROVIDER_REQUEST,
+                pageKeys = pageKeys,
+                attempt = attempt,
+                reason = null,
+            )
+        }
         try {
             return block()
         } catch (e: CancellationException) {
@@ -39,6 +51,14 @@ internal suspend inline fun <T> withTranslationRetry(
             lastError = e
             val backend = ShortHash.hash(logTag).ifEmpty { "unknown" }
             if (attempt >= maxAttempts) {
+                envelopePageKeys?.let { pageKeys ->
+                    BatchTranslationDiagnostics.envelopeLifecycle(
+                        phase = BatchEnvelopeLifecycle.FAILED,
+                        pageKeys = pageKeys,
+                        attempt = attempt,
+                        reason = BatchDiagnosticReason.TERMINAL_FAILURE,
+                    )
+                }
                 logcat(tag = "TranslationRetry", priority = LogPriority.ERROR) {
                     "backend=$backend event=translation_failure reason=retry_exhausted " +
                         "attempt=$attempt error=${e::class.java.simpleName}"
@@ -46,6 +66,14 @@ internal suspend inline fun <T> withTranslationRetry(
                 throw e
             }
             if (!e.isTransientRateOrServerError()) {
+                envelopePageKeys?.let { pageKeys ->
+                    BatchTranslationDiagnostics.envelopeLifecycle(
+                        phase = BatchEnvelopeLifecycle.FAILED,
+                        pageKeys = pageKeys,
+                        attempt = attempt,
+                        reason = BatchDiagnosticReason.TERMINAL_FAILURE,
+                    )
+                }
                 logcat(tag = "TranslationRetry", priority = LogPriority.ERROR) {
                     "backend=$backend event=translation_failure reason=terminal " +
                         "attempt=$attempt error=${e::class.java.simpleName}"
@@ -53,7 +81,16 @@ internal suspend inline fun <T> withTranslationRetry(
                 throw e
             }
             val backoff = (baseDelayMs * (1L shl (attempt - 1))) + Random.nextLong(0, 500)
-            val capped = backoff.coerceAtMost(30_000L)
+            val retryAfter = (e as? GeminiApiException)?.retryAfterMillis
+            val capped = (retryAfter ?: backoff).coerceIn(0L, 30_000L)
+            envelopePageKeys?.let { pageKeys ->
+                BatchTranslationDiagnostics.envelopeLifecycle(
+                    phase = BatchEnvelopeLifecycle.RETRY,
+                    pageKeys = pageKeys,
+                    attempt = attempt,
+                    reason = BatchDiagnosticReason.TRANSIENT_FAILURE,
+                )
+            }
             logcat(tag = "TranslationRetry", priority = LogPriority.WARN) {
                 "backend=$backend event=translation_retry reason=transient " +
                     "attempt=$attempt maxAttempts=$maxAttempts error=${e::class.java.simpleName} " +

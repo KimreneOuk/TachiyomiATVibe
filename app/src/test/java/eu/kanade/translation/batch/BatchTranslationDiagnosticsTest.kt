@@ -39,6 +39,14 @@ class BatchTranslationDiagnosticsTest {
                 retryCount = 1,
                 reason = BatchDiagnosticReason.TERMINAL_FAILURE,
             ),
+            BatchTranslationDiagnostics.envelopeLifecycleMessage(
+                phase = BatchEnvelopeLifecycle.FAILED,
+                pageKeys = listOf(malicious),
+                attempt = 2,
+                expectedItemCount = 4,
+                receivedItemCount = 0,
+                reason = BatchDiagnosticReason.TERMINAL_FAILURE,
+            ),
         )
 
         messages.forEach { message ->
@@ -59,5 +67,19 @@ class BatchTranslationDiagnosticsTest {
         )
 
         message shouldBe "event=memory stage=pass1 usedBytes=0 maxBytes=1024 queueDepth=0 activePages=3"
+    }
+
+    @Test
+    fun `envelope lifecycle message has stable bounded fields`() {
+        BatchTranslationDiagnostics.envelopeLifecycleMessage(
+            phase = BatchEnvelopeLifecycle.RETRY,
+            pageKeys = listOf("001.jpg", "002.jpg"),
+            attempt = 3,
+            expectedItemCount = 8,
+            receivedItemCount = null,
+            reason = BatchDiagnosticReason.TRANSIENT_FAILURE,
+        ) shouldBe "event=envelope_lifecycle phase=retry envelope=${
+            BatchTranslationDiagnostics.envelopeId(listOf("001.jpg", "002.jpg"))
+        } pages=2 attempt=3 expectedItems=8 receivedItems=none reason=transient_failure"
     }
 }

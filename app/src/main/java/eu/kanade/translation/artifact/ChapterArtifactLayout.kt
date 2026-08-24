@@ -46,6 +46,9 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     private val artifactDirectoryName = "$artifactRootDirectoryName/artifacts"
     private val imageDirectoryName = "$artifactRootDirectoryName/images"
     private val pageSnapshotDirectoryName = "$artifactRootDirectoryName/pages"
+
+    // Legacy scene-checkpoint sidecar directory: no longer written, still swept
+    // by the retention reconciler so pre-refactor files get reclaimed.
     private val contextDirectoryName = "$artifactRootDirectoryName/context"
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
     private val glossaryDirectoryName = "$artifactRootDirectoryName/glossary"
@@ -79,12 +82,8 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     val imagesRootDirectory: String get() = imageDirectoryName
     val stageArtifactsRootDirectory: String get() = artifactDirectoryName
-    val contextRootDirectory: String get() = contextDirectoryName
     val generationsRootDirectory: String get() = generationDirectoryName
     val glossaryDirectory: String get() = glossaryDirectoryName
-
-    fun contextCheckpointFile(naturalPageIndex: Int, checkpointHash: String): String =
-        "$contextDirectoryName/$naturalPageIndex-${checkpointSegment(checkpointHash)}.json"
 
     fun generationFile(generationId: String): String =
         "$generationDirectoryName/${generationSegment(generationId)}.json"
@@ -119,8 +118,6 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     fun generationSegment(generationId: String): String = "g-${sha256Hex(generationId)}"
 
     private fun fingerprintSegment(fingerprint: String): String = "f-${sha256Hex(fingerprint)}"
-
-    private fun checkpointSegment(checkpointHash: String): String = "c-${sha256Hex(checkpointHash)}"
 
     private fun fileExtension(extension: String): String {
         require(extension.matches(Regex("^[A-Za-z0-9]{1,8}$"))) {

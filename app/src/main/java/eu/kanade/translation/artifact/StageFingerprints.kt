@@ -83,36 +83,6 @@ object StageFingerprints {
         cleanupRevision,
     )
 
-    /** Translation artifact (contract §7). The context checkpoint is an input. */
-    fun translation(
-        orderedOcrBlockIdsAndTextHashes: List<String>,
-        sourceLanguage: String,
-        targetLanguage: String,
-        provider: String,
-        model: String,
-        modelSettings: String,
-        promptProtocolVersion: Int,
-        contextInputCheckpointHash: String,
-        glossaryVersion: String,
-        profileLedgerVersion: String,
-        batchRelationshipAmbiguityPriorValue: String,
-        ambiguityPriorSchemaVersion: Int,
-    ): String = fingerprintIndexed(
-        "translation",
-        orderedOcrBlockIdsAndTextHashes,
-        sourceLanguage,
-        targetLanguage,
-        provider,
-        model,
-        modelSettings,
-        promptProtocolVersion,
-        contextInputCheckpointHash,
-        glossaryVersion,
-        profileLedgerVersion,
-        batchRelationshipAmbiguityPriorValue,
-        ambiguityPriorSchemaVersion,
-    )
-
     /** Render layout artifact (contract §8). */
     fun layout(
         translationArtifactId: String,
@@ -184,8 +154,6 @@ object StageFingerprints {
         page.translationFingerprint,
         page.layoutFingerprint,
         page.translationOrigin,
-        page.batchContextCheckpointHash,
-        page.batchContextComplete,
         page.retryCount,
         page.attemptCount,
         page.errorMessage,

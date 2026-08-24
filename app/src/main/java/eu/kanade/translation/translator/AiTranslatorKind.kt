@@ -35,7 +35,15 @@ enum class AiTranslatorKind(val engine: AiEngine, val label: String, val provide
         }
 
         return when (this) {
-            GEMINI -> GeminiTranslator(fromLang, toLang, apiKey, modelName, maxOutputTokens, temperature)
+            GEMINI -> GeminiTranslator(
+                fromLang,
+                toLang,
+                apiKey,
+                modelName,
+                maxOutputTokens,
+                temperature,
+                pref.translationGeminiThinkingMode().get(),
+            )
             OPENROUTER -> OpenRouterTranslator(fromLang, toLang, apiKey, modelName, maxOutputTokens, temperature)
             DEEPSEEK -> DeepSeekTranslator(fromLang, toLang, apiKey, modelName, maxOutputTokens, temperature)
             LMSTUDIO -> LmStudioTranslator(

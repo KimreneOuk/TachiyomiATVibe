@@ -193,6 +193,33 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
+    fun `load preserves a valid backup when primary promotion is interrupted`() {
+        val io = FakeChapterDocumentIo()
+        val store = artifactStore(io)
+        val first = store.loadOrMigrate(legacySnapshot())
+        val artifactManifest = first.manifest.copy(
+            authority = ManifestAuthority.ARTIFACTS,
+            updatedAtEpochMs = 43L,
+        )
+        store.publishManifest(artifactManifest)
+        store.publishManifest(artifactManifest.copy(updatedAtEpochMs = 44L))
+
+        val backupName = AtomicChapterDocuments.backupNameFor(layout.manifestFileName)
+        val backupBytes = io.read(backupName).shouldNotBeNull()
+        io.deletedNames.clear()
+        io.files.remove(layout.manifestFileName)
+        io.renamesToFail += backupName
+
+        val recovered = store.loadOrMigrate(legacySnapshot())
+
+        recovered.manifest.authority shouldBe ManifestAuthority.ARTIFACTS
+        recovered.manifest.pages.keys shouldBe setOf("page.jpg")
+        io.read(backupName) shouldBe backupBytes
+        io.files.containsKey(layout.manifestFileName) shouldBe false
+        io.deletedNames.none { it == backupName } shouldBe true
+    }
+
+    @Test
     fun `manifest with an unsupported primary schema is left untouched`() {
         val io = FakeChapterDocumentIo()
         val future = ChapterArtifactManifest(schemaVersion = 99, chapterKey = "Chapter 1")
@@ -331,7 +358,6 @@ class ChapterArtifactStoreTest {
         val candidateImage = layout.imageFile("0001.jpg", "g2", "fp2", "jpg")
         val ocrSidecar = layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "deadbeef")
         val keptGeneration = layout.generationFile("g1")
-        val keptCheckpoint = layout.contextCheckpointFile(3, "cphash")
         val keptGlossary = layout.glossaryFile(1)
         val manifest = ChapterArtifactManifest(
             chapterKey = "Chapter 1",
@@ -353,7 +379,6 @@ class ChapterArtifactStoreTest {
                         ),
                     ),
                     candidate = CandidateGenerationMetadata(generationId = "g2"),
-                    contextCheckpointFileName = keptCheckpoint,
                     ocr = StageArtifactRecord(
                         status = ArtifactStageStatus.READY,
                         origin = ArtifactOrigin.BATCH,
@@ -371,8 +396,7 @@ class ChapterArtifactStoreTest {
         io.write(layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "ffffffff"), byteArrayOf(6))
         io.write(keptGeneration, byteArrayOf(7))
         io.write(layout.generationFile("stale-gen"), byteArrayOf(8))
-        io.write(keptCheckpoint, byteArrayOf(9))
-        io.write(layout.contextCheckpointFile(4, "orphan"), byteArrayOf(10))
+        io.write("Chapter 1_artifacts/context/legacy-orphan.json", byteArrayOf(9))
         io.write(keptGlossary, byteArrayOf(11))
         io.write(layout.glossaryFile(2), byteArrayOf(12))
         io.write(layout.glossaryFile(9), byteArrayOf(13))
@@ -390,8 +414,7 @@ class ChapterArtifactStoreTest {
         io.files.containsKey(layout.stageArtifactFile("0001.jpg", ArtifactStage.OCR, "ffffffff")) shouldBe false
         io.files.containsKey(keptGeneration) shouldBe true
         io.files.containsKey(layout.generationFile("stale-gen")) shouldBe false
-        io.files.containsKey(keptCheckpoint) shouldBe true
-        io.files.containsKey(layout.contextCheckpointFile(4, "orphan")) shouldBe false
+        io.files.containsKey("Chapter 1_artifacts/context/legacy-orphan.json") shouldBe false
         io.files.containsKey(keptGlossary) shouldBe true
         io.files.containsKey(layout.glossaryFile(2)) shouldBe false
         io.files.containsKey(layout.glossaryFile(9)) shouldBe false
@@ -807,7 +830,7 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
-    fun `reader adhoc can display a candidate but cannot publish batch context`() {
+    fun `reader adhoc can display a candidate`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
         val migrated = store.loadOrMigrate(legacySnapshot()).manifest
@@ -820,19 +843,6 @@ class ChapterArtifactStoreTest {
             nowEpochMs = 300L,
         ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
         val generationId = opened.generationId.shouldNotBeNull()
-        val context = store.commitContextCheckpoint(
-            manifest = opened.manifest,
-            pageKey = "page.jpg",
-            naturalPageIndex = 0,
-            checkpointHash = "reader-context",
-            payload = buildJsonObject { put("context", "must-not-write") },
-            generationId = generationId,
-            origin = ArtifactOrigin.READER_ADHOC,
-            expectedPageVersion = 1L,
-            expectedDependencyFingerprint = "reader-deps",
-        )
-        context.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
-        io.files.keys.none { it.contains("reader-context") } shouldBe true
 
         val translation = store.commitStagePayload(
             opened.manifest,

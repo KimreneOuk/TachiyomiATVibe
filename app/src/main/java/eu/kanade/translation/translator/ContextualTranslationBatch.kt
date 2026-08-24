@@ -184,10 +184,6 @@ data class ContextualStructuralFailure(
     }
 }
 
-class ContextualStructuralFailureException(
-    val failure: ContextualStructuralFailure,
-) : IllegalStateException(failure.safeSummary())
-
 data class ContextualTranslationAccounting(
     val requested: Int,
     val translated: Int,

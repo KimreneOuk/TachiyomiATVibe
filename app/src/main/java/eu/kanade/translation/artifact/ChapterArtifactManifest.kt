@@ -77,7 +77,6 @@ data class PageArtifactRecord(
      * Canonical file name of this page's committed trusted context checkpoint
      * under `context/`, when one exists. Legacy pages have none (unknown).
      */
-    val contextCheckpointFileName: String? = null,
     /** Last known display state; the migration-time initial state when legacy. */
     val displayState: PageDisplayState = PageDisplayState.ORIGINAL_ONLY,
 )

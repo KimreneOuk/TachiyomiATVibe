@@ -1826,6 +1826,13 @@ class ChapterTranslationStore(
         private const val DEFAULT_FILE_NAME = "translation.json"
 
         /**
+         * The flat page map predates the artifact schema and may contain fields
+         * removed by a later refactor. Unknown keys are additive compatibility
+         * data here, so they must not make an otherwise valid page unreadable.
+         */
+        private val legacyPageJson = Json { ignoreUnknownKeys = true }
+
+        /**
          * Creates a sibling temp-file name scoped to its target translation file.
          * This avoids concurrent stores overwriting a shared temporary document.
          */
@@ -1844,7 +1851,7 @@ class ChapterTranslationStore(
             }
             val existing = if (legacyBytes != null) {
                 try {
-                    val map = Json.decodeFromStream<Map<String, PageTranslation>>(legacyBytes.inputStream())
+                    val map = legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(legacyBytes.inputStream())
                     map.values.forEach { page ->
                         if (page.errorMessage != null) {
                             if (page.ocrStatus == StageStatus.FAILED) page.ocrError = page.ocrError ?: page.errorMessage

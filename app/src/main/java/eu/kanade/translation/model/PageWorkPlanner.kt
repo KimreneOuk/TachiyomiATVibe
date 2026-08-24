@@ -35,7 +35,6 @@ object PageWorkPlanner {
                 runInpaint = !canReuseNative,
                 runRender = true,
                 displayReady = false,
-                batchContextComplete = false,
             )
         }
 
@@ -52,7 +51,7 @@ object PageWorkPlanner {
             runRender = batch.shouldRun(BatchStage.LAYOUT),
             stageDecisions = batch.stages,
             displayReady = batch.displayReady,
-            batchContextComplete = batch.batchContextComplete,
+
         )
     }
 
@@ -77,7 +76,7 @@ object PageWorkPlanner {
         val decisions = linkedMapOf<BatchStage, StageWorkDecision>()
         BatchStage.entries.forEach { stage ->
             val stageEvidence = evidence.getValue(stage)
-            val decision = decideStage(stage, stageEvidence, decisions, textless, input.contextCheckpoint)
+            val decision = decideStage(stage, stageEvidence, decisions, textless)
             decisions[stage] = decision
         }
 
@@ -86,32 +85,19 @@ object PageWorkPlanner {
         val firstIncomplete = decisions.values.firstOrNull {
             it.decision != StageDecision.REUSE && it.decision != StageDecision.TERMINAL_COMPLETE
         }?.stage
-        val translation = decisions.getValue(BatchStage.TRANSLATION)
-        val batchContextComplete = translation.decision in setOf(
-            StageDecision.REUSE,
-            StageDecision.TERMINAL_COMPLETE,
-        ) &&
-            input.contextCheckpoint.state in setOf(
-                ContextCheckpointState.TRUSTED,
-                ContextCheckpointState.NOT_REQUIRED,
-            ) &&
-            input.translationOrigin != ArtifactOrigin.READER_ADHOC &&
-            artifact?.translation?.origin != ArtifactOrigin.READER_ADHOC
 
         return BatchPageWorkPlan(
             pageKey = input.pageKey,
             stages = decisions.values.toList(),
             displayReady = displayReady,
-            batchContextComplete = batchContextComplete,
             firstIncompleteStage = firstIncomplete,
         )
     }
 
     /**
-     * Plan a natural-order chapter. Once a page needs translation work (or has
-     * a failed translation/context checkpoint), later pages wait for that page
-     * so a corrupt checkpoint can never be skipped by a later reusable page.
-     * Native work on later pages remains independently reusable/runnable.
+     * Plan a natural-order chapter. Once a page needs translation work, later
+     * pages wait for that page so chapter context stays gap-free. Native work
+     * on later pages remains independently reusable/runnable.
      */
     fun planChapter(pages: List<BatchPlannerInput>): BatchChapterWorkPlan {
         var translationBlocked = false
@@ -141,7 +127,6 @@ object PageWorkPlanner {
                 }
                 page.copy(
                     stages = stages,
-                    batchContextComplete = false,
                     firstIncompleteStage = stages.firstOrNull {
                         it.decision != StageDecision.REUSE && it.decision != StageDecision.TERMINAL_COMPLETE
                     }?.stage,
@@ -183,7 +168,6 @@ object PageWorkPlanner {
         evidence: StageEvidence,
         prior: Map<BatchStage, StageWorkDecision>,
         textless: Boolean,
-        checkpoint: BatchContextCheckpoint,
     ): StageWorkDecision {
         if (textless && stage != BatchStage.DETECTION && stage != BatchStage.OCR) {
             return StageWorkDecision(
@@ -195,23 +179,6 @@ object PageWorkPlanner {
                     StageReasonCode.TEXTLESS
                 },
             )
-        }
-
-        if (stage == BatchStage.TRANSLATION && evidence.origin == ArtifactOrigin.READER_ADHOC && !isTerminalSuccess(evidence.status)) {
-            return dependencyOrRun(
-                stage,
-                StageReasonCode.READER_ADHOC_NOT_BATCH_COMPLETE,
-                prior,
-            )
-        }
-        if (stage == BatchStage.TRANSLATION &&
-            checkpoint.state in setOf(
-                ContextCheckpointState.MISSING,
-                ContextCheckpointState.CORRUPT,
-            ) &&
-            !isTerminalSuccess(evidence.status)
-        ) {
-            return dependencyOrRun(stage, StageReasonCode.CONTEXT_CHECKPOINT_INVALID, prior)
         }
 
         val raw = when {

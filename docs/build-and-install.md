@@ -57,12 +57,13 @@ Always qualify the flavor. Kotlin-only compile (fastest, ~1–2 min incremental)
 
 ```cmd
 set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
-gradlew.bat :app:compileStandardDebugKotlin --no-daemon
+gradlew.bat :app:compileStandardDebugKotlin
 ```
 
 > Note: on Windows `cmd`, use `gradlew.bat` (NOT `./gradlew` — that's the Unix
 > launcher and fails with `'.' is not recognized`). `gradlew.bat` must be on the
-> PATH or invoked from the repo root.
+> PATH or invoked from the repo root. Do not pass `--no-daemon`: reusing the
+> warm Gradle daemon is what makes incremental invocations fast.
 
 ---
 
@@ -70,7 +71,7 @@ gradlew.bat :app:compileStandardDebugKotlin --no-daemon
 
 ```cmd
 set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
-gradlew.bat :app:assembleStandardDebug --no-daemon
+gradlew.bat :app:assembleStandardDebug
 ```
 
 Output APK (the `standard` debug variant):
@@ -99,7 +100,41 @@ A full clean build can take several minutes; incremental builds are much faster.
 
 ---
 
-## 4. adb — where it lives
+## 4. Running unit tests
+
+Unit tests live in `app\src\test` (mostly under `eu\kanade\translation\**`) and
+`domain\src\test`. They are pure-JVM JUnit 5 — no emulator or device needed.
+
+Task names must include the flavor; the bare `testDebugUnitTest` does not exist
+(same ambiguity as `compileDebugKotlin`):
+
+```cmd
+gradlew.bat :app:testStandardDebugUnitTest
+gradlew.bat :app:testDevDebugUnitTest
+gradlew.bat :domain:testReleaseUnitTest
+```
+
+While iterating, filter to the package or class you touched — this is the
+default way to validate a change (see AGENTS.md "Build and validation"):
+
+```cmd
+gradlew.bat :app:testStandardDebugUnitTest --tests "eu.kanade.translation.rendering.*"
+gradlew.bat :app:testStandardDebugUnitTest --tests "eu.kanade.translation.rendering.TextLayoutPlannerTest"
+```
+
+Test classes mirror source packages one-to-one, so run the filter matching the
+package you changed; for shared model/root pipeline types widen the filter to
+`eu.kanade.translation.*`. Release-variant test tasks (`testStandardReleaseUnitTest`,
+`testReleaseUnitTest`) run the same tests through the slower release compile
+config — CI uses those (`spotlessCheck assembleStandardRelease testReleaseUnitTest
+testStandardReleaseUnitTest`); prefer debug-variant tasks locally.
+
+Per-class timings are in `app\build\test-results\testStandardDebugUnitTest\*.xml`
+(the `time=` attributes); HTML reports are under `app\build\reports\tests\`.
+
+---
+
+## 5. adb — where it lives
 
 `adb` is NOT on the system PATH by default. It ships inside the Android SDK:
 
@@ -144,7 +179,7 @@ List of devices attached
 
 ---
 
-## 5. Installing the APK on the connected device
+## 6. Installing the APK on the connected device
 
 The package name of the `standard` **debug** build is
 `app.kanade.tachiyomi.at.debug` (NOT `eu.kanade.tachiyomi` — the applicationId
@@ -180,14 +215,14 @@ A successful launch prints `Events injected: 1`.
 
 ---
 
-## 6. All-in-one: build + install on the Wi-Fi phone
+## 7. All-in-one: build + install on the Wi-Fi phone
 
 Copy-paste from the repo root:
 
 ```cmd
 set "JAVA_HOME=C:\Program Files\Android\Android Studio\jbr"
 set "PATH=%PATH%;C:\Users\User\AppData\Local\Android\Sdk\platform-tools"
-gradlew.bat :app:assembleStandardDebug --no-daemon && ^
+gradlew.bat :app:assembleStandardDebug && ^
 adb connect 192.168.100.207:37625 && ^
 adb -s 192.168.100.207:37625 install -r app\build\outputs\apk\standard\debug\app-standard-arm64-v8a-debug.apk && ^
 adb -s 192.168.100.207:37625 shell monkey -p app.kanade.tachiyomi.at.debug -c android.intent.category.LAUNCHER 1
@@ -195,7 +230,7 @@ adb -s 192.168.100.207:37625 shell monkey -p app.kanade.tachiyomi.at.debug -c an
 
 ---
 
-## 7. Locating the tools on a new machine
+## 8. Locating the tools on a new machine
 
 If the paths above don't exist, find them:
 
@@ -215,13 +250,13 @@ gradlew.bat --version
 
 ---
 
-## 8. Reading build output
+## 9. Reading build output
 
 Always check the **tail** of the log for the real result — the wrapper's exit
 code can be misleading when chained with `&`:
 
 ```cmd
-gradlew.bat :app:compileStandardDebugKotlin --no-daemon > build.log 2>&1
+gradlew.bat :app:compileStandardDebugKotlin > build.log 2>&1
 ```
 Then look for `BUILD SUCCESSFUL` or `BUILD FAILED`, and grep for `e: file` /
 `error:` to find Kotlin/compiler errors:
@@ -235,7 +270,7 @@ Kotlin compiler diagnostic — the line:col points straight at the problem.
 
 ---
 
-## 9. Common pitfalls (all hit during the first session)
+## 10. Common pitfalls (all hit during the first session)
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|

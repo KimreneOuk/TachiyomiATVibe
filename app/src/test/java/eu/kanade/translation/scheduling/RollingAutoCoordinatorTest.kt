@@ -784,7 +784,12 @@ class RollingAutoCoordinatorTest {
     @Test
     fun `older same-spec snapshot build cannot overwrite newer stage`() = runBlocking {
         val executor = ControllableExecutor(autoComplete = false)
-        val store = newStore(listOf("p0" to blank()))
+        // The visible slot's transient state is populated by prepare's stage
+        // events, so snapshot builds resolve it from slotStates and never
+        // consult pageResolver. The gate below is only reachable through an
+        // ahead page, whose slot has no transient state and therefore must be
+        // resolved through the resolver-backed store lookup.
+        val store = newStore(listOf("p0" to blank(), "p1" to blank()))
         val coordinator = newCoordinator(
             executor,
             TranslatorComputeClass.REMOTE_IO,
@@ -802,7 +807,7 @@ class RollingAutoCoordinatorTest {
             RollingAutoCoordinator.PageWorkItem("p$idx", null)
         }
 
-        coordinator.updateWindow(identity, 0, 0, 1, session, gatedResolver)
+        coordinator.updateWindow(identity, 0, 1, 2, session, gatedResolver)
         executor.awaitPrepareStarted(0)
         blockNextBuild.set(true)
 

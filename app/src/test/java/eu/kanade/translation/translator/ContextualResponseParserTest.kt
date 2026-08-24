@@ -180,14 +180,14 @@ class ContextualResponseParserTest {
             TextTranslatorLanguage.ENGLISH,
         )
         val rawResponse = """
-            ${BatchTranslationProtocol.RESPONSE_HEADER}
-            ${BatchTranslationProtocol.PAGE_START} p0000
+            TACHIYOMI_AT_BATCH_RESPONSE v1
+            BEGIN_PAGE p0000
             p0000_b0000|First translation
             p0000_b0000|Duplicate translation
             p0000_b0001|${" ".repeat(3)}
             p0000_b0002|Unknown translation
-            ${BatchTranslationProtocol.PAGE_END} p0000
-            ${BatchTranslationProtocol.RESPONSE_END}
+            END_PAGE p0000
+            END_TACHIYOMI_AT_BATCH_RESPONSE
         """.trimIndent()
 
         val batch = ContextualResponseParser.parseBatch(rawResponse, request)

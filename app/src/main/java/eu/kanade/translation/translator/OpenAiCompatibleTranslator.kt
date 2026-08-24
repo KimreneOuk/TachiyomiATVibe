@@ -92,7 +92,10 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         )
         val payloadJson = buildPayload(systemPrompt, finalPrompt)
 
-        val rawOutput = withTranslationRetry(logTag = logTag) {
+        val rawOutput = withTranslationRetry(
+            logTag = logTag,
+            envelopePageKeys = chunk.pages.keys,
+        ) {
             postChatCompletion(url, headers, payloadJson)
         }
         return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {

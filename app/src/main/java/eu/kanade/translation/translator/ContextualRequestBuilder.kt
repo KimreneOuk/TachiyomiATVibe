@@ -117,29 +117,11 @@ object ContextualRequestBuilder {
 
     fun renderPrompt(
         request: Request,
-        rollingContext: eu.kanade.translation.batch.RollingContextPacket =
-            eu.kanade.translation.batch.RollingContextPacket(),
-        extraGlossary: String = "",
-    ): String {
-        val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, extraGlossary)
-        return renderPromptBody(request, contextPrefix)
-    }
-
-    fun renderPrompt(
-        request: Request,
         rollingContext: String,
         extraGlossary: String = "",
     ): String {
         val contextPrefix = TranslationPrompts.contextPrefix(rollingContext, extraGlossary)
-        return renderPromptBody(request, contextPrefix)
-    }
-
-    private fun renderPromptBody(request: Request, contextPrefix: String): String {
-        val requestBody = if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
-            BatchTranslationProtocol.renderRequest(request)
-        } else {
-            request.promptLines.joinToString("\n")
-        }
+        val requestBody = request.promptLines.joinToString("\n")
         return if (contextPrefix.isEmpty()) requestBody else contextPrefix + requestBody
     }
 

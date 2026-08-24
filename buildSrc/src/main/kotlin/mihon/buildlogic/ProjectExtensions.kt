@@ -114,7 +114,7 @@ internal fun Project.configureTest() {
     tasks.withType<Test> {
         useJUnitPlatform()
         testLogging {
-            events(TestLogEvent.PASSED, TestLogEvent.SKIPPED, TestLogEvent.FAILED)
+            events(TestLogEvent.SKIPPED, TestLogEvent.FAILED)
         }
     }
 }

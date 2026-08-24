@@ -62,6 +62,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
 import eu.kanade.translation.batch.BatchPhase
+import eu.kanade.translation.model.AiBatchProgress
+import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
@@ -480,6 +482,7 @@ private fun LivePipelineGrid(snapshot: TranslationProgressSnapshot) {
                 label = stringResource(ATMR.strings.manga_batch_stage_ai_name),
                 stageCount = translateCount,
                 total = total,
+                aiProgress = snapshot.aiProgress,
                 isActive = snapshot.activeStages.contains(TranslationProgressStage.TRANSLATE),
                 modifier = Modifier.weight(1f),
             )
@@ -514,12 +517,22 @@ private fun PipelineStageCard(
     label: String,
     stageCount: StageCount?,
     total: Int,
+    aiProgress: AiBatchProgress? = null,
     isActive: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val done = stageCount?.succeeded ?: 0
-    val fraction = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-    val isComplete = done >= total && total > 0
+    val done = aiProgress?.succeeded ?: stageCount?.succeeded ?: 0
+    val progressTotal = aiProgress?.total ?: total
+    val fraction = if (progressTotal > 0) (done.toFloat() / progressTotal).coerceIn(0f, 1f) else 0f
+    val isComplete = done >= progressTotal && progressTotal > 0
+    val progressDetail = aiProgress?.let { progress ->
+        listOfNotNull(
+            "${progress.pending} pending".takeIf { progress.pending > 0 },
+            "${progress.buffered} buffered".takeIf { progress.buffered > 0 },
+            "${progress.running} running/retrying".takeIf { progress.running > 0 },
+            "${progress.failed} failed".takeIf { progress.failed > 0 },
+        ).joinToString(" • ")
+    }
 
     val cardBorderColor by animateColorAsState(
         targetValue = when {
@@ -580,7 +593,7 @@ private fun PipelineStageCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = "$done / $total",
+                    text = "$done / $progressTotal",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -601,6 +614,15 @@ private fun PipelineStageCard(
                 color = if (isComplete) SuccessGreen else MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
+            if (!progressDetail.isNullOrBlank()) {
+                Text(
+                    text = progressDetail,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -609,13 +631,21 @@ private fun PipelineStageCard(
 private fun PageMiniChip(page: TranslationProgressSnapshot.Page) {
     val chipColor = when {
         page.displayReady -> SuccessGreen
+        page.aiState == AiPageProgressState.FAILED -> MaterialTheme.colorScheme.error
         page.stage == TranslationProgressStage.FAILED -> MaterialTheme.colorScheme.error
+        page.aiState == AiPageProgressState.BUFFERED -> WarningAmber
+        page.aiState == AiPageProgressState.RUNNING -> MaterialTheme.colorScheme.primary
         page.stage.isRunning -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
 
     val contentColor = when {
-        page.displayReady || page.stage == TranslationProgressStage.FAILED || page.stage.isRunning -> Color.White
+        page.displayReady ||
+            page.aiState == AiPageProgressState.FAILED ||
+            page.stage == TranslationProgressStage.FAILED ||
+            page.aiState == AiPageProgressState.BUFFERED ||
+            page.aiState == AiPageProgressState.RUNNING ||
+            page.stage.isRunning -> Color.White
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
@@ -678,7 +708,16 @@ private fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isR
             else -> "No active batch in progress"
         }
         TranslationBatchPhase.FIRST_PASS -> when {
-            snapshot.activeStages.contains(TranslationProgressStage.TRANSLATE) -> "Translating dialogue with AI model..."
+            snapshot.activeStages.contains(TranslationProgressStage.TRANSLATE) -> {
+                val progress = snapshot.aiProgress
+                val detail = listOfNotNull(
+                    "${progress.pending} pending".takeIf { progress.pending > 0 },
+                    "${progress.buffered} buffered".takeIf { progress.buffered > 0 },
+                    "${progress.running} running/retrying".takeIf { progress.running > 0 },
+                    "${progress.failed} failed".takeIf { progress.failed > 0 },
+                ).joinToString(", ")
+                if (detail.isBlank()) "Translating dialogue with AI model..." else "AI translation: $detail"
+            }
             snapshot.activeStages.contains(TranslationProgressStage.OCR) -> "Reading and detecting page text..."
             snapshot.activeStages.contains(TranslationProgressStage.INPAINT) -> "Cleaning speech bubbles..."
             snapshot.activeStages.contains(TranslationProgressStage.RENDER) -> "Rendering English text overlays..."
