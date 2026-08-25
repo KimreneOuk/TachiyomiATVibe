@@ -19,7 +19,8 @@ import kotlinx.coroutines.sync.withLock
  */
 internal class ActiveChapterStoreRegistry {
     private val stores = LinkedHashMap<Long, ChapterTranslationStore>()
-    private val openingLocks = LinkedHashMap<Long, Mutex>()
+    private val fileStores = LinkedHashMap<String, ChapterTranslationStore>()
+    private val openingLocks = LinkedHashMap<String, Mutex>()
     private val _snapshots = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _snapshots.asStateFlow()
 
@@ -27,10 +28,21 @@ internal class ActiveChapterStoreRegistry {
     fun get(chapterId: Long): ChapterTranslationStore? = stores[chapterId]
 
     @Synchronized
+    fun getByFile(fileKey: String): ChapterTranslationStore? = fileStores[fileKey]
+
+    @Synchronized
     fun register(chapterId: Long, store: ChapterTranslationStore): Boolean {
         if (stores.containsKey(chapterId)) return false
         stores[chapterId] = store
         publish()
+        return true
+    }
+
+    @Synchronized
+    fun registerFile(fileKey: String, store: ChapterTranslationStore): Boolean {
+        val existing = fileStores[fileKey]
+        if (existing != null && existing !== store) return false
+        fileStores[fileKey] = store
         return true
     }
 
@@ -41,22 +53,48 @@ internal class ActiveChapterStoreRegistry {
      */
     suspend fun getOrCreate(
         chapterId: Long,
+        fileKey: String? = null,
         create: suspend () -> ChapterTranslationStore?,
     ): ChapterTranslationStore? {
         get(chapterId)?.let { return it }
+        fileKey?.let { getByFile(it) }?.let { store ->
+            return if (register(chapterId, store)) store else get(chapterId)
+        }
         val openingLock = synchronized(this) {
-            openingLocks.getOrPut(chapterId) { Mutex() }
+            openingLocks.getOrPut(fileKey ?: "chapter:$chapterId") { Mutex() }
         }
         return openingLock.withLock {
             get(chapterId)?.let { return@withLock it }
+            fileKey?.let { getByFile(it) }?.let { store ->
+                return@withLock if (register(chapterId, store)) store else get(chapterId)
+            }
             val created = create() ?: return@withLock null
-            if (register(chapterId, created)) created else get(chapterId)
+            if (!register(chapterId, created)) return@withLock get(chapterId)
+            if (fileKey != null) registerFile(fileKey, created)
+            created
+        }
+    }
+
+    /** Opens one file-keyed store for callers that do not have a chapter id. */
+    suspend fun getOrCreateFile(
+        fileKey: String,
+        create: suspend () -> ChapterTranslationStore?,
+    ): ChapterTranslationStore? {
+        getByFile(fileKey)?.let { return it }
+        val openingLock = synchronized(this) {
+            openingLocks.getOrPut(fileKey) { Mutex() }
+        }
+        return openingLock.withLock {
+            getByFile(fileKey)?.let { return@withLock it }
+            val created = create() ?: return@withLock null
+            if (registerFile(fileKey, created)) created else getByFile(fileKey)
         }
     }
 
     @Synchronized
     fun remove(chapterId: Long): ChapterTranslationStore? {
         val removed = stores.remove(chapterId) ?: return null
+        fileStores.entries.removeIf { it.value === removed }
         publish()
         return removed
     }

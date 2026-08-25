@@ -6,10 +6,12 @@ import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationSummary
+import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.ChapterQueuePreflight
+import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
@@ -30,6 +32,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -78,6 +81,18 @@ class TranslationManager(
     /** Serializes reader lifecycle teardown so pause/finish cannot race store eviction. */
     private val readerTeardownMutex = Mutex()
 
+    private data class DurableChapterKey(
+        val chapterId: Long?,
+        val chapterName: String,
+        val chapterScanlator: String?,
+        val mangaTitle: String,
+        val sourceId: Long,
+    )
+
+    private data class DurableStatus(val state: Translation.State?)
+
+    private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
+
     /**
      * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
      * keeps the store lifecycle (open/evict/observe), chapter queue, and translation-file I/O.
@@ -125,6 +140,9 @@ class TranslationManager(
 
         // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
         // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
+        applicationScope.launch {
+            translator.queueState.collect { durableStatusCache.clear() }
+        }
         applicationScope.launch { translator.restoreQueue() }
     }
 
@@ -375,15 +393,11 @@ class TranslationManager(
             val pages = store.display.value
             if (pages.values.any { it.toPageDisplayProjection().displayReady }) {
                 val summary = kotlinx.coroutines.runBlocking(Dispatchers.IO) { store.readSummary() }
-                return when {
-                    summary == null || summary.expectedPageCount != pages.size -> Translation.State.READY_WITH_WARNINGS
-                    summary.outcome() == Translation.State.TRANSLATED -> Translation.State.TRANSLATED
-                    summary.outcome() == Translation.State.ERROR -> Translation.State.ERROR
-                    else -> Translation.State.READY_WITH_WARNINGS
-                }
+                return statusFromReadablePages(chapterName, pages, summary)
+                    ?: Translation.State.READY_WITH_WARNINGS
             }
         }
-        return persistedChapterStatus(chapterName, scanlator, title, sourceId)
+        return persistedChapterStatus(chapterId, chapterName, scanlator, title, sourceId)
             ?: Translation.State.NOT_TRANSLATED
     }
 
@@ -420,51 +434,133 @@ class TranslationManager(
         chapterScanlator: String?,
         mangaTitle: String,
         sourceId: Long,
-    ): Boolean = persistedChapterStatus(chapterName, chapterScanlator, mangaTitle, sourceId)
+    ): Boolean = persistedChapterStatus(null, chapterName, chapterScanlator, mangaTitle, sourceId)
         .let { it == Translation.State.TRANSLATED || it == Translation.State.READY_WITH_WARNINGS }
 
     private fun persistedChapterStatus(
+        chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
         mangaTitle: String,
         sourceId: Long,
-    ): Translation.State? = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-        val source = sourceManager.get(sourceId) ?: return@runBlocking null
-        val file = provider.findTranslationFile(chapterName, chapterScanlator, mangaTitle, source)
-            ?: return@runBlocking null
-        if (!file.exists() || file.length() <= 2L) return@runBlocking null
-        try {
-            val pages = legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
-            val readable = pages.values.any { it.toPageDisplayProjection().displayReady }
-            if (!readable) return@runBlocking null
+    ): Translation.State? {
+        val key = DurableChapterKey(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
+        durableStatusCache[key]?.let { return it.state }
+        val state = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            resolveDurableChapterStatus(
+                chapterId,
+                chapterName,
+                chapterScanlator,
+                mangaTitle,
+                sourceId,
+            )
+        }
+        durableStatusCache[key] = DurableStatus(state)
+        return state
+    }
 
-            val summary = ChapterTranslationSummaryStore(file).read()
-            // Page JSON predates the sidecar. It remains reader-available but can never
-            // prove full completion until a full batch creates a compatible summary.
-            if (summary == null) return@runBlocking Translation.State.READY_WITH_WARNINGS
-            if (summary.expectedPageCount != pages.size) {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName " +
-                        "reason=expected-count mismatch expected=${summary.expectedPageCount} actual=${pages.size}"
-                }
-                return@runBlocking Translation.State.READY_WITH_WARNINGS
-            }
-            when (summary.outcome()) {
-                Translation.State.TRANSLATED -> Translation.State.TRANSLATED
-                Translation.State.READY_WITH_WARNINGS -> Translation.State.READY_WITH_WARNINGS
-                Translation.State.ERROR -> Translation.State.ERROR
-                else -> {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName reason=invalid terminal outcome"
+    private suspend fun resolveDurableChapterStatus(
+        chapterId: Long?,
+        chapterName: String,
+        chapterScanlator: String?,
+        mangaTitle: String,
+        sourceId: Long,
+    ): Translation.State? {
+        val source = sourceManager.get(sourceId) ?: return null
+        val file = provider.findTranslationFile(chapterName, chapterScanlator, mangaTitle, source)
+            ?: return null
+        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
+        val summary = ChapterTranslationSummaryStore(file).read()
+        return when {
+            manifestProbe.exists && manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS -> {
+                artifactSummaryStatus(manifestProbe.manifest, summary)
+                    ?: openExistingChapterTranslationStore(
+                        chapterId,
+                        chapterName,
+                        chapterScanlator,
+                        mangaTitle,
+                        source,
+                    )?.let { store ->
+                        statusFromReadablePages(chapterName, store.display.value, summary)
                     }
-                    Translation.State.READY_WITH_WARNINGS
+            }
+            manifestProbe.exists && manifestProbe.manifest == null -> {
+                // A present but unreadable manifest must not fall back to stale flat JSON.
+                openExistingChapterTranslationStore(
+                    chapterId,
+                    chapterName,
+                    chapterScanlator,
+                    mangaTitle,
+                    source,
+                )?.let { store ->
+                    statusFromReadablePages(chapterName, store.display.value, summary)
                 }
             }
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) { "Translation file for $chapterName unreadable; treating as not translated" }
-            null
+            else -> decodeLegacyChapterStatus(file, chapterName, summary)
         }
     }
+
+    private fun artifactSummaryStatus(
+        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest?,
+        summary: ChapterTranslationSummary?,
+    ): Translation.State? {
+        if (manifest == null || summary == null || summary.expectedPageCount <= 0) return null
+        if (summary.expectedPageCount != manifest.pages.size) return null
+        if (manifest.pages.values.none { PageDisplayProjection.from(it).displayReady }) return null
+        return when (summary.outcome()) {
+            Translation.State.TRANSLATED -> Translation.State.TRANSLATED
+            Translation.State.READY_WITH_WARNINGS -> Translation.State.READY_WITH_WARNINGS
+            Translation.State.ERROR -> Translation.State.ERROR
+            else -> null
+        }
+    }
+
+    private fun decodeLegacyChapterStatus(
+        file: UniFile,
+        chapterName: String,
+        summary: ChapterTranslationSummary?,
+    ): Translation.State? {
+        if (!file.exists() || file.length() <= 2L) return null
+        return runCatching {
+            val pages = file.openInputStream().use {
+                legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(it)
+            }
+            statusFromReadablePages(chapterName, pages, summary)
+        }.onFailure { error ->
+            quarantineCorruptTranslationFile(file, error)
+            logcat(LogPriority.WARN, error) {
+                "Translation file for $chapterName unreadable; treating as not translated"
+            }
+        }.getOrNull()
+    }
+
+    private fun statusFromReadablePages(
+        chapterName: String,
+        pages: Map<String, PageTranslation>,
+        summary: ChapterTranslationSummary?,
+    ): Translation.State? {
+        if (pages.values.none { it.toPageDisplayProjection().displayReady }) return null
+        if (summary == null) return Translation.State.READY_WITH_WARNINGS
+        if (summary.expectedPageCount != pages.size) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName " +
+                    "reason=expected-count mismatch expected=${summary.expectedPageCount} actual=${pages.size}"
+            }
+            return Translation.State.READY_WITH_WARNINGS
+        }
+        return when (summary.outcome()) {
+            Translation.State.TRANSLATED -> Translation.State.TRANSLATED
+            Translation.State.READY_WITH_WARNINGS -> Translation.State.READY_WITH_WARNINGS
+            Translation.State.ERROR -> Translation.State.ERROR
+            else -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName reason=invalid terminal outcome"
+                }
+                Translation.State.READY_WITH_WARNINGS
+            }
+        }
+    }
+
     fun getChapterTranslation(
         chapterName: String,
         scanlator: String?,
@@ -487,27 +583,91 @@ class TranslationManager(
         return emptyMap()
     }
 
-    fun getChapterTranslationForReader(
+    suspend fun getChapterTranslationForReader(
         chapterId: Long,
         chapterName: String,
         scanlator: String?,
         mangaTitle: String,
         source: Source,
-    ): Map<String, PageTranslation> {
-        activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return it }
-        return getChapterTranslation(chapterName, scanlator, mangaTitle, source)
+    ): Map<String, PageTranslation> = withContext(Dispatchers.IO) {
+        activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+            ?: return@withContext emptyMap()
+        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
+        if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
+            return@withContext openExistingChapterTranslationStore(
+                chapterId,
+                chapterName,
+                scanlator,
+                mangaTitle,
+                source,
+            )?.state?.value.orEmpty()
+        }
+        return@withContext decodeLegacyChapterTranslation(file, quarantineOnFailure = true)
     }
 
     fun getChapterTranslation(
         file: UniFile,
     ): Map<String, PageTranslation> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-        try {
-            return@runBlocking legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(file.openInputStream())
-        } catch (e: Exception) {
-            file.delete()
+        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
+        if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
+            return@runBlocking activeStores.getOrCreateFile(file.registryKey()) {
+                ChapterTranslationStore.open(file)
+            }?.state?.value.orEmpty()
         }
-        return@runBlocking emptyMap()
+        return@runBlocking decodeLegacyChapterTranslation(file, quarantineOnFailure = true)
     }
+
+    private suspend fun openExistingChapterTranslationStore(
+        chapterId: Long?,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+    ): ChapterTranslationStore? {
+        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+            ?.takeIf { it.exists() }
+            ?: return null
+        return if (chapterId != null) {
+            activeStores.getOrCreate(chapterId, file.registryKey()) {
+                ChapterTranslationStore.open(file)
+            }
+        } else {
+            activeStores.getOrCreateFile(file.registryKey()) {
+                ChapterTranslationStore.open(file)
+            }
+        }
+    }
+
+    private fun decodeLegacyChapterTranslation(
+        file: UniFile,
+        quarantineOnFailure: Boolean,
+    ): Map<String, PageTranslation> {
+        if (!file.exists()) return emptyMap()
+        return runCatching {
+            file.openInputStream().use {
+                legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(it)
+            }
+        }.getOrElse { error ->
+            if (quarantineOnFailure) quarantineCorruptTranslationFile(file, error)
+            emptyMap()
+        }
+    }
+
+    private fun quarantineCorruptTranslationFile(file: UniFile, error: Throwable) {
+        val name = file.name ?: "translation.json"
+        val corruptName = "$name.corrupt"
+        val renamed = runCatching {
+            file.parentFile?.findFile(corruptName)?.delete()
+            file.renameTo(corruptName)
+        }.getOrDefault(false)
+        logcat(LogPriority.ERROR, error) {
+            "TachiyomiAT quarantined corrupt translation file: " +
+                "file=$name quarantine=$corruptName renamed=$renamed"
+        }
+    }
+
+    private fun UniFile.registryKey(): String = filePath ?: uri.toString()
 
     /** Returns whether this chapter has an existing or active translation store. */
     fun hasTranslationStore(chapter: Chapter, manga: Manga, source: Source): Boolean {
@@ -530,9 +690,11 @@ class TranslationManager(
         val activeStore = activeStores.get(chapterId)
         val store = activeStore ?: run {
             val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
+                ?.takeIf { it.exists() }
                 ?: return
-            if (!file.exists()) return
-            ChapterTranslationStore.open(file)
+            activeStores.getOrCreate(chapterId, file.registryKey()) {
+                ChapterTranslationStore.open(file)
+            } ?: return
         }
         val pages = store.state.value
         if (pages.size != onlineKeyByPageIndex.size) return
@@ -565,18 +727,24 @@ class TranslationManager(
     }
 
     fun openChapterTranslationStore(file: UniFile): StateFlow<Map<String, PageTranslation>> {
-        return ChapterTranslationStore.open(file).state
+        return kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+            activeStores.getOrCreateFile(file.registryKey()) {
+                ChapterTranslationStore.open(file)
+            }?.state ?: kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
+        }
     }
 
     fun registerActiveTranslationStore(chapterId: Long, store: ChapterTranslationStore) {
         // Keep the existing instance if already registered so a reader keeps observing the same object.
         activeStores.register(chapterId, store)
+        durableStatusCache.clear()
     }
 
     fun unregisterActiveTranslationStore(chapterId: Long) {
         // Mark the evicted store defunct BEFORE removing it from the registry. A worker still
         // holding a reference has late writes rejected rather than recreating deleted output.
         activeStores.remove(chapterId)?.markDefunct()
+        durableStatusCache.clear()
     }
 
     /**
@@ -644,8 +812,12 @@ class TranslationManager(
         source: Source,
         mangaId: Long?,
     ): ChapterTranslationStore? {
-        val registered = activeStores.getOrCreate(chapterId) {
-            val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+        val existingFile = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+        val registered = activeStores.getOrCreate(
+            chapterId,
+            existingFile?.takeIf { it.exists() }?.registryKey(),
+        ) {
+            val file = existingFile
             if (file != null && file.exists()) {
                 ChapterTranslationStore.open(file)
             } else {
@@ -1007,9 +1179,13 @@ class TranslationManager(
         val activeStore = chapterId?.let(activeStores::get)
         if (activeStore != null) return activeStore.resetPreflight()
 
-        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-        if (file?.exists() != true) return ChapterResetPreflight(0, 0, 0, 0)
-        return ChapterTranslationStore.open(file).resetPreflight()
+        return openExistingChapterTranslationStore(
+            chapterId,
+            chapter.name,
+            chapter.scanlator,
+            manga.title,
+            source,
+        )?.resetPreflight() ?: ChapterResetPreflight(0, 0, 0, 0)
     }
 
     suspend fun resetChapterTranslationData(
@@ -1067,6 +1243,7 @@ class TranslationManager(
         transform: (PageTranslation) -> PageTranslation,
     ) {
         val chapterId = chapter.id ?: return
+        durableStatusCache.clear()
         scheduler.cancelAutoTranslations(chapterId)
         cancelPageTranslations(chapterId)
         removeFromTranslationQueue(chapter)
@@ -1083,9 +1260,13 @@ class TranslationManager(
             }
             activeStore.flush()
         } else {
-            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-            if (file?.exists() == true) {
-                val store = ChapterTranslationStore.open(file)
+            openExistingChapterTranslationStore(
+                chapterId,
+                chapter.name,
+                chapter.scanlator,
+                manga.title,
+                source,
+            )?.let { store ->
                 store.state.value.keys.forEach { pageKey ->
                     store.updatePageFromCurrentSnapshot(pageKey, "chapter data reset") { page -> page?.let(transform) ?: PageTranslation.EMPTY }
                     store.demoteCommittedDisplay(pageKey, "chapter data reset")
@@ -1098,6 +1279,7 @@ class TranslationManager(
 
     suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) {
         val chapterId = chapter.id ?: return
+        durableStatusCache.clear()
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
 
@@ -1130,9 +1312,13 @@ class TranslationManager(
             store.demoteCommittedDisplay(pageKey, "translation data reset")
             store.flush()
         } else {
-            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-            if (file?.exists() == true) {
-                val s = ChapterTranslationStore.open(file)
+            openExistingChapterTranslationStore(
+                chapterId,
+                chapter.name,
+                chapter.scanlator,
+                manga.title,
+                source,
+            )?.let { s ->
                 s.updatePageFromCurrentSnapshot(pageKey, "translation data reset") { page ->
                     page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                     val newBlocks = page.blocks.map { block ->
@@ -1168,6 +1354,7 @@ class TranslationManager(
 
     suspend fun resetInpaintData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
         val chapterId = chapter.id ?: return
+        durableStatusCache.clear()
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
 
@@ -1188,9 +1375,13 @@ class TranslationManager(
             store.demoteCommittedDisplay(pageKey, "inpaint data reset")
             store.flush()
         } else {
-            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-            if (file?.exists() == true) {
-                val s = ChapterTranslationStore.open(file)
+            openExistingChapterTranslationStore(
+                chapterId,
+                chapter.name,
+                chapter.scanlator,
+                manga.title,
+                source,
+            )?.let { s ->
                 s.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
                     page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
                     page.copy(
@@ -1230,6 +1421,7 @@ class TranslationManager(
 
     suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
         val chapterId = chapter.id ?: return
+        durableStatusCache.clear()
 
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
@@ -1239,9 +1431,13 @@ class TranslationManager(
         if (activeStore != null) {
             activeStore.deletePage(pageKey)
         } else {
-            val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-            if (file?.exists() == true) {
-                val store = ChapterTranslationStore.open(file)
+            openExistingChapterTranslationStore(
+                chapterId,
+                chapter.name,
+                chapter.scanlator,
+                manga.title,
+                source,
+            )?.let { store ->
                 store.deletePage(pageKey)
                 store.flush()
             }

@@ -53,6 +53,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
 import kotlin.time.Duration.Companion.hours
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -83,6 +84,13 @@ class DownloadCache(
     private val renewInterval = 1.hours.inWholeMilliseconds
 
     /**
+     * Retry delay after a renewal was skipped because enumeration failed or
+     * sources were unavailable; keeps a transient SAF failure from freezing a
+     * stale (or empty) index for a full interval.
+     */
+    private val failedRenewalRetryMs = 1.minutes.inWholeMilliseconds
+
+    /**
      * The last time the cache was refreshed.
      */
     private var lastRenew = 0L
@@ -109,7 +117,14 @@ class DownloadCache(
                             ProtoBuf.decodeFromByteArray<RootDirectory>(it.readBytes())
                         }
                         rootDownloadsDir = diskCache
-                        lastRenew = System.currentTimeMillis()
+                        // An empty persisted index is indistinguishable from the
+                        // residue of a failed enumeration, so it must not
+                        // suppress the next renewal for a full interval.
+                        lastRenew = if (diskCache.sourceDirs.isEmpty()) {
+                            0L
+                        } else {
+                            System.currentTimeMillis()
+                        }
                     }
                 } catch (e: Throwable) {
                     logcat(LogPriority.ERROR, e) { "Failed to initialize from disk cache" }
@@ -324,8 +339,25 @@ class DownloadCache(
 
             rootDownloadsDirMutex.withLock {
                 val updatedRootDir = RootDirectory(storageManager.getDownloadsDirectory())
+                val rootListing = updatedRootDir.dir?.listFiles()
 
-                updatedRootDir.sourceDirs = updatedRootDir.dir?.listFiles().orEmpty()
+                // TachiyomiAT bug 5 fix: a failed SAF enumeration (null listing)
+                // or an unavailable source list must not replace the previous
+                // index with an empty one. An empty index used to be committed
+                // and persisted here, and the one-hour renewal interval then
+                // kept every chapter reported as "not downloaded" indefinitely
+                // while the downloader's live checks still found the files.
+                val renewalFailed = sources.isEmpty() || (updatedRootDir.dir != null && rootListing == null)
+                if (renewalFailed) {
+                    logcat(LogPriority.WARN) {
+                        "DownloadCache: renewal skipped (sources=${sources.size}, " +
+                            "rootListed=${rootListing != null}); keeping previous index"
+                    }
+                    lastRenew = System.currentTimeMillis() - renewInterval + failedRenewalRetryMs
+                    return@withLock
+                }
+
+                updatedRootDir.sourceDirs = rootListing.orEmpty()
                     .filter { it.isDirectory && !it.name.isNullOrBlank() }
                     .mapNotNull { dir ->
                         val sourceId = sourceMap[dir.name!!.lowercase()]
@@ -362,6 +394,13 @@ class DownloadCache(
                     .awaitAll()
 
                 rootDownloadsDir = updatedRootDir
+                if (updatedRootDir.sourceDirs.isEmpty() && rootListing.orEmpty().isNotEmpty()) {
+                    logcat(LogPriority.WARN) {
+                        "DownloadCache: renewal found ${rootListing.orEmpty().size} root entries " +
+                            "but none matched an installed source"
+                    }
+                }
+                lastRenew = System.currentTimeMillis()
             }
 
             _isInitializing.emit(false)
@@ -370,7 +409,12 @@ class DownloadCache(
                 if (exception != null && exception !is CancellationException) {
                     logcat(LogPriority.ERROR, exception) { "DownloadCache: failed to create cache" }
                 }
-                lastRenew = System.currentTimeMillis()
+                // The coroutine body already stamped lastRenew for both the
+                // success and the guarded-failure paths; only an exception may
+                // bypass it, in which case back off a full interval.
+                if (exception != null) {
+                    lastRenew = System.currentTimeMillis()
+                }
                 notifyChanges()
             }
         }

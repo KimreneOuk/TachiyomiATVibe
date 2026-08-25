@@ -949,29 +949,46 @@ class MangaScreenModel(
             .takeIf { it.any { candidate -> candidate.chapter.id == item.chapter.id } }
             ?: listOf(item)
         pendingTranslationGroup = emptyList()
-        val downloaded = group.filter { it.downloadState == Download.State.DOWNLOADED }
-        val awaitingDownload = group.filter { it.downloadState != Download.State.DOWNLOADED }
-        awaitingDownload.forEach { candidate ->
-            translationManager.queueTranslationAfterDownload(manga, candidate.chapter)
-        }
-        if (awaitingDownload.isNotEmpty()) {
-            downloadManager.downloadChapters(manga, awaitingDownload.map { it.chapter })
-        }
-        if (downloaded.isEmpty()) return
-        if (downloaded.size > 1) {
-            translationManager.translateChapters(manga, downloaded.map { it.chapter })
-            return
-        }
-        val target = downloaded.single()
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT translate START: chapter=${target.chapter.name} manga=${manga.title} " +
-                "lastPageRead=${target.chapter.lastPageRead}"
-        }
-        when (val preflight = translationManager.translateChapterPreflight(manga, target.chapter)) {
-            is ChapterQueuePreflight.NoConflict -> launchTranslateChapter(manga, target.chapter)
-            is ChapterQueuePreflight.RunningConflict -> {
-                updateSuccessState {
-                    it.copy(dialog = Dialog.RunningTranslationConflict(target, preflight))
+        screenModelScope.launch {
+            // TachiyomiAT bug 5 fix: decide with the same live provider check that
+            // Downloader.queueChapters uses to drop already-downloaded chapters. The
+            // item's cached downloadState can be wrong when the DownloadCache index
+            // is stale or empty, which previously made this branch queue an
+            // in-memory translate-after-download request that the downloader then
+            // filtered out silently, so the batch never started at all.
+            val (downloaded, awaitingDownload) = withIOContext {
+                group.partition {
+                    downloadManager.isChapterDownloaded(
+                        it.chapter.name,
+                        it.chapter.scanlator,
+                        manga.title,
+                        manga.source,
+                        skipCache = true,
+                    )
+                }
+            }
+            awaitingDownload.forEach { candidate ->
+                translationManager.queueTranslationAfterDownload(manga, candidate.chapter)
+            }
+            if (awaitingDownload.isNotEmpty()) {
+                downloadManager.downloadChapters(manga, awaitingDownload.map { it.chapter })
+            }
+            if (downloaded.isEmpty()) return@launch
+            if (downloaded.size > 1) {
+                translationManager.translateChapters(manga, downloaded.map { it.chapter })
+                return@launch
+            }
+            val target = downloaded.single()
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT translate START: chapter=${target.chapter.name} manga=${manga.title} " +
+                    "lastPageRead=${target.chapter.lastPageRead}"
+            }
+            when (val preflight = translationManager.translateChapterPreflight(manga, target.chapter)) {
+                is ChapterQueuePreflight.NoConflict -> launchTranslateChapter(manga, target.chapter)
+                is ChapterQueuePreflight.RunningConflict -> {
+                    updateSuccessState {
+                        it.copy(dialog = Dialog.RunningTranslationConflict(target, preflight))
+                    }
                 }
             }
         }

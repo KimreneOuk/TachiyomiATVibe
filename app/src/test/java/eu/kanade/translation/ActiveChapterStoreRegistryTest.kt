@@ -39,6 +39,34 @@ class ActiveChapterStoreRegistryTest {
     }
 
     @Test
+    fun `chapter and file keyed opens share one store`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        val fileKey = "chapter-file"
+        var createCount = 0
+
+        val stores = listOf(
+            async {
+                registry.getOrCreate(101, fileKey) {
+                    createCount++
+                    delay(10)
+                    ChapterTranslationStore(null, null)
+                }
+            },
+            async {
+                registry.getOrCreateFile(fileKey) {
+                    createCount++
+                    ChapterTranslationStore(null, null)
+                }
+            },
+        ).awaitAll()
+
+        createCount shouldBe 1
+        (stores[0] === stores[1]) shouldBe true
+        stores[0] shouldBe registry.get(101)
+        stores[0] shouldBe registry.getByFile(fileKey)
+    }
+
+    @Test
     fun `register never replaces an existing chapter authority`() = runTest {
         val registry = ActiveChapterStoreRegistry()
         val first = ChapterTranslationStore(null, null)

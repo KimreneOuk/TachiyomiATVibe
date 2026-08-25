@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.lang.reflect.Field
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -224,6 +225,7 @@ class TranslationManagerReaderTeardownTest {
         setField(manager, "activeStores", activeStores)
         setField(manager, "applicationScope", applicationScope)
         setField(manager, "readerTeardownMutex", Mutex())
+        setField(manager, "durableStatusCache", ConcurrentHashMap<Any, Any>())
         return manager
     }
 

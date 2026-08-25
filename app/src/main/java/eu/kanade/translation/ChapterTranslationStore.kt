@@ -1832,6 +1832,27 @@ class ChapterTranslationStore(
          */
         private val legacyPageJson = Json { ignoreUnknownKeys = true }
 
+        internal data class ArtifactManifestProbe(
+            val exists: Boolean,
+            val manifest: ChapterArtifactManifest?,
+        )
+
+        /** Reads only the small manifest header; page snapshots stay unopened. */
+        internal fun probeArtifactManifest(translationFile: UniFile): ArtifactManifestProbe {
+            val layout = translationFile.name
+                ?.let(ChapterArtifactLayout::fromTranslationFileName)
+                ?: return ArtifactManifestProbe(exists = false, manifest = null)
+            val manifestFile = translationFile.parentFile?.findFile(layout.manifestFileName)
+                ?: return ArtifactManifestProbe(exists = false, manifest = null)
+            if (!manifestFile.exists()) return ArtifactManifestProbe(exists = false, manifest = null)
+            val manifest = runCatching {
+                manifestFile.openInputStream().use { input ->
+                    legacyPageJson.decodeFromStream<ChapterArtifactManifest>(input)
+                }
+            }.getOrNull()
+            return ArtifactManifestProbe(exists = true, manifest = manifest)
+        }
+
         /**
          * Creates a sibling temp-file name scoped to its target translation file.
          * This avoids concurrent stores overwriting a shared temporary document.
