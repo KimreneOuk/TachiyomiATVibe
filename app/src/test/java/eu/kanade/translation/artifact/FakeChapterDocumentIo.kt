@@ -6,6 +6,8 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     val directories = mutableSetOf<String>()
     val deletedNames = mutableListOf<String>()
     val renamed = mutableListOf<Pair<String, String>>()
+    val writtenNames = mutableListOf<String>()
+    val listedDirectories = mutableListOf<String>()
     var failWrites = false
 
     /** Exact `from` names whose rename must fail. */
@@ -33,6 +35,7 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
 
     override fun write(name: String, bytes: ByteArray): Boolean {
         if (failWrites) return false
+        writtenNames += name
         files[name] = bytes.copyOf()
         ensureParents(name)
         return true
@@ -59,6 +62,7 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     }
 
     override fun list(directoryName: String): List<String>? {
+        listedDirectories += directoryName
         if (!directories.contains(directoryName)) return null
         return (
             files.keys.filter { parentOf(it) == directoryName }.map { it.substringAfterLast('/') } +

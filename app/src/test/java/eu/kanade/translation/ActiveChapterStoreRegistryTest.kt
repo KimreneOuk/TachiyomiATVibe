@@ -2,6 +2,8 @@ package eu.kanade.translation
 
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -121,5 +123,61 @@ class ActiveChapterStoreRegistryTest {
 
         collectorA.cancel()
         collectorB.cancel()
+    }
+
+    @Test
+    fun `durable probe is evicted unless an active chapter adopts it`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        val fileKey = "probe-file"
+        val probe = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+
+        registry.releaseProbe(fileKey, probe.store) shouldBe true
+        registry.getByFile(fileKey) shouldBe null
+        registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!.store shouldNotBe probe.store
+
+        val adopted = registry.getOrCreateProbe("adopted-file") { ChapterTranslationStore(null, null) }!!
+        registry.getOrCreate(909, "adopted-file") { error("probe should be promoted") } shouldBe adopted.store
+        registry.releaseProbe("adopted-file", adopted.store) shouldBe false
+        registry.get(909) shouldBe adopted.store
+    }
+
+    @Test
+    fun `file-keyed open adopts durable probe before it can be evicted`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        val fileKey = "file-probe"
+        val probe = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+
+        registry.getOrCreateFile(fileKey) { error("file open should adopt the probe") } shouldBe probe.store
+        registry.releaseProbe(fileKey, probe.store) shouldBe false
+        registry.getByFile(fileKey) shouldBe probe.store
+    }
+
+    @Test
+    fun `concurrent file open adopts a probe created under the shared opening lock`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        val fileKey = "concurrent-file-probe"
+        val creationStarted = CompletableDeferred<Unit>()
+        val created = CompletableDeferred<ChapterTranslationStore>()
+
+        val probeDeferred = async {
+            registry.getOrCreateProbe(fileKey) {
+                creationStarted.complete(Unit)
+                created.await()
+            }!!
+        }
+        creationStarted.await()
+        val fileOpen = async {
+            registry.getOrCreateFile(fileKey) {
+                error("file open must adopt the probe")
+            }
+        }
+        val probeStore = ChapterTranslationStore(null, null)
+        created.complete(probeStore)
+
+        val probe = probeDeferred.await()
+        fileOpen.await() shouldBe probe.store
+        probe.store shouldBe probeStore
+        registry.releaseProbe(fileKey, probe.store) shouldBe false
+        registry.getByFile(fileKey) shouldBe probeStore
     }
 }

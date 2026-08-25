@@ -18,6 +18,10 @@ data class ChapterArtifactManifest(
     /** Chapter base name (translation file name without extension) this manifest covers. */
     val chapterKey: String = "",
     val pages: Map<String, PageArtifactRecord> = emptyMap(),
+    /** Expected chapter page baseline captured at batch pre-registration or first durable write. */
+    val expectedPageCount: Int? = null,
+    /** True only when the baseline is the complete ordered batch page set. */
+    val expectedPageCountTrusted: Boolean = false,
     val activeCandidateGenerationIds: Set<String> = emptySet(),
     val durableFailures: Map<String, DurableFailureMetadata> = emptyMap(),
     val glossary: GlossaryPointer? = null,

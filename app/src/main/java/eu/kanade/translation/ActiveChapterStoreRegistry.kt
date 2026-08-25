@@ -20,6 +20,7 @@ import kotlinx.coroutines.sync.withLock
 internal class ActiveChapterStoreRegistry {
     private val stores = LinkedHashMap<Long, ChapterTranslationStore>()
     private val fileStores = LinkedHashMap<String, ChapterTranslationStore>()
+    private val probeStores = LinkedHashMap<String, ChapterTranslationStore>()
     private val openingLocks = LinkedHashMap<String, Mutex>()
     private val _snapshots = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _snapshots.asStateFlow()
@@ -60,6 +61,15 @@ internal class ActiveChapterStoreRegistry {
         fileKey?.let { getByFile(it) }?.let { store ->
             return if (register(chapterId, store)) store else get(chapterId)
         }
+        fileKey?.let { takeProbe(it) }?.let { store ->
+            return if (register(chapterId, store)) {
+                registerFile(fileKey, store)
+                store
+            } else {
+                store.closeAndFlush()
+                get(chapterId)
+            }
+        }
         val openingLock = synchronized(this) {
             openingLocks.getOrPut(fileKey ?: "chapter:$chapterId") { Mutex() }
         }
@@ -67,6 +77,15 @@ internal class ActiveChapterStoreRegistry {
             get(chapterId)?.let { return@withLock it }
             fileKey?.let { getByFile(it) }?.let { store ->
                 return@withLock if (register(chapterId, store)) store else get(chapterId)
+            }
+            fileKey?.let { takeProbe(it) }?.let { store ->
+                return@withLock if (register(chapterId, store)) {
+                    registerFile(fileKey, store)
+                    store
+                } else {
+                    store.closeAndFlush()
+                    get(chapterId)
+                }
             }
             val created = create() ?: return@withLock null
             if (!register(chapterId, created)) return@withLock get(chapterId)
@@ -86,9 +105,51 @@ internal class ActiveChapterStoreRegistry {
         }
         return openingLock.withLock {
             getByFile(fileKey)?.let { return@withLock it }
+            takeProbe(fileKey)?.let { probe ->
+                return@withLock if (registerFile(fileKey, probe)) {
+                    probe
+                } else {
+                    probe.closeAndFlush()
+                    getByFile(fileKey)
+                }
+            }
             val created = create() ?: return@withLock null
             if (registerFile(fileKey, created)) created else getByFile(fileKey)
         }
+    }
+
+    /** Opens a non-published store used only for a durable read probe. */
+    suspend fun getOrCreateProbe(
+        fileKey: String,
+        create: suspend () -> ChapterTranslationStore?,
+    ): ProbeResult? {
+        getByFile(fileKey)?.let { return ProbeResult(it, owned = false) }
+        synchronized(this) { probeStores[fileKey] }?.let { return ProbeResult(it, owned = true) }
+        val openingLock = synchronized(this) {
+            openingLocks.getOrPut(fileKey) { Mutex() }
+        }
+        return openingLock.withLock {
+            getByFile(fileKey)?.let { return@withLock ProbeResult(it, owned = false) }
+            synchronized(this@ActiveChapterStoreRegistry) { probeStores[fileKey] }?.let {
+                return@withLock ProbeResult(it, owned = true)
+            }
+            val created = create() ?: return@withLock null
+            probeStores[fileKey] = created
+            ProbeResult(created, owned = true)
+        }
+    }
+
+    /**
+     * Removes a probe unless an active chapter or file reader adopted it while
+     * the probe was running. The caller closes the returned store only when the
+     * result is true; active stores retain their persist scope.
+     */
+    @Synchronized
+    fun releaseProbe(fileKey: String, store: ChapterTranslationStore): Boolean {
+        if (probeStores[fileKey] !== store) return false
+        val active = stores.values.any { it === store } || fileStores[fileKey] === store
+        probeStores.remove(fileKey)
+        return !active
     }
 
     @Synchronized
@@ -120,4 +181,12 @@ internal class ActiveChapterStoreRegistry {
     private fun publish() {
         _snapshots.value = stores.toMap()
     }
+
+    data class ProbeResult(
+        val store: ChapterTranslationStore,
+        val owned: Boolean,
+    )
+
+    @Synchronized
+    private fun takeProbe(fileKey: String): ChapterTranslationStore? = probeStores.remove(fileKey)
 }

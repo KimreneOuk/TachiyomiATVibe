@@ -97,6 +97,11 @@ object LegacyArtifactMigration {
      */
     fun resyncManifest(prior: ChapterArtifactManifest, fresh: ChapterArtifactManifest): ChapterArtifactManifest =
         fresh.copy(
+            expectedPageCount = maxOf(
+                prior.expectedPageCount ?: 0,
+                fresh.expectedPageCount ?: 0,
+            ).takeIf { it > 0 },
+            expectedPageCountTrusted = prior.expectedPageCountTrusted || fresh.expectedPageCountTrusted,
             durableFailures = prior.durableFailures.filterKeys { key ->
                 fresh.pages.containsKey(key.substringBeforeLast(':'))
             },

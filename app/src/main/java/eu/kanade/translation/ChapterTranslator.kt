@@ -499,17 +499,7 @@ class ChapterTranslator(
                 orderedKeys = batchOrderedPageKeys,
                 activeGeneration = store.currentGeneration,
             )
-            translation.status = if (
-                reconciliation.chapterStatus == Translation.State.TRANSLATED &&
-                store.readSummary() == null
-            ) {
-                logcat(LogPriority.ERROR) {
-                    "TachiyomiAT batch cannot certify completion: chapter=${translation.chapter.name} reason=summary sidecar unavailable"
-                }
-                Translation.State.READY_WITH_WARNINGS
-            } else {
-                reconciliation.chapterStatus
-            }
+            translation.status = reconciliation.chapterStatus
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 // If it's no longer in the queue, it was explicitly removed (cancelled).

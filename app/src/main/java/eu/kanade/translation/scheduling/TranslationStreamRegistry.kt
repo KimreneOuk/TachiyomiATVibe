@@ -282,6 +282,23 @@ class TranslationStreamRegistry(
         cleanedLeases[CleanedLeaseKey(sourceId, mangaId, chapterId, pageKey, imageName)]?.readers ?: 0
     }
 
+    /** Returns leases for [imageName] regardless of the page key used by the reader. */
+    fun activeCleanedImageReadersForChapter(
+        sourceId: Long,
+        mangaId: Long,
+        chapterId: Long,
+        imageName: String,
+    ): Int = synchronized(cleanedLeaseLock) {
+        cleanedLeases.entries
+            .filter { (key, _) ->
+                key.sourceId == sourceId &&
+                    key.mangaId == mangaId &&
+                    key.chapterId == chapterId &&
+                    key.imageName == imageName
+            }
+            .sumOf { (_, record) -> record.readers }
+    }
+
     private fun releaseCleanedImageLease(key: CleanedLeaseKey) {
         val deletes = synchronized(cleanedLeaseLock) {
             val record = cleanedLeases[key] ?: return

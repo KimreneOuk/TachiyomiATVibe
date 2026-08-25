@@ -84,6 +84,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -444,6 +445,10 @@ class TranslationPipeline(
      */
     @Volatile
     var activeStoreResolver: ((Translation) -> ChapterTranslationStore?)? = null
+
+    /** Chapter-close hook for bounded storage cleanup owned by TranslationManager. */
+    @Volatile
+    var onBatchClosed: (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)? = null
 
     private fun peekReaderPageStream(
         manga: Manga,
@@ -2718,18 +2723,6 @@ class TranslationPipeline(
                     }
                 }
                 store.flush()
-                val summaryPublished = store.publishSummary(
-                    ChapterTranslationSummary(
-                        expectedPageCount = orderedStreams.map { it.first }.distinct().size,
-                        terminalOutcome = reconciliation.chapterStatus.value,
-                        updatedAtMillis = System.currentTimeMillis(),
-                    ),
-                )
-                if (!summaryPublished) {
-                    logcat(LogPriority.ERROR) {
-                        "TachiyomiAT batch terminal summary unavailable: chapter=${chapter.name} reason=sidecar publication failed"
-                    }
-                }
                 tracker?.finish(reconciliation)
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
@@ -2743,6 +2736,11 @@ class TranslationPipeline(
                 }
                 batchWriteIdentities.clear()
                 store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                withContext(NonCancellable) {
+                    store.flush()
+                }
+                store.reconcileArtifactRetention()
+                onBatchClosed?.invoke(manga, chapter, source, store)
             }
         }
     }
@@ -3448,25 +3446,6 @@ class TranslationPipeline(
                 // A newer committed display bundle may have just promoted; the
                 // file it superseded is now deletable.
                 deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
-                // CP4: Publish backward-compatible chapter summary after every accepted
-                // manual/auto commit so cold manga-screen eligibility discovery does not
-                // require a prior batch run. Published as READY_WITH_WARNINGS (partial
-                // chapter). Non-fatal if the sidecar write fails.
-                val pageCount = store.state.value.size
-                runCatching {
-                    store.publishSummary(
-                        ChapterTranslationSummary(
-                            expectedPageCount = pageCount.coerceAtLeast(1),
-                            terminalOutcome = eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS.value,
-                            updatedAtMillis = System.currentTimeMillis(),
-                        ),
-                    )
-                }.onFailure { e ->
-                    logcat(LogPriority.WARN, e) {
-                        "TachiyomiAT single-page summary publication failed (non-fatal): " +
-                            "chapter=${chapter.name} pageKey=$pageKey"
-                    }
-                }
             }
         } finally {
             store.flush()

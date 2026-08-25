@@ -5,13 +5,11 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.ChapterTranslationSummary
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.ChapterQueuePreflight
-import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
@@ -60,6 +58,12 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 
+private const val MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP = 64
+private const val ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS = 30_000L
+
+internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): Boolean =
+    lastModified <= 0L || nowEpochMs - lastModified < ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS
+
 class TranslationManager(
     private val context: Context,
     private val provider: TranslationProvider = Injekt.get(),
@@ -91,6 +95,14 @@ class TranslationManager(
 
     private data class DurableStatus(val state: Translation.State?)
 
+    private data class TranslationDocument(
+        val parent: UniFile,
+        val fileName: String,
+        val file: UniFile?,
+    ) {
+        val registryKey: String get() = "${parent.filePath ?: parent.uri}:$fileName"
+    }
+
     private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
 
     /**
@@ -118,6 +130,19 @@ class TranslationManager(
                 translation.source,
                 translation.manga.id,
             )
+        }
+        pipeline.onBatchClosed = { manga, chapter, source, store ->
+            chapter.id?.let { chapterId ->
+                sweepOrphanedCleanedImages(
+                    store = store,
+                    chapterId = chapterId,
+                    chapterName = chapter.name,
+                    scanlator = chapter.scanlator,
+                    mangaTitle = manga.title,
+                    source = source,
+                    mangaId = manga.id,
+                )
+            }
         }
         // NOTE: activeStoreUnregister is intentionally NOT wired. Evicting after
         // each single-page translation broke live updates (reader captured the
@@ -392,9 +417,7 @@ class TranslationManager(
             // or hide an older committed bundle while it is being refreshed.
             val pages = store.display.value
             if (pages.values.any { it.toPageDisplayProjection().displayReady }) {
-                val summary = kotlinx.coroutines.runBlocking(Dispatchers.IO) { store.readSummary() }
-                return statusFromReadablePages(chapterName, pages, summary)
-                    ?: Translation.State.READY_WITH_WARNINGS
+                return store.artifactStatus() ?: Translation.State.READY_WITH_WARNINGS
             }
         }
         return persistedChapterStatus(chapterId, chapterName, scanlator, title, sourceId)
@@ -467,65 +490,35 @@ class TranslationManager(
         sourceId: Long,
     ): Translation.State? {
         val source = sourceManager.get(sourceId) ?: return null
-        val file = provider.findTranslationFile(chapterName, chapterScanlator, mangaTitle, source)
+        val document = findTranslationDocument(chapterName, chapterScanlator, mangaTitle, source)
             ?: return null
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
-        val summary = ChapterTranslationSummaryStore(file).read()
+        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         return when {
             manifestProbe.exists && manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS -> {
-                artifactSummaryStatus(manifestProbe.manifest, summary)
-                    ?: openExistingChapterTranslationStore(
-                        chapterId,
-                        chapterName,
-                        chapterScanlator,
-                        mangaTitle,
-                        source,
-                    )?.let { store ->
-                        statusFromReadablePages(chapterName, store.display.value, summary)
-                    }
+                withProbeStore(document, chapterId) { store ->
+                    store.artifactStatus()
+                }
             }
             manifestProbe.exists && manifestProbe.manifest == null -> {
                 // A present but unreadable manifest must not fall back to stale flat JSON.
-                openExistingChapterTranslationStore(
-                    chapterId,
-                    chapterName,
-                    chapterScanlator,
-                    mangaTitle,
-                    source,
-                )?.let { store ->
-                    statusFromReadablePages(chapterName, store.display.value, summary)
+                withProbeStore(document, chapterId) { store ->
+                    store.artifactStatus()
                 }
             }
-            else -> decodeLegacyChapterStatus(file, chapterName, summary)
-        }
-    }
-
-    private fun artifactSummaryStatus(
-        manifest: eu.kanade.translation.artifact.ChapterArtifactManifest?,
-        summary: ChapterTranslationSummary?,
-    ): Translation.State? {
-        if (manifest == null || summary == null || summary.expectedPageCount <= 0) return null
-        if (summary.expectedPageCount != manifest.pages.size) return null
-        if (manifest.pages.values.none { PageDisplayProjection.from(it).displayReady }) return null
-        return when (summary.outcome()) {
-            Translation.State.TRANSLATED -> Translation.State.TRANSLATED
-            Translation.State.READY_WITH_WARNINGS -> Translation.State.READY_WITH_WARNINGS
-            Translation.State.ERROR -> Translation.State.ERROR
-            else -> null
+            else -> document.file?.let { decodeLegacyChapterStatus(it, chapterName) }
         }
     }
 
     private fun decodeLegacyChapterStatus(
         file: UniFile,
         chapterName: String,
-        summary: ChapterTranslationSummary?,
     ): Translation.State? {
         if (!file.exists() || file.length() <= 2L) return null
         return runCatching {
             val pages = file.openInputStream().use {
                 legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(it)
             }
-            statusFromReadablePages(chapterName, pages, summary)
+            statusFromReadablePages(pages)
         }.onFailure { error ->
             quarantineCorruptTranslationFile(file, error)
             logcat(LogPriority.WARN, error) {
@@ -535,30 +528,10 @@ class TranslationManager(
     }
 
     private fun statusFromReadablePages(
-        chapterName: String,
         pages: Map<String, PageTranslation>,
-        summary: ChapterTranslationSummary?,
     ): Translation.State? {
         if (pages.values.none { it.toPageDisplayProjection().displayReady }) return null
-        if (summary == null) return Translation.State.READY_WITH_WARNINGS
-        if (summary.expectedPageCount != pages.size) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName " +
-                    "reason=expected-count mismatch expected=${summary.expectedPageCount} actual=${pages.size}"
-            }
-            return Translation.State.READY_WITH_WARNINGS
-        }
-        return when (summary.outcome()) {
-            Translation.State.TRANSLATED -> Translation.State.TRANSLATED
-            Translation.State.READY_WITH_WARNINGS -> Translation.State.READY_WITH_WARNINGS
-            Translation.State.ERROR -> Translation.State.ERROR
-            else -> {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT chapter summary cannot certify completion: chapter=$chapterName reason=invalid terminal outcome"
-                }
-                Translation.State.READY_WITH_WARNINGS
-            }
-        }
+        return Translation.State.READY_WITH_WARNINGS
     }
 
     fun getChapterTranslation(
@@ -591,9 +564,9 @@ class TranslationManager(
         source: Source,
     ): Map<String, PageTranslation> = withContext(Dispatchers.IO) {
         activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
-        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
             ?: return@withContext emptyMap()
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
+        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
             return@withContext openExistingChapterTranslationStore(
                 chapterId,
@@ -603,7 +576,7 @@ class TranslationManager(
                 source,
             )?.state?.value.orEmpty()
         }
-        return@withContext decodeLegacyChapterTranslation(file, quarantineOnFailure = true)
+        return@withContext document.file?.let { decodeLegacyChapterTranslation(it, quarantineOnFailure = true) }.orEmpty()
     }
 
     fun getChapterTranslation(
@@ -625,16 +598,60 @@ class TranslationManager(
         mangaTitle: String,
         source: Source,
     ): ChapterTranslationStore? {
-        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
-            ?.takeIf { it.exists() }
-            ?: return null
+        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source) ?: return null
+        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
+        if (document.file?.exists() != true && !manifestProbe.exists) return null
         return if (chapterId != null) {
-            activeStores.getOrCreate(chapterId, file.registryKey()) {
-                ChapterTranslationStore.open(file)
+            activeStores.getOrCreate(chapterId, document.registryKey) {
+                if (document.file?.exists() == true) {
+                    ChapterTranslationStore.open(document.file)
+                } else {
+                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                }
             }
         } else {
-            activeStores.getOrCreateFile(file.registryKey()) {
-                ChapterTranslationStore.open(file)
+            activeStores.getOrCreateFile(document.registryKey) {
+                if (document.file?.exists() == true) {
+                    ChapterTranslationStore.open(document.file)
+                } else {
+                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                }
+            }
+        }
+    }
+
+    private fun findTranslationDocument(
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+    ): TranslationDocument? {
+        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+        val parent = file?.parentFile ?: provider.findMangaDir(mangaTitle, source) ?: return null
+        val fileName = file?.name ?: provider.getTranslationFileName(chapterName, scanlator)
+        return TranslationDocument(parent, fileName, file ?: parent.findFile(fileName))
+    }
+
+    private suspend fun <T> withProbeStore(
+        document: TranslationDocument,
+        chapterId: Long?,
+        block: suspend (ChapterTranslationStore) -> T,
+    ): T? {
+        if (chapterId != null) {
+            activeStores.get(chapterId)?.let { return block(it) }
+        }
+        val result = activeStores.getOrCreateProbe(document.registryKey) {
+            if (document.file?.exists() == true) {
+                ChapterTranslationStore.open(document.file)
+            } else {
+                ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+            }
+        } ?: return null
+        return try {
+            block(result.store)
+        } finally {
+            if (result.owned && activeStores.releaseProbe(document.registryKey, result.store)) {
+                result.store.closeAndFlush()
             }
         }
     }
@@ -812,23 +829,32 @@ class TranslationManager(
         source: Source,
         mangaId: Long?,
     ): ChapterTranslationStore? {
-        val existingFile = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
+        val fileName = document?.fileName ?: provider.getTranslationFileName(chapterName, scanlator)
+        val manifestProbe = document?.let {
+            ChapterTranslationStore.probeArtifactManifest(it.parent, it.fileName)
+        }
         val registered = activeStores.getOrCreate(
             chapterId,
-            existingFile?.takeIf { it.exists() }?.registryKey(),
+            document?.registryKey,
         ) {
-            val file = existingFile
-            if (file != null && file.exists()) {
+            val file = document?.file
+            if (file?.exists() == true) {
                 ChapterTranslationStore.open(file)
+            } else if (manifestProbe?.exists == true) {
+                ChapterTranslationStore.openArtifact(document.parent, fileName)
             } else {
-                // Create a LAZY store: the on-disk file materializes only on the first real write
-                // (persistLocked), so merely opening a chapter never leaves an empty file behind that
-                // would make isChapterTranslated report a false TRANSLATED state.
-                val saveFile = provider.getTranslationFileName(chapterName, scanlator)
-                ChapterTranslationStore.lazy {
-                    provider.getMangaDir(mangaTitle, source)?.createFile(saveFile)
-                        ?: throw java.io.IOException("Cannot create translation file for $chapterName")
-                }
+                // Create a LAZY store: the artifact manifest materializes only on the first real
+                // write, so merely opening a chapter never leaves an empty compatibility document
+                // behind that could make isChapterTranslated report a false TRANSLATED state.
+                ChapterTranslationStore.lazy(
+                    fileCreator = {
+                        provider.getMangaDir(mangaTitle, source)?.createFile(fileName)
+                            ?: throw java.io.IOException("Cannot create translation file for $chapterName")
+                    },
+                    artifactParent = document?.parent,
+                    artifactFileName = fileName,
+                )
             }
         } ?: return null
         scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
@@ -881,7 +907,48 @@ class TranslationManager(
                     }
                 }
             }
+            sweepOrphanedCleanedImages(
+                store = store,
+                chapterId = chapterId,
+                chapterName = chapterName,
+                scanlator = scanlator,
+                mangaTitle = mangaTitle,
+                source = source,
+                mangaId = stableMangaId,
+            )
         }
+    }
+
+    private fun sweepOrphanedCleanedImages(
+        store: ChapterTranslationStore,
+        chapterId: Long,
+        chapterName: String,
+        scanlator: String?,
+        mangaTitle: String,
+        source: Source,
+        mangaId: Long,
+    ) {
+        val directory = provider.findCompanionImageDir(mangaTitle, source, chapterName, scanlator) ?: return
+        val referenced = store.referencedCleanedImageNames()
+        val pageKeys = store.state.value.keys
+        val now = System.currentTimeMillis()
+        directory.listFiles()
+            ?.asSequence()
+            ?.mapNotNull { file -> file.name?.let { it to file } }
+            ?.filter { (name, file) -> file.isFile && name.contains(".cleaned.") }
+            ?.filterNot { (name, file) ->
+                name in referenced ||
+                    streamRegistry.activeCleanedImageReadersForChapter(source.id, mangaId, chapterId, name) > 0 ||
+                    pageKeys.any { pageKey -> !store.mayDeleteCleanedImage(pageKey, name) } ||
+                    isFreshOrphanedCleanedImage(file.lastModified(), now)
+            }
+            ?.take(MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP)
+            ?.forEach { (name, file) ->
+                val deleted = runCatching { file.delete() }.getOrDefault(false)
+                logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
+                    "TachiyomiAT orphaned cleaned image sweep: chapter=$chapterName file=$name deleted=$deleted"
+                }
+            }
     }
 
     private fun retireChapterCompanionImages(
@@ -1155,14 +1222,6 @@ class TranslationManager(
         streamRegistry.clearChapter(source.id, manga.id, chapterId)
         val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
         file?.delete()
-        // Purge the bounded summary sidecar alongside the translation JSON.
-        // deleteManga already removes the whole manga directory so the sidecar goes with it;
-        // this per-chapter path previously only deleted the translation JSON + companion images.
-        // Same lookup ChapterTranslationSummaryStore.findSummaryFile() uses (parent + summaryFileName).
-        file?.let { nonNullFile ->
-            val name = nonNullFile.name ?: return@let
-            nonNullFile.parentFile?.findFile(ChapterTranslationSummaryStore.summaryFileName(name))?.delete()
-        }
         retireChapterCompanionImages(manga, chapter, source)
     }
 
@@ -1430,6 +1489,7 @@ class TranslationManager(
         val persistedCleanedName = activeStore?.state?.value?.get(pageKey)?.cleanedImageName
         if (activeStore != null) {
             activeStore.deletePage(pageKey)
+            activeStore.flush()
         } else {
             openExistingChapterTranslationStore(
                 chapterId,

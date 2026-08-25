@@ -397,7 +397,10 @@ class ChapterArtifactStore(
         }
         val candidateFile = candidate.pageSnapshotFileName
             ?: layout.candidatePageSnapshotFile(pageKey, generationId)
-        if (!documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
+        val candidateMatches = documents.readValidated<PageTranslation>(candidateFile)?.let {
+            it == pageSnapshot
+        } == true
+        if (!candidateMatches && !documents.publishJson(candidateFile, pageSnapshot.detachedCopy())) {
             return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
         }
         val committedFile = layout.committedPageSnapshotFile(pageKey, generationId)
@@ -458,8 +461,7 @@ class ChapterArtifactStore(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; committed pointer unchanged")
         }
-        val retention = reconcileRetention(updated)
-        return TransactionOutcome.Committed(updated, generationId, retention.deletedNames)
+        return TransactionOutcome.Committed(updated, generationId)
     }
 
     /** Cancels a live candidate while retaining the committed pointer. */
@@ -512,8 +514,7 @@ class ChapterArtifactStore(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; reset pointers remain authoritative")
         }
-        val retention = reconcileRetention(updated)
-        return TransactionOutcome.Committed(updated, candidateGenerationId, retention.deletedNames)
+        return TransactionOutcome.Committed(updated, candidateGenerationId)
     }
 
     /** Removes one page from the artifact-authoritative live manifest. */
@@ -534,8 +535,7 @@ class ChapterArtifactStore(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; page remains authoritative: pageKey=$pageKey")
         }
-        val retention = reconcileRetention(updated)
-        return TransactionOutcome.Committed(updated, deletedFiles = retention.deletedNames)
+        return TransactionOutcome.Committed(updated)
     }
 
     /**

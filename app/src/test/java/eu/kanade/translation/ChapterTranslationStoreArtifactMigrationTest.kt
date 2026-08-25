@@ -238,6 +238,90 @@ class ChapterTranslationStoreArtifactMigrationTest {
     }
 
     @Test
+    fun `pre-registered pages publish one durable baseline with only the changed candidate`() = runTest {
+        installPngHeaderProbe()
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        val store = ChapterTranslationStore.lazy(
+            fileCreator = { root.createFile("Chapter 2.json")!! },
+            artifactParent = root,
+            artifactFileName = "Chapter 2.json",
+        )
+        store.preRegisterPages(listOf("p1.jpg", "p2.jpg", "p3.jpg"))
+        readManifest("Chapter 2").expectedPageCount shouldBe 3
+        readManifest("Chapter 2").expectedPageCountTrusted shouldBe true
+        store.updatePage("p1.jpg") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        store.flush()
+
+        val manifest = readManifest("Chapter 2")
+        manifest.expectedPageCount shouldBe 3
+        manifest.pages.keys shouldBe setOf("p1.jpg", "p2.jpg", "p3.jpg")
+        manifest.pages.getValue("p1.jpg").candidate shouldNotBe null
+        manifest.pages.getValue("p2.jpg").candidate shouldBe null
+        manifest.pages.getValue("p3.jpg").candidate shouldBe null
+    }
+
+    @Test
+    fun `batch baseline certifies complete artifact pages`() = runTest {
+        installPngHeaderProbe()
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        File(mangaDir, "Chapter 6_images").mkdirs()
+        File(mangaDir, "Chapter 6_images/p1.cleaned.jpg").writeBytes(pngBytes(100, 100))
+        File(mangaDir, "Chapter 6_images/p2.cleaned.jpg").writeBytes(pngBytes(100, 100))
+        val store = ChapterTranslationStore.lazy(
+            fileCreator = { error("batch fixture must use artifacts") },
+            artifactParent = root,
+            artifactFileName = "Chapter 6.json",
+        )
+        store.preRegisterPages(listOf("p1.jpg", "p2.jpg"))
+        store.updatePage("p1.jpg") { displayablePage().copy(cleanedImageName = "p1.cleaned.jpg") }
+        store.updatePage("p2.jpg") { displayablePage().copy(cleanedImageName = "p2.cleaned.jpg") }
+        store.flush()
+
+        store.artifactStatus() shouldBe eu.kanade.translation.model.Translation.State.TRANSLATED
+    }
+
+    @Test
+    fun `missing expected pages warn while a durable stage failure remains error`() = runTest {
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        val store = ChapterTranslationStore.lazy(
+            fileCreator = { error("artifact-only store must not create the flat file") },
+            artifactParent = root,
+            artifactFileName = "Chapter 7.json",
+        )
+        store.preRegisterPages(listOf("p1.jpg", "p2.jpg"))
+        store.updatePage("p1.jpg") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        store.flush()
+
+        store.artifactStatus() shouldBe eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS
+
+        store.updatePage("p1.jpg") { PageTranslation(ocrStatus = StageStatus.FAILED) }
+        store.flush()
+
+        store.artifactStatus() shouldBe eu.kanade.translation.model.Translation.State.ERROR
+        store.closeAndFlush()
+    }
+
+    @Test
+    fun `artifact-only lazy store writes glossary without materializing flat compatibility file`() = runTest {
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        val store = ChapterTranslationStore.lazy(
+            fileCreator = { error("artifact-only store must not create the flat file") },
+            artifactParent = root,
+            artifactFileName = "Chapter 2.json",
+        )
+        store.updatePage("page.jpg") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        store.updateGlossary(mapOf("sensei" to "teacher"))
+        store.flush()
+
+        File(mangaDir, "Chapter 2.json").exists() shouldBe false
+        File(mangaDir, "Chapter 2.summary.json").exists() shouldBe false
+        File(mangaDir, "Chapter 2.manifest.json").exists() shouldBe true
+        readManifest("Chapter 2").expectedPageCount shouldBe 1
+        readManifest("Chapter 2").expectedPageCountTrusted shouldBe false
+        File(mangaDir, "Chapter 2_artifacts/glossary/chapter.glossary.1.json").exists() shouldBe true
+    }
+
+    @Test
     fun `first live mutation cuts over to artifact authority and legacy bytes cannot resync`() = runTest {
         installPngHeaderProbe()
         writeLegacyChapter()
@@ -557,6 +641,8 @@ class ChapterTranslationStoreArtifactMigrationTest {
         flatFile.readBytes() shouldBe ByteArray(0)
         val candidateManifest = readManifest("Chapter 2")
         candidateManifest.authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
+        candidateManifest.expectedPageCount shouldBe 1
+        candidateManifest.expectedPageCountTrusted shouldBe false
         candidateManifest.pages.getValue("page.jpg").committed shouldBe null
         candidateManifest.pages.getValue("page.jpg").candidate?.pageSnapshotFileName shouldNotBe null
 

@@ -79,6 +79,7 @@ class TranslationManagerArtifactReadTest {
         every { source.id } returns 77L
         val provider = mockk<TranslationProvider>(relaxed = true)
         every { provider.findTranslationFile(any(), any(), any(), any()) } returns file
+        every { provider.findMangaDir(any(), any()) } returns FakeUniFile(parent = null, backing = mangaDir)
         val sourceManager = mockk<SourceManager>(relaxed = true)
         every { sourceManager.get(77L) } returns source
         val translator = mockk<ChapterTranslator>(relaxed = true)
@@ -123,22 +124,77 @@ class TranslationManagerArtifactReadTest {
         store.updatePage("page.jpg") { current ->
             current!!.apply { blocks.single().userEditedAt = 42L }
         }
-        store.publishSummary(
-            ChapterTranslationSummary(
-                expectedPageCount = 1,
-                terminalOutcome = Translation.State.TRANSLATED.value,
-                updatedAtMillis = 1L,
-            ),
-        ) shouldBe true
         store.closeAndFlush()
 
         ChapterTranslationStore.probeArtifactManifest(file).manifest?.authority shouldBe ManifestAuthority.ARTIFACTS
+        ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCount shouldBe 1
+        ChapterTranslationStore.probeArtifactManifest(file).manifest?.expectedPageCountTrusted shouldBe false
+        file.delete() shouldBe true
+        File(mangaDir, "Chapter 1.summary.json").exists() shouldBe false
 
         val manager = newManager(file)
-        manager.getChapterTranslationStatus(42L, "Chapter 1", null, "Manga", 77L) shouldBe Translation.State.TRANSLATED
+        manager.getChapterTranslationStatus(42L, "Chapter 1", null, "Manga", 77L) shouldBe
+            Translation.State.READY_WITH_WARNINGS
         val pages = manager.getChapterTranslationForReader(42L, "Chapter 1", null, "Manga", mockk<Source>(relaxed = true))
         pages["page.jpg"]?.blocks?.single()?.translation shouldBe "hello"
         pages["page.jpg"]?.blocks?.single()?.userEditedAt shouldBe 42L
+    }
+
+    @Test
+    fun `artifact status reports warnings for a partial page after restart`() = runTest {
+        installImageProbe()
+        writeLegacyChapter("Chapter 4")
+        val file = translationFile("Chapter 4")
+        val store = ChapterTranslationStore.open(file)
+        store.updatePage("page.jpg") { current ->
+            current!!.copy(
+                blocks = mutableListOf(),
+                translationStatus = StageStatus.PARTIAL,
+                inpaintStatus = StageStatus.PENDING,
+                renderStatus = StageStatus.PENDING,
+                cleanedImageName = null,
+            )
+        }
+        store.closeAndFlush()
+
+        ChapterTranslationStore.probeArtifactManifest(file).manifest?.authority shouldBe ManifestAuthority.ARTIFACTS
+        val manager = newManager(file)
+        manager.getChapterTranslationStatus(45L, "Chapter 4", null, "Manga", 77L) shouldBe
+            Translation.State.READY_WITH_WARNINGS
+    }
+
+    @Test
+    fun `in-flight artifact page does not report chapter error`() = runTest {
+        installImageProbe()
+        val root = FakeUniFile(parent = null, backing = mangaDir)
+        File(mangaDir, "Chapter 5.json").createNewFile()
+        val file = root.findFile("Chapter 5.json")!!
+        File(mangaDir, "Chapter 5_images").mkdirs()
+        File(mangaDir, "Chapter 5_images/p1.cleaned.jpg").writeBytes(byteArrayOf(1))
+        val store = ChapterTranslationStore.lazy(
+            fileCreator = { error("in-flight fixture must use artifacts") },
+            artifactParent = root,
+            artifactFileName = "Chapter 5.json",
+        )
+        store.preRegisterPages(listOf("p1.jpg", "p2.jpg"))
+        store.updatePage("p1.jpg") { page().copy(cleanedImageName = "p1.cleaned.jpg") }
+        store.updatePage("p2.jpg") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        store.flush()
+        store.closeAndFlush()
+        file.delete()
+
+        val manager = newManager(file)
+        manager.getChapterTranslationStatus(46L, "Chapter 5", null, "Manga", 77L) shouldBe
+            Translation.State.READY_WITH_WARNINGS
+    }
+
+    @Test
+    fun `fresh orphaned cleaned image stays protected during write commit window`() {
+        val now = System.currentTimeMillis()
+        isFreshOrphanedCleanedImage(now, now) shouldBe true
+        isFreshOrphanedCleanedImage(now - 1_000L, now) shouldBe true
+        isFreshOrphanedCleanedImage(now - 31_000L, now) shouldBe false
+        isFreshOrphanedCleanedImage(0L, now) shouldBe true
     }
 
     @Test

@@ -16,16 +16,20 @@ import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
+import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.model.toPageDisplayProjection
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
@@ -49,7 +53,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
-import kotlinx.serialization.json.encodeToStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.security.MessageDigest
@@ -69,6 +72,8 @@ class ChapterTranslationStore(
     initialCommittedPages: Map<String, PageTranslation> = emptyMap(),
     initialArtifactManifest: ChapterArtifactManifest? = null,
     initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
+    private val artifactParent: UniFile? = null,
+    private val artifactFileName: String? = null,
 ) {
     private val mutex = Mutex()
 
@@ -99,6 +104,9 @@ class ChapterTranslationStore(
      * of promotions from losing an earlier retained file.
      */
     private val retiredCleanedImages = ConcurrentHashMap<String, MutableSet<String>>()
+    private val pendingArtifactPageRegistrations = LinkedHashSet<String>()
+    private var pendingExpectedPageCount: Int? = null
+    private var pendingExpectedPageCountTrusted = false
 
     private val _display = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
@@ -1050,8 +1058,8 @@ class ChapterTranslationStore(
      * Registers the full ordered page set for a chapter before OCR starts.
      *
      * These placeholders are intentionally memory-only: they let progress UI show
-     * the chapter total immediately, but they do not create/dirty the on-disk
-     * translation file until real OCR/inpaint/translation work lands.
+     * the chapter total immediately, while the expected-page count is captured
+     * in the artifact manifest when an artifact parent is already available.
      */
     suspend fun preRegisterPages(pageKeys: List<String>) {
         if (pageKeys.isEmpty()) return
@@ -1062,15 +1070,43 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
+            pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, pageKeys.distinct().size)
+            pendingExpectedPageCountTrusted = true
             var changed = false
             pageKeys.forEach { pageKey ->
                 if (!pages.containsKey(pageKey)) {
                     pages = pages.put(pageKey, ownedPage(pageKey, PageTranslation(sourceFileName = pageKey)))
+                    pendingArtifactPageRegistrations += pageKey
                     changed = true
                 }
             }
             if (changed) {
                 _state.value = snapshotPages()
+            }
+            if (artifactStore == null && artifactParent != null && artifactFileName != null) {
+                ensureArtifactStoreLocked()
+            }
+            val store = artifactStore
+            val manifest = artifactManifest
+            val expected = pendingExpectedPageCount
+            val expectedTrusted = manifest?.expectedPageCountTrusted == true || pendingExpectedPageCountTrusted
+            if (store != null && manifest != null && expected != null) {
+                val updated = manifest.copy(
+                    expectedPageCount = maxOf(expected, manifest.expectedPageCount ?: 0),
+                    expectedPageCountTrusted = expectedTrusted,
+                    updatedAtEpochMs = System.currentTimeMillis(),
+                )
+                if (
+                    updated.expectedPageCount == manifest.expectedPageCount &&
+                    updated.expectedPageCountTrusted == manifest.expectedPageCountTrusted
+                ) {
+                    pendingExpectedPageCount = null
+                    pendingExpectedPageCountTrusted = false
+                } else if (store.publishManifest(updated)) {
+                    artifactManifest = updated
+                    pendingExpectedPageCount = null
+                    pendingExpectedPageCountTrusted = false
+                }
             }
         }
     }
@@ -1187,18 +1223,45 @@ class ChapterTranslationStore(
         val store = artifactStore ?: return false
         var manifest = artifactManifest ?: return true
         if (pageKey.isEmpty()) return true
-        val currentRecord = manifest.pages[pageKey]
-        if (currentRecord == null) {
+        val firstReaderBaseline = if (
+            manifest.expectedPageCount == null && pendingExpectedPageCount == null
+        ) {
+            pages.size
+        } else {
+            0
+        }
+        val expectedPageCount = maxOf(
+            manifest.expectedPageCount ?: 0,
+            pendingExpectedPageCount ?: 0,
+            firstReaderBaseline,
+        ).takeIf { it > 0 }
+        val expectedPageCountTrusted = manifest.expectedPageCountTrusted || pendingExpectedPageCountTrusted
+        val registrationKeys = (pendingArtifactPageRegistrations + pageKey)
+            .filter { it.isNotEmpty() && it !in manifest.pages }
+        val expectedCountChanged = expectedPageCount != manifest.expectedPageCount ||
+            expectedPageCountTrusted != manifest.expectedPageCountTrusted
+        if (registrationKeys.isNotEmpty() || expectedCountChanged) {
             val added = manifest.copy(
-                pages = manifest.pages + (pageKey to eu.kanade.translation.artifact.PageArtifactRecord(pageKey = pageKey)),
+                pages = manifest.pages + registrationKeys.associateWith {
+                    eu.kanade.translation.artifact.PageArtifactRecord(pageKey = it)
+                },
+                expectedPageCount = expectedPageCount,
+                expectedPageCountTrusted = expectedPageCountTrusted,
                 updatedAtEpochMs = System.currentTimeMillis(),
             )
             if (!store.publishManifest(added)) {
-                logcat(LogPriority.WARN) { "TachiyomiAT artifact page registration failed: pageKey=$pageKey" }
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT artifact page registration failed: pageKey=$pageKey count=${registrationKeys.size}"
+                }
                 return false
             }
             manifest = added
             artifactManifest = manifest
+            pendingArtifactPageRegistrations.removeAll(registrationKeys.toSet())
+            if (expectedCountChanged) {
+                pendingExpectedPageCount = null
+                pendingExpectedPageCountTrusted = false
+            }
         }
         val record = manifest.pages.getValue(pageKey)
         if (expected != null) {
@@ -1315,24 +1378,24 @@ class ChapterTranslationStore(
         return true
     }
 
-    /**
-     * Lazily creates the artifact authority for a chapter that had no legacy
-     * translation file. The flat file is materialized only as an empty
-     * compatibility sibling; the first real page mutation immediately opens a
-     * candidate and flips the durable manifest to ARTIFACTS.
-     */
+    /** Lazily creates the artifact authority for a chapter with no legacy file. */
     private fun ensureArtifactStoreLocked(): Boolean {
         artifactStore?.let { return artifactManifest != null }
-        // Only the lazy-store constructor is allowed to bootstrap a new
-        // artifact tree here. A caller that explicitly supplied an existing
-        // translation file without a migrated artifact store retains the
-        // legacy compatibility behavior until it is opened through [open].
-        if (fileCreator == null) return false
-        val file = translationFile ?: runCatching { fileCreator?.invoke() }.getOrNull()?.also {
-            translationFile = it
-        } ?: return false
-        val parent = file.parentFile ?: return false
-        val fileName = file.name ?: DEFAULT_FILE_NAME
+        if (translationFile != null && fileCreator == null) return false
+        // A lazy store opened with an explicit artifact parent/name is an
+        // artifact-only chapter: bootstrap the manifest without materializing
+        // the legacy flat file. The compatibility-shaped lazy overload keeps
+        // its historical flat-file creation when no parent/name was supplied.
+        val file = translationFile ?: if (artifactParent == null || artifactFileName == null) {
+            runCatching { fileCreator?.invoke() }.getOrNull()?.also {
+                translationFile = it
+            }
+        } else {
+            null
+        }
+        if (file == null && (artifactParent == null || artifactFileName == null)) return false
+        val parent = file?.parentFile ?: artifactParent ?: return false
+        val fileName = file?.name ?: artifactFileName ?: DEFAULT_FILE_NAME
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val store = ChapterArtifactStore(documents, layout, artifactImageProbe)
@@ -1442,6 +1505,17 @@ class ChapterTranslationStore(
     fun mayDeleteCleanedImage(pageKey: String, name: String): Boolean =
         committedDisplay[pageKey]?.page?.cleanedImageName != name &&
             name !in (retiredCleanedImages[pageKey] ?: emptySet())
+
+    /** All cleaned-image names still reachable from live, committed, or retired state. */
+    fun referencedCleanedImageNames(): Set<String> = buildSet {
+        pages.values.mapNotNullTo(this) { it.cleanedImageName }
+        committedDisplay.values.mapNotNullTo(this) { it.page.cleanedImageName }
+        retiredCleanedImages.values.forEach { addAll(it) }
+        artifactManifest?.pages?.values?.forEach { record ->
+            record.committed?.displayBase?.fileName?.let(::add)
+            record.previousCommitted?.displayBase?.fileName?.let(::add)
+        }
+    }
 
     /**
      * Returns and forgets one cleaned-image name retained for [pageKey] after
@@ -1580,6 +1654,54 @@ class ChapterTranslationStore(
 
     fun glossarySnapshot(): Map<String, String> = glossary.toMap()
 
+    /** Derives durable artifact status without consulting the legacy summary sidecar. */
+    fun artifactStatus(): Translation.State? {
+        val manifest = artifactManifest ?: return null
+        val pagesSnapshot = state.value
+        val visiblePages = display.value
+        val hasReadableOutput = visiblePages.values.any { it.toPageDisplayProjection().displayReady } ||
+            pagesSnapshot.values.any { it.hasRenderedResult || it.isTextlessTerminal }
+        val expectedPageCount = manifest.expectedPageCount
+        val expectedPageCountTrusted = manifest.expectedPageCountTrusted
+        val hasDurableFailure = manifest.durableFailures.isNotEmpty() ||
+            pagesSnapshot.values.any { it.isStageFailed && !it.hasRenderedResult && !it.isTextlessTerminal }
+        val hasInFlightPage = pagesSnapshot.any { (pageKey, page) ->
+            !page.isStageFailed &&
+                (
+                    manifest.pages[pageKey]?.candidate != null ||
+                        (!page.hasRenderedResult && !page.isTextlessTerminal && page.isStageRunning)
+                    )
+        }
+        if (hasDurableFailure) return Translation.State.ERROR
+        if (hasInFlightPage) {
+            return if ((expectedPageCountTrusted && expectedPageCount != null && expectedPageCount > 0) ||
+                hasReadableOutput
+            ) {
+                Translation.State.READY_WITH_WARNINGS
+            } else {
+                null
+            }
+        }
+        val expectedPageCountValue = expectedPageCount
+            ?.takeIf { expectedPageCountTrusted }
+            ?: return if (hasReadableOutput) Translation.State.READY_WITH_WARNINGS else null
+        if (expectedPageCountValue <= 0) return null
+        val expectedKeys = manifest.pages.keys.toMutableList()
+        repeat((expectedPageCountValue - expectedKeys.size).coerceAtLeast(0)) { index ->
+            expectedKeys += "__missing_expected_page_$index"
+        }
+        val activeGeneration = pagesSnapshot.values.maxOfOrNull { it.runGeneration } ?: 0L
+        val reconciliation = BatchProgressReconciler.reconcile(pagesSnapshot, expectedKeys, activeGeneration)
+        return if (
+            reconciliation.chapterStatus == Translation.State.ERROR &&
+            pagesSnapshot.values.none { it.isStageFailed }
+        ) {
+            Translation.State.READY_WITH_WARNINGS
+        } else {
+            reconciliation.chapterStatus
+        }
+    }
+
     /**
      * All translated (source => target) pairs in the chapter so far — used to
      * (re)build the glossary. Reads the in-memory pages map (no I/O).
@@ -1630,50 +1752,49 @@ class ChapterTranslationStore(
     }
 
     private fun loadGlossary() {
-        val file = existingGlossaryFile() ?: return
-        runCatching {
-            file.openInputStream().use { input ->
-                glossary = Json.decodeFromStream<Map<String, String>>(input)
+        val artifact = artifactStore
+        val manifest = artifactManifest
+        if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
+            manifest.glossary?.let { pointer ->
+                glossary = artifact.readGlossary(pointer)?.entries.orEmpty()
             }
-        }.onFailure {
-            glossary = emptyMap()
+            return
         }
+        val documents = legacyDocuments() ?: return
+        glossary = documents.readValidated<Map<String, String>>(glossaryName()) ?: emptyMap()
     }
 
     private fun persistGlossaryLocked(): Boolean {
-        val file = ensureGlossaryFile()
-        if (file == null) {
+        val artifact = artifactStore
+        val manifest = artifactManifest
+        if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
+            val pointer = artifact.publishGlossary(glossary) ?: return false
+            val updated = manifest.copy(
+                glossary = pointer,
+                updatedAtEpochMs = System.currentTimeMillis(),
+            )
+            if (!artifact.publishManifest(updated)) return false
+            artifactManifest = updated
+            return true
+        }
+        val documents = legacyDocuments()
+        if (documents == null) {
             logcat(LogPriority.ERROR) { "TachiyomiAT glossary persistence failed: reason=file unavailable" }
             return false
         }
         val snapshot = glossary
         return runCatching {
-            file.openOutputStream().use { output ->
-                Json.encodeToStream(snapshot, output)
-            }
+            documents.publishJson(glossaryName(), snapshot)
         }.onFailure { error ->
             logcat(LogPriority.ERROR, error) { "TachiyomiAT glossary persistence failed: reason=write error" }
         }.isSuccess
     }
 
-    private fun glossaryName(tf: UniFile): String =
-        ((tf.name ?: "translation").substringBeforeLast('.')) + ".glossary.json"
+    private fun legacyDocuments(): AtomicChapterDocuments? =
+        (translationFile?.parentFile ?: artifactParent)?.let(::UniFileChapterDocumentIo)?.let(::AtomicChapterDocuments)
 
-    private fun existingGlossaryFile(): UniFile? {
-        val tf = translationFile ?: return null
-        val parent = tf.parentFile ?: return null
-        return parent.findFile(glossaryName(tf))
-    }
-
-    private fun ensureGlossaryFile(): UniFile? {
-        if (translationFile == null) {
-            translationFile = fileCreator?.invoke()
-        }
-        val tf = translationFile ?: return null
-        val parent = tf.parentFile ?: return null
-        val name = glossaryName(tf)
-        return parent.findFile(name) ?: runCatching { parent.createFile(name) }.getOrNull()
-    }
+    private fun glossaryName(): String =
+        legacyGlossaryName(translationFile?.name ?: artifactFileName ?: "translation")
 
     private fun PageTranslation.isQueueVisibleTransient(): Boolean {
         return ocrStatus.isQueueTransient() ||
@@ -1771,37 +1892,34 @@ class ChapterTranslationStore(
         }
     }
 
-    suspend fun readSummary(): ChapterTranslationSummary? = mutex.withLock {
-        translationFile?.let(::ChapterTranslationSummaryStore)?.read()
-    }
-
-    /** Publishes the completion sidecar only after the page snapshot is durable. */
-    suspend fun publishSummary(summary: ChapterTranslationSummary): Boolean = mutex.withLock {
-        flushDirtyLocked()
-        if (translationFile == null) {
-            translationFile = fileCreator?.invoke()
-        }
-        val file = translationFile
-        if (file == null) {
-            logcat(LogPriority.ERROR) {
-                "TachiyomiAT chapter summary publication failed: reason=translation file unavailable"
-            }
-            return@withLock false
-        }
-        ChapterTranslationSummaryStore(file).publish(summary)
-    }
-
     suspend fun closeAndFlush() {
-        mutex.withLock { flushDirtyLocked() }
+        mutex.withLock {
+            flushDirtyLocked()
+            reconcileArtifactRetentionLocked()
+        }
         persistScope.cancel()
     }
 
     fun close() {
         persistScope.launch {
-            mutex.withLock { flushDirtyLocked() }
+            mutex.withLock {
+                flushDirtyLocked()
+                reconcileArtifactRetentionLocked()
+            }
         }.invokeOnCompletion {
             persistScope.cancel()
         }
+    }
+
+    /** Performs the bounded artifact-tree sweep at a serialized chapter boundary. */
+    suspend fun reconcileArtifactRetention() {
+        mutex.withLock { reconcileArtifactRetentionLocked() }
+    }
+
+    private fun reconcileArtifactRetentionLocked() {
+        val store = artifactStore ?: return
+        val manifest = artifactManifest ?: return
+        store.reconcileRetention(manifest)
     }
 
     private fun schedulePersist(markPageDirty: Boolean = true) {
@@ -1839,10 +1957,15 @@ class ChapterTranslationStore(
 
         /** Reads only the small manifest header; page snapshots stay unopened. */
         internal fun probeArtifactManifest(translationFile: UniFile): ArtifactManifestProbe {
-            val layout = translationFile.name
-                ?.let(ChapterArtifactLayout::fromTranslationFileName)
-                ?: return ArtifactManifestProbe(exists = false, manifest = null)
-            val manifestFile = translationFile.parentFile?.findFile(layout.manifestFileName)
+            val parent = translationFile.parentFile ?: return ArtifactManifestProbe(exists = false, manifest = null)
+            val fileName = translationFile.name ?: return ArtifactManifestProbe(exists = false, manifest = null)
+            return probeArtifactManifest(parent, fileName)
+        }
+
+        /** Reads only the manifest header when the legacy flat document is absent. */
+        internal fun probeArtifactManifest(parent: UniFile, fileName: String): ArtifactManifestProbe {
+            val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
+            val manifestFile = parent.findFile(layout.manifestFileName)
                 ?: return ArtifactManifestProbe(exists = false, manifest = null)
             if (!manifestFile.exists()) return ArtifactManifestProbe(exists = false, manifest = null)
             val manifest = runCatching {
@@ -1861,9 +1984,24 @@ class ChapterTranslationStore(
             "${target.name ?: DEFAULT_FILE_NAME}.tmp"
 
         /** Opens an existing on-disk translation file into a store. */
-        fun open(translationFile: UniFile): ChapterTranslationStore {
+        fun open(translationFile: UniFile): ChapterTranslationStore =
+            openInternal(
+                translationFile = translationFile,
+                parent = translationFile.parentFile,
+                fileName = translationFile.name ?: DEFAULT_FILE_NAME,
+            )
+
+        /** Opens an artifact-authority chapter whose legacy flat file is absent. */
+        internal fun openArtifact(parent: UniFile, fileName: String): ChapterTranslationStore =
+            openInternal(translationFile = null, parent = parent, fileName = fileName)
+
+        private fun openInternal(
+            translationFile: UniFile?,
+            parent: UniFile?,
+            fileName: String,
+        ): ChapterTranslationStore {
             var legacyCorrupt = false
-            val legacyBytes = if (translationFile.exists()) {
+            val legacyBytes = if (translationFile?.exists() == true) {
                 runCatching { translationFile.openInputStream().use { it.readBytes() } }
                     .onFailure { legacyCorrupt = true }
                     .getOrNull()
@@ -1902,14 +2040,11 @@ class ChapterTranslationStore(
             } else {
                 emptyMap()
             }
-            val artifactLayout = translationFile.name
-                ?.let(ChapterArtifactLayout::fromTranslationFileName)
-            val artifactManifestFileExists = artifactLayout?.let { layout ->
-                translationFile.parentFile?.findFile(layout.manifestFileName)?.exists() == true
-            } == true
-            val artifactLoad = if (translationFile.exists() || artifactManifestFileExists) {
+            val artifactLayout = ChapterArtifactLayout.fromTranslationFileName(fileName)
+            val artifactManifestFileExists = parent?.findFile(artifactLayout.manifestFileName)?.exists() == true
+            val artifactLoad = if (translationFile?.exists() == true || artifactManifestFileExists) {
                 runCatching {
-                    migrateArtifactManifest(translationFile, legacyBytes, existing, legacyCorrupt)
+                    migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt)
                 }.onFailure { error ->
                     logcat(LogPriority.WARN, error) {
                         "TachiyomiAT artifact manifest migration skipped: reason=open failure"
@@ -1926,6 +2061,8 @@ class ChapterTranslationStore(
                 initialCommittedPages = artifactLoad?.committedPages.orEmpty(),
                 initialArtifactManifest = artifactLoad?.manifest,
                 initialRetiredCleanedImages = artifactLoad?.retiredCleanedImages.orEmpty(),
+                artifactParent = parent,
+                artifactFileName = fileName,
             ).also {
                 it.loadGlossary()
             }
@@ -1952,24 +2089,17 @@ class ChapterTranslationStore(
          * translation file are left untouched.
          */
         private fun migrateArtifactManifest(
-            translationFile: UniFile,
+            translationFile: UniFile?,
+            parent: UniFile?,
+            fileName: String,
             legacyBytes: ByteArray?,
             legacyPages: Map<String, PageTranslation>,
             legacyCorrupt: Boolean,
         ): ArtifactLoad {
-            val parent = translationFile.parentFile ?: return ArtifactLoad(
+            val parent = parent ?: return ArtifactLoad(
                 ChapterArtifactStore(
-                    AtomicChapterDocuments(UniFileChapterDocumentIo(translationFile)),
-                    ChapterArtifactLayout.fromTranslationFileName(translationFile.name ?: DEFAULT_FILE_NAME),
-                ),
-                ChapterArtifactManifest(),
-                emptyMap(),
-                legacyPages,
-            )
-            val fileName = translationFile.name ?: return ArtifactLoad(
-                ChapterArtifactStore(
-                    AtomicChapterDocuments(UniFileChapterDocumentIo(parent)),
-                    ChapterArtifactLayout.fromTranslationFileName(DEFAULT_FILE_NAME),
+                    AtomicChapterDocuments(UniFileChapterDocumentIo(translationFile ?: error("translation parent unavailable"))),
+                    ChapterArtifactLayout.fromTranslationFileName(fileName),
                 ),
                 ChapterArtifactManifest(),
                 emptyMap(),
@@ -1978,7 +2108,7 @@ class ChapterTranslationStore(
             val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
             val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
             val artifactStore = ChapterArtifactStore(documents, layout, artifactImageProbe)
-            val identity = legacyIdentityOf(legacyBytes, translationFile.lastModified())
+            val identity = legacyIdentityOf(legacyBytes, translationFile?.lastModified() ?: 0L)
             val companionImages = parent.findFile("${layout.chapterKey}_images")
             val facts = legacyPages.mapValues { (_, page) ->
                 val cleaned = cleanedFileValidationOf(page, companionImages)
@@ -1988,11 +2118,8 @@ class ChapterTranslationStore(
                     cleanedImageDimensions = cleaned.dimensions,
                 )
             }
-            val glossary = runCatching {
-                parent.findFile(((fileName.substringBeforeLast('.')) + ".glossary.json"))?.let { file ->
-                    file.openInputStream().use { input -> Json.decodeFromStream<Map<String, String>>(input) }
-                }
-            }.getOrNull().orEmpty()
+            val glossary = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
+                .readValidated<Map<String, String>>(legacyGlossaryName(fileName)).orEmpty()
             var loaded = synchronized(ARTIFACT_MIGRATION_LOCK) {
                 artifactStore.loadOrMigrate(
                     LegacyChapterSnapshot(
@@ -2052,6 +2179,9 @@ class ChapterTranslationStore(
             )
         }.getOrNull()
 
+        private fun legacyGlossaryName(fileName: String): String =
+            fileName.substringBeforeLast('.') + ".glossary.json"
+
         /**
          * Classifies a legacy cleaned-image reference with a bounded decode
          * probe: existence and non-emptiness alone never qualify as VALID;
@@ -2107,7 +2237,17 @@ class ChapterTranslationStore(
          * existing translation file yet, so that merely opening the chapter
          * does NOT leave an empty file behind.
          */
-        fun lazy(fileCreator: () -> UniFile): ChapterTranslationStore =
-            ChapterTranslationStore(translationFile = null, fileCreator = fileCreator, initialPages = emptyMap())
+        fun lazy(
+            artifactParent: UniFile? = null,
+            artifactFileName: String? = null,
+            fileCreator: () -> UniFile,
+        ): ChapterTranslationStore =
+            ChapterTranslationStore(
+                translationFile = null,
+                fileCreator = fileCreator,
+                initialPages = emptyMap(),
+                artifactParent = artifactParent,
+                artifactFileName = artifactFileName,
+            )
     }
 }

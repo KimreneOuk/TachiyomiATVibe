@@ -675,6 +675,63 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
+    fun `promotion reuses an identical candidate snapshot and defers retention sweep`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val opened = store.openCandidate(
+            manifest = migrated,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = 100L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val openedPage = opened.manifest.pages.getValue("page.jpg")
+        val page = displayablePage()
+        io.write(layout.legacyCompanionImageFile(page.cleanedImageName!!), byteArrayOf(2))
+        val persisted = store.persistLiveCandidate(
+            manifest = opened.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = openedPage.pageVersion,
+            expectedDependencyFingerprint = "deps",
+            pageSnapshot = page,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 101L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val candidateFile = persisted.manifest.pages.getValue("page.jpg").candidate
+            .shouldNotBeNull().pageSnapshotFileName.shouldNotBeNull()
+        val committedTemp = AtomicChapterDocuments.tempNameFor(
+            layout.committedPageSnapshotFile("page.jpg", generationId),
+        )
+        io.writtenNames.clear()
+        io.listedDirectories.clear()
+
+        val promoted = store.promoteLiveCandidate(
+            manifest = persisted.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = persisted.manifest.pages.getValue("page.jpg").pageVersion,
+            expectedDependencyFingerprint = "deps",
+            pageSnapshot = page,
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 102L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        promoted.manifest.pages.getValue("page.jpg").candidate.shouldBeNull()
+        io.files.containsKey(candidateFile) shouldBe true
+        io.writtenNames.count { it == committedTemp } shouldBe 1
+        io.writtenNames.none { it == AtomicChapterDocuments.tempNameFor(candidateFile) } shouldBe true
+        io.listedDirectories shouldBe emptyList()
+
+        store.reconcileRetention(promoted.manifest)
+        io.files.containsKey(candidateFile) shouldBe false
+        io.listedDirectories.isEmpty() shouldBe false
+    }
+
+    @Test
     fun `concurrent candidate opens serialize against the same manifest snapshot`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
