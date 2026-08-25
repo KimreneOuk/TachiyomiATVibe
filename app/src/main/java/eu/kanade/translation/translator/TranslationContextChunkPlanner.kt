@@ -17,7 +17,7 @@ object TranslationContextChunkPlanner {
     // This is a provider-safety ceiling, not a page/block batching limit.
     // Complete pages are greedily packed until their calculated prompt and
     // response reserve reaches this ceiling.
-    const val MAX_CONTEXT_TOKENS = 32_768
+    const val MAX_CONTEXT_TOKENS = 8_192
     const val SAFETY_MARGIN = 512
     const val MIN_OUTPUT_TOKENS = 256
 

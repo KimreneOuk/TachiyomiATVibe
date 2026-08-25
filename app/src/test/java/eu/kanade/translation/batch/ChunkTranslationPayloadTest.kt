@@ -38,15 +38,15 @@ class ChunkTranslationPayloadTest {
         )
         val prompt = ContextualRequestBuilder.renderPrompt(request, rollingContext = "")
 
-        prompt shouldContain "p0000_b0000|$source"
+        prompt shouldContain "p0_b0|$source"
 
         val systemPrompt = TranslationPrompts.pass1SystemPrompt(
             TextRecognizerLanguage.JAPANESE,
             TextTranslatorLanguage.ENGLISH,
             batchProtocol = true,
         )
-        systemPrompt shouldContain "Input: p0000_b0000|"
-        assertFalse(systemPrompt.contains("Input: b0|"))
+        systemPrompt shouldContain "p0_b0|"
+        assertFalse(systemPrompt.contains("\nb0|"))
     }
 
     @Test

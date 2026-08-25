@@ -54,7 +54,9 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
             logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
                 "event=stage2_structural_failure label=$safeLabel pass=$retryDepth ${failure.safeSummary()}"
             }
-            return mergedDeltas
+            if (batch.accepted.isEmpty()) {
+                return mergedDeltas
+            }
         }
         BatchTranslationDiagnostics.envelopeLifecycle(
             phase = BatchEnvelopeLifecycle.PARSED,

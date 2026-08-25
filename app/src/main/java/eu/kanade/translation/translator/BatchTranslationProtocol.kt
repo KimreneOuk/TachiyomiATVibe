@@ -9,8 +9,8 @@ object BatchTranslationProtocol {
     const val VERSION = 1
 
     fun pageId(naturalPageIndex: Int): String =
-        "p${naturalPageIndex.toString().padStart(4, '0')}"
+        "p$naturalPageIndex"
 
     fun blockId(naturalPageIndex: Int, stableBlockIndex: Int): String =
-        "${pageId(naturalPageIndex)}_b${stableBlockIndex.toString().padStart(4, '0')}"
+        "p${naturalPageIndex}_b$stableBlockIndex"
 }

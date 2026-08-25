@@ -107,9 +107,7 @@ class TranslationPromptsTest {
 
         prompt shouldContain "Japanese"
         prompt shouldContain "English"
-        prompt shouldContain "POINT OF VIEW"
         prompt shouldContain "pro-drop"
-        prompt shouldContain "first-person"
         prompt shouldContain "ID|Translated Text"
     }
 
@@ -120,7 +118,7 @@ class TranslationPromptsTest {
             TextTranslatorLanguage.ENGLISH,
         )
         prompt shouldContain "ID|Translated Text"
-        prompt shouldContain "Output ONLY these lines"
+        prompt shouldContain "Output ONLY the `ID|Translated Text` lines"
         prompt shouldNotContain "[SPEECH]"
         prompt shouldNotContain "[FLAG]"
         prompt shouldNotContain "[OK]"

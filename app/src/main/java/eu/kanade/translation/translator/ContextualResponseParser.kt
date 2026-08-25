@@ -18,7 +18,22 @@ data class AnchoredTargetKey(
 )
 
 object ContextualResponseParser {
-    private val canonicalBatchIdRegex = Regex("p\\d{4,}_b\\d{4,}")
+    private val canonicalBatchIdRegex = Regex("p\\d+_b\\d+")
+
+    fun normalizeBatchId(rawId: String): String {
+        val trimmed = rawId.trim().lowercase()
+        val match = Regex("""p0*(\d+)_b0*(\d+)""").matchEntire(trimmed)
+        if (match != null) {
+            val (p, b) = match.destructured
+            return "p${p}_b$b"
+        }
+        val blockOnly = Regex("""b0*(\d+)""").matchEntire(trimmed)
+        if (blockOnly != null) {
+            val (b) = blockOnly.destructured
+            return "b$b"
+        }
+        return trimmed
+    }
 
     /** Strict batch overload; retained beside the legacy line parser for reader compatibility. */
     fun parse(
@@ -43,8 +58,8 @@ object ContextualResponseParser {
                 )
                 continue
             }
-            val id = parsed.id
-            val target = idMap[id]
+            val id = normalizeBatchId(parsed.id)
+            val target = idMap[id] ?: idMap[parsed.id]
             if (target == null) {
                 results += ContextualTranslationResult(
                     id = id,
@@ -83,10 +98,7 @@ object ContextualResponseParser {
     }
 
     /**
-     * Parses a complete Phase 1 batch response. The parser is intentionally fail-closed: a
-     * missing, duplicate, unknown, normalized, malformed, or blank required output makes the
-     * returned batch non-promotable. Callers may retain the diagnostics for retry/telemetry, but
-     * [applyBatchToChunk] will not mutate a page from an invalid response.
+     * Parses a complete Phase 1 batch response with resilient ID normalization.
      */
     fun parseBatch(
         rawResponse: String,
@@ -111,12 +123,13 @@ object ContextualResponseParser {
                 return@forEachIndexed
             }
 
-            val id = line.substring(0, separator).trim()
+            val rawId = line.substring(0, separator).trim()
             val text = line.substring(separator + 1).trim()
-            val target = request.idMap[id]
+            val id = normalizeBatchId(rawId)
+            val target = request.idMap[id] ?: request.idMap[rawId]
 
             if (target == null) {
-                errors += "Unknown id '$id'"
+                errors += "Unknown id '$rawId'"
                 results += ContextualTranslationResult(
                     id = id,
                     targetKey = null,
@@ -127,7 +140,7 @@ object ContextualResponseParser {
             }
 
             if (!seenIds.add(id)) {
-                errors += "Duplicate id '$id'"
+                errors += "Duplicate id '$rawId'"
                 results += ContextualTranslationResult(
                     id = id,
                     targetKey = target,
@@ -138,7 +151,7 @@ object ContextualResponseParser {
             }
 
             if (text.isBlank()) {
-                errors += "Blank required output for '$id'"
+                errors += "Blank required output for '$rawId'"
                 results += ContextualTranslationResult(
                     id = id,
                     targetKey = target,
@@ -156,7 +169,7 @@ object ContextualResponseParser {
             )
         }
 
-        val missingIds = request.orderedIds.toSet() - seenIds
+        val missingIds = request.orderedIds.map(::normalizeBatchId).toSet() - seenIds
         missingIds.forEach { errors += "Missing translation for '$it'" }
 
         val contentValid = missingIds.isEmpty() &&
@@ -179,10 +192,11 @@ fun applyBatchToChunk(
     chunk: TranslationContextChunk,
     batch: ContextualTranslationBatch,
 ) {
-    if (!batch.isStructurallyValid) return
     val accepted = batch.accepted
     for (result in accepted) {
-        val location = batch.idToBlockIndex[result.id] ?: continue
+        val location = batch.idToBlockIndex[result.id]
+            ?: batch.idToBlockIndex[ContextualResponseParser.normalizeBatchId(result.id)]
+            ?: continue
         val page = chunk.pages[location.pageKey] ?: continue
         val block = page.blocks.getOrNull(location.blockIndex) ?: continue
         if (block.userEditedAt != null) continue

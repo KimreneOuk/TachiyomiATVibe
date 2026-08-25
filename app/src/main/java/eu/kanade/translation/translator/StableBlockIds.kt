@@ -5,7 +5,7 @@ import eu.kanade.translation.model.TranslationBlock
 
 /** Assigns the persisted, reading-order-independent IDs used by batch requests. */
 object StableBlockIds {
-    private val localIdRegex = Regex("(?:p\\d{4,}_)?b(\\d{1,})")
+    private val localIdRegex = Regex("(?:p\\d+_)?b(\\d+)")
 
     fun assign(page: PageTranslation, naturalPageIndex: Int) {
         val sorted = page.blocks.withIndex().sortedWith(

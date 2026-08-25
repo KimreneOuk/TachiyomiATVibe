@@ -2105,12 +2105,6 @@ class ReaderViewModel @JvmOverloads constructor(
         // under the wrong store key (skipped-pages bug) and register reader-page
         // streams for a chapter the translator can't match to disk files.
         val chapter = page.chapter.chapter
-        if (translationManager.isBatchTranslationActive(chapterId)) {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT manual translate suppressed: batch owns chapterId=$chapterId"
-            }
-            return
-        }
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         val pageKey = resolvePageKey(page)
         // TachiyomiAT: resolve force from the page's live translation state.

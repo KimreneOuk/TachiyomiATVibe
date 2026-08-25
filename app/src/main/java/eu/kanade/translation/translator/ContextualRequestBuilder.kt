@@ -1,7 +1,7 @@
 package eu.kanade.translation.translator
 
 object ContextualRequestBuilder {
-    private val stableBlockIdRegex = Regex("(?:p\\d{4,}_)?b(\\d{1,})")
+    private val stableBlockIdRegex = Regex("(?:p\\d+_)?b(\\d+)")
 
     data class Request(
         val idMap: Map<String, AnchoredTargetKey>,
