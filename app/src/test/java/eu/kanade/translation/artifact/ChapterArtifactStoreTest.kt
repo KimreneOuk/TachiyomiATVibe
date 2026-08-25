@@ -11,10 +11,9 @@ import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Test
 import java.io.InputStream
+import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -62,7 +61,27 @@ class ChapterArtifactStoreTest {
         pages = mapOf("page.jpg" to LegacyPageFacts(page, CleanedFileState.VALID)),
         glossary = glossary,
         legacyIdentity = identity(identityTag),
+        sourceFileName = "Chapter 1.json",
+        glossaryFileName = "Chapter 1.glossary.json",
+        glossaryIdentity = identity("glossary-$identityTag"),
+        migratedByVersionCode = 63L,
         migratedAtEpochMs = 42L,
+    )
+
+    private fun sourceIdentity(bytes: ByteArray, lastModifiedMs: Long = 0L) = LegacySourceIdentity(
+        sha256 = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) },
+        lengthBytes = bytes.size.toLong(),
+        lastModifiedMs = lastModifiedMs,
+    )
+
+    private fun legacySnapshotForSource(bytes: ByteArray) = legacySnapshot(
+        glossary = emptyMap(),
+    ).copy(
+        legacyIdentity = sourceIdentity(bytes),
+        glossaryFileName = null,
+        glossaryIdentity = null,
     )
 
     private fun artifactStore(io: FakeChapterDocumentIo) =
@@ -102,6 +121,322 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
+    fun `URI-backed rescue publishes manifest snapshots and glossary`() {
+        val io = FakeChapterDocumentIo().apply { supportsNoReplaceRename = false }
+        val result = artifactStore(io).loadOrMigrate(legacySnapshot())
+
+        result.manifest.authority shouldBe ManifestAuthority.ARTIFACTS
+        io.files[layout.manifestFileName] shouldNotBe null
+        io.files[result.manifest.pages.getValue("page.jpg").committed!!.pageSnapshotFileName] shouldNotBe null
+        io.files[result.manifest.glossary!!.fileName] shouldNotBe null
+        io.files.keys.none { it.endsWith(".tmp") } shouldBe true
+    }
+
+    @Test
+    fun `rescue records a collision-safe source target without overwriting it`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-v1".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.write("Chapter 1.json.migrated", "another-chapter".toByteArray())
+
+        val result = artifactStore(io).loadOrMigrate(legacySnapshotForSource(sourceBytes))
+        val metadata = result.manifest.legacyMigration.shouldNotBeNull()
+        metadata.sourcePreservation shouldBe LegacyPreservationState.PRESERVED
+        metadata.resolvedSourceFileName shouldNotBe "Chapter 1.json.migrated"
+        metadata.resolvedSourceFileName.shouldNotBeNull().let { resolved ->
+            io.read(resolved) shouldBe sourceBytes
+        }
+        io.read("Chapter 1.json.migrated") shouldBe "another-chapter".toByteArray()
+        io.read("Chapter 1.json") shouldBe null
+    }
+
+    @Test
+    fun `rescue preserves glossary identity with the same collision-safe rename`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-with-glossary".toByteArray()
+        val glossaryBytes = "{\"sensei\":\"teacher\"}".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.write("Chapter 1.glossary.json", glossaryBytes)
+        io.write("Chapter 1.glossary.json.migrated", "another-glossary".toByteArray())
+
+        val snapshot = legacySnapshotForSource(sourceBytes).copy(
+            glossary = mapOf("sensei" to "teacher"),
+            glossaryFileName = "Chapter 1.glossary.json",
+            glossaryIdentity = sourceIdentity(glossaryBytes),
+        )
+        val result = artifactStore(io).loadOrMigrate(snapshot)
+        val metadata = result.manifest.legacyMigration.shouldNotBeNull()
+        metadata.sourcePreservation shouldBe LegacyPreservationState.PRESERVED
+        metadata.glossaryPreservation shouldBe LegacyPreservationState.PRESERVED
+        metadata.resolvedGlossaryFileName shouldNotBe "Chapter 1.glossary.json.migrated"
+        io.read("Chapter 1.glossary.json.migrated") shouldBe "another-glossary".toByteArray()
+        metadata.resolvedGlossaryFileName.shouldNotBeNull().let { resolved ->
+            io.read(resolved) shouldBe glossaryBytes
+        }
+        io.read("Chapter 1.glossary.json") shouldBe null
+    }
+
+    @Test
+    fun `rescue adopts a matching target after rename before marker publication`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-v2".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.renamesToFail += "Chapter 1.json"
+        val store = artifactStore(io)
+        val first = store.loadOrMigrate(legacySnapshotForSource(sourceBytes))
+        val intent = first.manifest.legacyMigration.shouldNotBeNull()
+        intent.sourcePreservation shouldBe LegacyPreservationState.INTENT
+
+        io.renamesToFail.clear()
+        io.renameNoReplace("Chapter 1.json", "Chapter 1.json.migrated") shouldBe RenameResult.MOVED
+        val recovered = store.reconcileLegacyPreservation(first.manifest)
+        recovered.legacyMigration.shouldNotBeNull().sourcePreservation shouldBe
+            LegacyPreservationState.PRESERVED
+        recovered.legacyMigration.shouldNotBeNull().resolvedSourceFileName shouldBe
+            "Chapter 1.json.migrated"
+        store.readManifest() shouldBe recovered
+    }
+
+    @Test
+    fun `source preservation adopts content match when rename changes mtime`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-mtime".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.lastModifiedTimes["Chapter 1.json"] = 11L
+        io.renameChangesLastModified = true
+
+        val snapshot = legacySnapshotForSource(sourceBytes).copy(
+            legacyIdentity = sourceIdentity(sourceBytes, lastModifiedMs = 11L),
+        )
+        val result = artifactStore(io).loadOrMigrate(snapshot)
+        val metadata = result.manifest.legacyMigration.shouldNotBeNull()
+
+        metadata.sourcePreservation shouldBe LegacyPreservationState.PRESERVED
+        metadata.resolvedSourceFileName.shouldNotBeNull().let { resolved ->
+            io.read(resolved) shouldBe sourceBytes
+            io.lastModified(resolved) shouldBe 12L
+        }
+    }
+
+    @Test
+    fun `glossary preservation adopts content match when rename changes mtime`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-glossary-mtime".toByteArray()
+        val glossaryBytes = "{\"sensei\":\"teacher\"}".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.write("Chapter 1.glossary.json", glossaryBytes)
+        io.lastModifiedTimes["Chapter 1.json"] = 11L
+        io.lastModifiedTimes["Chapter 1.glossary.json"] = 21L
+        io.renameChangesLastModified = true
+
+        val snapshot = legacySnapshotForSource(sourceBytes).copy(
+            glossary = mapOf("sensei" to "teacher"),
+            glossaryFileName = "Chapter 1.glossary.json",
+            glossaryIdentity = sourceIdentity(glossaryBytes, lastModifiedMs = 21L),
+            legacyIdentity = sourceIdentity(sourceBytes, lastModifiedMs = 11L),
+        )
+        val result = artifactStore(io).loadOrMigrate(snapshot)
+        val metadata = result.manifest.legacyMigration.shouldNotBeNull()
+
+        metadata.glossaryPreservation shouldBe LegacyPreservationState.PRESERVED
+        metadata.resolvedGlossaryFileName.shouldNotBeNull().let { resolved ->
+            io.read(resolved) shouldBe glossaryBytes
+            io.lastModified(resolved) shouldBe 22L
+        }
+    }
+
+    @Test
+    fun `later healthy chapter verifies then deletes exact preserved source`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-health-source".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        val migrated = artifactStore(io).loadOrMigrate(
+            legacySnapshotForSource(sourceBytes).copy(
+                pages = mapOf(
+                    "page.jpg" to LegacyPageFacts(
+                        displayablePage().copy(
+                            cleanedImageName = null,
+                            inpaintStatus = StageStatus.SKIPPED,
+                            renderStatus = StageStatus.SKIPPED,
+                        ),
+                        CleanedFileState.NONE_RECORDED,
+                    ),
+                ),
+            ),
+        )
+        val record = migrated.manifest.pages.getValue("page.jpg")
+        val healthy = migrated.manifest.copy(
+            pages = mapOf(
+                "page.jpg" to record.copy(
+                    displayState = PageDisplayState.DISPLAY_READY,
+                    legacyVisible = null,
+                ),
+            ),
+        )
+        artifactStore(io).publishManifest(healthy) shouldBe true
+        val store = artifactStore(io)
+        val result = store.verifyLegacyArtifactHealth(
+            healthy,
+            currentVersionCode = healthy.legacyMigration!!.migratedByVersionCode + 1,
+            nowEpochMs = 100L,
+        )
+
+        result.verified shouldBe true
+        result.manifest.legacyMigration!!.health shouldBe LegacyMigrationHealth.VERIFIED
+        result.manifest.legacyMigration!!.sourcePreservation shouldBe LegacyPreservationState.DELETED
+        io.read("Chapter 1.json.migrated") shouldBe null
+    }
+
+    @Test
+    fun `health gate retains preserved source for same version or warning page`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-health-warning".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        val migrated = artifactStore(io).loadOrMigrate(
+            legacySnapshotForSource(sourceBytes).copy(
+                pages = mapOf(
+                    "page.jpg" to LegacyPageFacts(
+                        displayablePage().copy(
+                            cleanedImageName = null,
+                            inpaintStatus = StageStatus.SKIPPED,
+                            renderStatus = StageStatus.SKIPPED,
+                        ),
+                        CleanedFileState.NONE_RECORDED,
+                    ),
+                ),
+            ),
+        )
+        val record = migrated.manifest.pages.getValue("page.jpg")
+        val warning = migrated.manifest.copy(
+            pages = mapOf("page.jpg" to record.copy(displayState = PageDisplayState.ORIGINAL_ONLY)),
+        )
+        artifactStore(io).publishManifest(warning) shouldBe true
+        val store = artifactStore(io)
+
+        store.verifyLegacyArtifactHealth(
+            warning,
+            currentVersionCode = warning.legacyMigration!!.migratedByVersionCode,
+        ).verified shouldBe false
+        store.verifyLegacyArtifactHealth(
+            warning,
+            currentVersionCode = warning.legacyMigration!!.migratedByVersionCode + 1,
+        ).verified shouldBe false
+        io.read("Chapter 1.json.migrated") shouldNotBe null
+    }
+
+    @Test
+    fun `health gate retains source when content is replaced after preservation`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-health-replacement".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        val migrated = artifactStore(io).loadOrMigrate(
+            legacySnapshotForSource(sourceBytes).copy(
+                pages = mapOf(
+                    "page.jpg" to LegacyPageFacts(
+                        displayablePage().copy(
+                            cleanedImageName = null,
+                            inpaintStatus = StageStatus.SKIPPED,
+                            renderStatus = StageStatus.SKIPPED,
+                        ),
+                        CleanedFileState.NONE_RECORDED,
+                    ),
+                ),
+            ),
+        )
+        val record = migrated.manifest.pages.getValue("page.jpg")
+        val healthy = migrated.manifest.copy(
+            pages = mapOf("page.jpg" to record.copy(displayState = PageDisplayState.DISPLAY_READY)),
+        )
+        val target = healthy.legacyMigration!!.resolvedSourceFileName!!
+        io.write(target, "external-replacement".toByteArray())
+        val result = artifactStore(io).verifyLegacyArtifactHealth(
+            healthy,
+            currentVersionCode = healthy.legacyMigration!!.migratedByVersionCode + 1,
+        )
+
+        result.verified shouldBe true
+        result.manifest.legacyMigration!!.sourcePreservation shouldBe LegacyPreservationState.PRESERVED
+        io.read(target) shouldBe "external-replacement".toByteArray()
+    }
+
+    @Test
+    fun `source preservation retains bytes when every destination races into existence`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-race".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.beforeRenameAttempt = { from, to ->
+            if (from == "Chapter 1.json" && to.startsWith("Chapter 1.json.migrated")) {
+                io.files[to] = "external-copy".toByteArray()
+            }
+        }
+
+        val result = artifactStore(io).loadOrMigrate(legacySnapshotForSource(sourceBytes))
+        val metadata = result.manifest.legacyMigration.shouldNotBeNull()
+
+        metadata.sourcePreservation shouldBe LegacyPreservationState.INTENT
+        io.read("Chapter 1.json") shouldBe sourceBytes
+        io.files.filterKeys { it.startsWith("Chapter 1.json.migrated") }
+            .values.forEach { it shouldBe "external-copy".toByteArray() }
+    }
+
+    @Test
+    fun `glossary preservation retains bytes when every destination races into existence`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-glossary-race".toByteArray()
+        val glossaryBytes = "{\"sensei\":\"teacher\"}".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.write("Chapter 1.glossary.json", glossaryBytes)
+        io.beforeRenameAttempt = { from, to ->
+            if (from == "Chapter 1.glossary.json" && to.startsWith("Chapter 1.glossary.json.migrated")) {
+                io.files[to] = "external-glossary".toByteArray()
+            }
+        }
+
+        val snapshot = legacySnapshotForSource(sourceBytes).copy(
+            glossary = mapOf("sensei" to "teacher"),
+            glossaryFileName = "Chapter 1.glossary.json",
+            glossaryIdentity = sourceIdentity(glossaryBytes),
+        )
+        val result = artifactStore(io).loadOrMigrate(snapshot)
+        val metadata = result.manifest.legacyMigration.shouldNotBeNull()
+
+        metadata.sourcePreservation shouldBe LegacyPreservationState.PRESERVED
+        metadata.glossaryPreservation shouldBe LegacyPreservationState.INTENT
+        io.read("Chapter 1.glossary.json") shouldBe glossaryBytes
+        io.files.filterKeys { it.startsWith("Chapter 1.glossary.json.migrated") }
+            .values.forEach { it shouldBe "external-glossary".toByteArray() }
+    }
+
+    @Test
+    fun `unsupported destination admission retains legacy source for retry`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-unsupported-rename".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.supportsNoReplaceRename = false
+
+        val result = artifactStore(io).loadOrMigrate(legacySnapshotForSource(sourceBytes))
+        val metadata = result.manifest.legacyMigration.shouldNotBeNull()
+
+        metadata.sourcePreservation shouldBe LegacyPreservationState.INTENT
+        io.read("Chapter 1.json") shouldBe sourceBytes
+        io.read("Chapter 1.json.migrated") shouldBe null
+    }
+
+    @Test
+    fun `snapshot publication failure keeps legacy authority and source bytes`() {
+        val io = FakeChapterDocumentIo()
+        val sourceBytes = "legacy-source-v3".toByteArray()
+        io.write("Chapter 1.json", sourceBytes)
+        io.writeNamesToFail += "/pages/"
+
+        val result = artifactStore(io).loadOrMigrate(legacySnapshotForSource(sourceBytes))
+        result.migratedFromLegacy shouldBe false
+        result.manifest.authority shouldBe ManifestAuthority.LEGACY
+        io.read("Chapter 1.json") shouldBe sourceBytes
+        io.read("Chapter 1.json.migrated") shouldBe null
+    }
+
+    @Test
     fun `second load with an unchanged legacy identity takes the fast path`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
@@ -114,7 +449,7 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
-    fun `changed legacy identity forces a resync to the newest content`() {
+    fun `changed legacy identity cannot resync an artifact-authoritative chapter`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
         store.loadOrMigrate(legacySnapshot(identityTag = "v1"))
@@ -124,16 +459,16 @@ class ChapterArtifactStoreTest {
         )
         val second = store.loadOrMigrate(legacySnapshot(identityTag = "v2", page = editedPage))
 
-        second.resyncedFromLegacy shouldBe true
-        second.manifest.legacySource shouldBe identity("v2")
+        second.resyncedFromLegacy shouldBe false
+        second.manifest.legacySource shouldBe identity("v1")
         val committed = second.manifest.pages.getValue("page.jpg").committed.shouldNotBeNull()
-        committed.hasManualEdits shouldBe true
+        committed.hasManualEdits shouldBe false
         // The resynced manifest is durable: a plain read sees the same bytes.
         store.readManifest() shouldBe second.manifest
     }
 
     @Test
-    fun `resync keeps runtime durable failures for surviving pages`() {
+    fun `artifact reopen keeps runtime durable failures without legacy resync`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
         val first = store.loadOrMigrate(legacySnapshot(identityTag = "v1"))
@@ -152,7 +487,7 @@ class ChapterArtifactStoreTest {
         storedOutcome.manifest.durableFailures.size shouldBe 1
 
         val second = store.loadOrMigrate(legacySnapshot(identityTag = "v2"))
-        second.resyncedFromLegacy shouldBe true
+        second.resyncedFromLegacy shouldBe false
         second.manifest.durableFailures.getValue("page.jpg:TRANSLATION") shouldBe failure
     }
 
@@ -190,6 +525,24 @@ class ChapterArtifactStoreTest {
         val recovered = store.readManifest().shouldNotBeNull()
         recovered shouldBe first.manifest
         io.files.containsKey("${layout.manifestFileName}.corrupt") shouldBe true
+    }
+
+    @Test
+    fun `corrupt manifest recovery does not overwrite an existing quarantine`() {
+        val io = FakeChapterDocumentIo()
+        val store = artifactStore(io)
+        val first = store.loadOrMigrate(legacySnapshot())
+        store.publishManifest(first.manifest.copy(updatedAtEpochMs = 43L))
+        val corruptBytes = "still not json".toByteArray()
+        io.files[layout.manifestFileName] = corruptBytes
+        io.files["${layout.manifestFileName}.corrupt"] = "previous copy".toByteArray()
+
+        store.readManifest() shouldBe first.manifest
+        io.read("${layout.manifestFileName}.corrupt") shouldBe "previous copy".toByteArray()
+        io.files.keys.count {
+            it.startsWith("${layout.manifestFileName}.corrupt.")
+        } shouldBe 1
+        io.files.values.count { it.contentEquals(corruptBytes) } shouldBe 1
     }
 
     @Test
@@ -322,7 +675,7 @@ class ChapterArtifactStoreTest {
         )
 
         // Make the final temp->primary rename fail.
-        io.renamesToFail += AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
+        io.ownedRenamesToFail += AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
         val outcome = store.recordDurableFailure(first.manifest, failure)
         outcome.shouldBeInstanceOf<ChapterArtifactStore.RecordOutcome.NotStored>()
         // Prior manifest still parses as the authoritative document.
@@ -585,93 +938,47 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
-    fun `candidate promotion is atomic and legacy changes cannot overwrite artifact authority`() {
+    fun `incomplete legacy page materializes through the provisional committed pointer`() {
         val io = FakeChapterDocumentIo()
-        val store = transactionStore(io)
-        val migrated = store.loadOrMigrate(legacySnapshot(identityTag = "v1")).manifest
-        val opened = store.openCandidate(
-            manifest = migrated,
-            pageKey = "page.jpg",
-            origin = ArtifactOrigin.BATCH,
-            expectedPageVersion = 0L,
-            dependencyFingerprint = "deps-v1",
-            nowEpochMs = 100L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        opened.manifest.authority shouldBe ManifestAuthority.ARTIFACTS
-        opened.manifest.cutoverAtEpochMs shouldBe 100L
-        val generationId = opened.generationId.shouldNotBeNull()
-
-        val translation = store.commitStagePayload(
-            manifest = opened.manifest,
-            pageKey = "page.jpg",
-            stage = ArtifactStage.TRANSLATION,
-            generationId = generationId,
-            expectedPageVersion = 1L,
-            expectedDependencyFingerprint = "deps-v1",
-            fingerprint = "translation-v1",
-            payload = buildJsonObject { put("stage", "translation") },
-            origin = ArtifactOrigin.BATCH,
-            nowEpochMs = 101L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val layoutCommit = store.commitStagePayload(
-            manifest = translation.manifest,
-            pageKey = "page.jpg",
-            stage = ArtifactStage.LAYOUT,
-            generationId = generationId,
-            expectedPageVersion = 2L,
-            expectedDependencyFingerprint = "deps-v1",
-            fingerprint = "layout-v1",
-            payload = buildJsonObject { put("stage", "layout") },
-            origin = ArtifactOrigin.BATCH,
-            nowEpochMs = 102L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-
-        val corruptDisplay = "corrupt-image.jpg"
-        io.write(corruptDisplay, byteArrayOf(1))
-        val rejectedPromotion = store.promoteCandidate(
-            manifest = layoutCommit.manifest,
-            pageKey = "page.jpg",
-            generationId = generationId,
-            expectedPageVersion = 3L,
-            expectedDependencyFingerprint = "deps-v1",
-            bundle = ChapterArtifactStore.PromotionBundle(
-                displayBaseKind = DisplayBaseKind.CLEANED_IMAGE,
-                displayBaseFileName = corruptDisplay,
-                translationFingerprint = "translation-v1",
-                layoutFingerprint = "layout-v1",
-            ),
-            nowEpochMs = 103L,
+        val store = artifactStore(io)
+        val page = displayablePage().copy(
+            blocks = mutableListOf(block(), block().copy(translation = "")),
+            translationStatus = StageStatus.PARTIAL,
         )
-        rejectedPromotion.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
-        store.readManifest() shouldBe layoutCommit.manifest
+        val migrated = store.loadOrMigrate(legacySnapshot(page = page)).manifest
+        val before = migrated.pages.getValue("page.jpg").committed.shouldNotBeNull()
+        before.provisional shouldBe true
+        before.origin shouldBe ArtifactOrigin.LEGACY
+        before.pageSnapshotFileName.shouldNotBeNull()
 
-        val display = "valid-image.jpg"
-        io.write(display, byteArrayOf(2, 3, 4))
-        val promoted = store.promoteCandidate(
-            manifest = layoutCommit.manifest,
-            pageKey = "page.jpg",
-            generationId = generationId,
-            expectedPageVersion = 3L,
-            expectedDependencyFingerprint = "deps-v1",
-            bundle = ChapterArtifactStore.PromotionBundle(
-                displayBaseKind = DisplayBaseKind.CLEANED_IMAGE,
-                displayBaseFileName = display,
-                translationFingerprint = "translation-v1",
-                layoutFingerprint = "layout-v1",
+        val materialized = store.materializeLegacyCommittedSnapshot(migrated, "page.jpg", page)
+            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val committed = materialized.manifest.pages.getValue("page.jpg").committed.shouldNotBeNull()
+        val snapshot = store.readPageSnapshot(committed.pageSnapshotFileName).shouldNotBeNull()
+        snapshot.blocks.size shouldBe 2
+        snapshot.translationStatus shouldBe StageStatus.PARTIAL
+        snapshot.cleanedImageName shouldBe page.cleanedImageName
+    }
+
+    @Test
+    fun `incomplete legacy page with unusable image materializes original-source compatibility`() {
+        val io = FakeChapterDocumentIo()
+        val store = artifactStore(io)
+        val page = displayablePage()
+        val migrated = store.loadOrMigrate(
+            legacySnapshot(page = page).copy(
+                pages = mapOf("page.jpg" to LegacyPageFacts(page, CleanedFileState.CORRUPT_BYTES)),
             ),
-            nowEpochMs = 104L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val promotedPage = promoted.manifest.pages.getValue("page.jpg")
-        promotedPage.candidate.shouldBeNull()
-        promotedPage.committed.shouldNotBeNull().origin shouldBe ArtifactOrigin.BATCH
-        promotedPage.previousCommitted.shouldNotBeNull().origin shouldBe ArtifactOrigin.LEGACY
+        ).manifest
+        val committed = migrated.pages.getValue("page.jpg").committed.shouldNotBeNull()
+        committed.displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
 
-        val reopened = store.loadOrMigrate(
-            legacySnapshot(identityTag = "v2", page = displayablePage().copy(blocks = mutableListOf(block(), block()))),
-        )
-        reopened.resyncedFromLegacy shouldBe false
-        reopened.manifest.pages.getValue("page.jpg").committed?.generationId shouldBe generationId
-        reopened.manifest.legacySource shouldBe identity("v1")
+        val materialized = store.materializeLegacyCommittedSnapshot(migrated, "page.jpg", page)
+            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val snapshot = store.readPageSnapshot(
+            materialized.manifest.pages.getValue("page.jpg").committed?.pageSnapshotFileName,
+        ).shouldNotBeNull()
+        snapshot.cleanedImageName shouldBe null
     }
 
     @Test
@@ -763,100 +1070,6 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
-    fun `running stage recovers after process death and stale worker cannot commit`() {
-        val io = FakeChapterDocumentIo()
-        val store = transactionStore(io)
-        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
-        val opened = store.openCandidate(
-            migrated,
-            "page.jpg",
-            ArtifactOrigin.BATCH,
-            expectedPageVersion = 0L,
-            dependencyFingerprint = "deps",
-            nowEpochMs = 200L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val generationId = opened.generationId.shouldNotBeNull()
-        val running = store.beginStage(
-            opened.manifest,
-            "page.jpg",
-            ArtifactStage.OCR,
-            generationId,
-            expectedPageVersion = 1L,
-            expectedDependencyFingerprint = "deps",
-            fingerprint = "ocr-v1",
-            origin = ArtifactOrigin.BATCH,
-            nowEpochMs = 201L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-
-        val recovered = store.loadOrMigrate(legacySnapshot(identityTag = "changed")).manifest
-        recovered.authority shouldBe ManifestAuthority.ARTIFACTS
-        recovered.pages.getValue("page.jpg").ocr?.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
-        recovered.pages.getValue("page.jpg").candidate.shouldNotBeNull()
-        recovered.pages.getValue("page.jpg").committed.shouldNotBeNull()
-
-        val stale = store.commitStagePayload(
-            running.manifest,
-            "page.jpg",
-            ArtifactStage.OCR,
-            generationId,
-            expectedPageVersion = 2L,
-            expectedDependencyFingerprint = "deps",
-            fingerprint = "ocr-v1",
-            payload = buildJsonObject { put("stage", "ocr") },
-            origin = ArtifactOrigin.BATCH,
-        )
-        stale.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
-        store.readManifest() shouldBe recovered
-
-        val retried = store.commitStagePayload(
-            recovered,
-            "page.jpg",
-            ArtifactStage.OCR,
-            generationId,
-            expectedPageVersion = 3L,
-            expectedDependencyFingerprint = "deps",
-            fingerprint = "ocr-v1",
-            payload = buildJsonObject { put("stage", "ocr") },
-            origin = ArtifactOrigin.BATCH,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        retried.manifest.pages.getValue("page.jpg").ocr?.status shouldBe ArtifactStageStatus.READY
-    }
-
-    @Test
-    fun `failed interrupted-stage recovery preserves the crash-safe backup`() {
-        val io = FakeChapterDocumentIo()
-        val store = transactionStore(io)
-        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
-        val opened = store.openCandidate(
-            migrated,
-            "page.jpg",
-            ArtifactOrigin.BATCH,
-            expectedPageVersion = 0L,
-            dependencyFingerprint = "deps",
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val generationId = opened.generationId.shouldNotBeNull()
-        val running = store.beginStage(
-            opened.manifest,
-            "page.jpg",
-            ArtifactStage.OCR,
-            generationId,
-            expectedPageVersion = 1L,
-            expectedDependencyFingerprint = "deps",
-            fingerprint = "ocr",
-            origin = ArtifactOrigin.BATCH,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val backupName = AtomicChapterDocuments.backupNameFor(layout.manifestFileName)
-        io.files.containsKey(backupName) shouldBe true
-
-        io.failWrites = true
-        val recovered = store.loadOrMigrate(legacySnapshot(identityTag = "changed")).manifest
-
-        recovered.pages.getValue("page.jpg").ocr?.status shouldBe ArtifactStageStatus.RUNNING
-        io.files.containsKey(backupName) shouldBe true
-        running.manifest shouldBe recovered
-    }
-
-    @Test
     fun `cancel restores a textless display state captured before candidate open`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)
@@ -884,107 +1097,5 @@ class ChapterArtifactStoreTest {
         ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
 
         cancelled.manifest.pages.getValue("page.jpg").displayState shouldBe PageDisplayState.TEXTLESS_COMPLETE
-    }
-
-    @Test
-    fun `reader adhoc can display a candidate`() {
-        val io = FakeChapterDocumentIo()
-        val store = transactionStore(io)
-        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
-        val opened = store.openCandidate(
-            migrated,
-            "page.jpg",
-            ArtifactOrigin.READER_ADHOC,
-            expectedPageVersion = 0L,
-            dependencyFingerprint = "reader-deps",
-            nowEpochMs = 300L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val generationId = opened.generationId.shouldNotBeNull()
-
-        val translation = store.commitStagePayload(
-            opened.manifest,
-            "page.jpg",
-            ArtifactStage.TRANSLATION,
-            generationId,
-            expectedPageVersion = 1L,
-            expectedDependencyFingerprint = "reader-deps",
-            fingerprint = "reader-translation",
-            payload = buildJsonObject { put("stage", "translation") },
-            origin = ArtifactOrigin.READER_ADHOC,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val layoutCommit = store.commitStagePayload(
-            translation.manifest,
-            "page.jpg",
-            ArtifactStage.LAYOUT,
-            generationId,
-            expectedPageVersion = 2L,
-            expectedDependencyFingerprint = "reader-deps",
-            fingerprint = "reader-layout",
-            payload = buildJsonObject { put("stage", "layout") },
-            origin = ArtifactOrigin.READER_ADHOC,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val display = "reader-image.jpg"
-        io.write(display, byteArrayOf(5, 6, 7))
-        val promoted = store.promoteCandidate(
-            layoutCommit.manifest,
-            "page.jpg",
-            generationId,
-            expectedPageVersion = 3L,
-            expectedDependencyFingerprint = "reader-deps",
-            bundle = ChapterArtifactStore.PromotionBundle(
-                displayBaseKind = DisplayBaseKind.CLEANED_IMAGE,
-                displayBaseFileName = display,
-                translationFingerprint = "reader-translation",
-                layoutFingerprint = "reader-layout",
-            ),
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        promoted.manifest.pages.getValue("page.jpg").committed?.origin shouldBe ArtifactOrigin.READER_ADHOC
-    }
-
-    @Test
-    fun `cancel rejects stale snapshot and removes only candidate-owned files`() {
-        val io = FakeChapterDocumentIo()
-        val store = transactionStore(io)
-        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
-        val opened = store.openCandidate(
-            migrated,
-            "page.jpg",
-            ArtifactOrigin.BATCH,
-            expectedPageVersion = 0L,
-            dependencyFingerprint = "deps",
-            nowEpochMs = 400L,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val generationId = opened.generationId.shouldNotBeNull()
-        val running = store.beginStage(
-            opened.manifest,
-            "page.jpg",
-            ArtifactStage.OCR,
-            generationId,
-            expectedPageVersion = 1L,
-            expectedDependencyFingerprint = "deps",
-            fingerprint = "ocr",
-            origin = ArtifactOrigin.BATCH,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val sidecar = store.commitStagePayload(
-            running.manifest,
-            "page.jpg",
-            ArtifactStage.OCR,
-            generationId,
-            expectedPageVersion = 2L,
-            expectedDependencyFingerprint = "deps",
-            fingerprint = "ocr",
-            payload = buildJsonObject { put("stage", "ocr") },
-            origin = ArtifactOrigin.BATCH,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val staleCancel = store.cancelCandidate(opened.manifest, "page.jpg", generationId)
-        staleCancel.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
-
-        val cancelled = store.cancelCandidate(sidecar.manifest, "page.jpg", generationId)
-            .shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-        val page = cancelled.manifest.pages.getValue("page.jpg")
-        page.candidate.shouldBeNull()
-        page.committed?.origin shouldBe ArtifactOrigin.LEGACY
-        cancelled.deletedFiles.any { it.endsWith(".json") } shouldBe true
-        store.readManifest() shouldBe cancelled.manifest
     }
 }

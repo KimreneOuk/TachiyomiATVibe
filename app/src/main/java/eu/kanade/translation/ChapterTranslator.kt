@@ -397,16 +397,24 @@ class ChapterTranslator(
                         translation.chapter.name,
                         translation.chapter.scanlator,
                     )
-                    translationMangaDir.createFile(saveFile)
+                    if (translationMangaDir == null) {
+                        logcat(LogPriority.ERROR) {
+                            "TachiyomiAT cannot resolve artifact directory for ${translation.chapter.name}"
+                        }
+                        translation.status = Translation.State.ERROR
+                        return
+                    }
+                    store = ChapterTranslationStore.openArtifact(translationMangaDir, saveFile)
+                    null
                 }
-                if (translationFile == null) {
+                if (translationFile == null && store == null) {
                     logcat(LogPriority.ERROR) {
-                        "TachiyomiAT cannot create translation file for ${translation.chapter.name}"
+                        "TachiyomiAT cannot open translation artifact for ${translation.chapter.name}"
                     }
                     translation.status = Translation.State.ERROR
                     return
                 }
-                store = ChapterTranslationStore.open(translationFile)
+                if (store == null) store = ChapterTranslationStore.open(translationFile!!)
             }
 
             val chapterPath = downloadProvider.findChapterDir(

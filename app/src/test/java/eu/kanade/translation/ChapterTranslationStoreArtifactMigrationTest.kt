@@ -1,9 +1,15 @@
 package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
+import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterGlossary
 import eu.kanade.translation.artifact.CleanedImageProbe
+import eu.kanade.translation.artifact.CommittedBundleMetadata
+import eu.kanade.translation.artifact.DisplayBaseKind
+import eu.kanade.translation.artifact.DisplayBaseReference
+import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageStage
@@ -183,7 +189,9 @@ class ChapterTranslationStoreArtifactMigrationTest {
         }.let(::JsonObject)
 
     private fun translationFile(): UniFile =
-        com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")!!
+        com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir).findFile("Chapter 1.json")
+            ?: com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+                .findFile("Chapter 1.json.migrated")!!
 
     private fun readManifest(chapterName: String = "Chapter 1"): ChapterArtifactManifest =
         Json.decodeFromStream<ChapterArtifactManifest>(
@@ -216,7 +224,8 @@ class ChapterTranslationStoreArtifactMigrationTest {
         glossary.kind shouldBe ChapterGlossary.KIND_VOCABULARY_HINTS
         glossary.entries shouldBe mapOf("sensei" to "teacher")
 
-        File(mangaDir, "Chapter 1.json").readBytes() shouldBe legacyBytes
+        File(mangaDir, "Chapter 1.json").exists() shouldBe false
+        File(mangaDir, "Chapter 1.json.migrated").readBytes() shouldBe legacyBytes
     }
 
     @Test
@@ -234,7 +243,49 @@ class ChapterTranslationStoreArtifactMigrationTest {
         page.inpaintStatus shouldBe StageStatus.READY
         page.renderStatus shouldBe StageStatus.READY
         readManifest().pages.keys shouldBe setOf("page.jpg")
-        File(mangaDir, "Chapter 1.json").readBytes() shouldBe legacyBytes
+        File(mangaDir, "Chapter 1.json").exists() shouldBe false
+        File(mangaDir, "Chapter 1.json.migrated").readBytes() shouldBe legacyBytes
+    }
+
+    @Test
+    fun `schema one artifact fixture rehydrates with no legacy flat file`() {
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        val layout = ChapterArtifactLayout("Chapter 1")
+        val page = displayablePage().copy(translationStatus = StageStatus.PARTIAL)
+        val snapshotFile = layout.committedPageSnapshotFile("page.jpg", "legacy-page.jpg")
+        val manifest = ChapterArtifactManifest(
+            chapterKey = "Chapter 1",
+            pages = mapOf(
+                "page.jpg" to PageArtifactRecord(
+                    pageKey = "page.jpg",
+                    pageVersion = 1L,
+                    committed = CommittedBundleMetadata(
+                        generationId = "legacy-page.jpg",
+                        displayBase = DisplayBaseReference(kind = DisplayBaseKind.ORIGINAL_SOURCE),
+                        origin = eu.kanade.translation.artifact.ArtifactOrigin.LEGACY,
+                        provisional = true,
+                        pageSnapshotFileName = snapshotFile,
+                    ),
+                    displayState = PageDisplayState.ORIGINAL_ONLY,
+                ),
+            ),
+            expectedPageCount = 1,
+            expectedPageCountTrusted = false,
+            authority = ManifestAuthority.ARTIFACTS,
+        )
+        File(mangaDir, layout.manifestFileName).writeText(Json.encodeToString(manifest))
+        File(mangaDir, snapshotFile).apply {
+            parentFile?.mkdirs()
+            writeText(Json.encodeToString(page))
+        }
+
+        val store = ChapterTranslationStore.openArtifact(root, "Chapter 1.json")
+
+        File(mangaDir, "Chapter 1.json").exists() shouldBe false
+        store.state.value.getValue("page.jpg").blocks.single().translation shouldBe "hello"
+        store.state.value.getValue("page.jpg").translationStatus shouldBe StageStatus.PARTIAL
+        store.display.value.getValue("page.jpg").translationStatus shouldBe StageStatus.PARTIAL
+        store.artifactStatus() shouldBe eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS
     }
 
     @Test
@@ -339,7 +390,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
         }
         store.flush()
         store.closeAndFlush()
-        val legacyBytesAfterCutover = File(mangaDir, "Chapter 1.json").readBytes()
+        val legacyBytesAfterCutover = File(mangaDir, "Chapter 1.json.migrated").readBytes()
 
         // Reopen: artifact authority ignores the unchanged legacy document and
         // reconstructs the promoted committed snapshot.
@@ -375,7 +426,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
         ChapterTranslationStore.open(translationFile())
 
         val record = readManifest().pages.getValue("page.jpg")
-        record.committed.shouldBeNull()
+        record.committed.shouldNotBeNull().displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
         record.legacyVisible.shouldBeNull()
         record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
         record.inpaint shouldNotBe null
@@ -390,7 +441,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
         ChapterTranslationStore.open(translationFile())
 
         val record = readManifest().pages.getValue("page.jpg")
-        record.committed.shouldBeNull()
+        record.committed.shouldNotBeNull().displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
         record.legacyVisible.shouldBeNull()
         record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
         record.inpaint shouldNotBe null
@@ -415,7 +466,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
         ChapterTranslationStore.open(translationFile())
 
         val record = readManifest().pages.getValue("page.jpg")
-        record.committed shouldBe null
+        record.committed.shouldNotBeNull().displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
         record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
         record.inpaint shouldNotBe null
     }
@@ -622,7 +673,11 @@ class ChapterTranslationStoreArtifactMigrationTest {
     fun `lazy store cuts over before first candidate and reopens from artifact pointers`() = runTest {
         installPngHeaderProbe()
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
-        val store = ChapterTranslationStore.lazy { root.createFile("Chapter 2.json")!! }
+        val store = ChapterTranslationStore.lazy(
+            artifactParent = root,
+            artifactFileName = "Chapter 2.json",
+            fileCreator = { root.createFile("Chapter 2.json")!! },
+        )
         store.updatePage("page.jpg") {
             PageTranslation(
                 blocks = mutableListOf(block()),
@@ -638,7 +693,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
         store.closeAndFlush()
 
         val flatFile = File(mangaDir, "Chapter 2.json")
-        flatFile.readBytes() shouldBe ByteArray(0)
+        flatFile.exists() shouldBe false
         val candidateManifest = readManifest("Chapter 2")
         candidateManifest.authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
         candidateManifest.expectedPageCount shouldBe 1
@@ -646,7 +701,7 @@ class ChapterTranslationStoreArtifactMigrationTest {
         candidateManifest.pages.getValue("page.jpg").committed shouldBe null
         candidateManifest.pages.getValue("page.jpg").candidate?.pageSnapshotFileName shouldNotBe null
 
-        val reopened = ChapterTranslationStore.open(root.findFile("Chapter 2.json")!!)
+        val reopened = ChapterTranslationStore.openArtifact(root, "Chapter 2.json")
         reopened.state.value.getValue("page.jpg").ocrStatus shouldBe StageStatus.RUNNING
 
         File(mangaDir, "Chapter 2_images").mkdirs()
@@ -664,9 +719,9 @@ class ChapterTranslationStoreArtifactMigrationTest {
         reopened.flush()
         reopened.closeAndFlush()
 
-        val promoted = ChapterTranslationStore.open(root.findFile("Chapter 2.json")!!)
+        val promoted = ChapterTranslationStore.openArtifact(root, "Chapter 2.json")
         promoted.display.value.getValue("page.jpg").cleanedImageName shouldBe "page.cleaned.retry.jpg"
         readManifest("Chapter 2").pages.getValue("page.jpg").committed shouldNotBe null
-        flatFile.readBytes() shouldBe ByteArray(0)
+        flatFile.exists() shouldBe false
     }
 }

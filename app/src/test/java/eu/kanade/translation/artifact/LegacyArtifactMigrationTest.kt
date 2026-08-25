@@ -7,6 +7,9 @@ import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Test
 
 class LegacyArtifactMigrationTest {
@@ -35,6 +38,70 @@ class LegacyArtifactMigrationTest {
         cleanedImageName = "page.cleaned.abc.jpg",
         inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
     )
+
+    private fun supportedMetadata(
+        sourcePreservation: LegacyPreservationState = LegacyPreservationState.INTENT,
+        glossaryPreservation: LegacyPreservationState = LegacyPreservationState.NONE,
+        health: LegacyMigrationHealth = LegacyMigrationHealth.INITIAL_CUTOVER,
+    ) = LegacyMigrationMetadata(
+        sourceFileName = "Chapter 1.json",
+        sourcePreservation = sourcePreservation,
+        requestedSourceFileName = "Chapter 1.json.migrated",
+        resolvedSourceFileName = when (sourcePreservation) {
+            LegacyPreservationState.PRESERVED,
+            LegacyPreservationState.DELETED,
+            -> "Chapter 1.json.migrated"
+            else -> null
+        },
+        sourcePreservedAtEpochMs = when (sourcePreservation) {
+            LegacyPreservationState.PRESERVED,
+            LegacyPreservationState.DELETED,
+            -> 43L
+            else -> null
+        },
+        glossaryPreservation = glossaryPreservation,
+        requestedGlossaryFileName = glossaryPreservation.takeUnless {
+            it == LegacyPreservationState.NONE
+        }?.let { "Chapter 1.glossary.json" },
+        resolvedGlossaryFileName = when (glossaryPreservation) {
+            LegacyPreservationState.PRESERVED,
+            LegacyPreservationState.DELETED,
+            -> "Chapter 1.glossary.json"
+            else -> null
+        },
+        sourceIdentity = LegacySourceIdentity("a".repeat(64), 12L, 3L),
+        glossaryIdentity = glossaryPreservation.takeUnless {
+            it == LegacyPreservationState.NONE
+        }?.let { LegacySourceIdentity("b".repeat(64), 8L, 4L) },
+        sourcePageCount = 1,
+        sourcePageKeyDigest = "a".repeat(64),
+        migratedByVersionCode = 63L,
+        migratedAtEpochMs = 42L,
+        health = health,
+        lastVerifiedByVersionCode = health.takeUnless {
+            it == LegacyMigrationHealth.INITIAL_CUTOVER
+        }?.let { 64L },
+        lastVerifiedAtEpochMs = health.takeUnless {
+            it == LegacyMigrationHealth.INITIAL_CUTOVER
+        }?.let { 43L },
+    )
+
+    private fun legacySnapshot(identity: LegacySourceIdentity?, corrupt: Boolean = false) =
+        LegacyChapterSnapshot(
+            pages = mapOf("page.jpg" to LegacyPageFacts(PageTranslation())),
+            translationFileCorrupt = corrupt,
+            legacyIdentity = identity,
+            sourceFileName = identity?.let { "Chapter 1.json" },
+            migratedByVersionCode = 63L,
+            migratedAtEpochMs = 42L,
+        )
+
+    private fun PageArtifactRecord.shouldHaveProvisionalLegacyCommit(): CommittedBundleMetadata {
+        val committed = committed.shouldNotBeNull()
+        committed.origin shouldBe ArtifactOrigin.LEGACY
+        committed.provisional shouldBe true
+        return committed
+    }
 
     @Test
     fun `displayable legacy page becomes a provisional committed bundle`() {
@@ -71,16 +138,16 @@ class LegacyArtifactMigrationTest {
             "page.jpg",
             LegacyPageFacts(page, CleanedFileState.VALID),
         )
-        // Strict contract: not committed, not DISPLAY_READY.
-        record.committed.shouldBeNull()
+        // Compatibility committed data is not the strict DISPLAY_READY state.
+        record.shouldHaveProvisionalLegacyCommit()
         record.displayState shouldBe PageDisplayState.ORIGINAL_ONLY
         // Compatibility visibility is explicit and separate.
         val visible = record.legacyVisible.shouldNotBeNull()
         visible.fileName shouldBe "page.cleaned.abc.jpg"
         visible.legacyLayout shouldBe true
-        // Incomplete translation stays diagnostic/candidate.
+        // Incomplete translation stays diagnostic/retryable.
         record.translation?.status shouldBe ArtifactStageStatus.PARTIAL
-        record.candidate.shouldNotBeNull().origin shouldBe ArtifactOrigin.LEGACY
+        record.candidate.shouldBeNull()
     }
 
     @Test
@@ -92,7 +159,7 @@ class LegacyArtifactMigrationTest {
             "page.jpg",
             LegacyPageFacts(page, CleanedFileState.VALID),
         )
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.displayState shouldBe PageDisplayState.ORIGINAL_ONLY
         record.legacyVisible.shouldNotBeNull()
     }
@@ -104,7 +171,7 @@ class LegacyArtifactMigrationTest {
             "page.jpg",
             LegacyPageFacts(page, CleanedFileState.VALID),
         )
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.displayState shouldBe PageDisplayState.ORIGINAL_ONLY
         record.translation?.status shouldBe ArtifactStageStatus.PARTIAL
         record.legacyVisible.shouldNotBeNull()
@@ -130,7 +197,7 @@ class LegacyArtifactMigrationTest {
             "page.jpg",
             LegacyPageFacts(page, CleanedFileState.VALID),
         )
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.legacyVisible.shouldNotBeNull()
         LegacyArtifactMigration.blockGeometryIsValid(page) shouldBe false
     }
@@ -142,12 +209,12 @@ class LegacyArtifactMigrationTest {
             "page.jpg",
             LegacyPageFacts(page, CleanedFileState.VALID),
         )
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         LegacyArtifactMigration.blockGeometryIsValid(page) shouldBe false
     }
 
     @Test
-    fun `recognized blocks without display stages stay original-only with candidate data`() {
+    fun `recognized blocks without display stages stay original-only with compatibility data`() {
         val page = PageTranslation(
             blocks = mutableListOf(block()),
             ocrStatus = StageStatus.READY,
@@ -160,7 +227,7 @@ class LegacyArtifactMigrationTest {
             LegacyPageFacts(page, CleanedFileState.NONE_RECORDED),
         )
         record.displayState shouldBe PageDisplayState.ORIGINAL_ONLY
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.ocr?.status shouldBe ArtifactStageStatus.READY
         record.translation?.status shouldBe ArtifactStageStatus.READY
         record.inpaint.shouldBeNull()
@@ -180,12 +247,12 @@ class LegacyArtifactMigrationTest {
             LegacyPageFacts(page, CleanedFileState.NONE_RECORDED),
         )
         record.displayState shouldBe PageDisplayState.ORIGINAL_ONLY
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.translation?.status shouldBe ArtifactStageStatus.PARTIAL
     }
 
     @Test
-    fun `persisted running stage becomes a retryable candidate`() {
+    fun `persisted running stage becomes retryable with a compatibility commit`() {
         val page = PageTranslation(
             blocks = mutableListOf(block()),
             ocrStatus = StageStatus.READY,
@@ -199,9 +266,8 @@ class LegacyArtifactMigrationTest {
         )
         record.displayState shouldBe PageDisplayState.CANDIDATE_RUNNING
         record.translation?.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
-        val candidate = record.candidate.shouldNotBeNull()
-        candidate.origin shouldBe ArtifactOrigin.LEGACY
-        candidate.generationId shouldBe "legacy-page.jpg"
+        record.shouldHaveProvisionalLegacyCommit()
+        record.candidate.shouldBeNull()
     }
 
     @Test
@@ -211,7 +277,8 @@ class LegacyArtifactMigrationTest {
             "page.jpg",
             LegacyPageFacts(page, CleanedFileState.MISSING),
         )
-        record.committed.shouldBeNull()
+        val committed = record.shouldHaveProvisionalLegacyCommit()
+        committed.displayBase.kind shouldBe DisplayBaseKind.ORIGINAL_SOURCE
         record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
         record.inpaint?.status shouldBe ArtifactStageStatus.CORRUPT
         val manifest = LegacyArtifactMigration.migrateChapter(
@@ -270,7 +337,7 @@ class LegacyArtifactMigrationTest {
             LegacyPageFacts(page, CleanedFileState.NONE_RECORDED),
         )
         record.displayState shouldBe PageDisplayState.TEXTLESS_COMPLETE
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.ocr?.status shouldBe ArtifactStageStatus.READY
         record.translation?.status shouldBe ArtifactStageStatus.SKIPPED
         record.translation?.skipReason shouldBe LegacyArtifactMigration.SKIP_REASON_TEXTLESS
@@ -347,7 +414,7 @@ class LegacyArtifactMigrationTest {
             "page.jpg",
             LegacyPageFacts(page, CleanedFileState.VALID),
         )
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.displayState shouldBe PageDisplayState.ORIGINAL_ONLY
         record.inpaint?.status shouldBe ArtifactStageStatus.STALE
         record.legacyVisible.shouldBeNull()
@@ -361,7 +428,7 @@ class LegacyArtifactMigrationTest {
             LegacyPageFacts(page, CleanedFileState.CORRUPT_BYTES),
         )
         record.inpaint?.status shouldBe ArtifactStageStatus.CORRUPT
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.legacyVisible.shouldBeNull()
         record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
     }
@@ -374,67 +441,158 @@ class LegacyArtifactMigrationTest {
             LegacyPageFacts(page, CleanedFileState.DIMENSION_MISMATCH),
         )
         record.inpaint?.status shouldBe ArtifactStageStatus.CORRUPT
-        record.committed.shouldBeNull()
+        record.shouldHaveProvisionalLegacyCommit()
         record.legacyVisible.shouldBeNull()
         record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
     }
 
     @Test
-    fun `resync preserves durable failures for surviving pages and drops vanished ones`() {
-        val prior = LegacyArtifactMigration.migrateChapter(
-            LegacyChapterSnapshot(
-                pages = mapOf(
-                    "keep.jpg" to LegacyPageFacts(displayablePage(), CleanedFileState.VALID),
-                    "gone.jpg" to LegacyPageFacts(PageTranslation(ocrStatus = StageStatus.FAILED)),
-                ),
+    fun `migration metadata round trips identities digest and health`() {
+        val sourceIdentity = LegacySourceIdentity("a".repeat(64), 12L, 3L)
+        val glossaryIdentity = LegacySourceIdentity("b".repeat(64), 8L, 4L)
+        val snapshot = LegacyChapterSnapshot(
+            pages = mapOf(
+                "b.jpg" to LegacyPageFacts(PageTranslation(), CleanedFileState.NONE_RECORDED),
+                "a.jpg" to LegacyPageFacts(PageTranslation(), CleanedFileState.NONE_RECORDED),
             ),
-        ).let { manifest ->
-            manifest.copy(
-                durableFailures = mapOf(
-                    "keep.jpg:TRANSLATION" to DurableFailureMetadata(
-                        pageKey = "keep.jpg",
-                        stage = ArtifactStage.TRANSLATION,
-                        status = ArtifactStageStatus.FAILED_TERMINAL,
-                        category = FailureCategory.PROVIDER_REFUSAL,
-                        retryCount = 2,
-                        lastFailedAtEpochMs = 7L,
-                    ),
-                    "gone.jpg:OCR" to DurableFailureMetadata(
-                        pageKey = "gone.jpg",
-                        stage = ArtifactStage.OCR,
-                        status = ArtifactStageStatus.FAILED_RETRYABLE,
-                        category = FailureCategory.LEGACY_UNKNOWN,
-                        retryCount = 1,
-                        lastFailedAtEpochMs = 8L,
-                    ),
-                ),
-                migratedFromLegacyAtEpochMs = 5L,
-            )
-        }
-        val fresh = LegacyArtifactMigration.migrateChapter(
-            LegacyChapterSnapshot(
-                pages = mapOf("keep.jpg" to LegacyPageFacts(displayablePage(), CleanedFileState.VALID)),
-            ),
+            glossary = mapOf("sensei" to "teacher"),
+            legacyIdentity = sourceIdentity,
+            sourceFileName = "Chapter 1.json",
+            glossaryFileName = "Chapter 1.glossary.json",
+            glossaryIdentity = glossaryIdentity,
+            migratedByVersionCode = 63L,
+            migratedAtEpochMs = 42L,
         )
-        val merged = LegacyArtifactMigration.resyncManifest(prior, fresh)
+        val manifest = LegacyArtifactMigration.migrateChapter(snapshot)
+        val metadata = manifest.legacyMigration.shouldNotBeNull()
 
-        merged.durableFailures.keys shouldBe setOf("keep.jpg:TRANSLATION")
-        // First-migration stamp survives a resync.
-        merged.migratedFromLegacyAtEpochMs shouldBe 5L
+        metadata.formatVersion shouldBe LegacyMigrationMetadata.FORMAT_VERSION
+        metadata.sourceIdentity shouldBe sourceIdentity
+        metadata.glossaryIdentity shouldBe glossaryIdentity
+        metadata.sourceFileName shouldBe "Chapter 1.json"
+        metadata.requestedGlossaryFileName shouldBe "Chapter 1.glossary.json"
+        metadata.sourcePageCount shouldBe 2
+        metadata.sourcePageKeyDigest shouldBe LegacyArtifactMigration.legacyPageKeyDigest(
+            listOf("a.jpg", "b.jpg"),
+        )
+        metadata.migratedByVersionCode shouldBe 63L
+        metadata.migratedAtEpochMs shouldBe 42L
+        metadata.health shouldBe LegacyMigrationHealth.INITIAL_CUTOVER
+        metadata.sourcePreservation shouldBe LegacyPreservationState.INTENT
+        metadata.glossaryPreservation shouldBe LegacyPreservationState.INTENT
+        metadata.isSupported shouldBe true
+
+        val json = Json { encodeDefaults = true }
+        val decoded = json.decodeFromString<ChapterArtifactManifest>(json.encodeToString(manifest))
+        decoded.legacyMigration shouldBe metadata
     }
 
     @Test
-    fun `resync keeps the prior glossary pointer when content is unchanged`() {
-        val snapshot = LegacyChapterSnapshot(pages = emptyMap(), glossary = mapOf("a" to "b"))
-        val prior = LegacyArtifactMigration.migrateChapter(snapshot).copy(
-            glossary = GlossaryPointer(
-                fileName = "c_artifacts/glossary/chapter.glossary.3.json",
-                version = 3,
-                versionFingerprint = StageFingerprints.glossaryVersion(mapOf("a" to "b")),
+    fun `migration metadata accepts complete preservation lifecycle states`() {
+        listOf(
+            supportedMetadata(
+                sourcePreservation = LegacyPreservationState.INTENT,
+                glossaryPreservation = LegacyPreservationState.NONE,
+            ),
+            supportedMetadata(
+                sourcePreservation = LegacyPreservationState.PRESERVED,
+                glossaryPreservation = LegacyPreservationState.PRESERVED,
+                health = LegacyMigrationHealth.VERIFIED_WITH_WARNINGS,
+            ),
+            supportedMetadata(
+                sourcePreservation = LegacyPreservationState.DELETED,
+                glossaryPreservation = LegacyPreservationState.DELETED,
+                health = LegacyMigrationHealth.VERIFIED,
+            ),
+        ).forEach { metadata ->
+            metadata.isSupported shouldBe true
+        }
+    }
+
+    @Test
+    fun `migration metadata fails closed for malformed preservation combinations`() {
+        val malformed = listOf(
+            "missing source metadata" to LegacyMigrationMetadata(),
+            "unsupported format" to supportedMetadata().copy(
+                formatVersion = LegacyMigrationMetadata.FORMAT_VERSION + 1,
+            ),
+            "source none" to supportedMetadata().copy(
+                sourcePreservation = LegacyPreservationState.NONE,
+            ),
+            "source intent without requested name" to supportedMetadata().copy(
+                requestedSourceFileName = null,
+            ),
+            "source intent with resolved name" to supportedMetadata().copy(
+                resolvedSourceFileName = "Chapter 1.json.migrated",
+            ),
+            "source intent with preservation timestamp" to supportedMetadata().copy(
+                sourcePreservedAtEpochMs = 43L,
+            ),
+            "source preserved without resolved name" to supportedMetadata(
+                sourcePreservation = LegacyPreservationState.PRESERVED,
+            ).copy(resolvedSourceFileName = null),
+            "source preserved without timestamp" to supportedMetadata(
+                sourcePreservation = LegacyPreservationState.PRESERVED,
+            ).copy(sourcePreservedAtEpochMs = null),
+            "source deleted before verified" to supportedMetadata(
+                sourcePreservation = LegacyPreservationState.DELETED,
+                health = LegacyMigrationHealth.VERIFIED_WITH_WARNINGS,
+            ),
+            "glossary none with identity" to supportedMetadata().copy(
+                glossaryIdentity = LegacySourceIdentity("b".repeat(64), 8L, 4L),
+            ),
+            "glossary intent without requested name" to supportedMetadata(
+                glossaryPreservation = LegacyPreservationState.INTENT,
+            ).copy(requestedGlossaryFileName = null),
+            "glossary intent without identity" to supportedMetadata(
+                glossaryPreservation = LegacyPreservationState.INTENT,
+            ).copy(glossaryIdentity = null),
+            "glossary preserved without resolved name" to supportedMetadata(
+                glossaryPreservation = LegacyPreservationState.PRESERVED,
+            ).copy(resolvedGlossaryFileName = null),
+            "glossary deleted before verified" to supportedMetadata(
+                glossaryPreservation = LegacyPreservationState.DELETED,
+                health = LegacyMigrationHealth.VERIFIED_WITH_WARNINGS,
+            ),
+            "verification fields on initial health" to supportedMetadata().copy(
+                lastVerifiedByVersionCode = 64L,
+                lastVerifiedAtEpochMs = 43L,
+            ),
+            "verified without complete verification fields" to supportedMetadata(
+                health = LegacyMigrationHealth.VERIFIED,
+            ).copy(lastVerifiedAtEpochMs = null),
+            "preservation before migration" to supportedMetadata(
+                sourcePreservation = LegacyPreservationState.PRESERVED,
+            ).copy(sourcePreservedAtEpochMs = 41L),
+            "verification before migration" to supportedMetadata(
+                health = LegacyMigrationHealth.VERIFIED,
+            ).copy(lastVerifiedAtEpochMs = 41L),
+            "invalid source identity hash" to supportedMetadata().copy(
+                sourceIdentity = LegacySourceIdentity("bad", 12L, 3L),
+            ),
+            "invalid source identity length" to supportedMetadata().copy(
+                sourceIdentity = LegacySourceIdentity("a".repeat(64), -1L, 3L),
+            ),
+            "invalid source identity timestamp" to supportedMetadata().copy(
+                sourceIdentity = LegacySourceIdentity("a".repeat(64), 12L, -1L),
+            ),
+            "invalid glossary identity" to supportedMetadata(
+                glossaryPreservation = LegacyPreservationState.INTENT,
+            ).copy(
+                glossaryIdentity = LegacySourceIdentity("bad", 8L, 4L),
             ),
         )
-        val fresh = LegacyArtifactMigration.migrateChapter(snapshot)
-        val merged = LegacyArtifactMigration.resyncManifest(prior, fresh)
-        merged.glossary shouldBe prior.glossary
+
+        malformed.forEach { (_, metadata) ->
+            metadata.isSupported shouldBe false
+        }
+    }
+
+    @Test
+    fun `legacy page key digest is independent of input order`() {
+        val forward = LegacyArtifactMigration.legacyPageKeyDigest(listOf("b.jpg", "a.jpg"))
+        val reverse = LegacyArtifactMigration.legacyPageKeyDigest(listOf("a.jpg", "b.jpg"))
+        forward shouldBe reverse
+        forward.length shouldBe LegacyMigrationMetadata.SHA256_HEX_LENGTH
     }
 }

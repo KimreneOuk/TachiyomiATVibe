@@ -11,26 +11,29 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
+import java.security.MessageDigest
+
+private const val MAX_PRESERVATION_RENAME_ATTEMPTS = 8
 
 /**
  * TachiyomiAT: owns the chapter artifact manifest and the immutable artifact
  * tree for one chapter (lifecycle contract §15).
  *
- * Phase 2 delivered deterministic migration/resync of the legacy flat
- * translation record, crash-safe publication, and bounded retention. Phase 3
- * adds the store-transaction layer on top of the same primitives: candidate
+ * Phase 2 delivered deterministic mapping of the legacy flat translation
+ * record, crash-safe publication, and bounded retention. Phase 3 adds the
+ * store-transaction layer on top of the same primitives: candidate
  * generation lifecycle, preconditioned stage sidecar commits, atomic
  * committed-pointer promotion, cancel/failure semantics, and the
  * legacy-to-artifact authority cutover.
  *
- * Authority cutover: while [ManifestAuthority.LEGACY], the legacy flat file
- * stays authoritative and every load may resync the manifest from its bytes.
- * The first Phase 3 transaction ([openCandidate]) flips the manifest to
- * [ManifestAuthority.ARTIFACTS]; from then on loads never resync from legacy,
- * so open-time legacy identity changes cannot overwrite transactional
- * manifest writes. Rollback/recovery is preserved: a manifest lost on both
- * copies rebuilds conservatively from the legacy record (authority resets to
- * LEGACY), and backup/quarantine rotation is unchanged.
+ * Authority cutover: while [ManifestAuthority.LEGACY], the manifest is a
+ * rescue staging record and one load may materialize the legacy graph. The
+ * final rescue publication flips it to [ManifestAuthority.ARTIFACTS]; from
+ * then on loads never resync from legacy, so open-time legacy identity changes
+ * cannot overwrite transactional manifest writes. Rollback/recovery is
+ * preserved: a manifest lost on both copies rebuilds conservatively from the
+ * legacy record (authority resets to LEGACY), and backup/quarantine rotation
+ * remains crash-safe.
  */
 class ChapterArtifactStore(
     private val documents: AtomicChapterDocuments,
@@ -43,7 +46,7 @@ class ChapterArtifactStore(
         val manifest: ChapterArtifactManifest,
         /** True when this load performed the initial legacy migration and published it. */
         val migratedFromLegacy: Boolean,
-        /** True when this load detected a changed legacy identity and republished a resync. */
+        /** Retained compatibility field; one-way rescue never performs resync. */
         val resyncedFromLegacy: Boolean,
     )
 
@@ -54,8 +57,8 @@ class ChapterArtifactStore(
     }
 
     /**
-     * Loads the manifest, resyncing from [legacy] when the authoritative
-     * legacy identity changed. Future-schema documents (primary or backup) are
+     * Loads the manifest and performs one serialized legacy rescue when needed.
+     * Future-schema documents (primary or backup) are
      * returned read-only and never renamed, deleted, quarantined, or
      * overwritten by this version.
      *
@@ -123,23 +126,15 @@ class ChapterArtifactStore(
                 }
                 return LoadResult(recovered, migratedFromLegacy = false, resyncedFromLegacy = false)
             }
-            if (existing.legacySource != null &&
-                existing.legacySource == legacy.legacyIdentity &&
-                legacyGlossaryMatches(existing, legacy)
-            ) {
-                // Authoritative bytes unchanged: fast path. The retained
-                // backup is stale by definition once the primary validates.
-                io.delete(backupName())
-                return LoadResult(existing, migratedFromLegacy = false, resyncedFromLegacy = false)
-            }
-            val (merged, published) = resyncAndPublish(existing, legacy)
-            reconcileRetention(merged)
-            return LoadResult(merged, migratedFromLegacy = false, resyncedFromLegacy = published)
+            // A legacy manifest is only a rescue staging state. Never keep an
+            // identity-resync loop alive: map the currently readable source
+            // once, materialize its complete graph, and switch authority only
+            // after every referenced document validates.
+            return rescueLegacy(existing, legacy)
         }
 
-        val migrated = stampChapterKey(LegacyArtifactMigration.migrateChapter(legacy))
-        val withGlossary = attachGlossaryIfNeeded(migrated, legacy, priorPointer = null)
-        val published = publishManifestInternal(withGlossary)
+        val migrated = stampChapterKey(LegacyArtifactMigration.migrateChapter(legacy)).copy(glossary = null)
+        val published = publishManifestInternal(migrated)
         if (!published) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT artifact manifest migration publish failed: chapter=${layout.chapterKey}"
@@ -151,8 +146,9 @@ class ChapterArtifactStore(
                     "chapter=${layout.chapterKey}"
             }
         }
-        reconcileRetention(withGlossary)
-        return LoadResult(withGlossary, migratedFromLegacy = published, resyncedFromLegacy = false)
+        reconcileRetention(migrated)
+        if (!published) return LoadResult(migrated, migratedFromLegacy = false, resyncedFromLegacy = false)
+        return rescueLegacy(migrated, legacy)
     }
 
     fun readManifest(): ChapterArtifactManifest? {
@@ -240,17 +236,6 @@ class ChapterArtifactStore(
         data class Rejected(val reason: String) : TransactionOutcome
     }
 
-    /** Bundle inputs for [promoteCandidate] (lifecycle contract §9). */
-    data class PromotionBundle(
-        val displayBaseKind: DisplayBaseKind,
-        /** Required for [DisplayBaseKind.CLEANED_IMAGE]; validated before promotion. */
-        val displayBaseFileName: String? = null,
-        val translationFingerprint: String? = null,
-        val layoutFingerprint: String? = null,
-        val hasManualEdits: Boolean = false,
-        val textless: Boolean = false,
-    )
-
     /** Reads a complete live-store page snapshot referenced by a manifest pointer. */
     fun readPageSnapshot(fileName: String?): PageTranslation? =
         fileName?.let { documents.readValidated<PageTranslation>(it) }
@@ -280,14 +265,28 @@ class ChapterArtifactStore(
             }
         }
         val fileName = layout.committedPageSnapshotFile(pageKey, committed.generationId)
-        if (!documents.publishJson(fileName, pageSnapshot.detachedCopy())) {
+        val compatibilitySnapshot = pageSnapshot.detachedCopy().let { snapshot ->
+            if (committed.displayBase.kind == DisplayBaseKind.CLEANED_IMAGE &&
+                committed.displayBase.validated &&
+                committed.displayBase.fileName == snapshot.cleanedImageName
+            ) {
+                snapshot
+            } else {
+                snapshot.copy(cleanedImageName = null)
+            }
+        }
+        if (!documents.publishJson(fileName, compatibilitySnapshot)) {
             return TransactionOutcome.Rejected("committed page snapshot publication failed: pageKey=$pageKey")
         }
         val updated = manifest.copy(
             pages = manifest.pages + (
                 pageKey to page.copy(
                     committed = committed.copy(pageSnapshotFileName = fileName),
-                    pageVersion = page.pageVersion + 1,
+                    // Attaching the immutable compatibility snapshot does not
+                    // mutate the page itself. Keep the page version stable so
+                    // a candidate opened from the rescued LEGACY record keeps
+                    // the same optimistic-concurrency precondition.
+                    pageVersion = page.pageVersion,
                 )
                 ),
             updatedAtEpochMs = nowEpochMs,
@@ -628,246 +627,6 @@ class ChapterArtifactStore(
     }
 
     /**
-     * Commits one immutable stage payload sidecar and its manifest record.
-     * The sidecar file is published and validated first; only then does the
-     * manifest record point at it. A crash in between leaves an orphan sidecar
-     * (swept by retention) and no committed stage.
-     */
-    @Synchronized
-    fun commitStagePayload(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        stage: ArtifactStage,
-        generationId: String,
-        expectedPageVersion: Long,
-        expectedDependencyFingerprint: String,
-        fingerprint: String,
-        payload: JsonObject,
-        origin: ArtifactOrigin,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome {
-        val rejection = candidateWriteRejection(
-            manifest,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-        )
-        if (rejection != null) return TransactionOutcome.Rejected(rejection)
-        val page = manifest.pages.getValue(pageKey)
-        if (page.candidate?.origin != origin) {
-            return TransactionOutcome.Rejected(
-                "candidate provenance mismatch: pageKey=$pageKey expected=${page.candidate?.origin} actual=$origin",
-            )
-        }
-        page.stage(stage)?.let { record ->
-            if (record.status == ArtifactStageStatus.READY && record.fingerprint == fingerprint) {
-                return if (stagePayloadIsValid(record)) {
-                    BatchTranslationDiagnostics.reuse(
-                        stage = BatchDiagnosticStage.ARTIFACT,
-                        pageKey = pageKey,
-                        reason = BatchDiagnosticReason.CACHE_HIT,
-                        fingerprint = fingerprint,
-                    )
-                    TransactionOutcome.Committed(manifest, generationId)
-                } else {
-                    TransactionOutcome.Rejected("existing stage payload is missing or invalid: pageKey=$pageKey stage=$stage")
-                }
-            }
-        }
-        val artifactFile = layout.stageArtifactFile(pageKey, stage, fingerprint)
-        if (io.exists(artifactFile) && documents.readValidated<JsonObject>(artifactFile) == null) {
-            return TransactionOutcome.Rejected("existing stage payload is invalid: pageKey=$pageKey stage=$stage")
-        }
-        if (!documents.publishJson(artifactFile, payload)) {
-            return TransactionOutcome.Rejected("stage sidecar publication failed: stage=$stage pageKey=$pageKey")
-        }
-        val record = StageArtifactRecord(
-            status = ArtifactStageStatus.READY,
-            fingerprint = fingerprint,
-            origin = origin,
-            artifactFileName = artifactFile,
-            generationId = generationId,
-            updatedAtEpochMs = nowEpochMs,
-        )
-        val updated = manifest.copy(
-            pages = manifest.pages + (pageKey to page.withStage(stage, record).copy(pageVersion = page.pageVersion + 1)),
-            updatedAtEpochMs = nowEpochMs,
-        )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
-        }
-        return TransactionOutcome.Committed(updated, generationId)
-    }
-
-    /**
-     * Marks a candidate stage RUNNING before work begins. Persisting this marker
-     * makes process death recoverable: [loadOrMigrate] can turn it into a
-     * retryable stage while leaving the committed pointer untouched.
-     */
-    @Synchronized
-    fun beginStage(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        stage: ArtifactStage,
-        generationId: String,
-        expectedPageVersion: Long,
-        expectedDependencyFingerprint: String,
-        fingerprint: String,
-        origin: ArtifactOrigin,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome {
-        val rejection = candidateWriteRejection(
-            manifest,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-        )
-        if (rejection != null) return TransactionOutcome.Rejected(rejection)
-        val page = manifest.pages.getValue(pageKey)
-        if (page.candidate?.origin != origin) {
-            return TransactionOutcome.Rejected(
-                "candidate provenance mismatch: pageKey=$pageKey expected=${page.candidate?.origin} actual=$origin",
-            )
-        }
-        val current = page.stage(stage)
-        if (current?.status == ArtifactStageStatus.RUNNING && current.fingerprint == fingerprint) {
-            return TransactionOutcome.Committed(manifest, generationId)
-        }
-        val running = StageArtifactRecord(
-            status = ArtifactStageStatus.RUNNING,
-            fingerprint = fingerprint,
-            origin = origin,
-            generationId = generationId,
-            updatedAtEpochMs = nowEpochMs,
-        )
-        val updated = manifest.copy(
-            pages = manifest.pages + (
-                pageKey to page.withStage(stage, running).copy(pageVersion = page.pageVersion + 1)
-                ),
-            updatedAtEpochMs = nowEpochMs,
-        )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
-        }
-        return TransactionOutcome.Committed(updated, generationId)
-    }
-
-    /**
-     * Atomically promotes a complete candidate into the committed display
-     * bundle. The display-base file must exist and be non-empty before the
-     * pointer moves; observers of the manifest see either the complete old
-     * bundle or the complete new one, never a mix. The superseded committed
-     * bundle is retained as `previousCommitted` (one generation), and bounded
-     * retention reconciliation removes files only the canceled-in-place
-     * candidate still owned.
-     */
-    @Synchronized
-    fun promoteCandidate(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        generationId: String,
-        expectedPageVersion: Long,
-        expectedDependencyFingerprint: String,
-        bundle: PromotionBundle,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome {
-        val rejection = candidateWriteRejection(
-            manifest,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-        )
-        if (rejection != null) return TransactionOutcome.Rejected(rejection)
-        val page = manifest.pages.getValue(pageKey)
-        if (!bundle.textless) {
-            val candidate = page.candidate
-                ?: return TransactionOutcome.Rejected("candidate missing: pageKey=$pageKey")
-            val translationReady = page.translation?.status == ArtifactStageStatus.READY &&
-                page.translation.fingerprint == bundle.translationFingerprint &&
-                page.translation.generationId == generationId &&
-                page.translation.origin == candidate.origin
-            val layoutReady = page.layout?.status == ArtifactStageStatus.READY &&
-                page.layout.fingerprint == bundle.layoutFingerprint &&
-                page.layout.generationId == generationId &&
-                page.layout.origin == candidate.origin
-            if (!translationReady || !layoutReady) {
-                return TransactionOutcome.Rejected(
-                    "promotion requires READY translation and layout with matching fingerprints: pageKey=$pageKey",
-                )
-            }
-            if (!stagePayloadIsValid(page.translation) || !stagePayloadIsValid(page.layout)) {
-                return TransactionOutcome.Rejected(
-                    "promotion requires valid translation/layout payloads: pageKey=$pageKey",
-                )
-            }
-        }
-        if (bundle.displayBaseKind == DisplayBaseKind.CLEANED_IMAGE) {
-            val fileName = bundle.displayBaseFileName
-                ?: return TransactionOutcome.Rejected("cleaned display base requires a file name: pageKey=$pageKey")
-            if (!displayBaseIsValid(fileName, page.source)) {
-                return TransactionOutcome.Rejected(
-                    "cleaned display base file missing, corrupt, or wrong-sized: pageKey=$pageKey file=$fileName",
-                )
-            }
-        }
-        val candidateOrigin = page.candidate?.origin ?: ArtifactOrigin.BATCH
-        val displayBase = DisplayBaseReference(
-            kind = bundle.displayBaseKind,
-            fileName = bundle.displayBaseFileName,
-            validated = true,
-            legacyLayout = false,
-        )
-        val committed = CommittedBundleMetadata(
-            generationId = generationId,
-            bundleFingerprint = StageFingerprints.committedBundle(
-                sourceIdentity = page.source,
-                displayBase = displayBase,
-                translationFingerprint = bundle.translationFingerprint,
-                layoutFingerprint = bundle.layoutFingerprint,
-            ),
-            displayBase = displayBase,
-            translationFingerprint = bundle.translationFingerprint,
-            layoutFingerprint = bundle.layoutFingerprint,
-            origin = candidateOrigin,
-            provisional = false,
-            hasManualEdits = bundle.hasManualEdits,
-            promotedAtEpochMs = nowEpochMs,
-        )
-        val generationRecord = GenerationRecord(
-            generationId = generationId,
-            pageKey = pageKey,
-            origin = candidateOrigin,
-            lifecycle = GenerationLifecycle.COMMITTED,
-            createdAtEpochMs = page.candidate?.createdAtEpochMs ?: nowEpochMs,
-            closedAtEpochMs = nowEpochMs,
-        )
-        if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
-            return TransactionOutcome.Rejected("generation record publication failed: generationId=$generationId")
-        }
-        val updated = manifest.copy(
-            pages = manifest.pages + (
-                pageKey to page.copy(
-                    committed = committed,
-                    previousCommitted = page.committed,
-                    candidate = null,
-                    displayState = if (bundle.textless) PageDisplayState.TEXTLESS_COMPLETE else PageDisplayState.DISPLAY_READY,
-                    pageVersion = page.pageVersion + 1,
-                )
-                ),
-            activeCandidateGenerationIds = manifest.activeCandidateGenerationIds - generationId,
-            updatedAtEpochMs = nowEpochMs,
-        )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; committed pointer unchanged")
-        }
-        val retention = reconcileRetention(updated)
-        return TransactionOutcome.Committed(updated, generationId, retention.deletedNames)
-    }
-
-    /**
      * Cancels a candidate: removes only candidate-owned metadata/files, keeps
      * the committed bundle (and its retained previous generation) untouched
      * (lifecycle contract §13). Files are reclaimed exclusively through store
@@ -932,73 +691,6 @@ class ChapterArtifactStore(
         }
         val retention = reconcileRetention(updated)
         return TransactionOutcome.Committed(updated, generationId, retention.deletedNames)
-    }
-
-    /**
-     * Records a candidate stage failure durably while keeping the committed
-     * bundle and candidate diagnostics (lifecycle contract §13).
-     */
-    @Synchronized
-    fun markCandidateStageFailed(
-        manifest: ChapterArtifactManifest,
-        pageKey: String,
-        stage: ArtifactStage,
-        generationId: String,
-        status: ArtifactStageStatus,
-        category: FailureCategory,
-        message: String?,
-        retryCount: Int,
-        failureFingerprint: String?,
-        expectedPageVersion: Long,
-        expectedDependencyFingerprint: String,
-        nowEpochMs: Long = System.currentTimeMillis(),
-    ): TransactionOutcome {
-        if (status != ArtifactStageStatus.FAILED_RETRYABLE && status != ArtifactStageStatus.FAILED_TERMINAL) {
-            return TransactionOutcome.Rejected("failure status required: got=$status")
-        }
-        val page = manifest.pages[pageKey]
-            ?: return TransactionOutcome.Rejected("page missing: pageKey=$pageKey")
-        candidateWriteRejection(
-            manifest,
-            pageKey,
-            generationId,
-            expectedPageVersion,
-            expectedDependencyFingerprint,
-        )?.let { return TransactionOutcome.Rejected(it) }
-        val failedRecord = StageArtifactRecord(
-            status = status,
-            fingerprint = failureFingerprint,
-            origin = page.candidate?.origin ?: ArtifactOrigin.BATCH,
-            generationId = generationId,
-            updatedAtEpochMs = nowEpochMs,
-        )
-        val failure = DurableFailureMetadata(
-            pageKey = pageKey,
-            stage = stage,
-            status = status,
-            category = category,
-            retryCount = retryCount,
-            lastFailureMessage = message,
-            lastFailedAtEpochMs = nowEpochMs,
-            failureFingerprint = failureFingerprint,
-        )
-        val updated = manifest.copy(
-            pages = manifest.pages + (
-                pageKey to page.copy(
-                    displayState = if (page.committed != null) {
-                        PageDisplayState.FAILED_WITH_COMMITTED_RESULT
-                    } else {
-                        PageDisplayState.FAILED_NO_RESULT
-                    },
-                ).withStage(stage, failedRecord).copy(pageVersion = page.pageVersion + 1)
-                ),
-            durableFailures = manifest.durableFailures + ("$pageKey:${stage.name}" to failure),
-            updatedAtEpochMs = nowEpochMs,
-        )
-        if (!publishManifestInternal(updated)) {
-            return TransactionOutcome.Rejected("manifest publication failed; failure not durable")
-        }
-        return TransactionOutcome.Committed(updated, generationId)
     }
 
     private fun candidateWriteRejection(
@@ -1242,21 +934,421 @@ class ChapterArtifactStore(
         return readManifestDocument(layout.manifestFileName) ?: backup
     }
 
-    private fun resyncAndPublish(
+    /**
+     * Performs the one-way legacy rescue transaction. The LEGACY manifest is
+     * only a durable staging record while immutable page/glossary documents
+     * are published and re-read. The final manifest publication is the sole
+     * authority switch; source preservation is deliberately best-effort and
+     * retryable after that switch.
+     */
+    private fun rescueLegacy(
         prior: ChapterArtifactManifest,
         legacy: LegacyChapterSnapshot,
-    ): Pair<ChapterArtifactManifest, Boolean> {
-        val fresh = stampChapterKey(LegacyArtifactMigration.migrateChapter(legacy))
-        val merged = LegacyArtifactMigration.resyncManifest(prior, fresh)
-        val withGlossary = attachGlossaryIfNeeded(merged, legacy, priorPointer = prior.glossary)
-        if (!publishManifestInternal(withGlossary)) {
+    ): LoadResult {
+        if (legacy.translationFileCorrupt || legacy.glossaryFileCorrupt) {
+            return LoadResult(prior, migratedFromLegacy = false, resyncedFromLegacy = false)
+        }
+        val sourceIdentity = legacy.legacyIdentity
+            ?: return LoadResult(prior, migratedFromLegacy = false, resyncedFromLegacy = false)
+        val sourceName = legacy.sourceFileName?.takeIf { it.isNotBlank() }
+            ?: return LoadResult(prior, migratedFromLegacy = false, resyncedFromLegacy = false)
+
+        val mapped = stampChapterKey(LegacyArtifactMigration.migrateChapter(legacy))
+        var staging = mapped.copy(
+            glossary = null,
+            authority = ManifestAuthority.LEGACY,
+            cutoverAtEpochMs = null,
+            migratedFromLegacyAtEpochMs = mapped.migratedFromLegacyAtEpochMs
+                ?: legacy.migratedAtEpochMs.takeIf { it > 0L },
+        )
+        val glossaryPointer = attachGlossaryIfNeeded(staging, legacy, priorPointer = null)
+        staging = glossaryPointer.copy(updatedAtEpochMs = System.currentTimeMillis())
+        if (!publishManifestInternal(staging)) {
             logcat(LogPriority.WARN) {
-                "TachiyomiAT artifact manifest resync publish failed; prior manifest retained: " +
+                "TachiyomiAT legacy rescue staging publish failed; source retained: " +
                     "chapter=${layout.chapterKey}"
             }
-            return prior to false
+            return LoadResult(prior, migratedFromLegacy = false, resyncedFromLegacy = false)
         }
-        return withGlossary to true
+
+        var materialized = staging
+        legacy.pages.forEach { (pageKey, facts) ->
+            when (val outcome = materializeLegacyCommittedSnapshot(materialized, pageKey, facts.page)) {
+                is TransactionOutcome.Committed -> materialized = outcome.manifest
+                is TransactionOutcome.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT legacy rescue page publication failed; source retained: " +
+                            "chapter=${layout.chapterKey} pageKey=$pageKey reason=${outcome.reason}"
+                    }
+                    return LoadResult(materialized, migratedFromLegacy = false, resyncedFromLegacy = false)
+                }
+            }
+        }
+
+        if (!artifactGraphIsComplete(materialized, legacy)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT legacy rescue graph validation failed; source retained: " +
+                    "chapter=${layout.chapterKey}"
+            }
+            return LoadResult(materialized, migratedFromLegacy = false, resyncedFromLegacy = false)
+        }
+
+        val now = System.currentTimeMillis()
+        val metadata = materialized.legacyMigration?.copy(
+            sourceFileName = sourceName,
+            sourcePreservation = LegacyPreservationState.INTENT,
+            requestedSourceFileName = preservationTargetName(sourceName, sourceIdentity, 0),
+            resolvedSourceFileName = null,
+            sourcePreservedAtEpochMs = null,
+            glossaryPreservation = if (legacy.glossaryIdentity != null) {
+                LegacyPreservationState.INTENT
+            } else {
+                LegacyPreservationState.NONE
+            },
+            requestedGlossaryFileName = legacy.glossaryIdentity?.let { identity ->
+                legacy.glossaryFileName?.let { name -> preservationTargetName(name, identity, 0) }
+            },
+            resolvedGlossaryFileName = null,
+            health = LegacyMigrationHealth.INITIAL_CUTOVER,
+            lastVerifiedByVersionCode = null,
+            lastVerifiedAtEpochMs = null,
+        )
+        if (metadata == null) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT legacy rescue metadata unavailable; source retained: chapter=${layout.chapterKey}"
+            }
+            return LoadResult(materialized, migratedFromLegacy = false, resyncedFromLegacy = false)
+        }
+        val cutover = materialized.copy(
+            authority = ManifestAuthority.ARTIFACTS,
+            cutoverAtEpochMs = materialized.cutoverAtEpochMs ?: now,
+            migratedFromLegacyAtEpochMs = materialized.migratedFromLegacyAtEpochMs ?: now,
+            legacyMigration = metadata,
+            updatedAtEpochMs = now,
+        )
+        if (!publishManifestInternal(cutover)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT legacy rescue cutover publish failed; source retained: chapter=${layout.chapterKey}"
+            }
+            return LoadResult(materialized, migratedFromLegacy = false, resyncedFromLegacy = false)
+        }
+        val preserved = reconcileLegacyPreservation(cutover)
+        reconcileRetention(preserved)
+        return LoadResult(preserved, migratedFromLegacy = true, resyncedFromLegacy = false)
+    }
+
+    /** Retries INTENT preservation for an already ARTIFACTS-authoritative chapter. */
+    @Synchronized
+    fun reconcileLegacyPreservation(manifest: ChapterArtifactManifest): ChapterArtifactManifest {
+        if (manifest.authority != ManifestAuthority.ARTIFACTS) return manifest
+        val metadata = manifest.legacyMigration ?: return manifest
+        if (!metadata.isSupported) return manifest
+        var updated = manifest
+        if (metadata.sourcePreservation == LegacyPreservationState.INTENT) {
+            val result = preserveLegacyInput(
+                sourceName = metadata.sourceFileName,
+                requestedName = metadata.requestedSourceFileName,
+                identity = metadata.sourceIdentity,
+            )
+            updated = updated.copy(
+                legacyMigration = updated.legacyMigration?.copy(
+                    sourcePreservation = result.state,
+                    requestedSourceFileName = result.requestedName,
+                    resolvedSourceFileName = result.resolvedName,
+                    sourcePreservedAtEpochMs = result.preservedAtEpochMs,
+                ),
+            )
+        }
+        val currentMetadata = updated.legacyMigration ?: return updated
+        if (currentMetadata.glossaryPreservation == LegacyPreservationState.INTENT) {
+            val result = preserveLegacyInput(
+                sourceName = currentMetadata.sourceFileName.substringBeforeLast('.') + ".glossary.json",
+                requestedName = currentMetadata.requestedGlossaryFileName,
+                identity = currentMetadata.glossaryIdentity,
+            )
+            updated = updated.copy(
+                legacyMigration = updated.legacyMigration?.copy(
+                    glossaryPreservation = result.state,
+                    requestedGlossaryFileName = result.requestedName,
+                    resolvedGlossaryFileName = result.resolvedName,
+                ),
+            )
+        }
+        if (updated != manifest && !publishManifestInternal(updated)) return manifest
+        return updated
+    }
+
+    /**
+     * Result of the later-version cleanup gate. A failed gate is deliberately
+     * indistinguishable from an unverified chapter to callers: preserved
+     * legacy inputs remain the recovery source and can be retried on the next
+     * chapter open.
+     */
+    data class LegacyArtifactHealthResult(
+        val manifest: ChapterArtifactManifest,
+        val verified: Boolean,
+        val reason: String? = null,
+        val deletedLegacyNames: List<String> = emptyList(),
+    )
+
+    /**
+     * Verifies one already-open chapter before making preserved legacy inputs
+     * eligible for deletion. This is intentionally chapter-scoped and
+     * synchronized with every manifest/source operation; it is never a
+     * library-startup scan.
+     */
+    @Synchronized
+    fun verifyLegacyArtifactHealth(
+        manifest: ChapterArtifactManifest,
+        currentVersionCode: Long,
+        hasActiveLease: Boolean = false,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): LegacyArtifactHealthResult {
+        fun rejected(reason: String): LegacyArtifactHealthResult =
+            LegacyArtifactHealthResult(manifest, verified = false, reason = reason)
+
+        if (manifest.authority != ManifestAuthority.ARTIFACTS) {
+            return rejected("manifest is not artifact-authoritative")
+        }
+        val metadata = manifest.legacyMigration ?: return rejected("migration metadata missing")
+        if (!metadata.isSupported) return rejected("migration metadata unsupported")
+        if (currentVersionCode <= metadata.migratedByVersionCode) {
+            return rejected("verification requires a later app version")
+        }
+        if (hasActiveLease) return rejected("chapter has an active writer lease")
+        if (metadata.sourcePreservation == LegacyPreservationState.INTENT ||
+            metadata.glossaryPreservation == LegacyPreservationState.INTENT
+        ) {
+            return rejected("legacy preservation is unresolved")
+        }
+        if (metadata.sourcePageCount != manifest.pages.size ||
+            metadata.sourcePageKeyDigest != LegacyArtifactMigration.legacyPageKeyDigest(manifest.pages.keys)
+        ) {
+            return rejected("legacy page baseline does not match the artifact graph")
+        }
+        if (manifest.activeCandidateGenerationIds.isNotEmpty() ||
+            manifest.pages.values.any { it.candidate != null }
+        ) {
+            return rejected("artifact candidate is active")
+        }
+        if (manifest.durableFailures.isNotEmpty()) return rejected("durable failures remain")
+        if (manifest.glossary != null && readGlossary(manifest.glossary) == null) {
+            return rejected("artifact glossary pointer is invalid")
+        }
+        val invalidPage = manifest.pages.values.firstOrNull { page ->
+            page.displayState != PageDisplayState.DISPLAY_READY &&
+                page.displayState != PageDisplayState.TEXTLESS_COMPLETE ||
+                page.committed == null ||
+                page.committed?.pageSnapshotFileName?.let { readPageSnapshot(it) } == null ||
+                page.committed?.let { committed ->
+                    committed.displayBase.kind == DisplayBaseKind.CLEANED_IMAGE &&
+                        (
+                            committed.displayBase.fileName == null ||
+                                !displayBaseIsValid(
+                                    if (committed.displayBase.legacyLayout) {
+                                        layout.legacyCompanionImageFile(committed.displayBase.fileName)
+                                    } else {
+                                        committed.displayBase.fileName
+                                    },
+                                    page.source,
+                                )
+                            )
+                } == true ||
+                ArtifactStage.entries.any { stage ->
+                    val record = page.stage(stage)
+                    record?.status in setOf(
+                        ArtifactStageStatus.RUNNING,
+                        ArtifactStageStatus.FAILED_RETRYABLE,
+                        ArtifactStageStatus.FAILED_TERMINAL,
+                        ArtifactStageStatus.STALE,
+                        ArtifactStageStatus.CORRUPT,
+                        ArtifactStageStatus.PARTIAL,
+                    ) ||
+                        (record?.artifactFileName != null && !stagePayloadIsValid(record))
+                }
+        }
+        if (invalidPage != null) return rejected("artifact page graph is incomplete or unhealthy")
+
+        // Publish VERIFIED first. Physical cleanup is never allowed to make a
+        // chapter appear health-verified if this durable marker did not land.
+        val verifiedMetadata = metadata.copy(
+            health = LegacyMigrationHealth.VERIFIED,
+            lastVerifiedByVersionCode = currentVersionCode,
+            lastVerifiedAtEpochMs = nowEpochMs,
+        )
+        val verifiedManifest = manifest.copy(
+            legacyMigration = verifiedMetadata,
+            updatedAtEpochMs = nowEpochMs,
+        )
+        if (!publishManifestInternal(verifiedManifest)) {
+            return rejected("verification marker publication failed")
+        }
+
+        var cleanedMetadata = verifiedMetadata
+        val deleted = mutableListOf<String>()
+        if (verifiedMetadata.sourcePreservation == LegacyPreservationState.PRESERVED &&
+            deletePreservedLegacyInput(
+                verifiedMetadata.resolvedSourceFileName,
+                verifiedMetadata.sourceIdentity,
+                deleted,
+            )
+        ) {
+            cleanedMetadata = cleanedMetadata.copy(sourcePreservation = LegacyPreservationState.DELETED)
+        }
+        if (verifiedMetadata.glossaryPreservation == LegacyPreservationState.PRESERVED &&
+            deletePreservedLegacyInput(
+                verifiedMetadata.resolvedGlossaryFileName,
+                verifiedMetadata.glossaryIdentity,
+                deleted,
+            )
+        ) {
+            cleanedMetadata = cleanedMetadata.copy(glossaryPreservation = LegacyPreservationState.DELETED)
+        }
+        val cleanedManifest = verifiedManifest.copy(
+            legacyMigration = cleanedMetadata,
+            updatedAtEpochMs = nowEpochMs,
+        )
+        if (cleanedManifest != verifiedManifest && !publishManifestInternal(cleanedManifest)) {
+            // The exact source was already deleted only after identity proof;
+            // retaining VERIFIED/PRESERVED metadata is safe and makes the
+            // physical operation retryable without claiming a false deletion.
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT legacy cleanup marker publication failed; verified graph retained: " +
+                    "chapter=${layout.chapterKey}"
+            }
+            return LegacyArtifactHealthResult(
+                verifiedManifest,
+                verified = true,
+                reason = "cleanup marker publication failed",
+                deletedLegacyNames = deleted,
+            )
+        }
+        val resultManifest = if (cleanedManifest != verifiedManifest) cleanedManifest else verifiedManifest
+        cleanupOpenedChapterJunk()
+        reconcileRetention(resultManifest)
+        return LegacyArtifactHealthResult(resultManifest, verified = true, deletedLegacyNames = deleted)
+    }
+
+    /** Re-reads bytes and identity immediately before deleting one exact path. */
+    private fun deletePreservedLegacyInput(
+        name: String?,
+        expected: LegacySourceIdentity?,
+        deleted: MutableList<String>,
+    ): Boolean {
+        if (name.isNullOrBlank() || expected == null) return false
+        val actual = identityOf(name) ?: return false
+        if (!identitiesMatch(expected, actual)) return false
+        if (!io.delete(name)) return false
+        deleted += name
+        return true
+    }
+
+    /** Deletes only opened-chapter junk whose meaning is provable. */
+    private fun cleanupOpenedChapterJunk() {
+        val summaryName = "${layout.chapterKey}.summary.json"
+        if (io.exists(summaryName)) io.delete(summaryName)
+        val legacyName = "${layout.chapterKey}.json"
+        if (io.exists(legacyName) && io.length(legacyName) == 0L) io.delete(legacyName)
+    }
+
+    private data class PreservationResult(
+        val state: LegacyPreservationState,
+        val requestedName: String?,
+        val resolvedName: String?,
+        val preservedAtEpochMs: Long? = null,
+    )
+
+    private fun preserveLegacyInput(
+        sourceName: String,
+        requestedName: String?,
+        identity: LegacySourceIdentity?,
+    ): PreservationResult {
+        if (identity == null || sourceName.isBlank()) {
+            return PreservationResult(LegacyPreservationState.INTENT, requestedName, null)
+        }
+        val baseName = sourceName + ".migrated"
+        val digest = identity.sha256.take(8)
+        val first = requestedName?.takeIf { it.isNotBlank() } ?: baseName
+        val candidates = buildList {
+            add(first)
+            add(baseName)
+            (1..MAX_PRESERVATION_RENAME_ATTEMPTS).forEach { suffix ->
+                add("$baseName.$digest-$suffix")
+            }
+        }.distinct()
+        candidates.forEach { candidate ->
+            val targetIdentity = identityOf(candidate)
+            if (targetIdentity != null && identitiesMatch(identity, targetIdentity)) {
+                return preservedResult(candidate)
+            }
+            val sourceIdentity = identityOf(sourceName)
+            if (sourceIdentity == null || !identitiesMatch(identity, sourceIdentity)) return@forEach
+            when (io.renameNoReplace(sourceName, candidate)) {
+                RenameResult.MOVED -> {
+                    val renamedIdentity = identityOf(candidate)
+                    if (renamedIdentity != null && identitiesMatch(identity, renamedIdentity)) {
+                        return preservedResult(candidate)
+                    }
+                }
+                RenameResult.DESTINATION_EXISTS -> {
+                    // A target may have appeared after the admission probe;
+                    // adopt it only after recomputing its content identity.
+                    val observed = identityOf(candidate)
+                    if (observed != null && identitiesMatch(identity, observed)) {
+                        return preservedResult(candidate)
+                    }
+                    return@forEach
+                }
+                RenameResult.UNSUPPORTED,
+                RenameResult.FAILED,
+                -> return@forEach
+            }
+        }
+        return PreservationResult(LegacyPreservationState.INTENT, first, null)
+    }
+
+    private fun preservedResult(candidate: String): PreservationResult = PreservationResult(
+        LegacyPreservationState.PRESERVED,
+        candidate,
+        candidate,
+        System.currentTimeMillis(),
+    )
+
+    private fun artifactGraphIsComplete(
+        manifest: ChapterArtifactManifest,
+        legacy: LegacyChapterSnapshot,
+    ): Boolean {
+        if (manifest.pages.keys != legacy.pages.keys) return false
+        if (legacy.glossary.isNotEmpty()) {
+            val pointer = manifest.glossary ?: return false
+            if (readGlossary(pointer) == null) return false
+        }
+        return manifest.pages.all { (pageKey, page) ->
+            val pointer = page.committed?.pageSnapshotFileName ?: return false
+            readPageSnapshot(pointer) != null
+        }
+    }
+
+    private fun identityOf(name: String): LegacySourceIdentity? {
+        val bytes = io.read(name) ?: return null
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
+        return LegacySourceIdentity(digest, bytes.size.toLong(), io.lastModified(name))
+    }
+
+    /** Mtime is diagnostic evidence only; content identity owns adoption. */
+    private fun identitiesMatch(expected: LegacySourceIdentity, actual: LegacySourceIdentity): Boolean =
+        expected.sha256.equals(actual.sha256, ignoreCase = true) &&
+            expected.lengthBytes == actual.lengthBytes
+
+    private fun preservationTargetName(
+        sourceName: String,
+        identity: LegacySourceIdentity,
+        suffix: Int,
+    ): String {
+        val base = "$sourceName.migrated"
+        return if (suffix == 0) base else "$base.${identity.sha256.take(8)}-$suffix"
     }
 
     private fun attachGlossaryIfNeeded(
@@ -1269,14 +1361,6 @@ class ChapterArtifactStore(
         if (priorPointer?.versionFingerprint == fingerprint) return manifest.copy(glossary = priorPointer)
         val pointer = publishGlossary(legacy.glossary) ?: return manifest.copy(glossary = priorPointer)
         return manifest.copy(glossary = pointer)
-    }
-
-    private fun legacyGlossaryMatches(
-        existing: ChapterArtifactManifest,
-        legacy: LegacyChapterSnapshot,
-    ): Boolean {
-        if (legacy.glossary.isEmpty()) return true
-        return existing.glossary?.versionFingerprint == StageFingerprints.glossaryVersion(legacy.glossary)
     }
 
     private fun futureBackupPresent(): Boolean =

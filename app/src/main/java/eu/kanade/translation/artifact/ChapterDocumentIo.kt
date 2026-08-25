@@ -8,6 +8,18 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
+import java.nio.file.NoSuchFileException
+import java.security.MessageDigest
+
+/** Result of a destination-admitted move that never replaces an existing path. */
+enum class RenameResult {
+    MOVED,
+    DESTINATION_EXISTS,
+    UNSUPPORTED,
+    FAILED,
+}
 
 /**
  * TachiyomiAT: chapter document access rooted at the chapter's manga directory.
@@ -21,12 +33,28 @@ interface ChapterDocumentIo {
     fun length(name: String): Long
     fun read(name: String): ByteArray?
 
+    /** Last-modified evidence for identity-aware preservation; zero means unavailable. */
+    fun lastModified(name: String): Long = 0L
+
     /** Opens [name] without forcing callers to retain the whole payload in memory. */
     fun openInputStream(name: String): InputStream? = read(name)?.inputStream()
 
     /** Creates or overwrites [name], creating parent directories as needed. */
     fun write(name: String, bytes: ByteArray): Boolean
-    fun rename(from: String, to: String): Boolean
+
+    /**
+     * Moves [from] to [to] only when the backend can enforce no replacement.
+     * Unsupported backends must return [RenameResult.UNSUPPORTED] without
+     * mutating either path.
+     */
+    fun renameNoReplace(from: String, to: String): RenameResult
+
+    /**
+     * Moves a document between names exclusively owned by an atomic publisher.
+     * Unlike [renameNoReplace], this operation may replace the destination and
+     * must remain available on URI-backed SAF providers.
+     */
+    fun renameOwned(from: String, to: String): Boolean
     fun delete(name: String): Boolean
 
     /** Immediate child names of a directory, or null when it does not exist. */
@@ -39,6 +67,7 @@ class UniFileChapterDocumentIo(
 ) : ChapterDocumentIo {
 
     private fun resolve(name: String): UniFile? {
+        if (name.isEmpty()) return root
         var current: UniFile = root
         name.split('/').forEach { segment ->
             current = current.findFile(segment) ?: return null
@@ -59,6 +88,8 @@ class UniFileChapterDocumentIo(
     override fun exists(name: String): Boolean = resolve(name)?.exists() == true
 
     override fun length(name: String): Long = resolve(name)?.length() ?: 0L
+
+    override fun lastModified(name: String): Long = resolve(name)?.lastModified() ?: 0L
 
     override fun read(name: String): ByteArray? = runCatching {
         resolve(name)?.takeIf { it.isFile }?.openInputStream()?.use { input ->
@@ -81,14 +112,45 @@ class UniFileChapterDocumentIo(
         true
     }.getOrDefault(false)
 
-    override fun rename(from: String, to: String): Boolean {
+    override fun renameNoReplace(from: String, to: String): RenameResult {
+        val source = resolve(from) ?: return RenameResult.FAILED
+        val segments = to.split('/')
+        if (segments.any { it.isEmpty() }) return RenameResult.FAILED
+        var parent: UniFile = root
+        segments.dropLast(1).forEach { segment ->
+            parent = parent.findFile(segment) ?: parent.createDirectory(segment)
+                ?: return RenameResult.FAILED
+        }
+        val sourcePath = source.filePath?.let(java.nio.file.Path::of)
+        val parentPath = parent.filePath?.let(java.nio.file.Path::of)
+            ?: return RenameResult.UNSUPPORTED
+        if (sourcePath == null) return RenameResult.UNSUPPORTED
+        val targetPath = parentPath.resolve(segments.last())
+        return try {
+            // Files.move without REPLACE_EXISTING is the enforceable raw-file
+            // admission primitive. URI/SAF providers expose no equivalent.
+            Files.move(sourcePath, targetPath)
+            RenameResult.MOVED
+        } catch (_: FileAlreadyExistsException) {
+            RenameResult.DESTINATION_EXISTS
+        } catch (_: NoSuchFileException) {
+            RenameResult.FAILED
+        } catch (_: UnsupportedOperationException) {
+            RenameResult.UNSUPPORTED
+        } catch (_: java.io.IOException) {
+            RenameResult.FAILED
+        }
+    }
+
+    override fun renameOwned(from: String, to: String): Boolean {
         val source = resolve(from) ?: return false
         val segments = to.split('/')
+        if (segments.any { it.isEmpty() }) return false
         var parent: UniFile = root
         segments.dropLast(1).forEach { segment ->
             parent = parent.findFile(segment) ?: parent.createDirectory(segment) ?: return false
         }
-        return source.renameTo(segments.last())
+        return runCatching { source.renameTo(segments.last()) }.getOrDefault(false)
     }
 
     override fun delete(name: String): Boolean = resolve(name)?.delete() == true
@@ -134,12 +196,12 @@ class AtomicChapterDocuments(
             return false
         }
         io.delete(backupName)
-        if (io.exists(name) && !io.rename(name, backupName)) {
+        if (io.exists(name) && !io.renameOwned(name, backupName)) {
             io.delete(tempName)
             return false
         }
-        if (!io.rename(tempName, name)) {
-            if (io.exists(backupName)) io.rename(backupName, name)
+        if (!io.renameOwned(tempName, name)) {
+            if (io.exists(backupName)) io.renameOwned(backupName, name)
             return false
         }
         return true
@@ -179,20 +241,59 @@ class AtomicChapterDocuments(
      */
     @PublishedApi
     internal fun recoverPrimaryFromBackup(name: String, backupName: String): Boolean {
-        val quarantineName = corruptNameFor(name)
-        io.delete(quarantineName)
         val hadPrimary = io.exists(name)
-        val quarantined = !hadPrimary || io.rename(name, quarantineName)
-        if (quarantined && io.rename(backupName, name)) {
+        val primaryBytes = io.read(name)
+        val actualQuarantineName = if (hadPrimary) {
+            quarantineCorruptPrimary(name, primaryBytes ?: name.toByteArray())
+        } else {
+            null
+        }
+        val quarantined = !hadPrimary || actualQuarantineName != null
+        if (quarantined && io.renameNoReplace(backupName, name) == RenameResult.MOVED) {
             logcat(LogPriority.INFO) {
-                "TachiyomiAT chapter document recovered from backup: name=$name quarantined=$quarantineName"
+                "TachiyomiAT chapter document recovered from backup: " +
+                    "name=$name quarantined=${actualQuarantineName ?: "none"}"
             }
             return true
         }
-        if (quarantined && hadPrimary) {
-            io.rename(quarantineName, name)
+        if (actualQuarantineName != null) {
+            io.renameNoReplace(actualQuarantineName, name)
         }
         return false
+    }
+
+    /** Quarantines a corrupt primary without replacing an existing sibling. */
+    fun quarantineCorrupt(name: String): String? = quarantineCorruptPrimary(
+        name,
+        io.read(name) ?: name.toByteArray(),
+    )
+
+    private fun quarantineCorruptPrimary(name: String, bytes: ByteArray): String? {
+        val candidates = collisionSafeSiblings(corruptNameFor(name), bytes)
+        for (candidate in candidates) {
+            when (io.renameNoReplace(name, candidate)) {
+                RenameResult.MOVED -> return candidate
+                RenameResult.DESTINATION_EXISTS -> continue
+                RenameResult.UNSUPPORTED,
+                RenameResult.FAILED,
+                -> return null
+            }
+        }
+        return null
+    }
+
+    /** Returns only bounded, deterministic candidates; exhaustion fails closed. */
+    private fun collisionSafeSiblings(baseName: String, bytes: ByteArray): List<String> {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
+            .take(8)
+        val digestName = "$baseName.$digest"
+        return buildList {
+            add(baseName)
+            add(digestName)
+            (1..MAX_COLLISION_SUFFIX).forEach { suffix -> add("$digestName.$suffix") }
+        }
     }
 
     fun delete(name: String): Boolean = io.delete(name)
@@ -203,5 +304,7 @@ class AtomicChapterDocuments(
         fun tempNameFor(name: String): String = "$name.tmp"
         fun backupNameFor(name: String): String = "$name.bak"
         fun corruptNameFor(name: String): String = "$name.corrupt"
+
+        private const val MAX_COLLISION_SUFFIX = 16
     }
 }

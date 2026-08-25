@@ -6,6 +6,10 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
+import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets.UTF_8
+import java.security.MessageDigest
 
 /**
  * Physical state of a legacy cleaned-image file referenced by a legacy record.
@@ -47,8 +51,18 @@ data class LegacyChapterSnapshot(
     val glossary: Map<String, String> = emptyMap(),
     /** True when the legacy translation JSON existed but could not be parsed. */
     val translationFileCorrupt: Boolean = false,
+    /** True when a present legacy glossary existed but could not be read/parsed. */
+    val glossaryFileCorrupt: Boolean = false,
     /** Exact identity of the legacy translation file these facts came from. */
     val legacyIdentity: LegacySourceIdentity? = null,
+    /** Name used to locate the source; blank means preservation is untrusted. */
+    val sourceFileName: String? = null,
+    /** Name used to locate the imported glossary, when one exists. */
+    val glossaryFileName: String? = null,
+    /** Exact identity of the imported glossary sidecar, when readable. */
+    val glossaryIdentity: LegacySourceIdentity? = null,
+    /** App version that initiated this migration. */
+    val migratedByVersionCode: Long = 0L,
     val migratedAtEpochMs: Long = 0L,
 )
 
@@ -82,35 +96,11 @@ object LegacyArtifactMigration {
             durableFailures = durableFailures(snapshot),
             glossary = glossaryPointerOrNull(snapshot),
             legacySource = snapshot.legacyIdentity,
+            legacyMigration = legacyMigrationMetadataOrNull(snapshot),
             migratedFromLegacyAtEpochMs = snapshot.migratedAtEpochMs.takeIf { it > 0L },
             updatedAtEpochMs = snapshot.migratedAtEpochMs,
         )
     }
-
-    /**
-     * Merges a fresh migration with additive metadata from a prior manifest
-     * that was not derived from stale page content. Durable-failure entries
-     * survive only for page keys that still exist; the first-migration stamp
-     * and an unchanged glossary pointer are preserved so a resync neither
-     * loses runtime-recorded failures nor republishes identical glossary
-     * versions forever.
-     */
-    fun resyncManifest(prior: ChapterArtifactManifest, fresh: ChapterArtifactManifest): ChapterArtifactManifest =
-        fresh.copy(
-            expectedPageCount = maxOf(
-                prior.expectedPageCount ?: 0,
-                fresh.expectedPageCount ?: 0,
-            ).takeIf { it > 0 },
-            expectedPageCountTrusted = prior.expectedPageCountTrusted || fresh.expectedPageCountTrusted,
-            durableFailures = prior.durableFailures.filterKeys { key ->
-                fresh.pages.containsKey(key.substringBeforeLast(':'))
-            },
-            glossary = prior.glossary?.takeIf { pointer ->
-                fresh.glossary?.versionFingerprint == pointer.versionFingerprint
-            } ?: fresh.glossary,
-            migratedFromLegacyAtEpochMs = prior.migratedFromLegacyAtEpochMs
-                ?: fresh.migratedFromLegacyAtEpochMs,
-        )
 
     fun migratePage(pageKey: String, facts: LegacyPageFacts): PageArtifactRecord {
         val page = facts.page
@@ -121,14 +111,23 @@ object LegacyArtifactMigration {
         val layout = layoutRecord(page)
 
         val geometryValid = blockGeometryIsValid(page, facts.cleanedImageDimensions)
-        val committed = committedBundleOrNull(pageKey, page, facts.cleanedFileState, geometryValid)
-        val legacyVisible = if (committed == null) {
+        val strictCommitted = committedBundleOrNull(pageKey, page, facts.cleanedFileState, geometryValid)
+        val legacyVisible = if (strictCommitted == null) {
             legacyVisibleOrNull(page, facts.cleanedFileState)
         } else {
             null
         }
-        val hasIncompleteWork = runningStageOrNull(page) != null || page.blocks.isNotEmpty()
-        val displayState = displayStateFor(page, facts.cleanedFileState, committed != null, legacyVisible != null)
+        val compatibilityCommitted = strictCommitted ?: compatibilityCommittedBundle(
+            pageKey = pageKey,
+            page = page,
+            legacyVisible = legacyVisible,
+        )
+        val displayState = displayStateFor(
+            page,
+            facts.cleanedFileState,
+            hasCommitted = strictCommitted != null,
+            hasLegacyVisible = legacyVisible != null,
+        )
 
         return PageArtifactRecord(
             pageKey = pageKey,
@@ -140,23 +139,52 @@ object LegacyArtifactMigration {
             inpaint = inpaint,
             translation = translation,
             layout = layout,
-            committed = committed,
+            committed = compatibilityCommitted,
             previousCommitted = null,
-            candidate = if (committed == null && hasIncompleteWork) {
-                CandidateGenerationMetadata(
-                    generationId = legacyCandidateGenerationId(pageKey),
-                    origin = ArtifactOrigin.LEGACY,
-                    createdAtEpochMs = page.updatedAt,
-                )
-            } else {
-                null
-            },
+            // The legacy committed pointer is the downgrade-visible fallback;
+            // later rescue work opens a fresh candidate in its own phase.
+            candidate = null,
             legacyVisible = legacyVisible,
             displayState = displayState,
         )
     }
 
     fun legacyCandidateGenerationId(pageKey: String): String = "legacy-$pageKey"
+
+    /**
+     * Creates the schema-1 downgrade-visible fallback for any page that did
+     * not meet the strict promotion bar. It is always provisional and never
+     * claims a validated cleaned image unless the migration probe established
+     * one through [legacyVisible].
+     */
+    fun compatibilityCommittedBundle(
+        pageKey: String,
+        page: PageTranslation,
+        legacyVisible: DisplayBaseReference?,
+    ): CommittedBundleMetadata = CommittedBundleMetadata(
+        generationId = legacyCandidateGenerationId(pageKey),
+        displayBase = legacyVisible ?: DisplayBaseReference(kind = DisplayBaseKind.ORIGINAL_SOURCE),
+        origin = ArtifactOrigin.LEGACY,
+        provisional = true,
+        hasManualEdits = page.blocks.any { it.userEditedAt != null },
+        promotedAtEpochMs = page.updatedAt,
+    )
+
+    /**
+     * Stable SHA-256 over sorted page keys. Length-prefixing each UTF-8 key
+     * keeps separators in a page key from creating ambiguous digests.
+     */
+    fun legacyPageKeyDigest(pageKeys: Iterable<String>): String {
+        val canonical = ByteArrayOutputStream()
+        pageKeys.toList().sorted().forEach { pageKey ->
+            val bytes = pageKey.toByteArray(UTF_8)
+            canonical.write(ByteBuffer.allocate(4).putInt(bytes.size).array())
+            canonical.write(bytes)
+        }
+        return MessageDigest.getInstance("SHA-256")
+            .digest(canonical.toByteArray())
+            .joinToString("") { byte -> "%02x".format(byte) }
+    }
 
     /**
      * Strict legacy promotion (contract §14 row 1). Requires a current-revision
@@ -289,14 +317,6 @@ object LegacyArtifactMigration {
             renderStatus == StageStatus.READY &&
             blocks.any { it.translation.isNotBlank() }
 
-    private fun runningStageOrNull(page: PageTranslation): String? = when {
-        page.ocrStatus == StageStatus.RUNNING -> StageStatus.RUNNING
-        page.translationStatus == StageStatus.RUNNING -> StageStatus.RUNNING
-        page.inpaintStatus == StageStatus.RUNNING -> StageStatus.RUNNING
-        page.renderStatus == StageStatus.RUNNING -> StageStatus.RUNNING
-        else -> null
-    }
-
     private fun detectionRecord(page: PageTranslation): StageArtifactRecord? = when {
         page.ocrStatus == StageStatus.READY || page.blocks.isNotEmpty() || page.detectionCount > 0 ->
             legacyStage(ArtifactStageStatus.READY)
@@ -428,6 +448,29 @@ object LegacyArtifactMigration {
             fileName = "",
             version = 1,
             versionFingerprint = fingerprint,
+        )
+    }
+
+    private fun legacyMigrationMetadataOrNull(snapshot: LegacyChapterSnapshot): LegacyMigrationMetadata? {
+        val sourceIdentity = snapshot.legacyIdentity ?: return null
+        val glossaryPreservation = when {
+            snapshot.glossaryIdentity != null || snapshot.glossary.isNotEmpty() ->
+                LegacyPreservationState.INTENT
+            else -> LegacyPreservationState.NONE
+        }
+        return LegacyMigrationMetadata(
+            sourceFileName = snapshot.sourceFileName.orEmpty(),
+            sourcePreservation = LegacyPreservationState.INTENT,
+            requestedSourceFileName = snapshot.sourceFileName,
+            glossaryPreservation = glossaryPreservation,
+            requestedGlossaryFileName = snapshot.glossaryFileName,
+            sourceIdentity = sourceIdentity,
+            glossaryIdentity = snapshot.glossaryIdentity,
+            sourcePageCount = snapshot.pages.size,
+            sourcePageKeyDigest = legacyPageKeyDigest(snapshot.pages.keys),
+            migratedByVersionCode = snapshot.migratedByVersionCode,
+            migratedAtEpochMs = snapshot.migratedAtEpochMs,
+            health = LegacyMigrationHealth.INITIAL_CUTOVER,
         )
     }
 

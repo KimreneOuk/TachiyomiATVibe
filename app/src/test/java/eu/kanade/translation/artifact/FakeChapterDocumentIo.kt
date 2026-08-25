@@ -8,10 +8,28 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
     val renamed = mutableListOf<Pair<String, String>>()
     val writtenNames = mutableListOf<String>()
     val listedDirectories = mutableListOf<String>()
+    val lastModifiedTimes = mutableMapOf<String, Long>()
     var failWrites = false
+    var supportsNoReplaceRename = true
+    var renameChangesLastModified = false
+
+    /** Owned artifact moves remain available even when this double models URI/SAF. */
+    val ownedRenamesToFail = mutableSetOf<String>()
+
+    /** Injects a target between admission observation and the backend move. */
+    var beforeRenameAttempt: ((from: String, to: String) -> Unit)? = null
+
+    /** Optional failure/race seam for the owned artifact publication path. */
+    var beforeOwnedRenameAttempt: ((from: String, to: String) -> Unit)? = null
+
+    /** Write-name fragments that should fail while the rest of the document remains writable. */
+    val writeNamesToFail = mutableSetOf<String>()
 
     /** Exact `from` names whose rename must fail. */
     val renamesToFail = mutableSetOf<String>()
+
+    /** Exact paths whose deletion must fail, for crash/SAF cleanup tests. */
+    val deleteNamesToFail = mutableSetOf<String>()
 
     private fun parentOf(name: String): String? {
         val index = name.lastIndexOf('/')
@@ -33,18 +51,41 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
 
     override fun read(name: String): ByteArray? = files[name]?.copyOf()
 
+    override fun lastModified(name: String): Long = lastModifiedTimes[name] ?: 0L
+
     override fun write(name: String, bytes: ByteArray): Boolean {
-        if (failWrites) return false
+        if (failWrites || writeNamesToFail.any { fragment -> name.contains(fragment) }) return false
         writtenNames += name
         files[name] = bytes.copyOf()
         ensureParents(name)
         return true
     }
 
-    override fun rename(from: String, to: String): Boolean {
-        if (from in renamesToFail) return false
-        if (!files.containsKey(from)) return false
+    override fun renameNoReplace(from: String, to: String): RenameResult {
+        if (!supportsNoReplaceRename) return RenameResult.UNSUPPORTED
+        if (from in renamesToFail) return RenameResult.FAILED
+        if (files.containsKey(to) || directories.contains(to)) return RenameResult.DESTINATION_EXISTS
+        beforeRenameAttempt?.invoke(from, to)
+        if (files.containsKey(to) || directories.contains(to)) return RenameResult.DESTINATION_EXISTS
+        if (!files.containsKey(from)) return RenameResult.FAILED
         files[to] = files.remove(from)!!
+        lastModifiedTimes.remove(from)?.let { modified ->
+            lastModifiedTimes[to] = if (renameChangesLastModified) modified + 1L else modified
+        }
+        ensureParents(to)
+        renamed += from to to
+        return RenameResult.MOVED
+    }
+
+    override fun renameOwned(from: String, to: String): Boolean {
+        if (from in ownedRenamesToFail) return false
+        val bytes = files[from] ?: return false
+        beforeOwnedRenameAttempt?.invoke(from, to)
+        files.remove(from)
+        files[to] = bytes
+        lastModifiedTimes.remove(from)?.let { modified ->
+            lastModifiedTimes[to] = if (renameChangesLastModified) modified + 1L else modified
+        }
         ensureParents(to)
         renamed += from to to
         return true
@@ -52,6 +93,7 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
 
     override fun delete(name: String): Boolean {
         deletedNames += name
+        if (name in deleteNamesToFail) return false
         val removedFile = files.remove(name) != null
         val removedDir = directories.remove(name)
         if (removedDir) {
@@ -63,10 +105,13 @@ class FakeChapterDocumentIo : ChapterDocumentIo {
 
     override fun list(directoryName: String): List<String>? {
         listedDirectories += directoryName
-        if (!directories.contains(directoryName)) return null
+        if (directoryName.isNotEmpty() && !directories.contains(directoryName)) return null
+        val isChild: (String) -> Boolean = { name ->
+            if (directoryName.isEmpty()) parentOf(name) == null else parentOf(name) == directoryName
+        }
         return (
-            files.keys.filter { parentOf(it) == directoryName }.map { it.substringAfterLast('/') } +
-                directories.filter { parentOf(it) == directoryName }.map { it.substringAfterLast('/') }
+            files.keys.filter(isChild).map { it.substringAfterLast('/') } +
+                directories.filter(isChild).map { it.substringAfterLast('/') }
             )
             .distinct()
             .sorted()

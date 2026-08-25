@@ -5,7 +5,11 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactDeletionPlan
+import eu.kanade.translation.artifact.ChapterDocumentIo
 import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
@@ -93,7 +97,7 @@ class TranslationManager(
         val sourceId: Long,
     )
 
-    private data class DurableStatus(val state: Translation.State?)
+    private data class DurableStatus(val state: Translation.State)
 
     private data class TranslationDocument(
         val parent: UniFile,
@@ -478,7 +482,10 @@ class TranslationManager(
                 sourceId,
             )
         }
-        durableStatusCache[key] = DurableStatus(state)
+        // A null result includes an absent document, a failed probe, and a
+        // recoverable rescue/permission error. Do not turn that transient
+        // outcome into a same-manager cache hit that hides a later retry.
+        state?.let { durableStatusCache[key] = DurableStatus(it) }
         return state
     }
 
@@ -584,9 +591,14 @@ class TranslationManager(
     ): Map<String, PageTranslation> = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(file)
         if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
-            return@runBlocking activeStores.getOrCreateFile(file.registryKey()) {
+            val store = activeStores.getOrCreateFile(file.registryKey()) {
                 ChapterTranslationStore.open(file)
-            }?.state?.value.orEmpty()
+            }
+            // Opening an artifact store may complete a LEGACY rescue and
+            // advance its preservation marker. Do not retain a status observed
+            // before that durable transition.
+            durableStatusCache.clear()
+            return@runBlocking store?.state?.value.orEmpty()
         }
         return@runBlocking decodeLegacyChapterTranslation(file, quarantineOnFailure = true)
     }
@@ -601,7 +613,7 @@ class TranslationManager(
         val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source) ?: return null
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         if (document.file?.exists() != true && !manifestProbe.exists) return null
-        return if (chapterId != null) {
+        val store = if (chapterId != null) {
             activeStores.getOrCreate(chapterId, document.registryKey) {
                 if (document.file?.exists() == true) {
                     ChapterTranslationStore.open(document.file)
@@ -618,6 +630,8 @@ class TranslationManager(
                 }
             }
         }
+        durableStatusCache.clear()
+        return store
     }
 
     private fun findTranslationDocument(
@@ -647,6 +661,9 @@ class TranslationManager(
                 ChapterTranslationStore.openArtifact(document.parent, document.fileName)
             }
         } ?: return null
+        // A probe can perform the one-way rescue and rename intent recovery
+        // while it opens. Any status cached before that transition is stale.
+        durableStatusCache.clear()
         return try {
             block(result.store)
         } finally {
@@ -673,16 +690,18 @@ class TranslationManager(
 
     private fun quarantineCorruptTranslationFile(file: UniFile, error: Throwable) {
         val name = file.name ?: "translation.json"
-        val corruptName = "$name.corrupt"
-        val renamed = runCatching {
-            file.parentFile?.findFile(corruptName)?.delete()
-            file.renameTo(corruptName)
-        }.getOrDefault(false)
+        val targetName = file.parentFile?.let { parent ->
+            quarantineCorruptDocument(UniFileChapterDocumentIo(parent), name)
+        }
+        val renamed = targetName != null
         logcat(LogPriority.ERROR, error) {
             "TachiyomiAT quarantined corrupt translation file: " +
-                "file=$name quarantine=$corruptName renamed=$renamed"
+                "file=$name quarantine=${targetName ?: "unavailable"} renamed=$renamed"
         }
     }
+
+    internal fun quarantineCorruptDocument(io: ChapterDocumentIo, name: String): String? =
+        AtomicChapterDocuments(io).quarantineCorrupt(name)
 
     private fun UniFile.registryKey(): String = filePath ?: uri.toString()
 
@@ -848,10 +867,6 @@ class TranslationManager(
                 // write, so merely opening a chapter never leaves an empty compatibility document
                 // behind that could make isChapterTranslated report a false TRANSLATED state.
                 ChapterTranslationStore.lazy(
-                    fileCreator = {
-                        provider.getMangaDir(mangaTitle, source)?.createFile(fileName)
-                            ?: throw java.io.IOException("Cannot create translation file for $chapterName")
-                    },
                     artifactParent = document?.parent,
                     artifactFileName = fileName,
                 )
@@ -1199,6 +1214,21 @@ class TranslationManager(
 
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
         val chapterId = chapter.id ?: return
+        // Capture the validated authority/legacy-preservation marker before any
+        // teardown can evict the only store that still knows the exact names.
+        // This is read-only and runs off the caller thread because SAF reads can
+        // block; the cancellation ordering below remains unchanged.
+        val deletionDocument = withContext(Dispatchers.IO) {
+            findTranslationDocument(chapter.name, chapter.scanlator, manga.title, source)
+        }
+        val artifactDeletionPlan = deletionDocument?.let { document ->
+            withContext(Dispatchers.IO) {
+                ChapterArtifactDeletionPlan.capture(
+                    UniFileChapterDocumentIo(document.parent),
+                    document.fileName,
+                )
+            }
+        }
         // SYNCHRONOUS teardown (was fire-and-forget): a delete-then-retranslate let the reader
         // re-bind to the about-to-be-evicted store while the translator wrote to a fresh instance,
         // and a cancelled-but-not-joined batch worker kept writing into the old store after its
@@ -1220,9 +1250,31 @@ class TranslationManager(
         disposeBatchTracker(chapterId)
         unregisterActiveTranslationStore(chapterId)
         streamRegistry.clearChapter(source.id, manga.id, chapterId)
-        val file = provider.findTranslationFile(chapter.name, chapter.scanlator, manga.title, source)
-        file?.delete()
-        retireChapterCompanionImages(manga, chapter, source)
+        val file = deletionDocument?.file ?: provider.findTranslationFile(
+            chapter.name,
+            chapter.scanlator,
+            manga.title,
+            source,
+        )
+        var authorityRemoved = true
+        artifactDeletionPlan?.let { plan ->
+            val result = withContext(Dispatchers.IO) { plan.delete() }
+            authorityRemoved = result.manifestRemoved
+            logcat(if (result.complete) LogPriority.INFO else LogPriority.ERROR) {
+                "TachiyomiAT chapter artifact deletion: chapter=${chapter.name} " +
+                    "manifestRemoved=${result.manifestRemoved} " +
+                    "artifactTreeRemoved=${result.artifactTreeRemoved} " +
+                    "deletedLegacy=${result.deletedLegacyNames.size} " +
+                    "retainedLegacy=${result.retainedLegacyNames.size} " +
+                    "failures=${result.failures.size}"
+            }
+            // An artifact-authoritative chapter owns its flat source only when
+            // the migration marker proves its current identity. Unknown or
+            // mismatched legacy files remain untouched by the plan.
+            if (!plan.isArtifactAuthoritative) file?.delete()
+        } ?: file?.delete()
+        if (authorityRemoved) retireChapterCompanionImages(manga, chapter, source)
+        durableStatusCache.clear()
     }
 
     suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {

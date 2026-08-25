@@ -220,4 +220,55 @@ class TranslationManagerArtifactReadTest {
         original.exists() shouldBe false
         File(mangaDir, "Chapter 3.json.corrupt").readText() shouldBe "{ not json"
     }
+
+    @Test
+    fun `corrupt quarantine preserves an existing target copy`() {
+        val original = File(mangaDir, "Chapter 6.json")
+        val corruptBytes = "{ corrupt-v2".toByteArray()
+        original.writeBytes(corruptBytes)
+        File(mangaDir, "Chapter 6.json.corrupt").writeText("older-quarantine")
+        val file = translationFile("Chapter 6").also { check(it.exists()) }
+        val manager = newManager(file)
+
+        manager.getChapterTranslation(file).isEmpty() shouldBe true
+
+        original.exists() shouldBe false
+        File(mangaDir, "Chapter 6.json.corrupt").readText() shouldBe "older-quarantine"
+        mangaDir.listFiles()!!.filter { it.name.startsWith("Chapter 6.json.corrupt.") }
+            .map { it.readBytes().toList() } shouldBe listOf(corruptBytes.toList())
+    }
+
+    @Test
+    fun `corrupt quarantine retains the source when every destination races`() {
+        File(mangaDir, "Chapter 8.json").writeText("{ corrupt-v3")
+        val manager = newManager(translationFile("Chapter 8"))
+        val io = eu.kanade.translation.artifact.FakeChapterDocumentIo()
+        val corruptBytes = "{ corrupt-v3".toByteArray()
+        io.files["Chapter 8.json"] = corruptBytes
+        io.beforeRenameAttempt = { from, to ->
+            if (from == "Chapter 8.json" && to.startsWith("Chapter 8.json.corrupt")) {
+                io.files[to] = "external-quarantine".toByteArray()
+            }
+        }
+
+        manager.quarantineCorruptDocument(io, "Chapter 8.json") shouldBe null
+        io.files["Chapter 8.json"] shouldBe corruptBytes
+        io.files.filterKeys { it.startsWith("Chapter 8.json.corrupt") }
+            .values.forEach { it shouldBe "external-quarantine".toByteArray() }
+    }
+
+    @Test
+    fun `recoverable missing legacy input is retried by the same manager`() {
+        File(mangaDir, "Chapter 7.json").createNewFile()
+        val file = translationFile("Chapter 7")
+        val manager = newManager(file)
+        manager.getChapterTranslationStatus(47L, "Chapter 7", null, "Manga", 77L) shouldBe
+            Translation.State.NOT_TRANSLATED
+
+        File(mangaDir, "Chapter 7.json").writeText(
+            Json.encodeToString(mapOf("page.jpg" to page())),
+        )
+        manager.getChapterTranslationStatus(47L, "Chapter 7", null, "Manga", 77L) shouldBe
+            Translation.State.READY_WITH_WARNINGS
+    }
 }

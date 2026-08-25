@@ -31,6 +31,8 @@ data class ChapterArtifactManifest(
      * never matches a live identity, forcing one conservative resync.
      */
     val legacySource: LegacySourceIdentity? = null,
+    /** Additive provenance and preservation state for a legacy rescue. */
+    val legacyMigration: LegacyMigrationMetadata? = null,
     /**
      * Which document owns this manifest's metadata (Phase 3 cutover). While
      * [ManifestAuthority.LEGACY], opens may resync from the authoritative
@@ -46,6 +48,120 @@ data class ChapterArtifactManifest(
     companion object {
         const val SCHEMA_VERSION = 1
     }
+}
+
+/**
+ * Durable identity and preservation metadata for a one-way legacy rescue.
+ * Missing, incomplete, or unsupported values are intentionally not eligible
+ * for destructive cleanup decisions.
+ */
+@Serializable
+data class LegacyMigrationMetadata(
+    val formatVersion: Int = FORMAT_VERSION,
+    val sourceFileName: String = "",
+    val sourcePreservation: LegacyPreservationState = LegacyPreservationState.INTENT,
+    val requestedSourceFileName: String? = null,
+    val resolvedSourceFileName: String? = null,
+    val sourcePreservedAtEpochMs: Long? = null,
+    val glossaryPreservation: LegacyPreservationState = LegacyPreservationState.NONE,
+    val requestedGlossaryFileName: String? = null,
+    val resolvedGlossaryFileName: String? = null,
+    val sourceIdentity: LegacySourceIdentity? = null,
+    val glossaryIdentity: LegacySourceIdentity? = null,
+    val sourcePageCount: Int = 0,
+    val sourcePageKeyDigest: String = "",
+    val migratedByVersionCode: Long = 0L,
+    val migratedAtEpochMs: Long = 0L,
+    val health: LegacyMigrationHealth = LegacyMigrationHealth.INITIAL_CUTOVER,
+    val lastVerifiedByVersionCode: Long? = null,
+    val lastVerifiedAtEpochMs: Long? = null,
+) {
+    /** Only complete schema-1 metadata may participate in later cleanup. */
+    val isSupported: Boolean
+        get() = formatVersion == FORMAT_VERSION &&
+            sourceFileName.isNotBlank() &&
+            sourceIdentity?.isValidForCleanup() == true &&
+            sourcePreservationIsSupported() &&
+            glossaryPreservationIsSupported() &&
+            verificationIsSupported() &&
+            sourcePageCount >= 0 &&
+            sourcePageKeyDigest.length == SHA256_HEX_LENGTH &&
+            sourcePageKeyDigest.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } &&
+            migratedByVersionCode > 0L &&
+            migratedAtEpochMs > 0L
+
+    private fun sourcePreservationIsSupported(): Boolean = when (sourcePreservation) {
+        LegacyPreservationState.NONE -> false
+        LegacyPreservationState.INTENT -> requestedSourceFileName.isPresent() &&
+            resolvedSourceFileName == null &&
+            sourcePreservedAtEpochMs == null
+        LegacyPreservationState.PRESERVED -> requestedSourceFileName.isPresent() &&
+            resolvedSourceFileName.isPresent() &&
+            sourcePreservedAtEpochMs.isValidTimestamp()
+        LegacyPreservationState.DELETED -> requestedSourceFileName.isPresent() &&
+            resolvedSourceFileName.isPresent() &&
+            sourcePreservedAtEpochMs.isValidTimestamp() &&
+            health == LegacyMigrationHealth.VERIFIED
+    }
+
+    private fun glossaryPreservationIsSupported(): Boolean = when (glossaryPreservation) {
+        LegacyPreservationState.NONE ->
+            requestedGlossaryFileName == null &&
+                resolvedGlossaryFileName == null &&
+                glossaryIdentity == null
+        LegacyPreservationState.INTENT -> requestedGlossaryFileName.isPresent() &&
+            resolvedGlossaryFileName == null &&
+            glossaryIdentity?.isValidForCleanup() == true
+        LegacyPreservationState.PRESERVED -> requestedGlossaryFileName.isPresent() &&
+            resolvedGlossaryFileName.isPresent() &&
+            glossaryIdentity?.isValidForCleanup() == true
+        LegacyPreservationState.DELETED -> requestedGlossaryFileName.isPresent() &&
+            resolvedGlossaryFileName.isPresent() &&
+            glossaryIdentity?.isValidForCleanup() == true &&
+            health == LegacyMigrationHealth.VERIFIED
+    }
+
+    private fun verificationIsSupported(): Boolean = when (health) {
+        LegacyMigrationHealth.INITIAL_CUTOVER ->
+            lastVerifiedByVersionCode == null && lastVerifiedAtEpochMs == null
+        LegacyMigrationHealth.VERIFIED_WITH_WARNINGS,
+        LegacyMigrationHealth.VERIFIED,
+        -> lastVerifiedByVersionCode != null &&
+            lastVerifiedByVersionCode > migratedByVersionCode &&
+            lastVerifiedAtEpochMs.isValidTimestamp()
+    }
+
+    private fun String?.isPresent(): Boolean = !isNullOrBlank()
+
+    private fun Long?.isValidTimestamp(): Boolean = this != null &&
+        this > 0L &&
+        this >= migratedAtEpochMs
+
+    private fun LegacySourceIdentity.isValidForCleanup(): Boolean =
+        sha256.length == SHA256_HEX_LENGTH &&
+            sha256.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' } &&
+            lengthBytes >= 0L &&
+            lastModifiedMs >= 0L
+
+    companion object {
+        const val FORMAT_VERSION = 1
+        const val SHA256_HEX_LENGTH = 64
+    }
+}
+
+/** Preservation lifecycle for a legacy source or glossary sidecar. */
+enum class LegacyPreservationState {
+    NONE,
+    INTENT,
+    PRESERVED,
+    DELETED,
+}
+
+/** Verification health recorded by a migration transaction. */
+enum class LegacyMigrationHealth {
+    INITIAL_CUTOVER,
+    VERIFIED_WITH_WARNINGS,
+    VERIFIED,
 }
 
 /** One page's artifact records, committed/candidate pointers (lifecycle contract §1). */

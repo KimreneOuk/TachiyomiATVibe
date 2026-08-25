@@ -1,6 +1,7 @@
 package eu.kanade.translation
 
 import com.hippo.unifile.UniFile
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
@@ -50,7 +51,6 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
@@ -61,10 +61,28 @@ import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 import kotlin.math.abs
 
+/** Durable admission result for a page mutation. */
+sealed interface MutationAdmission {
+    data object Granted : MutationAdmission
+
+    data class Rejected(
+        val code: Code,
+        val retryable: Boolean = true,
+        val message: String,
+    ) : MutationAdmission {
+        enum class Code {
+            LEGACY_RESCUE_REQUIRED,
+            LEGACY_RESCUE_FAILED,
+            ARTIFACT_PUBLICATION_FAILED,
+            STORE_DEFUNCT,
+            FENCE_REJECTED,
+        }
+    }
+}
+
 class ChapterTranslationStore(
-    // Mutable so persistLocked() caches the file materialized by fileCreator on
-    // first write; as `val` it re-invoked fileCreator on every persist, leaking
-    // orphaned files and splitting one translation across multiple documents.
+    // Retained as a source-compatible test seam; artifact-only persistence never
+    // invokes this legacy flat-file creator.
     private var translationFile: UniFile?,
     private val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
@@ -296,6 +314,49 @@ class ChapterTranslationStore(
         snapshotLocked(pageKey)
     }
 
+    /** Establishes artifact authority before a caller installs a new page state. */
+    suspend fun ensureArtifactAuthorityForMutation(): MutationAdmission = mutex.withLock {
+        admitMutationLocked()
+    }
+
+    private fun admitMutationLocked(): MutationAdmission {
+        if (defunct) {
+            return MutationAdmission.Rejected(
+                code = MutationAdmission.Rejected.Code.STORE_DEFUNCT,
+                message = "store is defunct",
+            )
+        }
+        if (artifactStore != null && artifactManifest?.authority == ManifestAuthority.ARTIFACTS) {
+            return MutationAdmission.Granted
+        }
+        // Explicitly memory-only stores are used by pure reducer/unit tests;
+        // they have no persistence target and therefore cannot accidentally
+        // create a legacy document. Production stores always provide a parent
+        // or an already-open legacy document and take the rescue path below.
+        if (artifactStore == null &&
+            artifactParent == null &&
+            artifactFileName == null &&
+            translationFile == null &&
+            fileCreator == null
+        ) {
+            return MutationAdmission.Granted
+        }
+        if (!ensureArtifactStoreLocked()) {
+            return MutationAdmission.Rejected(
+                code = MutationAdmission.Rejected.Code.LEGACY_RESCUE_FAILED,
+                message = "artifact store rescue/publication failed",
+            )
+        }
+        return if (artifactStore != null && artifactManifest?.authority == ManifestAuthority.ARTIFACTS) {
+            MutationAdmission.Granted
+        } else {
+            MutationAdmission.Rejected(
+                code = MutationAdmission.Rejected.Code.LEGACY_RESCUE_REQUIRED,
+                message = "artifact authority was not established",
+            )
+        }
+    }
+
     suspend fun beginGeneration(reason: String): Long = mutex.withLock {
         generation++
         logcat(LogPriority.INFO) { "TachiyomiAT store generation advanced: generation=$generation reason=$reason" }
@@ -413,6 +474,14 @@ class ChapterTranslationStore(
     ): PatchResult {
         if (defunct) return rejected(pageKey, description, "store is defunct")
         return mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejected(
+                    pageKey,
+                    description,
+                    "${admission.code}: ${admission.message}",
+                )
+            }
             val current = pages[pageKey]
             val rejection = when {
                 expected.generation != generation -> "generation expected=${expected.generation} actual=$generation"
@@ -456,7 +525,10 @@ class ChapterTranslationStore(
                 }
                 val updated = ownedPage(pageKey, candidate)
                 pages = pages.put(pageKey, updated)
-                publishLocked(current, updated, expected)
+                if (!publishLocked(current, updated, expected)) {
+                    restorePageLocked(pageKey, current)
+                    return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+                }
                 PatchResult.Accepted(snapshotLocked(pageKey))
             }
         }
@@ -477,6 +549,14 @@ class ChapterTranslationStore(
     ): PatchResult {
         if (defunct) return rejected(pageKey, description, "store is defunct")
         return mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejected(
+                    pageKey,
+                    description,
+                    "${admission.code}: ${admission.message}",
+                )
+            }
             val rejection = pageWriteRejection(pageKey, expected)
             if (rejection != null) {
                 rejected(pageKey, description, rejection)
@@ -484,7 +564,10 @@ class ChapterTranslationStore(
                 val previous = pages[pageKey]
                 val updated = ownedPage(pageKey, update(previous?.detachedCopy()))
                 pages = pages.put(pageKey, updated)
-                publishLocked(previous, updated, expected)
+                if (!publishLocked(previous, updated, expected)) {
+                    restorePageLocked(pageKey, previous)
+                    return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+                }
                 PatchResult.Accepted(snapshotLocked(pageKey))
             }
         }
@@ -527,6 +610,14 @@ class ChapterTranslationStore(
     ): StagePatchResult {
         if (defunct) return rejectedStage(patch.pageKey, description, "store is defunct")
         return mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejectedStage(
+                    patch.pageKey,
+                    description,
+                    "${admission.code}: ${admission.message}",
+                )
+            }
             val current = pages[patch.pageKey]
             when (patch) {
                 is StagePatch.Ocr -> mergeOcrLocked(current, patch.value, description)
@@ -647,7 +738,10 @@ class ChapterTranslationStore(
         }
         val owned = ownedPage(patch.pageKey, updated)
         pages = pages.put(patch.pageKey, owned)
-        publishLocked(current, owned, patch.toPrecondition())
+        if (!publishLocked(current, owned, patch.toPrecondition())) {
+            restorePageLocked(patch.pageKey, current)
+            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+        }
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey))
     }
 
@@ -720,7 +814,10 @@ class ChapterTranslationStore(
         page.errorMessage = patch.errorMessage
         val updated = ownedPage(patch.pageKey, page)
         pages = pages.put(patch.pageKey, updated)
-        publishLocked(current, updated, patch.toPrecondition())
+        if (!publishLocked(current, updated, patch.toPrecondition())) {
+            restorePageLocked(patch.pageKey, current)
+            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+        }
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), applied)
     }
 
@@ -755,7 +852,10 @@ class ChapterTranslationStore(
             },
         )
         pages = pages.put(patch.pageKey, updated)
-        publishLocked(current, updated, patch.toPrecondition())
+        if (!publishLocked(current, updated, patch.toPrecondition())) {
+            restorePageLocked(patch.pageKey, current)
+            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+        }
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey))
     }
 
@@ -802,7 +902,10 @@ class ChapterTranslationStore(
         page.errorMessage = patch.errorMessage
         val updated = ownedPage(patch.pageKey, page)
         pages = pages.put(patch.pageKey, updated)
-        publishLocked(current, updated, patch.toPrecondition())
+        if (!publishLocked(current, updated, patch.toPrecondition())) {
+            restorePageLocked(patch.pageKey, current)
+            return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+        }
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), patch.blocks.map { it.blockIndex })
     }
 
@@ -960,6 +1063,16 @@ class ChapterTranslationStore(
     suspend fun deletePage(pageKey: String) {
         if (defunct) return
         mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT store deletePage rejected: " +
+                            "code=${admission.code} reason=${admission.message}"
+                    }
+                    return@withLock
+                }
+            }
             if (pages.containsKey(pageKey)) {
                 deleteArtifactPageLocked(pageKey)
                 pages = pages.remove(pageKey)
@@ -981,6 +1094,16 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT store replaceAll rejected: " +
+                            "code=${admission.code} reason=${admission.message}"
+                    }
+                    return@withLock
+                }
+            }
             if (artifactManifest?.authority == ManifestAuthority.ARTIFACTS) {
                 artifactManifest?.pages?.keys?.toList().orEmpty().forEach { pageKey ->
                     deleteArtifactPageLocked(pageKey)
@@ -1009,6 +1132,16 @@ class ChapterTranslationStore(
     ): List<Pair<String, String>> {
         if (defunct || onlineKeys.size != onDiskKeys.size) return emptyList()
         return mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT store rekeyPages rejected: " +
+                            "code=${admission.code} reason=${admission.message}"
+                    }
+                    return@withLock emptyList()
+                }
+            }
             if (pages.size != onlineKeys.size) return@withLock emptyList()
             val onDiskKeySet = onDiskKeys.toSet()
             if (pages.keys.all { it in onDiskKeySet }) return@withLock emptyList()
@@ -1070,6 +1203,16 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT store preRegisterPages rejected: " +
+                            "code=${admission.code} reason=${admission.message}"
+                    }
+                    return@withLock
+                }
+            }
             pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, pageKeys.distinct().size)
             pendingExpectedPageCountTrusted = true
             var changed = false
@@ -1125,6 +1268,16 @@ class ChapterTranslationStore(
             return
         }
         mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT store clearTransientQueuePages rejected: " +
+                            "code=${admission.code} reason=${admission.message}"
+                    }
+                    return@withLock
+                }
+            }
             generation++
             logcat(LogPriority.INFO) {
                 "TachiyomiAT store generation invalidated: generation=$generation reason=${reason ?: "clear transient queue"}"
@@ -1185,7 +1338,7 @@ class ChapterTranslationStore(
         previous: PageTranslation?,
         updated: PageTranslation,
         expected: PatchPrecondition? = null,
-    ) {
+    ): Boolean {
         val pageKey = updated.sourceFileName ?: ""
         val isDurable = shouldPersistUpdate(previous, updated)
         val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
@@ -1193,12 +1346,18 @@ class ChapterTranslationStore(
         } else {
             true
         }
-        if (artifactAccepted) {
-            promoteDisplayIfReadyLocked(pageKey, updated)
-        }
+        if (!artifactAccepted) return false
+        promoteDisplayIfReadyLocked(pageKey, updated)
         if (isDurable && artifactManifest?.authority != ManifestAuthority.ARTIFACTS) {
             schedulePersist()
         }
+        _state.value = snapshotPages()
+        _display.value = displaySnapshotLocked()
+        return true
+    }
+
+    private fun restorePageLocked(pageKey: String, previous: PageTranslation?) {
+        pages = if (previous == null) pages.remove(pageKey) else pages.put(pageKey, previous)
         _state.value = snapshotPages()
         _display.value = displaySnapshotLocked()
     }
@@ -1217,7 +1376,11 @@ class ChapterTranslationStore(
         expected: PatchPrecondition? = null,
     ): Boolean {
         if (artifactStore == null) {
-            if (fileCreator == null && translationFile == null) return true
+            if (artifactParent == null && artifactFileName == null && translationFile == null && fileCreator == null) {
+                // Pure in-memory stores have no persistence target and never
+                // create a compatibility document as a side effect.
+                return true
+            }
             if (!ensureArtifactStoreLocked()) return false
         }
         val store = artifactStore ?: return false
@@ -1381,25 +1544,15 @@ class ChapterTranslationStore(
     /** Lazily creates the artifact authority for a chapter with no legacy file. */
     private fun ensureArtifactStoreLocked(): Boolean {
         artifactStore?.let { return artifactManifest != null }
-        if (translationFile != null && fileCreator == null) return false
-        // A lazy store opened with an explicit artifact parent/name is an
-        // artifact-only chapter: bootstrap the manifest without materializing
-        // the legacy flat file. The compatibility-shaped lazy overload keeps
-        // its historical flat-file creation when no parent/name was supplied.
-        val file = translationFile ?: if (artifactParent == null || artifactFileName == null) {
-            runCatching { fileCreator?.invoke() }.getOrNull()?.also {
-                translationFile = it
-            }
-        } else {
-            null
-        }
-        if (file == null && (artifactParent == null || artifactFileName == null)) return false
-        val parent = file?.parentFile ?: artifactParent ?: return false
-        val fileName = file?.name ?: artifactFileName ?: DEFAULT_FILE_NAME
+        // Lazy production stores must provide an artifact parent/name. An
+        // existing flat file is migrated by openInternal; this method never
+        // creates one as a mutation side effect.
+        val parent = artifactParent ?: translationFile?.parentFile ?: return false
+        val fileName = artifactFileName ?: translationFile?.name ?: return false
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val store = ChapterArtifactStore(documents, layout, artifactImageProbe)
-        val manifest = synchronized(ARTIFACT_MIGRATION_LOCK) {
+        var manifest = synchronized(artifactMigrationLock(parent, fileName)) {
             store.loadOrMigrate(
                 LegacyChapterSnapshot(
                     pages = emptyMap(),
@@ -1409,6 +1562,26 @@ class ChapterTranslationStore(
                     migratedAtEpochMs = System.currentTimeMillis(),
                 ),
             ).manifest
+        }
+        // A new artifact-backed chapter has no legacy source to rescue. The
+        // first mutation still needs an ARTIFACTS authority manifest, but must
+        // not manufacture a compatibility flat file as an admission side
+        // effect.
+        if (
+            manifest.authority == ManifestAuthority.LEGACY &&
+            manifest.legacyMigration == null &&
+            manifest.pages.isEmpty()
+        ) {
+            val now = System.currentTimeMillis()
+            val artifactManifest = manifest.copy(
+                authority = ManifestAuthority.ARTIFACTS,
+                cutoverAtEpochMs = manifest.cutoverAtEpochMs ?: now,
+                migratedFromLegacyAtEpochMs = manifest.migratedFromLegacyAtEpochMs ?: now,
+                updatedAtEpochMs = now,
+            )
+            if (store.publishManifest(artifactManifest)) {
+                manifest = artifactManifest
+            }
         }
         artifactStore = store
         artifactManifest = manifest
@@ -1661,6 +1834,7 @@ class ChapterTranslationStore(
         val visiblePages = display.value
         val hasReadableOutput = visiblePages.values.any { it.toPageDisplayProjection().displayReady } ||
             pagesSnapshot.values.any { it.hasRenderedResult || it.isTextlessTerminal }
+        val hasPartialArtifact = pagesSnapshot.isNotEmpty() || manifest.pages.isNotEmpty()
         val expectedPageCount = manifest.expectedPageCount
         val expectedPageCountTrusted = manifest.expectedPageCountTrusted
         val hasDurableFailure = manifest.durableFailures.isNotEmpty() ||
@@ -1675,7 +1849,8 @@ class ChapterTranslationStore(
         if (hasDurableFailure) return Translation.State.ERROR
         if (hasInFlightPage) {
             return if ((expectedPageCountTrusted && expectedPageCount != null && expectedPageCount > 0) ||
-                hasReadableOutput
+                hasReadableOutput ||
+                hasPartialArtifact
             ) {
                 Translation.State.READY_WITH_WARNINGS
             } else {
@@ -1684,7 +1859,11 @@ class ChapterTranslationStore(
         }
         val expectedPageCountValue = expectedPageCount
             ?.takeIf { expectedPageCountTrusted }
-            ?: return if (hasReadableOutput) Translation.State.READY_WITH_WARNINGS else null
+            ?: return if (hasReadableOutput || hasPartialArtifact) {
+                Translation.State.READY_WITH_WARNINGS
+            } else {
+                null
+            }
         if (expectedPageCountValue <= 0) return null
         val expectedKeys = manifest.pages.keys.toMutableList()
         repeat((expectedPageCountValue - expectedKeys.size).coerceAtLeast(0)) { index ->
@@ -1724,6 +1903,16 @@ class ChapterTranslationStore(
         }
         mutex.withLock {
             if (glossary != updated) {
+                when (val admission = admitMutationLocked()) {
+                    MutationAdmission.Granted -> Unit
+                    is MutationAdmission.Rejected -> {
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT store updateGlossary rejected: " +
+                                "code=${admission.code} reason=${admission.message}"
+                        }
+                        return@withLock
+                    }
+                }
                 glossary = updated.toMap()
                 val artifact = artifactStore
                 val manifest = artifactManifest
@@ -1777,17 +1966,10 @@ class ChapterTranslationStore(
             artifactManifest = updated
             return true
         }
-        val documents = legacyDocuments()
-        if (documents == null) {
-            logcat(LogPriority.ERROR) { "TachiyomiAT glossary persistence failed: reason=file unavailable" }
-            return false
+        logcat(LogPriority.ERROR) {
+            "TachiyomiAT glossary persistence failed: reason=artifact authority unavailable"
         }
-        val snapshot = glossary
-        return runCatching {
-            documents.publishJson(glossaryName(), snapshot)
-        }.onFailure { error ->
-            logcat(LogPriority.ERROR, error) { "TachiyomiAT glossary persistence failed: reason=write error" }
-        }.isSuccess
+        return false
     }
 
     private fun legacyDocuments(): AtomicChapterDocuments? =
@@ -1849,31 +2031,10 @@ class ChapterTranslationStore(
         // map back into it would erase the durable committed pointer on the
         // next reopen, so all page durability is handled by the artifact
         // bridge in publishLocked().
-        if (artifactManifest?.authority == ManifestAuthority.ARTIFACTS) return true
         persistCount++
-        // Resolve the backing file lazily on first write. Opening a chapter with
-        // no existing file leaves translationFile null; materializing it on first
-        // real write avoids leaving empty files on disk (which previously made
-        // isChapterTranslated report false TRANSLATED on reopen).
-        if (translationFile == null) {
-            translationFile = fileCreator?.invoke()
-        }
-        val target = translationFile ?: return false
-        try {
-            // Snapshot PersistentMap into a plain Map before encoding. Serializing
-            // it directly makes kotlinx.serialization treat PersistentMap
-            // polymorphically and fail at runtime ("subclass 'PersistentOrderedMap'
-            // not found"), breaking every persist and reopen.
-            val snapshot: Map<String, PageTranslation> = pages.toMap()
-            val jsonBytes = Json.encodeToString(snapshot).toByteArray(Charsets.UTF_8)
-            target.openOutputStream().use { output ->
-                output.write(jsonBytes)
-            }
-            return true
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) { "Failed to persist translation store; in-memory state retained" }
-            return false
-        }
+        // All durable page writes go through the artifact bridge. A legacy
+        // flat file is a migration-time read/recovery source only.
+        return artifactManifest?.authority == ManifestAuthority.ARTIFACTS
     }
 
     suspend fun flush() {
@@ -1927,7 +2088,7 @@ class ChapterTranslationStore(
         // A memory-only store has no future persistence target. Avoid leaving a
         // delayed job behind for eviction to join; explicit flush() still
         // remains available for deterministic callers and preserves dirty state.
-        if (translationFile == null && fileCreator == null) return
+        if (translationFile == null && fileCreator == null && artifactParent == null) return
         if (persistJob?.isActive == true) return
         persistJob = persistScope.launch {
             delay(PERSIST_DEBOUNCE_MS)
@@ -1976,19 +2137,12 @@ class ChapterTranslationStore(
             return ArtifactManifestProbe(exists = true, manifest = manifest)
         }
 
-        /**
-         * Creates a sibling temp-file name scoped to its target translation file.
-         * This avoids concurrent stores overwriting a shared temporary document.
-         */
-        private fun tempFileNameFor(target: UniFile): String =
-            "${target.name ?: DEFAULT_FILE_NAME}.tmp"
-
         /** Opens an existing on-disk translation file into a store. */
         fun open(translationFile: UniFile): ChapterTranslationStore =
             openInternal(
                 translationFile = translationFile,
                 parent = translationFile.parentFile,
-                fileName = translationFile.name ?: DEFAULT_FILE_NAME,
+                fileName = (translationFile.name ?: DEFAULT_FILE_NAME).removeSuffix(".migrated"),
             )
 
         /** Opens an artifact-authority chapter whose legacy flat file is absent. */
@@ -2043,13 +2197,16 @@ class ChapterTranslationStore(
             val artifactLayout = ChapterArtifactLayout.fromTranslationFileName(fileName)
             val artifactManifestFileExists = parent?.findFile(artifactLayout.manifestFileName)?.exists() == true
             val artifactLoad = if (translationFile?.exists() == true || artifactManifestFileExists) {
-                runCatching {
-                    migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt)
-                }.onFailure { error ->
-                    logcat(LogPriority.WARN, error) {
-                        "TachiyomiAT artifact manifest migration skipped: reason=open failure"
-                    }
-                }.getOrNull()
+                val migrationLock = artifactMigrationLock(parent, fileName)
+                synchronized(migrationLock) {
+                    runCatching {
+                        migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt)
+                    }.onFailure { error ->
+                        logcat(LogPriority.WARN, error) {
+                            "TachiyomiAT artifact manifest migration skipped: reason=open failure"
+                        }
+                    }.getOrNull()
+                }
             } else {
                 null
             }
@@ -2077,16 +2234,14 @@ class ChapterTranslationStore(
         )
 
         /**
-         * TachiyomiAT: identity-aware, non-destructive migration/resync of the
+         * TachiyomiAT: identity-aware, non-destructive lazy rescue of the
          * legacy flat translation record into the chapter artifact manifest.
          * Reads the legacy file's exact identity and the companion cleaned
-         * images (bounded decode probe), then publishes the manifest and
-         * versioned glossary sidecar as sibling documents. Because the legacy
-         * file remains authoritative until the store-transaction phase, every
-         * open compares the stored identity and resyncs when the bytes
-         * changed. The legacy file itself is never modified, so the live
-         * reader keeps its current behavior. Chapters without a legacy
-         * translation file are left untouched.
+         * images (bounded decode probe), then publishes and re-reads the
+         * complete graph before one final ARTIFACTS authority switch. Once
+         * switched, the flat file is never consulted for page rehydration;
+         * preservation is retried from the durable migration marker. Chapters
+         * without a legacy translation file are left untouched.
          */
         private fun migrateArtifactManifest(
             translationFile: UniFile?,
@@ -2118,35 +2273,70 @@ class ChapterTranslationStore(
                     cleanedImageDimensions = cleaned.dimensions,
                 )
             }
-            val glossary = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
-                .readValidated<Map<String, String>>(legacyGlossaryName(fileName)).orEmpty()
-            var loaded = synchronized(ARTIFACT_MIGRATION_LOCK) {
-                artifactStore.loadOrMigrate(
-                    LegacyChapterSnapshot(
-                        pages = facts,
-                        glossary = glossary,
-                        translationFileCorrupt = legacyCorrupt,
-                        legacyIdentity = identity,
-                        migratedAtEpochMs = System.currentTimeMillis(),
-                    ),
-                )
+            val glossaryFileName = legacyGlossaryName(fileName)
+            val glossaryFile = parent.findFile(glossaryFileName)
+            val glossaryFilePresent = glossaryFile?.exists() == true
+            val glossaryBytes = runCatching {
+                glossaryFile?.takeIf { it.exists() }?.openInputStream()?.use { input -> input.readBytes() }
+            }.getOrNull()
+            val glossaryLastModified = runCatching { glossaryFile?.lastModified() ?: 0L }.getOrDefault(0L)
+            var glossaryFileCorrupt = false
+            val glossary = if (glossaryFilePresent) {
+                runCatching {
+                    legacyPageJson.decodeFromStream<Map<String, String>>(
+                        glossaryBytes?.inputStream() ?: error("glossary bytes unavailable"),
+                    )
+                }.onFailure { glossaryFileCorrupt = true }.getOrDefault(emptyMap())
+            } else {
+                emptyMap()
             }
+            val migratedAtEpochMs = System.currentTimeMillis()
+            val loaded = artifactStore.loadOrMigrate(
+                LegacyChapterSnapshot(
+                    pages = facts,
+                    glossary = glossary,
+                    translationFileCorrupt = legacyCorrupt,
+                    glossaryFileCorrupt = glossaryFileCorrupt,
+                    legacyIdentity = identity,
+                    sourceFileName = fileName,
+                    glossaryFileName = glossaryFileName,
+                    glossaryIdentity = legacyIdentityOf(
+                        glossaryBytes,
+                        glossaryLastModified,
+                    ),
+                    migratedByVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                    migratedAtEpochMs = migratedAtEpochMs,
+                ),
+            )
             var manifest = loaded.manifest
-            if (manifest.authority == ManifestAuthority.LEGACY) {
-                legacyPages.forEach { (pageKey, page) ->
-                    val record = manifest.pages[pageKey]
-                    if (record?.committed != null && page.hasRenderedResult && record.committed.pageSnapshotFileName == null) {
-                        val materialized = artifactStore.materializeLegacyCommittedSnapshot(manifest, pageKey, page)
-                        if (materialized is ChapterArtifactStore.TransactionOutcome.Committed) {
-                            manifest = materialized.manifest
-                        }
-                    }
+            if (manifest.authority == ManifestAuthority.ARTIFACTS) {
+                manifest = artifactStore.reconcileLegacyPreservation(manifest)
+                // Verification is chapter-open scoped. The first rescue is
+                // stamped with this version and therefore cannot delete its
+                // recovery source; only a later open can pass the health gate.
+                val migration = manifest.legacyMigration
+                val needsHealthVerification = migration == null ||
+                    migration.health != eu.kanade.translation.artifact.LegacyMigrationHealth.VERIFIED ||
+                    migration.sourcePreservation in setOf(
+                        eu.kanade.translation.artifact.LegacyPreservationState.INTENT,
+                        eu.kanade.translation.artifact.LegacyPreservationState.PRESERVED,
+                    ) ||
+                    migration.glossaryPreservation in setOf(
+                        eu.kanade.translation.artifact.LegacyPreservationState.INTENT,
+                        eu.kanade.translation.artifact.LegacyPreservationState.PRESERVED,
+                    )
+                if (needsHealthVerification) {
+                    manifest = artifactStore.verifyLegacyArtifactHealth(
+                        manifest = manifest,
+                        currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                        hasActiveLease = false,
+                    ).manifest
                 }
             }
             val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
                 val committed = record.committed ?: return@mapNotNull null
                 val snapshot = artifactStore.readPageSnapshot(committed.pageSnapshotFileName)
-                    ?: legacyPages[pageKey]?.takeIf { it.hasRenderedResult }
+                    ?: legacyPages[pageKey]?.takeIf { manifest.authority == ManifestAuthority.LEGACY }
                 snapshot?.let { pageKey to it }
             }.toMap()
             val livePages = when (manifest.authority) {
@@ -2154,8 +2344,7 @@ class ChapterTranslationStore(
                 ManifestAuthority.ARTIFACTS -> manifest.pages.mapNotNull { (pageKey, record) ->
                     val candidateSnapshot = artifactStore.readPageSnapshot(record.candidate?.pageSnapshotFileName)
                     val committedSnapshot = committedPages[pageKey]
-                    val fallback = committedSnapshot ?: legacyPages[pageKey]
-                    (candidateSnapshot ?: fallback)?.let { pageKey to it }
+                    (candidateSnapshot ?: committedSnapshot)?.let { pageKey to it }
                 }.toMap()
             }
             val retiredCleanedImages = manifest.pages.mapNotNull { (pageKey, record) ->
@@ -2229,18 +2418,22 @@ class ChapterTranslationStore(
 
         private const val IMAGE_DIMENSION_TOLERANCE_PX = 1
 
-        private val ARTIFACT_MIGRATION_LOCK = Any()
+        private val ARTIFACT_MIGRATION_LOCKS = ConcurrentHashMap<String, Any>()
+
+        private fun artifactMigrationLock(parent: UniFile?, fileName: String): Any {
+            val parentKey = parent?.filePath ?: parent?.uri?.toString() ?: "<unknown>"
+            return ARTIFACT_MIGRATION_LOCKS.computeIfAbsent("$parentKey:$fileName") { Any() }
+        }
 
         /**
          * Creates a store whose on-disk file is created lazily on the first
-         * [updatePage]/[replaceAll] write. Use this when a chapter has no
-         * existing translation file yet, so that merely opening the chapter
-         * does NOT leave an empty file behind.
+         * artifact-backed [updatePage]/[replaceAll] write. The optional
+         * [fileCreator] remains source-compatible but is never invoked.
          */
         fun lazy(
             artifactParent: UniFile? = null,
             artifactFileName: String? = null,
-            fileCreator: () -> UniFile,
+            fileCreator: (() -> UniFile)? = null,
         ): ChapterTranslationStore =
             ChapterTranslationStore(
                 translationFile = null,

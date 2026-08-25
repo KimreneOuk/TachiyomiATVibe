@@ -2870,8 +2870,8 @@ class TranslationPipeline(
         } ?: run {
             val mangaDir = provider.getMangaDir(manga.title, source)
             val saveFile = provider.getTranslationFileName(chapter.name, chapter.scanlator)
-            val file = mangaDir?.createFile(saveFile) ?: return null
-            ChapterTranslationStore.open(file).also { ownStore = it }
+            val parent = mangaDir ?: return null
+            ChapterTranslationStore.openArtifact(parent, saveFile).also { ownStore = it }
         }
 
         // Cleanup runs here for resume/error paths; deferred to the fresh path
