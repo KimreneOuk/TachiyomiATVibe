@@ -33,6 +33,7 @@ class GeminiTranslator(
     val maxOutputToken: Int,
     val temp: Float,
     private val thinkingMode: GeminiThinkingMode = GeminiThinkingMode.DISABLED,
+    private val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
 ) : AITranslator() {
 
     private val client = OkHttpClient.Builder()
@@ -125,36 +126,64 @@ class GeminiTranslator(
             thinkingMode = thinkingMode,
         )
         return try {
-            post(requestConfig.payload)
+            post(requestConfig.payload, maxOutputTokens)
         } catch (e: GeminiApiException) {
             if (e.statusCode != 400 || !requestConfig.hasThinkingConfig) throw e
             logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
                 "event=gemini_thinking_fallback model=${ShortHash.hash(modelName)} status=${e.statusCode}"
             }
-            post(requestConfig.payloadWithoutThinking)
+            post(requestConfig.payloadWithoutThinking, maxOutputTokens)
         }
     }
 
-    private suspend fun post(payload: String): String {
+    private suspend fun post(payload: String, reservedOutputTokens: Int): String {
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent")
             .header("x-goog-api-key", apiKey)
             .header("Content-Type", "application/json")
             .post(payload.toRequestBody(JSON_MEDIA_TYPE))
             .build()
-        val response = client.newCall(request).await()
-        val body = response.body?.string().orEmpty()
-        if (!response.isSuccessful) {
-            val retryAfterMillis = response.header("Retry-After")?.toLongOrNull()?.times(1_000)
-            val error = body.toGeminiErrorSummary()
-            logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
-                "event=provider_http_failure backend=gemini status=${response.code} " +
-                    "retryAfterMs=${retryAfterMillis ?: 0} code=${error.code ?: 0} " +
-                    "statusName=${error.statusName ?: "none"} responseHash=${ShortHash.hash(body)}"
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(
+                backend = "gemini",
+                model = modelName,
+                credentialScope = ShortHash.hash(apiKey).ifEmpty { null },
+            ),
+            estimatedInputTokens = TranslationContextChunkPlanner.estimateTokens(payload),
+            reservedOutputTokens = reservedOutputTokens,
+            operation = "generate_content",
+            envelopeId = ShortHash.hash(payload),
+            priority = currentProviderRequestPriority(),
+        )
+        val response = requestGovernor.executeValue(metadata) {
+            client.newCall(request).await().use { response ->
+                val raw = RawGeminiResponse(
+                    code = response.code,
+                    retryAfter = response.header("Retry-After"),
+                    body = response.body?.string().orEmpty(),
+                )
+                if (raw.code !in 200..299) {
+                    val retryAfterMillis = parseRetryAfterMillis(raw.retryAfter)
+                    val error = raw.body.toGeminiErrorSummary()
+                    val failure = classifyHttpFailure(
+                        backend = "gemini",
+                        statusCode = raw.code,
+                        retryAfterHeader = raw.retryAfter,
+                        providerCode = error.code?.toString(),
+                        providerStatus = error.statusName,
+                        safeSummary = "Gemini HTTP ${raw.code}",
+                    )
+                    logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
+                        "event=provider_http_failure backend=gemini status=${raw.code} " +
+                            "retryAfterMs=${retryAfterMillis ?: 0} code=${error.code ?: 0} " +
+                            "statusName=${error.statusName ?: "none"} responseHash=${ShortHash.hash(raw.body)}"
+                    }
+                    throw GeminiApiException(raw.code, retryAfterMillis, error.code, error.statusName, failure)
+                }
+                raw
             }
-            throw GeminiApiException(response.code, retryAfterMillis, error.code, error.statusName)
         }
-        return body.extractGeminiText()
+        return response.body.extractGeminiText()
     }
 
     private fun logProviderFailure(stage: String, error: Exception) {
@@ -174,6 +203,12 @@ class GeminiTranslator(
     private companion object {
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
+
+    private data class RawGeminiResponse(
+        val code: Int,
+        val retryAfter: String?,
+        val body: String,
+    )
 }
 
 internal data class GeminiPayload(
@@ -259,7 +294,16 @@ internal class GeminiApiException(
     val retryAfterMillis: Long?,
     val providerCode: Int?,
     val providerStatus: String?,
-) : Exception("Gemini HTTP $statusCode${providerStatus?.let { " ($it)" }.orEmpty()}")
+    failure: ProviderFailure? = null,
+) : ProviderFailureException(
+    failure ?: classifyHttpFailureWithRetryAfterMillis(
+        backend = "gemini",
+        statusCode = statusCode,
+        retryAfterMillis = retryAfterMillis,
+        providerCode = providerCode?.toString(),
+        providerStatus = providerStatus,
+    ),
+)
 
 private data class GeminiErrorSummary(val code: Int?, val statusName: String?)
 

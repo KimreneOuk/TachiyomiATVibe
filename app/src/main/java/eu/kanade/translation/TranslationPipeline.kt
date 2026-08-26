@@ -57,6 +57,7 @@ import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
+import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.ChapterGlossaryBuilder
@@ -76,6 +77,7 @@ import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.translator.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.translator.translateAiChunkWithAdaptiveRetry
+import eu.kanade.translation.translator.withProviderRequestPriority
 import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
@@ -656,15 +658,17 @@ class TranslationPipeline(
         force: Boolean,
         stageListener: TranslationStageListener?,
     ) {
-        runSinglePageBoundary(
-            manga = manga,
-            chapter = chapter,
-            source = source,
-            pageKey = pageKey,
-            streamFn = null,
-            force = force,
-            stageListener = stageListener,
-        )
+        withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+            runSinglePageBoundary(
+                manga = manga,
+                chapter = chapter,
+                source = source,
+                pageKey = pageKey,
+                streamFn = null,
+                force = force,
+                stageListener = stageListener,
+            )
+        }
     }
 
     override suspend fun translateSinglePageFromStream(
@@ -2521,11 +2525,9 @@ class TranslationPipeline(
                             // Standard (per-page) path: translate, validate, persist, render.
                             var aiSucceeded = false
                             try {
-                                eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
-                                    tracker?.markAiRunning(pageKey)
-                                    tracker?.markTranslateRunning(pageKey)
-                                    textTranslator.translatePage(pageKey, p)
-                                }
+                                tracker?.markAiRunning(pageKey)
+                                tracker?.markTranslateRunning(pageKey)
+                                textTranslator.translatePage(pageKey, p)
                                 TranslationBlockValidation.applyTo(p)
                                 val s = p.translationStatus
                                 when (s) {
@@ -2568,13 +2570,11 @@ class TranslationPipeline(
 
                     private suspend fun processAiEmission(emission: StreamingChunkPlanner.Emission) {
                         if (emission.chunk != null) {
-                            eu.kanade.translation.SharedProviderRequestAdmission.withRequest {
-                                rollingContext = translateChunkAi(
-                                    emission.chunk,
-                                    emission.completedPages,
-                                    rollingContext,
-                                )
-                            }
+                            rollingContext = translateChunkAi(
+                                emission.chunk,
+                                emission.completedPages,
+                                rollingContext,
+                            )
                         } else {
                             emission.completedPages
                                 .sortedBy { pk -> resolvedNaturalPageIndexes[pk] ?: Int.MAX_VALUE }

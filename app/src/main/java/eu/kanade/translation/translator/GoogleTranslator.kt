@@ -15,6 +15,7 @@ import java.net.URLEncoder
 class GoogleTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
+    private val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
 ) : BaseTranslator() {
     private val client1 = "gtx"
     private val client2 = "webapp"
@@ -35,17 +36,44 @@ class GoogleTranslator(
         if (text.isBlank()) return ""
         val access = getTranslateUrl(lang, sourceLang, text)
         val build: Request = Request.Builder().url(access).build()
-        val newCall = okHttpClient.newCall(build)
-        val response = newCall.await()
-        val body = response.body
-            ?: run {
-                logcat(LogPriority.WARN) {
-                    "event=provider_response_empty backend=google reason=empty_body lang=$lang " +
-                        "inputChars=${text.length} status=${response.code}"
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(backend = "google"),
+            estimatedInputTokens = TranslationContextChunkPlanner.estimateTokens(text),
+            operation = "translate",
+            envelopeId = ShortHash.hash(text),
+            priority = currentProviderRequestPriority(),
+        )
+        val response = withTranslationRetry(logTag = "google") {
+            requestGovernor.executeValue(metadata) {
+                okHttpClient.newCall(build).await().use { response ->
+                    val raw = RawGoogleResponse(
+                        code = response.code,
+                        retryAfter = response.header("Retry-After"),
+                        body = response.body?.string().orEmpty(),
+                    )
+                    if (raw.code !in 200..299) {
+                        val failure = classifyHttpFailure(
+                            backend = "google",
+                            statusCode = raw.code,
+                            retryAfterHeader = raw.retryAfter,
+                            safeSummary = "Google Translate HTTP ${raw.code}",
+                        )
+                        if (failure.retryability != ProviderFailureRetryability.TERMINAL) {
+                            throw ProviderFailureException(failure)
+                        }
+                    }
+                    raw
                 }
-                return ""
             }
-        val string = body.string()
+        }
+        val string = response.body
+        if (string.isBlank()) {
+            logcat(LogPriority.WARN) {
+                "event=provider_response_empty backend=google reason=empty_body lang=$lang " +
+                    "inputChars=${text.length} status=${response.code}"
+            }
+            return ""
+        }
         try {
             val jSONArray = JSONArray(string).getJSONArray(0).getJSONArray(0)
             return jSONArray.getString(0)
@@ -57,8 +85,8 @@ class GoogleTranslator(
                 "event=provider_response_invalid backend=google reason=parse_failure lang=$lang " +
                     "inputChars=${text.length} status=${response.code} responseHash=${ShortHash.hash(string)}"
             }
+            return ""
         }
-        return ""
     }
 
     private fun getTranslateUrl(lang: String, sourceLang: String, text: String): String {
@@ -134,4 +162,10 @@ class GoogleTranslator(
         okHttpClient.connectionPool.evictAll()
         okHttpClient.dispatcher.executorService.shutdown()
     }
+
+    private data class RawGoogleResponse(
+        val code: Int,
+        val retryAfter: String?,
+        val body: String,
+    )
 }

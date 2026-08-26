@@ -5,32 +5,33 @@ import eu.kanade.translation.batch.BatchEnvelopeLifecycle
 import eu.kanade.translation.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import logcat.LogPriority
 import logcat.logcat
 import java.io.IOException
-import kotlin.random.Random
 
 /**
- * Bounded retry with exponential backoff for transient translator failures
- * (HTTP 429/5xx, rate-limit, timeouts, connection drops). This is NOT a
- * fallback: a non-transient exception is rethrown immediately, and a
- * transient exception that exhausts [maxAttempts] is rethrown so the batch
- * driver's failure handling still runs. Every retry and the terminal failure
- * are logged so failures stay visible (no silent suppression).
+ * Bounded transport retry for transient provider failures.
  *
- * Centralised here so all four translator backends (DeepSeek/OpenRouter/
- * LmStudio and Gemini via OkHttp) get uniform retry behaviour without
- * per-translator duplication.
+ * The retry budget is deliberately finite and is independent from semantic
+ * retries. Provider implementations admit each actual HTTP attempt at their
+ * network boundary; [requestMetadata] is available for small adapters/tests
+ * whose attempt callback is itself the HTTP operation.
  */
-internal suspend inline fun <T> withTranslationRetry(
+internal suspend fun <T> withTranslationRetry(
     maxAttempts: Int = 3,
-    baseDelayMs: Long = 1000L,
+    baseDelayMs: Long = 1_000L,
     logTag: String,
     envelopePageKeys: Collection<String>? = null,
-    crossinline block: suspend () -> T,
+    clock: ProviderRequestClock = SystemProviderRequestClock,
+    maxRetryDelayMs: Long = 30_000L,
+    requestMetadata: ProviderRequestMetadata? = null,
+    governor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+    block: suspend () -> T,
 ): T {
     require(maxAttempts > 0) { "maxAttempts must be > 0" }
+    require(baseDelayMs >= 0) { "baseDelayMs must be >= 0" }
+    require(maxRetryDelayMs >= 0) { "maxRetryDelayMs must be >= 0" }
+
     var attempt = 0
     var lastError: Throwable? = null
     while (attempt < maxAttempts) {
@@ -44,13 +45,21 @@ internal suspend inline fun <T> withTranslationRetry(
             )
         }
         try {
-            return block()
+            val metadata = requestMetadata?.copy(attempt = attempt)
+            return if (metadata == null) {
+                block()
+            } else {
+                governor.executeValue(metadata, block)
+            }
         } catch (e: CancellationException) {
+            throw e
+        } catch (e: ProviderRequestPausedException) {
             throw e
         } catch (e: Exception) {
             lastError = e
+            val failure = classifyProviderFailure(e, backend = logTag, nowEpochMs = clock.nowEpochMs())
             val backend = ShortHash.hash(logTag).ifEmpty { "unknown" }
-            if (attempt >= maxAttempts) {
+            if (attempt >= maxAttempts || failure.retryability == ProviderFailureRetryability.TERMINAL) {
                 envelopePageKeys?.let { pageKeys ->
                     BatchTranslationDiagnostics.envelopeLifecycle(
                         phase = BatchEnvelopeLifecycle.FAILED,
@@ -60,29 +69,36 @@ internal suspend inline fun <T> withTranslationRetry(
                     )
                 }
                 logcat(tag = "TranslationRetry", priority = LogPriority.ERROR) {
-                    "backend=$backend event=translation_failure reason=retry_exhausted " +
-                        "attempt=$attempt error=${e::class.java.simpleName}"
+                    "backend=$backend event=translation_failure reason=" +
+                        "${if (attempt >= maxAttempts) "retry_exhausted" else "terminal"} " +
+                        "attempt=$attempt error=${e::class.java.simpleName} kind=${failure.kind}"
                 }
                 throw e
             }
-            if (!e.isTransientRateOrServerError()) {
+
+            val now = clock.nowEpochMs()
+            val hintedDelay = failure.retryAfterMillis
+                ?: failure.retryAfterAtEpochMs?.let { (it - now).coerceAtLeast(0L) }
+            val retryDelay = hintedDelay ?: exponentialDelay(baseDelayMs, attempt)
+            val nextRetryAt = failure.retryAfterAtEpochMs ?: safeAdd(now, retryDelay)
+            if (failure.retryability == ProviderFailureRetryability.PAUSE ||
+                retryDelay > maxRetryDelayMs
+            ) {
                 envelopePageKeys?.let { pageKeys ->
                     BatchTranslationDiagnostics.envelopeLifecycle(
                         phase = BatchEnvelopeLifecycle.FAILED,
                         pageKeys = pageKeys,
                         attempt = attempt,
-                        reason = BatchDiagnosticReason.TERMINAL_FAILURE,
+                        reason = BatchDiagnosticReason.TRANSIENT_FAILURE,
                     )
                 }
-                logcat(tag = "TranslationRetry", priority = LogPriority.ERROR) {
-                    "backend=$backend event=translation_failure reason=terminal " +
-                        "attempt=$attempt error=${e::class.java.simpleName}"
-                }
-                throw e
+                throw ProviderRequestPausedException(
+                    key = requestMetadata?.key ?: ProviderRequestKey(logTag),
+                    nextEligibleRetryAtEpochMs = nextRetryAt,
+                    reason = "Provider retry deferred beyond the configured transport wait budget",
+                )
             }
-            val backoff = (baseDelayMs * (1L shl (attempt - 1))) + Random.nextLong(0, 500)
-            val retryAfter = (e as? GeminiApiException)?.retryAfterMillis
-            val capped = (retryAfter ?: backoff).coerceIn(0L, 30_000L)
+
             envelopePageKeys?.let { pageKeys ->
                 BatchTranslationDiagnostics.envelopeLifecycle(
                     phase = BatchEnvelopeLifecycle.RETRY,
@@ -94,38 +110,30 @@ internal suspend inline fun <T> withTranslationRetry(
             logcat(tag = "TranslationRetry", priority = LogPriority.WARN) {
                 "backend=$backend event=translation_retry reason=transient " +
                     "attempt=$attempt maxAttempts=$maxAttempts error=${e::class.java.simpleName} " +
-                    "backoffMs=$capped"
+                    "backoffMs=$retryDelay"
             }
-            delay(capped)
+            clock.delay(retryDelay.coerceAtLeast(0L))
         }
     }
     throw lastError ?: IOException("$logTag retry exhausted with no captured error")
 }
 
-/**
- * Classifies an exception as transient (safe to retry) vs terminal (rethrow
- * immediately). Detection is string-based because translator backends wrap
- * HTTP/SDK errors in their own exception types without a shared status-code
- * field; the message is the only universal signal. IOException (network
- * drops, sockets, timeouts) is always transient.
- */
+private fun exponentialDelay(baseDelayMs: Long, attempt: Int): Long {
+    val shift = (attempt - 1).coerceIn(0, 62)
+    val multiplier = 1L shl shift
+    if (baseDelayMs == 0L || baseDelayMs > Long.MAX_VALUE / multiplier) return Long.MAX_VALUE
+    return baseDelayMs * multiplier
+}
+
+/** Compatibility classifier for callers that still need a boolean retry check. */
 internal fun Throwable.isTransientRateOrServerError(): Boolean {
-    if (this is IOException) return true
-    val msg = message?.lowercase() ?: return false
-    return msg.contains("429") ||
-        msg.contains("rate limit") ||
-        msg.contains("rate_limit") ||
-        msg.contains("ratelimit") ||
-        msg.contains("too many requests") ||
-        msg.contains("502") ||
-        msg.contains("503") ||
-        msg.contains("504") ||
-        msg.contains("service unavailable") ||
-        msg.contains("bad gateway") ||
-        msg.contains("gateway timeout") ||
-        msg.contains("timeout") ||
-        msg.contains("timed out") ||
-        msg.contains("temporarily unavailable") ||
-        msg.contains("server error") ||
-        msg.contains("overloaded")
+    val failure = classifyProviderFailure(this)
+    return failure.retryability == ProviderFailureRetryability.RETRY_NOW ||
+        failure.retryability == ProviderFailureRetryability.RETRY_AFTER
+}
+
+private fun safeAdd(left: Long, right: Long): Long {
+    if (right <= 0) return left
+    if (left > Long.MAX_VALUE - right) return Long.MAX_VALUE
+    return left + right
 }

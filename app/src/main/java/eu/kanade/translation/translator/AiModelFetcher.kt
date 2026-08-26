@@ -29,6 +29,9 @@ import java.util.concurrent.TimeUnit
  */
 object AiModelFetcher {
 
+    /** Shared with text translation so model discovery cannot burst around quotas. */
+    internal var requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance
+
     /** Outcome of a fetch attempt. The UI never throws from this. */
     sealed class Result {
         data class Success(val models: List<String>) : Result()
@@ -73,52 +76,64 @@ object AiModelFetcher {
         }
     }
 
-    private fun fetchGemini(apiKey: String): List<String> {
+    private suspend fun fetchGemini(apiKey: String): List<String> {
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey")
             .get()
             .build()
 
-        client.newCall(request).execute().use { response ->
-            validateAuth(response.code)
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) return emptyList()
-            return parseGeminiModels(Json.parseToJsonElement(body).jsonObject)
+        val metadata = modelListMetadata("gemini", apiKey, request.url.toString())
+        val response = requestGovernor.executeValue(metadata) {
+            client.newCall(request).execute().use { response ->
+                RawModelResponse(response.code, response.header("Retry-After"), response.body?.string().orEmpty()).also {
+                    validateAuth(it)
+                }
+            }
         }
+        if (response.body.isBlank()) return emptyList()
+        return parseGeminiModels(Json.parseToJsonElement(response.body).jsonObject)
     }
 
-    private fun fetchOpenRouter(apiKey: String): List<String> {
+    private suspend fun fetchOpenRouter(apiKey: String): List<String> {
         val request = Request.Builder()
             .url("https://openrouter.ai/api/v1/models")
             .header("Authorization", "Bearer $apiKey")
             .get()
             .build()
 
-        client.newCall(request).execute().use { response ->
-            validateAuth(response.code)
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) return emptyList()
-            return parseOpenAiModels(Json.parseToJsonElement(body).jsonObject)
+        val metadata = modelListMetadata("openrouter", apiKey, request.url.toString())
+        val response = requestGovernor.executeValue(metadata) {
+            client.newCall(request).execute().use { response ->
+                RawModelResponse(response.code, response.header("Retry-After"), response.body?.string().orEmpty()).also {
+                    validateAuth(it)
+                }
+            }
         }
+        if (response.body.isBlank()) return emptyList()
+        return parseOpenAiModels(Json.parseToJsonElement(response.body).jsonObject)
     }
 
-    private fun fetchDeepSeek(apiKey: String): List<String> {
+    private suspend fun fetchDeepSeek(apiKey: String): List<String> {
         val request = Request.Builder()
             .url("https://api.deepseek.com/models")
             .header("Authorization", "Bearer $apiKey")
             .get()
             .build()
 
-        client.newCall(request).execute().use { response ->
-            validateAuth(response.code)
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) return emptyList()
-            // DeepSeek exposes the list under "data" like OpenAI/OpenRouter.
-            return parseOpenAiModels(Json.parseToJsonElement(body).jsonObject)
+        val metadata = modelListMetadata("deepseek", apiKey, request.url.toString())
+        val response = requestGovernor.executeValue(metadata) {
+            client.newCall(request).execute().use { response ->
+                RawModelResponse(response.code, response.header("Retry-After"), response.body?.string().orEmpty()).also {
+                    validateAuth(it)
+                }
+            }
         }
+        if (response.body.isBlank()) return emptyList()
+        // DeepSeek exposes the list under "data" like OpenAI/OpenRouter.
+        return parseOpenAiModels(Json.parseToJsonElement(response.body).jsonObject)
     }
 
-    private fun fetchLmStudio(baseUrl: String): List<String> {
+    private suspend fun fetchLmStudio(baseUrl: String): List<String> {
         val url = "${normalizeBaseUrl(baseUrl)}/models"
         logcat(LogPriority.INFO) { "LM Studio fetching models from '$url'" }
         val request = Request.Builder()
@@ -126,12 +141,24 @@ object AiModelFetcher {
             .get()
             .build()
 
-        client.newCall(request).execute().use { response ->
-            validateAuth(response.code)
-            val body = response.body?.string().orEmpty()
-            if (body.isBlank()) return emptyList()
-            return parseOpenAiModels(Json.parseToJsonElement(body).jsonObject)
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(
+                backend = "lm_studio",
+                credentialScope = ShortHash.hash(normalizeBaseUrl(baseUrl)).ifEmpty { null },
+            ),
+            operation = "model_list",
+            envelopeId = ShortHash.hash(request.url.toString()),
+            priority = currentProviderRequestPriority(),
+        )
+        val response = requestGovernor.executeValue(metadata) {
+            client.newCall(request).execute().use { response ->
+                RawModelResponse(response.code, response.header("Retry-After"), response.body?.string().orEmpty()).also {
+                    validateAuth(it)
+                }
+            }
         }
+        if (response.body.isBlank()) return emptyList()
+        return parseOpenAiModels(Json.parseToJsonElement(response.body).jsonObject)
     }
 
     fun normalizeBaseUrl(baseUrl: String): String =
@@ -184,10 +211,45 @@ object AiModelFetcher {
         return jsonPrimitive.content
     }
 
-    private fun validateAuth(code: Int) {
-        if (code == 401 || code == 403) throw InvalidKeyException("Invalid or expired API key")
-        if (code !in 200..299) throw RuntimeException("HTTP $code")
+    private suspend fun modelListMetadata(backend: String, apiKey: String, url: String): ProviderRequestMetadata =
+        ProviderRequestMetadata(
+            key = ProviderRequestKey(
+                backend = backend,
+                credentialScope = ShortHash.hash(apiKey).ifEmpty { null },
+            ),
+            operation = "model_list",
+            envelopeId = ShortHash.hash(url),
+            priority = currentProviderRequestPriority(),
+        )
+
+    private fun validateAuth(response: RawModelResponse) {
+        if (response.code == 401 || response.code == 403) {
+            throw InvalidKeyException("Invalid or expired API key")
+        }
+        if (response.code !in 200..299) {
+            throw ProviderFailureException(
+                classifyHttpFailure(
+                    backend = "model_list",
+                    statusCode = response.code,
+                    retryAfterHeader = response.retryAfter,
+                    safeSummary = "Model list request failed with HTTP ${response.code}",
+                ),
+            )
+        }
     }
 
-    private class InvalidKeyException(message: String) : Exception(message)
+    private data class RawModelResponse(
+        val code: Int,
+        val retryAfter: String?,
+        val body: String,
+    )
+
+    private class InvalidKeyException(message: String) : ProviderFailureException(
+        ProviderFailure(
+            kind = ProviderFailureKind.AUTHENTICATION,
+            retryability = ProviderFailureRetryability.TERMINAL,
+            statusCode = 401,
+            safeSummary = message,
+        ),
+    )
 }

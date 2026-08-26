@@ -2,6 +2,7 @@ package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -15,9 +16,14 @@ class LmStudioTranslator(
     val modelName: String,
     val maxOutputToken: Int,
     val temperature: Float,
-) : OpenAiCompatibleTranslator() {
+    requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+) : OpenAiCompatibleTranslator(requestGovernor) {
 
     private val normalizedBaseUrl = AiModelFetcher.normalizeBaseUrl(baseUrl)
+
+    override val providerBackend: String = "lm_studio"
+    override val providerModel: String get() = modelName
+    override val providerCredentialScope: String? get() = ShortHash.hash(normalizedBaseUrl).ifEmpty { null }
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
@@ -79,11 +85,16 @@ class LmStudioTranslator(
                 }
             }.toString()
 
-            postChatCompletion(
-                url = "$normalizedBaseUrl/chat/completions",
-                headers = emptyMap(),
-                payloadJson = jsonObject,
-            )
+            withTranslationRetry(logTag = "lm_studio") {
+                postChatCompletion(
+                    url = "$normalizedBaseUrl/chat/completions",
+                    headers = emptyMap(),
+                    payloadJson = jsonObject,
+                    reservedOutputTokens = maxOutputToken,
+                    operation = "prompt",
+                    envelopeId = ShortHash.hash(prompt),
+                )
+            }
         } catch (e: Exception) {
             logcat { "event=provider_failure backend=lm_studio stage=prompt error=${e::class.java.simpleName}" }
             ""

@@ -1,0 +1,815 @@
+package eu.kanade.translation.translator
+
+import eu.kanade.translation.util.ShortHash
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import logcat.LogPriority
+import logcat.logcat
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlin.math.ceil
+import kotlinx.coroutines.delay as coroutineDelay
+
+/** Stable identity for one provider quota bucket. Never put a raw secret here. */
+data class ProviderRequestKey(
+    val backend: String,
+    val model: String? = null,
+    val credentialScope: String? = null,
+) {
+    init {
+        require(backend.isNotBlank()) { "Provider backend must not be blank" }
+    }
+
+    internal fun normalized(): ProviderRequestKey = copy(
+        backend = backend.trim().lowercase(Locale.ROOT),
+        model = model?.trim()?.takeIf { it.isNotEmpty() },
+        credentialScope = credentialScope?.trim()?.takeIf { it.isNotEmpty() },
+    )
+
+    /** Privacy-safe bucket label for diagnostics. */
+    fun diagnosticHash(): String = ShortHash.hash(
+        listOf(backend, model.orEmpty(), credentialScope.orEmpty()).joinToString("|"),
+    )
+}
+
+enum class AdmissionPriority {
+    INTERACTIVE,
+    BACKGROUND,
+}
+
+/** Metadata charged to one actual HTTP attempt. */
+data class ProviderRequestMetadata(
+    val key: ProviderRequestKey,
+    val estimatedInputTokens: Int = 0,
+    val reservedOutputTokens: Int = 0,
+    val operation: String = "translation",
+    val envelopeId: String? = null,
+    val priority: AdmissionPriority = AdmissionPriority.BACKGROUND,
+    val attempt: Int = 1,
+) {
+    val estimatedTokens: Int
+        get() = estimatedInputTokens.coerceAtLeast(0).toLong()
+            .plus(reservedOutputTokens.coerceAtLeast(0).toLong())
+            .coerceAtMost(Int.MAX_VALUE.toLong())
+            .toInt()
+}
+
+/** Provider quota policy. Values are configuration data, not provider assumptions. */
+data class ProviderQuotaPolicy(
+    val requestsPerMinute: Int = 60,
+    val tokensPerMinute: Int = 60_000,
+    val minimumSpacingMs: Long = 1_000L,
+    val maxInFlight: Int = 1,
+    val maxForegroundWaitMs: Long = 15_000L,
+    val interactiveMaxAgeMs: Long = 30_000L,
+    val pollIntervalMs: Long = 50L,
+    val quotaCooldownMs: Long = 60_000L,
+    val windowMs: Long = 60_000L,
+) {
+    init {
+        require(requestsPerMinute > 0) { "requestsPerMinute must be > 0" }
+        require(tokensPerMinute > 0) { "tokensPerMinute must be > 0" }
+        require(minimumSpacingMs >= 0) { "minimumSpacingMs must be >= 0" }
+        require(maxInFlight > 0) { "maxInFlight must be > 0" }
+        require(maxForegroundWaitMs >= 0) { "maxForegroundWaitMs must be >= 0" }
+        require(interactiveMaxAgeMs >= 0) { "interactiveMaxAgeMs must be >= 0" }
+        require(pollIntervalMs > 0) { "pollIntervalMs must be > 0" }
+        require(quotaCooldownMs >= 0) { "quotaCooldownMs must be >= 0" }
+        require(windowMs > 0) { "windowMs must be > 0" }
+    }
+}
+
+/** Clock/delay seam used by the governor and transport tests. */
+interface ProviderRequestClock {
+    fun nowEpochMs(): Long
+
+    suspend fun delay(millis: Long)
+}
+
+object SystemProviderRequestClock : ProviderRequestClock {
+    override fun nowEpochMs(): Long = System.currentTimeMillis()
+
+    override suspend fun delay(millis: Long) {
+        if (millis > 0) coroutineDelay(millis)
+    }
+}
+
+/** Makes reader/manual priority explicit without creating a second quota lane. */
+class ProviderRequestPriorityContext(
+    val priority: AdmissionPriority,
+) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ProviderRequestPriorityContext>
+}
+
+suspend fun <T> withProviderRequestPriority(
+    priority: AdmissionPriority,
+    block: suspend () -> T,
+): T = withContext(ProviderRequestPriorityContext(priority)) { block() }
+
+suspend fun currentProviderRequestPriority(): AdmissionPriority =
+    currentCoroutineContext()[ProviderRequestPriorityContext]?.priority ?: AdmissionPriority.BACKGROUND
+
+data class ProviderUsage(
+    val inputTokens: Int? = null,
+    val outputTokens: Int? = null,
+) {
+    val totalTokens: Int?
+        get() = if (inputTokens == null && outputTokens == null) {
+            null
+        } else {
+            (inputTokens ?: 0).coerceAtLeast(0).toLong()
+                .plus((outputTokens ?: 0).coerceAtLeast(0).toLong())
+                .coerceAtMost(Int.MAX_VALUE.toLong())
+                .toInt()
+        }
+}
+
+/** Optional result wrapper for callers that have provider-reported token usage. */
+data class ProviderHttpResult<T>(
+    val value: T,
+    val usage: ProviderUsage? = null,
+    val retryAfterMillis: Long? = null,
+)
+
+enum class ProviderFailureKind {
+    NETWORK,
+    RATE_LIMIT,
+    QUOTA_EXHAUSTED,
+    SERVER,
+    AUTHENTICATION,
+    REFUSAL,
+    PROTOCOL,
+    CONFIGURATION,
+    SOURCE,
+}
+
+enum class ProviderFailureRetryability {
+    RETRY_NOW,
+    RETRY_AFTER,
+    PAUSE,
+    TERMINAL,
+}
+
+/** Safe, provider-neutral failure metadata. It never carries prompts or response bodies. */
+data class ProviderFailure(
+    val kind: ProviderFailureKind,
+    val retryability: ProviderFailureRetryability,
+    val statusCode: Int? = null,
+    val providerCode: String? = null,
+    val retryAfterMillis: Long? = null,
+    val retryAfterAtEpochMs: Long? = null,
+    val safeSummary: String,
+    val requestId: String? = null,
+    val attempt: Int? = null,
+)
+
+open class ProviderFailureException(
+    val failure: ProviderFailure,
+    cause: Throwable? = null,
+) : Exception(failure.safeSummary, cause)
+
+/** Admission could not safely wait within the foreground budget. */
+class ProviderRequestPausedException(
+    val key: ProviderRequestKey,
+    val nextEligibleRetryAtEpochMs: Long?,
+    val reason: String,
+) : ProviderFailureException(
+    ProviderFailure(
+        kind = ProviderFailureKind.QUOTA_EXHAUSTED,
+        retryability = ProviderFailureRetryability.PAUSE,
+        retryAfterAtEpochMs = nextEligibleRetryAtEpochMs,
+        safeSummary = reason,
+    ),
+)
+
+sealed interface ProviderAdmissionDecision {
+    data class Admitted(val permit: ProviderRequestPermit) : ProviderAdmissionDecision
+
+    data class Deferred(
+        val nextEligibleRetryAtEpochMs: Long?,
+        val reason: String,
+    ) : ProviderAdmissionDecision
+}
+
+/** Opaque permit held only while one HTTP operation is in flight. */
+class ProviderRequestPermit internal constructor(
+    internal val key: ProviderRequestKey,
+    internal val reservation: Any,
+)
+
+fun interface ProviderRequestDiagnostics {
+    fun onEvent(event: ProviderAdmissionEvent)
+}
+
+data class ProviderAdmissionEvent(
+    val keyHash: String,
+    val operation: String,
+    val priority: AdmissionPriority,
+    val attempt: Int,
+    val waitMs: Long,
+    val estimatedTokens: Int,
+    val actualTokens: Int?,
+    val cooldownSource: String?,
+    val outcome: String,
+)
+
+/**
+ * Process-wide quota-aware admission for all remote translation requests.
+ *
+ * Each key has a rolling request/token window, a minimum spacing, an in-flight
+ * cap, and a shared cooldown. Waiters are selected with bounded interactive
+ * priority: an interactive waiter goes first until an older background waiter
+ * reaches [ProviderQuotaPolicy.interactiveMaxAgeMs], at which point FIFO age
+ * wins. Waiting is cancellation-safe and never holds the state mutex.
+ */
+class ProviderRequestGovernor(
+    private val policy: (ProviderRequestKey) -> ProviderQuotaPolicy = { ProviderQuotaPolicy() },
+    private val clock: ProviderRequestClock = SystemProviderRequestClock,
+    private val diagnostics: ProviderRequestDiagnostics? = null,
+) {
+    private data class Reservation(
+        val admittedAtEpochMs: Long,
+        val estimatedTokens: Int,
+        var actualTokens: Int? = null,
+    )
+
+    private data class Waiter(
+        val sequence: Long,
+        val metadata: ProviderRequestMetadata,
+        val enqueuedAtEpochMs: Long,
+    )
+
+    private data class Bucket(
+        val reservations: ArrayDeque<Reservation> = ArrayDeque(),
+        val waiters: MutableList<Waiter> = mutableListOf(),
+        var inFlight: Int = 0,
+        var lastAdmissionAtEpochMs: Long? = null,
+        var cooldownUntilEpochMs: Long = 0L,
+        var cooldownSource: String? = null,
+    )
+
+    private sealed interface WaitResult {
+        data class Granted(val permit: ProviderRequestPermit) : WaitResult
+
+        data class Wait(val millis: Long) : WaitResult
+
+        data class Defer(val decision: ProviderAdmissionDecision.Deferred) : WaitResult
+    }
+
+    private val mutex = Mutex()
+    private val buckets = mutableMapOf<ProviderRequestKey, Bucket>()
+    private var nextSequence = 0L
+
+    suspend fun admit(metadata: ProviderRequestMetadata): ProviderAdmissionDecision {
+        val normalizedMetadata = metadata.copy(
+            key = metadata.key.normalized(),
+            estimatedInputTokens = metadata.estimatedInputTokens.coerceAtLeast(0),
+            reservedOutputTokens = metadata.reservedOutputTokens.coerceAtLeast(0),
+            attempt = metadata.attempt.coerceAtLeast(1),
+        )
+        val key = normalizedMetadata.key
+        val quota = policy(key)
+        val waiter = mutex.withLock {
+            val created = Waiter(
+                sequence = nextSequence++,
+                metadata = normalizedMetadata,
+                enqueuedAtEpochMs = clock.nowEpochMs(),
+            )
+            buckets.getOrPut(key) { Bucket() }.waiters += created
+            created
+        }
+
+        try {
+            while (true) {
+                val result = evaluate(waiter, quota)
+                when (result) {
+                    is WaitResult.Granted -> {
+                        emit(
+                            waiter.metadata,
+                            waitMs = (clock.nowEpochMs() - waiter.enqueuedAtEpochMs).coerceAtLeast(0),
+                            actualTokens = null,
+                            cooldownSource = null,
+                            outcome = "admitted",
+                        )
+                        return ProviderAdmissionDecision.Admitted(result.permit)
+                    }
+
+                    is WaitResult.Defer -> {
+                        emit(
+                            waiter.metadata,
+                            waitMs = (clock.nowEpochMs() - waiter.enqueuedAtEpochMs).coerceAtLeast(0),
+                            actualTokens = null,
+                            cooldownSource = null,
+                            outcome = "deferred",
+                        )
+                        return result.decision
+                    }
+
+                    is WaitResult.Wait -> {
+                        clock.delay(result.millis.coerceAtLeast(1L))
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            mutex.withLock { removeWaiter(key, waiter) }
+            throw e
+        }
+    }
+
+    suspend fun <T> execute(
+        metadata: ProviderRequestMetadata,
+        block: suspend () -> ProviderHttpResult<T>,
+    ): T = executeResult(metadata, block).value
+
+    /** Convenience boundary for operations that do not expose provider usage. */
+    suspend fun <T> executeValue(
+        metadata: ProviderRequestMetadata,
+        block: suspend () -> T,
+    ): T = executeResult(metadata) { ProviderHttpResult(block()) }.value
+
+    private suspend fun <T> executeResult(
+        metadata: ProviderRequestMetadata,
+        block: suspend () -> ProviderHttpResult<T>,
+    ): ProviderHttpResult<T> {
+        val decision = admit(metadata)
+        val permit = when (decision) {
+            is ProviderAdmissionDecision.Admitted -> decision.permit
+            is ProviderAdmissionDecision.Deferred -> throw ProviderRequestPausedException(
+                key = metadata.key,
+                nextEligibleRetryAtEpochMs = decision.nextEligibleRetryAtEpochMs,
+                reason = decision.reason,
+            )
+        }
+        var result: ProviderHttpResult<T>? = null
+        return try {
+            result = block()
+            result!!.retryAfterMillis?.let { retryAfter ->
+                applyCooldown(metadata.key, retryAfter, "response")
+            }
+            result!!
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ProviderFailureException) {
+            recordFailure(metadata, e.failure)
+            throw e
+        } catch (e: Exception) {
+            recordFailure(metadata, classifyProviderFailure(e, metadata.key.backend, clock.nowEpochMs()))
+            throw e
+        } finally {
+            release(permit, result?.usage, metadata)
+        }
+    }
+
+    /** Compatibility alias for callers that prefer to make usage explicit. */
+    suspend fun <T> executeWithUsage(
+        metadata: ProviderRequestMetadata,
+        block: suspend () -> ProviderHttpResult<T>,
+    ): ProviderHttpResult<T> = executeResult(metadata, block)
+
+    /** Records a response failure parsed after the HTTP permit is released. */
+    suspend fun recordFailure(
+        metadata: ProviderRequestMetadata,
+        failure: ProviderFailure,
+    ) {
+        val key = metadata.key.normalized()
+        val now = clock.nowEpochMs()
+        val quota = policy(key)
+        val cooldownMs = when {
+            failure.retryAfterMillis != null -> failure.retryAfterMillis
+            failure.retryAfterAtEpochMs != null -> (failure.retryAfterAtEpochMs - now).coerceAtLeast(0L)
+            failure.kind == ProviderFailureKind.QUOTA_EXHAUSTED -> quota.quotaCooldownMs
+            else -> null
+        }
+        if (cooldownMs != null) applyCooldown(key, cooldownMs, "${failure.kind.name.lowercase(Locale.ROOT)}")
+    }
+
+    suspend fun clearCooldown(key: ProviderRequestKey) {
+        mutex.withLock {
+            buckets[key.normalized()]?.apply {
+                cooldownUntilEpochMs = 0L
+                cooldownSource = null
+            }
+        }
+    }
+
+    private suspend fun evaluate(waiter: Waiter, quota: ProviderQuotaPolicy): WaitResult = mutex.withLock {
+        val key = waiter.metadata.key
+        val bucket = buckets.getOrPut(key) { Bucket() }
+        if (waiter !in bucket.waiters) {
+            return@withLock WaitResult.Defer(
+                ProviderAdmissionDecision.Deferred(null, "Provider request waiter was cancelled"),
+            )
+        }
+        val now = clock.nowEpochMs()
+        prune(bucket, quota, now)
+        val selected = selectWaiter(bucket.waiters, now, quota)
+        if (selected !== waiter) {
+            return@withLock waitOrDefer(waiter, now, now + quota.pollIntervalMs, quota)
+        }
+
+        val tokenCost = waiter.metadata.estimatedTokens
+        val tokenLimit = maxOf(quota.tokensPerMinute, tokenCost)
+        val requestsReady = bucket.reservations.size < quota.requestsPerMinute
+        val tokensReady = bucket.reservations.sumOf { (it.actualTokens ?: it.estimatedTokens).toLong() } +
+            tokenCost.toLong() <= tokenLimit.toLong()
+        val inFlightReady = bucket.inFlight < quota.maxInFlight
+        val cooldownReady = now >= bucket.cooldownUntilEpochMs
+        val spacingReady = bucket.lastAdmissionAtEpochMs == null ||
+            now >= safeAdd(bucket.lastAdmissionAtEpochMs!!, quota.minimumSpacingMs)
+        if (requestsReady && tokensReady && inFlightReady && cooldownReady && spacingReady) {
+            val reservation = Reservation(now, tokenCost)
+            bucket.reservations.addLast(reservation)
+            bucket.inFlight++
+            bucket.lastAdmissionAtEpochMs = now
+            bucket.waiters.remove(waiter)
+            return@withLock WaitResult.Granted(
+                ProviderRequestPermit(key = key, reservation = reservation),
+            )
+        }
+
+        val next = nextEligibleAt(bucket, quota, now, tokenCost, tokenLimit)
+        waitOrDefer(waiter, now, next, quota)
+    }
+
+    private fun waitOrDefer(
+        waiter: Waiter,
+        now: Long,
+        nextEligibleAt: Long,
+        quota: ProviderQuotaPolicy,
+    ): WaitResult {
+        val waitMs = (nextEligibleAt - now).coerceAtLeast(quota.pollIntervalMs)
+        val elapsed = (now - waiter.enqueuedAtEpochMs).coerceAtLeast(0L)
+        val remaining = (quota.maxForegroundWaitMs - elapsed).coerceAtLeast(0L)
+        if (waitMs > remaining) {
+            buckets[waiter.metadata.key]?.waiters?.remove(waiter)
+            return WaitResult.Defer(
+                ProviderAdmissionDecision.Deferred(
+                    nextEligibleRetryAtEpochMs = nextEligibleAt.takeUnless { it == Long.MAX_VALUE },
+                    reason = "Provider admission deferred beyond the foreground wait budget",
+                ),
+            )
+        }
+        return WaitResult.Wait(waitMs.coerceAtMost(quota.pollIntervalMs))
+    }
+
+    private fun nextEligibleAt(
+        bucket: Bucket,
+        quota: ProviderQuotaPolicy,
+        now: Long,
+        tokenCost: Int,
+        tokenLimit: Int,
+    ): Long {
+        var next = now + quota.pollIntervalMs
+        next = maxOf(next, bucket.cooldownUntilEpochMs)
+        bucket.lastAdmissionAtEpochMs?.let { next = maxOf(next, safeAdd(it, quota.minimumSpacingMs)) }
+        if (bucket.inFlight >= quota.maxInFlight) next = maxOf(next, safeAdd(now, quota.pollIntervalMs))
+        if (bucket.reservations.size >= quota.requestsPerMinute) {
+            bucket.reservations.firstOrNull()?.let { next = maxOf(next, safeAdd(it.admittedAtEpochMs, quota.windowMs)) }
+        }
+        val tokenTotal = bucket.reservations.sumOf { (it.actualTokens ?: it.estimatedTokens).toLong() }
+        if (tokenTotal + tokenCost.toLong() > tokenLimit.toLong()) {
+            var remaining = tokenTotal + tokenCost.toLong() - tokenLimit.toLong()
+            for (reservation in bucket.reservations) {
+                remaining -= reservation.actualTokens ?: reservation.estimatedTokens
+                if (remaining <= 0) {
+                    next = maxOf(next, safeAdd(reservation.admittedAtEpochMs, quota.windowMs))
+                    break
+                }
+            }
+        }
+        return next
+    }
+
+    private fun selectWaiter(waiters: List<Waiter>, now: Long, quota: ProviderQuotaPolicy): Waiter? {
+        val starvingBackground = waiters
+            .asSequence()
+            .filter { it.metadata.priority == AdmissionPriority.BACKGROUND }
+            .filter { now - it.enqueuedAtEpochMs >= quota.interactiveMaxAgeMs }
+            .minByOrNull { it.sequence }
+        if (starvingBackground != null) return starvingBackground
+        return waiters.minWithOrNull(
+            compareBy<Waiter> {
+                val age = (now - it.enqueuedAtEpochMs).coerceAtLeast(0L)
+                if (it.metadata.priority == AdmissionPriority.INTERACTIVE && age < quota.interactiveMaxAgeMs) 0 else 1
+            }.thenBy { it.sequence },
+        )
+    }
+
+    private fun prune(bucket: Bucket, quota: ProviderQuotaPolicy, now: Long) {
+        while (bucket.reservations.firstOrNull()?.let { now - it.admittedAtEpochMs >= quota.windowMs } == true) {
+            bucket.reservations.removeFirst()
+        }
+    }
+
+    private suspend fun release(
+        permit: ProviderRequestPermit,
+        usage: ProviderUsage?,
+        metadata: ProviderRequestMetadata,
+    ) {
+        mutex.withLock {
+            val bucket = buckets[permit.key] ?: return@withLock
+            val reservation = permit.reservation as? Reservation ?: return@withLock
+            reservation.actualTokens = usage?.totalTokens
+            bucket.inFlight = (bucket.inFlight - 1).coerceAtLeast(0)
+            emitUnsafe(
+                metadata,
+                waitMs = 0L,
+                actualTokens = usage?.totalTokens,
+                cooldownSource = bucket.cooldownSource,
+                outcome = "completed",
+            )
+        }
+    }
+
+    private suspend fun applyCooldown(key: ProviderRequestKey, durationMs: Long, source: String) {
+        val now = clock.nowEpochMs()
+        val safeDuration = durationMs.coerceAtLeast(0L)
+        val until = safeAdd(now, safeDuration)
+        mutex.withLock {
+            val bucket = buckets.getOrPut(key.normalized()) { Bucket() }
+            if (until > bucket.cooldownUntilEpochMs) {
+                bucket.cooldownUntilEpochMs = until
+                bucket.cooldownSource = source
+            }
+        }
+    }
+
+    private fun removeWaiter(key: ProviderRequestKey, waiter: Waiter) {
+        buckets[key]?.waiters?.remove(waiter)
+    }
+
+    private fun emit(
+        metadata: ProviderRequestMetadata,
+        waitMs: Long,
+        actualTokens: Int?,
+        cooldownSource: String?,
+        outcome: String,
+    ) {
+        diagnostics?.onEvent(
+            ProviderAdmissionEvent(
+                keyHash = metadata.key.diagnosticHash(),
+                operation = metadata.operation,
+                priority = metadata.priority,
+                attempt = metadata.attempt,
+                waitMs = waitMs,
+                estimatedTokens = metadata.estimatedTokens,
+                actualTokens = actualTokens,
+                cooldownSource = cooldownSource,
+                outcome = outcome,
+            ),
+        )
+        emitLog(metadata, waitMs, actualTokens, cooldownSource, outcome)
+    }
+
+    private fun emitUnsafe(
+        metadata: ProviderRequestMetadata,
+        waitMs: Long,
+        actualTokens: Int?,
+        cooldownSource: String?,
+        outcome: String,
+    ) {
+        diagnostics?.onEvent(
+            ProviderAdmissionEvent(
+                keyHash = metadata.key.diagnosticHash(),
+                operation = metadata.operation,
+                priority = metadata.priority,
+                attempt = metadata.attempt,
+                waitMs = waitMs,
+                estimatedTokens = metadata.estimatedTokens,
+                actualTokens = actualTokens,
+                cooldownSource = cooldownSource,
+                outcome = outcome,
+            ),
+        )
+        emitLog(metadata, waitMs, actualTokens, cooldownSource, outcome)
+    }
+
+    private fun emitLog(
+        metadata: ProviderRequestMetadata,
+        waitMs: Long,
+        actualTokens: Int?,
+        cooldownSource: String?,
+        outcome: String,
+    ) {
+        if (outcome == "admitted" && waitMs == 0L && actualTokens == null) return
+        logcat(tag = "ProviderRequestGovernor", priority = LogPriority.DEBUG) {
+            "event=provider_admission key=${metadata.key.diagnosticHash()} " +
+                "operation=${metadata.operation} priority=${metadata.priority.name.lowercase(Locale.ROOT)} " +
+                "attempt=${metadata.attempt} waitMs=$waitMs estimatedTokens=${metadata.estimatedTokens} " +
+                "actualTokens=${actualTokens ?: 0} cooldownSource=${cooldownSource ?: "none"} outcome=$outcome"
+        }
+    }
+
+    companion object {
+        fun defaultPolicy(key: ProviderRequestKey): ProviderQuotaPolicy = when {
+            key.backend == "desktop" -> ProviderQuotaPolicy(
+                requestsPerMinute = 1_000,
+                tokensPerMinute = Int.MAX_VALUE,
+                minimumSpacingMs = 0,
+                maxInFlight = 1,
+                maxForegroundWaitMs = 15_000,
+            )
+            else -> ProviderQuotaPolicy()
+        }
+    }
+}
+
+/** Application-lifetime governor shared by batch, reader, auto, and settings calls. */
+object SharedProviderRequestGovernor {
+    val instance: ProviderRequestGovernor = ProviderRequestGovernor(
+        policy = { key -> ProviderRequestGovernor.defaultPolicy(key) },
+    )
+}
+
+object RetryAfterParser {
+    /** Parses delta-seconds (including fractions) or an RFC-1123 HTTP date. */
+    fun parseMillis(value: String?, nowEpochMs: Long = System.currentTimeMillis()): Long? {
+        val raw = value?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        raw.toDoubleOrNull()?.let { seconds ->
+            if (!seconds.isFinite()) return null
+            if (seconds <= 0.0) return 0L
+            val millis = ceil(seconds * 1_000.0)
+            return if (millis >= Long.MAX_VALUE.toDouble()) Long.MAX_VALUE else millis.toLong()
+        }
+        return runCatching {
+            val target = ZonedDateTime.parse(raw, DateTimeFormatter.RFC_1123_DATE_TIME)
+                .toInstant()
+                .toEpochMilli()
+            (target - nowEpochMs).coerceAtLeast(0L)
+        }.getOrNull()
+    }
+}
+
+internal fun parseRetryAfterMillis(value: String?, nowEpochMs: Long = System.currentTimeMillis()): Long? =
+    RetryAfterParser.parseMillis(value, nowEpochMs)
+
+fun classifyHttpFailure(
+    backend: String,
+    statusCode: Int,
+    retryAfterHeader: String? = null,
+    providerCode: String? = null,
+    providerStatus: String? = null,
+    safeSummary: String? = null,
+    nowEpochMs: Long = System.currentTimeMillis(),
+): ProviderFailure {
+    val retryAfter = parseRetryAfterMillis(retryAfterHeader, nowEpochMs)
+    val normalizedStatus = providerStatus?.uppercase(Locale.ROOT).orEmpty()
+    val quotaSignal = normalizedStatus.contains("QUOTA") ||
+        normalizedStatus.contains("RESOURCE_EXHAUSTED") ||
+        safeSummary?.lowercase(Locale.ROOT)?.contains("quota") == true
+    val kind: ProviderFailureKind
+    val retryability: ProviderFailureRetryability
+    when {
+        statusCode == 401 || statusCode == 403 -> {
+            kind = ProviderFailureKind.AUTHENTICATION
+            retryability = ProviderFailureRetryability.TERMINAL
+        }
+        statusCode == 429 && quotaSignal -> {
+            kind = ProviderFailureKind.QUOTA_EXHAUSTED
+            retryability = if (retryAfter == 0L) {
+                ProviderFailureRetryability.RETRY_AFTER
+            } else {
+                ProviderFailureRetryability.PAUSE
+            }
+        }
+        statusCode == 408 || statusCode == 425 || statusCode == 429 -> {
+            kind = ProviderFailureKind.RATE_LIMIT
+            retryability = if (retryAfter != null) {
+                ProviderFailureRetryability.RETRY_AFTER
+            } else {
+                ProviderFailureRetryability.RETRY_NOW
+            }
+        }
+        statusCode in 500..599 -> {
+            kind = ProviderFailureKind.SERVER
+            retryability = if (retryAfter != null) {
+                ProviderFailureRetryability.RETRY_AFTER
+            } else {
+                ProviderFailureRetryability.RETRY_NOW
+            }
+        }
+        statusCode in 400..499 -> {
+            kind = ProviderFailureKind.CONFIGURATION
+            retryability = ProviderFailureRetryability.TERMINAL
+        }
+        else -> {
+            kind = ProviderFailureKind.PROTOCOL
+            retryability = ProviderFailureRetryability.TERMINAL
+        }
+    }
+    return ProviderFailure(
+        kind = kind,
+        retryability = retryability,
+        statusCode = statusCode,
+        providerCode = providerCode,
+        retryAfterMillis = retryAfter,
+        retryAfterAtEpochMs = retryAfter?.let { safeAdd(nowEpochMs, it) },
+        safeSummary = safeSummary ?: "$backend HTTP $statusCode",
+    )
+}
+
+internal fun classifyHttpFailureWithRetryAfterMillis(
+    backend: String,
+    statusCode: Int,
+    retryAfterMillis: Long?,
+    providerCode: String? = null,
+    providerStatus: String? = null,
+    nowEpochMs: Long = System.currentTimeMillis(),
+): ProviderFailure {
+    val base = classifyHttpFailure(
+        backend = backend,
+        statusCode = statusCode,
+        providerCode = providerCode,
+        providerStatus = providerStatus,
+        nowEpochMs = nowEpochMs,
+    )
+    return if (retryAfterMillis == null) {
+        base
+    } else {
+        base.copy(
+            retryAfterMillis = retryAfterMillis.coerceAtLeast(0L),
+            retryAfterAtEpochMs = safeAdd(nowEpochMs, retryAfterMillis.coerceAtLeast(0L)),
+            retryability = if (
+                base.retryability == ProviderFailureRetryability.RETRY_NOW ||
+                (base.retryability == ProviderFailureRetryability.PAUSE && retryAfterMillis <= 0L)
+            ) {
+                ProviderFailureRetryability.RETRY_AFTER
+            } else {
+                base.retryability
+            },
+        )
+    }
+}
+
+fun classifyProviderFailure(
+    error: Throwable,
+    backend: String = "unknown",
+    nowEpochMs: Long = System.currentTimeMillis(),
+): ProviderFailure {
+    if (error is ProviderFailureException) return error.failure
+    if (error is CancellationException) throw error
+    val message = error.message?.lowercase(Locale.ROOT).orEmpty()
+    val kind: ProviderFailureKind
+    val retryability: ProviderFailureRetryability
+    when {
+        error is java.io.IOException || message.contains("timeout") || message.contains("timed out") -> {
+            kind = ProviderFailureKind.NETWORK
+            retryability = ProviderFailureRetryability.RETRY_NOW
+        }
+        message.contains("quota") || message.contains("resource_exhausted") -> {
+            kind = ProviderFailureKind.QUOTA_EXHAUSTED
+            retryability = ProviderFailureRetryability.PAUSE
+        }
+        message.contains("429") ||
+            message.contains("rate limit") ||
+            message.contains("ratelimit") ||
+            message.contains("too many requests") -> {
+            kind = ProviderFailureKind.RATE_LIMIT
+            retryability = ProviderFailureRetryability.RETRY_NOW
+        }
+        message.contains("502") ||
+            message.contains("503") ||
+            message.contains("504") ||
+            message.contains("service unavailable") ||
+            message.contains("bad gateway") ||
+            message.contains("gateway timeout") ||
+            message.contains("overloaded") ||
+            message.contains("server error") ||
+            message.contains("temporarily unavailable") -> {
+            kind = ProviderFailureKind.SERVER
+            retryability = ProviderFailureRetryability.RETRY_NOW
+        }
+        message.contains("refus") || message.contains("safety") || message.contains("policy") -> {
+            kind = ProviderFailureKind.REFUSAL
+            retryability = ProviderFailureRetryability.TERMINAL
+        }
+        error is IllegalArgumentException -> {
+            kind = ProviderFailureKind.CONFIGURATION
+            retryability = ProviderFailureRetryability.TERMINAL
+        }
+        else -> {
+            kind = ProviderFailureKind.PROTOCOL
+            retryability = ProviderFailureRetryability.TERMINAL
+        }
+    }
+    return ProviderFailure(
+        kind = kind,
+        retryability = retryability,
+        safeSummary = "$backend ${error::class.java.simpleName}",
+        retryAfterAtEpochMs = null,
+        attempt = null,
+    )
+}
+
+private fun safeAdd(left: Long, right: Long): Long {
+    if (right <= 0) return left
+    if (left > Long.MAX_VALUE - right) return Long.MAX_VALUE
+    return left + right
+}

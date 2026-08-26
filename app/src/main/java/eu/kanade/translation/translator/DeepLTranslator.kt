@@ -24,6 +24,7 @@ class DeepLTranslator(
     override val fromLang: TextRecognizerLanguage,
     override val toLang: TextTranslatorLanguage,
     private val apiKey: String,
+    private val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
 ) : BaseTranslator() {
 
     private val okHttpClient = OkHttpClient.Builder()
@@ -56,10 +57,52 @@ class DeepLTranslator(
             .post(formBuilder.build())
             .build()
 
-        val response = okHttpClient.newCall(request).await()
-        val body = response.body
-            ?: throw IllegalStateException("Empty response body from DeepL API (code=${response.code})")
-        val responseString = body.string()
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(
+                backend = "deepl",
+                credentialScope = ShortHash.hash(apiKey).ifEmpty { null },
+            ),
+            estimatedInputTokens = flatBlocks.sumOf { TranslationContextChunkPlanner.estimateTokens(it.text) },
+            operation = "translate",
+            envelopeId = ShortHash.hash(pages.keys.joinToString("|")),
+            priority = currentProviderRequestPriority(),
+        )
+        val response = withTranslationRetry(
+            logTag = "deepl",
+            envelopePageKeys = pages.keys,
+        ) {
+            requestGovernor.executeValue(metadata) {
+                okHttpClient.newCall(request).await().use { response ->
+                    val raw = RawDeepLResponse(
+                        code = response.code,
+                        retryAfter = response.header("Retry-After"),
+                        body = response.body?.string().orEmpty(),
+                    )
+                    if (raw.code !in 200..299) {
+                        throw ProviderFailureException(
+                            classifyHttpFailure(
+                                backend = "deepl",
+                                statusCode = raw.code,
+                                retryAfterHeader = raw.retryAfter,
+                                safeSummary = "DeepL HTTP ${raw.code}",
+                            ),
+                        )
+                    }
+                    raw
+                }
+            }
+        }
+        if (response.body.isBlank()) {
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.PROTOCOL,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    statusCode = response.code,
+                    safeSummary = "DeepL returned an empty response body",
+                ),
+            )
+        }
+        val responseString = response.body
 
         // Shape-check: an API error (bad key, quota, unsupported lang, rate limit) returns a
         // body with no "translations" array (or plain text); log status + a response fingerprint.
@@ -70,7 +113,15 @@ class DeepLTranslator(
                 "event=provider_response_invalid backend=deepl reason=parse_failure " +
                     "status=${response.code} responseHash=${ShortHash.hash(responseString)}"
             }
-            throw IllegalStateException("DeepL returned an unparseable response (code=${response.code})", e)
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.PROTOCOL,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    statusCode = response.code,
+                    safeSummary = "DeepL returned an unparseable response",
+                ),
+                e,
+            )
         }
         if (translations == null || translations.length() != flatBlocks.size) {
             logcat(LogPriority.WARN) {
@@ -78,8 +129,13 @@ class DeepLTranslator(
                     "expected=${flatBlocks.size} got=${translations?.length() ?: 0} " +
                     "status=${response.code} responseHash=${ShortHash.hash(responseString)}"
             }
-            throw IllegalStateException(
-                "DeepL returned ${translations?.length() ?: 0} translations for ${flatBlocks.size} blocks (code=${response.code})",
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.PROTOCOL,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    statusCode = response.code,
+                    safeSummary = "DeepL returned an unexpected translation count",
+                ),
             )
         }
 
@@ -97,4 +153,10 @@ class DeepLTranslator(
         okHttpClient.connectionPool.evictAll()
         okHttpClient.dispatcher.executorService.shutdown()
     }
+
+    private data class RawDeepLResponse(
+        val code: Int,
+        val retryAfter: String?,
+        val body: String,
+    )
 }

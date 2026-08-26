@@ -9,7 +9,15 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.recognition.PageRecognitionEngine
+import eu.kanade.translation.translator.ProviderFailureException
+import eu.kanade.translation.translator.ProviderRequestGovernor
+import eu.kanade.translation.translator.ProviderRequestKey
+import eu.kanade.translation.translator.ProviderRequestMetadata
+import eu.kanade.translation.translator.SharedProviderRequestGovernor
 import eu.kanade.translation.translator.TextTranslatorLanguage
+import eu.kanade.translation.translator.currentProviderRequestPriority
+import eu.kanade.translation.translator.withTranslationRetry
+import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -36,6 +44,7 @@ class RemotePageTranslationEngine(
     private val inpaintingMode: InpaintingMode,
     maxConcurrency: Int,
     private val client: OkHttpClient = defaultClient(),
+    private val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
 ) : PageRecognitionEngine {
 
     private val normalizedBaseUrl = baseUrl.trim().trimEnd('/')
@@ -102,15 +111,38 @@ class RemotePageTranslationEngine(
         executeBytes(request).toString(Charsets.UTF_8)
 
     private suspend fun executeBytes(request: Request): ByteArray {
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(
+                backend = "desktop",
+                credentialScope = ShortHash.hash(normalizedBaseUrl).ifEmpty { null },
+            ),
+            operation = request.url.encodedPath,
+            envelopeId = ShortHash.hash(request.url.toString()),
+            priority = currentProviderRequestPriority(),
+        )
         try {
-            client.newCall(request).await().use { response ->
-                if (!response.isSuccessful) {
-                    throw RemotePageTranslationException("Desktop server returned HTTP ${response.code}")
+            return withTranslationRetry(logTag = "desktop") {
+                requestGovernor.executeValue(metadata) {
+                    client.newCall(request).await().use { response ->
+                        val raw = RawDesktopResponse(
+                            code = response.code,
+                            retryAfter = response.header("Retry-After"),
+                            body = response.body?.bytes(),
+                        )
+                        if (raw.code !in 200..299) {
+                            val failure = eu.kanade.translation.translator.classifyHttpFailure(
+                                backend = "desktop",
+                                statusCode = raw.code,
+                                retryAfterHeader = raw.retryAfter,
+                                safeSummary = "Desktop server returned HTTP ${raw.code}",
+                            )
+                            throw RemotePageTranslationException(failure)
+                        }
+                        raw
+                    }
                 }
-                return response.body?.bytes()
-                    ?: throw RemotePageTranslationException("Desktop server returned an empty response")
-            }
-        } catch (e: RemotePageTranslationException) {
+            }.body ?: throw RemotePageTranslationException("Desktop server returned an empty response")
+        } catch (e: ProviderFailureException) {
             throw e
         } catch (e: InterruptedIOException) {
             throw RemotePageTranslationException(RemotePageTranslationException.DESKTOP_UNREACHABLE, e)
@@ -118,6 +150,12 @@ class RemotePageTranslationEngine(
             throw RemotePageTranslationException(RemotePageTranslationException.DESKTOP_UNREACHABLE, e)
         }
     }
+
+    private data class RawDesktopResponse(
+        val code: Int,
+        val retryAfter: String?,
+        val body: ByteArray?,
+    )
 
     private fun Bitmap.toUploadBytes(): ByteArray {
         val output = ByteArrayOutputStream()

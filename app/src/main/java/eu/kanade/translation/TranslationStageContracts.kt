@@ -3,8 +3,6 @@ package eu.kanade.translation
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.security.MessageDigest
 
 /**
@@ -188,21 +186,18 @@ sealed interface LeaseAcquisition {
 }
 
 /**
- * Pure request admission. `withRequest` owns the lock for the entire provider
- * call, and `withLock` guarantees release when the caller or provider is
- * cancelled or fails.
+ * Compatibility facade for callers that have not yet adopted request metadata.
+ *
+ * Provider network boundaries use [eu.kanade.translation.translator.ProviderRequestGovernor]
+ * directly. Keeping this no-op shim avoids turning a legacy local caller into a
+ * second process-wide lock while the migration is completed in later slices.
  */
-class ProviderRequestAdmission {
-    private val mutex = Mutex()
-
-    suspend fun <T> withRequest(block: suspend () -> T): T = mutex.withLock { block() }
-}
-
-/** Process-wide provider lane shared by manual, auto, batch, and revision callers. */
 object SharedProviderRequestAdmission {
-    private val admission = ProviderRequestAdmission()
+    /** New callers should use this metadata-aware, process-wide governor. */
+    val governor: eu.kanade.translation.translator.ProviderRequestGovernor
+        get() = eu.kanade.translation.translator.SharedProviderRequestGovernor.instance
 
-    suspend fun <T> withRequest(block: suspend () -> T): T = admission.withRequest(block)
+    suspend fun <T> withRequest(block: suspend () -> T): T = block()
 }
 
 /** OCR identity excludes mutable translation, render colors, revision flags, and edits. */

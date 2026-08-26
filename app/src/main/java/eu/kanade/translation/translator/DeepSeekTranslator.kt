@@ -2,6 +2,7 @@ package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -15,7 +16,12 @@ class DeepSeekTranslator(
     val modelName: String,
     val maxOutputToken: Int,
     val temperature: Float,
-) : OpenAiCompatibleTranslator() {
+    requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+) : OpenAiCompatibleTranslator(requestGovernor) {
+
+    override val providerBackend: String = "deepseek"
+    override val providerModel: String get() = modelName.ifBlank { "deepseek-chat" }
+    override val providerCredentialScope: String? get() = ShortHash.hash(apiKey).ifEmpty { null }
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
@@ -74,11 +80,16 @@ class DeepSeekTranslator(
                 }
             }.toString()
 
-            postChatCompletion(
-                url = "https://api.deepseek.com/chat/completions",
-                headers = mapOf("Authorization" to "Bearer $apiKey"),
-                payloadJson = jsonObject,
-            )
+            withTranslationRetry(logTag = "deepseek", envelopePageKeys = null) {
+                postChatCompletion(
+                    url = "https://api.deepseek.com/chat/completions",
+                    headers = mapOf("Authorization" to "Bearer $apiKey"),
+                    payloadJson = jsonObject,
+                    reservedOutputTokens = maxOutputToken,
+                    operation = "prompt",
+                    envelopeId = ShortHash.hash(prompt),
+                )
+            }
         } catch (e: Exception) {
             logcat { "event=provider_failure backend=deepseek stage=prompt error=${e::class.java.simpleName}" }
             ""

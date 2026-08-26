@@ -9,9 +9,21 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
-abstract class OpenAiCompatibleTranslator : AITranslator() {
+abstract class OpenAiCompatibleTranslator(
+    protected val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+) : AITranslator() {
+
+    protected open val providerBackend: String
+        get() = this::class.java.simpleName.removeSuffix("Translator").lowercase(Locale.ROOT)
+
+    protected open val providerModel: String?
+        get() = null
+
+    protected open val providerCredentialScope: String?
+        get() = null
 
     protected val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
@@ -27,6 +39,10 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         url: String,
         headers: Map<String, String>,
         payloadJson: String,
+        estimatedInputTokens: Int = TranslationContextChunkPlanner.estimateTokens(payloadJson),
+        reservedOutputTokens: Int = 0,
+        operation: String = "chat_completion",
+        envelopeId: String? = null,
     ): String {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = payloadJson.toRequestBody(mediaType)
@@ -42,10 +58,49 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         requestBuilder.header("Content-Type", "application/json")
 
         val request = requestBuilder.build()
-        val response = okHttpClient.newCall(request).await()
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(
+                backend = providerBackend,
+                model = providerModel,
+                credentialScope = providerCredentialScope,
+            ),
+            estimatedInputTokens = estimatedInputTokens,
+            reservedOutputTokens = reservedOutputTokens,
+            operation = operation,
+            envelopeId = envelopeId,
+            priority = currentProviderRequestPriority(),
+        )
+        val response = requestGovernor.executeValue(metadata) {
+            okHttpClient.newCall(request).await().use { response ->
+                val raw = RawProviderResponse(
+                    code = response.code,
+                    retryAfter = response.header("Retry-After"),
+                    body = response.body?.string().orEmpty(),
+                )
+                if (raw.code !in 200..299) {
+                    val failure = classifyHttpFailure(
+                        backend = providerBackend,
+                        statusCode = raw.code,
+                        retryAfterHeader = raw.retryAfter,
+                        safeSummary = "$providerBackend HTTP ${raw.code}",
+                    )
+                    throw OpenAiApiException(failure)
+                }
+                raw
+            }
+        }
 
-        val responseBody = response.body ?: throw IllegalStateException("Empty response body (reason=empty_body)")
-        val responseString = responseBody.string()
+        val responseString = response.body
+        if (responseString.isBlank()) {
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.PROTOCOL,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    statusCode = response.code,
+                    safeSummary = "$providerBackend returned an empty response body",
+                ),
+            )
+        }
         val responseJson = JSONObject(responseString)
 
         val choicesArray = responseJson.optJSONArray("choices")
@@ -57,7 +112,14 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
                     "chars=${responseString.length} responseHash=${ShortHash.hash(responseString)} " +
                     "choices=${choicesArray?.length() ?: 0}"
             }
-            throw IllegalStateException("API returned no content (reason=no_content)")
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.PROTOCOL,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    statusCode = response.code,
+                    safeSummary = "$providerBackend returned no completion content",
+                ),
+            )
         }
 
         return rawOutput
@@ -96,7 +158,15 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
             logTag = logTag,
             envelopePageKeys = chunk.pages.keys,
         ) {
-            postChatCompletion(url, headers, payloadJson)
+            postChatCompletion(
+                url = url,
+                headers = headers,
+                payloadJson = payloadJson,
+                estimatedInputTokens = chunk.estimatedPromptTokens,
+                reservedOutputTokens = chunk.maxOutputTokens,
+                operation = "contextual",
+                envelopeId = ShortHash.hash(chunk.pages.keys.joinToString("|")),
+            )
         }
         return if (request.protocol == ContextualRequestProtocol.BATCH_V1) {
             ContextualResponseParser.parseBatch(rawOutput, request).also { batch ->
@@ -117,4 +187,14 @@ abstract class OpenAiCompatibleTranslator : AITranslator() {
         okHttpClient.connectionPool.evictAll()
         okHttpClient.dispatcher.executorService.shutdown()
     }
+
+    private data class RawProviderResponse(
+        val code: Int,
+        val retryAfter: String?,
+        val body: String,
+    )
 }
+
+internal class OpenAiApiException(
+    failure: ProviderFailure,
+) : ProviderFailureException(failure)

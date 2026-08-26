@@ -2,6 +2,7 @@ package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.util.ShortHash
 import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -15,7 +16,12 @@ class OpenRouterTranslator(
     val modelName: String,
     val maxOutputToken: Int,
     val temperature: Float,
-) : OpenAiCompatibleTranslator() {
+    requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
+) : OpenAiCompatibleTranslator(requestGovernor) {
+
+    override val providerBackend: String = "openrouter"
+    override val providerModel: String get() = modelName
+    override val providerCredentialScope: String? get() = ShortHash.hash(apiKey).ifEmpty { null }
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
@@ -75,11 +81,16 @@ class OpenRouterTranslator(
                 }
             }.toString()
 
-            postChatCompletion(
-                url = "https://openrouter.ai/api/v1/chat/completions",
-                headers = mapOf("Authorization" to "Bearer $apiKey"),
-                payloadJson = jsonObject,
-            )
+            withTranslationRetry(logTag = "openrouter") {
+                postChatCompletion(
+                    url = "https://openrouter.ai/api/v1/chat/completions",
+                    headers = mapOf("Authorization" to "Bearer $apiKey"),
+                    payloadJson = jsonObject,
+                    reservedOutputTokens = maxOutputToken,
+                    operation = "prompt",
+                    envelopeId = ShortHash.hash(prompt),
+                )
+            }
         } catch (e: Exception) {
             logcat { "event=provider_failure backend=openrouter stage=prompt error=${e::class.java.simpleName}" }
             ""
