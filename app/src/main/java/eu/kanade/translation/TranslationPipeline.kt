@@ -76,6 +76,7 @@ import eu.kanade.translation.translator.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.translator.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.translator.applyAiChunkOutcomeToPages
 import eu.kanade.translation.translator.translateAiChunkWithAdaptiveRetry
 import eu.kanade.translation.translator.withProviderRequestPriority
 import eu.kanade.translation.util.ShortHash
@@ -1805,13 +1806,23 @@ class TranslationPipeline(
                     )
                     var envelopeFailed = false
                     try {
-                        translateAiChunkWithAdaptiveRetry(
+                        val adaptiveOutcome = translateAiChunkWithAdaptiveRetry(
                             translator = ct,
                             chunk = contextualChunk,
                             requestedOutputTokens = requestedOutputTokens,
                             profile = chunkProfile,
                             label = "stream-${chunkCounter.incrementAndGet()}",
                             retryDepth = 0,
+                        )
+                        // Phase-2 compatibility bridge: the controller keeps
+                        // provider output detached; Phase 3 will decide how
+                        // Paused/Terminal candidates are persisted. Applying
+                        // only through this explicit adapter preserves the
+                        // pre-existing pipeline API for this slice.
+                        applyAiChunkOutcomeToPages(
+                            outcome = adaptiveOutcome,
+                            pages = translationRegistry,
+                            pageIndexes = resolvedNaturalPageIndexes,
                         )
                         val orderedCompletion = completedPages.sortedBy { pk ->
                             resolvedNaturalPageIndexes[pk] ?: Int.MAX_VALUE

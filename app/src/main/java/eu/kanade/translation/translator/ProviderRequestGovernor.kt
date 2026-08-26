@@ -346,6 +346,17 @@ class ProviderRequestGovernor(
                 reason = decision.reason,
             )
         }
+        // A semantic envelope owns one hard request budget. Charge it only
+        // after admission succeeds so waiting/deferred requests do not burn a
+        // network attempt. Releasing the permit here is essential: a budget
+        // exhaustion is a typed pause, not an in-flight provider operation.
+        currentRequestRetryBudget()?.let { budget ->
+            if (!budget.tryConsumeAttempt()) {
+                release(permit, usage = null, metadata = metadata, outcome = "budget_exhausted")
+                throw RequestRetryBudgetExhaustedException(budget)
+            }
+            currentRequestRetryAttempt()?.recordAttempt()
+        }
         var result: ProviderHttpResult<T>? = null
         return try {
             result = block()
@@ -511,6 +522,7 @@ class ProviderRequestGovernor(
         permit: ProviderRequestPermit,
         usage: ProviderUsage?,
         metadata: ProviderRequestMetadata,
+        outcome: String = "completed",
     ) {
         mutex.withLock {
             val bucket = buckets[permit.key] ?: return@withLock
@@ -522,7 +534,7 @@ class ProviderRequestGovernor(
                 waitMs = 0L,
                 actualTokens = usage?.totalTokens,
                 cooldownSource = bucket.cooldownSource,
-                outcome = "completed",
+                outcome = outcome,
             )
         }
     }
