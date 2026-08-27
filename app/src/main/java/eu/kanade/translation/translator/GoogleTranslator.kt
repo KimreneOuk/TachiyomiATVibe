@@ -58,9 +58,7 @@ class GoogleTranslator(
                             retryAfterHeader = raw.retryAfter,
                             safeSummary = "Google Translate HTTP ${raw.code}",
                         )
-                        if (failure.retryability != ProviderFailureRetryability.TERMINAL) {
-                            throw ProviderFailureException(failure)
-                        }
+                        throw ProviderFailureException(failure)
                     }
                     raw
                 }

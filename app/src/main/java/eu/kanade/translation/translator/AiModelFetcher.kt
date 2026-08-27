@@ -65,6 +65,10 @@ object AiModelFetcher {
             if (models.isEmpty()) Result.NoModels else Result.Success(models)
         } catch (e: InvalidKeyException) {
             Result.InvalidKey
+        } catch (e: ProviderFailureException) {
+            // Provider failures already carry a redacted, provider-neutral summary.
+            // Keep the UI contract safe if a transport is deferred or rejected.
+            Result.Error(e.failure.safeSummary)
         } catch (e: Exception) {
             if (engine == AiEngine.LMSTUDIO) {
                 logcat(LogPriority.ERROR) {
@@ -72,7 +76,10 @@ object AiModelFetcher {
                         "error=${e::class.java.simpleName}"
                 }
             }
-            Result.Error("${e::class.java.simpleName}: ${e.message ?: "Network error"}")
+            // Exception messages can embed URLs, response bodies, or other
+            // user/provider data. Diagnostics retain only the exception type;
+            // the UI receives a stable safe summary.
+            Result.Error("Model list request failed")
         }
     }
 
@@ -135,7 +142,9 @@ object AiModelFetcher {
 
     private suspend fun fetchLmStudio(baseUrl: String): List<String> {
         val url = "${normalizeBaseUrl(baseUrl)}/models"
-        logcat(LogPriority.INFO) { "LM Studio fetching models from '$url'" }
+        logcat(LogPriority.INFO) {
+            "event=model_fetch_start backend=lm_studio baseHash=${ShortHash.hash(normalizeBaseUrl(baseUrl))}"
+        }
         val request = Request.Builder()
             .url(url)
             .get()
