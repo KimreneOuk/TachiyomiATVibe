@@ -43,6 +43,9 @@ data class Translation(
          * Kept distinct from [TRANSLATED] so callers can offer retry/review without hiding it.
          */
         READY_WITH_WARNINGS(5),
+
+        /** Retryable provider work remains durable but is not currently running. */
+        PAUSED(6),
     }
 
     companion object {

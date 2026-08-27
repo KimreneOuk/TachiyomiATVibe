@@ -18,6 +18,13 @@ data class ReconciliationResult(
     val doneCount: Int,
     val failedCount: Int,
     val partialCount: Int,
+    val paused: Boolean = false,
+    val anchorPageKey: String? = null,
+    val pendingCount: Int = 0,
+    val retryableCount: Int = 0,
+    val terminalCount: Int = failedCount,
+    val nextEligibleRetryAtEpochMs: Long? = null,
+    val pauseReason: String? = null,
 )
 
 object BatchProgressReconciler {
@@ -26,6 +33,7 @@ object BatchProgressReconciler {
         pageMap: Map<String, PageTranslation>,
         orderedKeys: List<String>,
         activeGeneration: Long,
+        pauseOutcome: BatchPass1Outcome? = null,
     ): ReconciliationResult {
         val expectedKeys = orderedKeys.distinct()
         val unexpectedPageKeys = pageMap.keys - expectedKeys.toSet()
@@ -42,7 +50,14 @@ object BatchProgressReconciler {
                 doneCount = 0,
                 failedCount = 0,
                 partialCount = 0,
+                paused = false,
             )
+        }
+
+        pauseOutcome?.takeIf {
+            it.status == BatchPass1Status.PAUSED || it.status == BatchPass1Status.FAILED
+        }?.let { pausedOutcome ->
+            return reconcilePaused(pageMap, expectedKeys, pausedOutcome, unexpectedPageKeys)
         }
 
         val strandedPages = linkedMapOf<String, String>()
@@ -96,6 +111,79 @@ object BatchProgressReconciler {
             doneCount = doneCount,
             failedCount = failedCount,
             partialCount = partialCount,
+            terminalCount = failedCount,
+        )
+    }
+
+    private fun reconcilePaused(
+        pageMap: Map<String, PageTranslation>,
+        expectedKeys: List<String>,
+        outcome: BatchPass1Outcome,
+        unexpectedPageKeys: Set<String>,
+    ): ReconciliationResult {
+        val retryable = outcome.retryablePageKeys.ifEmpty {
+            outcome.anchorPageKey?.let(::setOf).orEmpty()
+        }
+        val anchorIndex = outcome.anchorPageKey?.let(expectedKeys::indexOf)?.takeIf { it >= 0 }
+        var doneCount = 0
+        var failedCount = 0
+        var partialCount = 0
+        var pendingCount = 0
+        var terminalCount = 0
+
+        expectedKeys.forEachIndexed { index, pageKey ->
+            val page = pageMap[pageKey]
+            when {
+                pageKey in retryable -> {
+                    if (page?.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL) {
+                        partialCount++
+                    }
+                }
+                anchorIndex != null && index > anchorIndex -> {
+                    // A pause owns only its first unresolved anchor. Tail pages
+                    // remain pending; pre-existing terminal failures are still
+                    // reported, but no missing page is synthesized as failed.
+                    when {
+                        page == null -> pendingCount++
+                        page.isStageFailed -> {
+                            failedCount++
+                            terminalCount++
+                        }
+                        page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
+                        else -> pendingCount++
+                    }
+                }
+                page == null -> pendingCount++
+                page.isStageFailed -> {
+                    failedCount++
+                    terminalCount++
+                }
+                page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
+                page.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL -> {
+                    partialCount++
+                }
+                else -> pendingCount++
+            }
+        }
+
+        return ReconciliationResult(
+            chapterStatus = if (outcome.status == BatchPass1Status.FAILED || terminalCount > 0) {
+                Translation.State.ERROR
+            } else {
+                Translation.State.PAUSED
+            },
+            strandedPages = emptyMap(),
+            unexpectedPageKeys = unexpectedPageKeys,
+            doneCount = doneCount,
+            failedCount = failedCount,
+            partialCount = partialCount,
+            paused = outcome.status == BatchPass1Status.PAUSED && terminalCount == 0,
+            anchorPageKey = outcome.anchorPageKey,
+            pendingCount = pendingCount,
+            retryableCount = retryable.size,
+            terminalCount = terminalCount,
+            nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
+            pauseReason = outcome.reason,
         )
     }
 

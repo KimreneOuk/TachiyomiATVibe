@@ -405,6 +405,8 @@ class ReaderViewModel @JvmOverloads constructor(
                 liveTranslationState == Translation.State.TRANSLATING -> Translation.State.TRANSLATING
             batchTranslationState == Translation.State.ERROR ||
                 liveTranslationState == Translation.State.ERROR -> Translation.State.ERROR
+            batchTranslationState == Translation.State.PAUSED ||
+                liveTranslationState == Translation.State.PAUSED -> Translation.State.PAUSED
             liveTranslationState == Translation.State.TRANSLATED -> Translation.State.TRANSLATED
             else -> Translation.State.NOT_TRANSLATED
         }

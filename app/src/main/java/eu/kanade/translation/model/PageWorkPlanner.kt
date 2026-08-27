@@ -1,7 +1,9 @@
 package eu.kanade.translation.model
 
 import eu.kanade.translation.artifact.ArtifactOrigin
+import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.artifact.PageArtifactRecord
 
 /**
@@ -71,12 +73,20 @@ object PageWorkPlanner {
                 expected,
                 input.translationOrigin,
                 input.sourceFingerprint,
+                input.durableFailure?.takeIf { it.stage.matches(stage) },
             )
         }
         val decisions = linkedMapOf<BatchStage, StageWorkDecision>()
         BatchStage.entries.forEach { stage ->
             val stageEvidence = evidence.getValue(stage)
-            val decision = decideStage(stage, stageEvidence, decisions, textless)
+            val decision = decideStage(
+                stage = stage,
+                evidence = stageEvidence,
+                prior = decisions,
+                textless = textless,
+                nowEpochMs = input.nowEpochMs,
+                forceRetry = input.forceRetry,
+            )
             decisions[stage] = decision
         }
 
@@ -110,15 +120,25 @@ object PageWorkPlanner {
             } else {
                 val stages = page.stages.toMutableList()
                 val translation = stages[index]
-                if (translation.decision != StageDecision.FAILED &&
-                    translation.decision != StageDecision.TERMINAL_COMPLETE
+                if (translation.decision !in setOf(
+                        StageDecision.FAILED,
+                        StageDecision.FAILED_RETRYABLE,
+                        StageDecision.FAILED_TERMINAL,
+                        StageDecision.TERMINAL_COMPLETE,
+                    )
                 ) {
                     stages[index] = translation.copy(
                         decision = StageDecision.WAIT_FOR_DEPENDENCY,
                         reason = StageReasonCode.PRIOR_PAGE_INCOMPLETE,
                     )
                     val layoutIndex = stages.indexOfFirst { it.stage == BatchStage.LAYOUT }
-                    if (layoutIndex >= 0 && stages[layoutIndex].decision != StageDecision.FAILED) {
+                    if (layoutIndex >= 0 &&
+                        stages[layoutIndex].decision !in setOf(
+                            StageDecision.FAILED,
+                            StageDecision.FAILED_RETRYABLE,
+                            StageDecision.FAILED_TERMINAL,
+                        )
+                    ) {
                         stages[layoutIndex] = stages[layoutIndex].copy(
                             decision = StageDecision.WAIT_FOR_DEPENDENCY,
                             reason = StageReasonCode.DEPENDENCY_INCOMPLETE,
@@ -140,6 +160,8 @@ object PageWorkPlanner {
         val translation = stages.first { it.stage == BatchStage.TRANSLATION }
         return translation.decision == StageDecision.RUN ||
             translation.decision == StageDecision.FAILED ||
+            translation.decision == StageDecision.FAILED_RETRYABLE ||
+            translation.decision == StageDecision.FAILED_TERMINAL ||
             translation.decision == StageDecision.WAIT_FOR_DEPENDENCY
     }
 
@@ -149,7 +171,11 @@ object PageWorkPlanner {
         return stages.first { it.stage == stage }.decision in setOf(
             StageDecision.RUN,
             StageDecision.FAILED,
-        )
+            StageDecision.FAILED_RETRYABLE,
+        ) &&
+            stages.first { it.stage == stage }.let { decision ->
+                decision.decision != StageDecision.FAILED_RETRYABLE || decision.retryEligible
+            }
     }
 
     private data class StageEvidence(
@@ -161,6 +187,7 @@ object PageWorkPlanner {
         val payloadValid: Boolean,
         val origin: ArtifactOrigin,
         val skipReason: String? = null,
+        val durableFailure: DurableFailureMetadata? = null,
     )
 
     private fun decideStage(
@@ -168,7 +195,36 @@ object PageWorkPlanner {
         evidence: StageEvidence,
         prior: Map<BatchStage, StageWorkDecision>,
         textless: Boolean,
+        nowEpochMs: Long,
+        forceRetry: Boolean,
     ): StageWorkDecision {
+        val durableFailureFingerprintMismatch = evidence.durableFailure?.let { failure ->
+            failure.failureFingerprint != null &&
+                evidence.expectedFingerprint != null &&
+                failure.failureFingerprint != evidence.expectedFingerprint
+        } == true
+        if (durableFailureFingerprintMismatch) {
+            // A failure recorded for an older translator/model/configuration is
+            // no longer an admission fence. Re-plan the stage from current
+            // evidence instead of treating the stale failure as retryable.
+            return dependencyOrRun(stage, StageReasonCode.FINGERPRINT_MISMATCH, prior)
+        }
+        evidence.durableFailure
+            ?.let { failure ->
+                val retryable = failure.status == ArtifactStageStatus.FAILED_RETRYABLE
+                return StageWorkDecision(
+                    stage = stage,
+                    decision = if (retryable) StageDecision.FAILED_RETRYABLE else StageDecision.FAILED_TERMINAL,
+                    reason = StageReasonCode.FAILED_STAGE,
+                    nextEligibleRetryAtEpochMs = failure.nextEligibleRetryAtEpochMs,
+                    retryEligible = retryable &&
+                        (
+                            forceRetry ||
+                                failure.nextEligibleRetryAtEpochMs == null ||
+                                failure.nextEligibleRetryAtEpochMs <= nowEpochMs
+                            ),
+                )
+            }
         if (textless && stage != BatchStage.DETECTION && stage != BatchStage.OCR) {
             return StageWorkDecision(
                 stage,
@@ -182,10 +238,20 @@ object PageWorkPlanner {
         }
 
         val raw = when {
-            evidence.status == StageStatus.FAILED ||
-                evidence.status == ArtifactStageStatus.FAILED_RETRYABLE.name ||
-                evidence.status == ArtifactStageStatus.FAILED_TERMINAL.name ->
+            evidence.status == StageStatus.FAILED ->
                 StageWorkDecision(stage, StageDecision.FAILED, StageReasonCode.FAILED_STAGE)
+
+            evidence.status == ArtifactStageStatus.FAILED_RETRYABLE.name ->
+                StageWorkDecision(
+                    stage,
+                    StageDecision.FAILED_RETRYABLE,
+                    StageReasonCode.FAILED_STAGE,
+                    evidence.durableFailure?.nextEligibleRetryAtEpochMs,
+                    retryEligible = true,
+                )
+
+            evidence.status == ArtifactStageStatus.FAILED_TERMINAL.name ->
+                StageWorkDecision(stage, StageDecision.FAILED_TERMINAL, StageReasonCode.FAILED_STAGE)
 
             evidence.status == StageStatus.RUNNING || evidence.status == ArtifactStageStatus.RUNNING.name ->
                 dependencyOrRun(stage, StageReasonCode.INTERRUPTED_STAGE, prior)
@@ -217,7 +283,14 @@ object PageWorkPlanner {
             else -> StageWorkDecision(stage, StageDecision.REUSE, StageReasonCode.VALID_ARTIFACT)
         }
 
-        if (raw.decision == StageDecision.FAILED) return raw
+        if (raw.decision in setOf(
+                StageDecision.FAILED,
+                StageDecision.FAILED_RETRYABLE,
+                StageDecision.FAILED_TERMINAL,
+            )
+        ) {
+            return raw
+        }
         val dependencies = dependencies(stage)
         val blocked = dependencies.any { dependency ->
             prior[dependency]?.decision !in setOf(StageDecision.REUSE, StageDecision.TERMINAL_COMPLETE)
@@ -287,6 +360,7 @@ object PageWorkPlanner {
         expected: BatchExpectedFingerprints,
         translationOrigin: ArtifactOrigin?,
         sourceFingerprint: String?,
+        durableFailure: DurableFailureMetadata?,
     ): StageEvidence {
         val record = when (stage) {
             BatchStage.DETECTION -> artifact?.detection
@@ -346,7 +420,16 @@ object PageWorkPlanner {
                 runCatching { ArtifactOrigin.valueOf(it) }.getOrDefault(ArtifactOrigin.UNKNOWN)
             } ?: ArtifactOrigin.UNKNOWN,
             skipReason = record?.skipReason,
+            durableFailure = durableFailure,
         )
+    }
+
+    private fun ArtifactStage.matches(stage: BatchStage): Boolean = when (this) {
+        ArtifactStage.DETECTION -> stage == BatchStage.DETECTION
+        ArtifactStage.OCR -> stage == BatchStage.OCR
+        ArtifactStage.INPAINT -> stage == BatchStage.INPAINT
+        ArtifactStage.TRANSLATION -> stage == BatchStage.TRANSLATION
+        ArtifactStage.LAYOUT -> stage == BatchStage.LAYOUT
     }
 
     private const val NO_ERASE_REGIONS = "NO_ERASE_REGIONS"

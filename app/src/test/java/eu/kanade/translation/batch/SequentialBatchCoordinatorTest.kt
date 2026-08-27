@@ -181,6 +181,99 @@ class SequentialBatchCoordinatorTest {
     }
 
     @Test
+    fun `typed pause settles unresolved chunk and stops future OCR admission`() = runTest {
+        val events = RecordingListener()
+        val native = ImmediateNativeWorker()
+        val rendered = mutableListOf<String>()
+        val settled = mutableListOf<String>()
+        val render = object : RenderJoinWorker {
+            override fun onNativeBranchDone(pageKey: String) {}
+            override fun onTranslationBranchDone(pageKey: String) {}
+
+            override suspend fun awaitAndRender(pageKey: String) {
+                rendered += pageKey
+            }
+
+            override suspend fun awaitAndSettle(pageKey: String) {
+                settled += pageKey
+            }
+        }
+        val translator = object : TranslatorLaneWorker {
+            override suspend fun translate(ref: OcrReadyPageRef) {
+                if (ref.pageKey == "p1") {
+                    error("typed path should use translateOutcome")
+                }
+            }
+
+            override suspend fun translateOutcome(ref: OcrReadyPageRef): ChunkCompletionOutcome =
+                if (ref.pageKey == "p1") {
+                    ChunkCompletionOutcome.Paused(
+                        anchorPageKey = "p1",
+                        completedPageKeys = setOf("p0"),
+                        retryablePageKeys = setOf("p1"),
+                        reason = "provider quota exhausted",
+                    )
+                } else {
+                    ChunkCompletionOutcome.Completed(setOf(ref.pageKey))
+                }
+        }
+        val coordinator = SequentialBatchCoordinator(native, translator, render, events)
+
+        val outcome = coordinator.runPass1(
+            (0 until 8).map { "p$it" to it },
+            TranslatorComputeClass.REMOTE_IO,
+        )
+
+        outcome.status shouldBe BatchPass1Status.PAUSED
+        outcome.anchorPageKey shouldBe "p1"
+        outcome.completedPageKeys shouldBe setOf("p0")
+        outcome.retryablePageKeys shouldBe setOf("p1")
+        events.contains("ocrStarted:p7") shouldBe false
+        rendered shouldBe listOf("p0")
+        settled shouldContainExactly (1 until 7).map { "p$it" }
+    }
+
+    @Test
+    fun `typed pause propagates through the local translation lane`() = runTest {
+        val ocrStarted = mutableListOf<String>()
+        val native = object : NativeLaneWorker {
+            override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef {
+                ocrStarted += pageKey
+                return OcrReadyPageRef(pageKey, pageIndex, 0L, emptyList())
+            }
+
+            override suspend fun runInpaintStage(pageKey: String) = Unit
+        }
+        val translator = object : TranslatorLaneWorker {
+            override suspend fun translate(ref: OcrReadyPageRef) = error("typed path should use translateOutcome")
+
+            override suspend fun translateOutcome(ref: OcrReadyPageRef): ChunkCompletionOutcome =
+                if (ref.pageKey == "p0") {
+                    ChunkCompletionOutcome.Paused(
+                        anchorPageKey = "p0",
+                        retryablePageKeys = setOf("p0"),
+                        reason = "provider quota exhausted",
+                    )
+                } else {
+                    ChunkCompletionOutcome.Completed(setOf(ref.pageKey))
+                }
+        }
+
+        val outcome = SequentialBatchCoordinator(
+            native,
+            translator,
+            RecordingRenderJoin(),
+        ).runPass1(
+            listOf("p0" to 0, "p1" to 1),
+            TranslatorComputeClass.LOCAL_COMPUTE,
+        )
+
+        outcome.status shouldBe BatchPass1Status.PAUSED
+        outcome.anchorPageKey shouldBe "p0"
+        ocrStarted shouldBe listOf("p0")
+    }
+
+    @Test
     fun `translation commits sequentially in natural order while native runs ahead`() = runTest {
         val events = RecordingListener()
         val native = ImmediateNativeWorker()

@@ -91,7 +91,7 @@ fun BottomReaderBar(
 
             IconButton(onClick = onClickTranslate, enabled = translateEnabled) {
                 when (translationState) {
-                    Translation.State.NOT_TRANSLATED, Translation.State.QUEUE -> {
+                    Translation.State.NOT_TRANSLATED, Translation.State.QUEUE, Translation.State.PAUSED -> {
                         Icon(
                             painter = painterResource(R.drawable.ic_translate_circle),
                             contentDescription = stringResource(ATMR.strings.reader_translate),

@@ -4,7 +4,7 @@ import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.Translation
 
 enum class BatchPhase { OCR, TRANSLATE, INPAINT, RENDER, DISPLAY }
-enum class PhaseStatus { RUNNING, DONE, FAILED, SKIPPED, PARTIAL }
+enum class PhaseStatus { RUNNING, DONE, FAILED, SKIPPED, PARTIAL, PAUSED }
 
 /**
  * Input to the batch-progress projection. Pipeline/store own all actual page state.
@@ -33,6 +33,15 @@ sealed class TranslationBatchEvent {
         val reason: String? = null,
     ) : TranslationBatchEvent()
     data class BatchAborted(val reason: String, val failedPageKeys: Set<String>) : TranslationBatchEvent()
+    data class BatchPaused(
+        val anchorPageKey: String?,
+        val completedPages: Int,
+        val totalPages: Int,
+        val retryableCount: Int,
+        val reason: String,
+        val nextEligibleRetryAtEpochMs: Long? = null,
+        val retryablePageKeys: Set<String> = emptySet(),
+    ) : TranslationBatchEvent()
     data class BatchFinished(
         val state: Translation.State,
         val donePages: Int,

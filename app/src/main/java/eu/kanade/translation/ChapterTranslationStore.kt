@@ -3,6 +3,8 @@ package eu.kanade.translation
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.artifact.ArtifactOrigin
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
@@ -10,6 +12,7 @@ import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.CleanedFileState
 import eu.kanade.translation.artifact.CleanedImageProbe
+import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.artifact.LegacyChapterSnapshot
 import eu.kanade.translation.artifact.LegacyPageFacts
 import eu.kanade.translation.artifact.LegacySourceIdentity
@@ -314,6 +317,16 @@ class ChapterTranslationStore(
         snapshotLocked(pageKey)
     }
 
+    /** Current durable stage failure, if the artifact manifest owns one. */
+    fun durableFailure(
+        pageKey: String,
+        stage: ArtifactStage = ArtifactStage.TRANSLATION,
+    ): DurableFailureMetadata? = artifactManifest?.durableFailures?.get("$pageKey:${stage.name}")
+
+    /** Immutable view used by queue restoration and planner admission. */
+    fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
+        artifactManifest?.durableFailures?.toMap().orEmpty()
+
     /** Establishes artifact authority before a caller installs a new page state. */
     suspend fun ensureArtifactAuthorityForMutation(): MutationAdmission = mutex.withLock {
         admitMutationLocked()
@@ -570,6 +583,61 @@ class ChapterTranslationStore(
                 }
                 PatchResult.Accepted(snapshotLocked(pageKey))
             }
+        }
+    }
+
+    /**
+     * Persists a retryable/terminal stage failure together with the current
+     * candidate snapshot. The page mutation and durable failure pointer share
+     * one artifact-manifest publication, so a restart cannot observe a page
+     * status without its failure metadata (or vice versa).
+     */
+    suspend fun persistDurableStageFailure(
+        pageKey: String,
+        expected: PatchPrecondition,
+        failure: DurableFailureMetadata,
+        description: String = "durable stage failure",
+        update: (PageTranslation?) -> PageTranslation,
+    ): PatchResult {
+        if (defunct) return rejected(pageKey, description, "store is defunct")
+        return mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejected(
+                    pageKey,
+                    description,
+                    "${admission.code}: ${admission.message}",
+                )
+            }
+            val rejection = pageWriteRejection(pageKey, expected)
+            if (rejection != null) {
+                return@withLock rejected(pageKey, description, rejection)
+            }
+            val previous = pages[pageKey]
+            val updated = try {
+                ownedPage(pageKey, update(previous?.detachedCopy()))
+            } catch (error: IllegalArgumentException) {
+                return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
+            } catch (error: IllegalStateException) {
+                return@withLock rejected(pageKey, description, error.message ?: error::class.java.simpleName)
+            }
+            pages = pages.put(pageKey, updated)
+            val persisted = persistArtifactMutationLocked(
+                pageKey = pageKey,
+                previous = previous,
+                updated = updated,
+                expected = expected,
+                durableFailure = failure,
+            )
+            if (!persisted) {
+                restorePageLocked(pageKey, previous)
+                return@withLock rejected(pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
+            }
+            // A retryable/terminal candidate is deliberately not promoted. The
+            // prior committed display remains the reader authority.
+            _state.value = snapshotPages()
+            _display.value = displaySnapshotLocked()
+            PatchResult.Accepted(snapshotLocked(pageKey))
         }
     }
 
@@ -1338,11 +1406,12 @@ class ChapterTranslationStore(
         previous: PageTranslation?,
         updated: PageTranslation,
         expected: PatchPrecondition? = null,
+        durableFailure: DurableFailureMetadata? = null,
     ): Boolean {
         val pageKey = updated.sourceFileName ?: ""
         val isDurable = shouldPersistUpdate(previous, updated)
         val artifactAccepted = if (isDurable || artifactManifest?.pages?.containsKey(pageKey) != true) {
-            persistArtifactMutationLocked(pageKey, previous, updated, expected)
+            persistArtifactMutationLocked(pageKey, previous, updated, expected, durableFailure)
         } else {
             true
         }
@@ -1374,6 +1443,7 @@ class ChapterTranslationStore(
         previous: PageTranslation?,
         updated: PageTranslation,
         expected: PatchPrecondition? = null,
+        durableFailure: DurableFailureMetadata? = null,
     ): Boolean {
         if (artifactStore == null) {
             if (artifactParent == null && artifactFileName == null && translationFile == null && fileCreator == null) {
@@ -1496,16 +1566,30 @@ class ChapterTranslationStore(
         }
         val currentCandidate = manifest.pages.getValue(pageKey).candidate ?: return false
         val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion
-        val persisted = store.persistLiveCandidate(
-            manifest = manifest,
-            pageKey = pageKey,
-            generationId = currentCandidate.generationId,
-            expectedPageVersion = expectedPageVersion,
-            expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
-            pageSnapshot = updated,
-            origin = origin,
-            sourceIdentity = updated.sourceIdentity(pageKey),
-        )
+        val persisted = if (durableFailure != null) {
+            store.persistLiveCandidateAndFailure(
+                manifest = manifest,
+                pageKey = pageKey,
+                generationId = currentCandidate.generationId,
+                expectedPageVersion = expectedPageVersion,
+                expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                pageSnapshot = updated,
+                origin = origin,
+                failure = durableFailure,
+                sourceIdentity = updated.sourceIdentity(pageKey),
+            )
+        } else {
+            store.persistLiveCandidate(
+                manifest = manifest,
+                pageKey = pageKey,
+                generationId = currentCandidate.generationId,
+                expectedPageVersion = expectedPageVersion,
+                expectedDependencyFingerprint = currentCandidate.dependencyFingerprint.orEmpty(),
+                pageSnapshot = updated,
+                origin = origin,
+                sourceIdentity = updated.sourceIdentity(pageKey),
+            )
+        }
         manifest = when (persisted) {
             is ChapterArtifactStore.TransactionOutcome.Committed -> persisted.manifest
             is ChapterArtifactStore.TransactionOutcome.Rejected -> {
@@ -1516,7 +1600,7 @@ class ChapterTranslationStore(
             }
         }
         artifactManifest = manifest
-        if (updated.hasRenderedResult || updated.isTextlessTerminal) {
+        if (durableFailure == null && (updated.hasRenderedResult || updated.isTextlessTerminal)) {
             val promoted = store.promoteLiveCandidate(
                 manifest = manifest,
                 pageKey = pageKey,
@@ -1776,9 +1860,14 @@ class ChapterTranslationStore(
                 pageVersion = record.pageVersion + if (oldKey in moveByOldKey) 1L else 0L,
             )
         }
-        if (updatedPages == manifest.pages) return
+        val updatedFailures = manifest.durableFailures.entries.associate { (_, failure) ->
+            val newPageKey = moveByOldKey[failure.pageKey] ?: failure.pageKey
+            "$newPageKey:${failure.stage.name}" to failure.copy(pageKey = newPageKey)
+        }
+        if (updatedPages == manifest.pages && updatedFailures == manifest.durableFailures) return
         val updated = manifest.copy(
             pages = updatedPages,
+            durableFailures = updatedFailures,
             updatedAtEpochMs = System.currentTimeMillis(),
         )
         if (store.publishManifest(updated)) {
@@ -1837,8 +1926,24 @@ class ChapterTranslationStore(
         val hasPartialArtifact = pagesSnapshot.isNotEmpty() || manifest.pages.isNotEmpty()
         val expectedPageCount = manifest.expectedPageCount
         val expectedPageCountTrusted = manifest.expectedPageCountTrusted
-        val hasDurableFailure = manifest.durableFailures.isNotEmpty() ||
-            pagesSnapshot.values.any { it.isStageFailed && !it.hasRenderedResult && !it.isTextlessTerminal }
+        val durableFailures = manifest.durableFailures.values
+        val hasTerminalDurableFailure = durableFailures.any { failure ->
+            failure.status == ArtifactStageStatus.FAILED_TERMINAL ||
+                failure.status == ArtifactStageStatus.CORRUPT ||
+                failure.status == ArtifactStageStatus.STALE
+        }
+        val hasRetryableDurableFailure = durableFailures.any { failure ->
+            failure.status == ArtifactStageStatus.FAILED_RETRYABLE
+        }
+        val retryablePageKeys = durableFailures
+            .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
+            .mapTo(mutableSetOf()) { it.pageKey }
+        val hasInMemoryFailure = pagesSnapshot.any { (pageKey, page) ->
+            page.isStageFailed &&
+                pageKey !in retryablePageKeys &&
+                !page.hasRenderedResult &&
+                !page.isTextlessTerminal
+        }
         val hasInFlightPage = pagesSnapshot.any { (pageKey, page) ->
             !page.isStageFailed &&
                 (
@@ -1846,7 +1951,8 @@ class ChapterTranslationStore(
                         (!page.hasRenderedResult && !page.isTextlessTerminal && page.isStageRunning)
                     )
         }
-        if (hasDurableFailure) return Translation.State.ERROR
+        if (hasTerminalDurableFailure || hasInMemoryFailure) return Translation.State.ERROR
+        if (hasRetryableDurableFailure) return Translation.State.PAUSED
         if (hasInFlightPage) {
             return if ((expectedPageCountTrusted && expectedPageCount != null && expectedPageCount > 0) ||
                 hasReadableOutput ||

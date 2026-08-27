@@ -1,0 +1,70 @@
+package eu.kanade.translation.batch
+
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBlock
+import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Test
+
+class BatchProgressReconcilerTest {
+
+    @Test
+    fun `retryable pause preserves prefix and leaves tail pending without stranded failures`() {
+        val prefix = readyPage("p0")
+        val anchor = PageTranslation(
+            sourceFileName = "p1",
+            blocks = mutableListOf(block()),
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.PARTIAL,
+            inpaintStatus = StageStatus.READY,
+        )
+        val result = BatchProgressReconciler.reconcile(
+            pageMap = mapOf("p0" to prefix, "p1" to anchor),
+            orderedKeys = listOf("p0", "p1", "p2"),
+            activeGeneration = 0L,
+            pauseOutcome = BatchPass1Outcome(
+                needsTranslation = listOf("p0", "p1"),
+                status = BatchPass1Status.PAUSED,
+                anchorPageKey = "p1",
+                completedPageKeys = setOf("p0"),
+                retryablePageKeys = setOf("p1"),
+                nextEligibleRetryAtEpochMs = 5000L,
+                reason = "provider quota exhausted",
+            ),
+        )
+
+        result.chapterStatus shouldBe Translation.State.PAUSED
+        result.paused shouldBe true
+        result.strandedPages shouldBe emptyMap()
+        result.doneCount shouldBe 1
+        result.partialCount shouldBe 1
+        result.pendingCount shouldBe 1
+        result.failedCount shouldBe 0
+        result.retryableCount shouldBe 1
+        result.nextEligibleRetryAtEpochMs shouldBe 5000L
+    }
+
+    private fun readyPage(key: String) = PageTranslation(
+        sourceFileName = key,
+        blocks = mutableListOf(block()),
+        ocrStatus = StageStatus.READY,
+        translationStatus = StageStatus.READY,
+        inpaintStatus = StageStatus.READY,
+        renderStatus = StageStatus.READY,
+        cleanedImageName = "$key.cleaned.jpg",
+        inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+    )
+
+    private fun block() = TranslationBlock(
+        text = "source",
+        translation = "target",
+        width = 10f,
+        height = 10f,
+        x = 1f,
+        y = 1f,
+        symHeight = 10f,
+        symWidth = 10f,
+        angle = 0f,
+    )
+}

@@ -28,6 +28,41 @@ import java.lang.reflect.Field
 class TranslationManagerAutoArbitrationTest {
 
     @Test
+    fun `manager treats a paused chapter as durable but inactive`() = runBlocking {
+        val source = mockk<HttpSource>(relaxed = true)
+        val manga = mockk<Manga>(relaxed = true)
+        val chapter = mockk<Chapter>(relaxed = true)
+        every { source.id } returns 1L
+        every { manga.id } returns 2L
+        every { manga.source } returns 1L
+        every { chapter.id } returns 10L
+        val scheduler = TranslationScheduler(
+            executor = mockk<eu.kanade.translation.scheduling.TranslationExecutor>(relaxed = true),
+            storeResolver = TranslationStoreResolver { null },
+            immediateStoreResolver = { null },
+        )
+        val queue = MutableStateFlow<List<Translation>>(emptyList())
+        val translator = mockk<ChapterTranslator>(relaxed = true)
+        every { translator.queueState } returns queue
+        every { translator.isRunning } returns false
+        val paused = Translation(source, manga, chapter).also {
+            it.status = Translation.State.PAUSED
+        }
+        queue.value = listOf(paused)
+        val manager = uninitializedManager(scheduler, translator)
+
+        try {
+            manager.isTranslating() shouldBe false
+            manager.isAnyBatchTranslationActive shouldBe false
+            manager.isBatchTranslationActive(10L) shouldBe false
+            manager.isTranslationActive(10L) shouldBe false
+            Unit
+        } finally {
+            scheduler.close()
+        }
+    }
+
+    @Test
     fun `manager keeps auto window active while the chapter batch is queued`() = runBlocking {
         val store = ChapterTranslationStore(
             translationFile = null,

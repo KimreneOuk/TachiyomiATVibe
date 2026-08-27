@@ -23,6 +23,7 @@ enum class AiPageProgressState {
     RUNNING,
     SUCCEEDED,
     FAILED,
+    PAUSED,
 }
 
 @Immutable
@@ -32,8 +33,9 @@ data class AiBatchProgress(
     val running: Int = 0,
     val succeeded: Int = 0,
     val failed: Int = 0,
+    val paused: Int = 0,
 ) {
-    val total: Int get() = pending + buffered + running + succeeded + failed
+    val total: Int get() = pending + buffered + running + succeeded + failed + paused
     val processed: Int get() = succeeded + failed
 }
 
@@ -61,6 +63,9 @@ data class TranslationProgressSnapshot(
     val abortedReason: String? = null,
     val batchPhase: TranslationBatchPhase = TranslationBatchPhase.IDLE,
     val aiProgress: AiBatchProgress = AiBatchProgress(),
+    val pauseAnchorPageKey: String? = null,
+    val pauseReason: String? = null,
+    val nextEligibleRetryAtEpochMs: Long? = null,
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages

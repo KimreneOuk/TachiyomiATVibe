@@ -144,6 +144,32 @@ class TranslationBatchProgressTrackerTest {
     }
 
     @Test
+    fun `retryable pause is a terminal projection with explicit anchor and cooldown`() = runTest {
+        val store = ChapterTranslationStore(null, null)
+        store.preRegisterPages(listOf("001.jpg", "002.jpg"))
+        val tracker = TranslationBatchProgressTracker(1, store, listOf("001.jpg", "002.jpg"), this)
+
+        tracker.pause(
+            BatchPass1Outcome(
+                needsTranslation = listOf("001.jpg", "002.jpg"),
+                status = BatchPass1Status.PAUSED,
+                anchorPageKey = "002.jpg",
+                completedPageKeys = setOf("001.jpg"),
+                retryablePageKeys = setOf("002.jpg"),
+                nextEligibleRetryAtEpochMs = 1234L,
+                reason = "provider quota exhausted",
+            ),
+        )
+        runCurrent()
+
+        tracker.snapshot.value.state shouldBe Translation.State.PAUSED
+        tracker.snapshot.value.batchPhase shouldBe TranslationBatchPhase.FINISHED
+        tracker.snapshot.value.pauseAnchorPageKey shouldBe "002.jpg"
+        tracker.snapshot.value.nextEligibleRetryAtEpochMs shouldBe 1234L
+        tracker.close()
+    }
+
+    @Test
     fun `finish emits immutable terminal snapshot`() = runTest {
         val store = ChapterTranslationStore(null, null)
         val tracker = TranslationBatchProgressTracker(1, store, emptyList(), this)

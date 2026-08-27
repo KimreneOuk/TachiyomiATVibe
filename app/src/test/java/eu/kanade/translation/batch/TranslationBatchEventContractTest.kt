@@ -25,6 +25,7 @@ class TranslationBatchEventContractTest {
             "AiPageProgress",
             "BatchAborted",
             "BatchFinished",
+            "BatchPaused",
         )
     }
 

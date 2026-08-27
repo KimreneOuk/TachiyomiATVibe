@@ -76,8 +76,13 @@ class TranslationForegroundService : Service() {
                 stopSelf()
                 return
             }
-            val active = queued.firstOrNull { it.status == eu.kanade.translation.model.Translation.State.TRANSLATING }
-                ?: queued.first()
+            val active = queued.firstOrNull {
+                it.status == eu.kanade.translation.model.Translation.State.TRANSLATING ||
+                    it.status == eu.kanade.translation.model.Translation.State.QUEUE
+            } ?: run {
+                stopSelf()
+                return
+            }
             publishProgress(
                 active.chapter.name,
                 active.chapter.id?.let(manager::getTranslationProgress)?.first(),

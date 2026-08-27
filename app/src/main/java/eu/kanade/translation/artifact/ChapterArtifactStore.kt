@@ -313,6 +313,7 @@ class ChapterArtifactStore(
         origin: ArtifactOrigin,
         sourceIdentity: SourceIdentity? = null,
         nowEpochMs: Long = System.currentTimeMillis(),
+        durableFailure: DurableFailureMetadata? = null,
     ): TransactionOutcome {
         val rejection = candidateWriteRejection(
             manifest,
@@ -333,14 +334,32 @@ class ChapterArtifactStore(
         if (!documents.publishJson(fileName, pageSnapshot.detachedCopy())) {
             return TransactionOutcome.Rejected("candidate page snapshot publication failed: pageKey=$pageKey")
         }
+        val failureKey = durableFailure?.let { "${it.pageKey}:${it.stage.name}" }
+        val failureRecord = durableFailure?.let { failure ->
+            StageArtifactRecord(
+                status = failure.status,
+                fingerprint = expectedDependencyFingerprint,
+                origin = origin,
+                generationId = generationId,
+                updatedAtEpochMs = nowEpochMs,
+            )
+        }
+        val updatedPage = page.copy(
+            source = sourceIdentity ?: page.source,
+            candidate = page.candidate.copy(pageSnapshotFileName = fileName),
+            pageVersion = page.pageVersion + 1,
+        ).let { candidatePage ->
+            if (durableFailure == null) candidatePage else candidatePage.withStage(durableFailure.stage, failureRecord)
+        }
         val updated = manifest.copy(
             pages = manifest.pages + (
-                pageKey to page.copy(
-                    source = sourceIdentity ?: page.source,
-                    candidate = page.candidate.copy(pageSnapshotFileName = fileName),
-                    pageVersion = page.pageVersion + 1,
-                )
+                pageKey to updatedPage
                 ),
+            durableFailures = if (failureKey == null) {
+                manifest.durableFailures
+            } else {
+                manifest.durableFailures + (failureKey to durableFailure)
+            },
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
@@ -348,6 +367,36 @@ class ChapterArtifactStore(
         }
         return TransactionOutcome.Committed(updated, generationId)
     }
+
+    /**
+     * Candidate snapshot plus retry/terminal metadata in one manifest
+     * publication. The immutable candidate sidecar is written first, then a
+     * single manifest pointer update makes both pieces visible together.
+     */
+    @Synchronized
+    fun persistLiveCandidateAndFailure(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        generationId: String,
+        expectedPageVersion: Long,
+        expectedDependencyFingerprint: String,
+        pageSnapshot: PageTranslation,
+        origin: ArtifactOrigin,
+        failure: DurableFailureMetadata,
+        sourceIdentity: SourceIdentity? = null,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = persistLiveCandidate(
+        manifest = manifest,
+        pageKey = pageKey,
+        generationId = generationId,
+        expectedPageVersion = expectedPageVersion,
+        expectedDependencyFingerprint = expectedDependencyFingerprint,
+        pageSnapshot = pageSnapshot,
+        origin = origin,
+        sourceIdentity = sourceIdentity,
+        nowEpochMs = nowEpochMs,
+        durableFailure = failure,
+    )
 
     /**
      * Commits the complete live candidate page and atomically moves the
@@ -439,6 +488,28 @@ class ChapterArtifactStore(
         if (!documents.publishJson(layout.generationFile(generationId), generationRecord)) {
             return TransactionOutcome.Rejected("generation record publication failed: generationId=$generationId")
         }
+        val promotedTranslation = resolvedPage.translation?.copy(
+            status = if (pageSnapshot.isTextlessTerminal) {
+                ArtifactStageStatus.TEXTLESS
+            } else {
+                ArtifactStageStatus.READY
+            },
+            fingerprint = StageFingerprints.pageSnapshot(pageSnapshot),
+            origin = origin,
+            generationId = null,
+            artifactFileName = committedFile,
+            updatedAtEpochMs = nowEpochMs,
+        ) ?: StageArtifactRecord(
+            status = if (pageSnapshot.isTextlessTerminal) {
+                ArtifactStageStatus.TEXTLESS
+            } else {
+                ArtifactStageStatus.READY
+            },
+            fingerprint = StageFingerprints.pageSnapshot(pageSnapshot),
+            origin = origin,
+            artifactFileName = committedFile,
+            updatedAtEpochMs = nowEpochMs,
+        )
         val updated = manifest.copy(
             pages = manifest.pages + (
                 pageKey to page.copy(
@@ -451,10 +522,12 @@ class ChapterArtifactStore(
                     } else {
                         PageDisplayState.DISPLAY_READY
                     },
+                    translation = promotedTranslation,
                     pageVersion = page.pageVersion + 1,
                 )
                 ),
             activeCandidateGenerationIds = manifest.activeCandidateGenerationIds - generationId,
+            durableFailures = manifest.durableFailures - "$pageKey:${ArtifactStage.TRANSLATION.name}",
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
@@ -508,6 +581,7 @@ class ChapterArtifactStore(
                 ),
             activeCandidateGenerationIds = candidateGenerationId?.let { manifest.activeCandidateGenerationIds - it }
                 ?: manifest.activeCandidateGenerationIds,
+            durableFailures = manifest.durableFailures.filterValues { it.pageKey != pageKey },
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
@@ -529,6 +603,7 @@ class ChapterArtifactStore(
             pages = manifest.pages - pageKey,
             activeCandidateGenerationIds = manifest.activeCandidateGenerationIds -
                 manifest.pages[pageKey]?.candidate?.generationId.orEmpty(),
+            durableFailures = manifest.durableFailures.filterValues { it.pageKey != pageKey },
             updatedAtEpochMs = nowEpochMs,
         )
         if (!publishManifestInternal(updated)) {
@@ -725,7 +800,8 @@ class ChapterArtifactStore(
     private fun recoverInterruptedStages(manifest: ChapterArtifactManifest): ChapterArtifactManifest {
         var changed = false
         val now = System.currentTimeMillis()
-        val pages = manifest.pages.mapValues { (_, page) ->
+        val durableFailures = manifest.durableFailures.toMutableMap()
+        val pages = manifest.pages.mapValues { (pageKey, page) ->
             var updated = page
             ArtifactStage.entries.forEach { stage ->
                 val record = updated.stage(stage)
@@ -738,12 +814,27 @@ class ChapterArtifactStore(
                             updatedAtEpochMs = now,
                         ),
                     )
+                    durableFailures["$pageKey:${stage.name}"] = DurableFailureMetadata(
+                        pageKey = pageKey,
+                        stage = stage,
+                        status = ArtifactStageStatus.FAILED_RETRYABLE,
+                        category = FailureCategory.LEGACY_UNKNOWN,
+                        retryCount = 0,
+                        lastFailureMessage = "process interrupted",
+                        lastFailedAtEpochMs = now,
+                        nextEligibleRetryAtEpochMs = now,
+                        failureFingerprint = record.fingerprint,
+                    )
                 }
             }
             if (updated !== page) updated.copy(pageVersion = page.pageVersion + 1) else updated
         }
         if (!changed) return manifest
-        val recovered = manifest.copy(pages = pages, updatedAtEpochMs = now)
+        val recovered = manifest.copy(
+            pages = pages,
+            durableFailures = durableFailures,
+            updatedAtEpochMs = now,
+        )
         if (!publishManifestInternal(recovered)) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT interrupted-stage recovery publish failed; prior manifest retained: " +

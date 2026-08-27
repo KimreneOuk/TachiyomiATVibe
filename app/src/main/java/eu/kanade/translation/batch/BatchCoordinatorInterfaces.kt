@@ -1,5 +1,7 @@
 package eu.kanade.translation.batch
 
+import eu.kanade.translation.translator.ProviderFailure
+
 /**
  * TachiyomiAT: testable batch coordinator interfaces.
  */
@@ -79,20 +81,100 @@ interface TranslatorLaneWorker {
     suspend fun translate(ref: OcrReadyPageRef)
 
     /**
+     * Typed translation entry point used by the coordinator. Existing workers
+     * may keep implementing [translate]; provider-aware workers can override
+     * this bridge to return a retryable pause without throwing it through the
+     * lane. Unexpected exceptions still reach the coordinator's failure path.
+     */
+    suspend fun translateOutcome(ref: OcrReadyPageRef): ChunkCompletionOutcome =
+        try {
+            translate(ref)
+            ChunkCompletionOutcome.Completed(setOf(ref.pageKey))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: eu.kanade.translation.translator.ProviderFailureException) {
+            e.toChunkCompletionOutcome(ref.pageKey)
+        }
+
+    /**
      * Complete the current image chunk. For a buffered AI lane this is the
      * first point at which queued planner emissions may make provider calls.
      */
+    /**
+     * Complete the current image chunk. This legacy hook intentionally keeps
+     * its Unit return type so existing lane implementations remain source
+     * compatible; provider-aware lanes override [completeChunkOutcome].
+     */
     suspend fun completeChunk(finalChunk: Boolean) {}
+
+    /** Typed chunk completion bridge used by the coordinator. */
+    suspend fun completeChunkOutcome(finalChunk: Boolean): ChunkCompletionOutcome {
+        completeChunk(finalChunk)
+        return ChunkCompletionOutcome.Completed()
+    }
 }
 
 interface RenderJoinWorker {
     fun onNativeBranchDone(pageKey: String)
     fun onTranslationBranchDone(pageKey: String)
+
+    /** Closes the translation gate without making a paused page renderable. */
+    fun onTranslationBranchPaused(pageKey: String) = onTranslationBranchDone(pageKey)
     suspend fun awaitAndRender(pageKey: String)
+
+    /**
+     * Settles a page whose translation branch is paused/terminal. A default
+     * no-op keeps the committed display untouched; production joins may still
+     * override it when they need to close an explicit gate.
+     */
+    suspend fun awaitAndSettle(pageKey: String) {}
 }
 
 /** Result of the only live batch coordinator's first pass. */
-data class BatchPass1Outcome(val needsTranslation: List<String>)
+enum class BatchPass1Status {
+    COMPLETED,
+    PAUSED,
+    FAILED,
+}
+
+/** Typed result returned by one translator chunk or one per-page request. */
+sealed interface ChunkCompletionOutcome {
+    data class Completed(
+        val completedPageKeys: Set<String> = emptySet(),
+    ) : ChunkCompletionOutcome
+
+    data class Paused(
+        val anchorPageKey: String,
+        val completedPageKeys: Set<String> = emptySet(),
+        val retryablePageKeys: Set<String> = setOf(anchorPageKey),
+        val failure: ProviderFailure? = null,
+        val nextEligibleRetryAtEpochMs: Long? = failure?.retryAfterAtEpochMs,
+        val reason: String = failure?.safeSummary ?: "Translation paused; retryable provider work remains",
+    ) : ChunkCompletionOutcome
+
+    data class Failed(
+        val anchorPageKey: String? = null,
+        val completedPageKeys: Set<String> = emptySet(),
+        val terminalPageKeys: Set<String> = anchorPageKey?.let(::setOf).orEmpty(),
+        val failure: ProviderFailure? = null,
+        val reason: String = failure?.safeSummary ?: "Translation failed",
+    ) : ChunkCompletionOutcome
+}
+
+/** Result of the only live batch coordinator's first pass. */
+data class BatchPass1Outcome(
+    val needsTranslation: List<String>,
+    val status: BatchPass1Status = BatchPass1Status.COMPLETED,
+    val anchorPageKey: String? = null,
+    val completedPageKeys: Set<String> = emptySet(),
+    val retryablePageKeys: Set<String> = emptySet(),
+    val terminalPageKeys: Set<String> = emptySet(),
+    val failure: ProviderFailure? = null,
+    val nextEligibleRetryAtEpochMs: Long? = null,
+    val reason: String? = null,
+) {
+    val isPaused: Boolean get() = status == BatchPass1Status.PAUSED
+}
 
 open class BatchScheduleListener {
     open fun ocrStarted(pageKey: String) {}
@@ -107,8 +189,27 @@ open class BatchScheduleListener {
     open fun allOcrBarrierReleased() {}
     open fun pass1BarrierReleased() {}
     open fun pass2Started() {}
+    open fun batchPaused(outcome: BatchPass1Outcome) {}
 
     companion object {
         val NOOP: BatchScheduleListener = BatchScheduleListener()
     }
+}
+
+internal fun eu.kanade.translation.translator.ProviderFailureException.toChunkCompletionOutcome(
+    pageKey: String,
+): ChunkCompletionOutcome = when (failure.retryability) {
+    eu.kanade.translation.translator.ProviderFailureRetryability.PAUSE,
+    eu.kanade.translation.translator.ProviderFailureRetryability.RETRY_AFTER,
+    -> ChunkCompletionOutcome.Paused(
+        anchorPageKey = pageKey,
+        failure = failure,
+        nextEligibleRetryAtEpochMs = failure.retryAfterAtEpochMs,
+    )
+    eu.kanade.translation.translator.ProviderFailureRetryability.RETRY_NOW,
+    eu.kanade.translation.translator.ProviderFailureRetryability.TERMINAL,
+    -> ChunkCompletionOutcome.Failed(
+        anchorPageKey = pageKey,
+        failure = failure,
+    )
 }

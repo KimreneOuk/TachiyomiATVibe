@@ -46,7 +46,7 @@ data class ChapterArtifactManifest(
     val updatedAtEpochMs: Long = 0L,
 ) {
     companion object {
-        const val SCHEMA_VERSION = 1
+        const val SCHEMA_VERSION = 2
     }
 }
 

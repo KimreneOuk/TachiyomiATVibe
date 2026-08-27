@@ -11,7 +11,7 @@ class BatchTranslationForegroundPolicyTest {
         BatchTranslationForegroundPolicy.shouldKeepServiceRunning(listOf(Translation.State.QUEUE)) shouldBe true
         BatchTranslationForegroundPolicy.shouldKeepServiceRunning(listOf(Translation.State.TRANSLATING)) shouldBe true
         BatchTranslationForegroundPolicy.shouldKeepServiceRunning(
-            listOf(Translation.State.TRANSLATED, Translation.State.ERROR),
+            listOf(Translation.State.TRANSLATED, Translation.State.ERROR, Translation.State.PAUSED),
         ) shouldBe false
         BatchTranslationForegroundPolicy.shouldKeepServiceRunning(emptyList()) shouldBe false
     }

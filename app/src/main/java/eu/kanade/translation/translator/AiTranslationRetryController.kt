@@ -962,13 +962,15 @@ internal fun applyAiChunkOutcomeToPages(
     outcome: AiChunkOutcome,
     pages: Map<String, PageTranslation>,
     pageIndexes: Map<String, Int> = emptyMap(),
+    pageKeys: Set<String>? = null,
 ) {
     if (outcome.blockTranslations.isEmpty()) return
     val indexes = normalizedAdapterPageIndexes(pages.keys, pageIndexes)
-    pages.forEach { (pageKey, page) ->
+    val targetPages = if (pageKeys == null) pages else pages.filterKeys { it in pageKeys }
+    targetPages.forEach { (pageKey, page) ->
         StableBlockIds.assign(page, indexes.getValue(pageKey))
     }
-    val blocksById = pages.values
+    val blocksById = targetPages.values
         .asSequence()
         .flatMap { it.blocks.asSequence() }
         .mapNotNull { block ->

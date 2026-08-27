@@ -254,7 +254,9 @@ class TranslationManager(
         }
     }
 
-    fun isTranslating(): Boolean = queueState.value.isNotEmpty()
+    fun isTranslating(): Boolean = queueState.value.any {
+        it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
+    }
 
     fun getActivePageKeys(chapterId: Long): List<String> {
         val store = activeStores.get(chapterId) ?: return emptyList()
@@ -297,8 +299,11 @@ class TranslationManager(
 
     fun pauseTranslation() {
         translator.pause()
-        translator.stop()
     }
+
+    /** Re-admits retryable paused work without disturbing another active chapter. */
+    suspend fun requeueTranslation(chapterId: Long, force: Boolean = false): Boolean =
+        translator.requeueExisting(chapterId, force)
 
     fun clearQueue() {
         translator.clearQueue()

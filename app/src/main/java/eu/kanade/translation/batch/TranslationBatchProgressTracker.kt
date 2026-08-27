@@ -54,7 +54,11 @@ class TranslationBatchProgressTracker(
             projection = reduce(projection, event)
             val updatedSnapshot = snapshotFor(projection)
             _snapshot.value = updatedSnapshot
-            if (event is TranslationBatchEvent.BatchFinished || event is TranslationBatchEvent.BatchAborted) {
+            if (
+                event is TranslationBatchEvent.BatchFinished ||
+                event is TranslationBatchEvent.BatchAborted ||
+                event is TranslationBatchEvent.BatchPaused
+            ) {
                 // Publish immutable terminal state before releasing store/tracker ownership.
                 terminalSnapshot.complete(updatedSnapshot)
                 onTerminalSnapshot?.invoke(updatedSnapshot)
@@ -85,11 +89,14 @@ class TranslationBatchProgressTracker(
     ) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.FAILED, reason)
     fun markTranslatePartial(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.PARTIAL)
     fun markTranslateSkipped(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.SKIPPED)
+    fun markTranslatePaused(pageKey: String, reason: String) =
+        phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.PAUSED, reason)
     fun markAiPending(pageKey: String) = aiProgress(pageKey, AiPageProgressState.PENDING)
     fun markAiBuffered(pageKey: String) = aiProgress(pageKey, AiPageProgressState.BUFFERED)
     fun markAiRunning(pageKey: String) = aiProgress(pageKey, AiPageProgressState.RUNNING)
     fun markAiSucceeded(pageKey: String) = aiProgress(pageKey, AiPageProgressState.SUCCEEDED)
     fun markAiFailed(pageKey: String, reason: String) = aiProgress(pageKey, AiPageProgressState.FAILED, reason)
+    fun markAiPaused(pageKey: String, reason: String) = aiProgress(pageKey, AiPageProgressState.PAUSED, reason)
     fun markInpaintRunning(pageKey: String) = phase(pageKey, BatchPhase.INPAINT, PhaseStatus.RUNNING)
     fun markInpaintDone(pageKey: String) = phase(pageKey, BatchPhase.INPAINT, PhaseStatus.DONE)
     fun markInpaintFailed(
@@ -125,6 +132,21 @@ class TranslationBatchProgressTracker(
                 result.failedCount,
                 result.partialCount,
                 orderedPageKeys.size,
+            ),
+        )
+    }
+
+    fun pause(outcome: BatchPass1Outcome, totalPages: Int = orderedPageKeys.size) {
+        terminalEventQueued.set(true)
+        emit(
+            TranslationBatchEvent.BatchPaused(
+                anchorPageKey = outcome.anchorPageKey,
+                completedPages = outcome.completedPageKeys.size,
+                totalPages = totalPages,
+                retryableCount = outcome.retryablePageKeys.size.coerceAtLeast(1),
+                reason = outcome.reason ?: "Translation paused; retryable provider work remains",
+                nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
+                retryablePageKeys = outcome.retryablePageKeys,
             ),
         )
     }
@@ -171,7 +193,13 @@ class TranslationBatchProgressTracker(
         batchPhase = state.batchPhase,
         chapterId = chapterId,
         aiPageStates = state.aiPageStates,
-    ).copy(aborted = state.aborted, abortedReason = state.abortReason)
+    ).copy(
+        aborted = state.aborted,
+        abortedReason = state.abortReason,
+        pauseAnchorPageKey = state.pauseAnchorPageKey,
+        pauseReason = state.pauseReason,
+        nextEligibleRetryAtEpochMs = state.nextEligibleRetryAtEpochMs,
+    )
 
     data class Projection(
         val chapterState: Translation.State = Translation.State.TRANSLATING,
@@ -180,6 +208,9 @@ class TranslationBatchProgressTracker(
         val aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
         val aborted: Boolean = false,
         val abortReason: String? = null,
+        val pauseAnchorPageKey: String? = null,
+        val pauseReason: String? = null,
+        val nextEligibleRetryAtEpochMs: Long? = null,
     )
 
     companion object {
@@ -201,6 +232,13 @@ class TranslationBatchProgressTracker(
                 chapterState = event.state,
                 batchPhase = TranslationBatchPhase.FINISHED,
             )
+            is TranslationBatchEvent.BatchPaused -> previous.copy(
+                chapterState = Translation.State.PAUSED,
+                batchPhase = TranslationBatchPhase.FINISHED,
+                pauseAnchorPageKey = event.anchorPageKey,
+                pauseReason = event.reason,
+                nextEligibleRetryAtEpochMs = event.nextEligibleRetryAtEpochMs,
+            )
             is TranslationBatchEvent.BatchAborted -> previous.copy(
                 chapterState = Translation.State.ERROR,
                 batchPhase = TranslationBatchPhase.FINISHED,
@@ -216,6 +254,7 @@ class TranslationBatchProgressTracker(
             PhaseStatus.FAILED -> StageStatus.FAILED
             PhaseStatus.SKIPPED -> StageStatus.SKIPPED
             PhaseStatus.PARTIAL -> StageStatus.PARTIAL
+            PhaseStatus.PAUSED -> StageStatus.PENDING
         }
 
         fun computeSnapshot(
@@ -295,6 +334,7 @@ class TranslationBatchProgressTracker(
                 running = rows.count { it.aiState == AiPageProgressState.RUNNING },
                 succeeded = rows.count { it.aiState == AiPageProgressState.SUCCEEDED },
                 failed = rows.count { it.aiState == AiPageProgressState.FAILED },
+                paused = rows.count { it.aiState == AiPageProgressState.PAUSED },
             )
             return TranslationProgressSnapshot(
                 chapterId, chapterState, done + failed, rows.size, active?.index ?: 0, active?.pageKey, activeStages,
@@ -396,7 +436,9 @@ class TranslationBatchProgressTracker(
             previous: AiPageProgressState?,
             next: AiPageProgressState,
         ): AiPageProgressState = if (
-            previous == AiPageProgressState.SUCCEEDED || previous == AiPageProgressState.FAILED
+            previous == AiPageProgressState.SUCCEEDED ||
+            previous == AiPageProgressState.FAILED ||
+            previous == AiPageProgressState.PAUSED
         ) {
             previous
         } else {

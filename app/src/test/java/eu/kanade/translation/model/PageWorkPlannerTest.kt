@@ -1,6 +1,10 @@
 package eu.kanade.translation.model
 
 import eu.kanade.translation.artifact.ArtifactOrigin
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.FailureCategory
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -183,6 +187,60 @@ class PageWorkPlannerTest {
         plan.firstWorkPageKey shouldBe "page-2"
         plan.pages[1].stage(BatchStage.OCR).decision shouldBe StageDecision.FAILED
         plan.pages[2].stage(BatchStage.TRANSLATION).decision shouldBe StageDecision.WAIT_FOR_DEPENDENCY
+    }
+
+    @Test
+    fun `retryable and terminal durable failures expose distinct planner decisions`() {
+        val expected = fingerprints()
+        val retryable = DurableFailureMetadata(
+            pageKey = "page-1",
+            stage = ArtifactStage.TRANSLATION,
+            status = ArtifactStageStatus.FAILED_RETRYABLE,
+            category = FailureCategory.TRANSIENT,
+            retryCount = 1,
+            lastFailedAtEpochMs = 100L,
+            nextEligibleRetryAtEpochMs = 200L,
+            failureFingerprint = expected.translation,
+        )
+        val future = PageWorkPlanner.planPage(
+            BatchPlannerInput(
+                pageKey = "page-1",
+                page = PageTranslation(sourceFileName = "page-1"),
+                expectedFingerprints = expected,
+                durableFailure = retryable,
+                nowEpochMs = 199L,
+            ),
+        ).stage(BatchStage.TRANSLATION)
+        future.decision shouldBe StageDecision.FAILED_RETRYABLE
+        future.retryEligible shouldBe false
+        future.nextEligibleRetryAtEpochMs shouldBe 200L
+
+        val due = PageWorkPlanner.planPage(
+            BatchPlannerInput(
+                pageKey = "page-1",
+                page = PageTranslation(sourceFileName = "page-1"),
+                expectedFingerprints = expected,
+                durableFailure = retryable,
+                nowEpochMs = 200L,
+            ),
+        ).stage(BatchStage.TRANSLATION)
+        due.decision shouldBe StageDecision.FAILED_RETRYABLE
+        due.retryEligible shouldBe true
+
+        val terminal = PageWorkPlanner.planPage(
+            BatchPlannerInput(
+                pageKey = "page-1",
+                page = PageTranslation(sourceFileName = "page-1"),
+                expectedFingerprints = expected,
+                durableFailure = retryable.copy(
+                    status = ArtifactStageStatus.FAILED_TERMINAL,
+                    category = FailureCategory.CONFIGURATION,
+                ),
+                nowEpochMs = 500L,
+            ),
+        ).stage(BatchStage.TRANSLATION)
+        terminal.decision shouldBe StageDecision.FAILED_TERMINAL
+        terminal.retryEligible shouldBe false
     }
 
     private fun BatchPageWorkPlan.stage(stage: BatchStage): StageWorkDecision =

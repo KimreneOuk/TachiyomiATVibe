@@ -1039,6 +1039,104 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
+    fun `candidate and retryable failure publish atomically without replacing committed display`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val committedGeneration = migrated.pages.getValue("page.jpg").committed
+            .shouldNotBeNull().generationId
+        val opened = store.openCandidate(
+            manifest = migrated,
+            pageKey = "page.jpg",
+            origin = ArtifactOrigin.BATCH,
+            expectedPageVersion = 0L,
+            dependencyFingerprint = "deps",
+            nowEpochMs = 100L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val generationId = opened.generationId.shouldNotBeNull()
+        val openedPage = opened.manifest.pages.getValue("page.jpg")
+        val partial = displayablePage().apply {
+            sourceFileName = "page.jpg"
+            translationStatus = StageStatus.PARTIAL
+        }
+        val failure = DurableFailureMetadata(
+            pageKey = "page.jpg",
+            stage = ArtifactStage.TRANSLATION,
+            status = ArtifactStageStatus.FAILED_RETRYABLE,
+            category = FailureCategory.TRANSIENT,
+            retryCount = 1,
+            lastFailedAtEpochMs = 101L,
+            nextEligibleRetryAtEpochMs = 200L,
+            failureFingerprint = "deps",
+            envelopeId = "envelope-hash",
+            missingBlockIds = setOf("block-hash"),
+        )
+
+        val persisted = store.persistLiveCandidateAndFailure(
+            manifest = opened.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = openedPage.pageVersion,
+            expectedDependencyFingerprint = "deps",
+            pageSnapshot = partial,
+            origin = ArtifactOrigin.BATCH,
+            failure = failure,
+            nowEpochMs = 101L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        persisted.manifest.pages.getValue("page.jpg").committed
+            .shouldNotBeNull().generationId shouldBe committedGeneration
+        persisted.manifest.pages.getValue("page.jpg").candidate.shouldNotBeNull()
+        persisted.manifest.durableFailures["page.jpg:TRANSLATION"] shouldBe failure
+        persisted.manifest.pages.getValue("page.jpg").translation
+            .shouldNotBeNull().status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+
+        io.write(layout.legacyCompanionImageFile(partial.cleanedImageName!!), byteArrayOf(2))
+        val promoted = store.promoteLiveCandidate(
+            manifest = persisted.manifest,
+            pageKey = "page.jpg",
+            generationId = generationId,
+            expectedPageVersion = persisted.manifest.pages.getValue("page.jpg").pageVersion,
+            expectedDependencyFingerprint = "deps",
+            pageSnapshot = partial.copy(translationStatus = StageStatus.READY),
+            origin = ArtifactOrigin.BATCH,
+            nowEpochMs = 102L,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        promoted.manifest.durableFailures.containsKey("page.jpg:TRANSLATION") shouldBe false
+        promoted.manifest.pages.getValue("page.jpg").candidate.shouldBeNull()
+    }
+
+    @Test
+    fun `process restart turns an interrupted artifact stage into a durable retryable failure`() {
+        val io = FakeChapterDocumentIo()
+        val store = transactionStore(io)
+        val migrated = store.loadOrMigrate(legacySnapshot()).manifest
+        val interrupted = migrated.copy(
+            authority = ManifestAuthority.ARTIFACTS,
+            pages = migrated.pages + (
+                "page.jpg" to migrated.pages.getValue("page.jpg").copy(
+                    translation = StageArtifactRecord(
+                        status = ArtifactStageStatus.RUNNING,
+                        fingerprint = "deps",
+                        origin = ArtifactOrigin.BATCH,
+                    ),
+                )
+                ),
+        )
+        store.publishManifest(interrupted) shouldBe true
+
+        val restarted = store.loadOrMigrate(legacySnapshot()).manifest
+
+        restarted.pages.getValue("page.jpg").translation
+            .shouldNotBeNull().status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+        val failure = restarted.durableFailures["page.jpg:TRANSLATION"].shouldNotBeNull()
+        failure.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+        failure.category shouldBe FailureCategory.LEGACY_UNKNOWN
+        failure.nextEligibleRetryAtEpochMs shouldNotBe null
+    }
+
+    @Test
     fun `concurrent candidate opens serialize against the same manifest snapshot`() {
         val io = FakeChapterDocumentIo()
         val store = transactionStore(io)

@@ -1,5 +1,6 @@
 package eu.kanade.translation.batch
 
+import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -45,8 +46,10 @@ class SequentialBatchCoordinator(
         // compute remains page-serial so OCR/inference/inpaint never overlap.
         val fallbackChunkPageCount = if (remote) MAX_NATIVE_LOOKAHEAD_PAGES + 1 else 1
         val needsTranslation = linkedSetOf<String>()
+        val completedPassPageKeys = linkedSetOf<String>()
         var cursor = 0
         var retainedProbe: ChunkPage? = null
+        var stoppingOutcome: ChunkCompletionOutcome? = null
 
         BatchTranslationDiagnostics.memorySnapshot(
             stage = "pass1",
@@ -103,8 +106,8 @@ class SequentialBatchCoordinator(
         suspend fun processChunk(
             chunk: List<ChunkPage>,
             finalChunk: Boolean,
-        ) = coroutineScope {
-            if (chunk.isEmpty()) return@coroutineScope
+        ): ChunkCompletionOutcome = coroutineScope {
+            if (chunk.isEmpty()) return@coroutineScope ChunkCompletionOutcome.Completed()
 
             BatchTranslationDiagnostics.memorySnapshot(
                 stage = "chunk_ocr_barrier",
@@ -114,6 +117,8 @@ class SequentialBatchCoordinator(
 
             val nativeDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
             val translationDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
+            val nonRenderablePages = ConcurrentHashMap.newKeySet<String>()
+            var inlineTranslationOutcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
 
             fun nativeGate(pageKey: String): CompletableDeferred<Unit> =
                 nativeDone.getOrPut(pageKey) { CompletableDeferred() }
@@ -121,15 +126,17 @@ class SequentialBatchCoordinator(
             fun translationGate(pageKey: String): CompletableDeferred<Unit> =
                 translationDone.getOrPut(pageKey) { CompletableDeferred() }
 
-            fun completeTranslationBranch(pageKey: String) {
-                renderJoin.onTranslationBranchDone(pageKey)
-                translationGate(pageKey).complete(Unit)
-            }
-
             val renderJob = async {
                 chunk.forEach { page ->
                     nativeGate(page.pageKey).await()
                     translationGate(page.pageKey).await()
+                    val nonRenderable = nonRenderablePages.contains(page.pageKey)
+                    if (nonRenderable) {
+                        renderJoin.awaitAndSettle(page.pageKey)
+                        nativeDone.remove(page.pageKey)
+                        translationDone.remove(page.pageKey)
+                        return@forEach
+                    }
                     listener.renderStarted(page.pageKey)
                     val startedAt = System.nanoTime()
                     try {
@@ -154,39 +161,108 @@ class SequentialBatchCoordinator(
                 }
             }
 
+            fun failureOutcome(pageKey: String?, error: Throwable): ChunkCompletionOutcome =
+                if (error is ProviderFailureException) {
+                    if (pageKey != null) {
+                        error.toChunkCompletionOutcome(pageKey)
+                    } else {
+                        ChunkCompletionOutcome.Failed(
+                            failure = error.failure,
+                            reason = error.failure.safeSummary,
+                        )
+                    }
+                } else {
+                    // Keep the legacy lane contract isolated per page/chunk. Production
+                    // provider failures are returned as typed outcomes by the adapter; an
+                    // untyped exception from an old test/translator must not strand every
+                    // later page in the chapter.
+                    ChunkCompletionOutcome.Completed()
+                }
+
+            fun pausedPages(outcome: ChunkCompletionOutcome): Set<String> {
+                val anchor = when (outcome) {
+                    is ChunkCompletionOutcome.Paused -> outcome.anchorPageKey
+                    is ChunkCompletionOutcome.Failed -> outcome.anchorPageKey
+                    is ChunkCompletionOutcome.Completed -> null
+                } ?: return emptySet()
+                val anchorIndex = chunk.indexOfFirst { it.pageKey == anchor }.takeIf { it >= 0 }
+                if (anchorIndex == null) return emptySet()
+                return chunk.asSequence()
+                    .filter { page ->
+                        val explicitlyCompleted = when (outcome) {
+                            is ChunkCompletionOutcome.Paused -> page.pageKey in outcome.completedPageKeys
+                            is ChunkCompletionOutcome.Failed -> page.pageKey in outcome.completedPageKeys
+                            is ChunkCompletionOutcome.Completed -> false
+                        }
+                        !explicitlyCompleted &&
+                            (page.pageKey == anchor || chunk.indexOf(page) >= anchorIndex)
+                    }
+                    .map { it.pageKey }
+                    .toSet()
+            }
+
+            suspend fun settleTranslationBranches(outcome: ChunkCompletionOutcome) {
+                val paused = pausedPages(outcome)
+                nonRenderablePages.addAll(paused)
+                chunk.forEach { page ->
+                    if (page.pageKey in paused) {
+                        renderJoin.onTranslationBranchPaused(page.pageKey)
+                    } else {
+                        renderJoin.onTranslationBranchDone(page.pageKey)
+                    }
+                    translationGate(page.pageKey).complete(Unit)
+                }
+            }
+
+            fun normalizeCompletedOutcome(outcome: ChunkCompletionOutcome): ChunkCompletionOutcome {
+                if (outcome !is ChunkCompletionOutcome.Completed || outcome.completedPageKeys.isNotEmpty()) {
+                    return outcome
+                }
+                return outcome.copy(
+                    completedPageKeys = chunk.asSequence()
+                        .mapNotNull { page -> page.ref?.let { page.pageKey } }
+                        .toSet(),
+                )
+            }
+
             val translationJob = if (remote) {
                 async {
                     if (translatorWorker.usesChunkAdmission) {
                         chunk.forEach { page ->
                             if (page.ref != null) listener.translationRequested(page.pageKey)
                         }
-                        try {
-                            translatorWorker.completeChunk(finalChunk)
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            val pageKey = chunk.firstOrNull { it.ref != null }?.pageKey
-                            BatchTranslationDiagnostics.failure(
-                                stage = BatchDiagnosticStage.TRANSLATION,
-                                pageKey = pageKey ?: "<chunk>",
-                                errorClass = e::class.java.simpleName,
-                            )
-                        } finally {
-                            chunk.forEach { page ->
-                                if (page.ref != null) listener.translationFinished(page.pageKey)
-                                completeTranslationBranch(page.pageKey)
-                            }
-                        }
-                    } else {
+                        val outcome = normalizeCompletedOutcome(
+                            try {
+                                translatorWorker.completeChunkOutcome(finalChunk)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                val pageKey = chunk.firstOrNull { it.ref != null }?.pageKey
+                                BatchTranslationDiagnostics.failure(
+                                    stage = BatchDiagnosticStage.TRANSLATION,
+                                    pageKey = pageKey ?: "<chunk>",
+                                    errorClass = e::class.java.simpleName,
+                                )
+                                failureOutcome(pageKey, e)
+                            },
+                        )
                         chunk.forEach { page ->
+                            if (page.ref != null) listener.translationFinished(page.pageKey)
+                        }
+                        settleTranslationBranches(outcome)
+                        outcome
+                    } else {
+                        var outcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
+                        chunk.forEach { page ->
+                            if (outcome !is ChunkCompletionOutcome.Completed) return@forEach
                             val ref = page.ref
                             if (ref == null) {
-                                completeTranslationBranch(page.pageKey)
                                 return@forEach
                             }
                             listener.translationRequested(page.pageKey)
                             val startedAt = System.nanoTime()
                             try {
-                                translatorWorker.translate(ref)
+                                outcome = translatorWorker.translateOutcome(ref)
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e
                                 BatchTranslationDiagnostics.failure(
@@ -194,6 +270,7 @@ class SequentialBatchCoordinator(
                                     pageKey = page.pageKey,
                                     errorClass = e::class.java.simpleName,
                                 )
+                                outcome = failureOutcome(page.pageKey, e)
                             } finally {
                                 BatchTranslationDiagnostics.timing(
                                     stage = BatchDiagnosticStage.TRANSLATION,
@@ -202,19 +279,26 @@ class SequentialBatchCoordinator(
                                     itemCount = ref.blockFingerprints.size,
                                 )
                                 listener.translationFinished(page.pageKey)
-                                completeTranslationBranch(page.pageKey)
                             }
                         }
-                        try {
-                            translatorWorker.completeChunk(finalChunk)
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            BatchTranslationDiagnostics.failure(
-                                stage = BatchDiagnosticStage.TRANSLATION,
-                                pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
-                                errorClass = e::class.java.simpleName,
+                        if (outcome is ChunkCompletionOutcome.Completed) {
+                            outcome = normalizeCompletedOutcome(
+                                try {
+                                    translatorWorker.completeChunkOutcome(finalChunk)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    BatchTranslationDiagnostics.failure(
+                                        stage = BatchDiagnosticStage.TRANSLATION,
+                                        pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
+                                        errorClass = e::class.java.simpleName,
+                                    )
+                                    failureOutcome(chunk.firstOrNull { it.ref != null }?.pageKey, e)
+                                },
                             )
                         }
+                        settleTranslationBranches(outcome)
+                        outcome
                     }
                 }
             } else {
@@ -230,32 +314,37 @@ class SequentialBatchCoordinator(
                         chunk.forEach { page ->
                             if (page.ref != null) listener.translationRequested(page.pageKey)
                         }
-                        try {
-                            translatorWorker.completeChunk(finalChunk)
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            BatchTranslationDiagnostics.failure(
-                                stage = BatchDiagnosticStage.TRANSLATION,
-                                pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
-                                errorClass = e::class.java.simpleName,
-                            )
-                        } finally {
-                            chunk.forEach { page ->
-                                if (page.ref != null) listener.translationFinished(page.pageKey)
-                                completeTranslationBranch(page.pageKey)
-                            }
-                        }
-                    } else {
+                        val outcome = normalizeCompletedOutcome(
+                            try {
+                                translatorWorker.completeChunkOutcome(finalChunk)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                BatchTranslationDiagnostics.failure(
+                                    stage = BatchDiagnosticStage.TRANSLATION,
+                                    pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
+                                    errorClass = e::class.java.simpleName,
+                                )
+                                failureOutcome(chunk.firstOrNull { it.ref != null }?.pageKey, e)
+                            },
+                        )
                         chunk.forEach { page ->
+                            if (page.ref != null) listener.translationFinished(page.pageKey)
+                        }
+                        settleTranslationBranches(outcome)
+                        inlineTranslationOutcome = outcome
+                    } else {
+                        var outcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
+                        chunk.forEach { page ->
+                            if (outcome !is ChunkCompletionOutcome.Completed) return@forEach
                             val ref = page.ref
                             if (ref == null) {
-                                completeTranslationBranch(page.pageKey)
                                 return@forEach
                             }
                             listener.translationRequested(page.pageKey)
                             val startedAt = System.nanoTime()
                             try {
-                                translatorWorker.translate(ref)
+                                outcome = translatorWorker.translateOutcome(ref)
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e
                                 BatchTranslationDiagnostics.failure(
@@ -263,6 +352,7 @@ class SequentialBatchCoordinator(
                                     pageKey = page.pageKey,
                                     errorClass = e::class.java.simpleName,
                                 )
+                                outcome = failureOutcome(page.pageKey, e)
                             } finally {
                                 BatchTranslationDiagnostics.timing(
                                     stage = BatchDiagnosticStage.TRANSLATION,
@@ -271,19 +361,26 @@ class SequentialBatchCoordinator(
                                     itemCount = ref.blockFingerprints.size,
                                 )
                                 listener.translationFinished(page.pageKey)
-                                completeTranslationBranch(page.pageKey)
                             }
                         }
-                        try {
-                            translatorWorker.completeChunk(finalChunk)
-                        } catch (e: Exception) {
-                            if (e is CancellationException) throw e
-                            BatchTranslationDiagnostics.failure(
-                                stage = BatchDiagnosticStage.TRANSLATION,
-                                pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
-                                errorClass = e::class.java.simpleName,
+                        if (outcome is ChunkCompletionOutcome.Completed) {
+                            outcome = normalizeCompletedOutcome(
+                                try {
+                                    translatorWorker.completeChunkOutcome(finalChunk)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    BatchTranslationDiagnostics.failure(
+                                        stage = BatchDiagnosticStage.TRANSLATION,
+                                        pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
+                                        errorClass = e::class.java.simpleName,
+                                    )
+                                    failureOutcome(chunk.firstOrNull { it.ref != null }?.pageKey, e)
+                                },
                             )
                         }
+                        settleTranslationBranches(outcome)
+                        inlineTranslationOutcome = outcome
                     }
                 }
 
@@ -319,8 +416,9 @@ class SequentialBatchCoordinator(
                     }
                 }
 
-                translationJob?.await()
+                val translationOutcome = translationJob?.await() ?: inlineTranslationOutcome
                 renderJob.await()
+                translationOutcome
             } finally {
                 unreleasedHandoffs.values.forEach(nativeWorker::releaseNativeHandoff)
             }
@@ -382,7 +480,36 @@ class SequentialBatchCoordinator(
                 if (chunk.isEmpty()) continue
                 listener.allOcrBarrierReleased()
                 val finalChunk = cursor >= orderedPages.size && retainedProbe == null
-                processChunk(chunk, finalChunk)
+                val outcome = processChunk(chunk, finalChunk)
+                completedPassPageKeys += outcome.completedPageKeysForPass()
+                if (outcome !is ChunkCompletionOutcome.Completed) {
+                    stoppingOutcome = outcome
+                    break
+                }
+            }
+
+            val stopped = stoppingOutcome
+            if (stopped != null) {
+                val paused = stopped as? ChunkCompletionOutcome.Paused
+                val failed = stopped as? ChunkCompletionOutcome.Failed
+                val outcome = BatchPass1Outcome(
+                    needsTranslation = needsTranslation.toList(),
+                    status = if (paused != null) BatchPass1Status.PAUSED else BatchPass1Status.FAILED,
+                    anchorPageKey = paused?.anchorPageKey ?: failed?.anchorPageKey,
+                    completedPageKeys = completedPassPageKeys.toSet(),
+                    retryablePageKeys = paused?.retryablePageKeys.orEmpty(),
+                    terminalPageKeys = failed?.terminalPageKeys.orEmpty(),
+                    failure = paused?.failure ?: failed?.failure,
+                    nextEligibleRetryAtEpochMs = paused?.nextEligibleRetryAtEpochMs,
+                    reason = paused?.reason ?: failed?.reason,
+                )
+                if (paused != null) listener.batchPaused(outcome)
+                BatchTranslationDiagnostics.memorySnapshot(
+                    stage = "pass1",
+                    queueDepth = 0,
+                    activePages = 0,
+                )
+                return@coroutineScope outcome
             }
 
             listener.pass1BarrierReleased()
@@ -391,7 +518,10 @@ class SequentialBatchCoordinator(
                 queueDepth = 0,
                 activePages = 0,
             )
-            BatchPass1Outcome(needsTranslation = needsTranslation.toList())
+            BatchPass1Outcome(
+                needsTranslation = needsTranslation.toList(),
+                completedPageKeys = completedPassPageKeys.toSet(),
+            )
         } finally {
             retainedProbe?.ref?.let(nativeWorker::releaseNativeHandoff)
             retainedProbe = null
@@ -400,6 +530,12 @@ class SequentialBatchCoordinator(
 
     private fun elapsedMs(startedAt: Long): Long =
         ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(0L)
+
+    private fun ChunkCompletionOutcome.completedPageKeysForPass(): Set<String> = when (this) {
+        is ChunkCompletionOutcome.Completed -> completedPageKeys
+        is ChunkCompletionOutcome.Paused -> completedPageKeys
+        is ChunkCompletionOutcome.Failed -> completedPageKeys
+    }
 
     private data class ChunkPage(
         val pageKey: String,

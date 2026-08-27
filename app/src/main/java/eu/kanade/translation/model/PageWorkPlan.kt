@@ -1,6 +1,7 @@
 package eu.kanade.translation.model
 
 import eu.kanade.translation.artifact.ArtifactOrigin
+import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.artifact.PageArtifactRecord
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -32,6 +33,14 @@ enum class StageDecision {
     RUN,
     WAIT_FOR_DEPENDENCY,
     TERMINAL_COMPLETE,
+
+    /** Durable retryable failure; eligible once its cooldown has elapsed. */
+    FAILED_RETRYABLE,
+
+    /** Durable failure requiring explicit user/configuration/source action. */
+    FAILED_TERMINAL,
+
+    /** Legacy in-memory failure with no durable retryability metadata. */
     FAILED,
 }
 
@@ -56,6 +65,8 @@ data class StageWorkDecision(
     val stage: BatchStage,
     val decision: StageDecision,
     val reason: StageReasonCode,
+    val nextEligibleRetryAtEpochMs: Long? = null,
+    val retryEligible: Boolean = false,
 )
 
 /** The current configuration identity expected for each stage. */
@@ -78,6 +89,12 @@ data class BatchPlannerInput(
     /** Current source bytes hash, when the batch could read the page source. */
     val sourceFingerprint: String? = null,
     val translationOrigin: ArtifactOrigin? = null,
+    /** Durable failure metadata, when the artifact manifest owns this page. */
+    val durableFailure: DurableFailureMetadata? = null,
+    /** Clock used for retry cooldown eligibility; injectable for planner tests. */
+    val nowEpochMs: Long = System.currentTimeMillis(),
+    /** Explicit user force-retry bypasses a retryable cooldown. */
+    val forceRetry: Boolean = false,
 )
 
 data class BatchPageWorkPlan(

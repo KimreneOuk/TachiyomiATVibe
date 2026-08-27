@@ -16,9 +16,10 @@ import androidx.core.content.edit
  * are silently dropped on rehydration.
  *
  * Only queue MEMBERSHIP + ORDER is persisted here. [Translation.State] is
- * `@Transient` and rebuilt as [Translation.State.QUEUE] on rehydration (per
- * the owner decision: rehydrate but require Start — never auto-start
- * background OCR/LLM work on launch).
+ * `@Transient`; queue rehydration normally rebuilds it as [Translation.State.QUEUE],
+ * while the chapter artifact may refine that to [Translation.State.PAUSED] or
+ * [Translation.State.ERROR]. In every case rehydration requires an explicit
+ * user start/rearm and never auto-starts background OCR/LLM work on launch.
  *
  * Why SharedPreferences (not a SQLDelight table): the download queue solves
  * the identical problem (persist an ordered chapter list across restart,

@@ -196,4 +196,8 @@ data class DurableFailureMetadata(
      * retryable.
      */
     val failureFingerprint: String? = null,
+    /** Optional contextual envelope identity for resumable AI work. */
+    val envelopeId: String? = null,
+    /** Stable block ids still missing from a partial envelope candidate. */
+    val missingBlockIds: Set<String> = emptySet(),
 )

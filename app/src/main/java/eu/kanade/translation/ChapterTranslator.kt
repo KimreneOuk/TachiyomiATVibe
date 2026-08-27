@@ -6,6 +6,7 @@ import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -23,12 +24,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import mihon.core.archive.ArchiveReader
@@ -155,7 +155,12 @@ class ChapterTranslator(
         val restored = mutableListOf<Translation>()
         for (id in ids) {
             val translation = Translation.fromChapterId(id) ?: continue
-            translation.status = Translation.State.QUEUE
+            val durable = durableQueueState(translation)
+            translation.status = when (durable?.status) {
+                Translation.State.PAUSED -> Translation.State.PAUSED
+                Translation.State.ERROR -> Translation.State.ERROR
+                else -> Translation.State.QUEUE
+            }
             restored += translation
         }
         if (restored.isNotEmpty()) {
@@ -174,6 +179,41 @@ class ChapterTranslator(
         }
     }
 
+    private data class DurableQueueState(
+        val status: Translation.State?,
+        val nextEligibleRetryAtEpochMs: Long?,
+    )
+
+    /** Reads only durable status; it never starts work or creates a directory. */
+    private suspend fun durableQueueState(translation: Translation): DurableQueueState? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val active = pipeline.activeStoreResolver?.invoke(translation)
+                val store = active ?: provider.findTranslationFile(
+                    translation.chapter.name,
+                    translation.chapter.scanlator,
+                    translation.manga.title,
+                    translation.source,
+                )?.takeIf { it.exists() }?.let(ChapterTranslationStore::open)
+                    ?: provider.findMangaDir(translation.manga.title, translation.source)?.let { parent ->
+                        ChapterTranslationStore.openArtifact(
+                            parent,
+                            provider.getTranslationFileName(
+                                translation.chapter.name,
+                                translation.chapter.scanlator,
+                            ),
+                        )
+                    }
+                store ?: return@withContext null
+                DurableQueueState(
+                    status = store.artifactStatus(),
+                    nextEligibleRetryAtEpochMs = store.durableFailuresSnapshot().values
+                        .firstOrNull { it.stage == ArtifactStage.TRANSLATION }
+                        ?.nextEligibleRetryAtEpochMs,
+                )
+            }.getOrNull()
+        }
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     @Volatile
@@ -190,7 +230,12 @@ class ChapterTranslator(
             return false
         }
 
-        val pending = queueState.value.filter { it.status != Translation.State.TRANSLATED }
+        val pending = queueState.value.filter {
+            it.status != Translation.State.TRANSLATED && it.status != Translation.State.PAUSED
+        }
+        if (pending.isEmpty()) {
+            return false
+        }
         pending.forEach { if (it.status != Translation.State.QUEUE) it.status = Translation.State.QUEUE }
         isPaused = false
         launchTranslatorJob()
@@ -242,6 +287,28 @@ class ChapterTranslator(
         isPaused = true
     }
 
+    /**
+     * Idempotently re-admits a paused chapter. A cooldown is honored unless
+     * the caller explicitly requests a force retry; rearming while another
+     * chapter is active only nudges the queue flow and never starts a second
+     * source worker.
+     */
+    suspend fun requeueExisting(chapterId: Long, force: Boolean = false): Boolean {
+        val translation = queueState.value.firstOrNull { it.chapter.id == chapterId } ?: return false
+        val durable = durableQueueState(translation)
+        val next = durable?.nextEligibleRetryAtEpochMs
+        if (!force && next != null && next > System.currentTimeMillis()) return false
+        if (translation.status != Translation.State.PAUSED && durable?.status != Translation.State.PAUSED) {
+            return translation.status == Translation.State.QUEUE
+        }
+        translation.status = Translation.State.QUEUE
+        isPaused = false
+        _queueState.update { it.toList() }
+        persistQueue()
+        if (!isRunning) launchTranslatorJob()
+        return true
+    }
+
     fun clearQueue() {
         cancelTranslatorJob()
         internalClearQueue()
@@ -252,19 +319,28 @@ class ChapterTranslator(
 
         translationJob = scope.launch {
             val activeTranslationFlow = queueState.transformLatest { queue ->
-                while (true) {
-                    val activeTranslations =
-                        queue.asSequence().filter { it.status.value <= Translation.State.TRANSLATING.value }
-                            .groupBy { it.source }.toList().take(1).map { (_, translations) -> translations.first() }
-                    emit(activeTranslations)
-
-                    if (activeTranslations.isEmpty()) break
-                    val activeTranslationsErroredFlow =
-                        combine(activeTranslations.map(Translation::statusFlow)) { states ->
-                            states.contains(Translation.State.ERROR)
-                        }.filter { it }
-                    activeTranslationsErroredFlow.first()
-                }
+                if (queue.isEmpty()) return@transformLatest
+                // Translation.status is mutable state inside each queue item, so observing only
+                // queueState misses a transition to PAUSED/TRANSLATED and leaves the scheduler
+                // waiting forever for the old ERROR-only wake-up. Recompute active membership
+                // whenever any queued item's status changes; a paused item therefore releases
+                // its source lane while another source/chapter may continue.
+                combine(queue.map(Translation::statusFlow)) {
+                    val candidates = queue.asSequence().filter {
+                        it.status == Translation.State.QUEUE ||
+                            it.status == Translation.State.TRANSLATING
+                    }.toList()
+                    // A rearmed paused entry must not preempt a chapter that is
+                    // already translating. The queue still serializes by source;
+                    // this preference only keeps a live worker stable while the
+                    // rearm is idempotently recorded.
+                    val active = candidates.filter { it.status == Translation.State.TRANSLATING }
+                    (if (active.isNotEmpty()) active else candidates).asSequence()
+                        .groupBy { it.source }
+                        .toList()
+                        .take(1)
+                        .map { (_, translations) -> translations.first() }
+                }.distinctUntilChanged().collect { emit(it) }
             }.distinctUntilChanged()
             supervisorScope {
                 val translationJobs = mutableMapOf<Translation, Job>()
@@ -292,8 +368,10 @@ class ChapterTranslator(
                 translation.status == Translation.State.READY_WITH_WARNINGS
             ) {
                 removeFromQueue(translation)
+            } else if (translation.status == Translation.State.PAUSED) {
+                isPaused = true
             }
-            if (areAllTranslationsFinished()) {
+            if (translation.status != Translation.State.PAUSED && areAllTranslationsFinished()) {
                 stop()
             }
         } catch (e: Throwable) {
@@ -501,13 +579,22 @@ class ChapterTranslator(
                 } catch (_: Exception) {}
             }
 
-            val pageStates = store.state.value
-            val reconciliation = eu.kanade.translation.batch.BatchProgressReconciler.reconcile(
-                pageMap = pageStates,
-                orderedKeys = batchOrderedPageKeys,
-                activeGeneration = store.currentGeneration,
-            )
-            translation.status = reconciliation.chapterStatus
+            // A durable pause/terminal outcome already owns its unresolved
+            // anchor. Running the ordinary reconciler here would synthesize
+            // tail failures and destroy the retry boundary.
+            when (store.artifactStatus()) {
+                Translation.State.PAUSED -> translation.status = Translation.State.PAUSED
+                Translation.State.ERROR -> translation.status = Translation.State.ERROR
+                else -> {
+                    val pageStates = store.state.value
+                    val reconciliation = eu.kanade.translation.batch.BatchProgressReconciler.reconcile(
+                        pageMap = pageStates,
+                        orderedKeys = batchOrderedPageKeys,
+                        activeGeneration = store.currentGeneration,
+                    )
+                    translation.status = reconciliation.chapterStatus
+                }
+            }
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 // If it's no longer in the queue, it was explicitly removed (cancelled).
@@ -576,7 +663,9 @@ class ChapterTranslator(
     }
 
     private fun areAllTranslationsFinished(): Boolean {
-        return queueState.value.none { it.status.value <= Translation.State.TRANSLATING.value }
+        return queueState.value.none {
+            it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
+        }
     }
 
     private fun addToQueue(translation: Translation) {

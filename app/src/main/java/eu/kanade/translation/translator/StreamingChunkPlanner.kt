@@ -58,6 +58,11 @@ class StreamingChunkPlanner(
      *  exceeds the context budget). Finalized after [flushRemaining]. */
     val rejectedPages: Map<String, String> get() = rejected
 
+    /** Records a natural-order page refusal discovered before envelope flush. */
+    fun reject(pageKey: String, reason: String) {
+        rejected.putIfAbsent(pageKey, reason)
+    }
+
     /** Feed the next page IN ORDER. Returns null when nothing flushed and no
      *  page completed on this call; otherwise the emission. Flushes at the
      *  IDENTICAL points and with IDENTICAL chunk contents as

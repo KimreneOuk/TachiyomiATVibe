@@ -67,7 +67,7 @@ fun ChapterTranslationIndicator(
             downloaded = downloaded,
             onClick = onClick,
         )
-        Translation.State.QUEUE, Translation.State.TRANSLATING -> TranslatingIndicator(
+        Translation.State.QUEUE, Translation.State.TRANSLATING, Translation.State.PAUSED -> TranslatingIndicator(
             enabled = enabled,
             modifier = modifier,
             onClick = onClick,
