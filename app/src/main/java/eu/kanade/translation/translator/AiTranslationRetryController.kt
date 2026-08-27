@@ -511,18 +511,21 @@ private suspend fun requestStructured(
 ): ContextualTranslationBatch {
     val before = budget.attemptsUsed
     var failed = false
+    var admissionDeferred = false
     return try {
         withRequestRetryBudget(budget) {
             translator.translateContextualStructured(outgoing.chunk)
         }
     } catch (e: Throwable) {
         failed = true
+        admissionDeferred = e is ProviderRequestPausedException ||
+            e is RequestRetryBudgetExhaustedException
         throw e
     } finally {
         // Real providers consume at the governor boundary. Test doubles and
         // legacy implementations which do not expose that boundary still
         // represent one logical request and must consume one budget unit.
-        if (budget.attemptsUsed == before && !budget.isExhausted) {
+        if (budget.attemptsUsed == before && !budget.isExhausted && !admissionDeferred) {
             if (failed) {
                 budget.tryConsumeAttempt()
             } else {

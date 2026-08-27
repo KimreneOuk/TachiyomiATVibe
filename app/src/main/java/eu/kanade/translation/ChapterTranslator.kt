@@ -134,6 +134,13 @@ class ChapterTranslator(
     val queueState = _queueState.asStateFlow()
 
     /**
+     * Returns the queue ids currently durable on disk. Startup restoration is
+     * intentionally asynchronous, so lifecycle deletion must consult this
+     * snapshot before [restoreQueue] has repopulated [queueState].
+     */
+    fun persistedQueueChapterIds(): Set<Long> = queueStore.load().toSet()
+
+    /**
      * TachiyomiAT: persists the queue (ordered chapter ids) to disk after every
      * mutation so a crash mid-batch no longer loses it. One SharedPreferences
      * editor batch; idempotent.

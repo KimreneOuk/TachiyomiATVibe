@@ -404,7 +404,10 @@ object LegacyArtifactMigration {
                             status = ArtifactStageStatus.FAILED_RETRYABLE,
                             category = FailureCategory.LEGACY_UNKNOWN,
                             retryCount = page.retryCount,
-                            lastFailureMessage = page.activeError,
+                            // Legacy activeError may contain provider response text,
+                            // prompts, URLs, or source paths. Migration is a durable
+                            // boundary, so retain only a bounded stage category.
+                            lastFailureMessage = legacyFailureSummary(stage),
                             lastFailedAtEpochMs = page.updatedAt,
                             nextEligibleRetryAtEpochMs = null,
                             failureFingerprint = null,
@@ -440,6 +443,9 @@ object LegacyArtifactMigration {
         page.renderStatus == StageStatus.FAILED -> ArtifactStage.LAYOUT
         else -> null
     }
+
+    private fun legacyFailureSummary(stage: ArtifactStage): String =
+        "Legacy ${stage.name.lowercase()} state requires retry"
 
     private fun glossaryPointerOrNull(snapshot: LegacyChapterSnapshot): GlossaryPointer? {
         if (snapshot.glossary.isEmpty()) return null

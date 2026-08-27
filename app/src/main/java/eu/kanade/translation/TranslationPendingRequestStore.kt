@@ -23,7 +23,7 @@ class TranslationPendingRequestStore(
 
     @Synchronized
     fun add(chapterId: Long, phase: TranslationRequestPhase, reason: String?) {
-        preferences.edit {
+        preferences.edit(commit = true) {
             putString(chapterId.toString(), phase.name)
             if (reason.isNullOrBlank()) {
                 remove(reasonKey(chapterId))
@@ -45,7 +45,7 @@ class TranslationPendingRequestStore(
 
     @Synchronized
     fun remove(chapterId: Long) {
-        preferences.edit {
+        preferences.edit(commit = true) {
             remove(chapterId.toString())
             remove(reasonKey(chapterId))
         }
@@ -53,7 +53,7 @@ class TranslationPendingRequestStore(
 
     @Synchronized
     fun clear() {
-        preferences.edit { clear() }
+        preferences.edit(commit = true) { clear() }
     }
 
     private companion object {

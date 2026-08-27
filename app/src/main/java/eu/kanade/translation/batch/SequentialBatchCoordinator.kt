@@ -72,6 +72,7 @@ class SequentialBatchCoordinator(
                     pageKey = pageKey,
                     errorClass = e::class.java.simpleName,
                 )
+                throw UnexpectedBatchStageException(pageKey, BatchDiagnosticStage.OCR)
             } finally {
                 BatchTranslationDiagnostics.timing(
                     stage = BatchDiagnosticStage.OCR,
@@ -148,6 +149,7 @@ class SequentialBatchCoordinator(
                             pageKey = page.pageKey,
                             errorClass = e::class.java.simpleName,
                         )
+                        throw UnexpectedBatchStageException(page.pageKey, BatchDiagnosticStage.RENDER)
                     } finally {
                         BatchTranslationDiagnostics.timing(
                             stage = BatchDiagnosticStage.RENDER,
@@ -161,7 +163,11 @@ class SequentialBatchCoordinator(
                 }
             }
 
-            fun failureOutcome(pageKey: String?, error: Throwable): ChunkCompletionOutcome =
+            fun failureOutcome(
+                pageKey: String?,
+                error: Throwable,
+                stage: BatchDiagnosticStage,
+            ): ChunkCompletionOutcome =
                 if (error is ProviderFailureException) {
                     if (pageKey != null) {
                         error.toChunkCompletionOutcome(pageKey)
@@ -172,17 +178,20 @@ class SequentialBatchCoordinator(
                         )
                     }
                 } else {
-                    // Keep the legacy lane contract isolated per page/chunk. Production
-                    // provider failures are returned as typed outcomes by the adapter; an
-                    // untyped exception from an old test/translator must not strand every
-                    // later page in the chapter.
-                    ChunkCompletionOutcome.Completed()
+                    // Keep unexpected worker failures distinct from provider outcomes. Only
+                    // the affected page is terminal; the coordinator stops this pass so later
+                    // pages remain pending rather than being reported as successful.
+                    ChunkCompletionOutcome.Unexpected(
+                        anchorPageKey = pageKey ?: chunk.firstOrNull()?.pageKey ?: "<chunk>",
+                        stage = stage,
+                    )
                 }
 
             fun pausedPages(outcome: ChunkCompletionOutcome): Set<String> {
                 val anchor = when (outcome) {
                     is ChunkCompletionOutcome.Paused -> outcome.anchorPageKey
                     is ChunkCompletionOutcome.Failed -> outcome.anchorPageKey
+                    is ChunkCompletionOutcome.Unexpected -> outcome.anchorPageKey
                     is ChunkCompletionOutcome.Completed -> null
                 } ?: return emptySet()
                 val anchorIndex = chunk.indexOfFirst { it.pageKey == anchor }.takeIf { it >= 0 }
@@ -192,6 +201,7 @@ class SequentialBatchCoordinator(
                         val explicitlyCompleted = when (outcome) {
                             is ChunkCompletionOutcome.Paused -> page.pageKey in outcome.completedPageKeys
                             is ChunkCompletionOutcome.Failed -> page.pageKey in outcome.completedPageKeys
+                            is ChunkCompletionOutcome.Unexpected -> page.pageKey in outcome.completedPageKeys
                             is ChunkCompletionOutcome.Completed -> false
                         }
                         !explicitlyCompleted &&
@@ -243,7 +253,7 @@ class SequentialBatchCoordinator(
                                     pageKey = pageKey ?: "<chunk>",
                                     errorClass = e::class.java.simpleName,
                                 )
-                                failureOutcome(pageKey, e)
+                                failureOutcome(pageKey, e, BatchDiagnosticStage.TRANSLATION)
                             },
                         )
                         chunk.forEach { page ->
@@ -270,7 +280,7 @@ class SequentialBatchCoordinator(
                                     pageKey = page.pageKey,
                                     errorClass = e::class.java.simpleName,
                                 )
-                                outcome = failureOutcome(page.pageKey, e)
+                                outcome = failureOutcome(page.pageKey, e, BatchDiagnosticStage.TRANSLATION)
                             } finally {
                                 BatchTranslationDiagnostics.timing(
                                     stage = BatchDiagnosticStage.TRANSLATION,
@@ -293,7 +303,11 @@ class SequentialBatchCoordinator(
                                         pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
                                         errorClass = e::class.java.simpleName,
                                     )
-                                    failureOutcome(chunk.firstOrNull { it.ref != null }?.pageKey, e)
+                                    failureOutcome(
+                                        chunk.firstOrNull { it.ref != null }?.pageKey,
+                                        e,
+                                        BatchDiagnosticStage.TRANSLATION,
+                                    )
                                 },
                             )
                         }
@@ -325,7 +339,11 @@ class SequentialBatchCoordinator(
                                     pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
                                     errorClass = e::class.java.simpleName,
                                 )
-                                failureOutcome(chunk.firstOrNull { it.ref != null }?.pageKey, e)
+                                failureOutcome(
+                                    chunk.firstOrNull { it.ref != null }?.pageKey,
+                                    e,
+                                    BatchDiagnosticStage.TRANSLATION,
+                                )
                             },
                         )
                         chunk.forEach { page ->
@@ -352,7 +370,7 @@ class SequentialBatchCoordinator(
                                     pageKey = page.pageKey,
                                     errorClass = e::class.java.simpleName,
                                 )
-                                outcome = failureOutcome(page.pageKey, e)
+                                outcome = failureOutcome(page.pageKey, e, BatchDiagnosticStage.TRANSLATION)
                             } finally {
                                 BatchTranslationDiagnostics.timing(
                                     stage = BatchDiagnosticStage.TRANSLATION,
@@ -375,7 +393,11 @@ class SequentialBatchCoordinator(
                                         pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
                                         errorClass = e::class.java.simpleName,
                                     )
-                                    failureOutcome(chunk.firstOrNull { it.ref != null }?.pageKey, e)
+                                    failureOutcome(
+                                        chunk.firstOrNull { it.ref != null }?.pageKey,
+                                        e,
+                                        BatchDiagnosticStage.TRANSLATION,
+                                    )
                                 },
                             )
                         }
@@ -402,6 +424,7 @@ class SequentialBatchCoordinator(
                             pageKey = page.pageKey,
                             errorClass = e::class.java.simpleName,
                         )
+                        throw UnexpectedBatchStageException(page.pageKey, BatchDiagnosticStage.INPAINT)
                     } finally {
                         BatchTranslationDiagnostics.timing(
                             stage = BatchDiagnosticStage.INPAINT,
@@ -440,7 +463,12 @@ class SequentialBatchCoordinator(
 
                 while (cursor < orderedPages.size && !boundaryReached) {
                     val page = orderedPages[cursor++]
-                    val entry = runOcr(page)
+                    val entry = try {
+                        runOcr(page)
+                    } catch (e: UnexpectedBatchStageException) {
+                        chunk.forEach { previous -> previous.ref?.let(nativeWorker::releaseNativeHandoff) }
+                        throw e
+                    }
                     val admission = try {
                         if (adaptiveChunks && entry.ref != null) {
                             try {
@@ -452,13 +480,16 @@ class SequentialBatchCoordinator(
                                     pageKey = entry.pageKey,
                                     errorClass = e::class.java.simpleName,
                                 )
-                                ChunkAdmission.ACCEPT
+                                entry.ref?.let(nativeWorker::releaseNativeHandoff)
+                                chunk.forEach { page -> page.ref?.let(nativeWorker::releaseNativeHandoff) }
+                                throw UnexpectedBatchStageException(entry.pageKey, BatchDiagnosticStage.TRANSLATION)
                             }
                         } else {
                             ChunkAdmission.ACCEPT
                         }
                     } catch (e: CancellationException) {
                         entry.ref?.let(nativeWorker::releaseNativeHandoff)
+                        chunk.forEach { page -> page.ref?.let(nativeWorker::releaseNativeHandoff) }
                         throw e
                     }
 
@@ -492,16 +523,18 @@ class SequentialBatchCoordinator(
             if (stopped != null) {
                 val paused = stopped as? ChunkCompletionOutcome.Paused
                 val failed = stopped as? ChunkCompletionOutcome.Failed
+                val unexpected = stopped as? ChunkCompletionOutcome.Unexpected
                 val outcome = BatchPass1Outcome(
                     needsTranslation = needsTranslation.toList(),
                     status = if (paused != null) BatchPass1Status.PAUSED else BatchPass1Status.FAILED,
-                    anchorPageKey = paused?.anchorPageKey ?: failed?.anchorPageKey,
+                    anchorPageKey = paused?.anchorPageKey ?: failed?.anchorPageKey ?: unexpected?.anchorPageKey,
                     completedPageKeys = completedPassPageKeys.toSet(),
                     retryablePageKeys = paused?.retryablePageKeys.orEmpty(),
-                    terminalPageKeys = failed?.terminalPageKeys.orEmpty(),
+                    terminalPageKeys = failed?.terminalPageKeys.orEmpty() + unexpected?.terminalPageKeys.orEmpty(),
                     failure = paused?.failure ?: failed?.failure,
                     nextEligibleRetryAtEpochMs = paused?.nextEligibleRetryAtEpochMs,
-                    reason = paused?.reason ?: failed?.reason,
+                    reason = paused?.reason ?: failed?.reason ?: unexpected?.reason,
+                    unexpectedStage = unexpected?.stage,
                 )
                 if (paused != null) listener.batchPaused(outcome)
                 BatchTranslationDiagnostics.memorySnapshot(
@@ -522,6 +555,22 @@ class SequentialBatchCoordinator(
                 needsTranslation = needsTranslation.toList(),
                 completedPageKeys = completedPassPageKeys.toSet(),
             )
+        } catch (e: UnexpectedBatchStageException) {
+            val outcome = BatchPass1Outcome(
+                needsTranslation = needsTranslation.toList(),
+                status = BatchPass1Status.FAILED,
+                anchorPageKey = e.pageKey,
+                completedPageKeys = completedPassPageKeys.toSet(),
+                terminalPageKeys = setOf(e.pageKey),
+                reason = e.reason,
+                unexpectedStage = e.stage,
+            )
+            BatchTranslationDiagnostics.failure(
+                stage = e.stage,
+                pageKey = e.pageKey,
+                errorClass = e::class.java.simpleName,
+            )
+            return@coroutineScope outcome
         } finally {
             retainedProbe?.ref?.let(nativeWorker::releaseNativeHandoff)
             retainedProbe = null
@@ -535,6 +584,7 @@ class SequentialBatchCoordinator(
         is ChunkCompletionOutcome.Completed -> completedPageKeys
         is ChunkCompletionOutcome.Paused -> completedPageKeys
         is ChunkCompletionOutcome.Failed -> completedPageKeys
+        is ChunkCompletionOutcome.Unexpected -> completedPageKeys
     }
 
     private data class ChunkPage(
@@ -542,6 +592,13 @@ class SequentialBatchCoordinator(
         val pageIndex: Int,
         val ref: OcrReadyPageRef?,
     )
+
+    private class UnexpectedBatchStageException(
+        val pageKey: String,
+        val stage: BatchDiagnosticStage,
+    ) : RuntimeException("Unexpected ${stage.name.lowercase()} stage failure") {
+        val reason: String = "Unexpected ${stage.name.lowercase()} stage failure"
+    }
 
     companion object {
         /** Native work remains bounded for non-contextual translators. */

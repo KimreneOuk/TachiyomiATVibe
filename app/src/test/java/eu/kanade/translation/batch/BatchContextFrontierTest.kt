@@ -78,6 +78,18 @@ class BatchContextFrontierTest {
         frontier.rollingContext shouldContain "two => TWO"
     }
 
+    @Test
+    fun `partial page never advances the context frontier`() {
+        val frontier = BatchContextFrontier(mapOf("p0" to 0, "p1" to 1))
+        frontier.record(
+            "p0",
+            translatedPage("zero", "ZERO").copy(translationStatus = StageStatus.PARTIAL),
+        )
+
+        frontier.frontierIndex shouldBe -1
+        frontier.rollingContext shouldBe ""
+    }
+
     private fun translatedPage(source: String, translation: String) = PageTranslation(
         ocrStatus = StageStatus.READY,
         translationStatus = StageStatus.READY,

@@ -53,17 +53,29 @@ class BatchContextFrontier(
         terminalFailure: Boolean = false,
     ) {
         val pageIndex = indexes[pageKey] ?: return
+        // PARTIAL output is displayable but not a complete source=>target pair. Do
+        // not let it advance the rolling context frontier or seed a later request.
+        // A terminal failure still records a gap so later AI work remains fenced.
+        if (!isContextReady(page)) {
+            if (terminalFailure && !isTextless(page)) {
+                failures += pageIndex
+                if (gapIndex == null && pageIndex == frontierIndex + 1) {
+                    gapIndex = pageIndex
+                }
+            }
+            return
+        }
         completed[pageIndex] = pageKey to page.detachedCopy()
         if (terminalFailure && !isTextless(page)) failures += pageIndex
         if (gapIndex != null) return
 
         while (true) {
-            val next = completed[frontierIndex + 1] ?: return
             val nextIndex = frontierIndex + 1
             if (nextIndex in failures) {
                 gapIndex = nextIndex
                 return
             }
+            val next = completed[nextIndex] ?: return
             rollingContext = TranslationContextChunkPlanner.updateRollingContext(
                 rollingContext,
                 mapOf(next.first to next.second),
@@ -82,7 +94,6 @@ class BatchContextFrontier(
         page.ocrStatus in setOf(StageStatus.READY, StageStatus.TEXTLESS) &&
             (
                 page.translationStatus == StageStatus.READY ||
-                    page.translationStatus == StageStatus.PARTIAL ||
                     page.translationStatus == StageStatus.SKIPPED ||
                     page.translationStatus == StageStatus.FAILED
                 )
@@ -91,4 +102,8 @@ class BatchContextFrontier(
         page.ocrStatus == StageStatus.TEXTLESS ||
             page.isTextlessTerminal ||
             (page.blocks.none { it.text.isNotBlank() } && page.translationStatus == StageStatus.SKIPPED)
+
+    private fun isContextReady(page: PageTranslation): Boolean =
+        page.ocrStatus in setOf(StageStatus.READY, StageStatus.TEXTLESS) &&
+            (page.translationStatus == StageStatus.READY || isTextless(page))
 }

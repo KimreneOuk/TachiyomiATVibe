@@ -287,7 +287,7 @@ class TranslationManager(
             queuedState = queuedState,
             hasPendingRequest = pendingTranslationRequestsState.value.containsKey(chapterId) ||
                 pendingRequestStore.load().contains(chapterId),
-        )
+        ) || chapterId in translator.persistedQueueChapterIds()
     }
 
     /** Protected ids are passed to the pending chapter deleter at reader finish. */
@@ -301,6 +301,7 @@ class TranslationManager(
             .mapNotNullTo(this) { it.chapter.id }
         addAll(pendingTranslationRequestsState.value.keys)
         addAll(pendingRequestStore.load())
+        addAll(translator.persistedQueueChapterIds())
     }
 
     private fun setPendingTranslationRequest(
@@ -1968,6 +1969,17 @@ class TranslationManager(
         if (cancelBatchQueue) {
             translator.clearQueue()
             clearAllPendingTranslationRequests()
+        }
+    }
+
+    /**
+     * Runs the synchronous teardown bridge away from the reader main thread.
+     * The underlying method remains synchronous for existing lifecycle callers,
+     * but its SAF-backed store cleanup must never execute on UI dispatchers.
+     */
+    suspend fun cancelAllPageTranslationsOffMain(cancelBatchQueue: Boolean = false) {
+        withContext(Dispatchers.IO) {
+            cancelAllPageTranslations(cancelBatchQueue)
         }
     }
 

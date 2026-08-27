@@ -157,7 +157,7 @@ class SequentialBatchCoordinatorTest {
     }
 
     @Test
-    fun `terminal provider failure releases current chunk before next OCR`() = runTest {
+    fun `unexpected translation failure stops before admitting the next OCR`() = runTest {
         val events = RecordingListener()
         val native = ImmediateNativeWorker()
         val translator = ProbeChunkTranslator(
@@ -168,16 +168,17 @@ class SequentialBatchCoordinatorTest {
         val render = RecordingRenderJoin()
         val coordinator = SequentialBatchCoordinator(native, translator, render, events)
 
-        coordinator.runPass1(
+        val outcome = coordinator.runPass1(
             listOf("p0" to 0, "p1" to 1, "p2" to 2),
             TranslatorComputeClass.REMOTE_IO,
         )
 
-        val firstRender = events.log.indexOf("renderFinished:p0")
-        val nextOcr = events.log.indexOf("ocrStarted:p2")
-        (firstRender >= 0) shouldBe true
-        (nextOcr > firstRender) shouldBe true
-        render.rendered shouldContainExactly listOf("p0", "p1", "p2")
+        outcome.status shouldBe BatchPass1Status.FAILED
+        outcome.anchorPageKey shouldBe "p0"
+        outcome.terminalPageKeys shouldBe setOf("p0")
+        outcome.unexpectedStage shouldBe BatchDiagnosticStage.TRANSLATION
+        events.contains("ocrStarted:p2") shouldBe false
+        render.rendered shouldBe emptyList()
     }
 
     @Test
@@ -406,7 +407,7 @@ class SequentialBatchCoordinatorTest {
     }
 
     @Test
-    fun `per-page failures are isolated and the rest of the batch completes`() = runTest {
+    fun `unexpected stage failure stops the pass without completing later pages`() = runTest {
         val events = RecordingListener()
         val native = object : NativeLaneWorker {
             override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
@@ -431,9 +432,69 @@ class SequentialBatchCoordinatorTest {
             TranslatorComputeClass.REMOTE_IO,
         )
 
-        render.rendered shouldBe listOf("p0", "p1", "p2", "p3")
-        outcome.needsTranslation.toSet() shouldBe setOf("p1", "p2", "p3")
-        events.barrierReleased.get() shouldBe true
+        outcome.status shouldBe BatchPass1Status.FAILED
+        outcome.anchorPageKey shouldBe "p0"
+        outcome.terminalPageKeys shouldBe setOf("p0")
+        outcome.unexpectedStage shouldBe BatchDiagnosticStage.OCR
+        outcome.completedPageKeys shouldBe emptySet()
+        render.rendered shouldBe emptyList()
+        events.barrierReleased.get() shouldBe false
+    }
+
+    @Test
+    fun `unexpected inpaint failure is not reported as completed`() = runTest {
+        val events = RecordingListener()
+        val native = object : NativeLaneWorker {
+            override suspend fun runOcrStage(pageKey: String, pageIndex: Int) =
+                OcrReadyPageRef(pageKey, pageIndex, 0L, emptyList())
+
+            override suspend fun runInpaintStage(pageKey: String) {
+                if (pageKey == "p0") throw RuntimeException("inpaint stage failure")
+            }
+        }
+        val translator = object : TranslatorLaneWorker {
+            override suspend fun translate(ref: OcrReadyPageRef) = Unit
+        }
+        val render = RecordingRenderJoin()
+
+        val outcome = SequentialBatchCoordinator(native, translator, render, events).runPass1(
+            listOf("p0" to 0, "p1" to 1),
+            TranslatorComputeClass.REMOTE_IO,
+        )
+
+        outcome.status shouldBe BatchPass1Status.FAILED
+        outcome.anchorPageKey shouldBe "p0"
+        outcome.terminalPageKeys shouldBe setOf("p0")
+        outcome.unexpectedStage shouldBe BatchDiagnosticStage.INPAINT
+        outcome.completedPageKeys shouldBe emptySet()
+    }
+
+    @Test
+    fun `unexpected translation failure is not reported as completed`() = runTest {
+        val events = RecordingListener()
+        val native = object : NativeLaneWorker {
+            override suspend fun runOcrStage(pageKey: String, pageIndex: Int) =
+                OcrReadyPageRef(pageKey, pageIndex, 0L, emptyList())
+
+            override suspend fun runInpaintStage(pageKey: String) = Unit
+        }
+        val translator = object : TranslatorLaneWorker {
+            override suspend fun translate(ref: OcrReadyPageRef) {
+                if (ref.pageKey == "p0") throw RuntimeException("translation stage failure")
+            }
+        }
+        val render = RecordingRenderJoin()
+
+        val outcome = SequentialBatchCoordinator(native, translator, render, events).runPass1(
+            listOf("p0" to 0, "p1" to 1),
+            TranslatorComputeClass.REMOTE_IO,
+        )
+
+        outcome.status shouldBe BatchPass1Status.FAILED
+        outcome.anchorPageKey shouldBe "p0"
+        outcome.terminalPageKeys shouldBe setOf("p0")
+        outcome.unexpectedStage shouldBe BatchDiagnosticStage.TRANSLATION
+        outcome.completedPageKeys shouldBe emptySet()
     }
 
     @Test

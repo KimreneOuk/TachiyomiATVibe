@@ -293,7 +293,9 @@ class LegacyArtifactMigrationTest {
 
     @Test
     fun `failed legacy stage records durable retryable failure with unknown category`() {
-        val page = PageTranslation(ocrStatus = StageStatus.FAILED)
+        val page = PageTranslation(ocrStatus = StageStatus.FAILED).also {
+            it.ocrError = "provider body https://secret.invalid/prompt"
+        }
         val manifest = LegacyArtifactMigration.migrateChapter(
             LegacyChapterSnapshot(
                 pages = mapOf("page.jpg" to LegacyPageFacts(page, CleanedFileState.NONE_RECORDED)),
@@ -302,6 +304,8 @@ class LegacyArtifactMigrationTest {
         val failure = manifest.durableFailures["page.jpg:OCR"].shouldNotBeNull()
         failure.category shouldBe FailureCategory.LEGACY_UNKNOWN
         failure.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE
+        failure.lastFailureMessage shouldBe "Legacy ocr state requires retry"
+        failure.lastFailureMessage?.contains("secret", ignoreCase = true) shouldBe false
         val record = manifest.pages.getValue("page.jpg")
         record.displayState shouldBe PageDisplayState.FAILED_NO_RESULT
         record.ocr?.status shouldBe ArtifactStageStatus.FAILED_RETRYABLE

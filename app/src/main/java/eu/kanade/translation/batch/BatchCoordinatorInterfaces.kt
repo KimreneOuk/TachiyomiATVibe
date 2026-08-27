@@ -159,6 +159,20 @@ sealed interface ChunkCompletionOutcome {
         val failure: ProviderFailure? = null,
         val reason: String = failure?.safeSummary ?: "Translation failed",
     ) : ChunkCompletionOutcome
+
+    /**
+     * A worker failed outside the typed provider-failure contract. This is kept
+     * distinct from [Failed] so an unexpected programming/persistence error can
+     * never be mistaken for a successfully completed page or a durable provider
+     * failure. Only the affected page is terminal; later pages remain pending.
+     */
+    data class Unexpected(
+        val anchorPageKey: String,
+        val stage: BatchDiagnosticStage,
+        val completedPageKeys: Set<String> = emptySet(),
+        val terminalPageKeys: Set<String> = setOf(anchorPageKey),
+        val reason: String = "Unexpected ${stage.name.lowercase()} stage failure",
+    ) : ChunkCompletionOutcome
 }
 
 /** Result of the only live batch coordinator's first pass. */
@@ -172,6 +186,7 @@ data class BatchPass1Outcome(
     val failure: ProviderFailure? = null,
     val nextEligibleRetryAtEpochMs: Long? = null,
     val reason: String? = null,
+    val unexpectedStage: BatchDiagnosticStage? = null,
 ) {
     val isPaused: Boolean get() = status == BatchPass1Status.PAUSED
 }

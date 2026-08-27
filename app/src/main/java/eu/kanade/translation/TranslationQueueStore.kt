@@ -40,7 +40,7 @@ class TranslationQueueStore(
      * [chapterIds]). Cheap: one editor batch regardless of queue length.
      */
     fun save(chapterIds: List<Long>) {
-        preferences.edit {
+        preferences.edit(commit = true) {
             clear()
             chapterIds.forEachIndexed { index, id ->
                 putString("$index", id.toString())
@@ -68,7 +68,7 @@ class TranslationQueueStore(
      * empties (all chapters translated or explicitly cleared).
      */
     fun clear() {
-        preferences.edit { clear() }
+        preferences.edit(commit = true) { clear() }
     }
 
     private companion object {

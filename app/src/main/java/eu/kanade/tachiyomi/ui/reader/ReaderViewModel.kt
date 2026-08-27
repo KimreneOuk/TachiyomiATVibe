@@ -633,10 +633,13 @@ class ReaderViewModel @JvmOverloads constructor(
                     // no orphaned page jobs keep running (and keep holding the
                     // translator permit) after the per-page buttons disappear.
                     resetAutoTranslationState()
-                    translationManager.cancelAllPageTranslations(cancelBatchQueue = true)
-                    // TachiyomiAT: user disabled translation — tear down engines so a
-                    // subsequent re-enable picks up any config changes made while off.
-                    translationManager.translatorStop("translation disabled", closeEngines = true)
+                    withIOContext {
+                        translationManager.cancelAllPageTranslationsOffMain(cancelBatchQueue = true)
+                        // TachiyomiAT: user disabled translation — tear down engines so a
+                        // subsequent re-enable picks up any config changes made while off.
+                        translationManager.translatorStop("translation disabled", closeEngines = true)
+                        streamRegistry.clearAll()
+                    }
                     // Reset both halves of the merged state so the bottom-bar
                     // icon returns to neutral instead of staying stuck on
                     // TRANSLATING/ERROR after the work was just cancelled.
@@ -1185,6 +1188,13 @@ class ReaderViewModel @JvmOverloads constructor(
      * coordinator derives exactly N ordered pages after it.
      */
     private fun handleAutoTranslation(currentPage: ReaderPage) {
+        viewModelScope.launchIO {
+            if (state.value.viewerChapters?.currChapter !== currentPage.chapter) return@launchIO
+            handleAutoTranslationOnIo(currentPage)
+        }
+    }
+
+    private fun handleAutoTranslationOnIo(currentPage: ReaderPage) {
         val chapterId = currentPage.chapter.chapter.id ?: return
         val manga = manga ?: return
         val chapter = currentPage.chapter.chapter
@@ -2275,21 +2285,23 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     fun stopAllTranslation() {
         resetAutoTranslationState()
-        translationManager.cancelAllPageTranslations(cancelBatchQueue = true)
-        // TachiyomiAT: closeEngines = true so the cached textTranslator /
-        // recognitionEngine are torn down and enginesClosed is set. Without this,
-        // any config change made after stopping (engine, provider, API key, model,
-        // OCR, language) was ignored on the next run — the rebuild gate never
-        // fired because the old engine instances stayed cached.
-        translationManager.translatorStop("user stop", closeEngines = true)
-        // TachiyomiAT: evict all registered reader page streams so their captured
-        // ReaderPage / ByteArray references are released. Without this, the
-        // process-lifetime readerPageStreams map keeps page bytes alive after the
-        // user explicitly stops translation.
-        streamRegistry.clearAll()
         batchTranslationState = Translation.State.NOT_TRANSLATED
         liveTranslationState = Translation.State.NOT_TRANSLATED
         recomputeTranslationState()
+        viewModelScope.launchIO {
+            translationManager.cancelAllPageTranslationsOffMain(cancelBatchQueue = true)
+            // TachiyomiAT: closeEngines = true so the cached textTranslator /
+            // recognitionEngine are torn down and enginesClosed is set. Without this,
+            // any config change made after stopping (engine, provider, API key, model,
+            // OCR, language) was ignored on the next run — the rebuild gate never
+            // fired because the old engine instances stayed cached.
+            translationManager.translatorStop("user stop", closeEngines = true)
+            // TachiyomiAT: evict all registered reader page streams so their captured
+            // ReaderPage / ByteArray references are released. Without this, the
+            // process-lifetime readerPageStreams map keeps page bytes alive after the
+            // user explicitly stops translation.
+            streamRegistry.clearAll()
+        }
     }
 
     /** Re-arms the current durable batch; provider cooldowns are enforced by the manager. */
