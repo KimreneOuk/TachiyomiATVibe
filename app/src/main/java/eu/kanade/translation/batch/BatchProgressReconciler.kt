@@ -25,6 +25,8 @@ data class ReconciliationResult(
     val terminalCount: Int = failedCount,
     val nextEligibleRetryAtEpochMs: Long? = null,
     val pauseReason: String? = null,
+    /** True when the result is an in-memory-only stop after publication rejection. */
+    val nonDurableFailure: Boolean = false,
 )
 
 object BatchProgressReconciler {
@@ -55,7 +57,9 @@ object BatchProgressReconciler {
         }
 
         pauseOutcome?.takeIf {
-            it.status == BatchPass1Status.PAUSED || it.status == BatchPass1Status.FAILED
+            it.status == BatchPass1Status.PAUSED ||
+                it.status == BatchPass1Status.FAILED ||
+                it.status == BatchPass1Status.PERSISTENCE_REJECTED
         }?.let { pausedOutcome ->
             return reconcilePaused(pageMap, expectedKeys, pausedOutcome, unexpectedPageKeys)
         }
@@ -130,12 +134,18 @@ object BatchProgressReconciler {
         var partialCount = 0
         var pendingCount = 0
         var terminalCount = 0
+        val persistenceRejected = outcome.status == BatchPass1Status.PERSISTENCE_REJECTED
 
         expectedKeys.forEachIndexed { index, pageKey ->
             val page = pageMap[pageKey]
             when {
                 pageKey in retryable -> {
-                    if (page?.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL) {
+                    if (persistenceRejected) {
+                        // The rejected publication gives us no durable truth for
+                        // this anchor. Keep it pending in the in-memory report;
+                        // never infer completion or a retryable durable failure.
+                        pendingCount++
+                    } else if (page?.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL) {
                         partialCount++
                     }
                 }
@@ -167,10 +177,10 @@ object BatchProgressReconciler {
         }
 
         return ReconciliationResult(
-            chapterStatus = if (outcome.status == BatchPass1Status.FAILED || terminalCount > 0) {
-                Translation.State.ERROR
-            } else {
-                Translation.State.PAUSED
+            chapterStatus = when {
+                persistenceRejected -> Translation.State.READY_WITH_WARNINGS
+                outcome.status == BatchPass1Status.FAILED || terminalCount > 0 -> Translation.State.ERROR
+                else -> Translation.State.PAUSED
             },
             strandedPages = emptyMap(),
             unexpectedPageKeys = unexpectedPageKeys,
@@ -180,10 +190,11 @@ object BatchProgressReconciler {
             paused = outcome.status == BatchPass1Status.PAUSED && terminalCount == 0,
             anchorPageKey = outcome.anchorPageKey,
             pendingCount = pendingCount,
-            retryableCount = retryable.size,
+            retryableCount = if (persistenceRejected) 0 else retryable.size,
             terminalCount = terminalCount,
             nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
             pauseReason = outcome.reason,
+            nonDurableFailure = persistenceRejected,
         )
     }
 

@@ -65,6 +65,8 @@ class SequentialBatchCoordinator(
             try {
                 currentCoroutineContext().ensureActive()
                 ref = nativeWorker.runOcrStage(pageKey, pageIndex)
+            } catch (e: BatchPersistenceRejectedException) {
+                throw e
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 BatchTranslationDiagnostics.failure(
@@ -142,6 +144,8 @@ class SequentialBatchCoordinator(
                     val startedAt = System.nanoTime()
                     try {
                         renderJoin.awaitAndRender(page.pageKey)
+                    } catch (e: BatchPersistenceRejectedException) {
+                        throw e
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         BatchTranslationDiagnostics.failure(
@@ -168,7 +172,12 @@ class SequentialBatchCoordinator(
                 error: Throwable,
                 stage: BatchDiagnosticStage,
             ): ChunkCompletionOutcome =
-                if (error is ProviderFailureException) {
+                if (error is BatchPersistenceRejectedException) {
+                    ChunkCompletionOutcome.PersistenceRejected(
+                        anchorPageKey = error.pageKey ?: pageKey ?: chunk.firstOrNull()?.pageKey ?: "<chunk>",
+                        stage = error.stage ?: stage,
+                    )
+                } else if (error is ProviderFailureException) {
                     if (pageKey != null) {
                         error.toChunkCompletionOutcome(pageKey)
                     } else {
@@ -192,6 +201,7 @@ class SequentialBatchCoordinator(
                     is ChunkCompletionOutcome.Paused -> outcome.anchorPageKey
                     is ChunkCompletionOutcome.Failed -> outcome.anchorPageKey
                     is ChunkCompletionOutcome.Unexpected -> outcome.anchorPageKey
+                    is ChunkCompletionOutcome.PersistenceRejected -> outcome.anchorPageKey
                     is ChunkCompletionOutcome.Completed -> null
                 } ?: return emptySet()
                 val anchorIndex = chunk.indexOfFirst { it.pageKey == anchor }.takeIf { it >= 0 }
@@ -202,6 +212,7 @@ class SequentialBatchCoordinator(
                             is ChunkCompletionOutcome.Paused -> page.pageKey in outcome.completedPageKeys
                             is ChunkCompletionOutcome.Failed -> page.pageKey in outcome.completedPageKeys
                             is ChunkCompletionOutcome.Unexpected -> page.pageKey in outcome.completedPageKeys
+                            is ChunkCompletionOutcome.PersistenceRejected -> page.pageKey in outcome.completedPageKeys
                             is ChunkCompletionOutcome.Completed -> false
                         }
                         !explicitlyCompleted &&
@@ -417,6 +428,8 @@ class SequentialBatchCoordinator(
                     val startedAt = System.nanoTime()
                     try {
                         nativeWorker.runInpaintStage(page.pageKey, ref.nativeHandoff)
+                    } catch (e: BatchPersistenceRejectedException) {
+                        throw e
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         BatchTranslationDiagnostics.failure(
@@ -468,11 +481,18 @@ class SequentialBatchCoordinator(
                     } catch (e: UnexpectedBatchStageException) {
                         chunk.forEach { previous -> previous.ref?.let(nativeWorker::releaseNativeHandoff) }
                         throw e
+                    } catch (e: BatchPersistenceRejectedException) {
+                        chunk.forEach { previous -> previous.ref?.let(nativeWorker::releaseNativeHandoff) }
+                        throw e
                     }
                     val admission = try {
                         if (adaptiveChunks && entry.ref != null) {
                             try {
                                 translatorWorker.admit(entry.ref)
+                            } catch (e: BatchPersistenceRejectedException) {
+                                entry.ref?.let(nativeWorker::releaseNativeHandoff)
+                                chunk.forEach { page -> page.ref?.let(nativeWorker::releaseNativeHandoff) }
+                                throw e
                             } catch (e: Exception) {
                                 if (e is CancellationException) throw e
                                 BatchTranslationDiagnostics.failure(
@@ -524,17 +544,24 @@ class SequentialBatchCoordinator(
                 val paused = stopped as? ChunkCompletionOutcome.Paused
                 val failed = stopped as? ChunkCompletionOutcome.Failed
                 val unexpected = stopped as? ChunkCompletionOutcome.Unexpected
+                val persistenceRejected = stopped as? ChunkCompletionOutcome.PersistenceRejected
                 val outcome = BatchPass1Outcome(
                     needsTranslation = needsTranslation.toList(),
-                    status = if (paused != null) BatchPass1Status.PAUSED else BatchPass1Status.FAILED,
-                    anchorPageKey = paused?.anchorPageKey ?: failed?.anchorPageKey ?: unexpected?.anchorPageKey,
+                    status = when {
+                        paused != null -> BatchPass1Status.PAUSED
+                        persistenceRejected != null -> BatchPass1Status.PERSISTENCE_REJECTED
+                        else -> BatchPass1Status.FAILED
+                    },
+                    anchorPageKey = paused?.anchorPageKey ?: failed?.anchorPageKey
+                        ?: unexpected?.anchorPageKey ?: persistenceRejected?.anchorPageKey,
                     completedPageKeys = completedPassPageKeys.toSet(),
                     retryablePageKeys = paused?.retryablePageKeys.orEmpty(),
                     terminalPageKeys = failed?.terminalPageKeys.orEmpty() + unexpected?.terminalPageKeys.orEmpty(),
                     failure = paused?.failure ?: failed?.failure,
                     nextEligibleRetryAtEpochMs = paused?.nextEligibleRetryAtEpochMs,
-                    reason = paused?.reason ?: failed?.reason ?: unexpected?.reason,
+                    reason = paused?.reason ?: failed?.reason ?: unexpected?.reason ?: persistenceRejected?.reason,
                     unexpectedStage = unexpected?.stage,
+                    persistenceRejectedStage = persistenceRejected?.stage,
                 )
                 if (paused != null) listener.batchPaused(outcome)
                 BatchTranslationDiagnostics.memorySnapshot(
@@ -555,6 +582,21 @@ class SequentialBatchCoordinator(
                 needsTranslation = needsTranslation.toList(),
                 completedPageKeys = completedPassPageKeys.toSet(),
             )
+        } catch (e: BatchPersistenceRejectedException) {
+            val outcome = BatchPass1Outcome(
+                needsTranslation = needsTranslation.toList(),
+                status = BatchPass1Status.PERSISTENCE_REJECTED,
+                anchorPageKey = e.pageKey,
+                completedPageKeys = completedPassPageKeys.toSet(),
+                reason = "Batch persistence publication rejected",
+                persistenceRejectedStage = e.stage,
+            )
+            BatchTranslationDiagnostics.failure(
+                stage = e.stage ?: BatchDiagnosticStage.ARTIFACT,
+                pageKey = e.pageKey ?: "<batch>",
+                errorClass = e::class.java.simpleName,
+            )
+            return@coroutineScope outcome
         } catch (e: UnexpectedBatchStageException) {
             val outcome = BatchPass1Outcome(
                 needsTranslation = needsTranslation.toList(),
@@ -585,6 +627,7 @@ class SequentialBatchCoordinator(
         is ChunkCompletionOutcome.Paused -> completedPageKeys
         is ChunkCompletionOutcome.Failed -> completedPageKeys
         is ChunkCompletionOutcome.Unexpected -> completedPageKeys
+        is ChunkCompletionOutcome.PersistenceRejected -> completedPageKeys
     }
 
     private data class ChunkPage(

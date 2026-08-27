@@ -135,6 +135,13 @@ enum class BatchPass1Status {
     COMPLETED,
     PAUSED,
     FAILED,
+
+    /**
+     * A stage result could not be published under its guarded precondition.
+     * This is deliberately distinct from [FAILED]: no durable failure exists
+     * to justify a terminal chapter error or a durable pause projection.
+     */
+    PERSISTENCE_REJECTED,
 }
 
 /** Typed result returned by one translator chunk or one per-page request. */
@@ -173,6 +180,18 @@ sealed interface ChunkCompletionOutcome {
         val terminalPageKeys: Set<String> = setOf(anchorPageKey),
         val reason: String = "Unexpected ${stage.name.lowercase()} stage failure",
     ) : ChunkCompletionOutcome
+
+    /**
+     * A guarded artifact publication was rejected. The affected page is not
+     * terminal and must not be reported as a durable provider failure: the
+     * in-memory pass stops so a later run can re-read the current store state.
+     */
+    data class PersistenceRejected(
+        val anchorPageKey: String,
+        val stage: BatchDiagnosticStage,
+        val completedPageKeys: Set<String> = emptySet(),
+        val reason: String = "Batch persistence publication rejected",
+    ) : ChunkCompletionOutcome
 }
 
 /** Result of the only live batch coordinator's first pass. */
@@ -187,9 +206,21 @@ data class BatchPass1Outcome(
     val nextEligibleRetryAtEpochMs: Long? = null,
     val reason: String? = null,
     val unexpectedStage: BatchDiagnosticStage? = null,
+    val persistenceRejectedStage: BatchDiagnosticStage? = null,
 ) {
     val isPaused: Boolean get() = status == BatchPass1Status.PAUSED
+    val isPersistenceRejected: Boolean get() = status == BatchPass1Status.PERSISTENCE_REJECTED
 }
+
+/**
+ * Guarded stage publication failed after a worker had already produced an
+ * in-memory result. The marker is shared with the coordinator so a rejected
+ * write cannot be reclassified as an unexpected terminal stage failure.
+ */
+internal class BatchPersistenceRejectedException(
+    val pageKey: String? = null,
+    val stage: BatchDiagnosticStage? = null,
+) : IllegalStateException("Batch persistence publication rejected")
 
 open class BatchScheduleListener {
     open fun ocrStarted(pageKey: String) {}

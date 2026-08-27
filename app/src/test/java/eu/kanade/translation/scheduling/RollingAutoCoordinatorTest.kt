@@ -2,6 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
@@ -454,7 +455,7 @@ class RollingAutoCoordinatorTest {
     }
 
     /**
-     * translatePreparedPage == false means stale/race (re-prepare, never Ready).
+     * translatePreparedPage == null means stale/race (re-prepare, never Ready).
      * After two stale handoffs the third succeeds and the slot reaches Ready,
      * with the re-prepare counter reset. This is the contract documented on
      * [TranslationExecutor.translatePreparedPage].
@@ -474,6 +475,31 @@ class RollingAutoCoordinatorTest {
         val snap = coordinator.snapshot.value!!
         snap.foreground shouldNotBe null
         snap.foreground!!.state shouldBe AutoSlotState.Ready
+
+        coordinator.shutdown()
+        coordinator.awaitTermination()
+    }
+
+    @Test
+    fun `typed pause is not ready and retries on an eligible reconcile`() = runBlocking {
+        val executor = ControllableExecutor(autoComplete = true)
+        executor.pausedTranslateRemaining["p0"] = AtomicInteger(1)
+        val store = newStore(listOf("p0" to blank(), "p1" to blank()))
+        val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
+        val session = fakeSession(store)
+        coordinator.updateWindow(identity, 0, 1, 2, session, resolver())
+
+        val paused = coordinator.snapshot.value!!.foreground
+        paused shouldNotBe null
+        paused!!.state shouldBe AutoSlotState.Deferred(AutoDeferralReason.Network)
+        (executor.translateCallsByPage["p0"] ?: 0) shouldBe 1
+
+        // The completion poke does not reset the finite request budget. An
+        // external reconcile re-admits the page and the second attempt can
+        // complete normally.
+        coordinator.reconcile()
+        (executor.translateCallsByPage["p0"] ?: 0) shouldBe 2
+        coordinator.snapshot.value!!.foreground!!.state shouldBe AutoSlotState.Ready
 
         coordinator.shutdown()
         coordinator.awaitTermination()
@@ -1213,6 +1239,10 @@ class RollingAutoCoordinatorTest {
         // Pages whose translate handoff throws a genuine failure.
         val failTranslateFor = ConcurrentHashMap.newKeySet<String>()
 
+        // Pages whose typed provider outcome pauses once before a later
+        // external reconcile retries the prepared boundary.
+        val pausedTranslateRemaining = ConcurrentHashMap<String, AtomicInteger>()
+
         private val prepareStarted = ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
         private val prepareGate = ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
         private val translateStarted = ConcurrentHashMap<Int, CompletableDeferred<Unit>>()
@@ -1284,7 +1314,7 @@ class RollingAutoCoordinatorTest {
             source: eu.kanade.tachiyomi.source.online.HttpSource,
             prepared: PreparedPage,
             stageListener: TranslationStageListener?,
-        ): Boolean {
+        ): ChunkCompletionOutcome? {
             val callNum = translateCount.getAndIncrement()
             translateCallsByPage.merge(prepared.pageKey, 1) { a, b -> a + b }
             translateChapterIdsByPage[prepared.pageKey] = chapter.id
@@ -1298,11 +1328,15 @@ class RollingAutoCoordinatorTest {
                 decConcurrent()
             }
             val remaining = staleTranslateRemaining[prepared.pageKey]
-            if (remaining != null && remaining.getAndDecrement() > 0) return false
+            if (remaining != null && remaining.getAndDecrement() > 0) return null
             if (prepared.pageKey in failTranslateFor) {
                 throw RuntimeException("translate failed: ${prepared.pageKey}")
             }
-            return true
+            val paused = pausedTranslateRemaining[prepared.pageKey]
+            if (paused != null && paused.getAndDecrement() > 0) {
+                return ChunkCompletionOutcome.Paused(prepared.pageKey)
+            }
+            return ChunkCompletionOutcome.Completed(setOf(prepared.pageKey))
         }
 
         override suspend fun translateSinglePage(

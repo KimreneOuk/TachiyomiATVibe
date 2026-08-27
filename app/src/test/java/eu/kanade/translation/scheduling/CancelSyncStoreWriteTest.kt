@@ -2,6 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import io.kotest.matchers.shouldBe
@@ -67,7 +68,7 @@ class CancelSyncStoreWriteTest {
                 source: HttpSource,
                 prepared: PreparedPage,
                 stageListener: TranslationStageListener?,
-            ): Boolean = false
+            ): ChunkCompletionOutcome? = null
         }
         val resolver = TranslationStoreResolver { id -> if (id == chapterId) store else null }
         val immediate = { id: Long -> if (id == chapterId) store else null }

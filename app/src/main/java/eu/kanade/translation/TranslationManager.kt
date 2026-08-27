@@ -70,12 +70,21 @@ import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 private const val MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP = 64
 private const val ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS = 30_000L
 
 internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): Boolean =
     lastModified <= 0L || nowEpochMs - lastModified < ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS
+
+internal fun acknowledgePendingTranslationState(
+    current: Map<Long, TranslationRequestState>,
+    chapterIds: Iterable<Long>,
+): Map<Long, TranslationRequestState> =
+    current + chapterIds.distinct().associateWith { chapterId ->
+        TranslationRequestState(chapterId, TranslationRequestPhase.STARTING)
+    }
 
 class TranslationManager(
     private val context: Context,
@@ -100,6 +109,13 @@ class TranslationManager(
 
     private val pendingRequestStore = TranslationPendingRequestStore(context)
     private val pendingTranslationRequestsState = MutableStateFlow(loadPendingTranslationRequests())
+
+    /**
+     * Versions fence the asynchronous STARTING commit from a later download,
+     * preparation, or cancellation update. The version is advanced before a
+     * synchronous normal mutation writes its new durable state.
+     */
+    private val pendingRequestWriteVersions = ConcurrentHashMap<Long, AtomicLong>()
 
     /** Immediate, lifecycle-independent acknowledgement for pre-translation requests. */
     val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
@@ -242,9 +258,19 @@ class TranslationManager(
 
     /** Publishes the acknowledgement shown while the live download probe runs. */
     fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
-        chapters.forEach { chapter ->
-            chapter.id?.let { chapterId ->
-                setPendingTranslationRequest(chapterId, TranslationRequestPhase.STARTING)
+        val chapterIds = chapters.mapNotNull { it.id }.distinct()
+        if (chapterIds.isEmpty()) return
+        val versions = chapterIds.associateWith(::nextPendingRequestVersion)
+        // Publish the in-memory acknowledgement before any disk operation so
+        // the confirmation row and its protection fence are immediate. The
+        // synchronous SharedPreferences commit runs on the manager's IO scope
+        // and is fenced against later phase/cancel mutations below.
+        pendingTranslationRequestsState.update {
+            acknowledgePendingTranslationState(it, chapterIds)
+        }
+        storeScope.launch(Dispatchers.IO) {
+            versions.forEach { (chapterId, version) ->
+                persistPendingStartingAcknowledgement(chapterId, version)
             }
         }
     }
@@ -287,7 +313,8 @@ class TranslationManager(
             queuedState = queuedState,
             hasPendingRequest = pendingTranslationRequestsState.value.containsKey(chapterId) ||
                 pendingRequestStore.load().contains(chapterId),
-        ) || chapterId in translator.persistedQueueChapterIds()
+        ) ||
+            chapterId in translator.persistedQueueChapterIds()
     }
 
     /** Protected ids are passed to the pending chapter deleter at reader finish. */
@@ -309,6 +336,7 @@ class TranslationManager(
         phase: TranslationRequestPhase,
         reason: String? = null,
     ) {
+        nextPendingRequestVersion(chapterId)
         pendingRequestStore.add(chapterId, phase, reason)
         pendingTranslationRequestsState.update {
             it + (chapterId to TranslationRequestState(chapterId, phase, reason))
@@ -316,13 +344,52 @@ class TranslationManager(
     }
 
     private fun clearPendingTranslationRequest(chapterId: Long) {
+        nextPendingRequestVersion(chapterId)
         pendingRequestStore.remove(chapterId)
         pendingTranslationRequestsState.update { it - chapterId }
     }
 
     private fun clearAllPendingTranslationRequests() {
+        (pendingTranslationRequestsState.value.keys + pendingRequestStore.load()).distinct()
+            .forEach(::nextPendingRequestVersion)
         pendingRequestStore.clear()
         pendingTranslationRequestsState.value = emptyMap()
+    }
+
+    private fun nextPendingRequestVersion(chapterId: Long): Long =
+        pendingRequestWriteVersions.computeIfAbsent(chapterId) { AtomicLong() }.incrementAndGet()
+
+    /**
+     * Persists the immediate STARTING acknowledgement without allowing it to
+     * overwrite a newer phase. A normal phase mutation writes synchronously on
+     * its caller, so this loop only needs to repair the narrow race where that
+     * mutation advances the in-memory version while this IO commit is in flight.
+     */
+    private fun persistPendingStartingAcknowledgement(chapterId: Long, initialVersion: Long) {
+        var expectedVersion = initialVersion
+        repeat(4) {
+            val currentVersion = pendingRequestWriteVersions[chapterId]?.get() ?: return
+            val current = pendingTranslationRequestsState.value[chapterId]
+            if (current == null) {
+                // A cancellation may have removed the request while the
+                // STARTING commit was in flight. Repeat the removal so a
+                // stale commit cannot resurrect it after the clear.
+                pendingRequestStore.remove(chapterId)
+                return
+            }
+            if (currentVersion != expectedVersion || current.phase != TranslationRequestPhase.STARTING) {
+                expectedVersion = currentVersion
+                if (current.phase != TranslationRequestPhase.STARTING) {
+                    pendingRequestStore.add(chapterId, current.phase, current.reason)
+                    return
+                }
+            }
+            pendingRequestStore.add(chapterId, TranslationRequestPhase.STARTING, null)
+            val afterVersion = pendingRequestWriteVersions[chapterId]?.get() ?: return
+            val after = pendingTranslationRequestsState.value[chapterId]
+            if (afterVersion == expectedVersion && after?.phase == TranslationRequestPhase.STARTING) return
+            expectedVersion = afterVersion
+        }
     }
 
     private fun loadPendingTranslationRequests(): Map<Long, TranslationRequestState> =

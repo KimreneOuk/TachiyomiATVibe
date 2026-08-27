@@ -1,8 +1,10 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
+import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.util.TranslationMemoryBudget
 import kotlinx.coroutines.CancellationException
@@ -98,10 +100,16 @@ class RollingAutoCoordinator(
     private val completed = ConcurrentHashMap.newKeySet<Int>()
 
     // Per-page re-prepare attempts after a stale translate handoff
-    // (translatePreparedPage == false). Bounded so a page that persistently
+    // (translatePreparedPage == null). Bounded so a page that persistently
     // loses the race or has no durable cleaned image cannot tight-loop the
     // native lane; it flips to Failed(retryable) past the cap instead.
     private val reprepareAttempts = ConcurrentHashMap<Int, Int>()
+
+    // A typed provider pause has already exhausted the current page's finite
+    // request budget. Keep it out of the admission set until an external
+    // reconcile arrives after the provider's eligible time; the completion
+    // callback's internal poke must not immediately start a fresh budget.
+    private val pausedTranslations = ConcurrentHashMap<Int, Long>()
 
     @Volatile
     private var currentSpec: WindowSpec? = null
@@ -182,7 +190,10 @@ class RollingAutoCoordinator(
      * available, or any external signal the loop would not otherwise observe.
      * Cheap and coalesced; safe to call from any thread.
      */
-    fun reconcile() = poke()
+    fun reconcile() {
+        releaseMaturedTranslationPauses()
+        poke()
+    }
 
     /**
      * Stops all lane work, cancels the coordination loop, and clears transient
@@ -283,6 +294,7 @@ class RollingAutoCoordinator(
         translateAdmitted.clear()
         completed.clear()
         reprepareAttempts.clear()
+        pausedTranslations.clear()
         stateSequence++
     }
 
@@ -341,7 +353,7 @@ class RollingAutoCoordinator(
                 val translated = if (computeGate != null) {
                     computeGate.withPermit {
                         if (!isWorkCurrent(work)) {
-                            false
+                            null
                         } else {
                             executor.translatePreparedPage(
                                 work.session.manga,
@@ -354,7 +366,7 @@ class RollingAutoCoordinator(
                     }
                 } else {
                     if (!isWorkCurrent(work)) {
-                        false
+                        null
                     } else {
                         executor.translatePreparedPage(
                             work.session.manga,
@@ -366,18 +378,67 @@ class RollingAutoCoordinator(
                     }
                 }
                 if (isWorkCurrent(work)) {
-                    if (translated) {
-                        markCompleted(work.pageIndex, work.generation)
-                        clearReprepareAttempts(work.pageIndex, work.generation)
-                        updateSlot(work.pageIndex, AutoSlotState.Ready, work.generation)
-                    } else {
-                        // translatePreparedPage returns false ONLY for a stale/race
-                        // handoff or a missing cleaned image (see interface contract):
-                        // the caller must re-prepare, never mark Ready. Return the
-                        // slot to the admissible set so the next reconcile re-admits
-                        // it into the native lane; bound the retries so a persistently
-                        // stale/broken page cannot tight-loop.
-                        handleStaleTranslate(work.pageIndex, work.generation)
+                    when (translated) {
+                        is ChunkCompletionOutcome.Completed -> {
+                            markCompleted(work.pageIndex, work.generation)
+                            clearReprepareAttempts(work.pageIndex, work.generation)
+                            clearTranslationPause(work.pageIndex, work.generation)
+                            updateSlot(work.pageIndex, AutoSlotState.Ready, work.generation)
+                        }
+                        null -> {
+                            // A null result means only a stale/race handoff or a
+                            // missing cleaned image (see interface contract): the
+                            // caller must re-prepare, never mark Ready. Return the
+                            // slot to the admissible set for the next reconcile;
+                            // bound retries so a persistently stale handoff cannot
+                            // tight-loop the native lane.
+                            handleStaleTranslate(work.pageIndex, work.generation)
+                        }
+                        is ChunkCompletionOutcome.Paused -> {
+                            // The provider budget was consumed by this attempt. A
+                            // completion poke must not immediately reset that
+                            // budget; defer until an external reconcile after the
+                            // outcome's eligible time.
+                            clearReprepareAttempts(work.pageIndex, work.generation)
+                            deferTranslationRetry(
+                                pageIndex = work.pageIndex,
+                                generation = work.generation,
+                                nextEligibleRetryAtEpochMs = translated.nextEligibleRetryAtEpochMs,
+                            )
+                        }
+                        is ChunkCompletionOutcome.Failed -> {
+                            clearReprepareAttempts(work.pageIndex, work.generation)
+                            val retryable = translated.failure?.retryability !=
+                                ProviderFailureRetryability.TERMINAL
+                            if (retryable) {
+                                deferTranslationRetry(work.pageIndex, work.generation, null)
+                            } else {
+                                clearTranslationPause(work.pageIndex, work.generation)
+                                updateSlot(
+                                    work.pageIndex,
+                                    AutoSlotState.Failed(retryable = false),
+                                    work.generation,
+                                )
+                            }
+                        }
+                        is ChunkCompletionOutcome.Unexpected -> {
+                            clearReprepareAttempts(work.pageIndex, work.generation)
+                            clearTranslationPause(work.pageIndex, work.generation)
+                            updateSlot(
+                                work.pageIndex,
+                                AutoSlotState.Failed(retryable = true),
+                                work.generation,
+                            )
+                        }
+                        is ChunkCompletionOutcome.PersistenceRejected -> {
+                            clearReprepareAttempts(work.pageIndex, work.generation)
+                            clearTranslationPause(work.pageIndex, work.generation)
+                            updateSlot(
+                                work.pageIndex,
+                                AutoSlotState.Failed(retryable = true),
+                                work.generation,
+                            )
+                        }
                     }
                 }
             } catch (e: CancellationException) {
@@ -415,6 +476,47 @@ class RollingAutoCoordinator(
                 slotStates[pageIndex] = AutoSlotState.Queued
             }
             stateSequence++
+        }
+    }
+
+    private fun deferTranslationRetry(
+        pageIndex: Int,
+        generation: Long,
+        nextEligibleRetryAtEpochMs: Long?,
+    ) {
+        synchronized(lifecycleLock) {
+            if (!isGenerationActiveLocked(generation)) return
+            pausedTranslations[pageIndex] = nextEligibleRetryAtEpochMs
+                ?.takeIf { it > System.currentTimeMillis() }
+                ?: RETRY_AT_NEXT_RECONCILE
+            updateSlot(pageIndex, AutoSlotState.Deferred(AutoDeferralReason.Network), generation)
+        }
+    }
+
+    private fun clearTranslationPause(pageIndex: Int, generation: Long) {
+        synchronized(lifecycleLock) {
+            if (isGenerationActiveLocked(generation) && pausedTranslations.remove(pageIndex) != null) {
+                stateSequence++
+            }
+        }
+    }
+
+    /**
+     * Opens provider-paused slots only after an external reconcile and after
+     * their persisted/provider retry timestamp. The internal lane-completion
+     * poke deliberately does not call this method.
+     */
+    private fun releaseMaturedTranslationPauses() {
+        synchronized(lifecycleLock) {
+            val now = System.currentTimeMillis()
+            val released = pausedTranslations.keys.toList().filter { pageIndex ->
+                val retryAt = pausedTranslations[pageIndex] ?: return@filter false
+                retryAt == RETRY_AT_NEXT_RECONCILE || retryAt <= now
+            }
+            if (released.isNotEmpty()) {
+                released.forEach(pausedTranslations::remove)
+                stateSequence++
+            }
         }
     }
 
@@ -561,13 +663,15 @@ class RollingAutoCoordinator(
 
     /**
      * Eligible to be admitted into the native lane now: desired, not currently
-     * in either lane, not completed, and not already Failed (a failed slot
-     * stays failed until an explicit retry clears it — never auto-looped).
+     * in either lane, not completed, not provider-paused, and not already
+     * terminally Failed. Retryable typed failures are represented as Deferred
+     * until an explicit reconcile re-opens them.
      */
     private fun isAdmissible(idx: Int): Boolean =
         idx !in nativeAdmitted &&
             idx !in translateAdmitted &&
             idx !in completed &&
+            !pausedTranslations.containsKey(idx) &&
             slotStates[idx] !is AutoSlotState.Failed
 
     private fun computeDesiredSet(spec: WindowSpec, bounds: AutoWindowBounds): Set<Int> {
@@ -601,11 +705,13 @@ class RollingAutoCoordinator(
             val leaving = mutableSetOf<Int>().apply {
                 addAll(slotStates.keys)
                 addAll(reprepareAttempts.keys)
+                addAll(pausedTranslations.keys)
             }.filter { it !in desired && it !in nativeAdmitted && it !in translateAdmitted }
             for (idx in leaving) {
                 slotStates.remove(idx)
                 completed.remove(idx)
                 reprepareAttempts.remove(idx)
+                pausedTranslations.remove(idx)
             }
             if (leaving.isNotEmpty()) stateSequence++
         }
@@ -883,6 +989,9 @@ class RollingAutoCoordinator(
     )
 
     private companion object {
+        /** Sentinel for a pause that may be retried at the next reconcile. */
+        const val RETRY_AT_NEXT_RECONCILE = Long.MIN_VALUE
+
         /**
          * Max re-prepare attempts after a stale translate handoff before the
          * slot flips to Failed(retryable). Stale handoffs are transient races,

@@ -498,6 +498,33 @@ class SequentialBatchCoordinatorTest {
     }
 
     @Test
+    fun `persistence rejection remains non-durable and never becomes terminal error`() = runTest {
+        val native = ImmediateNativeWorker()
+        val translator = object : TranslatorLaneWorker {
+            override suspend fun translate(ref: OcrReadyPageRef) {
+                throw BatchPersistenceRejectedException(
+                    pageKey = ref.pageKey,
+                    stage = BatchDiagnosticStage.TRANSLATION,
+                )
+            }
+        }
+        val render = RecordingRenderJoin()
+
+        val outcome = SequentialBatchCoordinator(native, translator, render).runPass1(
+            listOf("p0" to 0, "p1" to 1),
+            TranslatorComputeClass.REMOTE_IO,
+        )
+
+        outcome.status shouldBe BatchPass1Status.PERSISTENCE_REJECTED
+        outcome.anchorPageKey shouldBe "p0"
+        outcome.terminalPageKeys shouldBe emptySet()
+        outcome.unexpectedStage shouldBe null
+        outcome.persistenceRejectedStage shouldBe BatchDiagnosticStage.TRANSLATION
+        outcome.completedPageKeys shouldBe emptySet()
+        render.rendered shouldBe emptyList()
+    }
+
+    @Test
     fun `cancellation stops the pass promptly and starts no further stages`() = runTest {
         val events = RecordingListener()
         val native = GatedNativeWorker()

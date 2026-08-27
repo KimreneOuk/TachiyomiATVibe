@@ -20,6 +20,7 @@ import eu.kanade.translation.batch.BatchDiagnosticStage
 import eu.kanade.translation.batch.BatchEnvelopeLifecycle
 import eu.kanade.translation.batch.BatchPass1Outcome
 import eu.kanade.translation.batch.BatchPass1Status
+import eu.kanade.translation.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.batch.BatchResumeGateDecider
 import eu.kanade.translation.batch.BatchTranslationDiagnostics
@@ -1009,12 +1010,12 @@ class TranslationPipeline(
      * native permit so a caller's other native page may overlap this page's
      * remote translation.
      *
-     * Returns true when translate/render work was performed or attempted
-     * (including textless terminal no-ops). Returns false ONLY when the
-     * prepared reference no longer matches the durable store (generation /
-     * pageVersion / fingerprint mismatch, missing page entry, or missing
-     * cleaned image) — a stale/race outcome the caller treats as "try again"
-     * rather than a failure.
+     * Returns a typed completion outcome when translate/render work was
+     * performed or attempted (including textless terminal no-ops). Returns
+     * null ONLY when the prepared reference no longer matches the durable
+     * store (generation / pageVersion / fingerprint mismatch, missing page
+     * entry, or missing cleaned image) — a stale/race outcome the caller
+     * treats as "try again" rather than a failure.
      *
      * A genuine translate/render failure or timeout is thrown (after durable
      * failure writes via [markPageFailed] / [markPageTimedOut]), matching the
@@ -1030,20 +1031,20 @@ class TranslationPipeline(
         source: HttpSource,
         prepared: PreparedPage,
         stageListener: TranslationStageListener?,
-    ): Boolean {
+    ): ChunkCompletionOutcome? {
         if (prepared.isTerminal) {
             logcat(LogPriority.INFO) {
                 "TachiyomiAT translatePreparedPage: terminal skip pageKey=${prepared.pageKey} " +
                     "cleaned=${prepared.cleanedImageName}"
             }
-            return true
+            return ChunkCompletionOutcome.Completed()
         }
-        val store = resolveActiveStore(manga, chapter, source) ?: return false
+        val store = resolveActiveStore(manga, chapter, source) ?: return null
         // prepareSinglePage owns the reader lease only through the native
         // handoff. Re-admit the translate/render half here so a batch cannot
         // acquire the page in the handoff gap and then race the prepared
         // reference's writes.
-        if (!acquireReaderPageLease(store, chapter, prepared.pageKey)) return false
+        if (!acquireReaderPageLease(store, chapter, prepared.pageKey)) return null
         try {
             val snapshot = store.snapshot(prepared.pageKey)
             // Stale-reference rejection: generation, pageVersion, and the OCR block
@@ -1059,15 +1060,15 @@ class TranslationPipeline(
                         "preparedVer=${prepared.pageVersion} currentVer=${snapshot.pageVersion} " +
                         "fingerprintMatch=${snapshot.blockFingerprints == prepared.blockFingerprints}"
                 }
-                return false
+                return null
             }
-            val pageState = store.state.value[prepared.pageKey] ?: return false
+            val pageState = store.state.value[prepared.pageKey] ?: return null
             val cleanedImageName = prepared.cleanedImageName ?: pageState.cleanedImageName
             if (cleanedImageName == null) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT translatePreparedPage: no cleaned image for pageKey=${prepared.pageKey}"
                 }
-                return false
+                return null
             }
 
             val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
@@ -1126,7 +1127,7 @@ class TranslationPipeline(
                     markPageTimedOut(manga, chapter, source, prepared.pageKey)
                     throw java.io.IOException("translatePreparedPage timed out for ${prepared.pageKey}")
                 } else {
-                    true
+                    completed
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -1187,8 +1188,8 @@ class TranslationPipeline(
         orderedStreams: List<Pair<String, () -> InputStream>>,
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
-    ) {
-        if (orderedStreams.isEmpty()) return
+    ): eu.kanade.translation.batch.ReconciliationResult? {
+        if (orderedStreams.isEmpty()) return null
         val resolvedNaturalPageIndexes = if (naturalPageIndexes.isNotEmpty()) {
             naturalPageIndexes
         } else {
@@ -1201,7 +1202,7 @@ class TranslationPipeline(
         val batchGeneration = store.beginGeneration("batch start chapter=${chapter.name}")
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        store.withGeneration(batchGeneration) {
+        return store.withGeneration(batchGeneration) {
             val batchWriteIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
             // Paused/terminal durable failures retain their candidate and
             // manifest metadata until the next explicit retry/reset. The
@@ -1225,7 +1226,7 @@ class TranslationPipeline(
                     // Phase 3: no batch page lease outlives its run, whatever exit
                     // path the batch takes.
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                    return@withGeneration
+                    return@withGeneration null
                 }
 
                 val ensureCompanionDir: suspend () -> UniFile? = {
@@ -1579,7 +1580,8 @@ class TranslationPipeline(
                         is ChapterTranslationStore.PatchResult.Accepted -> Unit
                         is ChapterTranslationStore.PatchResult.Rejected -> {
                             throw BatchPersistenceRejectedException(
-                                "durable translation failure publication rejected",
+                                pageKey = pageKey,
+                                stage = BatchDiagnosticStage.TRANSLATION,
                             )
                         }
                     }
@@ -1593,9 +1595,10 @@ class TranslationPipeline(
                 suspend fun persistBatchPageWithOomRecovery(
                     pageKey: String,
                     pageTranslation: PageTranslation,
-                ) {
-                    val expected = batchWritePrecondition(pageKey) ?: return
-                    persistPageWithOomRecovery(
+                ): ChapterTranslationStore.PatchResult {
+                    val expected = batchWritePrecondition(pageKey)
+                        ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
+                    return persistPageWithOomRecovery(
                         store,
                         pageKey,
                         pageTranslation,
@@ -1789,8 +1792,14 @@ class TranslationPipeline(
                             page.errorMessage = "Cleaned image is missing or unreadable; retry inpainting"
                             tracker?.markInpaintFailed(pageKey, page.errorMessage!!)
                             tracker?.markRenderFailed(pageKey, page.errorMessage!!)
-                            persistBatchPageWithOomRecovery(pageKey, page)
+                            val failurePersisted = persistBatchPageWithOomRecovery(pageKey, page)
                             abortBatchCandidate(pageKey, page.errorMessage!!)
+                            if (failurePersisted is ChapterTranslationStore.PatchResult.Rejected) {
+                                throw BatchPersistenceRejectedException(
+                                    pageKey = pageKey,
+                                    stage = BatchDiagnosticStage.RENDER,
+                                )
+                            }
                             return@withLock
                         }
                         var renderPersisted = false
@@ -1808,7 +1817,10 @@ class TranslationPipeline(
                                         "pageKey=$pageKey reason=${running.reason}"
                                 }
                                 abortBatchCandidate(pageKey, "render admission rejected: ${running.reason}")
-                                return@withLock
+                                throw BatchPersistenceRejectedException(
+                                    pageKey = pageKey,
+                                    stage = BatchDiagnosticStage.RENDER,
+                                )
                             }
                             val renderInput = store.snapshot(pageKey)
                             RenderColorEstimator.recomputeFor(bitmap, page.blocks)
@@ -1841,7 +1853,10 @@ class TranslationPipeline(
                             renderPersisted = renderResult is StagePatchResult.Accepted
                             if (renderResult is StagePatchResult.Rejected) {
                                 abortBatchCandidate(pageKey, "render commit rejected: ${renderResult.reason}")
-                                return@withLock
+                                throw BatchPersistenceRejectedException(
+                                    pageKey = pageKey,
+                                    stage = BatchDiagnosticStage.RENDER,
+                                )
                             }
                             if (renderPersisted) {
                                 // A newer committed display bundle may have just
@@ -1849,6 +1864,8 @@ class TranslationPipeline(
                                 deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
                             }
                             tracker?.markRenderDone(pageKey)
+                        } catch (e: BatchPersistenceRejectedException) {
+                            throw e
                         } catch (e: LayoutFailureException) {
                             page.renderStatus = StageStatus.FAILED
                             page.recordAttemptFailure()
@@ -1869,8 +1886,14 @@ class TranslationPipeline(
                             } catch (_: Exception) {}
                             page.cleanedBitmap = null
                             if (!renderPersisted) {
-                                persistBatchPageWithOomRecovery(pageKey, page)
+                                val failurePersisted = persistBatchPageWithOomRecovery(pageKey, page)
                                 abortBatchCandidate(pageKey, page.activeError ?: "render did not commit")
+                                if (failurePersisted is ChapterTranslationStore.PatchResult.Rejected) {
+                                    throw BatchPersistenceRejectedException(
+                                        pageKey = pageKey,
+                                        stage = BatchDiagnosticStage.RENDER,
+                                    )
+                                }
                             } else {
                                 translationRegistry.remove(pageKey)
                                 releaseBatchLease(pageKey)
@@ -2124,7 +2147,8 @@ class TranslationPipeline(
                                 tracker?.markAiFailed(pk, reason)
                                 abortBatchCandidate(pk, "translation commit rejected: ${persisted.reason}")
                                 throw BatchPersistenceRejectedException(
-                                    "translation commit rejected",
+                                    pageKey = pk,
+                                    stage = BatchDiagnosticStage.TRANSLATION,
                                 )
                             }
                             if (status == StageStatus.READY || status == StageStatus.PARTIAL) {
@@ -2310,10 +2334,10 @@ class TranslationPipeline(
                         tracker?.markTranslateFailed(pk, reason)
                         tracker?.markAiFailed(pk, reason)
                         abortBatchCandidate(pk, reason)
-                        return ChunkCompletionOutcome.Failed(
+                        return ChunkCompletionOutcome.PersistenceRejected(
                             anchorPageKey = pk,
-                            terminalPageKeys = setOf(pk),
-                            reason = reason,
+                            stage = BatchDiagnosticStage.TRANSLATION,
+                            reason = "Batch persistence publication rejected",
                         )
                     }
                     tracker?.markTranslateDone(pk)
@@ -2591,7 +2615,8 @@ class TranslationPipeline(
                                             val result = guardedBatchUpdate(pageKey, description, BatchStage.INPAINT, update)
                                             if (result is ChapterTranslationStore.PatchResult.Rejected) {
                                                 throw BatchPersistenceRejectedException(
-                                                    "$description rejected for $pageKey: ${result.reason}",
+                                                    pageKey = pageKey,
+                                                    stage = BatchDiagnosticStage.INPAINT,
                                                 )
                                             }
                                             result
@@ -2658,7 +2683,8 @@ class TranslationPipeline(
                                 tracker?.markInpaintFailed(pageKey, "Cleaned image publication rejected")
                                 abortBatchCandidate(pageKey, "cleaned image publication rejected")
                                 throw BatchPersistenceRejectedException(
-                                    "cleaned image publication rejected",
+                                    pageKey = pageKey,
+                                    stage = BatchDiagnosticStage.INPAINT,
                                 )
                             }
                         } else {
@@ -2672,7 +2698,8 @@ class TranslationPipeline(
                             if (terminal is ChapterTranslationStore.PatchResult.Rejected) {
                                 abortBatchCandidate(pageKey, "inpaint terminal write rejected: ${terminal.reason}")
                                 throw BatchPersistenceRejectedException(
-                                    "inpaint terminal write rejected",
+                                    pageKey = pageKey,
+                                    stage = BatchDiagnosticStage.INPAINT,
                                 )
                             }
                         }
@@ -2830,7 +2857,10 @@ class TranslationPipeline(
                             val textless = guardedBatchUpdate(pageKey, "batch textless translation commit", BatchStage.TRANSLATION) { p }
                             if (textless is ChapterTranslationStore.PatchResult.Rejected) {
                                 abortBatchCandidate(pageKey, "textless commit rejected: ${textless.reason}")
-                                return
+                                throw BatchPersistenceRejectedException(
+                                    pageKey = pageKey,
+                                    stage = BatchDiagnosticStage.TRANSLATION,
+                                )
                             }
                             tracker?.markTranslateSkipped(pageKey)
                             tracker?.markAiSucceeded(pageKey)
@@ -2989,10 +3019,10 @@ class TranslationPipeline(
                                     val reason = "translation commit rejected: ${persisted.reason}"
                                     tracker?.markTranslateFailed(pageKey, reason)
                                     tracker?.markAiFailed(pageKey, reason)
-                                    standardOutcome = ChunkCompletionOutcome.Failed(
+                                    standardOutcome = ChunkCompletionOutcome.PersistenceRejected(
                                         anchorPageKey = pageKey,
-                                        terminalPageKeys = setOf(pageKey),
-                                        reason = reason,
+                                        stage = BatchDiagnosticStage.TRANSLATION,
+                                        reason = "Batch persistence publication rejected",
                                     )
                                 } else {
                                     standardOutcome = ChunkCompletionOutcome.Completed(setOf(pageKey))
@@ -3025,6 +3055,9 @@ class TranslationPipeline(
                                     is ChunkCompletionOutcome.Unexpected -> return result.copy(
                                         completedPageKeys = completed + result.completedPageKeys,
                                     )
+                                    is ChunkCompletionOutcome.PersistenceRejected -> return result.copy(
+                                        completedPageKeys = completed + result.completedPageKeys,
+                                    )
                                 }
                             }
                             return ChunkCompletionOutcome.Completed(completed)
@@ -3038,6 +3071,7 @@ class TranslationPipeline(
                             is ChunkCompletionOutcome.Paused -> completedPageKeys
                             is ChunkCompletionOutcome.Failed -> completedPageKeys
                             is ChunkCompletionOutcome.Unexpected -> completedPageKeys
+                            is ChunkCompletionOutcome.PersistenceRejected -> completedPageKeys
                         }
                         var completed = linkedSetOf<String>()
                         var result: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
@@ -3130,6 +3164,7 @@ class TranslationPipeline(
                             is ChunkCompletionOutcome.Paused -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
                             is ChunkCompletionOutcome.Failed -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
                             is ChunkCompletionOutcome.Unexpected -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
+                            is ChunkCompletionOutcome.PersistenceRejected -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
                         }
                     }
                 }
@@ -3219,41 +3254,61 @@ class TranslationPipeline(
                     }
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                     store.flush()
-                    return@withGeneration
+                    return@withGeneration null
                 }
                 val stoppedOutcome = pass1Outcome
                 if (stoppedOutcome != null && stoppedOutcome.status != BatchPass1Status.COMPLETED) {
-                    if (stoppedOutcome.unexpectedStage != null && stoppedOutcome.anchorPageKey != null) {
-                        persistUnexpectedBatchStageFailure(
-                            store = store,
-                            pageKey = stoppedOutcome.anchorPageKey,
-                            stage = stoppedOutcome.unexpectedStage,
-                            reason = stoppedOutcome.reason ?: "Unexpected batch stage failure",
+                    // Unexpected stage failures are normally made durable before
+                    // reconciliation. If that publication is rejected, preserve
+                    // the rejection as an explicit in-memory-only outcome: do not
+                    // add the page to durableFailurePageKeys and do not let the
+                    // outer cleanup claim a durable terminal record exists.
+                    val effectiveOutcome = try {
+                        if (stoppedOutcome.unexpectedStage != null && stoppedOutcome.anchorPageKey != null) {
+                            persistUnexpectedBatchStageFailure(
+                                store = store,
+                                pageKey = stoppedOutcome.anchorPageKey,
+                                stage = stoppedOutcome.unexpectedStage,
+                                reason = stoppedOutcome.reason ?: "Unexpected batch stage failure",
+                            )
+                            // Keep the unexpected-stage terminal snapshot intact during the
+                            // outer lease cleanup. A plain cancellation here would erase the
+                            // visible failure and make the page look pending again.
+                            durableFailurePageKeys += stoppedOutcome.anchorPageKey
+                            store.flush()
+                        }
+                        stoppedOutcome
+                    } catch (rejected: BatchPersistenceRejectedException) {
+                        stoppedOutcome.copy(
+                            status = BatchPass1Status.PERSISTENCE_REJECTED,
+                            anchorPageKey = rejected.pageKey ?: stoppedOutcome.anchorPageKey,
+                            retryablePageKeys = emptySet(),
+                            terminalPageKeys = emptySet(),
+                            failure = null,
+                            nextEligibleRetryAtEpochMs = null,
+                            reason = "Batch persistence publication rejected",
+                            unexpectedStage = null,
+                            persistenceRejectedStage = rejected.stage ?: stoppedOutcome.unexpectedStage,
                         )
-                        // Keep the unexpected-stage terminal snapshot intact during the
-                        // outer lease cleanup. A plain cancellation here would erase the
-                        // visible failure and make the page look pending again.
-                        durableFailurePageKeys += stoppedOutcome.anchorPageKey
-                        store.flush()
                     }
                     val reconciliation = BatchProgressReconciler.reconcile(
                         pageMap = store.state.value,
                         orderedKeys = orderedStreams.map { it.first },
                         activeGeneration = store.currentGeneration,
-                        pauseOutcome = stoppedOutcome,
+                        pauseOutcome = effectiveOutcome,
                     )
                     store.flush()
-                    if (stoppedOutcome.status == BatchPass1Status.PAUSED) {
-                        tracker?.pause(stoppedOutcome, orderedStreams.size)
+                    if (effectiveOutcome.status == BatchPass1Status.PAUSED) {
+                        tracker?.pause(effectiveOutcome, orderedStreams.size)
                     } else {
                         tracker?.finish(reconciliation)
                     }
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT batch stopped before tail reconciliation chapter=${chapter.name} " +
-                            "status=${stoppedOutcome.status} anchor=${stoppedOutcome.anchorPageKey?.let(ShortHash::hash)}"
+                            "status=${effectiveOutcome.status} anchor=${effectiveOutcome.anchorPageKey?.let(ShortHash::hash)}"
                     }
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
-                    return@withGeneration
+                    return@withGeneration reconciliation
                 }
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
@@ -3284,6 +3339,7 @@ class TranslationPipeline(
                     "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
                 }
                 store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                return@withGeneration reconciliation
             } finally {
                 // Cancellation, an unexpected worker exception, or a provider
                 // failure must not strand a BATCH lease for the next run.
@@ -3339,7 +3395,7 @@ class TranslationPipeline(
         pageKey: String,
         stage: BatchDiagnosticStage,
         reason: String,
-    ) {
+    ): Boolean {
         val current = store.state.value[pageKey]
         val alreadyFailed = current?.let {
             it.ocrStatus == StageStatus.FAILED ||
@@ -3347,7 +3403,7 @@ class TranslationPipeline(
                 it.translationStatus == StageStatus.FAILED ||
                 it.renderStatus == StageStatus.FAILED
         } == true
-        if (alreadyFailed) return
+        if (alreadyFailed) return true
         val result = updatePageFromCurrentSnapshot(
             store = store,
             pageKey = pageKey,
@@ -3375,10 +3431,10 @@ class TranslationPipeline(
                 "TachiyomiAT unexpected stage failure could not be persisted: " +
                     "pageHash=${ShortHash.hash(pageKey)} stage=${stage.name}"
             }
+            throw BatchPersistenceRejectedException(pageKey = pageKey, stage = stage)
         }
+        return true
     }
-
-    private class BatchPersistenceRejectedException(message: String) : IllegalStateException(message)
 
     private data class BatchWriteIdentity(
         val generation: Long,
@@ -3911,6 +3967,26 @@ class TranslationPipeline(
                             TranslationBlockValidation.applyTo(pageTranslation)
                         }
                     }
+                    if (translationOutcome is ChunkCompletionOutcome.Completed &&
+                        pageTranslation.translationStatus == StageStatus.PARTIAL
+                    ) {
+                        // A translator may report a partial response without throwing.
+                        // Keep that outcome typed as a pause so rolling auto does not
+                        // promote a partially translated page to Ready.
+                        val partialFailure = ProviderFailure(
+                            kind = ProviderFailureKind.PROTOCOL,
+                            retryability = ProviderFailureRetryability.PAUSE,
+                            safeSummary = "translation output is partial",
+                        )
+                        pageTranslation.translationError = partialFailure.safeSummary
+                        translationOutcome = ChunkCompletionOutcome.Paused(
+                            anchorPageKey = pageKey,
+                            retryablePageKeys = setOf(pageKey),
+                            failure = partialFailure,
+                            nextEligibleRetryAtEpochMs = partialFailure.retryAfterAtEpochMs,
+                            reason = partialFailure.safeSummary,
+                        )
+                    }
                     // Fold this page's translated pairs into the chapter glossary so later
                     // on-demand/batch translations reuse its established terms.
                     if (activeTranslator is ContextualTextTranslator) {
@@ -4111,6 +4187,11 @@ class TranslationPipeline(
                     "TachiyomiAT single-page late result rejected: chapter=${chapter.name} " +
                         "pageKey=$pageKey reason=${commit.reason}"
                 }
+                translationOutcome = ChunkCompletionOutcome.PersistenceRejected(
+                    anchorPageKey = pageKey,
+                    stage = BatchDiagnosticStage.TRANSLATION,
+                    reason = "Batch persistence publication rejected",
+                )
             } else {
                 // A newer committed display bundle may have just promoted; the
                 // file it superseded is now deletable.
@@ -4759,7 +4840,8 @@ class TranslationPipeline(
                 "TachiyomiAT batch OCR persist rejected (stale writer): pageKey=$fileName reason=${ocrPatch.reason}"
             }
             throw BatchPersistenceRejectedException(
-                "OCR persistence rejected for $fileName: ${ocrPatch.reason}",
+                pageKey = fileName,
+                stage = BatchDiagnosticStage.OCR,
             )
         }
         return pageTranslation
@@ -4798,7 +4880,12 @@ class TranslationPipeline(
                     updatedAt = System.currentTimeMillis()
                 }
             }
-            if (runningWrite is ChapterTranslationStore.PatchResult.Rejected) return pageTranslation
+            if (runningWrite is ChapterTranslationStore.PatchResult.Rejected) {
+                throw BatchPersistenceRejectedException(
+                    pageKey = fileName,
+                    stage = BatchDiagnosticStage.INPAINT,
+                )
+            }
             pageTranslation.cleanedBitmap = recognitionEngine.inpaint(bitmap, pageTranslation)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
@@ -5049,18 +5136,18 @@ class TranslationPipeline(
         fileName: String,
         pageTranslation: PageTranslation,
         expectedPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    ) {
+    ): ChapterTranslationStore.PatchResult {
         suspend fun persist(
             description: String,
             update: (PageTranslation?) -> PageTranslation,
-        ) {
+        ): ChapterTranslationStore.PatchResult {
             if (expectedPrecondition != null) {
-                store.updatePageGuarded(fileName, expectedPrecondition, description, update)
+                return store.updatePageGuarded(fileName, expectedPrecondition, description, update)
             } else {
-                updatePageFromCurrentSnapshot(store, fileName, description, update = update)
+                return updatePageFromCurrentSnapshot(store, fileName, description, update = update)
             }
         }
-        try {
+        return try {
             if (TranslationMemoryBudget.isCriticalHeap()) {
                 handleCriticalTranslationOom("persisting $fileName", OutOfMemoryError("critical heap before persist"))
             }

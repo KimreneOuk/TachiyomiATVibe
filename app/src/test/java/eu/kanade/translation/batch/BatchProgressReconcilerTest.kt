@@ -45,6 +45,30 @@ class BatchProgressReconcilerTest {
         result.nextEligibleRetryAtEpochMs shouldBe 5000L
     }
 
+    @Test
+    fun `persistence rejection is reconciled as an in-memory warning`() {
+        val result = BatchProgressReconciler.reconcile(
+            pageMap = mapOf("p0" to readyPage("p0")),
+            orderedKeys = listOf("p0", "p1"),
+            activeGeneration = 0L,
+            pauseOutcome = BatchPass1Outcome(
+                needsTranslation = listOf("p0", "p1"),
+                status = BatchPass1Status.PERSISTENCE_REJECTED,
+                anchorPageKey = "p1",
+                completedPageKeys = setOf("p0"),
+                persistenceRejectedStage = BatchDiagnosticStage.TRANSLATION,
+                reason = "Batch persistence publication rejected",
+            ),
+        )
+
+        result.chapterStatus shouldBe Translation.State.READY_WITH_WARNINGS
+        result.paused shouldBe false
+        result.nonDurableFailure shouldBe true
+        result.failedCount shouldBe 0
+        result.pendingCount shouldBe 1
+        result.retryableCount shouldBe 0
+    }
+
     private fun readyPage(key: String) = PageTranslation(
         sourceFileName = key,
         blocks = mutableListOf(block()),

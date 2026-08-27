@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.batch.ReconciliationResult
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -46,6 +47,14 @@ import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
+
+internal fun <T> mergeRestoredQueueEntries(
+    durableIds: List<Long>,
+    restoredById: Map<Long, T>,
+    liveById: Map<Long, T>,
+): List<T> = durableIds.distinct().mapNotNull { chapterId ->
+    restoredById[chapterId] ?: liveById[chapterId]
+}
 
 class ChapterTranslator(
     private val context: Context,
@@ -133,12 +142,17 @@ class ChapterTranslator(
     private val _queueState = MutableStateFlow<List<Translation>>(emptyList())
     val queueState = _queueState.asStateFlow()
 
+    /** Serializes queue membership and restore publication with persistence. */
+    private val queueMutationLock = Any()
+
     /**
      * Returns the queue ids currently durable on disk. Startup restoration is
      * intentionally asynchronous, so lifecycle deletion must consult this
      * snapshot before [restoreQueue] has repopulated [queueState].
      */
-    fun persistedQueueChapterIds(): Set<Long> = queueStore.load().toSet()
+    fun persistedQueueChapterIds(): Set<Long> = synchronized(queueMutationLock) {
+        queueStore.load().toSet()
+    }
 
     /**
      * TachiyomiAT: persists the queue (ordered chapter ids) to disk after every
@@ -146,7 +160,9 @@ class ChapterTranslator(
      * editor batch; idempotent.
      */
     private fun persistQueue() {
-        queueStore.save(_queueState.value.map { it.chapter.id ?: return })
+        synchronized(queueMutationLock) {
+            queueStore.save(_queueState.value.mapNotNull { it.chapter.id })
+        }
     }
 
     /**
@@ -157,7 +173,7 @@ class ChapterTranslator(
      * launch. Must run in a coroutine (suspend lookups).
      */
     suspend fun restoreQueue() {
-        val ids = queueStore.load()
+        val ids = synchronized(queueMutationLock) { queueStore.load() }
         if (ids.isEmpty()) return
         val restored = mutableListOf<Translation>()
         for (id in ids) {
@@ -170,18 +186,39 @@ class ChapterTranslator(
             }
             restored += translation
         }
-        if (restored.isNotEmpty()) {
-            _queueState.update { restored }
-            // Re-save so any self-healed (null) drops are persisted.
-            queueStore.save(restored.mapNotNull { it.chapter.id })
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT restored ${restored.size}/${ids.size} queued translations from disk"
+        synchronized(queueMutationLock) {
+            // Lookups above suspend. Re-read the durable membership and merge
+            // any queue additions that landed during that window instead of
+            // replacing them with the startup snapshot.
+            val durableIds = queueStore.load()
+            val merged = mergeRestoredQueueEntries(
+                durableIds = durableIds,
+                restoredById = restored.mapNotNull { translation ->
+                    translation.chapter.id?.let { it to translation }
+                }.toMap(),
+                liveById = _queueState.value.mapNotNull { translation ->
+                    translation.chapter.id?.let { it to translation }
+                }.toMap(),
+            )
+            if (merged.isNotEmpty()) {
+                _queueState.value = merged
+                // Re-save so self-healed stale ids are removed while concurrent
+                // additions retained by the merge remain durable.
+                queueStore.save(merged.mapNotNull { it.chapter.id })
+            } else {
+                _queueState.value = emptyList()
+                queueStore.clear()
             }
-        } else {
-            // All persisted ids were stale (chapters deleted) — clear the store.
-            queueStore.clear()
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT queue restore: all ${ids.size} persisted ids were stale; cleared store"
+            if (merged.isNotEmpty()) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT restored ${merged.size}/${ids.size} queued translations from disk"
+                }
+            } else {
+                // All persisted ids were stale (chapters deleted) and no
+                // concurrent queue entry survived the merge.
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT queue restore: all ${ids.size} persisted ids were stale; cleared store"
+                }
             }
         }
     }
@@ -305,13 +342,18 @@ class ChapterTranslator(
         val durable = durableQueueState(translation)
         val next = durable?.nextEligibleRetryAtEpochMs
         if (!force && next != null && next > System.currentTimeMillis()) return false
-        if (translation.status != Translation.State.PAUSED && durable?.status != Translation.State.PAUSED) {
-            return translation.status == Translation.State.QUEUE
+        val rearmed = synchronized(queueMutationLock) {
+            val current = _queueState.value.firstOrNull { it.chapter.id == chapterId } ?: return@synchronized false
+            if (current.status != Translation.State.PAUSED && durable?.status != Translation.State.PAUSED) {
+                return@synchronized current.status == Translation.State.QUEUE
+            }
+            current.status = Translation.State.QUEUE
+            isPaused = false
+            _queueState.update { it.toList() }
+            persistQueue()
+            true
         }
-        translation.status = Translation.State.QUEUE
-        isPaused = false
-        _queueState.update { it.toList() }
-        persistQueue()
+        if (!rearmed) return false
         if (!isRunning) launchTranslatorJob()
         return true
     }
@@ -462,6 +504,7 @@ class ChapterTranslator(
     private suspend fun translateChapterInternal(translation: Translation) {
         var store: ChapterTranslationStore? = null
         var tracker: eu.kanade.translation.batch.TranslationBatchProgressTracker? = null
+        var batchReconciliation: ReconciliationResult? = null
         var batchOrderedPageKeys: List<String> = emptyList()
         try {
             // Prefer the shared active store from TranslationManager so the reader
@@ -570,7 +613,7 @@ class ChapterTranslator(
                 if (translationJob?.isActive != true) {
                     logcat(LogPriority.INFO) { "TachiyomiAT batch cancelled before start: ${translation.chapter.name}" }
                 } else {
-                    pipeline.translateBatch(
+                    batchReconciliation = pipeline.translateBatch(
                         translation.manga,
                         translation.chapter,
                         translation.source,
@@ -589,9 +632,19 @@ class ChapterTranslator(
             // A durable pause/terminal outcome already owns its unresolved
             // anchor. Running the ordinary reconciler here would synthesize
             // tail failures and destroy the retry boundary.
-            when (store.artifactStatus()) {
-                Translation.State.PAUSED -> translation.status = Translation.State.PAUSED
-                Translation.State.ERROR -> translation.status = Translation.State.ERROR
+            when {
+                batchReconciliation?.nonDurableFailure == true -> {
+                    // A guarded publication rejection was reconciled in memory
+                    // only. Preserve that explicit warning instead of deriving a
+                    // terminal ERROR from a snapshot that was not durably owned.
+                    translation.status = batchReconciliation!!.chapterStatus
+                }
+                store.artifactStatus() == Translation.State.PAUSED -> {
+                    translation.status = Translation.State.PAUSED
+                }
+                store.artifactStatus() == Translation.State.ERROR -> {
+                    translation.status = Translation.State.ERROR
+                }
                 else -> {
                     val pageStates = store.state.value
                     val reconciliation = eu.kanade.translation.batch.BatchProgressReconciler.reconcile(
@@ -676,36 +729,46 @@ class ChapterTranslator(
     }
 
     private fun addToQueue(translation: Translation) {
-        translation.status = Translation.State.QUEUE
-        _queueState.update {
-            it + translation
+        synchronized(queueMutationLock) {
+            // queueChapter performs a best-effort preflight before resolving
+            // translation configuration, but restore/queue actions can race;
+            // the mutation itself owns the authoritative duplicate check.
+            if (_queueState.value.any { it.chapter.id == translation.chapter.id }) return
+            translation.status = Translation.State.QUEUE
+            _queueState.update {
+                it + translation
+            }
+            persistQueue()
         }
-        persistQueue()
     }
 
     private fun removeFromQueue(translation: Translation) {
-        _queueState.update {
-            if (translation.status == Translation.State.TRANSLATING || translation.status == Translation.State.QUEUE) {
-                translation.status = Translation.State.NOT_TRANSLATED
+        synchronized(queueMutationLock) {
+            _queueState.update {
+                if (translation.status == Translation.State.TRANSLATING || translation.status == Translation.State.QUEUE) {
+                    translation.status = Translation.State.NOT_TRANSLATED
+                }
+                it - translation
             }
-            it - translation
+            persistQueue()
         }
-        persistQueue()
     }
 
     private inline fun removeFromQueueIf(predicate: (Translation) -> Boolean) {
-        _queueState.update { queue ->
-            val translations = queue.filter { predicate(it) }
-            translations.forEach { translation ->
-                if (translation.status == Translation.State.TRANSLATING ||
-                    translation.status == Translation.State.QUEUE
-                ) {
-                    translation.status = Translation.State.NOT_TRANSLATED
+        synchronized(queueMutationLock) {
+            _queueState.update { queue ->
+                val translations = queue.filter { predicate(it) }
+                translations.forEach { translation ->
+                    if (translation.status == Translation.State.TRANSLATING ||
+                        translation.status == Translation.State.QUEUE
+                    ) {
+                        translation.status = Translation.State.NOT_TRANSLATED
+                    }
                 }
+                queue - translations
             }
-            queue - translations
+            persistQueue()
         }
-        persistQueue()
     }
 
     fun removeFromQueue(chapter: Chapter) {
@@ -717,16 +780,18 @@ class ChapterTranslator(
     }
 
     private fun internalClearQueue() {
-        _queueState.update {
-            it.forEach { translation ->
-                if (translation.status == Translation.State.TRANSLATING ||
-                    translation.status == Translation.State.QUEUE
-                ) {
-                    translation.status = Translation.State.NOT_TRANSLATED
+        synchronized(queueMutationLock) {
+            _queueState.update {
+                it.forEach { translation ->
+                    if (translation.status == Translation.State.TRANSLATING ||
+                        translation.status == Translation.State.QUEUE
+                    ) {
+                        translation.status = Translation.State.NOT_TRANSLATED
+                    }
                 }
+                emptyList()
             }
-            emptyList()
+            persistQueue()
         }
-        persistQueue()
     }
 }

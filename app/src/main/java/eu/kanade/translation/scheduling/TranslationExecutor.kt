@@ -1,6 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.batch.ChunkCompletionOutcome
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream
@@ -63,9 +64,11 @@ interface TranslationExecutor {
      * never a decoded bitmap — so a caller may begin another native page while
      * a remote translator processes this prepared page.
      *
-     * Returns null on failure before handoff (decode/recognition/persist
-     * failure, soft skip with no durable state, or cancellation-equivalent
-     * terminal writes). A null return cannot be mistaken for a prepared page.
+     * Returns null only when the prepared reference is stale, the active store
+     * disappeared, or the cleaned image is unavailable. Typed completion
+     * outcomes carry provider pauses, terminal failures, and persistence
+     * rejections; callers must not treat those outcomes as successful
+     * completion.
      *
      * When [PreparedPage.isTerminal] is true the page needs no further work
      * (textless terminal, render-only resume that already completed, or an
@@ -94,12 +97,14 @@ interface TranslationExecutor {
      * native permit so a caller's other native page may overlap this page's
      * remote translation.
      *
-     * @return true when translate/render work was performed or attempted
-     *   (including textless terminal no-ops); false ONLY when the prepared
+     * @return [ChunkCompletionOutcome.Completed] when translate/render work
+     *   completed (including textless terminal no-ops), [ChunkCompletionOutcome.Paused]
+     *   or [ChunkCompletionOutcome.Failed] when the page was actually attempted
+     *   but produced a typed provider outcome, and null ONLY when the prepared
      *   reference no longer matches the durable store (generation / pageVersion
      *   / fingerprint mismatch, missing page, or missing cleaned image) — a
      *   stale/race outcome the caller may retry. An inpaint failure during
-     *   preparation (no cleaned image produced) also surfaces as false: the
+     *   preparation (no cleaned image produced) also surfaces as null: the
      *   caller should re-prepare the page rather than mark the slot Failed.
      * @throws Throwable on a genuine translate/render failure or timeout (after
      *   durable failure writes), matching the legacy [translateSinglePage]
@@ -115,7 +120,7 @@ interface TranslationExecutor {
         source: HttpSource,
         prepared: PreparedPage,
         stageListener: TranslationStageListener? = null,
-    ): Boolean
+    ): ChunkCompletionOutcome?
 }
 
 /**
