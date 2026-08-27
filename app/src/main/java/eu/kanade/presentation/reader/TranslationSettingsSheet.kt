@@ -31,7 +31,9 @@ import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidge
 import eu.kanade.presentation.more.settings.widget.SwitchPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.TextPreferenceWidget
 import eu.kanade.tachiyomi.ui.reader.TranslationSettingsState
+import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.translator.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslatorKind
@@ -85,6 +87,7 @@ fun TranslationSettingsSheet(
     translationProgress: Pair<Int, Int> = Pair(0, 0),
     translationCurrentPage: Int = 0,
     translationBatchProgress: TranslationProgressSnapshot? = null,
+    onRetryBatch: (() -> Unit)? = null,
 ) {
     var showAdvanced by remember { mutableStateOf(false) }
 
@@ -109,6 +112,7 @@ fun TranslationSettingsSheet(
                 translationProgress = translationProgress,
                 translationCurrentPage = translationCurrentPage,
                 translationBatchProgress = translationBatchProgress,
+                onRetryBatch = onRetryBatch,
             )
             StopAllSection(onStopAllTranslation)
             LanguagesSection(
@@ -186,6 +190,7 @@ private fun ColumnScope.QueueSection(
     translationProgress: Pair<Int, Int>,
     translationCurrentPage: Int,
     translationBatchProgress: TranslationProgressSnapshot?,
+    onRetryBatch: (() -> Unit)?,
 ) {
     val (done, total) = translationProgress
     val queued = queue.count {
@@ -200,6 +205,53 @@ private fun ColumnScope.QueueSection(
             stringResource(ATMR.strings.reader_translation_queued_count, queued)
         else ->
             stringResource(ATMR.strings.reader_translation_queue_idle)
+    }
+
+    val snapshot = translationBatchProgress
+    val isPaused = snapshot?.state == Translation.State.PAUSED || snapshot?.pauseReason != null
+    val request = snapshot?.requestState
+    val hasBatchProjection = snapshot != null &&
+        (
+            snapshot.batchPhase != eu.kanade.translation.model.TranslationBatchPhase.IDLE ||
+                snapshot.state == Translation.State.QUEUE ||
+                snapshot.state == Translation.State.TRANSLATING ||
+                isPaused ||
+                request != null
+            )
+
+    if (hasBatchProjection && snapshot != null) {
+        val status = when {
+            request?.phase == TranslationRequestPhase.STARTING -> "Translation accepted — preparing batch"
+            request?.phase == TranslationRequestPhase.PREPARING -> "Preparing translation batch"
+            request?.phase == TranslationRequestPhase.WAITING_FOR_DOWNLOAD ->
+                "Waiting for chapter download before translation"
+            request?.phase == TranslationRequestPhase.DOWNLOAD_FAILED ->
+                "Download failed — retry to continue"
+            isPaused -> {
+                val reason = snapshot.pauseReason?.takeIf { it.isNotBlank() } ?: "Provider work is temporarily unavailable"
+                val retryAt = snapshot.nextEligibleRetryAtEpochMs?.let { " · retry after ${formatRetryTime(it)}" }.orEmpty()
+                "Paused — $reason$retryAt"
+            }
+            snapshot.state == Translation.State.QUEUE -> "Batch queued — preparing to resume"
+            snapshot.state == Translation.State.TRANSLATING -> "Batch translating · ${snapshot.donePages}/${snapshot.totalPages} pages"
+            else -> "Batch progress · ${snapshot.donePages}/${snapshot.totalPages} pages"
+        }
+        Text(
+            text = status,
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (isPaused) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = MaterialTheme.padding.medium, vertical = MaterialTheme.padding.small),
+        )
+        if (isPaused && onRetryBatch != null) {
+            TextButton(
+                onClick = onRetryBatch,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = MaterialTheme.padding.medium),
+            ) {
+                Text("Retry translation")
+            }
+        }
     }
 
     Text(
@@ -233,6 +285,9 @@ private fun ColumnScope.QueueSection(
         }
     }
 }
+
+private fun formatRetryTime(epochMs: Long): String =
+    java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(java.util.Date(epochMs))
 
 @Composable
 private fun QueueRow(info: eu.kanade.tachiyomi.ui.reader.ReaderViewModel.QueuedPageInfo) {

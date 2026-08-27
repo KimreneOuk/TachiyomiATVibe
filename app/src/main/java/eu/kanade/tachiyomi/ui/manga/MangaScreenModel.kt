@@ -47,7 +47,9 @@ import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.model.TranslationSettingsSummary
+import eu.kanade.translation.model.TranslationUiProjection
 import eu.kanade.translation.model.snapshotTranslationSummary
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -185,7 +187,8 @@ class MangaScreenModel(
                 downloadManager.queueState,
                 // TachiyomiAT
                 translationManager.queueState,
-            ) { mangaAndChapters, _, _, _ -> mangaAndChapters }
+                translationManager.pendingTranslationRequests,
+            ) { mangaAndChapters, _, _, _, _ -> mangaAndChapters }
                 .flowWithLifecycle(lifecycle)
                 .collectLatest { (manga, chapters) ->
                     updateSuccessState {
@@ -222,6 +225,7 @@ class MangaScreenModel(
         observeDownloads()
         // TachiyomiAT
         observeTranslations()
+        observeTranslationRequests()
 
         screenModelScope.launchIO {
             val manga = getMangaAndChapters.awaitManga(mangaId)
@@ -532,6 +536,18 @@ class MangaScreenModel(
         }
     }
 
+    private fun observeTranslationRequests() {
+        screenModelScope.launchIO {
+            translationManager.pendingTranslationRequests
+                .flowWithLifecycle(lifecycle)
+                .collectLatest { requests ->
+                    withUIContext {
+                        updateTranslationRequests(requests)
+                    }
+                }
+        }
+    }
+
     // TachiyomiAT: active per-chapter batch-progress collectors. Keyed by
     // chapterId so we start one collector when a chapter begins translating and
     // stop it when it leaves the translating state, feeding (done,total) into
@@ -591,7 +607,10 @@ class MangaScreenModel(
         // resets to no-fraction) once the chapter reaches a terminal state.
         val chapterId = translation.chapter.id
         when (translation.status) {
-            Translation.State.QUEUE, Translation.State.TRANSLATING -> observeTranslationProgress(chapterId)
+            Translation.State.QUEUE,
+            Translation.State.TRANSLATING,
+            Translation.State.PAUSED,
+            -> observeTranslationProgress(chapterId)
             else -> stopTranslationProgress(chapterId)
         }
         updateSuccessState { successState ->
@@ -604,6 +623,15 @@ class MangaScreenModel(
                 add(modifiedIndex, item)
             }
             successState.copy(chapters = newChapters)
+        }
+    }
+
+    private fun updateTranslationRequests(requests: Map<Long, TranslationRequestState>) {
+        updateSuccessState { successState ->
+            val newChapters = successState.chapters.map { item ->
+                item.copy(translationRequest = item.id?.let(requests::get))
+            }
+            if (newChapters == successState.chapters) successState else successState.copy(chapters = newChapters)
         }
     }
 
@@ -640,17 +668,26 @@ class MangaScreenModel(
                 else -> Download.State.NOT_DOWNLOADED
             }
             // TachiyomiAT
-            var translationState = Translation.State.NOT_TRANSLATED
-            if (downloadState == Download.State.DOWNLOADED) {
-                translationState = translationManager.getChapterTranslationStatus(
+            val queuedTranslation = chapter.id?.let(translationManager::getQueuedTranslationOrNull)
+            val translationRequest = chapter.id?.let { translationManager.pendingTranslationRequests.value[it] }
+            val persistedTranslationState = if (downloadState == Download.State.DOWNLOADED) {
+                translationManager.getChapterTranslationStatus(
                     chapter.id,
                     chapter.name,
                     chapter.scanlator,
                     manga.title,
                     manga.source,
                 )
+            } else {
+                null
             }
-            if (translationState == Translation.State.QUEUE || translationState == Translation.State.TRANSLATING) {
+            val translationState = TranslationUiProjection.chapterState(
+                queuedState = queuedTranslation?.status,
+                persistedState = persistedTranslationState,
+                requestState = translationRequest,
+                downloaded = downloadState == Download.State.DOWNLOADED,
+            )
+            if (queuedTranslation != null || translationRequest != null) {
                 chapter.id?.let(::observeTranslationProgress)
             }
 
@@ -661,6 +698,7 @@ class MangaScreenModel(
                 selected = chapter.id in selectedChapterIds,
                 // TachiyomiAT
                 translationState = translationState,
+                translationRequest = translationRequest,
             )
         }
     }
@@ -847,9 +885,17 @@ class MangaScreenModel(
 
             ChapterTranslationAction.CANCEL -> {
                 items.forEach { item ->
-                    val activeTranslation = translationManager.getQueuedTranslationOrNull(item.chapter.id) ?: return@forEach
-                    translationManager.cancelQueuedTranslation(activeTranslation)
-                    updateTranslationState(activeTranslation.apply { status = Translation.State.NOT_TRANSLATED })
+                    val activeTranslation = translationManager.getQueuedTranslationOrNull(item.chapter.id)
+                    val wasPendingRequest = activeTranslation == null &&
+                        translationManager.isChapterTranslationProtected(item.chapter.id)
+                    if (activeTranslation != null) {
+                        translationManager.cancelQueuedTranslation(activeTranslation)
+                        updateTranslationState(activeTranslation.apply { status = Translation.State.NOT_TRANSLATED })
+                    } else if (!translationManager.cancelTranslationRequest(item.chapter.id)) {
+                        return@forEach
+                    } else {
+                        updateTranslationRequests(translationManager.pendingTranslationRequests.value)
+                    }
                     // TachiyomiAT bug 4 fix: confirm the cancellation visibly and
                     // offer Undo. The store-level dim clear is handled by
                     // cancelPageTranslations; this snackbar closes the loop on the
@@ -865,7 +911,11 @@ class MangaScreenModel(
                             withDismissAction = true,
                         )
                         if (result == SnackbarResult.ActionPerformed && manga != null) {
-                            translationManager.translateChapter(manga, item.chapter)
+                            if (wasPendingRequest) {
+                                confirmChapterTranslation(item)
+                            } else {
+                                translationManager.translateChapter(manga, item.chapter)
+                            }
                         }
                     }
                 }
@@ -949,6 +999,13 @@ class MangaScreenModel(
             .takeIf { it.any { candidate -> candidate.chapter.id == item.chapter.id } }
             ?: listOf(item)
         pendingTranslationGroup = emptyList()
+        // Publish an acknowledgement before the live download probe or any
+        // store/engine setup. The row can immediately open details/cancel even
+        // when the selected chapter is not downloaded yet.
+        translationManager.acknowledgeTranslationRequests(
+            chapters = group.map { it.chapter },
+        )
+        updateTranslationRequests(translationManager.pendingTranslationRequests.value)
         screenModelScope.launch {
             // TachiyomiAT bug 5 fix: decide with the same live provider check that
             // Downloader.queueChapters uses to drop already-downloaded chapters. The
@@ -956,8 +1013,12 @@ class MangaScreenModel(
             // is stale or empty, which previously made this branch queue an
             // in-memory translate-after-download request that the downloader then
             // filtered out silently, so the batch never started at all.
+            val requestedGroup = group.filter { candidate ->
+                candidate.chapter.id?.let(translationManager::hasPendingTranslationRequest) == true
+            }
+            if (requestedGroup.isEmpty()) return@launch
             val (downloaded, awaitingDownload) = withIOContext {
-                group.partition {
+                requestedGroup.partition {
                     downloadManager.isChapterDownloaded(
                         it.chapter.name,
                         it.chapter.scanlator,
@@ -967,18 +1028,35 @@ class MangaScreenModel(
                     )
                 }
             }
-            awaitingDownload.forEach { candidate ->
+            val pendingAwaitingDownload = awaitingDownload.filter { candidate ->
+                candidate.chapter.id?.let(translationManager::hasPendingTranslationRequest) == true
+            }
+            pendingAwaitingDownload.forEach { candidate ->
                 translationManager.queueTranslationAfterDownload(manga, candidate.chapter)
             }
-            if (awaitingDownload.isNotEmpty()) {
-                downloadManager.downloadChapters(manga, awaitingDownload.map { it.chapter })
+            if (pendingAwaitingDownload.isNotEmpty()) {
+                downloadManager.downloadChapters(manga, pendingAwaitingDownload.map { it.chapter })
+                // A failed download remains in the downloader queue with ERROR
+                // status. Put it back at the front when this is an explicit
+                // retry of a previously failed pending request.
+                pendingAwaitingDownload.forEach { candidate ->
+                    if (downloadManager.getQueuedDownloadOrNull(candidate.chapter.id)?.status == Download.State.ERROR) {
+                        candidate.chapter.id?.let(downloadManager::startDownloadNow)
+                    }
+                }
             }
-            if (downloaded.isEmpty()) return@launch
-            if (downloaded.size > 1) {
-                translationManager.translateChapters(manga, downloaded.map { it.chapter })
+            val pendingDownloaded = downloaded.filter { candidate ->
+                candidate.chapter.id?.let(translationManager::hasPendingTranslationRequest) == true
+            }
+            if (pendingDownloaded.isEmpty()) return@launch
+            pendingDownloaded.forEach { candidate ->
+                candidate.chapter.id?.let(translationManager::markTranslationRequestPreparing)
+            }
+            if (pendingDownloaded.size > 1) {
+                translationManager.translateChapters(manga, pendingDownloaded.map { it.chapter })
                 return@launch
             }
-            val target = downloaded.single()
+            val target = pendingDownloaded.single()
             logcat(LogPriority.INFO) {
                 "TachiyomiAT translate START: chapter=${target.chapter.name} manga=${manga.title} " +
                     "lastPageRead=${target.chapter.lastPageRead}"
@@ -994,6 +1072,37 @@ class MangaScreenModel(
         }
     }
 
+    /** Re-arms a durable PAUSED batch without bypassing its cooldown. */
+    fun resumeChapterTranslation(item: ChapterList.Item, force: Boolean = false) {
+        val chapterId = item.chapter.id ?: return
+        screenModelScope.launchIO {
+            val resumed = translationManager.requeueTranslation(chapterId, force)
+            if (resumed) {
+                // requeueExisting owns cooldown and queue membership; the
+                // manager entry point also re-arms the foreground service for
+                // the newly active QUEUE state.
+                translationManager.startTranslation()
+            } else {
+                withUIContext {
+                    snackbarHostState.showSnackbar(
+                        message = "Translation is still paused; retry when the provider cooldown expires",
+                        duration = SnackbarDuration.Short,
+                    )
+                }
+            }
+        }
+    }
+
+    /** Cancels an acknowledgement that was waiting for a conflict decision. */
+    fun cancelPendingTranslationRequest(item: ChapterList.Item) {
+        item.chapter.id?.let { chapterId ->
+            if (translationManager.cancelTranslationRequest(chapterId)) {
+                updateTranslationRequests(translationManager.pendingTranslationRequests.value)
+            }
+        }
+        dismissDialog()
+    }
+
     /**
      * TachiyomiAT bug 3 fix: called after the user confirms the
      * [Dialog.RunningTranslationConflict] dialog. Cancels the in-flight chapter
@@ -1003,6 +1112,7 @@ class MangaScreenModel(
     fun confirmReplaceRunningChapter(item: ChapterList.Item) {
         val manga = successState?.manga ?: return
         val preflight = (successState?.dialog as? Dialog.RunningTranslationConflict)?.conflict ?: return
+        dismissDialog()
         screenModelScope.launchNonCancellable {
             translationManager.cancelRunningChapterForReplace(preflight.chapterId)
             translationManager.translateChapter(manga, item.chapter)
@@ -1562,6 +1672,8 @@ sealed class ChapterList {
         // TachiyomiAT: rich batch translation progress for the manga-screen
         // indicator and progress sheet. Null means no active batch.
         val translationProgress: TranslationProgressSnapshot? = null,
+        /** Immediate request acknowledgement before queue/tracker creation. */
+        val translationRequest: TranslationRequestState? = null,
         val downloadProgress: Int,
         val selected: Boolean = false,
     ) : ChapterList() {

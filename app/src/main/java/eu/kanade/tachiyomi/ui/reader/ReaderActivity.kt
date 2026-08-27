@@ -630,6 +630,7 @@ class ReaderActivity : BaseActivity() {
                         translationProgress = translationProgress,
                         translationCurrentPage = translationCurrentPage,
                         translationBatchProgress = translationBatchProgress,
+                        onRetryBatch = viewModel::retryCurrentBatch,
                     )
                 }
                 is ReaderViewModel.Dialog.ReadingModeSelect -> {

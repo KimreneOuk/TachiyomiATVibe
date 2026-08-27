@@ -66,6 +66,8 @@ data class TranslationProgressSnapshot(
     val pauseAnchorPageKey: String? = null,
     val pauseReason: String? = null,
     val nextEligibleRetryAtEpochMs: Long? = null,
+    /** Immediate pre-tracker acknowledgement, when a request is still preparing or downloading. */
+    val requestState: TranslationRequestState? = null,
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages

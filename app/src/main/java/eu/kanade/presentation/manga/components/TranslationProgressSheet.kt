@@ -71,6 +71,8 @@ import eu.kanade.translation.model.TranslationProgressStage
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
+import java.text.DateFormat
+import java.util.Date
 
 private val SuccessGreen = Color(0xFF10B981)
 private val ReadyBadgeColor = Color(0xFF059669)
@@ -91,7 +93,9 @@ fun TranslationProgressSheet(
     if (snapshot.batchPhase != TranslationBatchPhase.IDLE || snapshot.state == eu.kanade.translation.model.Translation.State.TRANSLATING) {
         isResuming = false
     }
-    val isTerminal = snapshot.batchPhase == TranslationBatchPhase.FINISHED
+    val isSnapshotPaused = snapshot.state == eu.kanade.translation.model.Translation.State.PAUSED ||
+        snapshot.pauseReason != null
+    val isTerminal = snapshot.batchPhase == TranslationBatchPhase.FINISHED && !isSnapshotPaused
     val animatedFraction by animateFloatAsState(
         targetValue = snapshot.fraction.coerceIn(0f, 1f),
         animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
@@ -127,7 +131,11 @@ fun TranslationProgressSheet(
                     )
                 }
                 Spacer(Modifier.width(12.dp))
-                LiveStatusPill(snapshot = snapshot, paused = paused, isResuming = isResuming)
+                LiveStatusPill(
+                    snapshot = snapshot,
+                    paused = paused || isSnapshotPaused,
+                    isResuming = isResuming,
+                )
             }
 
             // Aborted banner if any
@@ -260,8 +268,17 @@ fun TranslationProgressSheet(
                 FailureSummary(snapshot)
             }
 
-            val isBatchRunning = snapshot.batchPhase == TranslationBatchPhase.FIRST_PASS ||
-                snapshot.batchPhase == TranslationBatchPhase.FINALIZING
+            val isBatchRunning = !isSnapshotPaused &&
+                (
+                    snapshot.batchPhase == TranslationBatchPhase.FIRST_PASS ||
+                        snapshot.batchPhase == TranslationBatchPhase.FINALIZING
+                    )
+            val canResume = onResume != null &&
+                (
+                    isSnapshotPaused ||
+                        snapshot.state == eu.kanade.translation.model.Translation.State.QUEUE ||
+                        snapshot.requestState != null
+                    )
 
             // Bottom Action Bar
             Column(
@@ -307,7 +324,7 @@ fun TranslationProgressSheet(
                                     Text(stringResource(if (paused) MR.strings.action_resume else MR.strings.action_pause))
                                 }
                             }
-                        } else if (onResume != null) {
+                        } else if (canResume) {
                             if (isResuming) {
                                 Button(
                                     onClick = {},
@@ -330,7 +347,12 @@ fun TranslationProgressSheet(
                                 Button(
                                     onClick = {
                                         isResuming = true
-                                        onResume()
+                                        onResume?.invoke()
+                                        // The manager owns the asynchronous
+                                        // cooldown check. Do not leave a
+                                        // permanently disabled button when it
+                                        // rejects an early retry.
+                                        isResuming = false
                                     },
                                     modifier = Modifier.weight(1.3f),
                                     colors = ButtonDefaults.buttonColors(
@@ -701,6 +723,27 @@ private fun FailureSummary(snapshot: TranslationProgressSnapshot) {
 
 private fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isResuming: Boolean = false): String {
     if (isResuming) return "Scanning completed pages & resuming batch..."
+    snapshot.requestState?.let { request ->
+        return when (request.phase) {
+            eu.kanade.translation.model.TranslationRequestPhase.STARTING ->
+                "Translation accepted — preparing batch..."
+            eu.kanade.translation.model.TranslationRequestPhase.PREPARING ->
+                "Preparing translation batch..."
+            eu.kanade.translation.model.TranslationRequestPhase.WAITING_FOR_DOWNLOAD ->
+                "Waiting for chapter download before translation"
+            eu.kanade.translation.model.TranslationRequestPhase.DOWNLOAD_FAILED ->
+                "Download failed — retry to continue"
+        } + request.reason.orEmpty().takeIf { it.isNotBlank() }?.let { " — $it" }.orEmpty()
+    }
+    if (snapshot.state == eu.kanade.translation.model.Translation.State.PAUSED ||
+        snapshot.pauseReason != null
+    ) {
+        val reason = snapshot.pauseReason?.takeIf { it.isNotBlank() } ?: "Provider work is temporarily unavailable"
+        val next = snapshot.nextEligibleRetryAtEpochMs?.let { retryAt ->
+            DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(retryAt))
+        }
+        return if (next == null) "Paused — $reason" else "Paused — $reason · retry after $next"
+    }
     return when (snapshot.batchPhase) {
         TranslationBatchPhase.IDLE -> when (snapshot.state) {
             eu.kanade.translation.model.Translation.State.QUEUE -> "Queued — ready to resume remaining pages"

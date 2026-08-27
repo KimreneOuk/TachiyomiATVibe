@@ -1868,6 +1868,16 @@ class ReaderViewModel @JvmOverloads constructor(
     private fun enqueueDeleteReadChapters(chapter: ReaderChapter) {
         if (!chapter.chapter.read) return
         val manga = manga ?: return
+        val chapterId = chapter.chapter.id ?: return
+        if (translationManager.isChapterTranslationProtected(chapterId)) {
+            // Reader auto-delete is a convenience, while a queued/paused batch
+            // still owns the source files it must translate. Keep the chapter
+            // on disk; an explicit user delete remains available.
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT retaining chapter $chapterId for batch translation"
+            }
+            return
+        }
 
         viewModelScope.launchNonCancellable {
             downloadManager.enqueueChaptersToDelete(listOf(chapter.chapter.toDomainChapter()!!), manga)
@@ -1880,7 +1890,7 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     private fun deletePendingChapters() {
         viewModelScope.launchNonCancellable {
-            downloadManager.deletePendingChapters()
+            downloadManager.deletePendingChapters(translationManager.protectedChapterIds())
         }
     }
 
@@ -2282,6 +2292,23 @@ class ReaderViewModel @JvmOverloads constructor(
         recomputeTranslationState()
     }
 
+    /** Re-arms the current durable batch; provider cooldowns are enforced by the manager. */
+    fun retryCurrentBatch(force: Boolean = false) {
+        val chapterId = getCurrentChapter()?.chapter?.id ?: return
+        viewModelScope.launchIO {
+            val resumed = translationManager.requeueTranslation(chapterId, force)
+            if (resumed) {
+                translationManager.startTranslation()
+            } else {
+                withUIContext {
+                    Injekt.get<Application>().toast(
+                        "Translation is still paused; retry when the provider cooldown expires",
+                    )
+                }
+            }
+        }
+    }
+
     fun setTranslationEnabled(enabled: Boolean) {
         translationPreferences.translationEnabled().set(enabled)
     }
@@ -2475,7 +2502,7 @@ class ReaderViewModel @JvmOverloads constructor(
      * already reached FAILED. Idempotent.
      */
     private suspend fun sweepStrandedPageStatus(store: ChapterTranslationStore, chapterId: Long) {
-        if (translationManager.isBatchTranslationActive(chapterId)) {
+        if (translationManager.isBatchTranslationRetained(chapterId)) {
             return
         }
         val currentGen = store.currentGeneration
@@ -2547,6 +2574,22 @@ class ReaderViewModel @JvmOverloads constructor(
         translationBatchProgressJob?.cancel()
         val manga = manga ?: return
         val chapter = getCurrentChapter()?.chapter ?: return
+        // A collector belongs to one reader chapter. Clear only when binding a
+        // different chapter; re-entry keeps the last shared snapshot visible
+        // while its collector reconnects, so lifecycle transitions do not hide
+        // a running or paused batch.
+        if (state.value.translationBatchProgress?.chapterId != chapter.id) {
+            mutableState.update { it.copy(translationBatchProgress = null) }
+        }
+        val chapterId = chapter.id ?: return
+        // Subscribe to the manager projection before opening the chapter store. A pending
+        // request (for example, one waiting for a download) has no store yet, but it still
+        // needs to be visible in the reader and survive an enter/exit cycle.
+        translationBatchProgressJob = viewModelScope.launchIO {
+            translationManager.observeBatchProgress(chapterId).collect { progress ->
+                mutableState.update { it.copy(translationBatchProgress = progress) }
+            }
+        }
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
         // TachiyomiAT: use openOrCreate... instead of openActive.... The latter
         // returns null and bails out when no translation file exists yet (a
@@ -2560,7 +2603,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // artifact migration with SAF I/O and must not runBlocking a
         // dispatcher thread while holding readers waiting on the same store.
         val store = translationManager.openOrCreateActiveChapterTranslationStoreSuspend(
-            chapter.id!!,
+            chapterId,
             chapter.name,
             chapter.scanlator,
             manga.title,
@@ -2568,11 +2611,6 @@ class ReaderViewModel @JvmOverloads constructor(
             manga.id,
         ) ?: return
         val storeState = store.state
-        translationBatchProgressJob = viewModelScope.launchIO {
-            translationManager.observeBatchProgress(chapter.id!!).collect { progress ->
-                mutableState.update { it.copy(translationBatchProgress = progress) }
-            }
-        }
         translationStoreJob = viewModelScope.launchIO {
             // TachiyomiAT: heal stranded RUNNING/PENDING pages left behind by a
             // prior crash, an OOM-kill, or the native-code permit leak this build
@@ -2585,7 +2623,7 @@ class ReaderViewModel @JvmOverloads constructor(
             // treated as abandoned and flipped to CANCELLED. Runs once per
             // chapter open. Never clobbers a page that produced a result or
             // reached FAILED.
-            sweepStrandedPageStatus(store, chapter.id!!)
+            sweepStrandedPageStatus(store, chapterId)
             storeState.collect { pageMap ->
                 val pages = state.value.viewerChapters?.currChapter?.pages ?: return@collect
                 var translatedCount = 0

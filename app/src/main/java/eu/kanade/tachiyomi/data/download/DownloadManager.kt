@@ -323,11 +323,20 @@ class DownloadManager(
     /**
      * Triggers the execution of the deletion of pending chapters.
      */
-    fun deletePendingChapters() {
+    fun deletePendingChapters(protectedChapterIds: Set<Long> = emptySet()) {
         val pendingChapters = pendingDeleter.getPendingChapters()
         for ((manga, chapters) in pendingChapters) {
             val source = sourceManager.get(manga.source) ?: continue
-            deleteChapters(chapters, manga, source)
+            val (protected, deletable) = chapters.partition { it.id in protectedChapterIds }
+            if (protected.isNotEmpty()) {
+                // The pending-deletion store is consumed as a batch. Reinsert
+                // chapters that a live/paused translation still owns so a
+                // later reader finish can retry the convenience deletion.
+                pendingDeleter.addChapters(protected, manga)
+            }
+            if (deletable.isNotEmpty()) {
+                deleteChapters(deletable, manga, source)
+            }
         }
     }
 

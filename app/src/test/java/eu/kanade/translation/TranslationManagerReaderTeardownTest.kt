@@ -107,6 +107,36 @@ class TranslationManagerReaderTeardownTest {
     }
 
     @Test
+    fun `reader stop preserves a paused batch store for retry`() = runBlocking {
+        val storeDefunct = AtomicBoolean(false)
+        val batchStore = mockk<ChapterTranslationStore>(relaxed = true)
+        every { batchStore.markDefunct() } answers { storeDefunct.set(true) }
+
+        val source = mockk<HttpSource>(relaxed = true)
+        val manga = mockk<Manga>(relaxed = true)
+        val chapter = mockk<Chapter>(relaxed = true)
+        every { chapter.id } returns 42L
+        val pausedBatch = Translation(source, manga, chapter).also {
+            it.status = Translation.State.PAUSED
+        }
+        val translator = mockk<ChapterTranslator>(relaxed = true)
+        every { translator.queueState } returns MutableStateFlow(listOf(pausedBatch))
+        val scheduler = mockk<TranslationScheduler>(relaxed = true)
+        val activeStores = ActiveChapterStoreRegistry().apply {
+            register(42L, batchStore)
+        }
+        val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val manager = uninitializedManager(scheduler, translator, activeStores, managerScope)
+
+        try {
+            manager.requestReaderStop("reader closed").await()
+            assertFalse(storeDefunct.get(), "paused batch artifacts must remain available for retry")
+        } finally {
+            managerScope.cancel()
+        }
+    }
+
+    @Test
     fun `await reader stop moves scheduler teardown off caller thread`() = runBlocking {
         val schedulerStarted = CountDownLatch(1)
         val schedulerRelease = CountDownLatch(1)

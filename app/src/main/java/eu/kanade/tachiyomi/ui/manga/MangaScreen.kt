@@ -295,7 +295,13 @@ class MangaScreen(
                     onDismissRequest = onDismissRequest,
                     onResume = {
                         if (item != null) {
-                            screenModel.confirmChapterTranslation(item)
+                            if (item.translationState == eu.kanade.translation.model.Translation.State.PAUSED ||
+                                item.translationState == eu.kanade.translation.model.Translation.State.QUEUE
+                            ) {
+                                screenModel.resumeChapterTranslation(item)
+                            } else {
+                                screenModel.confirmChapterTranslation(item)
+                            }
                         }
                     },
                     onReadNow = {
@@ -354,7 +360,7 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.RunningTranslationConflict -> {
                 AlertDialog(
-                    onDismissRequest = onDismissRequest,
+                    onDismissRequest = { screenModel.cancelPendingTranslationRequest(dialog.item) },
                     title = {
                         Text(text = stringResource(ATMR.strings.manga_translate_conflict_title))
                     },
@@ -372,7 +378,7 @@ class MangaScreen(
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = onDismissRequest) {
+                        TextButton(onClick = { screenModel.cancelPendingTranslationRequest(dialog.item) }) {
                             Text(text = stringResource(MR.strings.action_cancel))
                         }
                     },

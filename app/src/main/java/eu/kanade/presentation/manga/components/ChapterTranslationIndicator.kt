@@ -34,6 +34,8 @@ import eu.kanade.presentation.components.DropdownMenu
 import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.model.TranslationRequestState
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.IconButtonTokens
@@ -54,19 +56,31 @@ fun ChapterTranslationIndicator(
     onClick: (ChapterTranslationAction) -> Unit,
     // TachiyomiAT: batch translation progress snapshot for the indicator.
     translationProgressProvider: () -> TranslationProgressSnapshot? = { null },
+    // TachiyomiAT: immediate acknowledgement while queue/tracker setup is pending.
+    translationRequestProvider: () -> TranslationRequestState? = { null },
     // TachiyomiAT: pre-translate is always reachable; when false the idle glyph
     // carries a "will download first" hint badge.
     downloadedProvider: () -> Boolean = { true },
     modifier: Modifier = Modifier,
 ) {
     val downloaded = downloadedProvider()
+    val translationRequest = translationRequestProvider()
     when (val translationState = translationStateProvider()) {
-        Translation.State.NOT_TRANSLATED -> NotTranslatedIndicator(
-            enabled = enabled,
-            modifier = modifier,
-            downloaded = downloaded,
-            onClick = onClick,
-        )
+        Translation.State.NOT_TRANSLATED -> if (translationRequest != null) {
+            PendingTranslationIndicator(
+                enabled = enabled,
+                modifier = modifier,
+                request = translationRequest,
+                onClick = onClick,
+            )
+        } else {
+            NotTranslatedIndicator(
+                enabled = enabled,
+                modifier = modifier,
+                downloaded = downloaded,
+                onClick = onClick,
+            )
+        }
         Translation.State.QUEUE, Translation.State.TRANSLATING, Translation.State.PAUSED -> TranslatingIndicator(
             enabled = enabled,
             modifier = modifier,
@@ -85,6 +99,62 @@ fun ChapterTranslationIndicator(
             modifier = modifier,
             onClick = onClick,
         )
+    }
+}
+
+@Composable
+private fun PendingTranslationIndicator(
+    enabled: Boolean,
+    modifier: Modifier,
+    request: TranslationRequestState?,
+    onClick: (ChapterTranslationAction) -> Unit,
+) {
+    if (request == null) return
+    val isDownloadWait = request.phase == TranslationRequestPhase.WAITING_FOR_DOWNLOAD
+    val isFailed = request.phase == TranslationRequestPhase.DOWNLOAD_FAILED
+    val tint = when {
+        isFailed -> MaterialTheme.colorScheme.error
+        isDownloadWait -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.primary
+    }
+    Box(
+        modifier = modifier
+            .size(IconButtonTokens.StateLayerSize)
+            .commonClickable(
+                enabled = enabled,
+                hapticFeedback = LocalHapticFeedback.current,
+                onLongClick = { onClick(ChapterTranslationAction.CANCEL) },
+                onClick = { onClick(ChapterTranslationAction.DETAILS) },
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (isDownloadWait) {
+            Icon(
+                imageVector = Icons.Outlined.Download,
+                contentDescription = "Translation waiting for download",
+                modifier = Modifier.size(IndicatorSize),
+                tint = tint,
+            )
+        } else if (isFailed) {
+            Icon(
+                imageVector = Icons.Outlined.ErrorOutline,
+                contentDescription = "Translation download failed",
+                modifier = Modifier.size(IndicatorSize),
+                tint = tint,
+            )
+        } else {
+            CircularProgressIndicator(
+                modifier = IndicatorModifier,
+                color = tint,
+                strokeWidth = IndicatorStrokeWidth,
+            )
+            Icon(
+                painter = painterResource(R.drawable.ic_translate),
+                contentDescription = "Translation starting",
+                modifier = TranslatingModifier,
+                tint = tint,
+            )
+        }
     }
 }
 
@@ -149,10 +219,10 @@ private fun TranslatingIndicator(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        val strokeColor = if (translationState == Translation.State.TRANSLATING) {
-            MaterialTheme.colorScheme.primary
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
+        val strokeColor = when (translationState) {
+            Translation.State.TRANSLATING -> MaterialTheme.colorScheme.primary
+            Translation.State.PAUSED -> WarningColor
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
         }
         // TachiyomiAT: stage-based progress fraction
         val isDeterminate = snapshot != null && snapshot.totalStages > 0
@@ -176,12 +246,22 @@ private fun TranslatingIndicator(
                 },
             )
         }
-        Icon(
-            painter = painterResource(R.drawable.ic_translate),
-            contentDescription = null,
-            modifier = TranslatingModifier,
-            tint = strokeColor,
-        )
+        if (translationState == Translation.State.PAUSED) {
+            Icon(
+                painter = painterResource(R.drawable.ic_pause_24dp),
+                contentDescription = snapshot?.pauseReason?.let { "Translation paused: $it" }
+                    ?: "Translation paused",
+                modifier = TranslatingModifier,
+                tint = strokeColor,
+            )
+        } else {
+            Icon(
+                painter = painterResource(R.drawable.ic_translate),
+                contentDescription = null,
+                modifier = TranslatingModifier,
+                tint = strokeColor,
+            )
+        }
         // TachiyomiAT: stage-based percentage label under the icon
         if (isDeterminate) {
             val percentageText = "${(progressFraction * 100).toInt()}%"

@@ -5,6 +5,8 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactDeletionPlan
 import eu.kanade.translation.artifact.ChapterDocumentIo
@@ -18,7 +20,11 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.model.TranslationUiProjection
 import eu.kanade.translation.model.findRunningSameSourceConflict
 import eu.kanade.translation.model.staleQueuedChaptersToEvict
 import eu.kanade.translation.model.toPageDisplayProjection
@@ -32,19 +38,22 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -88,6 +97,13 @@ class TranslationManager(
 
     /** Serializes reader lifecycle teardown so pause/finish cannot race store eviction. */
     private val readerTeardownMutex = Mutex()
+
+    private val pendingRequestStore = TranslationPendingRequestStore(context)
+    private val pendingTranslationRequestsState = MutableStateFlow(loadPendingTranslationRequests())
+
+    /** Immediate, lifecycle-independent acknowledgement for pre-translation requests. */
+    val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
+        pendingTranslationRequestsState.asStateFlow()
 
     private data class DurableChapterKey(
         val chapterId: Long?,
@@ -172,6 +188,25 @@ class TranslationManager(
         applicationScope.launch {
             translator.queueState.collect { durableStatusCache.clear() }
         }
+        applicationScope.launch {
+            // A paused chapter is not an active foreground job, but its durable
+            // outcome still deserves a visible notification after process
+            // restart. The service owns only the active QUEUE/TRANSLATING
+            // predicate; this collector owns the detached paused projection.
+            statusFlow().collect { translation ->
+                if (translation.status == Translation.State.PAUSED && !isAnyBatchTranslationActive) {
+                    val snapshot = translation.chapter.id?.let { chapterId ->
+                        getTranslationProgress(chapterId)?.firstOrNull()
+                    }
+                    TranslationForegroundService.showPaused(
+                        context = context,
+                        chapterName = translation.chapter.name,
+                        chapterId = translation.chapter.id,
+                        snapshot = snapshot,
+                    )
+                }
+            }
+        }
         applicationScope.launch { translator.restoreQueue() }
     }
 
@@ -185,13 +220,7 @@ class TranslationManager(
 
     private val activeStores = ActiveChapterStoreRegistry()
     private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
-    private val translateAfterDownload = ConcurrentHashMap<Long, TranslationRequest>()
     private val legacyPageJson = Json { ignoreUnknownKeys = true }
-
-    private data class TranslationRequest(
-        val manga: Manga,
-        val chapter: Chapter,
-    )
 
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
     private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -206,14 +235,113 @@ class TranslationManager(
         get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
 
     fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
-        chapter.id?.let { translateAfterDownload[it] = TranslationRequest(manga, chapter) }
+        chapter.id?.let { chapterId ->
+            setPendingTranslationRequest(chapterId, TranslationRequestPhase.WAITING_FOR_DOWNLOAD)
+        }
     }
+
+    /** Publishes the acknowledgement shown while the live download probe runs. */
+    fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
+        chapters.forEach { chapter ->
+            chapter.id?.let { chapterId ->
+                setPendingTranslationRequest(chapterId, TranslationRequestPhase.STARTING)
+            }
+        }
+    }
+
+    /** Advances an acknowledged request into archive/store/engine preparation. */
+    fun markTranslationRequestPreparing(chapterId: Long) {
+        if (pendingTranslationRequestsState.value.containsKey(chapterId)) {
+            setPendingTranslationRequest(chapterId, TranslationRequestPhase.PREPARING)
+        }
+    }
+
+    /** Keeps a failed download request visible and retryable from the batch details UI. */
+    fun markTranslationDownloadFailed(chapterId: Long, reason: String? = null) {
+        if (pendingTranslationRequestsState.value.containsKey(chapterId) ||
+            pendingRequestStore.load().contains(chapterId)
+        ) {
+            setPendingTranslationRequest(chapterId, TranslationRequestPhase.DOWNLOAD_FAILED, reason)
+        }
+    }
+
+    /** Removes only the pending request; downloaded files and queue membership are untouched. */
+    fun cancelTranslationRequest(chapterId: Long): Boolean {
+        val existed = pendingTranslationRequestsState.value.containsKey(chapterId) ||
+            pendingRequestStore.load().contains(chapterId)
+        clearPendingTranslationRequest(chapterId)
+        return existed
+    }
+
+    fun hasPendingTranslationRequest(chapterId: Long): Boolean =
+        pendingTranslationRequestsState.value.containsKey(chapterId) ||
+            pendingRequestStore.load().contains(chapterId)
+
+    /**
+     * A chapter remains protected from reader auto-delete while either its
+     * queued batch or its durable post-download intent may still need files.
+     */
+    fun isChapterTranslationProtected(chapterId: Long): Boolean {
+        val queuedState = getQueuedTranslationOrNull(chapterId)?.status
+        return TranslationUiProjection.protectsChapterFromDeletion(
+            queuedState = queuedState,
+            hasPendingRequest = pendingTranslationRequestsState.value.containsKey(chapterId) ||
+                pendingRequestStore.load().contains(chapterId),
+        )
+    }
+
+    /** Protected ids are passed to the pending chapter deleter at reader finish. */
+    fun protectedChapterIds(): Set<Long> = buildSet {
+        queueState.value
+            .filter { translation ->
+                translation.status == Translation.State.QUEUE ||
+                    translation.status == Translation.State.TRANSLATING ||
+                    translation.status == Translation.State.PAUSED
+            }
+            .mapNotNullTo(this) { it.chapter.id }
+        addAll(pendingTranslationRequestsState.value.keys)
+        addAll(pendingRequestStore.load())
+    }
+
+    private fun setPendingTranslationRequest(
+        chapterId: Long,
+        phase: TranslationRequestPhase,
+        reason: String? = null,
+    ) {
+        pendingRequestStore.add(chapterId, phase, reason)
+        pendingTranslationRequestsState.update {
+            it + (chapterId to TranslationRequestState(chapterId, phase, reason))
+        }
+    }
+
+    private fun clearPendingTranslationRequest(chapterId: Long) {
+        pendingRequestStore.remove(chapterId)
+        pendingTranslationRequestsState.update { it - chapterId }
+    }
+
+    private fun clearAllPendingTranslationRequests() {
+        pendingRequestStore.clear()
+        pendingTranslationRequestsState.value = emptyMap()
+    }
+
+    private fun loadPendingTranslationRequests(): Map<Long, TranslationRequestState> =
+        pendingRequestStore.load().associateWith { chapterId ->
+            TranslationRequestState(
+                chapterId = chapterId,
+                phase = pendingRequestStore.phase(chapterId) ?: TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                reason = pendingRequestStore.reason(chapterId),
+            )
+        }
 
     suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) {
         val chapterId = chapter.id ?: return
-        val request = translateAfterDownload.remove(chapterId) ?: return
-        if (request.manga.id != manga.id) return
-        translateChapter(request.manga, request.chapter)
+        if (!pendingRequestStore.load().contains(chapterId) &&
+            pendingTranslationRequestsState.value[chapterId] == null
+        ) {
+            return
+        }
+        setPendingTranslationRequest(chapterId, TranslationRequestPhase.PREPARING)
+        translateChapter(manga, chapter)
     }
 
     fun stopReaderTranslations(reason: String) {
@@ -248,7 +376,7 @@ class TranslationManager(
             readerTeardownMutex.withLock {
                 scheduler.awaitReaderStop()
                 val chapterIdsToEvict = activeStores.chapterIds()
-                    .filter { !isBatchTranslationActive(it) }
+                    .filter { !isBatchTranslationRetained(it) }
                 chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
             }
         }
@@ -272,9 +400,9 @@ class TranslationManager(
             page.renderStatus == StageStatus.RUNNING
     }
 
-    fun getTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot>? {
-        return getBatchTracker(chapterId)?.snapshot
-    }
+    /** Canonical batch projection used by every UI surface and the notification. */
+    fun getTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
+        observeBatchProgress(chapterId)
 
     fun isTranslationActive(chapterId: Long): Boolean {
         return isBatchTranslationActive(chapterId)
@@ -308,6 +436,7 @@ class TranslationManager(
     fun clearQueue() {
         translator.clearQueue()
         translator.stop()
+        clearAllPendingTranslationRequests()
     }
 
     fun getQueuedTranslationOrNull(chapterId: Long): Translation? {
@@ -321,11 +450,31 @@ class TranslationManager(
         }
     }
 
+    /**
+     * Whether a chapter still owns batch artifacts across reader lifecycle
+     * transitions. PAUSED is intentionally included here even though it is
+     * excluded from the foreground-service active predicate.
+     */
+    fun isBatchTranslationRetained(chapterId: Long): Boolean = queueState.value.any { translation ->
+        translation.chapter.id == chapterId &&
+            (
+                translation.status == Translation.State.QUEUE ||
+                    translation.status == Translation.State.TRANSLATING ||
+                    translation.status == Translation.State.PAUSED
+                )
+    }
+
     fun translateChapter(manga: Manga, chapters: Chapter) {
         val chapterId = chapters.id ?: return
         scheduler.shutdownAutoCoordinator(chapterId)
         evictStaleQueuedChapters(chapterId, manga.source)
+        markTranslationRequestPreparing(chapterId)
         translator.queueChapter(manga, chapters)
+        if (queueState.value.any { it.chapter.id == chapterId }) {
+            clearPendingTranslationRequest(chapterId)
+        } else {
+            markTranslationQueueFailureIfAcknowledged(chapterId)
+        }
         startTranslation()
     }
 
@@ -334,9 +483,25 @@ class TranslationManager(
         chapters.forEach { chapter ->
             val chapterId = chapter.id ?: return@forEach
             scheduler.shutdownAutoCoordinator(chapterId)
+            markTranslationRequestPreparing(chapterId)
             translator.queueChapter(manga, chapter)
+            if (queueState.value.any { it.chapter.id == chapterId }) {
+                clearPendingTranslationRequest(chapterId)
+            } else {
+                markTranslationQueueFailureIfAcknowledged(chapterId)
+            }
         }
         startTranslation()
+    }
+
+    private fun markTranslationQueueFailureIfAcknowledged(chapterId: Long) {
+        if (pendingTranslationRequestsState.value.containsKey(chapterId)) {
+            setPendingTranslationRequest(
+                chapterId,
+                TranslationRequestPhase.DOWNLOAD_FAILED,
+                "Translation could not be queued",
+            )
+        }
     }
 
     /**
@@ -1121,67 +1286,166 @@ class TranslationManager(
     fun getBatchTracker(chapterId: Long): TranslationBatchProgressTracker? = batchTrackerRegistry.getLive(chapterId)
 
     /**
-     * Live batch progress for [chapterId]: emits from the tracker's snapshot StateFlow when a
-     * tracker is active, else falls back to store-derived progress. Switches reactively when a
-     * tracker is created or disposed.
+     * Live batch progress for [chapterId]. This is the one projection shared
+     * by manga, reader, and notification surfaces. It starts with an immediate
+     * request acknowledgement, follows queue status changes, then switches to
+     * the live tracker or shared store without consulting download-cache state.
      */
     fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
-        return batchTrackerRegistry.live
-            .flatMapLatest { trackers ->
-                val tracker = trackers[chapterId]
-                if (tracker != null) {
-                    tracker.snapshot
+        val pending = pendingTranslationRequests
+            .map { requests -> requests[chapterId] }
+            .distinctUntilChanged()
+        return combine(pending, observeQueuedTranslationStatus(chapterId)) { request, queueStatus ->
+            request to queueStatus
+        }
+            .flatMapLatest { (request, queueStatus) ->
+                if (request != null && queueStatus == null) {
+                    flowOf(
+                        TranslationProgressSnapshot.empty(chapterId).copy(
+                            requestState = request,
+                        ),
+                    )
                 } else {
-                    val terminal = batchTrackerRegistry.terminal.value[chapterId]
-                    if (terminal != null) {
-                        flowOf(terminal)
+                    observeBatchProgressProjection(chapterId, queueStatus)
+                        .map { snapshot -> snapshot.copy(requestState = null) }
+                }
+            }
+            .distinctUntilChanged()
+    }
+
+    private fun observeQueuedTranslationStatus(chapterId: Long): Flow<Translation.State?> =
+        queueState
+            .flatMapLatest { queue ->
+                val translation = queue.firstOrNull { it.chapter.id == chapterId }
+                if (translation == null) {
+                    flowOf(null)
+                } else {
+                    translation.statusFlow
+                        .drop(1)
+                        .map { it }
+                        .onStart { emit(translation.status) }
+                }
+            }
+            .distinctUntilChanged()
+
+    private fun observeBatchProgressProjection(
+        chapterId: Long,
+        queueStatus: Translation.State?,
+    ): Flow<TranslationProgressSnapshot> = batchTrackerRegistry.live
+        .flatMapLatest { trackers ->
+            val tracker = trackers[chapterId]
+            if (tracker != null) {
+                tracker.snapshot
+            } else {
+                val terminal = batchTrackerRegistry.terminal.value[chapterId]
+                if (terminal != null) {
+                    flowOf(terminal)
+                } else {
+                    val queued = getQueuedTranslationOrNull(chapterId)
+                    val state = queueStatus ?: queued?.status ?: Translation.State.NOT_TRANSLATED
+                    val store = activeStores.get(chapterId)
+                    if (store == null && queued != null) {
+                        flow {
+                            val resolvedStore = openOrCreateActiveChapterTranslationStoreSuspend(
+                                chapterId = chapterId,
+                                chapterName = queued.chapter.name,
+                                scanlator = queued.chapter.scanlator,
+                                mangaTitle = queued.manga.title,
+                                source = queued.source,
+                                mangaId = queued.manga.id,
+                            )
+                            if (resolvedStore == null) {
+                                emit(TranslationProgressSnapshot.empty(chapterId, state))
+                            } else {
+                                emitAll(
+                                    combine(resolvedStore.state, resolvedStore.display) { pages, display ->
+                                        snapshotFromStore(
+                                            chapterId = chapterId,
+                                            state = state,
+                                            store = resolvedStore,
+                                            pages = pages,
+                                            display = display,
+                                        )
+                                    },
+                                )
+                            }
+                        }
+                    } else if (store == null) {
+                        flowOf(TranslationProgressSnapshot.empty(chapterId, state))
                     } else {
-                        val queued = getQueuedTranslationOrNull(chapterId)
-                        val state = queued?.status ?: Translation.State.NOT_TRANSLATED
-                        val store = activeStores.get(chapterId)
-                        if (store == null && queued != null) {
-                            flow {
-                                val s = openOrCreateActiveChapterTranslationStoreSuspend(
-                                    chapterId = chapterId,
-                                    chapterName = queued.chapter.name,
-                                    scanlator = queued.chapter.scanlator,
-                                    mangaTitle = queued.manga.title,
-                                    source = queued.source,
-                                    mangaId = queued.manga.id,
-                                )
-                                if (s == null) {
-                                    emit(TranslationProgressSnapshot.empty(chapterId, state))
-                                } else {
-                                    emitAll(
-                                        combine(s.state, s.display) { pages, display ->
-                                            TranslationProgressSnapshot.compute(
-                                                chapterId = chapterId,
-                                                state = state,
-                                                pageMap = pages,
-                                                displayPageMap = display,
-                                                permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
-                                            )
-                                        },
-                                    )
-                                }
-                            }
-                        } else if (store == null) {
-                            flowOf(TranslationProgressSnapshot.empty(chapterId, state))
-                        } else {
-                            combine(store.state, store.display) { pages, display ->
-                                TranslationProgressSnapshot.compute(
-                                    chapterId = chapterId,
-                                    state = state,
-                                    pageMap = pages,
-                                    displayPageMap = display,
-                                    permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
-                                )
-                            }
+                        combine(store.state, store.display) { pages, display ->
+                            snapshotFromStore(
+                                chapterId = chapterId,
+                                state = state,
+                                store = store,
+                                pages = pages,
+                                display = display,
+                            )
                         }
                     }
                 }
             }
-            .distinctUntilChanged()
+        }
+        .map { snapshot -> snapshot.projectQueueStatus(queueStatus) }
+        .distinctUntilChanged()
+
+    private fun snapshotFromStore(
+        chapterId: Long,
+        state: Translation.State,
+        store: ChapterTranslationStore,
+        pages: Map<String, PageTranslation>,
+        display: Map<String, PageTranslation>,
+    ): TranslationProgressSnapshot = TranslationProgressSnapshot.compute(
+        chapterId = chapterId,
+        state = state,
+        pageMap = pages,
+        displayPageMap = display,
+        permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
+    ).withDurablePause(store)
+
+    private fun TranslationProgressSnapshot.withDurablePause(
+        store: ChapterTranslationStore,
+    ): TranslationProgressSnapshot {
+        if (state != Translation.State.PAUSED) return this
+        val failure = store.durableFailuresSnapshot().values
+            .firstOrNull {
+                it.stage == ArtifactStage.TRANSLATION &&
+                    it.status == ArtifactStageStatus.FAILED_RETRYABLE
+            }
+            ?: return this
+        return copy(
+            pauseAnchorPageKey = pauseAnchorPageKey ?: failure.pageKey,
+            pauseReason = pauseReason ?: failure.lastFailureMessage,
+            nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
+        )
+    }
+
+    private fun TranslationProgressSnapshot.projectQueueStatus(
+        queueStatus: Translation.State?,
+    ): TranslationProgressSnapshot {
+        return when (queueStatus) {
+            null -> this
+            Translation.State.QUEUE -> copy(
+                state = queueStatus,
+                batchPhase = TranslationBatchPhase.IDLE,
+                pauseAnchorPageKey = null,
+                pauseReason = null,
+                nextEligibleRetryAtEpochMs = null,
+            )
+            Translation.State.TRANSLATING -> copy(
+                state = queueStatus,
+                batchPhase = if (batchPhase == TranslationBatchPhase.IDLE) {
+                    TranslationBatchPhase.FIRST_PASS
+                } else {
+                    batchPhase
+                },
+            )
+            Translation.State.PAUSED -> copy(
+                state = queueStatus,
+                batchPhase = TranslationBatchPhase.FINISHED,
+            )
+            else -> copy(state = queueStatus)
+        }
     }
 
     /**
@@ -1190,25 +1454,7 @@ class TranslationManager(
      * store's page-count progress; empty when no active store exists (no batch in flight).
      */
     fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
-        return activeStores.snapshots
-            .flatMapLatest { stores ->
-                val state = getQueuedTranslationOrNull(chapterId)?.status ?: Translation.State.NOT_TRANSLATED
-                val store = stores[chapterId]
-                if (store == null) {
-                    flowOf(TranslationProgressSnapshot.empty(chapterId, state))
-                } else {
-                    combine(store.state, store.display) { pages, display ->
-                        TranslationProgressSnapshot.compute(
-                            chapterId = chapterId,
-                            state = getQueuedTranslationOrNull(chapterId)?.status ?: state,
-                            pageMap = pages,
-                            displayPageMap = display,
-                            permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
-                        )
-                    }
-                }
-            }
-            .distinctUntilChanged()
+        return observeBatchProgress(chapterId)
     }
 
     fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {
@@ -1683,7 +1929,7 @@ class TranslationManager(
      */
     suspend fun cancelPageTranslations(chapterId: Long) {
         scheduler.cancelPageTranslations(chapterId)
-        if (isBatchTranslationActive(chapterId)) {
+        if (isBatchTranslationRetained(chapterId)) {
             return
         }
         disposeBatchTracker(chapterId)
@@ -1701,7 +1947,7 @@ class TranslationManager(
     fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) {
         scheduler.cancelAllPageTranslations()
         val chapterIdsToEvict = activeStores.chapterIds()
-            .filter { cancelBatchQueue || !isBatchTranslationActive(it) }
+            .filter { cancelBatchQueue || !isBatchTranslationRetained(it) }
         val stores = chapterIdsToEvict.mapNotNull { activeStores.get(it) }
         if (stores.isNotEmpty()) {
             // TachiyomiAT bug 4 fix: the durable CANCELLED write MUST land before
@@ -1721,6 +1967,7 @@ class TranslationManager(
         chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
         if (cancelBatchQueue) {
             translator.clearQueue()
+            clearAllPendingTranslationRequests()
         }
     }
 
@@ -1728,13 +1975,14 @@ class TranslationManager(
         .flatMapLatest { translations ->
             translations
                 .map { translation ->
-                    translation.statusFlow.drop(1).map { translation }
+                    // Queue membership is the acknowledgement. Replay the
+                    // current status for every subscriber instead of dropping
+                    // QUEUE and relying on a later TRANSLATING transition.
+                    translation.statusFlow
+                        .drop(1)
+                        .map { translation }
+                        .onStart { emit(translation) }
                 }
                 .merge()
-        }
-        .onStart {
-            emitAll(
-                queueState.value.filter { translation -> translation.status == Translation.State.TRANSLATING }.asFlow(),
-            )
         }
 }

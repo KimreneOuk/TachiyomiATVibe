@@ -323,6 +323,7 @@ class Downloader(
         val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
         if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
             download.status = Download.State.ERROR
+            translationManager.markTranslationDownloadFailed(download.chapter.id, "Insufficient storage")
             notifier.onError(
                 context.stringResource(MR.strings.download_insufficient_space),
                 download.chapter.name,
@@ -385,6 +386,7 @@ class Downloader(
 
             if (!isDownloadSuccessful(download, tmpDir)) {
                 download.status = Download.State.ERROR
+                translationManager.markTranslationDownloadFailed(download.chapter.id, "Chapter download failed")
                 return
             }
 
@@ -440,6 +442,7 @@ class Downloader(
             // If the page list threw, it will resume here
             logcat(LogPriority.ERROR, error)
             download.status = Download.State.ERROR
+            translationManager.markTranslationDownloadFailed(download.chapter.id, "Chapter download failed")
             notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
         }
     }
