@@ -76,3 +76,34 @@ Restore working batch translation downloads:
 
 Report commit hash, verification numbers, deviations, and risks to the
 Main Leader. Do not address the Director directly.
+
+## Delivery record (2026-08-28)
+
+DELIVERED. Fix commit `2085c03` on `t907/fix` (parent `b65a21f`); primary
+workspace `optimize_translation_finishing_page` fast-forwarded `b65a21f →
+2085c03`. Diff: 3 production files (MangaScreenModel.kt seam
+`enqueueTranslationDownloads` with unconditional idempotent
+`startDownloads()`; TranslationManager.kt `clearStaleDownloadFailedRequest`
+hooked at rolling-auto entry; ReaderViewModel.kt manual-entry clear) + 8 new
+tests (2 suites).
+
+Gates (implementer, re-verified by reviewer on the same tree): compile
+SUCCESS; `:app:testStandardDebugUnitTest` 1072/0 (138 suites; baseline ~1064
++ 8 new); `:domain:test` 68/0; spotlessCheck SUCCESS.
+
+Independent review: VERDICT PASS. Requeue-durable overwrite confirmed
+(`WAITING_FOR_DOWNLOAD`, commit=true, inside `pendingRequestMutationLock`);
+no new main-thread I/O class; failure→download-completes→batch-launch
+verified (no phase gate). Non-gating follow-ups: (1) wrap
+`clearStaleDownloadFailedRequest` check-then-clear in
+`pendingRequestMutationLock` (tiny race vs downloader-thread revival); (2)
+hook wiring at ReaderViewModel:2133 / TranslationManager:1283 is untested at
+this tier (consistent with prior practice).
+
+APKs built `2026-08-28 22:37` from `2085c03` at
+`app/build/outputs/apk/standard/debug/`: arm64-v8a 436M, armeabi-v7a 224M,
+universal 543M, x86_64 239M, x86 238M.
+
+Residual: runtime trigger of the *first* download failure (S2) remains
+unattributed — capture logcat (`Downloader` / download notifier) during a
+repro if it recurs on-device.
