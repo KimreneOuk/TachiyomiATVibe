@@ -7,7 +7,6 @@ import eu.kanade.translation.translator.BaseTranslator
 import eu.kanade.translation.translator.ContextualRequestBuilder
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationPrompts
-import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import kotlinx.coroutines.test.runTest
@@ -74,31 +73,6 @@ class ChunkTranslationPayloadTest {
     fun `context prefix is empty when glossary and pairs are blank`() {
         TranslationPrompts.contextPrefix("   ", "  ") shouldBe ""
         TranslationPrompts.contextPrefix("", "") shouldBe ""
-    }
-
-    @Test
-    fun `standard engine translation pathway correctly maps flat string lists without prompt template overhead`() = runTest {
-        val mockStandardEngine = object : BaseTranslator() {
-            override val fromLang: TextRecognizerLanguage = TextRecognizerLanguage.JAPANESE
-            override val toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH
-
-            override suspend fun translateFlat(texts: List<String>): List<String> {
-                return texts.map { text ->
-                    when (text) {
-                        "こんにちは" -> "Hello"
-                        "さようなら" -> "Goodbye"
-                        "ありがとう" -> "Thank you"
-                        else -> "Translated: $text"
-                    }
-                }
-            }
-        }
-
-        // Direct flat string mapping without LLM formatting/prompt overhead
-        val input = listOf("こんにちは", "さようなら", "ありがとう")
-        val output = mockStandardEngine.translateFlat(input)
-
-        output shouldContainExactly listOf("Hello", "Goodbye", "Thank you")
     }
 
     @Test

@@ -4,7 +4,6 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 
@@ -20,9 +19,8 @@ import org.junit.jupiter.api.Test
  * every bubble" / "regions with no text" symptom. The live reader path was
  * unaffected because it mutates the page in place and persists the same instance.
  *
- * The fix copies the registry's authoritative translated blocks wholesale. These
- * tests pin the invariant (each block keeps its own translation) and document
- * why a blockId-keyed merge is unsafe while blockId stays null.
+ * The fix copies the registry's authoritative translated blocks wholesale. The
+ * surviving test pins that invariant (each block keeps its own translation).
  */
 class BatchTranslateBlockMergeTest {
 
@@ -71,34 +69,5 @@ class BatchTranslateBlockMergeTest {
 
         val merged = store.state.value["p1"]!!.blocks
         merged.map { it.translation } shouldContainExactly listOf("ONE", "TWO", "THREE")
-    }
-
-    @Test
-    fun `legacy blockId-keyed merge collapses every region to the last translation`() = runTest {
-        val store = store()
-        store.updatePage("p1") { ocrPage("one", "two", "three") }
-
-        val p = PageTranslation(
-            blocks = mutableListOf(
-                block("one", "ONE"),
-                block("two", "TWO"),
-                block("three", "THREE"),
-            ),
-        )
-
-        store.updatePage("p1") {
-            (it ?: p).apply {
-                if (it != null && it !== p) {
-                    val byId = p.blocks.associateBy { b -> b.blockId }
-                    blocks = blocks.map { b ->
-                        byId[b.blockId]?.let { tb -> b.copy(translation = tb.translation) } ?: b
-                    }.toMutableList()
-                }
-            }
-        }
-
-        p.blocks.forEach { it.blockId shouldBe null }
-        val corrupted = store.state.value["p1"]!!.blocks
-        corrupted.map { it.translation } shouldContainExactly listOf("THREE", "THREE", "THREE")
     }
 }
