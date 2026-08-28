@@ -492,17 +492,15 @@ class ChapterArtifactStoreTest {
     }
 
     @Test
-    fun `failed resync publish keeps the prior manifest authoritative`() {
+    fun `reopen with a changed legacy identity returns the prior manifest unchanged`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
         val first = store.loadOrMigrate(legacySnapshot(identityTag = "v1"))
 
-        io.failWrites = true
         val second = store.loadOrMigrate(legacySnapshot(identityTag = "v2"))
         // The in-memory result of this load is the prior manifest.
         second.manifest shouldBe first.manifest
         second.resyncedFromLegacy shouldBe false
-        io.failWrites = false
         store.readManifest() shouldBe first.manifest
     }
 

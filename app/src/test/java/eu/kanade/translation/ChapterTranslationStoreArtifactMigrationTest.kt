@@ -248,11 +248,13 @@ class ChapterTranslationStoreArtifactMigrationTest {
     }
 
     @Test
-    fun `schema one artifact fixture rehydrates with no legacy flat file`() {
+    fun `committed-only artifact fixture rehydrates with no legacy flat file`() {
         val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
         val layout = ChapterArtifactLayout("Chapter 1")
         val page = displayablePage().copy(translationStatus = StageStatus.PARTIAL)
         val snapshotFile = layout.committedPageSnapshotFile("page.jpg", "legacy-page.jpg")
+        // Current-schema fixture: plain Json omits defaulted fields (including
+        // schemaVersion), so this also pins the additive-defaults decode path.
         val manifest = ChapterArtifactManifest(
             chapterKey = "Chapter 1",
             pages = mapOf(
