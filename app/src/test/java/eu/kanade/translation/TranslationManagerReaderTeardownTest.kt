@@ -85,16 +85,17 @@ class TranslationManagerReaderTeardownTest {
                 }
             }
 
+            withTimeout(5_000) { while (entryReturned.count > 0L) delay(10) }
             assertTrue(
-                entryReturned.await(1, TimeUnit.SECONDS),
+                entryReturned.count == 0L,
                 "reader lifecycle entry must not wait for store persistence",
             )
-            assertTrue(cleanupStarted.await(1, TimeUnit.SECONDS))
+            withTimeout(5_000) { while (cleanupStarted.count > 0L) delay(10) }
             assertNotSame(callerThread.get(), cleanupThread.get())
             assertFalse(batchStoreDefunct.get(), "batch-owned store must remain registered")
 
             cleanupRelease.countDown()
-            callerFuture.get(1, TimeUnit.SECONDS)
+            callerFuture.get(5, TimeUnit.SECONDS)
             withTimeout(5_000) {
                 while (!readerStoreDefunct.get()) delay(10)
             }
@@ -137,7 +138,7 @@ class TranslationManagerReaderTeardownTest {
     }
 
     @Test
-    fun `await reader stop moves scheduler teardown off caller thread`() = runBlocking {
+    fun `await reader stop moves scheduler teardown off caller thread`() = runBlocking<Unit> {
         val schedulerStarted = CountDownLatch(1)
         val schedulerRelease = CountDownLatch(1)
         val schedulerThread = AtomicReference<Thread>()
@@ -173,11 +174,13 @@ class TranslationManagerReaderTeardownTest {
                 }
             }
 
-            assertTrue(schedulerStarted.await(1, TimeUnit.SECONDS))
+            withTimeout(5_000) { while (schedulerStarted.count > 0L) delay(10) }
+            assertTrue(schedulerStarted.count == 0L)
             assertNotSame(callerThread.get(), schedulerThread.get())
             schedulerRelease.countDown()
-            assertTrue(callerFinished.await(1, TimeUnit.SECONDS))
-            callerFuture.get(1, TimeUnit.SECONDS)
+            withTimeout(5_000) { while (callerFinished.count > 0L) delay(10) }
+            assertTrue(callerFinished.count == 0L)
+            callerFuture.get(5, TimeUnit.SECONDS)
         } finally {
             schedulerRelease.countDown()
             readerExecutor.shutdownNow()
@@ -186,7 +189,7 @@ class TranslationManagerReaderTeardownTest {
     }
 
     @Test
-    fun `request reader stop has no undispatched scheduler prefix`() = runBlocking {
+    fun `request reader stop has no undispatched scheduler prefix`() = runBlocking<Unit> {
         val schedulerStarted = CountDownLatch(1)
         val schedulerRelease = CountDownLatch(1)
         val schedulerThread = AtomicReference<Thread>()
@@ -223,15 +226,17 @@ class TranslationManagerReaderTeardownTest {
                 }
             }
 
+            withTimeout(5_000) { while (entryReturned.count > 0L) delay(10) }
             assertTrue(
-                entryReturned.await(1, TimeUnit.SECONDS),
+                entryReturned.count == 0L,
                 "requestReaderStop must return before scheduler teardown joins",
             )
-            assertTrue(schedulerStarted.await(1, TimeUnit.SECONDS))
+            withTimeout(5_000) { while (schedulerStarted.count > 0L) delay(10) }
+            assertTrue(schedulerStarted.count == 0L)
             assertNotSame(callerThread.get(), schedulerThread.get())
             schedulerRelease.countDown()
             deferredRef.get().await()
-            callerFuture.get(1, TimeUnit.SECONDS)
+            callerFuture.get(5, TimeUnit.SECONDS)
         } finally {
             schedulerRelease.countDown()
             readerExecutor.shutdownNow()

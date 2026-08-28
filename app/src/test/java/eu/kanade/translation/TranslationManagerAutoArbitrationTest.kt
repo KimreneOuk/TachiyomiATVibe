@@ -1,14 +1,21 @@
 package eu.kanade.translation
 
+import android.content.Context
+import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import io.kotest.matchers.shouldBe
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.runs
+import io.mockk.unmockkObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -17,6 +24,8 @@ import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.lang.reflect.Field
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Production-path arbitration coverage. The fixture injects only the manager
@@ -63,7 +72,7 @@ class TranslationManagerAutoArbitrationTest {
     }
 
     @Test
-    fun `manager keeps auto window active while the chapter batch is queued`() = runBlocking {
+    fun `manager keeps auto window active while the chapter batch is queued`() = runBlocking<Unit> {
         val store = ChapterTranslationStore(
             translationFile = null,
             fileCreator = null,
@@ -95,6 +104,9 @@ class TranslationManagerAutoArbitrationTest {
         val activeBatch = Translation(source, manga, chapter).also { it.status = Translation.State.QUEUE }
         every { translator.queueChapter(manga, chapter) } answers { queue.value = listOf(activeBatch) }
         val manager = uninitializedManager(scheduler, translator)
+
+        mockkObject(TranslationForegroundService.Companion)
+        every { TranslationForegroundService.start(any()) } just runs
 
         try {
             manager.updateAutoWindow(
@@ -139,6 +151,9 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
 
+            // Repeated window updates keep the coordinator armed; an explicit
+            // reader close retires it, and a later window update re-arms it
+            // once the batch has drained.
             manager.updateAutoWindow(
                 identity,
                 0,
@@ -148,6 +163,9 @@ class TranslationManagerAutoArbitrationTest {
                 { RollingAutoCoordinator.PageWorkItem("p0", null) },
                 eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
             )
+            withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
+
+            manager.shutdownAutoCoordinator()
             withTimeout(5_000) { scheduler.autoSnapshot.first { it == null } }
 
             manager.updateAutoWindow(
@@ -161,6 +179,7 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
         } finally {
+            unmockkObject(TranslationForegroundService.Companion)
             scheduler.close()
         }
     }
@@ -176,6 +195,14 @@ class TranslationManagerAutoArbitrationTest {
         val manager = allocateInstance.invoke(unsafe, TranslationManager::class.java) as TranslationManager
         setField(manager, "scheduler", scheduler)
         setField(manager, "translator", translator)
+        setField(manager, "context", mockk<Context>(relaxed = true))
+        setField(manager, "pendingRequestStore", mockk<TranslationPendingRequestStore>(relaxed = true))
+        setField(
+            manager,
+            "pendingTranslationRequestsState",
+            MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap()),
+        )
+        setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         return manager
     }
 
