@@ -1035,15 +1035,11 @@ class MangaScreenModel(
                 translationManager.queueTranslationAfterDownload(manga, candidate.chapter)
             }
             if (pendingAwaitingDownload.isNotEmpty()) {
-                downloadManager.downloadChapters(manga, pendingAwaitingDownload.map { it.chapter })
-                // A failed download remains in the downloader queue with ERROR
-                // status. Put it back at the front when this is an explicit
-                // retry of a previously failed pending request.
-                pendingAwaitingDownload.forEach { candidate ->
-                    if (downloadManager.getQueuedDownloadOrNull(candidate.chapter.id)?.status == Download.State.ERROR) {
-                        candidate.chapter.id?.let(downloadManager::startDownloadNow)
-                    }
-                }
+                enqueueTranslationDownloads(
+                    downloadManager,
+                    manga,
+                    pendingAwaitingDownload.map { it.chapter },
+                )
             }
             val pendingDownloaded = downloaded.filter { candidate ->
                 candidate.chapter.id?.let(translationManager::hasPendingTranslationRequest) == true
@@ -1680,4 +1676,32 @@ sealed class ChapterList {
         val id = chapter.id
         val isDownloaded = downloadState == Download.State.DOWNLOADED
     }
+}
+
+/**
+ * TachiyomiAT: enqueues translation-driven chapter downloads and guarantees
+ * the downloader actually runs. Stock auto-start only fires when the queue
+ * was empty, so a stale or restored entry — including a retained ERROR
+ * download from an earlier failed attempt — would leave freshly queued
+ * chapters stuck in QUEUED until the user started each one by hand.
+ * [DownloadManager.startDownloads] is idempotent, so the guarantee must not
+ * depend on ERROR-state detection below; that re-fronting only preserves
+ * explicit-retry ordering.
+ */
+internal fun enqueueTranslationDownloads(
+    downloadManager: DownloadManager,
+    manga: Manga,
+    chapters: List<Chapter>,
+) {
+    if (chapters.isEmpty()) return
+    downloadManager.downloadChapters(manga, chapters)
+    // A failed download remains in the downloader queue with ERROR
+    // status. Put it back at the front when this is an explicit
+    // retry of a previously failed pending request.
+    chapters.forEach { chapter ->
+        if (downloadManager.getQueuedDownloadOrNull(chapter.id)?.status == Download.State.ERROR) {
+            downloadManager.startDownloadNow(chapter.id)
+        }
+    }
+    downloadManager.startDownloads()
 }

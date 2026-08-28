@@ -2128,6 +2128,9 @@ class ReaderViewModel @JvmOverloads constructor(
         // streams for a chapter the translator can't match to disk files.
         val chapter = page.chapter.chapter
         val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        // TachiyomiAT: manual entry drops a stale DOWNLOAD_FAILED batch
+        // request so its failed projection cannot shadow this manual work.
+        chapter.id?.let(translationManager::clearStaleDownloadFailedRequest)
         val pageKey = resolvePageKey(page)
         // TachiyomiAT: resolve force from the page's live translation state.
         // A FAILED stage means the page is stuck (the "cannot reprocess /

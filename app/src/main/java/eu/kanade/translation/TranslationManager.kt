@@ -305,6 +305,20 @@ class TranslationManager(
         return existed
     }
 
+    /**
+     * Drops a stale DOWNLOAD_FAILED request at manual/auto reader entry so the
+     * failed projection cannot outlive the batch that produced it and a later
+     * download completion cannot fire an unrequested batch. Live phases are
+     * left untouched.
+     */
+    fun clearStaleDownloadFailedRequest(chapterId: Long) {
+        val phase = pendingTranslationRequestsState.value[chapterId]?.phase
+            ?: pendingRequestStore.phase(chapterId)
+        if (phase == TranslationRequestPhase.DOWNLOAD_FAILED) {
+            clearPendingTranslationRequest(chapterId)
+        }
+    }
+
     fun hasPendingTranslationRequest(chapterId: Long): Boolean =
         pendingTranslationRequestsState.value.containsKey(chapterId) ||
             pendingRequestStore.load().contains(chapterId)
@@ -1264,6 +1278,9 @@ class TranslationManager(
         source: HttpSource,
     ): TranslationSession? {
         val chapterId = chapter.id ?: return null
+        // Rolling-auto owns the chapter from here; a stale DOWNLOAD_FAILED
+        // batch request must not keep projecting its failed state.
+        clearStaleDownloadFailedRequest(chapterId)
         val store = openOrCreateActiveChapterTranslationStore(
             chapterId,
             chapter.name,
