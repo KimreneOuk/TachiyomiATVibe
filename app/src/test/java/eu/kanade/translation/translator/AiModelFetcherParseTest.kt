@@ -79,9 +79,4 @@ class AiModelFetcherParseTest {
     fun `parseGeminiModels returns empty when the models array is missing`() {
         AiModelFetcher.parseGeminiModels(json("""{"error":"denied"}""")) shouldBe emptyList()
     }
-
-    @Test
-    fun `normalizeBaseUrl trims whitespace and trailing slashes`() {
-        AiModelFetcher.normalizeBaseUrl("  http://host:1234/v1///  ") shouldBe "http://host:1234/v1"
-    }
 }

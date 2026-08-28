@@ -35,7 +35,6 @@ internal object AotReportBubbleFill {
         val distances = IntArray(mask.size)
         val queue = ArrayDeque<Int>()
         val distQueue = ArrayDeque<Int>()
-        val insetPx = 5 // Do not overwrite pixels within 5px of the mask boundary
 
         for (start in mask.indices) {
             if (mask[start] == 0.toByte() || visited[start]) continue

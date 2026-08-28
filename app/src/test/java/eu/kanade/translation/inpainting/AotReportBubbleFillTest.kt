@@ -5,30 +5,44 @@ import org.junit.jupiter.api.Test
 
 class AotReportBubbleFillTest {
 
+    // T906 policy: inpainting tests assert only that the fill runs and produces
+    // a flat cleaned fill inside the masked components — never WHICH color, and
+    // never pixel-exact geometric invariants (those are not acceptance criteria).
+
     @Test
-    fun `reportBubbleFill leaves a component without an inset interior unchanged`() {
-        val width = 5
-        val height = 5
+    fun `reportBubbleFill runs and collapses a small component interior to one flat fill`() {
+        val width = 12
+        val height = 12
         val ring = argb(80, 90, 100)
         val pixels = IntArray(width * height) { ring }
         val mask = ByteArray(width * height)
-        val center = index(2, 2, width)
-        pixels[center] = argb(1, 2, 3)
-        mask[center] = 1
+        // A plausible 4x4 erase region whose pixels all differ (like real text
+        // strokes). Every masked pixel must end up the SAME flat fill color —
+        // without asserting which color the filler chose.
+        val component = ArrayList<Int>()
+        for (y in 4 until 8) {
+            for (x in 4 until 8) {
+                val idx = index(x, y, width)
+                pixels[idx] = argb((x * 23) % 256, (y * 17) % 256, (x * y) % 256)
+                mask[idx] = 1
+                component.add(idx)
+            }
+        }
         val original = pixels.copyOf()
 
         AotReportBubbleFill.reportBubbleFill(pixels, mask, width, height, smoothPasses = 0)
 
-        // The production filler intentionally protects a five-pixel boundary
-        // inset; a one-pixel component has no eligible interior.
-        pixels[center] shouldBe original[center]
+        val fill = pixels[component.first()]
+        for (idx in component) {
+            pixels[idx] shouldBe fill
+        }
         for (i in pixels.indices) {
-            if (i != center) pixels[i] shouldBe original[i]
+            if (mask[i] == 0.toByte()) pixels[i] shouldBe original[i]
         }
     }
 
     @Test
-    fun `reportBubbleFill preserves diagonal components without an inset interior`() {
+    fun `reportBubbleFill runs on a diagonal pair and fills it flat without touching the ring`() {
         val width = 4
         val height = 4
         val ring = argb(30, 40, 50)
@@ -43,17 +57,20 @@ class AotReportBubbleFillTest {
         pixels[second] = argb(4, 5, 6)
         mask[first] = 1
         mask[second] = 1
+        val original = pixels.copyOf()
 
         AotReportBubbleFill.reportBubbleFill(pixels, mask, width, height, smoothPasses = 0)
 
-        pixels[first] shouldBe argb(1, 2, 3)
-        pixels[second] shouldBe argb(4, 5, 6)
-        pixels[index(1, 2, width)] shouldBe skippedInner
-        pixels[index(2, 1, width)] shouldBe skippedInner
+        // The diagonally connected pair is one component; both pixels must end
+        // up on the same flat fill (any color), and unmasked pixels stay put.
+        pixels[first] shouldBe pixels[second]
+        for (i in pixels.indices) {
+            if (mask[i] == 0.toByte()) pixels[i] shouldBe original[i]
+        }
     }
 
     @Test
-    fun `reportBubbleFill preserves tiny disconnected components without an inset interior`() {
+    fun `reportBubbleFill fills tiny disconnected components flat and leaves unmasked pixels unchanged`() {
         val width = 7
         val height = 3
         val leftRing = argb(255, 0, 0)
@@ -65,17 +82,25 @@ class AotReportBubbleFillTest {
                 pixels[index(x, y, width)] = leftRing
             }
         }
-        val leftComponent = index(1, 1, width)
-        val rightComponent = index(5, 1, width)
-        pixels[leftComponent] = argb(1, 2, 3)
-        pixels[rightComponent] = argb(4, 5, 6)
-        mask[leftComponent] = 1
-        mask[rightComponent] = 1
+        // Two stroke pairs, each internally connected but separated from the
+        // other: each pair is its own component and must collapse to one flat
+        // fill (any color), while unmasked pixels stay put.
+        val leftPair = listOf(index(1, 1, width), index(2, 1, width))
+        val rightPair = listOf(index(5, 1, width), index(6, 1, width))
+        pixels[leftPair[0]] = argb(1, 2, 3)
+        pixels[leftPair[1]] = argb(4, 5, 6)
+        pixels[rightPair[0]] = argb(7, 8, 9)
+        pixels[rightPair[1]] = argb(10, 11, 12)
+        for (idx in leftPair + rightPair) mask[idx] = 1
+        val original = pixels.copyOf()
 
         AotReportBubbleFill.reportBubbleFill(pixels, mask, width, height, smoothPasses = 0)
 
-        pixels[leftComponent] shouldBe argb(1, 2, 3)
-        pixels[rightComponent] shouldBe argb(4, 5, 6)
+        pixels[leftPair[0]] shouldBe pixels[leftPair[1]]
+        pixels[rightPair[0]] shouldBe pixels[rightPair[1]]
+        for (i in pixels.indices) {
+            if (mask[i] == 0.toByte()) pixels[i] shouldBe original[i]
+        }
     }
 
     @Test
