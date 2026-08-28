@@ -203,6 +203,7 @@ class TranslationManagerAutoArbitrationTest {
             MutableStateFlow<Map<Long, TranslationRequestState>>(emptyMap()),
         )
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
+        setField(manager, "pendingRequestMutationLock", Any())
         return manager
     }
 
