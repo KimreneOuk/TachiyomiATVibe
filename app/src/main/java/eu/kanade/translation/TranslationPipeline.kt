@@ -3873,6 +3873,23 @@ class TranslationPipeline(
         // bounded partial retries below.
         val retryBudget = RequestRetryBudget()
         var translationOutcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
+        val renderFailure = ProviderFailure(
+            kind = ProviderFailureKind.PROTOCOL,
+            retryability = ProviderFailureRetryability.RETRY_NOW,
+            safeSummary = "rendering failed; retry required",
+        )
+
+        fun markRenderFailure() {
+            pageTranslation.renderStatus = StageStatus.FAILED
+            pageTranslation.recordAttemptFailure()
+            pageTranslation.errorMessage = renderFailure.safeSummary
+            translationOutcome = ChunkCompletionOutcome.Failed(
+                anchorPageKey = pageKey,
+                terminalPageKeys = emptySet(),
+                failure = renderFailure,
+                reason = renderFailure.safeSummary,
+            )
+        }
 
         // AI translators use translateContextual with the chapter glossary so on-demand
         // single-page translation reuses established terms/pronouns (same continuity the
@@ -4084,9 +4101,7 @@ class TranslationPipeline(
                         pageTranslation.updatedAt = System.currentTimeMillis()
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
-                        pageTranslation.renderStatus = StageStatus.FAILED
-                        pageTranslation.recordAttemptFailure()
-                        pageTranslation.errorMessage = e.message
+                        markRenderFailure()
                         logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
                     } finally {
                         if (cleanedBitmap != null) {
@@ -4134,7 +4149,7 @@ class TranslationPipeline(
                         }
                         try {
                             if (published == null) {
-                                pageTranslation.renderStatus = StageStatus.FAILED
+                                markRenderFailure()
                                 pageTranslation.errorMessage =
                                     "Cleaned image could not be published; translated text was not rendered."
                             } else {
@@ -4146,9 +4161,7 @@ class TranslationPipeline(
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
-                            pageTranslation.renderStatus = StageStatus.FAILED
-                            pageTranslation.recordAttemptFailure()
-                            pageTranslation.errorMessage = e.message
+                            markRenderFailure()
                             logcat(LogPriority.ERROR, e) { "Failed to render text for single page (retry path) $pageKey" }
                         } finally {
                             try {
@@ -4156,8 +4169,7 @@ class TranslationPipeline(
                             } catch (_: Exception) {}
                         }
                     } else {
-                        pageTranslation.renderStatus = StageStatus.FAILED
-                        pageTranslation.recordAttemptFailure()
+                        markRenderFailure()
                         val reason = pageTranslation.errorMessage ?: "inpaint unavailable"
                         pageTranslation.errorMessage =
                             "Inpainting unavailable ($reason) — original text would show through, so the " +

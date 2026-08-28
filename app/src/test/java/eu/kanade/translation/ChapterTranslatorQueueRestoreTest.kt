@@ -25,4 +25,13 @@ class ChapterTranslatorQueueRestoreTest {
             liveById = emptyMap(),
         ) shouldContainExactly listOf("restored-20")
     }
+
+    @Test
+    fun `restore merge prefers a live requeue over stale restored state`() {
+        mergeRestoredQueueEntries(
+            durableIds = listOf(20L),
+            restoredById = mapOf(20L to "stale-paused"),
+            liveById = mapOf(20L to "fresh-queue"),
+        ) shouldContainExactly listOf("fresh-queue")
+    }
 }

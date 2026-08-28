@@ -121,6 +121,9 @@ class TranslationManager(
     val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
         pendingTranslationRequestsState.asStateFlow()
 
+    /** Serializes request versioning, state publication, and durable writes. */
+    private val pendingRequestMutationLock = Any()
+
     private data class DurableChapterKey(
         val chapterId: Long?,
         val chapterName: String,
@@ -260,13 +263,16 @@ class TranslationManager(
     fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
         val chapterIds = chapters.mapNotNull { it.id }.distinct()
         if (chapterIds.isEmpty()) return
-        val versions = chapterIds.associateWith(::nextPendingRequestVersion)
-        // Publish the in-memory acknowledgement before any disk operation so
-        // the confirmation row and its protection fence are immediate. The
-        // synchronous SharedPreferences commit runs on the manager's IO scope
-        // and is fenced against later phase/cancel mutations below.
-        pendingTranslationRequestsState.update {
-            acknowledgePendingTranslationState(it, chapterIds)
+        val versions = synchronized(pendingRequestMutationLock) {
+            chapterIds.associateWith(::nextPendingRequestVersion).also {
+                // Publish the in-memory acknowledgement before any disk
+                // operation so the confirmation row and its protection fence
+                // are immediate. The lock keeps this publication atomic with
+                // every later synchronous phase/cancel mutation.
+                pendingTranslationRequestsState.update { current ->
+                    acknowledgePendingTranslationState(current, chapterIds)
+                }
+            }
         }
         storeScope.launch(Dispatchers.IO) {
             versions.forEach { (chapterId, version) ->
@@ -336,24 +342,30 @@ class TranslationManager(
         phase: TranslationRequestPhase,
         reason: String? = null,
     ) {
-        nextPendingRequestVersion(chapterId)
-        pendingRequestStore.add(chapterId, phase, reason)
-        pendingTranslationRequestsState.update {
-            it + (chapterId to TranslationRequestState(chapterId, phase, reason))
+        synchronized(pendingRequestMutationLock) {
+            nextPendingRequestVersion(chapterId)
+            pendingRequestStore.add(chapterId, phase, reason)
+            pendingTranslationRequestsState.update {
+                it + (chapterId to TranslationRequestState(chapterId, phase, reason))
+            }
         }
     }
 
     private fun clearPendingTranslationRequest(chapterId: Long) {
-        nextPendingRequestVersion(chapterId)
-        pendingRequestStore.remove(chapterId)
-        pendingTranslationRequestsState.update { it - chapterId }
+        synchronized(pendingRequestMutationLock) {
+            nextPendingRequestVersion(chapterId)
+            pendingRequestStore.remove(chapterId)
+            pendingTranslationRequestsState.update { it - chapterId }
+        }
     }
 
     private fun clearAllPendingTranslationRequests() {
-        (pendingTranslationRequestsState.value.keys + pendingRequestStore.load()).distinct()
-            .forEach(::nextPendingRequestVersion)
-        pendingRequestStore.clear()
-        pendingTranslationRequestsState.value = emptyMap()
+        synchronized(pendingRequestMutationLock) {
+            (pendingTranslationRequestsState.value.keys + pendingRequestStore.load()).distinct()
+                .forEach(::nextPendingRequestVersion)
+            pendingRequestStore.clear()
+            pendingTranslationRequestsState.value = emptyMap()
+        }
     }
 
     private fun nextPendingRequestVersion(chapterId: Long): Long =
@@ -361,34 +373,21 @@ class TranslationManager(
 
     /**
      * Persists the immediate STARTING acknowledgement without allowing it to
-     * overwrite a newer phase. A normal phase mutation writes synchronously on
-     * its caller, so this loop only needs to repair the narrow race where that
-     * mutation advances the in-memory version while this IO commit is in flight.
+     * overwrite a newer phase. The same lock covers normal phase mutations, so
+     * the version check and commit cannot be separated by a state publication.
      */
     private fun persistPendingStartingAcknowledgement(chapterId: Long, initialVersion: Long) {
-        var expectedVersion = initialVersion
-        repeat(4) {
+        synchronized(pendingRequestMutationLock) {
             val currentVersion = pendingRequestWriteVersions[chapterId]?.get() ?: return
             val current = pendingTranslationRequestsState.value[chapterId]
             if (current == null) {
-                // A cancellation may have removed the request while the
-                // STARTING commit was in flight. Repeat the removal so a
-                // stale commit cannot resurrect it after the clear.
+                // A cancellation may have removed the request before this IO
+                // task acquired the lock. Keep the durable store cleared.
                 pendingRequestStore.remove(chapterId)
                 return
             }
-            if (currentVersion != expectedVersion || current.phase != TranslationRequestPhase.STARTING) {
-                expectedVersion = currentVersion
-                if (current.phase != TranslationRequestPhase.STARTING) {
-                    pendingRequestStore.add(chapterId, current.phase, current.reason)
-                    return
-                }
-            }
+            if (currentVersion != initialVersion || current.phase != TranslationRequestPhase.STARTING) return
             pendingRequestStore.add(chapterId, TranslationRequestPhase.STARTING, null)
-            val afterVersion = pendingRequestWriteVersions[chapterId]?.get() ?: return
-            val after = pendingTranslationRequestsState.value[chapterId]
-            if (afterVersion == expectedVersion && after?.phase == TranslationRequestPhase.STARTING) return
-            expectedVersion = afterVersion
         }
     }
 

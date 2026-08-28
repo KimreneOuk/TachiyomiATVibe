@@ -53,7 +53,9 @@ internal fun <T> mergeRestoredQueueEntries(
     restoredById: Map<Long, T>,
     liveById: Map<Long, T>,
 ): List<T> = durableIds.distinct().mapNotNull { chapterId ->
-    restoredById[chapterId] ?: liveById[chapterId]
+    // A live entry may have been requeued after the restore lookup. Prefer it
+    // over the stale status captured before that mutation.
+    liveById[chapterId] ?: restoredById[chapterId]
 }
 
 class ChapterTranslator(
@@ -412,15 +414,21 @@ class ChapterTranslator(
 
     private fun CoroutineScope.launchTranslationJob(translation: Translation) = launchIO {
         try {
-            translateChapter(translation)
+            val reconciliation = translateChapter(translation)
             if (translation.status == Translation.State.TRANSLATED ||
-                translation.status == Translation.State.READY_WITH_WARNINGS
+                (
+                    translation.status == Translation.State.READY_WITH_WARNINGS &&
+                        reconciliation?.nonDurableFailure != true
+                    )
             ) {
                 removeFromQueue(translation)
             } else if (translation.status == Translation.State.PAUSED) {
                 isPaused = true
             }
-            if (translation.status != Translation.State.PAUSED && areAllTranslationsFinished()) {
+            if (translation.status != Translation.State.PAUSED &&
+                reconciliation?.nonDurableFailure != true &&
+                areAllTranslationsFinished()
+            ) {
                 stop()
             }
         } catch (e: Throwable) {
@@ -497,11 +505,11 @@ class ChapterTranslator(
         addToQueue(translation)
     }
 
-    private suspend fun translateChapter(translation: Translation) {
-        translateChapterInternal(translation)
+    private suspend fun translateChapter(translation: Translation): ReconciliationResult? {
+        return translateChapterInternal(translation)
     }
 
-    private suspend fun translateChapterInternal(translation: Translation) {
+    private suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
         var store: ChapterTranslationStore? = null
         var tracker: eu.kanade.translation.batch.TranslationBatchProgressTracker? = null
         var batchReconciliation: ReconciliationResult? = null
@@ -530,7 +538,7 @@ class ChapterTranslator(
                             "TachiyomiAT cannot resolve artifact directory for ${translation.chapter.name}"
                         }
                         translation.status = Translation.State.ERROR
-                        return
+                        return null
                     }
                     store = ChapterTranslationStore.openArtifact(translationMangaDir, saveFile)
                     null
@@ -540,7 +548,7 @@ class ChapterTranslator(
                         "TachiyomiAT cannot open translation artifact for ${translation.chapter.name}"
                     }
                     translation.status = Translation.State.ERROR
-                    return
+                    return null
                 }
                 if (store == null) store = ChapterTranslationStore.open(translationFile!!)
             }
@@ -559,7 +567,7 @@ class ChapterTranslator(
                     "TachiyomiAT chapter files not found for ${translation.chapter.name}"
                 }
                 translation.status = Translation.State.ERROR
-                return
+                return null
             }
             translation.status = Translation.State.TRANSLATING
 
@@ -655,6 +663,7 @@ class ChapterTranslator(
                     translation.status = reconciliation.chapterStatus
                 }
             }
+            return batchReconciliation
         } catch (error: Throwable) {
             if (error is CancellationException) {
                 // If it's no longer in the queue, it was explicitly removed (cancelled).
@@ -668,6 +677,7 @@ class ChapterTranslator(
             BitmapPool.releaseAll()
             translation.status = Translation.State.ERROR
             logcat(LogPriority.ERROR, error)
+            return null
         }
     }
 
