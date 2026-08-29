@@ -33,6 +33,7 @@ import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.model.toPageDisplayProjection
+import eu.kanade.translation.store.ChapterGlossaryStore
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
@@ -85,17 +86,17 @@ class ChapterTranslationStore(
     private var translationFile: UniFile?,
     private val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
-    private var artifactStore: ChapterArtifactStore? = null,
+    internal var artifactStore: ChapterArtifactStore? = null,
     initialCommittedPages: Map<String, PageTranslation> = emptyMap(),
     initialArtifactManifest: ChapterArtifactManifest? = null,
     initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
     private val artifactParent: UniFile? = null,
     private val artifactFileName: String? = null,
 ) {
-    private val mutex = Mutex()
+    internal val mutex = Mutex()
 
     @Volatile
-    private var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
+    internal var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
     /**
@@ -112,7 +113,7 @@ class ChapterTranslationStore(
 
     /** Durable artifact manifest snapshot used by the live writer bridge. */
     @Volatile
-    private var artifactManifest: ChapterArtifactManifest? = initialArtifactManifest
+    internal var artifactManifest: ChapterArtifactManifest? = initialArtifactManifest
 
     /**
      * Cleaned-image names retained because the superseded committed bundle
@@ -209,14 +210,13 @@ class ChapterTranslationStore(
         companion object Key : CoroutineContext.Key<GenerationContext>
     }
 
-    // TachiyomiAT: chapter-level term→target glossary for cross-chunk translator
-    // continuity. Persisted to sibling JSON (additive; failure degrades to empty).
-    @Volatile
-    private var glossary: Map<String, String> = emptyMap()
+    // T909 Phase 8: glossary state + bodies moved to store/ChapterGlossaryStore.kt
+    // (delegates under the store mutex; legacy read fallback kept). The public
+    // glossary API stays at the old qualified names as delegating stubs.
+    private val glossaryStore = ChapterGlossaryStore(this)
 
     private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var dirty = false
-    private var glossaryDirty = false
     private var persistJob: Job? = null
 
     /**
@@ -328,7 +328,7 @@ class ChapterTranslationStore(
         admitMutationLocked()
     }
 
-    private fun admitMutationLocked(): MutationAdmission {
+    internal fun admitMutationLocked(): MutationAdmission {
         if (defunct) {
             return MutationAdmission.Rejected(
                 code = MutationAdmission.Rejected.Code.STORE_DEFUNCT,
@@ -1910,7 +1910,7 @@ class ChapterTranslationStore(
     private fun snapshotPages(): Map<String, PageTranslation> =
         pages.entries.associate { (key, page) -> key to page.detachedCopy() }
 
-    fun glossarySnapshot(): Map<String, String> = glossary.toMap()
+    fun glossarySnapshot(): Map<String, String> = glossaryStore.glossarySnapshot()
 
     /** Derives durable artifact status without consulting the legacy summary sidecar. */
     fun artifactStatus(): Translation.State? {
@@ -1983,101 +1983,24 @@ class ChapterTranslationStore(
         }
     }
 
-    /**
-     * All translated (source => target) pairs in the chapter so far — used to
-     * (re)build the glossary. Reads the in-memory pages map (no I/O).
-     */
-    fun translatedPairs(): List<Pair<String, String>> =
-        pages.values.flatMap { page ->
-            page.blocks.mapNotNull { block ->
-                val s = block.text.trim()
-                val t = block.translation.trim()
-                if (s.isBlank() || t.isBlank() || t == s) null else s to t
-            }
-        }
+    fun translatedPairs(): List<Pair<String, String>> = glossaryStore.translatedPairs()
 
     suspend fun updateGlossary(updated: Map<String, String>) {
-        if (defunct) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT store updateGlossary rejected: store is defunct"
-            }
-            return
-        }
-        mutex.withLock {
-            if (glossary != updated) {
-                when (val admission = admitMutationLocked()) {
-                    MutationAdmission.Granted -> Unit
-                    is MutationAdmission.Rejected -> {
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT store updateGlossary rejected: " +
-                                "code=${admission.code} reason=${admission.message}"
-                        }
-                        return@withLock
-                    }
-                }
-                glossary = updated.toMap()
-                val artifact = artifactStore
-                val manifest = artifactManifest
-                if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
-                    val pointer = artifact.publishGlossary(glossary)
-                    if (pointer != null) {
-                        val next = manifest.copy(
-                            glossary = pointer,
-                            updatedAtEpochMs = System.currentTimeMillis(),
-                        )
-                        if (artifact.publishManifest(next)) {
-                            artifactManifest = next
-                            glossaryDirty = false
-                        } else {
-                            glossaryDirty = true
-                        }
-                    } else {
-                        glossaryDirty = true
-                    }
-                } else {
-                    glossaryDirty = true
-                }
-                if (glossaryDirty) schedulePersist(markPageDirty = false)
-            }
-        }
+        glossaryStore.updateGlossary(updated)
     }
 
     internal fun loadGlossary() {
-        val artifact = artifactStore
-        val manifest = artifactManifest
-        if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
-            manifest.glossary?.let { pointer ->
-                glossary = artifact.readGlossary(pointer)?.entries.orEmpty()
-            }
-            return
-        }
-        val documents = legacyDocuments() ?: return
-        glossary = documents.readValidated<Map<String, String>>(glossaryName()) ?: emptyMap()
+        glossaryStore.loadGlossary()
     }
 
-    private fun persistGlossaryLocked(): Boolean {
-        val artifact = artifactStore
-        val manifest = artifactManifest
-        if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
-            val pointer = artifact.publishGlossary(glossary) ?: return false
-            val updated = manifest.copy(
-                glossary = pointer,
-                updatedAtEpochMs = System.currentTimeMillis(),
-            )
-            if (!artifact.publishManifest(updated)) return false
-            artifactManifest = updated
-            return true
-        }
-        logcat(LogPriority.ERROR) {
-            "TachiyomiAT glossary persistence failed: reason=artifact authority unavailable"
-        }
-        return false
-    }
+    private fun persistGlossaryLocked(): Boolean = glossaryStore.persistGlossaryLocked()
 
-    private fun legacyDocuments(): AtomicChapterDocuments? =
+    // T909 Phase 8: kept store-side (flat-file plumbing over ctor state); the
+    // moved loadGlossary reads them through these internal accessors.
+    internal fun legacyDocuments(): AtomicChapterDocuments? =
         (translationFile?.parentFile ?: artifactParent)?.let(::UniFileChapterDocumentIo)?.let(::AtomicChapterDocuments)
 
-    private fun glossaryName(): String =
+    internal fun glossaryName(): String =
         LegacyChapterMigrationSource.legacyGlossaryName(translationFile?.name ?: artifactFileName ?: "translation")
 
     private fun PageTranslation.isQueueVisibleTransient(): Boolean {
@@ -2149,9 +2072,9 @@ class ChapterTranslationStore(
         if (dirty) {
             if (persistLocked()) dirty = false else dirty = true
         }
-        if (glossaryDirty) {
+        if (glossaryStore.glossaryDirty) {
             // Keep dirty on failure so a later completion/close flush can retry.
-            if (persistGlossaryLocked()) glossaryDirty = false
+            if (persistGlossaryLocked()) glossaryStore.glossaryDirty = false
         }
     }
 
@@ -2185,7 +2108,7 @@ class ChapterTranslationStore(
         store.reconcileRetention(manifest)
     }
 
-    private fun schedulePersist(markPageDirty: Boolean = true) {
+    internal fun schedulePersist(markPageDirty: Boolean = true) {
         if (markPageDirty) dirty = true
         // A memory-only store has no future persistence target. Avoid leaving a
         // delayed job behind for eviction to join; explicit flush() still
