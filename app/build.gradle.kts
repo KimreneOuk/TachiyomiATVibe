@@ -189,6 +189,65 @@ kotlin {
     }
 }
 
+// TachiyomiAT: static guard against the silent-JUnit-skip quirk (T906 audit,
+// area3-lifecycle-ui-tests.md section U3). A test declared as an expression
+// body — fun `t`() = runBlocking { ... } — gets its return type inferred; if
+// inference yields anything but Unit, the method compiles to a non-void JVM
+// method that JUnit silently skips while it still counts as a suite member.
+// The cure is runBlocking<Unit>. Bare statement/block forms and explicit
+// `runBlocking<Unit>` never match the pattern below. Known occurrences are
+// exempted via config/runblocking-allowlist.txt.
+
+val testRunBlockingAllowlist = file("config/runblocking-allowlist.txt")
+
+tasks.register("checkTestRunBlocking") {
+    group = "verification"
+    description = "Fails when a unit test uses the expression-body `= runBlocking {` form, " +
+        "which JUnit silently skips if inference produces a non-Unit return. " +
+        "Declare runBlocking<Unit> or add an exemption to config/runblocking-allowlist.txt."
+
+    inputs.files(fileTree("src/test") { include("**/*.kt") })
+    inputs.file(testRunBlockingAllowlist)
+
+    doLast {
+        val allowlist = testRunBlockingAllowlist.readLines()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+
+        // Defect form: `= runBlocking {` or `= runBlocking` at end of line.
+        val risky = Regex("""=\s*runBlocking\s*(\{|$)""")
+
+        val offenders = mutableListOf<String>()
+        fileTree("src/test") { include("**/*.kt") }.forEach { file ->
+            val relPath = file.toRelativeString(projectDir).replace('\\', '/')
+            if (allowlist.any { relPath.contains(it) }) return@forEach
+            file.readLines().forEachIndexed { index, line ->
+                val match = risky.find(line) ?: return@forEachIndexed
+                // Only function expression bodies are defective; bare statement
+                // forms (`runBlocking { ... }`, `val x = runBlocking { ... }`)
+                // are safe because the method itself returns void.
+                if ("fun" in line.substring(0, match.range.first)) {
+                    offenders += "$relPath:${index + 1}: expression-body `= runBlocking` lets the " +
+                        "compiler infer the test's JVM return type; a non-Unit result is silently " +
+                        "skipped by JUnit. Declare runBlocking<Unit> " +
+                        "(or extend app/config/runblocking-allowlist.txt with an audit note)."
+                }
+            }
+        }
+
+        if (offenders.isNotEmpty()) {
+            throw GradleException(
+                "checkTestRunBlocking found ${offenders.size} risky expression-body runBlocking " +
+                    "test declaration(s):\n" + offenders.joinToString("\n"),
+            )
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn("checkTestRunBlocking")
+}
+
 dependencies {
     implementation(projects.i18n)
     implementation(projects.i18nAt)
