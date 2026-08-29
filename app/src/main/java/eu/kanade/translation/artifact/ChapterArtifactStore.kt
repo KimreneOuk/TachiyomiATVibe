@@ -44,6 +44,9 @@ class ChapterArtifactStore(
         LegacyArtifactRescue(io, layout, this)
     }
 
+    /** Bounded retention sweep (T909 Phase 2b). */
+    private val retentionSweep = ArtifactRetention(io, layout)
+
     data class LoadResult(
         val manifest: ChapterArtifactManifest,
         /** True when this load performed the initial legacy migration and published it. */
@@ -891,11 +894,6 @@ class ChapterArtifactStore(
         ArtifactStage.LAYOUT -> copy(layout = record)
     }
 
-    data class RetentionResult(
-        val deletedCount: Int,
-        val deletedNames: List<String>,
-    )
-
     /**
      * Bounded retention (lifecycle contract §15): preserves exactly the files
      * reachable from the manifest/generation graph — committed, candidate, and
@@ -908,101 +906,8 @@ class ChapterArtifactStore(
      * images) are never touched.
      */
     @Synchronized
-    fun reconcileRetention(manifest: ChapterArtifactManifest): RetentionResult {
-        val reachable = reachablePaths(manifest)
-        val retainedImageGenerations = retainedImageGenerations(manifest)
-        val deleted = mutableListOf<String>()
-
-        // Orphan temp sibling of the manifest itself (outside the managed tree).
-        val manifestTemp = AtomicChapterDocuments.tempNameFor(layout.manifestFileName)
-        if (io.exists(manifestTemp) && io.delete(manifestTemp)) deleted += manifestTemp
-
-        layout.managedDirectories.forEach { root ->
-            sweepDirectory(root, reachable, retainedImageGenerations, deleted)
-        }
-        return RetentionResult(deleted.size, deleted)
-    }
-
-    private fun sweepDirectory(
-        directory: String,
-        reachable: Set<String>,
-        retainedImageGenerations: Set<String>,
-        deleted: MutableList<String>,
-    ) {
-        val children = io.list(directory) ?: return
-        children.forEach { child ->
-            val path = "$directory/$child"
-            when {
-                io.list(path) != null -> {
-                    sweepDirectory(path, reachable, retainedImageGenerations, deleted)
-                    // Remove subdirectories that became empty, keeping the
-                    // managed roots themselves.
-                    if (io.list(path).isNullOrEmpty() && io.delete(path)) deleted += path
-                }
-                io.exists(path) && !isRetained(path, reachable, retainedImageGenerations) -> {
-                    if (layout.isManagedPath(path) && io.delete(path)) deleted += path
-                }
-            }
-        }
-    }
-
-    private fun isRetained(
-        path: String,
-        reachable: Set<String>,
-        retainedImageGenerations: Set<String>,
-    ): Boolean {
-        if (path in reachable) return true
-        if (path.endsWith(".tmp")) return false
-        // Backups of reachable files survive one sweep.
-        if (reachable.any { reachablePath -> path == "$reachablePath.bak" }) return true
-        if (!path.startsWith("${layout.imagesRootDirectory}/")) return false
-        val fileName = path.removeSuffix(".bak").substringAfterLast('/')
-        return retainedImageGenerations.any { generationSegment -> fileName.startsWith("$generationSegment-") }
-    }
-
-    /**
-     * Image files under `images/<pageSegment>/` embed their generation id as
-     * `<generationId>-<fingerprint>.<ext>`. A file is retained while its
-     * generation belongs to the manifest/generation graph: a committed,
-     * one-previous, or candidate bundle of any page, or any chapter-active
-     * candidate generation. This bounds retention to exactly those
-     * generations' files.
-     */
-    private fun retainedImageGenerations(manifest: ChapterArtifactManifest): Set<String> = buildSet {
-        manifest.pages.values.forEach { page ->
-            page.committed?.let { add(layout.generationSegment(it.generationId)) }
-            page.previousCommitted?.let { add(layout.generationSegment(it.generationId)) }
-            page.candidate?.let { add(layout.generationSegment(it.generationId)) }
-        }
-        manifest.activeCandidateGenerationIds.forEach { add(layout.generationSegment(it)) }
-    }
-
-    private fun reachablePaths(manifest: ChapterArtifactManifest): Set<String> = buildSet {
-        manifest.pages.values.forEach { page ->
-            listOfNotNull(page.committed, page.previousCommitted).forEach { bundle ->
-                add(layout.generationFile(bundle.generationId))
-                bundle.pageSnapshotFileName?.let(::add)
-                bundle.displayBase.fileName?.takeIf { !bundle.displayBase.legacyLayout }?.let(::add)
-            }
-            page.candidate?.let {
-                add(layout.generationFile(it.generationId))
-                it.pageSnapshotFileName?.let(::add)
-            }
-            listOf(
-                page.detection,
-                page.ocr,
-                page.inpaint,
-                page.translation,
-                page.layout,
-            ).forEach { stage ->
-                stage?.artifactFileName?.let(::add)
-            }
-        }
-        manifest.activeCandidateGenerationIds.forEach { generationId ->
-            add(layout.generationFile(generationId))
-        }
-        manifest.glossary?.fileName?.let(::add)
-    }
+    fun reconcileRetention(manifest: ChapterArtifactManifest): RetentionResult =
+        retentionSweep.reconcileRetention(manifest)
 
     internal fun readManifestDocument(name: String): ChapterArtifactManifest? {
         val bytes = io.read(name) ?: return null
