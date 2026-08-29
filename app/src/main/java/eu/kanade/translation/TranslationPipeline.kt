@@ -48,10 +48,10 @@ import eu.kanade.translation.model.prepareForcedRetry
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
+import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.pipeline.MemoryGovernance
@@ -59,8 +59,6 @@ import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.copyForResume
 import eu.kanade.translation.pipeline.toPrecondition
-import eu.kanade.translation.recognition.PageRecognitionEngine
-import eu.kanade.translation.recognition.RoiPageRecognitionEngine
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.PreparedPage
@@ -72,13 +70,9 @@ import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.AiTranslationRetryPlanner
-import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.ChapterGlossaryBuilder
 import eu.kanade.translation.translator.ContextualTextTranslator
-import eu.kanade.translation.translator.DeepSeekTranslator
-import eu.kanade.translation.translator.GeminiTranslator
 import eu.kanade.translation.translator.LmStudioTranslator
-import eu.kanade.translation.translator.OpenRouterTranslator
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
@@ -91,7 +85,6 @@ import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationBlockValidation
 import eu.kanade.translation.translator.TranslationContextChunk
 import eu.kanade.translation.translator.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.translator.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.translator.applyAiChunkOutcomeToPages
@@ -125,8 +118,6 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
-import tachiyomi.domain.translation.AiEngine
-import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
@@ -227,12 +218,8 @@ class TranslationPipeline(
 
     /** Native admission is owned by [nativeRunQuarantine]. */
 
-    private data class PermitHolder(val pageKey: String)
-
-    @Volatile
-    private var permitHolder: PermitHolder? = null
-
-    internal fun permitHolderPageKeySnapshot(): String? = permitHolder?.pageKey
+    // T909 Phase 10: PermitHolder/native-permit bookkeeping moved into pipeline/EngineLane.kt.
+    internal fun permitHolderPageKeySnapshot(): String? = engines.permitHolderPageKeySnapshot()
 
     private val engineRebuildMutex = kotlinx.coroutines.sync.Mutex()
 
@@ -268,6 +255,17 @@ class TranslationPipeline(
     @Volatile
     var batchTrackerFactory: ((chapterId: Long, store: ChapterTranslationStore, orderedPageKeys: List<String>) -> TranslationBatchProgressTracker?)? = null
 
+    // T909 Phase 10: engine cache + native lane moved to pipeline/EngineLane.kt
+    // (defensive init semantics preserved: EngineLane's init builds the engines
+    // defensively at construction). Same-signature stubs keep call sites.
+    internal val engines = EngineLane(
+        context = context,
+        translationPreferences = translationPreferences,
+        nativeRunQuarantine = nativeRunQuarantine,
+        inFlightPageKeys = inFlightPageKeys,
+        onPageStuck = { onPageStuck },
+    )
+
     private suspend fun <T> withNativeLane(
         timeoutMs: Long,
         chapterId: Long?,
@@ -275,202 +273,30 @@ class TranslationPipeline(
         pageKey: String,
         onTimeout: suspend () -> Unit,
         block: suspend () -> T,
-    ): T? {
-        val holder = PermitHolder(pageKey)
-        permitHolder = holder
-        return try {
-            when (
-                val outcome = nativeRunQuarantine.run(
-                    chapter = chapterName,
-                    pageKey = pageKey,
-                    timeoutMs = timeoutMs,
-                    onTimeout = {
-                        onTimeout()
-                        onPageStuck?.invoke(chapterId, pageKey)
-                    },
-                    block = block,
-                )
-            ) {
-                is NativeRunQuarantine.Outcome.Accepted -> outcome.value
-                is NativeRunQuarantine.Outcome.TimedOut -> null
-            }
-        } finally {
-            if (permitHolder === holder) permitHolder = null
-        }
-    }
+    ): T? = engines.withNativeLane(timeoutMs, chapterId, chapterName, pageKey, onTimeout, block)
 
-    @Volatile
-    private var currentFromLang: TextRecognizerLanguage
+    // T909 Phase 10: engine-cache fields live in [engines]; the staying paths
+    // keep reading them through these same-name getters.
+    private val currentOcrModel get() = engines.currentOcrModel
 
-    @Volatile
-    private var currentOcrModel: OcrModel
+    private val currentReadingOrder get() = engines.currentReadingOrder
 
-    // RoiPageRecognitionEngine caches the resolved reading order once per instance,
-    // so a runtime flip requires a recognition rebuild — same logic as fromLang/ocrModel.
-    @Volatile
-    private var currentReadingOrder: tachiyomi.domain.translation.TranslationReadingOrder
+    private val textTranslator get() = engines.textTranslator
 
-    // @Volatile: these are reassigned from a translation coroutine (language change) and
-    // read/closed from closeEngines() WITHOUT the permit (stop() on the main thread), so a
-    // race must read a consistent reference, not a half-published one.
-    @Volatile
-    private var textTranslator: TextTranslator
+    private val recognitionEngine get() = engines.recognitionEngine
 
-    @Volatile
-    private var recognitionEngine: PageRecognitionEngine
+    private val currentInpaintingMode get() = engines.currentInpaintingMode
 
-    @Volatile
-    private var currentInpaintingMode: InpaintingMode
+    private val currentTranslatorSignature get() = engines.currentTranslatorSignature
 
-    // Snapshot of EVERY config dimension used to build textTranslator. The rebuild gate
-    // compares a fresh signature so changing engine category, provider, key, model, temp,
-    // max-tokens, reading-order, or languages forces a rebuild — not just
-    // language changes. Without this the cached AI translator (which captures key/model/temp
-    // at construction and never re-reads prefs) survives a stop+reconfigure+restart. readingOrder
-    // MUST be included because it's cached at construction too. apiKeyHash is a
-    // short non-reversible digest so secrets are never stored/logged.
-    @Volatile
-    private var currentTranslatorSignature: EngineSignature
-
-    /**
-     * Captures the full set of preferences that determine which [TextTranslator]
-     * gets built. Two equal signatures guarantee the cached translator reflects
-     * exactly this configuration; any difference means a rebuild is required.
-     */
-    private data class EngineSignature(
-        val category: tachiyomi.domain.translation.TranslationEngineCategory,
-        val standardEngine: tachiyomi.domain.translation.StandardEngine,
-        val aiEngine: tachiyomi.domain.translation.AiEngine,
-        val apiKeyHash: String,
-        val baseUrl: String,
-        val modelName: String,
-        val temperature: String,
-        val maxTokens: String,
-        val readingOrder: tachiyomi.domain.translation.TranslationReadingOrder,
-        val fromLang: TextRecognizerLanguage,
-        val toLang: TextTranslatorLanguage,
-    )
-
-    /**
-     * Reads every engine-selection preference live and folds it into an
-     * [EngineSignature]. Called at the top of each translate path so the rebuild
-     * gate sees the user's current configuration, not whatever was selected when
-     * the singleton was first constructed.
-     */
-    private fun computeTranslatorSignature(
-        fromLang: TextRecognizerLanguage,
-        toLang: TextTranslatorLanguage,
-    ): EngineSignature {
-        val aiEngine = translationPreferences.translationAiEngine().get()
-        return EngineSignature(
-            category = translationPreferences.translationEngineCategory().get(),
-            standardEngine = translationPreferences.translationStandardEngine().get(),
-            aiEngine = aiEngine,
-            apiKeyHash = ShortHash.hash(translationPreferences.translationAiApiKey(aiEngine).get()),
-            baseUrl = translationPreferences.translationAiBaseUrlLmStudio().get(),
-            modelName = translationPreferences.translationAiModel(aiEngine).get(),
-            temperature = translationPreferences.translationAiTemperature().get(),
-            maxTokens = translationPreferences.translationAiOutputTokens().get(),
-            readingOrder = translationPreferences.translationReadingOrder().get(),
-            fromLang = fromLang,
-            toLang = toLang,
-        )
-    }
-
-    init {
-        // fromPref/build THROW on invalid config (intended on the translate path). But this
-        // object is constructed eagerly as a field initializer in TranslationManager, so an
-        // invalid pref at startup must NOT crash here: build defensively and let the first
-        // translate's fromPref re-throw and surface the error. ensureEnginesBuiltFor overwrites
-        // these once config is valid.
-        try {
-            val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-            val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-            val ocrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
-            currentFromLang = fromLang
-            currentOcrModel = ocrModel
-            currentInpaintingMode = inpaintingModeFromPref()
-            currentReadingOrder = translationPreferences.translationReadingOrder().get()
-            recognitionEngine = createRecognitionEngine(fromLang, ocrModel, currentInpaintingMode)
-            textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
-            currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
-        } catch (e: Exception) {
-            logcat(LogPriority.ERROR, e) {
-                "TachiyomiAT pipeline init: invalid translation config, deferring to first translate"
-            }
-            currentFromLang = TextRecognizerLanguage.JAPANESE
-            currentOcrModel = OcrModel.MLKIT
-            currentInpaintingMode = InpaintingMode.FAST
-            currentReadingOrder = tachiyomi.domain.translation.TranslationReadingOrder.AUTO
-            recognitionEngine = createRecognitionEngine(
-                TextRecognizerLanguage.JAPANESE,
-                OcrModel.MLKIT,
-                InpaintingMode.FAST,
-            )
-            // Throws on use; entry-point fromPref throws first. Guarantees the field
-            // is never null without a lateinit crash.
-            textTranslator = object : TextTranslator {
-                override val fromLang = TextRecognizerLanguage.JAPANESE
-                override val toLang = TextTranslatorLanguage.ENGLISH
-                override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-                    throw IllegalStateException("Translation pipeline not initialized (invalid config)")
-                }
-                override fun close() {}
-            }
-            currentTranslatorSignature = computeTranslatorSignature(
-                TextRecognizerLanguage.JAPANESE,
-                TextTranslatorLanguage.ENGLISH,
-            )
-        }
-    }
-
-    private fun inpaintingModeFromPref(): InpaintingMode {
-        return when (translationPreferences.translationInpaintingMode().get()) {
-            "FAST" -> InpaintingMode.FAST
-            else -> InpaintingMode.QUALITY
-        }
-    }
-
-    private fun createRecognitionEngine(
-        lang: TextRecognizerLanguage,
-        ocrModel: OcrModel,
-        mode: InpaintingMode,
-    ): PageRecognitionEngine {
-        val onnx = RoiPageRecognitionEngine(context, lang, ocrModel, mode)
-        if (onnx.isAvailable) {
-            logcat(LogPriority.INFO) { "Using ONNX recognition engine for $lang with OCR model $ocrModel" }
-            return onnx
-        }
-        onnx.close()
-        throw IllegalStateException("ONNX recognition unavailable for $lang/$ocrModel")
-    }
+    private fun inpaintingModeFromPref(): InpaintingMode = engines.inpaintingModeFromPref()
 
     fun closeEngines() {
-        // A stop invalidates cached engines immediately, but actual teardown may
-        // only happen while no admitted native call is alive. If the lane is
-        // occupied, the next admitted call rebuilds after the real native exit.
-        inFlightPageKeys.clear()
-        enginesClosed = true
-        val closedNow = nativeRunQuarantine.tryRunExclusive {
-            try {
-                recognitionEngine.close()
-            } catch (_: Exception) {}
-            try {
-                textTranslator.close()
-            } catch (_: Exception) {}
-        }
-        if (!closedNow) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT engine close deferred: reason=native invocation still alive"
-            }
-        }
+        engines.closeEngines()
     }
 
     @Volatile
     private var consecutiveOomCount = 0
-
-    @Volatile
-    private var enginesClosed = false
 
     /**
      * Listener that lets the translator share the same [ChapterTranslationStore]
@@ -3326,51 +3152,12 @@ class TranslationPipeline(
         var artifactPageVersion: Long?,
     )
 
-    /**
-     * TachiyomiAT: rebuild the recognition engine + text translator when the
-     * current configuration (languages, OCR model, engine signature, or a prior
-     * closeEngines()) differs from the cached instances. Shared by the per-page
-     * path and the staged batch path so both honor the same rebuild gate without
-     * duplicating the (subtle) signature/OcrModel logic.
-     *
-     * Reads every engine-selection preference live and is idempotent: a no-op
-     * when the cached instances already match. Call it at the top of each
-     * translation entry point before touching [recognitionEngine] / [textTranslator].
-     */
+    // T909 Phase 10: rebuild gate body moved to pipeline/EngineLane.kt.
     private suspend fun ensureEnginesBuiltFor(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
     ) {
-        val selectedOcrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
-        val desiredInpaintingMode = inpaintingModeFromPref()
-        val desiredReadingOrder = translationPreferences.translationReadingOrder().get()
-        val rebuildClosedEngines = enginesClosed
-        // Include inpainting mode AND reading order so FAST<->QUALITY or AUTO/RTL/LTR
-        // changes take effect without a language/OCR change or restart.
-        if (rebuildClosedEngines ||
-            fromLang != currentFromLang ||
-            selectedOcrModel != currentOcrModel ||
-            desiredInpaintingMode != currentInpaintingMode ||
-            desiredReadingOrder != currentReadingOrder
-        ) {
-            recognitionEngine.close()
-            currentFromLang = fromLang
-            currentOcrModel = selectedOcrModel
-            currentInpaintingMode = desiredInpaintingMode
-            currentReadingOrder = desiredReadingOrder
-            recognitionEngine = createRecognitionEngine(fromLang, currentOcrModel, currentInpaintingMode)
-        }
-        // Rebuild the translator whenever the full engine configuration differs — not just
-        // on language change. The AI translators capture these at construction and never re-read.
-        val desiredSignature = computeTranslatorSignature(fromLang, toLang)
-        if (rebuildClosedEngines || desiredSignature != currentTranslatorSignature) {
-            withContext(Dispatchers.IO) { textTranslator.close() }
-            textTranslator = TranslationEngineBuilder.build(translationPreferences, fromLang, toLang)
-            currentTranslatorSignature = desiredSignature
-        }
-        if (rebuildClosedEngines) {
-            enginesClosed = false
-        }
+        engines.ensureEnginesBuiltFor(fromLang, toLang)
     }
 
     /**
@@ -4119,39 +3906,6 @@ class TranslationPipeline(
         source: HttpSource,
         cleanedImageName: String,
     ): Bitmap? = cleanedPublication.loadPersistedCleanedBitmap(manga, chapter, source, cleanedImageName)
-
-    suspend fun getContextualTranslator(engine: AiEngine, model: String): ContextualTextTranslator? {
-        val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-
-        val kind = AiTranslatorKind.entries.firstOrNull { it.engine == engine } ?: return null
-        val apiKey = translationPreferences.translationAiApiKey(engine).get()
-        val maxOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull() ?: 8192
-        val temperature = translationPreferences.translationAiTemperature().get().toFloatOrNull() ?: 0.3f
-
-        val translator = when (kind) {
-            AiTranslatorKind.GEMINI -> GeminiTranslator(
-                fromLang,
-                toLang,
-                apiKey,
-                model,
-                maxOutputTokens,
-                temperature,
-                translationPreferences.translationGeminiThinkingMode().get(),
-            )
-            AiTranslatorKind.OPENROUTER -> OpenRouterTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
-            AiTranslatorKind.DEEPSEEK -> DeepSeekTranslator(fromLang, toLang, apiKey, model, maxOutputTokens, temperature)
-            AiTranslatorKind.LMSTUDIO -> LmStudioTranslator(
-                fromLang = fromLang,
-                toLang = toLang,
-                baseUrl = translationPreferences.translationAiBaseUrlLmStudio().get(),
-                modelName = model,
-                maxOutputToken = maxOutputTokens,
-                temperature = temperature,
-            )
-        }
-        return translator as? ContextualTextTranslator
-    }
 
     private suspend fun persistCleanedBitmap(
         pageTranslation: PageTranslation,
