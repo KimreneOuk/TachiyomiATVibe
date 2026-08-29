@@ -30,6 +30,7 @@ import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.store.ChapterGlossaryStore
+import eu.kanade.translation.store.PageStageLeaseTable
 import eu.kanade.translation.store.StoreStatusInputs
 import eu.kanade.translation.store.StoreStatusProjector
 import kotlinx.collections.immutable.PersistentMap
@@ -38,7 +39,6 @@ import kotlinx.collections.immutable.toPersistentMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
@@ -126,9 +126,14 @@ class ChapterTranslationStore(
 
     private val _display = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())
 
+    // T909 Phase 17a: the lease-table state + lease bodies moved to
+    // store/PageStageLeaseTable.kt; the map is shared through the table
+    // (never copied) and the same-name accessor below keeps every store-side
+    // reader unchanged. The public lease members stay as delegating stubs.
+    private val pageStageLeaseTable = PageStageLeaseTable(this)
+
     /** Writer leases per page: one origin owns a page until it releases it. */
-    private val pageLeases = ConcurrentHashMap<String, PageLeaseRecord>()
-    private var nextLeaseToken = 0L
+    private val pageLeases get() = pageStageLeaseTable.pageLeases
 
     @Volatile
     private var generation = 0L
@@ -158,12 +163,7 @@ class ChapterTranslationStore(
         val promotedAtEpochMs: Long,
     )
 
-    private data class PageLeaseRecord(
-        val token: Long,
-        val origin: PageWriteOrigin,
-        val stage: PageStage,
-        val generation: Long,
-    )
+    // T909 Phase 17a: PageLeaseRecord moved to store/PageStageLeaseTable.kt.
 
     fun resetPreflight(): ChapterResetPreflight = chapterResetPreflight(state.value.values)
 
@@ -387,103 +387,31 @@ class ChapterTranslationStore(
         generation
     }
 
-    // ------------------------------------------------------------------
-    // Phase 3 page/stage leases (lifecycle contract §12): one origin owns a
-    // page at a time. A reader request on a batch-owned page attaches to the
-    // batch result (observes store emissions) instead of opening a competing
-    // writer, and vice versa. The lease binds the store generation and page
-    // version the holder must present on every write.
-    // ------------------------------------------------------------------
+    // T909 Phase 17a: lease bodies (and the Phase 3 lifecycle-contract comment
+    // block) moved to store/PageStageLeaseTable.kt; these same-signature stubs
+    // keep the old qualified names (the pipeline, ReaderViewModel, and the
+    // lease tests resolve them here). The DUAL locking (store mutex in the
+    // table's withLock paths + synchronized(leases) lock-free readers) and the
+    // NonCancellable wrappers moved verbatim with the bodies.
 
     suspend fun tryAcquirePageStageLease(
         pageKey: String,
         stage: PageStage,
         origin: PageWriteOrigin,
-    ): LeaseAcquisition = mutex.withLock {
-        if (defunct) return@withLock LeaseAcquisition.Denied("store is defunct", null)
-        val existing = pageLeases[pageKey]
-        if (existing != null && existing.origin != origin) {
-            return@withLock LeaseAcquisition.Denied(
-                "page owned by ${existing.origin} at stage ${existing.stage}",
-                existing.origin,
-            )
-        }
-        if (existing != null && existing.origin == origin) {
-            val currentSnapshot = snapshotLocked(pageKey)
-            return@withLock LeaseAcquisition.Granted(
-                PageStageLease(
-                    pageKey = pageKey,
-                    stage = existing.stage,
-                    origin = existing.origin,
-                    generation = existing.generation,
-                    pageVersion = currentSnapshot.pageVersion,
-                    token = existing.token,
-                    candidateGenerationId = currentSnapshot.candidateGenerationId,
-                    dependencyFingerprint = currentSnapshot.dependencyFingerprint,
-                    artifactPageVersion = currentSnapshot.artifactPageVersion,
-                ),
-            )
-        }
-        val current = pages[pageKey]
-        val currentSnapshot = snapshotLocked(pageKey)
-        val token = ++nextLeaseToken
-        pageLeases[pageKey] = PageLeaseRecord(
-            token = token,
-            origin = origin,
-            stage = stage,
-            generation = generation,
-        )
-        LeaseAcquisition.Granted(
-            PageStageLease(
-                pageKey = pageKey,
-                stage = stage,
-                origin = origin,
-                generation = generation,
-                pageVersion = current?.pageVersion ?: 0L,
-                token = token,
-                candidateGenerationId = currentSnapshot.candidateGenerationId,
-                dependencyFingerprint = currentSnapshot.dependencyFingerprint,
-                artifactPageVersion = currentSnapshot.artifactPageVersion,
-            ),
-        )
-    }
+    ): LeaseAcquisition = pageStageLeaseTable.tryAcquirePageStageLease(pageKey, stage, origin)
 
-    suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) {
-        withContext(NonCancellable) {
-            mutex.withLock {
-                if (pageLeases[pageKey]?.origin == origin) {
-                    pageLeases.remove(pageKey)
-                }
-            }
-        }
-    }
+    suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) =
+        pageStageLeaseTable.releasePageStageLease(pageKey, origin)
 
     /** Cancels the active artifact candidate and releases its matching writer lease. */
     suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
-        withContext(NonCancellable) {
-            mutex.withLock {
-                val lease = pageLeases[pageKey]
-                if (lease?.origin != origin) return@withLock false
-                val cancelled = cancelArtifactCandidateLocked(pageKey)
-                if (cancelled && pageLeases[pageKey]?.origin == origin) {
-                    pageLeases.remove(pageKey)
-                }
-                cancelled
-            }
-        }
+        pageStageLeaseTable.cancelPageStageWork(pageKey, origin)
 
     /** Releases every lease held by [origin]; used at batch teardown so no lease outlives its run. */
-    suspend fun releaseAllPageLeases(origin: PageWriteOrigin) {
-        withContext(NonCancellable) {
-            mutex.withLock {
-                pageLeases.values.removeAll { it.origin == origin }
-            }
-        }
-    }
+    suspend fun releaseAllPageLeases(origin: PageWriteOrigin) =
+        pageStageLeaseTable.releaseAllPageLeases(origin)
 
-    fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = synchronized(pageLeases) {
-        pageLeases[pageKey]?.origin
-    }
+    fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = pageStageLeaseTable.pageLeaseOwner(pageKey)
 
     suspend fun invalidateGeneration(reason: String): Long = beginGeneration(reason)
 
@@ -1822,7 +1750,7 @@ class ChapterTranslationStore(
         }
     }
 
-    private fun cancelArtifactCandidateLocked(pageKey: String): Boolean {
+    internal fun cancelArtifactCandidateLocked(pageKey: String): Boolean {
         val store = artifactStore ?: return true
         val manifest = artifactManifest ?: return true
         val candidate = manifest.pages[pageKey]?.candidate ?: return true
@@ -1888,7 +1816,7 @@ class ChapterTranslationStore(
         }
     }
 
-    private fun snapshotLocked(pageKey: String): PageSnapshot {
+    internal fun snapshotLocked(pageKey: String): PageSnapshot {
         val page = pages[pageKey]
         val artifactPage = artifactManifest?.pages?.get(pageKey)
         return PageSnapshot(

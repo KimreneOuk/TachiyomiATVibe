@@ -1,0 +1,148 @@
+package eu.kanade.translation.store
+
+import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.LeaseAcquisition
+import eu.kanade.translation.PageStageLease
+import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.model.PageStage
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+
+// T909 Phase 17a: the page-stage lease table moved from
+// `ChapterTranslationStore` (record + backing map + the five lease members).
+// The DUAL locking discipline is load-bearing and moved verbatim: the store
+// mutex guards lease/patch paths (via [store]'s `mutex`) while
+// `synchronized(pageLeases)` guards the lock-free readers (`markDefunct`,
+// `pageLeaseOwner`, `clearTransientQueuePages`); the `NonCancellable` wrappers
+// on release/cancel/releaseAll preserve cancellation behavior. The map is
+// shared with the store through [pageLeases] — never copied — and the store keeps
+// same-signature delegating stubs at the old qualified names (the pipeline,
+// ReaderViewModel, and the lease tests resolve them there).
+internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
+
+    // Same-name dependency reads the moved bodies use; resolved through the
+    // owning store at each call.
+    private val mutex get() = store.mutex
+
+    private val defunct get() = store.isDefunct
+
+    private val generation get() = store.currentGeneration
+
+    private val pages get() = store.pages
+
+    private fun snapshotLocked(pageKey: String) = store.snapshotLocked(pageKey)
+
+    private fun cancelArtifactCandidateLocked(pageKey: String): Boolean =
+        store.cancelArtifactCandidateLocked(pageKey)
+
+    /** Writer leases per page: one origin owns a page until it releases it. */
+    val pageLeases = ConcurrentHashMap<String, PageLeaseRecord>()
+    private var nextLeaseToken = 0L
+
+    internal data class PageLeaseRecord(
+        val token: Long,
+        val origin: PageWriteOrigin,
+        val stage: PageStage,
+        val generation: Long,
+    )
+
+    // ------------------------------------------------------------------
+    // Phase 3 page/stage leases (lifecycle contract §12): one origin owns a
+    // page at a time. A reader request on a batch-owned page attaches to the
+    // batch result (observes store emissions) instead of opening a competing
+    // writer, and vice versa. The lease binds the store generation and page
+    // version the holder must present on every write.
+    // ------------------------------------------------------------------
+
+    suspend fun tryAcquirePageStageLease(
+        pageKey: String,
+        stage: PageStage,
+        origin: PageWriteOrigin,
+    ): LeaseAcquisition = mutex.withLock {
+        if (defunct) return@withLock LeaseAcquisition.Denied("store is defunct", null)
+        val existing = pageLeases[pageKey]
+        if (existing != null && existing.origin != origin) {
+            return@withLock LeaseAcquisition.Denied(
+                "page owned by ${existing.origin} at stage ${existing.stage}",
+                existing.origin,
+            )
+        }
+        if (existing != null && existing.origin == origin) {
+            val currentSnapshot = snapshotLocked(pageKey)
+            return@withLock LeaseAcquisition.Granted(
+                PageStageLease(
+                    pageKey = pageKey,
+                    stage = existing.stage,
+                    origin = existing.origin,
+                    generation = existing.generation,
+                    pageVersion = currentSnapshot.pageVersion,
+                    token = existing.token,
+                    candidateGenerationId = currentSnapshot.candidateGenerationId,
+                    dependencyFingerprint = currentSnapshot.dependencyFingerprint,
+                    artifactPageVersion = currentSnapshot.artifactPageVersion,
+                ),
+            )
+        }
+        val current = pages[pageKey]
+        val currentSnapshot = snapshotLocked(pageKey)
+        val token = ++nextLeaseToken
+        pageLeases[pageKey] = PageLeaseRecord(
+            token = token,
+            origin = origin,
+            stage = stage,
+            generation = generation,
+        )
+        LeaseAcquisition.Granted(
+            PageStageLease(
+                pageKey = pageKey,
+                stage = stage,
+                origin = origin,
+                generation = generation,
+                pageVersion = current?.pageVersion ?: 0L,
+                token = token,
+                candidateGenerationId = currentSnapshot.candidateGenerationId,
+                dependencyFingerprint = currentSnapshot.dependencyFingerprint,
+                artifactPageVersion = currentSnapshot.artifactPageVersion,
+            ),
+        )
+    }
+
+    suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) {
+        withContext(NonCancellable) {
+            mutex.withLock {
+                if (pageLeases[pageKey]?.origin == origin) {
+                    pageLeases.remove(pageKey)
+                }
+            }
+        }
+    }
+
+    /** Cancels the active artifact candidate and releases its matching writer lease. */
+    suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
+        withContext(NonCancellable) {
+            mutex.withLock {
+                val lease = pageLeases[pageKey]
+                if (lease?.origin != origin) return@withLock false
+                val cancelled = cancelArtifactCandidateLocked(pageKey)
+                if (cancelled && pageLeases[pageKey]?.origin == origin) {
+                    pageLeases.remove(pageKey)
+                }
+                cancelled
+            }
+        }
+
+    /** Releases every lease held by [origin]; used at batch teardown so no lease outlives its run. */
+    suspend fun releaseAllPageLeases(origin: PageWriteOrigin) {
+        withContext(NonCancellable) {
+            mutex.withLock {
+                pageLeases.values.removeAll { it.origin == origin }
+            }
+        }
+    }
+
+    fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = synchronized(pageLeases) {
+        pageLeases[pageKey]?.origin
+    }
+}
