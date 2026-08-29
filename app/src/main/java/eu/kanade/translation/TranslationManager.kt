@@ -23,7 +23,11 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.manager.BatchProgressProjector
+import eu.kanade.translation.manager.DurableChapterKey
+import eu.kanade.translation.manager.DurableChapterStatusResolver
+import eu.kanade.translation.manager.DurableStatus
 import eu.kanade.translation.manager.TranslationRequestCoordinator
+import eu.kanade.translation.manager.TranslationDocument
 import eu.kanade.translation.model.findRunningSameSourceConflict
 import eu.kanade.translation.model.staleQueuedChaptersToEvict
 import eu.kanade.translation.model.toPageDisplayProjection
@@ -135,23 +139,10 @@ class TranslationManager(
             translateChapter = { manga, chapter -> translateChapter(manga, chapter) },
         )
 
-    private data class DurableChapterKey(
-        val chapterId: Long?,
-        val chapterName: String,
-        val chapterScanlator: String?,
-        val mangaTitle: String,
-        val sourceId: Long,
-    )
-
-    private data class DurableStatus(val state: Translation.State)
-
-    private data class TranslationDocument(
-        val parent: UniFile,
-        val fileName: String,
-        val file: UniFile?,
-    ) {
-        val registryKey: String get() = "${parent.filePath ?: parent.uri}:$fileName"
-    }
+    // T909 Phase 13: DurableChapterKey/DurableStatus/TranslationDocument and the
+    // durable-status resolution region moved to manager/DurableChapterStatusResolver.kt.
+    // The cache field below stays — the durable tests reflection-write this exact
+    // field — and the resolver is built per access from the current field values.
 
     private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
 
@@ -216,7 +207,7 @@ class TranslationManager(
         // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
         // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
         applicationScope.launch {
-            translator.queueState.collect { durableStatusCache.clear() }
+            translator.queueState.collect { durableStatusResolver.clearDurableStatusCache() }
         }
         applicationScope.launch {
             // A paused chapter is not an active foreground job, but its durable
@@ -619,63 +610,28 @@ class TranslationManager(
     ): Boolean = persistedChapterStatus(null, chapterName, chapterScanlator, mangaTitle, sourceId)
         .let { it == Translation.State.TRANSLATED || it == Translation.State.READY_WITH_WARNINGS }
 
+    // T909 Phase 13: durable-status resolution region moved to
+    // manager/DurableChapterStatusResolver.kt (cache read/write, probe,
+    // document lookup, probe-store adoption). The durableStatusCache field
+    // above stays — the durable tests reflection-write this exact field — so
+    // the resolver is built per access from the current field values, and all
+    // cache invalidations route through it.
+    private val durableStatusResolver: DurableChapterStatusResolver
+        get() = DurableChapterStatusResolver(
+            providerProvider = { provider },
+            sourceManagerProvider = { sourceManager },
+            activeStoresProvider = { activeStores },
+            durableStatusCacheProvider = { durableStatusCache },
+        )
+
     private fun persistedChapterStatus(
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
         mangaTitle: String,
         sourceId: Long,
-    ): Translation.State? {
-        val key = DurableChapterKey(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
-        durableStatusCache[key]?.let { return it.state }
-        val state = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-            resolveDurableChapterStatus(
-                chapterId,
-                chapterName,
-                chapterScanlator,
-                mangaTitle,
-                sourceId,
-            )
-        }
-        // A null result includes an absent document, a failed probe, and a
-        // recoverable rescue/permission error. Do not turn that transient
-        // outcome into a same-manager cache hit that hides a later retry.
-        state?.let { durableStatusCache[key] = DurableStatus(it) }
-        return state
-    }
-
-    private suspend fun resolveDurableChapterStatus(
-        chapterId: Long?,
-        chapterName: String,
-        chapterScanlator: String?,
-        mangaTitle: String,
-        sourceId: Long,
-    ): Translation.State? {
-        val source = sourceManager.get(sourceId) ?: return null
-        val document = findTranslationDocument(chapterName, chapterScanlator, mangaTitle, source)
-            ?: return null
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-        return when {
-            manifestProbe.exists && manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS -> {
-                withProbeStore(document, chapterId) { store ->
-                    store.artifactStatus()
-                }
-            }
-            manifestProbe.exists && manifestProbe.manifest == null -> {
-                // A present but unreadable manifest must not fall back to stale flat JSON.
-                withProbeStore(document, chapterId) { store ->
-                    store.artifactStatus()
-                }
-            }
-            else -> document.file?.let { decodeLegacyChapterStatus(it, chapterName) }
-        }
-    }
-
-    // T909 Phase 3a: legacy decode/quarantine bodies moved to legacy/LegacyFlatFileDecoder.kt.
-    private fun decodeLegacyChapterStatus(
-        file: UniFile,
-        chapterName: String,
-    ): Translation.State? = LegacyFlatFileDecoder.decodeLegacyChapterStatus(file, chapterName)
+    ): Translation.State? =
+        durableStatusResolver.persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
 
     private fun statusFromReadablePages(
         pages: Map<String, PageTranslation>,
@@ -737,7 +693,7 @@ class TranslationManager(
             // Opening an artifact store may complete a LEGACY rescue and
             // advance its preservation marker. Do not retain a status observed
             // before that durable transition.
-            durableStatusCache.clear()
+            durableStatusResolver.clearDurableStatusCache()
             return@runBlocking store?.state?.value.orEmpty()
         }
         return@runBlocking decodeLegacyChapterTranslation(file, quarantineOnFailure = true)
@@ -770,48 +726,19 @@ class TranslationManager(
                 }
             }
         }
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
         return store
     }
 
+    // T909 Phase 13: body moved to manager/DurableChapterStatusResolver.kt.
+    // Same-signature stub keeps the call sites.
     private fun findTranslationDocument(
         chapterName: String,
         scanlator: String?,
         mangaTitle: String,
         source: Source,
-    ): TranslationDocument? {
-        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
-        val parent = file?.parentFile ?: provider.findMangaDir(mangaTitle, source) ?: return null
-        val fileName = file?.name ?: provider.getTranslationFileName(chapterName, scanlator)
-        return TranslationDocument(parent, fileName, file ?: parent.findFile(fileName))
-    }
-
-    private suspend fun <T> withProbeStore(
-        document: TranslationDocument,
-        chapterId: Long?,
-        block: suspend (ChapterTranslationStore) -> T,
-    ): T? {
-        if (chapterId != null) {
-            activeStores.get(chapterId)?.let { return block(it) }
-        }
-        val result = activeStores.getOrCreateProbe(document.registryKey) {
-            if (document.file?.exists() == true) {
-                ChapterTranslationStore.open(document.file)
-            } else {
-                ChapterTranslationStore.openArtifact(document.parent, document.fileName)
-            }
-        } ?: return null
-        // A probe can perform the one-way rescue and rename intent recovery
-        // while it opens. Any status cached before that transition is stale.
-        durableStatusCache.clear()
-        return try {
-            block(result.store)
-        } finally {
-            if (result.owned && activeStores.releaseProbe(document.registryKey, result.store)) {
-                result.store.closeAndFlush()
-            }
-        }
-    }
+    ): TranslationDocument? =
+        durableStatusResolver.findTranslationDocument(chapterName, scanlator, mangaTitle, source)
 
     // T909 Phase 3a: legacy decode/quarantine bodies moved to legacy/LegacyFlatFileDecoder.kt.
     private fun decodeLegacyChapterTranslation(
@@ -889,14 +816,14 @@ class TranslationManager(
     fun registerActiveTranslationStore(chapterId: Long, store: ChapterTranslationStore) {
         // Keep the existing instance if already registered so a reader keeps observing the same object.
         activeStores.register(chapterId, store)
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
     }
 
     fun unregisterActiveTranslationStore(chapterId: Long) {
         // Mark the evicted store defunct BEFORE removing it from the registry. A worker still
         // holding a reference has late writes rejected rather than recreating deleted output.
         activeStores.remove(chapterId)?.markDefunct()
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
     }
 
     /**
@@ -1307,7 +1234,7 @@ class TranslationManager(
             if (!plan.isArtifactAuthoritative) file?.delete()
         } ?: file?.delete()
         if (authorityRemoved) retireChapterCompanionImages(manga, chapter, source)
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
     }
 
     suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
@@ -1387,7 +1314,7 @@ class TranslationManager(
         transform: (PageTranslation) -> PageTranslation,
     ) {
         val chapterId = chapter.id ?: return
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
         scheduler.cancelAutoTranslations(chapterId)
         cancelPageTranslations(chapterId)
         removeFromTranslationQueue(chapter)
@@ -1423,7 +1350,7 @@ class TranslationManager(
 
     suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) {
         val chapterId = chapter.id ?: return
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
 
@@ -1498,7 +1425,7 @@ class TranslationManager(
 
     suspend fun resetInpaintData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
         val chapterId = chapter.id ?: return
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
 
@@ -1565,7 +1492,7 @@ class TranslationManager(
 
     suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
         val chapterId = chapter.id ?: return
-        durableStatusCache.clear()
+        durableStatusResolver.clearDurableStatusCache()
 
         cancelPageTranslation(chapterId, pageKey)
         streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
