@@ -1,0 +1,1828 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+index 83d11fd..875b4d1 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/reader/ReaderViewModel.kt
+@@ -346,6 +346,8 @@ class ReaderViewModel @JvmOverloads constructor(
+     private var translationBatchProgressJob: kotlinx.coroutines.Job? = null
+     private var translationStateJob: kotlinx.coroutines.Job? = null
+     private var autoSnapshotJob: kotlinx.coroutines.Job? = null
++    private var readerBackgroundTeardown: kotlinx.coroutines.Deferred<Unit>? = null
++    private var foregroundResumeJob: kotlinx.coroutines.Job? = null
+ 
+     /** Resolver indirection is invalidated before any chapter/page resources are recycled. */
+     private val autoPageResolver = ReaderAutoTranslationPageResolver(chapterCache)
+@@ -875,6 +877,7 @@ class ReaderViewModel @JvmOverloads constructor(
+         translationStoreJob?.cancel()
+         translationBatchProgressJob?.cancel()
+         translationStateJob?.cancel()
++        foregroundResumeJob?.cancel()
+         val readerStop = translationManager.requestReaderStop("reader closed")
+         registerReaderCleanupAfterStop(readerStop) {
+             // The joined manager boundary guarantees no in-flight work can open a retained page
+@@ -2424,7 +2427,12 @@ class ReaderViewModel @JvmOverloads constructor(
+      */
+     fun cancelTranslationsOnBackground() {
+         resetAutoTranslationState()
+-        translationManager.stopReaderTranslations("reader backgrounded")
++        foregroundResumeJob?.cancel()
++        // The manager owns this deferred on its application IO scope. onPause
++        // only requests it; no persistence, store eviction, or native join is
++        // allowed to run on the Activity's Main stack. The active store itself
++        // remains registered so existing page-holder collectors can resume.
++        readerBackgroundTeardown = translationManager.requestReaderPause("reader backgrounded")
+         // TachiyomiAT: evict registered reader page streams so their captured
+         // page bytes are freed while the reader sits in the background, instead
+         // of pinning them in the process-lifetime map.
+@@ -2448,16 +2456,25 @@ class ReaderViewModel @JvmOverloads constructor(
+      * dispatch sites (onPageSelected / loadChapter), which all require both.
+      */
+     fun resumeTranslationsOnForeground() {
+-        // Foreground resume is a real lifecycle/memory-recovery signal for a
+-        // fully Deferred(Memory) rolling window; it must not wait for a page
+-        // change before asking the coordinator to reconcile.
+-        translationManager.reconcileAutoWindow()
+-        if (!translationPreferences.translationEnabled().get()) return
+-        if (!translationPreferences.autoTranslate().get()) return
+-        val chapter = getCurrentChapter() ?: return
+-        if (chapterPageIndex < 0) return
+-        updateTranslationWorkingSet(chapter, chapterPageIndex, dispatchRefresh = true)
+-        translateCurrentPageForAuto()
++        val teardown = readerBackgroundTeardown
++        foregroundResumeJob?.cancel()
++        foregroundResumeJob = viewModelScope.launchIO {
++            // Resume is sequenced after the exact pause generation, including
++            // bounded scheduler joins and transient-status reconciliation.
++            teardown?.await()
++            withUIContext {
++                // Foreground resume is a real lifecycle/memory-recovery signal
++                // for a fully Deferred(Memory) rolling window; it must not wait
++                // for a page change before asking the coordinator to reconcile.
++                translationManager.reconcileAutoWindow()
++                if (!translationPreferences.translationEnabled().get()) return@withUIContext
++                if (!translationPreferences.autoTranslate().get()) return@withUIContext
++                val chapter = getCurrentChapter() ?: return@withUIContext
++                if (chapterPageIndex < 0) return@withUIContext
++                updateTranslationWorkingSet(chapter, chapterPageIndex, dispatchRefresh = true)
++                translateCurrentPageForAuto()
++            }
++        }
+     }
+ 
+     fun onMemoryPressure(level: Int) {
+@@ -2573,7 +2590,7 @@ class ReaderViewModel @JvmOverloads constructor(
+                     }
+                 }
+             } finally {
+-                store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC)
++                store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC, lease.lease.token)
+             }
+         }
+     }
+diff --git a/app/src/main/java/eu/kanade/translation/ChapterTranslationStore.kt b/app/src/main/java/eu/kanade/translation/ChapterTranslationStore.kt
+index cb83482..e18ccb3 100644
+--- a/app/src/main/java/eu/kanade/translation/ChapterTranslationStore.kt
++++ b/app/src/main/java/eu/kanade/translation/ChapterTranslationStore.kt
+@@ -289,6 +289,15 @@ class ChapterTranslationStore(
+     }
+ 
+     suspend fun beginGeneration(reason: String): Long = mutex.withLock {
++        // A new run must never inherit a lease or candidate from an older run.
++        // In particular, an old cancellation callback may arrive after the
++        // replacement run has acquired the same page.  Clearing here gives
++        // the replacement run a fresh token; token-scoped cleanup below then
++        // cannot release that replacement lease.
++        pageLeases.keys.toList().forEach { pageKey ->
++            cancelArtifactCandidateLocked(pageKey)
++        }
++        pageLeases.clear()
+         generation++
+         logcat(LogPriority.INFO) { "TachiyomiAT store generation advanced: generation=$generation reason=$reason" }
+         generation
+@@ -315,7 +324,7 @@ class ChapterTranslationStore(
+                 existing.origin,
+             )
+         }
+-        if (existing != null && existing.origin == origin) {
++        if (existing != null && existing.origin == origin && existing.generation == generation) {
+             val currentSnapshot = snapshotLocked(pageKey)
+             return@withLock LeaseAcquisition.Granted(
+                 PageStageLease(
+@@ -331,6 +340,12 @@ class ChapterTranslationStore(
+                 ),
+             )
+         }
++        if (existing != null) {
++            // Defensive recovery for callers that did not advance through
++            // beginGeneration: a lease from an older generation is stale.
++            cancelArtifactCandidateLocked(pageKey)
++            pageLeases.remove(pageKey)
++        }
+         val current = pages[pageKey]
+         val currentSnapshot = snapshotLocked(pageKey)
+         val token = ++nextLeaseToken
+@@ -355,10 +370,15 @@ class ChapterTranslationStore(
+         )
+     }
+ 
+-    suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) {
++    suspend fun releasePageStageLease(
++        pageKey: String,
++        origin: PageWriteOrigin,
++        leaseToken: Long? = null,
++    ) {
+         withContext(NonCancellable) {
+             mutex.withLock {
+-                if (pageLeases[pageKey]?.origin == origin) {
++                val lease = pageLeases[pageKey]
++                if (lease?.origin == origin && (leaseToken == null || lease.token == leaseToken)) {
+                     pageLeases.remove(pageKey)
+                 }
+             }
+@@ -366,13 +386,21 @@ class ChapterTranslationStore(
+     }
+ 
+     /** Cancels the active artifact candidate and releases its matching writer lease. */
+-    suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
++    suspend fun cancelPageStageWork(
++        pageKey: String,
++        origin: PageWriteOrigin,
++        leaseToken: Long? = null,
++    ): Boolean =
+         withContext(NonCancellable) {
+             mutex.withLock {
+                 val lease = pageLeases[pageKey]
+-                if (lease?.origin != origin) return@withLock false
++                if (lease?.origin != origin || (leaseToken != null && lease.token != leaseToken)) {
++                    return@withLock false
++                }
+                 val cancelled = cancelArtifactCandidateLocked(pageKey)
+-                if (cancelled && pageLeases[pageKey]?.origin == origin) {
++                if (pageLeases[pageKey]?.origin == origin &&
++                    (leaseToken == null || pageLeases[pageKey]?.token == leaseToken)
++                ) {
+                     pageLeases.remove(pageKey)
+                 }
+                 cancelled
+@@ -380,10 +408,12 @@ class ChapterTranslationStore(
+         }
+ 
+     /** Releases every lease held by [origin]; used at batch teardown so no lease outlives its run. */
+-    suspend fun releaseAllPageLeases(origin: PageWriteOrigin) {
++    suspend fun releaseAllPageLeases(origin: PageWriteOrigin, leaseTokens: Set<Long>? = null) {
+         withContext(NonCancellable) {
+             mutex.withLock {
+-                pageLeases.values.removeAll { it.origin == origin }
++                pageLeases.values.removeAll { lease ->
++                    lease.origin == origin && (leaseTokens == null || lease.token in leaseTokens)
++                }
+             }
+         }
+     }
+@@ -489,6 +519,29 @@ class ChapterTranslationStore(
+         update: (PageTranslation?) -> PageTranslation,
+     ): PatchResult = updatePageGuarded(pageKey, snapshot(pageKey).toPrecondition(), description, update)
+ 
++    /**
++     * Compatibility-shaped mutation fenced to a caller-owned run generation.
++     * The snapshot and subsequent guarded update close the check-then-act gap:
++     * if a replacement run advances the generation after the snapshot, the
++     * precondition is rejected instead of being rebuilt from replacement state.
++     */
++    suspend fun updatePageAtGeneration(
++        pageKey: String,
++        expectedGeneration: Long,
++        description: String,
++        update: (PageTranslation?) -> PageTranslation,
++    ): PatchResult {
++        val current = snapshot(pageKey)
++        if (current.generation != expectedGeneration) {
++            return rejected(
++                pageKey,
++                description,
++                "generation expected=$expectedGeneration actual=${current.generation}",
++            )
++        }
++        return updatePageGuarded(pageKey, current.toPrecondition(), description, update)
++    }
++
+     suspend fun patchBlock(
+         pageKey: String,
+         blockIndex: Int,
+diff --git a/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt b/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt
+index c6304c4..4067d01 100644
+--- a/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt
++++ b/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt
+@@ -240,6 +240,19 @@ class ChapterTranslator(
+         isPaused = true
+     }
+ 
++    /**
++     * Pauses a run while retaining its Job handle for a manager-owned joined
++     * teardown. Queue admission may resume only after that handle has joined;
++     * this avoids the old coordinator's finally block touching a replacement
++     * run after a running chapter was cancelled.
++     */
++    fun pauseForAdmission() {
++        translationJob?.cancel()
++        queueState.value.filter { it.status == Translation.State.TRANSLATING }
++            .forEach { it.status = Translation.State.QUEUE }
++        isPaused = true
++    }
++
+     fun clearQueue() {
+         cancelTranslatorJob()
+         internalClearQueue()
+@@ -332,6 +345,22 @@ class ChapterTranslator(
+         }
+     }
+ 
++    /**
++     * Cancels the batch coordinator and waits for its complete teardown before
++     * another batch can be admitted. Unlike the delete bridge above this is
++     * intentionally unbounded: admitting a replacement while the old
++     * coordinator is still unwinding would let its finally blocks release the
++     * replacement run's leases. Native phases already have their own timeout /
++     * quarantine boundary, so this join is the manager's ownership fence.
++     */
++    suspend fun cancelTranslatorJobAndJoinForAdmission() {
++        val job = translationJob ?: return
++        job.cancelAndJoin()
++        if (translationJob === job) {
++            translationJob = null
++        }
++    }
++
+     fun queueChapter(manga: Manga, chapter: Chapter) {
+         val source = sourceManager.get(manga.source) as? HttpSource ?: return
+         if (queueState.value.any { it.chapter.id == chapter.id }) return
+diff --git a/app/src/main/java/eu/kanade/translation/TranslationManager.kt b/app/src/main/java/eu/kanade/translation/TranslationManager.kt
+index 217a400..8ee1275 100644
+--- a/app/src/main/java/eu/kanade/translation/TranslationManager.kt
++++ b/app/src/main/java/eu/kanade/translation/TranslationManager.kt
+@@ -21,7 +21,6 @@ import eu.kanade.translation.model.toPageView
+ import eu.kanade.translation.model.toQueuedChapterView
+ import eu.kanade.translation.scheduling.TranslationStreamRegistry
+ import kotlinx.coroutines.CoroutineScope
+-import kotlinx.coroutines.CoroutineStart
+ import kotlinx.coroutines.Deferred
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
+@@ -39,6 +38,7 @@ import kotlinx.coroutines.flow.map
+ import kotlinx.coroutines.flow.merge
+ import kotlinx.coroutines.flow.onStart
+ import kotlinx.coroutines.launch
++import kotlinx.coroutines.withContext
+ import kotlinx.serialization.json.Json
+ import kotlinx.serialization.json.decodeFromStream
+ import logcat.LogPriority
+@@ -133,6 +133,33 @@ class TranslationManager(
+     private val translateAfterDownload = ConcurrentHashMap<Long, TranslationRequest>()
+     private val workMetadata = ConcurrentHashMap<Long, TranslationWorkMetadata>()
+ 
++    /**
++     * A batch cancellation is an admission barrier, not just a best-effort
++     * cancel signal. The old run owns its handles until its coordinator and
++     * child jobs have reached their finally blocks; a replacement run waits
++     * for this deferred before starting.
++     */
++    private data class BatchTeardown(
++        val chapterId: Long,
++        val deferred: Deferred<Unit>,
++    )
++
++    private val batchTeardownLock = Any()
++
++    @Volatile
++    private var batchTeardown: BatchTeardown? = null
++
++    /** Reader lifecycle teardown is idempotent across finish + onPause. */
++    private data class ReaderTeardown(
++        val evictStores: Boolean,
++        val deferred: Deferred<Unit>,
++    )
++
++    private val readerTeardownLock = Any()
++
++    @Volatile
++    private var readerTeardown: ReaderTeardown? = null
++
+     private data class TranslationRequest(
+         val manga: Manga,
+         val chapter: Chapter,
+@@ -154,7 +181,8 @@ class TranslationManager(
+         get() = translator.queueState
+ 
+     val isAnyBatchTranslationActive: Boolean
+-        get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING }
++        get() = queueState.value.any { it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING } ||
++            batchTeardown?.deferred?.isCompleted == false
+ 
+     fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
+         chapter.id?.let { translateAfterDownload[it] = TranslationRequest(manga, chapter) }
+@@ -168,28 +196,73 @@ class TranslationManager(
+     }
+ 
+     fun stopReaderTranslations(reason: String) {
+-        cancelAllPageTranslations(cancelBatchQueue = false)
+-        if (!isAnyBatchTranslationActive) {
+-            translatorStop(reason, closeEngines = false)
+-        }
++        requestReaderPause(reason)
+     }
+ 
+     /**
+      * Starts reader-owned teardown on the manager lifetime rather than the
+      * ReaderViewModel scope. The deferred completes only after scheduler
+-     * coordinator/native/page jobs have joined and reader stores are evicted.
++     * coordinator/native/page jobs have joined and non-batch reader stores have
++     * been cleared. Background pause deliberately keeps those store objects
++     * registered so existing cold-flow collectors remain attached on resume.
+      */
++    fun requestReaderPause(reason: String): Deferred<Unit> =
++        requestReaderTeardown(reason, evictStores = false)
++
+     fun requestReaderStop(reason: String): Deferred<Unit> =
+-        applicationScope.async(start = CoroutineStart.UNDISPATCHED) {
+-            awaitReaderStop(reason)
+-        }
++        requestReaderTeardown(reason, evictStores = true)
+ 
+     /** Joined counterpart for callers that already own a non-cancelled scope. */
+     suspend fun awaitReaderStop(reason: String) {
++        val pending = synchronized(readerTeardownLock) { readerTeardown }
++        if (pending != null) {
++            if (!pending.deferred.isCompleted) pending.deferred.await()
++            if (pending.evictStores) return
++        }
++        completeReaderTeardown(reason, evictStores = true)
++    }
++
++    private fun requestReaderTeardown(reason: String, evictStores: Boolean): Deferred<Unit> {
++        synchronized(readerTeardownLock) {
++            val existing = readerTeardown
++            if (existing != null && !existing.deferred.isCompleted) {
++                if (!evictStores || existing.evictStores) return existing.deferred
++                val chained = applicationScope.async(Dispatchers.IO) {
++                    existing.deferred.await()
++                    completeReaderTeardown(reason, evictStores = true)
++                }
++                readerTeardown = ReaderTeardown(evictStores = true, deferred = chained)
++                chained.invokeOnCompletion {
++                    synchronized(readerTeardownLock) {
++                        if (readerTeardown?.deferred === chained) readerTeardown = null
++                    }
++                }
++                return chained
++            }
++
++            val deferred = applicationScope.async(Dispatchers.IO) {
++                completeReaderTeardown(reason, evictStores)
++            }
++            readerTeardown = ReaderTeardown(evictStores, deferred)
++            deferred.invokeOnCompletion {
++                synchronized(readerTeardownLock) {
++                    if (readerTeardown?.deferred === deferred) readerTeardown = null
++                }
++            }
++            return deferred
++        }
++    }
++
++    private suspend fun completeReaderTeardown(reason: String, evictStores: Boolean) = withContext(Dispatchers.IO) {
+         scheduler.awaitReaderStop()
+-        val chapterIdsToEvict = activeStores.chapterIds()
++        val chapterIds = activeStores.chapterIds()
+             .filter { !isBatchTranslationActive(it) }
+-        chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
++        chapterIds.forEach { chapterId ->
++            activeStores.get(chapterId)?.clearTransientQueuePages(reason)
++        }
++        if (evictStores) {
++            chapterIds.forEach { unregisterActiveTranslationStore(it) }
++        }
+     }
+ 
+     fun isTranslating(): Boolean = queueState.value.isNotEmpty()
+@@ -226,6 +299,14 @@ class TranslationManager(
+ 
+     fun startTranslation() {
+         if (translator.isRunning) return
++        val pending = batchTeardown?.takeUnless { it.deferred.isCompleted }?.deferred
++        if (pending != null) {
++            applicationScope.launch {
++                pending.await()
++                if (queueState.value.isNotEmpty() && !translator.isRunning) translator.start()
++            }
++            return
++        }
+         translator.start()
+     }
+ 
+@@ -244,10 +325,12 @@ class TranslationManager(
+     }
+ 
+     fun isBatchTranslationActive(chapterId: Long): Boolean {
+-        return queueState.value.any { translation ->
++        val queued = queueState.value.any { translation ->
+             translation.chapter.id == chapterId &&
+                 (translation.status == Translation.State.QUEUE || translation.status == Translation.State.TRANSLATING)
+         }
++        if (queued) return true
++        return batchTeardown?.chapterId == chapterId && batchTeardown?.deferred?.isCompleted == false
+     }
+ 
+     fun translateChapter(manga: Manga, chapters: Chapter) {
+@@ -325,19 +408,45 @@ class TranslationManager(
+      * (preserving rendered/terminal artifacts), and drops the queue entry.
+      */
+     fun cancelRunningChapterForReplace(chapterId: Long) {
+-        val chapter = queueState.value
++        queueState.value
+             .firstOrNull { it.chapter.id == chapterId }
+-            ?.chapter
+-            ?: return
+-        kotlinx.coroutines.runBlocking {
+-            scheduler.cancelPageTranslations(chapterId)
+-        }
+-        activeStores.get(chapterId)?.let { store ->
+-            kotlinx.coroutines.runBlocking {
+-                store.clearTransientQueuePages("Replaced by another chapter's batch")
++            ?.let(::cancelQueuedTranslation)
++    }
++
++    /**
++     * Creates the manager-owned batch cancellation barrier. The predecessor
++     * (if any) is joined first, then this run's translator job is joined,
++     * transient page state is cleared, and only then may the remaining queue
++     * be admitted. Completion callbacks are token-fenced in TranslationPipeline.
++     */
++    private fun requestBatchTeardown(chapterId: Long, reason: String): Deferred<Unit> {
++        synchronized(batchTeardownLock) {
++            val existing = batchTeardown
++            if (existing != null && !existing.deferred.isCompleted && existing.chapterId == chapterId) {
++                return existing.deferred
++            }
++            val predecessor = existing?.deferred?.takeUnless { it.isCompleted }
++            val deferred = applicationScope.async(Dispatchers.IO) {
++                predecessor?.await()
++                // Batch cancellation owns the whole chapter admission
++                // boundary: retire any legacy Auto/manual page jobs before
++                // joining the ChapterTranslator coordinator.
++                scheduler.cancelPageTranslations(chapterId)
++                translator.cancelTranslatorJobAndJoinForAdmission()
++                activeStores.get(chapterId)?.clearTransientQueuePages(reason)
++                disposeBatchTracker(chapterId)
++                if (queueState.value.isNotEmpty() && !translator.isRunning) {
++                    translator.start()
++                }
+             }
++            batchTeardown = BatchTeardown(chapterId, deferred)
++            deferred.invokeOnCompletion {
++                synchronized(batchTeardownLock) {
++                    if (batchTeardown?.deferred === deferred) batchTeardown = null
++                }
++            }
++            return deferred
+         }
+-        removeFromTranslationQueue(chapter)
+     }
+ 
+     fun getChapterTranslationStatus(
+@@ -1343,22 +1452,25 @@ class TranslationManager(
+     }
+ 
+     fun cancelQueuedTranslation(translation: Translation) {
++        val chapterId = translation.chapter.id ?: return
++        val wasRunning = translation.status == Translation.State.TRANSLATING
++        if (!wasRunning) {
++            // A queued cancellation is deliberately local. In particular, it
++            // must not pause or restart the unrelated currently-running
++            // chapter selected by ChapterTranslator's source arbitration.
++            removeFromTranslationQueue(translation.chapter)
++            return
++        }
++
++        // Stop admission synchronously, remove only the requested entry, then
++        // let the manager-owned deferred join the old coordinator off Main.
++        translator.pauseForAdmission()
+         removeFromTranslationQueue(translation.chapter)
++        requestBatchTeardown(chapterId, "Translation cancelled")
+     }
+ 
+     private fun removeFromTranslationQueue(chapter: Chapter) {
+-        val wasRunning = translator.isRunning
+-        if (wasRunning) {
+-            translator.pause()
+-        }
+         translator.removeFromQueue(chapter)
+-        if (wasRunning) {
+-            if (queueState.value.isEmpty()) {
+-                translator.stop()
+-            } else if (queueState.value.isNotEmpty()) {
+-                translator.start()
+-            }
+-        }
+     }
+ 
+     fun getCleanedImageStream(
+diff --git a/app/src/main/java/eu/kanade/translation/TranslationPipeline.kt b/app/src/main/java/eu/kanade/translation/TranslationPipeline.kt
+index 4bbad08..8968029 100644
+--- a/app/src/main/java/eu/kanade/translation/TranslationPipeline.kt
++++ b/app/src/main/java/eu/kanade/translation/TranslationPipeline.kt
+@@ -709,7 +709,7 @@ class TranslationPipeline(
+         stageListener: TranslationStageListener?,
+     ) {
+         val leaseStore = resolveActiveStore(manga, chapter, source)
+-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey)) return
++        val leaseToken = acquireReaderPageLease(leaseStore, chapter, pageKey) ?: return
+         try {
+             val onnxResult = withNativeLane(
+                 timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+@@ -763,7 +763,7 @@ class TranslationPipeline(
+                 throw t
+             }
+         } finally {
+-            releaseReaderPageLease(leaseStore, pageKey)
++            releaseReaderPageLease(leaseStore, pageKey, leaseToken)
+         }
+     }
+ 
+@@ -777,28 +777,32 @@ class TranslationPipeline(
+         store: ChapterTranslationStore?,
+         chapter: Chapter,
+         pageKey: String,
+-    ): Boolean {
+-        if (store == null) return true
++    ): Long? {
++        if (store == null) return 0L
+         return when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.READER_ADHOC)) {
+-            is LeaseAcquisition.Granted -> true
++            is LeaseAcquisition.Granted -> acquisition.lease.token
+             is LeaseAcquisition.Denied -> {
+                 logcat(LogPriority.INFO) {
+                     "TachiyomiAT reader single-page request attaches to ${acquisition.owner} owner: " +
+                         "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
+                 }
+-                false
++                null
+             }
+         }
+     }
+ 
+-    private suspend fun releaseReaderPageLease(store: ChapterTranslationStore?, pageKey: String) {
+-        if (store == null) return
+-        store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC)
++    private suspend fun releaseReaderPageLease(store: ChapterTranslationStore?, pageKey: String, leaseToken: Long?) {
++        if (store == null || leaseToken == null || leaseToken == 0L) return
++        store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC, leaseToken)
+     }
+ 
+     /** Releases the batch's page lease at an atomic stage boundary (terminal render/failure). */
+-    private suspend fun releaseBatchPageLease(store: ChapterTranslationStore, pageKey: String) {
+-        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
++    private suspend fun releaseBatchPageLease(
++        store: ChapterTranslationStore,
++        pageKey: String,
++        leaseToken: Long? = null,
++    ) {
++        store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH, leaseToken)
+     }
+ 
+     /**
+@@ -868,7 +872,7 @@ class TranslationPipeline(
+         stageListener: TranslationStageListener?,
+     ): PreparedPage? {
+         val leaseStore = resolveActiveStore(manga, chapter, source)
+-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey)) return null
++        val leaseToken = acquireReaderPageLease(leaseStore, chapter, pageKey) ?: return null
+         try {
+             val onnxResult = withNativeLane(
+                 timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+@@ -939,7 +943,7 @@ class TranslationPipeline(
+                 expectedLeaseToken = published.commitPrecondition?.leaseToken,
+             )
+         } finally {
+-            releaseReaderPageLease(leaseStore, pageKey)
++            releaseReaderPageLease(leaseStore, pageKey, leaseToken)
+         }
+     }
+ 
+@@ -1012,7 +1016,7 @@ class TranslationPipeline(
+         // handoff. Re-admit the translate/render half here so a batch cannot
+         // acquire the page in the handoff gap and then race the prepared
+         // reference's writes.
+-        if (!acquireReaderPageLease(store, chapter, prepared.pageKey)) return false
++        val leaseToken = acquireReaderPageLease(store, chapter, prepared.pageKey) ?: return false
+         try {
+             val snapshot = store.snapshot(prepared.pageKey)
+             // Stale-reference rejection: generation, pageVersion, and the OCR block
+@@ -1128,7 +1132,7 @@ class TranslationPipeline(
+                 throw t
+             }
+         } finally {
+-            releaseReaderPageLease(store, prepared.pageKey)
++            releaseReaderPageLease(store, prepared.pageKey, leaseToken)
+         }
+     }
+ 
+@@ -1188,6 +1192,7 @@ class TranslationPipeline(
+         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+         store.withGeneration(batchGeneration) {
+             val batchWriteIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
++            val batchLeaseTokens = ConcurrentHashMap.newKeySet<Long>()
+             try {
+                 withNativeLane(
+                     timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+@@ -1204,7 +1209,8 @@ class TranslationPipeline(
+                 } ?: run {
+                     // Phase 3: no batch page lease outlives its run, whatever exit
+                     // path the batch takes.
+-                    store.releaseAllPageLeases(PageWriteOrigin.BATCH)
++                    store.releaseAllPageLeases(PageWriteOrigin.BATCH, batchLeaseTokens)
++                    batchLeaseTokens.clear()
+                     return@withGeneration
+                 }
+ 
+@@ -1395,8 +1401,11 @@ class TranslationPipeline(
+                 }
+ 
+                 suspend fun releaseBatchLease(pageKey: String) {
+-                    batchWriteIdentities.remove(pageKey)
+-                    releaseBatchPageLease(store, pageKey)
++                    val identity = batchWriteIdentities.remove(pageKey)
++                    if (identity != null) {
++                        batchLeaseTokens.remove(identity.leaseToken)
++                        releaseBatchPageLease(store, pageKey, identity.leaseToken)
++                    }
+                 }
+ 
+                 fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) {
+@@ -1543,8 +1552,10 @@ class TranslationPipeline(
+                 suspend fun abortBatchCandidate(pageKey: String, reason: String) {
+                     recycleHeld(pageKey)
+                     translationRegistry.remove(pageKey)
+-                    batchWriteIdentities.remove(pageKey)
+-                    val cancelled = store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
++                    val identity = batchWriteIdentities.remove(pageKey)
++                    val leaseToken = identity?.leaseToken
++                    if (leaseToken != null) batchLeaseTokens.remove(leaseToken)
++                    val cancelled = store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH, leaseToken)
+                     logcat(if (cancelled) LogPriority.INFO else LogPriority.WARN) {
+                         "TachiyomiAT batch candidate aborted: pageKey=$pageKey " +
+                             "cancelled=$cancelled reason=$reason"
+@@ -1777,7 +1788,11 @@ class TranslationPipeline(
+                             chunk = contextualChunk,
+                             requestedOutputTokens = requestedOutputTokens,
+                             profile = chunkProfile,
+-                            allowFailureSplit = ct is LmStudioTranslator,
++                            // Every contextual AI provider is REMOTE_IO. Structural truncation or
++                            // refusal must therefore get the same bounded smaller-envelope
++                            // recovery; keeping this LM-Studio-only strands remote chunks on the
++                            // first malformed response.
++                            allowFailureSplit = true,
+                             label = "stream-${chunkCounter.incrementAndGet()}",
+                             retryDepth = 0,
+                         )
+@@ -2039,6 +2054,7 @@ class TranslationPipeline(
+                             dependencyFingerprint = batchLease.dependencyFingerprint,
+                             artifactPageVersion = batchLease.artifactPageVersion,
+                         )
++                        batchLeaseTokens.add(batchLease.token)
+                         val existing = store.state.value[pageKey]
+                         val gate = resumeGate(existing)
+                         if (gate == BatchResumeGate.SKIP_ALL) {
+@@ -2695,7 +2711,8 @@ class TranslationPipeline(
+                     logcat(LogPriority.WARN) {
+                         "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
+                     }
+-                    store.releaseAllPageLeases(PageWriteOrigin.BATCH)
++                    store.releaseAllPageLeases(PageWriteOrigin.BATCH, batchLeaseTokens)
++                    batchLeaseTokens.clear()
+                     store.flush()
+                     return@withGeneration
+                 }
+@@ -2739,15 +2756,17 @@ class TranslationPipeline(
+                 logcat(LogPriority.INFO) {
+                     "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
+                 }
+-                store.releaseAllPageLeases(PageWriteOrigin.BATCH)
++                store.releaseAllPageLeases(PageWriteOrigin.BATCH, batchLeaseTokens)
++                batchLeaseTokens.clear()
+             } finally {
+                 // Cancellation, an unexpected worker exception, or a provider
+                 // failure must not strand a BATCH lease for the next run.
+-                batchWriteIdentities.keys.toList().forEach { pageKey ->
+-                    store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
++                batchWriteIdentities.entries.toList().forEach { (pageKey, identity) ->
++                    store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH, identity.leaseToken)
+                 }
+                 batchWriteIdentities.clear()
+-                store.releaseAllPageLeases(PageWriteOrigin.BATCH)
++                store.releaseAllPageLeases(PageWriteOrigin.BATCH, batchLeaseTokens)
++                batchLeaseTokens.clear()
+             }
+         }
+     }
+diff --git a/app/src/main/java/eu/kanade/translation/scheduling/TranslationScheduler.kt b/app/src/main/java/eu/kanade/translation/scheduling/TranslationScheduler.kt
+index 7322635..ad11a1c 100644
+--- a/app/src/main/java/eu/kanade/translation/scheduling/TranslationScheduler.kt
++++ b/app/src/main/java/eu/kanade/translation/scheduling/TranslationScheduler.kt
+@@ -2,9 +2,12 @@ package eu.kanade.translation.scheduling
+ 
+ import eu.kanade.tachiyomi.source.online.HttpSource
+ import eu.kanade.translation.ChapterTranslationStore
++import eu.kanade.translation.LeaseAcquisition
++import eu.kanade.translation.PageWriteOrigin
+ import eu.kanade.translation.TranslationPageRequest
+ import eu.kanade.translation.TranslationSession
+ import eu.kanade.translation.model.PageLifecycle
++import eu.kanade.translation.model.PageStage
+ import eu.kanade.translation.model.PageTranslation
+ import eu.kanade.translation.model.StageStatus
+ import eu.kanade.translation.model.cancelInFlightStages
+@@ -296,6 +299,7 @@ class TranslationScheduler(
+ 
+         val jobKey = "auto:$chapterId:$generation:${session.key}:${autoWindowIds.incrementAndGet()}"
+         val job = scope.launch {
++            val windowStoreGeneration = session.store.currentGeneration
+             val completedReservations = mutableSetOf<String>()
+             try {
+                 // TachiyomiAT: do NOT clearTransientQueuePages here. The prior
+@@ -330,85 +334,98 @@ class TranslationScheduler(
+                     }
+                     if (manualJob != null) activePageJobs.remove(manualJobKey)
+ 
+-                    markAutoPageStarting(session.store, request.storageKey, current)
++                    val autoLease = markAutoPageStarting(session.store, request.storageKey, current)
++                    if (autoLease == null) {
++                        completedReservations.add(reservationKey)
++                        queuedPageKeys.remove(reservationKey)
++                        continue
++                    }
++
++                    try {
++                        if (current != null &&
++                            current.hasRecognizedTranslation &&
++                            current.renderStatus != StageStatus.READY &&
++                            current.isCleanedImageReady
++                        ) {
++                            try {
++                                executor.translateSinglePage(
++                                    session.manga,
++                                    session.chapter,
++                                    session.source,
++                                    request.storageKey,
++                                    force = false,
++                                )
++                            } catch (e: CancellationException) {
++                                markPageCancelled(session.store, request.storageKey, windowStoreGeneration)
++                                logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], request.streamAvailable)
++                                throw e
++                            } catch (e: Throwable) {
++                                logAutoDecision("failed:resume-render", request, session.store.state.value[request.storageKey], request.streamAvailable)
++                                logcat(LogPriority.ERROR, e) {
++                                    "TachiyomiAT auto resume render failed: id=${request.id} storageKey=${request.storageKey}"
++                                }
++                            } finally {
++                                completedReservations.add(reservationKey)
++                                queuedPageKeys.remove(reservationKey)
++                            }
++                            continue
++                        }
++
++                        val streamFn = try {
++                            request.streamProvider()
++                        } catch (e: CancellationException) {
++                            logAutoDecision("cancelled", request, current, request.streamAvailable)
++                            throw e
++                        } catch (e: Throwable) {
++                            logcat(LogPriority.WARN, e) {
++                                "TachiyomiAT auto stream provider failed: id=${request.id} " +
++                                    "index=${request.id.pageIndex} storageKey=${request.storageKey}"
++                            }
++                            null
++                        }
++
++                        if (streamFn == null) {
++                            logAutoDecision("soft-skip:no-stream", request, current, false)
++                            markPageAutoSoftSkipped(session.store, request.storageKey, windowStoreGeneration)
++                            completedReservations.add(reservationKey)
++                            queuedPageKeys.remove(reservationKey)
++                            continue
++                        }
+ 
+-                    if (current != null &&
+-                        current.hasRecognizedTranslation &&
+-                        current.renderStatus != StageStatus.READY &&
+-                        current.isCleanedImageReady
+-                    ) {
+                         try {
+-                            executor.translateSinglePage(
++                            executor.translateSinglePageFromStream(
+                                 session.manga,
+                                 session.chapter,
+                                 session.source,
+                                 request.storageKey,
++                                streamFn,
+                                 force = false,
+                             )
+                         } catch (e: CancellationException) {
+-                            markPageCancelled(session.chapter, request.storageKey)
+-                            logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], request.streamAvailable)
++                            markPageCancelled(session.store, request.storageKey, windowStoreGeneration)
++                            logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], true)
+                             throw e
+                         } catch (e: Throwable) {
+-                            logAutoDecision("failed:resume-render", request, session.store.state.value[request.storageKey], request.streamAvailable)
++                            logAutoDecision("failed:pipeline", request, session.store.state.value[request.storageKey], true)
+                             logcat(LogPriority.ERROR, e) {
+-                                "TachiyomiAT auto resume render failed: id=${request.id} storageKey=${request.storageKey}"
++                                "TachiyomiAT auto page translation failed: id=${request.id} " +
++                                    "storageKey=${request.storageKey} chapter=${session.chapter.name} " +
++                                    "manga=${session.manga.title} source=${session.source.id}"
+                             }
++                            continue
+                         } finally {
+                             completedReservations.add(reservationKey)
+                             queuedPageKeys.remove(reservationKey)
+                         }
+-                        continue
+-                    }
+-
+-                    val streamFn = try {
+-                        request.streamProvider()
+-                    } catch (e: CancellationException) {
+-                        logAutoDecision("cancelled", request, current, request.streamAvailable)
+-                        throw e
+-                    } catch (e: Throwable) {
+-                        logcat(LogPriority.WARN, e) {
+-                            "TachiyomiAT auto stream provider failed: id=${request.id} " +
+-                                "index=${request.id.pageIndex} storageKey=${request.storageKey}"
++                        if (autoGenerations[chapterId]?.get() != generation) {
++                            break
+                         }
+-                        null
+-                    }
+-
+-                    if (streamFn == null) {
+-                        logAutoDecision("soft-skip:no-stream", request, current, false)
+-                        markPageAutoSoftSkipped(session.store, request.storageKey)
+-                        completedReservations.add(reservationKey)
+-                        queuedPageKeys.remove(reservationKey)
+-                        continue
+-                    }
+-
+-                    try {
+-                        executor.translateSinglePageFromStream(
+-                            session.manga,
+-                            session.chapter,
+-                            session.source,
++                    } finally {
++                        session.store.releasePageStageLease(
+                             request.storageKey,
+-                            streamFn,
+-                            force = false,
++                            PageWriteOrigin.READER_ADHOC,
++                            autoLease.token,
+                         )
+-                    } catch (e: CancellationException) {
+-                        markPageCancelled(session.chapter, request.storageKey)
+-                        logAutoDecision("cancelled", request, session.store.state.value[request.storageKey], true)
+-                        throw e
+-                    } catch (e: Throwable) {
+-                        logAutoDecision("failed:pipeline", request, session.store.state.value[request.storageKey], true)
+-                        logcat(LogPriority.ERROR, e) {
+-                            "TachiyomiAT auto page translation failed: id=${request.id} " +
+-                                "storageKey=${request.storageKey} chapter=${session.chapter.name} " +
+-                                "manga=${session.manga.title} source=${session.source.id}"
+-                        }
+-                        continue
+-                    } finally {
+-                        completedReservations.add(reservationKey)
+-                        queuedPageKeys.remove(reservationKey)
+-                    }
+-                    if (autoGenerations[chapterId]?.get() != generation) {
+-                        break
+                     }
+                 }
+             } catch (e: CancellationException) {
+@@ -500,11 +517,37 @@ class TranslationScheduler(
+         store: ChapterTranslationStore,
+         pageKey: String,
+         current: PageTranslation?,
+-    ) {
+-        if (!TranslationLifecyclePolicy.shouldSchedule(current)) return
+-        store.updatePageFromCurrentSnapshot(pageKey, "auto page starting") { existing ->
++    ): eu.kanade.translation.PageStageLease? {
++        if (!TranslationLifecyclePolicy.shouldSchedule(current)) return null
++        val lease = when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.READER_ADHOC)) {
++            is LeaseAcquisition.Granted -> acquisition.lease
++            is LeaseAcquisition.Denied -> {
++                logcat(LogPriority.INFO) {
++                    "TachiyomiAT auto page admission denied: pageKey=$pageKey owner=${acquisition.owner} " +
++                        "reason=${acquisition.reason}"
++                }
++                return null
++            }
++        }
++        var markedRunning = false
++        val updated = store.updatePageGuarded(
++            pageKey = pageKey,
++            expected = ChapterTranslationStore.PatchPrecondition(
++                generation = lease.generation,
++                pageVersion = lease.pageVersion,
++                leaseToken = lease.token,
++                candidateGenerationId = lease.candidateGenerationId,
++                dependencyFingerprint = lease.dependencyFingerprint,
++                artifactPageVersion = lease.artifactPageVersion,
++            ),
++            description = "auto page starting",
++        ) { existing ->
++            if (existing != null && !TranslationLifecyclePolicy.shouldSchedule(existing)) {
++                return@updatePageGuarded existing
++            }
+             val page = existing ?: PageTranslation(sourceFileName = pageKey)
+-            if (page.renderStatus == StageStatus.READY && page.isCleanedImageReady) return@updatePageFromCurrentSnapshot page
++            if (page.renderStatus == StageStatus.READY && page.isCleanedImageReady) return@updatePageGuarded page
++            markedRunning = true
+             page.apply {
+                 sourceFileName = pageKey
+                 errorMessage = null
+@@ -532,16 +575,27 @@ class TranslationScheduler(
+                 updatedAt = System.currentTimeMillis()
+             }
+         }
++        if (!markedRunning || updated !is ChapterTranslationStore.PatchResult.Accepted) {
++            store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC, lease.token)
++            return null
++        }
++        return lease
+     }
+ 
+-    private suspend fun markPageAutoSoftSkipped(store: ChapterTranslationStore, pageKey: String) {
+-        store.updatePageFromCurrentSnapshot(pageKey, "auto page soft skip") { existing ->
++    private suspend fun markPageAutoSoftSkipped(
++        store: ChapterTranslationStore,
++        pageKey: String,
++        expectedGeneration: Long? = null,
++    ) {
++        if (store.isDefunct) return
++        val generation = expectedGeneration ?: store.currentGeneration
++        store.updatePageAtGeneration(pageKey, generation, "auto page soft skip") { existing ->
+             val page = existing ?: PageTranslation(
+                 sourceFileName = pageKey,
+                 ocrStatus = StageStatus.CANCELLED,
+                 updatedAt = System.currentTimeMillis(),
+             )
+-            if (page.renderStatus == StageStatus.READY) return@updatePageFromCurrentSnapshot page
++            if (page.renderStatus == StageStatus.READY) return@updatePageAtGeneration page
+             page.apply {
+                 cancelInFlightStages()
+                 updatedAt = System.currentTimeMillis()
+@@ -585,8 +639,18 @@ class TranslationScheduler(
+             }
+             logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
+             val job = scope.launch {
++                var pageStore: ChapterTranslationStore? = null
++                var pageGeneration: Long? = null
++                // Store resolution is suspend (the manager may have to open
++                // the shared store on IO). Capture its generation inside the
++                // owned job so late cancellation cleanup cannot target a
++                // replacement generation.
+                 var cancelledMidFlight = false
+                 try {
++                    coroutineContext.ensureActive()
++                    pageStore = chapter.id?.let { storeResolver.resolve(it) }
++                    pageGeneration = pageStore?.currentGeneration
++                    coroutineContext.ensureActive()
+                     executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
+                 } catch (e: kotlinx.coroutines.CancellationException) {
+                     // Cancelled (chapter switch / reader exit / Stop all) after the
+@@ -615,7 +679,7 @@ class TranslationScheduler(
+                         // it. Guarded so a reset failure never masks the original CancellationException.
+                         try {
+                             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+-                                markPageCancelled(chapter, pageKey)
++                                markPageCancelled(pageStore, pageKey, pageGeneration)
+                             }
+                         } catch (resetError: Throwable) {
+                             logcat(LogPriority.WARN, resetError) {
+@@ -640,21 +704,27 @@ class TranslationScheduler(
+         markPageCancelled(store, pageKey)
+     }
+ 
+-    private suspend fun markPageCancelled(store: ChapterTranslationStore, pageKey: String) {
++    private suspend fun markPageCancelled(
++        store: ChapterTranslationStore?,
++        pageKey: String,
++        expectedGeneration: Long? = null,
++    ) {
++        if (store == null || store.isDefunct) return
+         // Peek first: if no entry or already terminal, nothing is stranded — skip
+         // the write rather than creating a spurious FAILED entry.
+         val existing = store.state.value[pageKey] ?: return
+         if (existing.hasRenderedResult || existing.isStageFailed) return
+         // Flip in-flight stages to CANCELLED so the reader clears the overlay and
+         // auto can reschedule the page later.
+-        store.updatePageFromCurrentSnapshot(pageKey, "auto page cancelled") { current ->
++        val generation = expectedGeneration ?: store.currentGeneration
++        store.updatePageAtGeneration(pageKey, generation, "auto page cancelled") { current ->
+             // Re-check inside the lock in case it changed between peek and write.
+             val cur = current ?: PageTranslation(
+                 sourceFileName = pageKey,
+                 ocrStatus = StageStatus.CANCELLED,
+                 updatedAt = System.currentTimeMillis(),
+             ).also { it.ocrError = "Translation cancelled" }
+-            if (cur.hasRenderedResult || cur.isStageFailed) return@updatePageFromCurrentSnapshot cur
++            if (cur.hasRenderedResult || cur.isStageFailed) return@updatePageAtGeneration cur
+             cur.apply {
+                 cancelInFlightStages()
+                 ocrError = "Translation cancelled"
+@@ -900,8 +970,16 @@ class TranslationScheduler(
+                 finishAutoCancellation(cancellation)
+             }
+ 
+-            jobsToJoin.joinAll()
+-            coordinatorsToJoin.forEach { it.awaitTermination() }
++            val joined = withTimeoutOrNull(JOIN_TIMEOUT_MS) {
++                jobsToJoin.joinAll()
++                coordinatorsToJoin.forEach { it.awaitTermination() }
++            }
++            if (joined == null) {
++                logcat(LogPriority.WARN) {
++                    "TachiyomiAT reader stop join timed out after $JOIN_TIMEOUT_MS ms; " +
++                        "late callbacks remain generation-fenced"
++                }
++            }
+         } finally {
+             synchronized(autoCoordinatorLock) {
+                 readerStopInFlight = false
+diff --git a/app/src/main/java/eu/kanade/translation/translator/AiTranslationRetryController.kt b/app/src/main/java/eu/kanade/translation/translator/AiTranslationRetryController.kt
+index 110d3c1..90e293b 100644
+--- a/app/src/main/java/eu/kanade/translation/translator/AiTranslationRetryController.kt
++++ b/app/src/main/java/eu/kanade/translation/translator/AiTranslationRetryController.kt
+@@ -7,6 +7,22 @@ import logcat.LogPriority
+ import logcat.logcat
+ import kotlin.coroutines.coroutineContext
+ 
++internal const val MAX_ADAPTIVE_RETRY_REQUESTS = 8
++
++internal class AdaptiveRetryBudget(maxRequests: Int) {
++    var remaining: Int = maxRequests.coerceAtLeast(1)
++        private set
++    var structuralFailure: ContextualStructuralFailureException? = null
++
++    fun canReserve(requestCount: Int): Boolean = requestCount in 1..remaining
++
++    fun consume(): Boolean {
++        if (remaining <= 0) return false
++        remaining--
++        return true
++    }
++}
++
+ /**
+  * Runs one contextual request and only plans missing-block retries after a promotable batch has
+  * been returned. A strict envelope failure is deliberately typed and propagated before the
+@@ -25,11 +41,26 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
+     allowFailureSplit: Boolean,
+     label: String,
+     retryDepth: Int,
++    retryBudget: AdaptiveRetryBudget? = null,
+ ): Map<String, String> {
+     coroutineContext.ensureActive()
++    val budget = retryBudget ?: AdaptiveRetryBudget(
++        maxRequests = minOf(
++            MAX_ADAPTIVE_RETRY_REQUESTS,
++            chunk.blockCount.coerceAtLeast(1) * 2,
++        ),
++    )
+     val mergedDeltas = linkedMapOf<String, String>()
+     val safeLabel = ShortHash.hash(label).ifEmpty { "none" }
+     val pageSetHash = ShortHash.hash(chunk.pages.keys.joinToString("\u0000"))
++    if (!budget.consume()) {
++        logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
++            "event=stage2_failure reason=retry_budget_exhausted label=$safeLabel pass=$retryDepth " +
++                "pages=${chunk.pages.size} blocks=${chunk.blockCount} pageSetHash=$pageSetHash"
++        }
++        budget.structuralFailure?.let { throw it }
++        return mergedDeltas
++    }
+     try {
+         logcat(tag = "TranslationBatchRetry", priority = LogPriority.INFO) {
+             "event=stage2_request label=$safeLabel pass=$retryDepth " +
+@@ -41,13 +72,59 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
+         batch.structuralFailure?.let { failure ->
+             throw ContextualStructuralFailureException(failure)
+         }
++        batch.safeOutputFailure?.let { failure ->
++            throw ContextualStructuralFailureException(failure)
++        }
+         batch.contextDeltas.forEach { (pageId, delta) ->
+             if (pageId !in mergedDeltas) mergedDeltas[pageId] = delta
+         }
+     } catch (e: ContextualStructuralFailureException) {
+-        // This is a protocol failure, not missing content. Let the live pipeline mark the
+-        // affected pages failed; never recurse into missing-block splitting.
+-        throw e
++        if (!allowFailureSplit || chunk.blockCount <= 1) throw e
++        val split = AiTranslationRetryPlanner.planFailureSplit(
++            chunk = chunk,
++            requestedOutputTokens = requestedOutputTokens,
++            profile = profile,
++        )
++        val retryChunks = split.chunks.filter { it.blockCount in 1 until chunk.blockCount }
++        if (retryChunks.isEmpty() || !budget.canReserve(retryChunks.size)) {
++            budget.structuralFailure = e
++            logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
++                "event=stage2_failure reason=structural_retry_exhausted label=$safeLabel " +
++                    "pass=$retryDepth pages=${chunk.pages.size} blocks=${chunk.blockCount} " +
++                    "retryChunks=${retryChunks.size} remaining=${budget.remaining} " +
++                    "pageSetHash=$pageSetHash"
++            }
++            throw e
++        }
++        logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
++            "event=stage2_retry_plan reason=structural_failure_split label=$safeLabel pass=$retryDepth " +
++                "blocks=${chunk.blockCount} retryChunks=${retryChunks.size} " +
++                "remaining=${budget.remaining}"
++        }
++        var structuralFailure: ContextualStructuralFailureException? = null
++        retryChunks.forEachIndexed { index, retryChunk ->
++            try {
++                translateAiChunkWithAdaptiveRetry(
++                    translator = translator,
++                    chunk = retryChunk,
++                    requestedOutputTokens = requestedOutputTokens,
++                    profile = profile,
++                    allowFailureSplit = allowFailureSplit,
++                    label = "$label.${index + 1}",
++                    retryDepth = retryDepth + 1,
++                    retryBudget = budget,
++                ).forEach { (pageId, delta) ->
++                    if (pageId !in mergedDeltas) mergedDeltas[pageId] = delta
++                }
++            } catch (childFailure: ContextualStructuralFailureException) {
++                structuralFailure = childFailure
++            }
++        }
++        structuralFailure?.let {
++            budget.structuralFailure = it
++            throw it
++        }
++        return mergedDeltas
+     } catch (e: Exception) {
+         if (e is CancellationException) throw e
+         if (!allowFailureSplit || chunk.blockCount <= 1) {
+@@ -65,7 +142,8 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
+             requestedOutputTokens = requestedOutputTokens,
+             profile = profile,
+         )
+-        if (split.chunks.isEmpty()) {
++        val retryChunks = split.chunks.filter { it.blockCount in 1 until chunk.blockCount }
++        if (retryChunks.isEmpty() || !budget.canReserve(retryChunks.size)) {
+             logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
+                 "event=stage2_retry_plan reason=no_retry_chunks label=$safeLabel pass=$retryDepth"
+             }
+@@ -73,9 +151,9 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
+         }
+         logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
+             "event=stage2_retry_plan reason=failure_split label=$safeLabel pass=$retryDepth " +
+-                "blocks=${chunk.blockCount} retryChunks=${split.chunks.size}"
++                "blocks=${chunk.blockCount} retryChunks=${retryChunks.size} remaining=${budget.remaining}"
+         }
+-        split.chunks.forEachIndexed { index, retryChunk ->
++        retryChunks.forEachIndexed { index, retryChunk ->
+             translateAiChunkWithAdaptiveRetry(
+                 translator = translator,
+                 chunk = retryChunk,
+@@ -84,6 +162,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
+                 allowFailureSplit = allowFailureSplit,
+                 label = "$label.${index + 1}",
+                 retryDepth = retryDepth + 1,
++                retryBudget = budget,
+             ).forEach { (pageId, delta) ->
+                 if (pageId !in mergedDeltas) mergedDeltas[pageId] = delta
+             }
+@@ -108,12 +187,13 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
+         requestedOutputTokens = requestedOutputTokens,
+         profile = profile,
+     )
+-    if (missingPlan.chunks.isEmpty()) return mergedDeltas
++    val missingChunks = missingPlan.chunks.filter { it.blockCount in 1 until chunk.blockCount }
++    if (missingChunks.isEmpty() || !budget.canReserve(missingChunks.size)) return mergedDeltas
+     logcat(tag = "TranslationBatchRetry", priority = LogPriority.WARN) {
+         "event=stage2_retry_plan reason=missing_blocks label=$safeLabel pass=$retryDepth " +
+-            "remainingBlocks=$missingBlocks retryChunks=${missingPlan.chunks.size}"
++            "remainingBlocks=$missingBlocks retryChunks=${missingChunks.size} remaining=${budget.remaining}"
+     }
+-    missingPlan.chunks.forEachIndexed { index, retryChunk ->
++    missingChunks.forEachIndexed { index, retryChunk ->
+         translateAiChunkWithAdaptiveRetry(
+             translator = translator,
+             chunk = retryChunk,
+@@ -122,6 +202,7 @@ internal suspend fun translateAiChunkWithAdaptiveRetry(
+             allowFailureSplit = allowFailureSplit,
+             label = "$label.missing${index + 1}",
+             retryDepth = retryDepth + 1,
++            retryBudget = budget,
+         ).forEach { (pageId, delta) ->
+             if (pageId !in mergedDeltas) mergedDeltas[pageId] = delta
+         }
+diff --git a/app/src/main/java/eu/kanade/translation/translator/ContextualResponseParser.kt b/app/src/main/java/eu/kanade/translation/translator/ContextualResponseParser.kt
+index ae3b16a..d0b4b0d 100644
+--- a/app/src/main/java/eu/kanade/translation/translator/ContextualResponseParser.kt
++++ b/app/src/main/java/eu/kanade/translation/translator/ContextualResponseParser.kt
+@@ -8,6 +8,9 @@ data class ContextualTranslationResult(
+ ) {
+     enum class Status {
+         TRANSLATED,
++
++        /** The provider returned the required safe marker instead of a translation. */
++        UNTRANSLATABLE,
+         REJECTED,
+     }
+ }
+@@ -177,7 +180,14 @@ object ContextualResponseParser {
+                 rejected(id, text, target)
+                 return
+             }
+-            if (canonical) {
++            if (canonical && text == TranslationPrompts.UNTRANSLATABLE_MARKER) {
++                results += ContextualTranslationResult(
++                    id = id,
++                    targetKey = target,
++                    text = text,
++                    status = ContextualTranslationResult.Status.UNTRANSLATABLE,
++                )
++            } else if (canonical) {
+                 results += ContextualTranslationResult(
+                     id = id,
+                     targetKey = target,
+@@ -294,10 +304,10 @@ object ContextualResponseParser {
+     }
+ 
+     /**
+-     * Recovers translation payloads from provider output that omitted or damaged
+-     * protocol framing. Only byte-exact canonical IDs are considered, and every
+-     * requested ID must occur exactly once with a non-blank target. Unknown,
+-     * duplicate, missing, or blank records keep the strict response invalid.
++     * Recovers translation payloads from provider output with a narrowly damaged wrapper. Framed
++     * responses are scanned only while a PAGE section is open; CONTEXT_DELTA content is never a
++     * translation source. The unframed compatibility path still accepts only byte-exact canonical
++     * IDs. Every requested ID must occur exactly once with a non-blank target or the safe marker.
+      */
+     private fun recoverExactIdRecords(
+         rawResponse: String,
+@@ -322,15 +332,18 @@ object ContextualResponseParser {
+         val recovered = mutableListOf<ContextualTranslationResult>()
+         val seen = HashSet<String>()
+         var unsafe = false
+-        rawResponse.lineSequence().forEach { rawLine ->
+-            val line = rawLine.removeSuffix("\r")
++        var currentPage: String? = null
++        var currentDelta: String? = null
++
++        fun recoverRecord(line: String, pageId: String?) {
+             val separator = line.indexOf('|')
+-            if (separator <= 0) return@forEach
++            if (separator <= 0) return
+             val id = line.substring(0, separator)
+-            if (!canonicalBatchIdRegex.matches(id)) return@forEach
++            if (!canonicalBatchIdRegex.matches(id)) return
+             val target = request.idMap[id]
+             val text = line.substring(separator + 1).trimEnd()
+-            if (target == null || !seen.add(id) || text.isBlank()) {
++            val belongsToPage = pageId == null || id.substringBefore("_b") == pageId
++            if (target == null || !belongsToPage || !seen.add(id) || text.isBlank()) {
+                 unsafe = true
+                 recovered += ContextualTranslationResult(
+                     id = id,
+@@ -343,10 +356,46 @@ object ContextualResponseParser {
+                     id = id,
+                     targetKey = target,
+                     text = text,
+-                    status = ContextualTranslationResult.Status.TRANSLATED,
++                    status = if (text == TranslationPrompts.UNTRANSLATABLE_MARKER) {
++                        ContextualTranslationResult.Status.UNTRANSLATABLE
++                    } else {
++                        ContextualTranslationResult.Status.TRANSLATED
++                    },
+                 )
+             }
+         }
++
++        rawResponse.lineSequence().forEach { rawLine ->
++            val line = rawLine.removeSuffix("\r")
++            if (!hasProtocolFraming) {
++                recoverRecord(line, pageId = null)
++                return@forEach
++            }
++            if (currentPage != null) {
++                when {
++                    line.startsWith("${BatchTranslationProtocol.PAGE_END} ") -> {
++                        currentPage = null
++                    }
++                    currentDelta == null -> recoverRecord(line, currentPage)
++                }
++                return@forEach
++            }
++            if (currentDelta != null) {
++                if (line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_END} ")) {
++                    currentDelta = null
++                }
++                // Delta payload is intentionally ignored, including ID-looking lines.
++                return@forEach
++            }
++            when {
++                line.startsWith("${BatchTranslationProtocol.PAGE_START} ") -> {
++                    currentPage = line.removePrefix("${BatchTranslationProtocol.PAGE_START} ")
++                }
++                line.startsWith("${BatchTranslationProtocol.CONTEXT_DELTA_START} ") -> {
++                    currentDelta = line.removePrefix("${BatchTranslationProtocol.CONTEXT_DELTA_START} ")
++                }
++            }
++        }
+         if (unsafe || seen != request.orderedIds.toSet()) return null
+         return ContextualTranslationBatch(
+             idToBlockIndex = request.locations,
+diff --git a/app/src/main/java/eu/kanade/translation/translator/ContextualTranslationBatch.kt b/app/src/main/java/eu/kanade/translation/translator/ContextualTranslationBatch.kt
+index 93b1aa9..e677f36 100644
+--- a/app/src/main/java/eu/kanade/translation/translator/ContextualTranslationBatch.kt
++++ b/app/src/main/java/eu/kanade/translation/translator/ContextualTranslationBatch.kt
+@@ -58,6 +58,7 @@ data class ContextualTranslationBatch(
+         get() = ContextualTranslationAccounting(
+             requested = requestedIds.size,
+             translated = accepted.size,
++            untranslatable = untranslatable.size,
+             rejected = rejected.size,
+             missing = missingIds.size,
+             duplicates = duplicateIds.size,
+@@ -68,13 +69,18 @@ data class ContextualTranslationBatch(
+     val accepted: List<ContextualTranslationResult>
+         get() = results.filter { it.status == ContextualTranslationResult.Status.TRANSLATED }
+ 
++    /** Required records that intentionally carry the safe untranslatable marker. */
++    val untranslatable: List<ContextualTranslationResult>
++        get() = results.filter { it.status == ContextualTranslationResult.Status.UNTRANSLATABLE }
++
+     /** Rejected (unknown/blank/malformed/duplicate) results only. */
+     val rejected: List<ContextualTranslationResult>
+         get() = results.filter { it.status == ContextualTranslationResult.Status.REJECTED }
+ 
+     /**
+      * A strict batch response is promotable only when every requested source block has exactly
+-     * one non-blank target and no unknown/extra/malformed protocol content was observed.
++     * one translation or the explicit safe untranslatable marker and no unknown/extra/malformed
++     * protocol content was observed.
+      */
+     val isStructurallyValid: Boolean
+         get() = !strictValidation ||
+@@ -85,7 +91,7 @@ data class ContextualTranslationBatch(
+                     missingIds.isEmpty() &&
+                     unknownIds.isEmpty() &&
+                     rejected.isEmpty() &&
+-                    accepted.size == requestedIds.size
++                    accepted.size + untranslatable.size == requestedIds.size
+                 )
+ 
+     /**
+@@ -108,6 +114,26 @@ data class ContextualTranslationBatch(
+             )
+         }
+ 
++    /**
++     * Safe refusal records satisfy envelope cardinality but are not promotable translations. The
++     * live adaptive controller treats them as a typed failure so they receive bounded recovery
++     * rather than advancing the ordered scene checkpoint with an empty block.
++     */
++    val safeOutputFailure: ContextualStructuralFailure?
++        get() = if (untranslatable.isEmpty()) {
++            null
++        } else {
++            ContextualStructuralFailure(
++                reasonCounts = mapOf(ContextualStructuralFailureCode.UNTRANSLATABLE to untranslatable.size),
++                expectedCount = requestedIds.size,
++                receivedCount = results.size,
++                missingCount = missingIds.size,
++                duplicateCount = duplicateIds.size,
++                unknownCount = unknownIds.size,
++                rejectedCount = rejected.size,
++            )
++        }
++
+     private fun buildReasonCounts(): Map<ContextualStructuralFailureCode, Int> {
+         val counts = linkedMapOf<ContextualStructuralFailureCode, Int>()
+         fun add(code: ContextualStructuralFailureCode, count: Int = 1) {
+@@ -137,7 +163,8 @@ data class ContextualTranslationBatch(
+         add(ContextualStructuralFailureCode.CARDINALITY, duplicateIds.size)
+         add(ContextualStructuralFailureCode.CARDINALITY, unknownIds.size)
+         add(ContextualStructuralFailureCode.CARDINALITY, rejected.size)
+-        if (strictValidation && accepted.size != requestedIds.size) {
++        add(ContextualStructuralFailureCode.UNTRANSLATABLE, untranslatable.size)
++        if (strictValidation && accepted.size + untranslatable.size != requestedIds.size) {
+             add(ContextualStructuralFailureCode.CARDINALITY)
+         }
+         return counts
+@@ -159,6 +186,7 @@ enum class ContextualStructuralFailureCode {
+     CONTEXT_DELTA_SECTION,
+     IDENTIFIER,
+     TRANSLATION_LINE,
++    UNTRANSLATABLE,
+     CONTENT,
+     CARDINALITY,
+ }
+@@ -195,6 +223,7 @@ data class ContextualTranslationAccounting(
+     val missing: Int,
+     val duplicates: Int,
+     val unknown: Int,
++    val untranslatable: Int = 0,
+ )
+ 
+ /** Where a target lives: page key + block index within that page's blocks list. */
+diff --git a/app/src/main/java/eu/kanade/translation/translator/TranslationPrompts.kt b/app/src/main/java/eu/kanade/translation/translator/TranslationPrompts.kt
+index 1d8a9ec..42fb430 100644
+--- a/app/src/main/java/eu/kanade/translation/translator/TranslationPrompts.kt
++++ b/app/src/main/java/eu/kanade/translation/translator/TranslationPrompts.kt
+@@ -10,6 +10,9 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
+  */
+ object TranslationPrompts {
+ 
++    /** Exact batch response payload used when a provider cannot translate faithfully. */
++    const val UNTRANSLATABLE_MARKER = "[UNTRANSLATABLE]"
++
+     fun idMappedSourceLine(id: String, block: TranslationBlock): String {
+         val flattened = block.text
+             .replace("\r\n", " ")
+@@ -113,8 +116,11 @@ object TranslationPrompts {
+             - Return exactly one response header, one PAGE section for every supplied page, and the
+               response footer. Do not add prose or any section not listed below.
+             - Inside each page section return one exact `p0000_b0000|Translated Text` line for every
+-              non-blank source block. IDs are case-sensitive and must not be trimmed, normalized,
+-              renamed, duplicated, or omitted.
++              non-blank source block, including content you cannot translate faithfully. IDs are
++              case-sensitive and must not be trimmed, normalized, renamed, duplicated, or omitted.
++            - If faithful translation is impossible, return the exact safe payload
++              `p0000_b0000|$UNTRANSLATABLE_MARKER` for that block. Never omit its ID, emit refusal
++              prose, invent a translation, or replace the safe marker with a blank line.
+             - A CONTEXT_DELTA section is optional and must be page-scoped; leave it empty when no
+               trusted delta is available. Never put translations or instructions outside a PAGE.
+ 
+@@ -132,7 +138,8 @@ object TranslationPrompts {
+             - Translate sexual or mature source material faithfully: preserve meaning, viewpoint,
+               tone, and the source's explicitness level exactly. Do not censor, euphemize, sanitize,
+               intensify, or add detail absent from the source. If you cannot translate it faithfully,
+-              output nothing and leave the block's line out rather than substituting moralizing prose.
++              return the exact safe marker for that block rather than omitting its required line or
++              substituting moralizing/refusal prose.
+ 
+             In the optional CONTEXT_DELTA for a page you may propose (code validates or rejects):
+             LINK|<temp label>|<name>|<blockId>[,<blockId>...]
+diff --git a/app/src/test/java/eu/kanade/translation/ChapterTranslationStorePhase3Test.kt b/app/src/test/java/eu/kanade/translation/ChapterTranslationStorePhase3Test.kt
+index 791d45b..bc0fade 100644
+--- a/app/src/test/java/eu/kanade/translation/ChapterTranslationStorePhase3Test.kt
++++ b/app/src/test/java/eu/kanade/translation/ChapterTranslationStorePhase3Test.kt
+@@ -6,6 +6,7 @@ import eu.kanade.translation.model.StageStatus
+ import eu.kanade.translation.model.TranslationBlock
+ import eu.kanade.translation.model.isTextlessTerminal
+ import io.kotest.matchers.shouldBe
++import io.kotest.matchers.shouldNotBe
+ import io.kotest.matchers.types.shouldBeInstanceOf
+ import kotlinx.coroutines.async
+ import kotlinx.coroutines.awaitAll
+@@ -174,6 +175,55 @@ class ChapterTranslationStorePhase3Test {
+         store.pageLeaseOwner("p1") shouldBe null
+     }
+ 
++    @Test
++    fun `old run token cannot release replacement lease`() = runTest {
++        val store = store()
++        val oldLease = store.tryAcquirePageStageLease(
++            "p1",
++            PageStage.Ocr,
++            PageWriteOrigin.BATCH,
++        ).shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
++
++        store.beginGeneration("rapid cancel and restart")
++        val replacement = store.tryAcquirePageStageLease(
++            "p1",
++            PageStage.Ocr,
++            PageWriteOrigin.BATCH,
++        ).shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
++        replacement.token shouldNotBe oldLease.token
++
++        store.releasePageStageLease("p1", PageWriteOrigin.BATCH, oldLease.token)
++        store.cancelPageStageWork("p1", PageWriteOrigin.BATCH, oldLease.token) shouldBe false
++        store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.BATCH
++
++        store.releasePageStageLease("p1", PageWriteOrigin.BATCH, replacement.token)
++        store.pageLeaseOwner("p1") shouldBe null
++    }
++
++    @Test
++    fun `cancelling work releases its matching lease even before a candidate exists`() = runTest {
++        val store = ChapterTranslationStore(translationFile = null, fileCreator = null)
++        val lease = store.tryAcquirePageStageLease("page-1", PageStage.Ocr, PageWriteOrigin.BATCH)
++            .shouldBeInstanceOf<LeaseAcquisition.Granted>()
++            .lease
++
++        store.cancelPageStageWork("page-1", PageWriteOrigin.BATCH, lease.token)
++        store.pageLeaseOwner("page-1") shouldBe null
++    }
++
++    @Test
++    fun `generation fenced compatibility update cannot mutate a replacement run`() = runTest {
++        val store = store()
++        val oldGeneration = store.currentGeneration
++        store.beginGeneration("replacement run")
++
++        store.updatePageAtGeneration("p1", oldGeneration, "late cancellation") {
++            PageTranslation(sourceFileName = "p1", ocrStatus = StageStatus.CANCELLED)
++        }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Rejected>()
++
++        store.state.value.getValue("p1").ocrStatus shouldBe StageStatus.READY
++    }
++
+     @Test
+     fun `ocr-only merge preserves reusable cleaned artifact`() = runTest {
+         val store = store()
+diff --git a/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt b/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt
+index f02a972..18b08e1 100644
+--- a/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt
++++ b/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt
+@@ -784,7 +784,10 @@ class RollingAutoCoordinatorTest {
+     @Test
+     fun `older same-spec snapshot build cannot overwrite newer stage`() = runBlocking {
+         val executor = ControllableExecutor(autoComplete = false)
+-        val store = newStore(listOf("p0" to blank()))
++        // Keep an unowned, display-ready ahead slot in every snapshot. Snapshot
++        // construction resolves that slot outside the lifecycle lock, which gives
++        // this test a deterministic place to pause an older build.
++        val store = newStore(listOf("p0" to blank(), "p1" to displayReady("p1")))
+         val coordinator = newCoordinator(
+             executor,
+             TranslatorComputeClass.REMOTE_IO,
+@@ -802,7 +805,7 @@ class RollingAutoCoordinatorTest {
+             RollingAutoCoordinator.PageWorkItem("p$idx", null)
+         }
+ 
+-        coordinator.updateWindow(identity, 0, 0, 1, session, gatedResolver)
++        coordinator.updateWindow(identity, 0, 1, 2, session, gatedResolver)
+         executor.awaitPrepareStarted(0)
+         blockNextBuild.set(true)
+ 
+diff --git a/app/src/test/java/eu/kanade/translation/translator/AiTranslationRetryControllerTest.kt b/app/src/test/java/eu/kanade/translation/translator/AiTranslationRetryControllerTest.kt
+index 76ab9e7..a114ea6 100644
+--- a/app/src/test/java/eu/kanade/translation/translator/AiTranslationRetryControllerTest.kt
++++ b/app/src/test/java/eu/kanade/translation/translator/AiTranslationRetryControllerTest.kt
+@@ -11,8 +11,8 @@ import org.junit.jupiter.api.Test
+ class AiTranslationRetryControllerTest {
+ 
+     @Test
+-    fun `strict structural failure stops live retry before missing split`() {
+-        val translator = StructuralFailureTranslator()
++    fun `strict structural failure uses bounded split recovery`() {
++        val translator = StructuralFailureThenSuccessTranslator()
+         val page = PageTranslation(
+             blocks = mutableListOf(block("first"), block("second")),
+         )
+@@ -26,6 +26,37 @@ class AiTranslationRetryControllerTest {
+             pageIndexes = mapOf("page.jpg" to 0),
+         )
+ 
++        runTest {
++            translateAiChunkWithAdaptiveRetry(
++                translator = translator,
++                chunk = chunk,
++                requestedOutputTokens = 256,
++                profile = TranslationContextChunkPlanner.Profile.DEFAULT,
++                allowFailureSplit = true,
++                label = "test",
++                retryDepth = 0,
++            )
++        }
++        translator.calls shouldBe 3
++        page.blocks.map { it.translation } shouldBe listOf("translated:first", "translated:second")
++    }
++
++    @Test
++    fun `structural split recovery has a bounded request budget`() {
++        val translator = AlwaysStructuralFailureTranslator()
++        val page = PageTranslation(
++            blocks = MutableList(16) { block("block-$it") },
++        )
++        val chunk = TranslationContextChunk(
++            pages = linkedMapOf("page.jpg" to page),
++            blockCount = page.blocks.size,
++            rollingContext = "",
++            estimatedPromptTokens = 0,
++            maxOutputTokens = 256,
++            protocol = ContextualRequestProtocol.BATCH_V1,
++            pageIndexes = mapOf("page.jpg" to 0),
++        )
++
+         assertThrows(ContextualStructuralFailureException::class.java) {
+             runTest {
+                 translateAiChunkWithAdaptiveRetry(
+@@ -34,16 +65,16 @@ class AiTranslationRetryControllerTest {
+                     requestedOutputTokens = 256,
+                     profile = TranslationContextChunkPlanner.Profile.DEFAULT,
+                     allowFailureSplit = true,
+-                    label = "test",
++                    label = "bounded",
+                     retryDepth = 0,
+                 )
+             }
+         }
+-        translator.calls shouldBe 1
++        (translator.calls <= MAX_ADAPTIVE_RETRY_REQUESTS) shouldBe true
+         page.blocks.forEach { it.translation shouldBe "" }
+     }
+ 
+-    private class StructuralFailureTranslator : AITranslator() {
++    private open class StructuralFailureThenSuccessTranslator : AITranslator() {
+         var calls = 0
+ 
+         override val fromLang: TextRecognizerLanguage = TextRecognizerLanguage.JAPANESE
+@@ -53,20 +84,66 @@ class AiTranslationRetryControllerTest {
+             chunk: TranslationContextChunk,
+         ): ContextualTranslationBatch {
+             calls++
+-            val idMap = linkedMapOf(
+-                "p0000_b0000" to TargetLocation("page.jpg", 0),
+-                "p0000_b0001" to TargetLocation("page.jpg", 1),
++            val request = ContextualRequestBuilder.build(
++                chunk,
++                TextRecognizerLanguage.JAPANESE,
++                TextTranslatorLanguage.ENGLISH,
++            )
++            if (calls == 1) {
++                return ContextualTranslationBatch(
++                    idToBlockIndex = request.locations,
++                    results = emptyList(),
++                    strictValidation = true,
++                    protocolVersion = BatchTranslationProtocol.VERSION,
++                    validationErrors = listOf("Missing batch response footer"),
++                )
++            }
++            return validBatch(request, chunk)
++        }
++
++        override suspend fun promptText(prompt: String): String = ""
++    }
++
++    private class AlwaysStructuralFailureTranslator : StructuralFailureThenSuccessTranslator() {
++        override suspend fun translateContextualStructured(
++            chunk: TranslationContextChunk,
++        ): ContextualTranslationBatch {
++            calls++
++            val request = ContextualRequestBuilder.build(
++                chunk,
++                TextRecognizerLanguage.JAPANESE,
++                TextTranslatorLanguage.ENGLISH,
+             )
+             return ContextualTranslationBatch(
+-                idToBlockIndex = idMap,
++                idToBlockIndex = request.locations,
+                 results = emptyList(),
+                 strictValidation = true,
+                 protocolVersion = BatchTranslationProtocol.VERSION,
+                 validationErrors = listOf("Missing batch response footer"),
+             )
+         }
++    }
+ 
+-        override suspend fun promptText(prompt: String): String = ""
++    companion object {
++        private fun validBatch(
++            request: ContextualRequestBuilder.Request,
++            chunk: TranslationContextChunk,
++        ): ContextualTranslationBatch = ContextualTranslationBatch(
++            idToBlockIndex = request.locations,
++            results = request.orderedIds.map { id ->
++                val target = request.idMap.getValue(id)
++                val location = request.locations.getValue(id)
++                val source = chunk.pages.getValue(location.pageKey).blocks[location.blockIndex].text
++                ContextualTranslationResult(
++                    id = id,
++                    targetKey = target,
++                    text = "translated:$source",
++                    status = ContextualTranslationResult.Status.TRANSLATED,
++                )
++            },
++            strictValidation = true,
++            protocolVersion = BatchTranslationProtocol.VERSION,
++        )
+     }
+ 
+     private fun block(text: String): TranslationBlock = TranslationBlock(
+diff --git a/app/src/test/java/eu/kanade/translation/translator/ContextualResponseParserTest.kt b/app/src/test/java/eu/kanade/translation/translator/ContextualResponseParserTest.kt
+index 4213860..40647c7 100644
+--- a/app/src/test/java/eu/kanade/translation/translator/ContextualResponseParserTest.kt
++++ b/app/src/test/java/eu/kanade/translation/translator/ContextualResponseParserTest.kt
+@@ -303,6 +303,39 @@ class ContextualResponseParserTest {
+         page.blocks.single().translation shouldBe "Translated target"
+     }
+ 
++    @Test
++    fun `strict batch accepts the explicit safe marker without promoting it as text`() {
++        val page = PageTranslation(blocks = mutableListOf(block("mature source")))
++        val chunk = TranslationContextChunk(
++            pages = linkedMapOf("page.jpg" to page),
++            blockCount = 1,
++            rollingContext = "",
++            estimatedPromptTokens = 0,
++            maxOutputTokens = 256,
++            pageIndexes = mapOf("page.jpg" to 0),
++        )
++        val request = ContextualRequestBuilder.build(
++            chunk,
++            TextRecognizerLanguage.JAPANESE,
++            TextTranslatorLanguage.ENGLISH,
++        )
++        val rawResponse = """
++            ${BatchTranslationProtocol.RESPONSE_HEADER}
++            ${BatchTranslationProtocol.PAGE_START} p0000
++            p0000_b0000|${TranslationPrompts.UNTRANSLATABLE_MARKER}
++            ${BatchTranslationProtocol.PAGE_END} p0000
++            ${BatchTranslationProtocol.RESPONSE_END}
++        """.trimIndent()
++
++        val batch = ContextualResponseParser.parseBatch(rawResponse, request)
++
++        assertTrue(batch.isStructurallyValid)
++        assertTrue(batch.safeOutputFailure != null)
++        batch.untranslatable.single().status shouldBe ContextualTranslationResult.Status.UNTRANSLATABLE
++        applyBatchToChunk(chunk, batch)
++        page.blocks.single().translation shouldBe ""
++    }
++
+     @Test
+     fun `strict batch requires every requested page section`() {
+         val first = PageTranslation(blocks = mutableListOf(block("first")))
+@@ -464,6 +497,40 @@ class ContextualResponseParserTest {
+         page.blocks.single().translation shouldBe "First"
+     }
+ 
++    @Test
++    fun `framing recovery never treats context delta records as page translations`() {
++        val page = PageTranslation(blocks = mutableListOf(block("first"), block("second", x = 20f)))
++        val chunk = TranslationContextChunk(
++            pages = linkedMapOf("page.jpg" to page),
++            blockCount = 2,
++            rollingContext = "",
++            estimatedPromptTokens = 0,
++            maxOutputTokens = 256,
++            pageIndexes = mapOf("page.jpg" to 0),
++        )
++        val request = ContextualRequestBuilder.build(
++            chunk,
++            TextRecognizerLanguage.JAPANESE,
++            TextTranslatorLanguage.ENGLISH,
++        )
++        val deltaIdLookingLine = """
++            ${BatchTranslationProtocol.RESPONSE_HEADER}
++            ${BatchTranslationProtocol.PAGE_START} p0000
++            p0000_b0000|First
++            ${BatchTranslationProtocol.PAGE_END} p0000
++            ${BatchTranslationProtocol.CONTEXT_DELTA_START} p0000
++            p0000_b0001|Forged from delta
++            ${BatchTranslationProtocol.RESPONSE_END}
++        """.trimIndent()
++
++        val batch = ContextualResponseParser.parseBatch(deltaIdLookingLine, request)
++
++        assertFalse(batch.isStructurallyValid)
++        assertTrue(batch.missingIds.contains("p0000_b0001"))
++        applyBatchToChunk(chunk, batch)
++        page.blocks.forEach { it.translation shouldBe "" }
++    }
++
+     @Test
+     fun `exact requested ids recover without protocol framing`() {
+         val page = PageTranslation(blocks = mutableListOf(block("first"), block("second", x = 20f)))
+diff --git a/app/src/test/java/eu/kanade/translation/translator/TranslationPromptsTest.kt b/app/src/test/java/eu/kanade/translation/translator/TranslationPromptsTest.kt
+index 0a918e2..b5fafd4 100644
+--- a/app/src/test/java/eu/kanade/translation/translator/TranslationPromptsTest.kt
++++ b/app/src/test/java/eu/kanade/translation/translator/TranslationPromptsTest.kt
+@@ -126,6 +126,20 @@ class TranslationPromptsTest {
+         prompt shouldNotContain "[OK]"
+     }
+ 
++    @Test
++    fun `batch prompt requires a safe record for untranslatable content`() {
++        val prompt = TranslationPrompts.pass1SystemPrompt(
++            TextRecognizerLanguage.JAPANESE,
++            TextTranslatorLanguage.ENGLISH,
++            batchProtocol = true,
++        )
++
++        prompt shouldContain TranslationPrompts.UNTRANSLATABLE_MARKER
++        prompt shouldContain "including content you cannot translate faithfully"
++        prompt shouldContain "Never omit its ID"
++        prompt shouldNotContain "output nothing and leave the block's line out"
++    }
++
+     @Test
+     fun `parseLine parses different format variations correctly`() {
+         with(TranslationPrompts) {

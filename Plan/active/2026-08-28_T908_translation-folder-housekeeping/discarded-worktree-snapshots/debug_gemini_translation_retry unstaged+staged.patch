@@ -1,0 +1,631 @@
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/data/download/Downloader.kt b/app/src/main/java/eu/kanade/tachiyomi/data/download/Downloader.kt
+index 047c322..af6a2c4 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/data/download/Downloader.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/data/download/Downloader.kt
+@@ -275,9 +275,19 @@ class Downloader(
+ 
+         val source = sourceManager.get(manga.source) as? HttpSource ?: return
+         val wasEmpty = queueState.value.isEmpty()
+-        val chaptersToQueue = chapters.asSequence()
+-            // Filter out those already downloaded.
+-            .filter { provider.findChapterDir(it.name, it.scanlator, manga.title, source) == null }
++        val (alreadyDownloaded, notDownloaded) = chapters.partition {
++            provider.findChapterDir(it.name, it.scanlator, manga.title, source) != null
++        }
++
++        if (alreadyDownloaded.isNotEmpty()) {
++            scope.launchIO {
++                alreadyDownloaded.forEach { chapter ->
++                    translationManager.startTranslationAfterDownloadIfRequested(manga, chapter)
++                }
++            }
++        }
++
++        val chaptersToQueue = notDownloaded.asSequence()
+             // Add chapters to queue from the start.
+             .sortedByDescending { it.sourceOrder }
+             // Filter out those already enqueued.
+@@ -290,7 +300,7 @@ class Downloader(
+             addAllToQueue(chaptersToQueue)
+ 
+             // Start downloader if needed
+-            if (autoStart && wasEmpty) {
++            if (autoStart && (!DownloadJob.isRunning(context) || wasEmpty)) {
+                 val queuedDownloads = queueState.value.count { it.source !is UnmeteredSource }
+                 val maxDownloadsFromSource = queueState.value
+                     .groupBy { it.source }
+diff --git a/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt b/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt
+index e950245..6c12792 100644
+--- a/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt
++++ b/app/src/main/java/eu/kanade/tachiyomi/ui/manga/MangaScreenModel.kt
+@@ -33,6 +33,7 @@ import eu.kanade.presentation.manga.components.ChapterDownloadAction
+ import eu.kanade.presentation.manga.components.ChapterTranslationAction
+ import eu.kanade.presentation.util.formattedMessage
+ import eu.kanade.tachiyomi.data.download.DownloadCache
++import eu.kanade.tachiyomi.data.download.DownloadJob
+ import eu.kanade.tachiyomi.data.download.DownloadManager
+ import eu.kanade.tachiyomi.data.download.model.Download
+ import eu.kanade.tachiyomi.data.track.EnhancedTracker
+@@ -949,13 +950,33 @@ class MangaScreenModel(
+             .takeIf { it.any { candidate -> candidate.chapter.id == item.chapter.id } }
+             ?: listOf(item)
+         pendingTranslationGroup = emptyList()
+-        val downloaded = group.filter { it.downloadState == Download.State.DOWNLOADED }
+-        val awaitingDownload = group.filter { it.downloadState != Download.State.DOWNLOADED }
++
++        val downloaded = mutableListOf<ChapterList.Item>()
++        val awaitingDownload = mutableListOf<ChapterList.Item>()
++        group.forEach { candidate ->
++            if (candidate.downloadState == Download.State.DOWNLOADED ||
++                downloadManager.isChapterDownloaded(
++                    candidate.chapter.name,
++                    candidate.chapter.scanlator,
++                    manga.title,
++                    manga.source,
++                    skipCache = true,
++                )
++            ) {
++                downloaded.add(candidate)
++            } else {
++                awaitingDownload.add(candidate)
++            }
++        }
++
+         awaitingDownload.forEach { candidate ->
+             translationManager.queueTranslationAfterDownload(manga, candidate.chapter)
+         }
+         if (awaitingDownload.isNotEmpty()) {
+             downloadManager.downloadChapters(manga, awaitingDownload.map { it.chapter })
++            if (!DownloadJob.isRunning(context)) {
++                downloadManager.startDownloads()
++            }
+         }
+         if (downloaded.isEmpty()) return
+         if (downloaded.size > 1) {
+diff --git a/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt b/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt
+index 9ee03f1..d98d97f 100644
+--- a/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt
++++ b/app/src/main/java/eu/kanade/translation/ChapterTranslator.kt
+@@ -341,7 +341,8 @@ class ChapterTranslator(
+ 
+     fun queueChapter(manga: Manga, chapter: Chapter) {
+         val source = sourceManager.get(manga.source) as? HttpSource ?: return
+-        if (queueState.value.any { it.chapter.id == chapter.id }) return
++        val existing = queueState.value.find { it.chapter.id == chapter.id }
++        if (existing?.status == Translation.State.TRANSLATING) return
+         // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
+         // (corrupted/migrated pref). This runs on a UI action, so a thrown
+         // exception would crash the UI thread; catch it and surface as a toast
+@@ -366,6 +367,14 @@ class ChapterTranslator(
+             }
+             return
+         }
++        if (existing != null) {
++            existing.source = source
++            existing.fromLang = fromLang
++            existing.toLang = toLang
++            existing.status = Translation.State.QUEUE
++            persistQueue()
++            return
++        }
+         val translation = Translation(source, manga, chapter, fromLang, toLang)
+         addToQueue(translation)
+     }
+diff --git a/app/src/main/java/eu/kanade/translation/model/ChapterQueueConflictDetection.kt b/app/src/main/java/eu/kanade/translation/model/ChapterQueueConflictDetection.kt
+index 346c412..3f61afa 100644
+--- a/app/src/main/java/eu/kanade/translation/model/ChapterQueueConflictDetection.kt
++++ b/app/src/main/java/eu/kanade/translation/model/ChapterQueueConflictDetection.kt
+@@ -37,8 +37,8 @@ fun findRunningSameSourceConflict(
+     .firstOrNull()
+ 
+ /**
+- * TachiyomiAT bug 3 fix: pure selection of stale QUEUE entries to evict when a
+- * new chapter of [sourceId] is queued. Returns every queued (status == QUEUE)
++ * TachiyomiAT bug 3 fix: pure selection of stale QUEUE / ERROR entries to evict when a
++ * new chapter of [sourceId] is queued. Returns every queued or errored (status == QUEUE or ERROR)
+  * chapter of [sourceId] that is NOT [keepChapterId]. Evicting these preserves
+  * their artifacts (the store is untouched); only the queue entry is dropped.
+  */
+@@ -50,7 +50,7 @@ fun staleQueuedChaptersToEvict(
+     .asSequence()
+     .filter { it.chapterId != keepChapterId }
+     .filter { it.sourceId == sourceId }
+-    .filter { it.status == Translation.State.QUEUE }
++    .filter { it.status == Translation.State.QUEUE || it.status == Translation.State.ERROR }
+     .toList()
+ 
+ /**
+diff --git a/app/src/main/java/eu/kanade/translation/model/Translation.kt b/app/src/main/java/eu/kanade/translation/model/Translation.kt
+index 71bfc86..0933f38 100644
+--- a/app/src/main/java/eu/kanade/translation/model/Translation.kt
++++ b/app/src/main/java/eu/kanade/translation/model/Translation.kt
+@@ -14,11 +14,11 @@ import uy.kohesive.injekt.Injekt
+ import uy.kohesive.injekt.api.get
+ 
+ data class Translation(
+-    val source: HttpSource,
++    var source: HttpSource,
+     val manga: Manga,
+     val chapter: Chapter,
+-    val fromLang: TextRecognizerLanguage = TextRecognizerLanguage.CHINESE,
+-    val toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH,
++    var fromLang: TextRecognizerLanguage = TextRecognizerLanguage.CHINESE,
++    var toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH,
+ ) {
+     @Transient
+     private val _statusFlow = MutableStateFlow(State.NOT_TRANSLATED)
+diff --git a/app/src/main/java/eu/kanade/translation/translator/GeminiTranslator.kt b/app/src/main/java/eu/kanade/translation/translator/GeminiTranslator.kt
+index 90c3771..56ba7e0 100644
+--- a/app/src/main/java/eu/kanade/translation/translator/GeminiTranslator.kt
++++ b/app/src/main/java/eu/kanade/translation/translator/GeminiTranslator.kt
+@@ -145,8 +145,9 @@ class GeminiTranslator(
+         val response = client.newCall(request).await()
+         val body = response.body?.string().orEmpty()
+         if (!response.isSuccessful) {
+-            val retryAfterMillis = response.header("Retry-After")?.toLongOrNull()?.times(1_000)
+             val error = body.toGeminiErrorSummary()
++            val retryAfterMillis = response.header("Retry-After")?.toLongOrNull()?.times(1_000)
++                ?: error.retryDelayMillis
+             logcat(tag = "GeminiTranslator", priority = LogPriority.WARN) {
+                 "event=provider_http_failure backend=gemini status=${response.code} " +
+                     "retryAfterMs=${retryAfterMillis ?: 0} code=${error.code ?: 0} " +
+@@ -220,16 +221,23 @@ internal object GeminiRequestPayload {
+     }
+ 
+     private fun thinkingConfig(modelName: String, mode: GeminiThinkingMode): JsonObject? {
+-        val normalized = modelName.lowercase()
+-        return when {
+-            mode == GeminiThinkingMode.AUTO -> null
+-            normalized.startsWith("gemini-3") && mode == GeminiThinkingMode.LOW ->
+-                buildJsonObject { put("thinkingLevel", JsonPrimitive("low")) }
+-            normalized.startsWith("gemini-2.5-flash") && mode == GeminiThinkingMode.DISABLED ->
+-                buildJsonObject { put("thinkingBudget", JsonPrimitive(0)) }
+-            normalized.startsWith("gemini-2.5") && mode == GeminiThinkingMode.LOW ->
+-                buildJsonObject { put("thinkingBudget", JsonPrimitive(1_024)) }
+-            else -> null
++        val normalized = modelName.removePrefix("models/").lowercase()
++        return when (mode) {
++            GeminiThinkingMode.DISABLED -> when {
++                normalized.startsWith("gemini-2.5") ->
++                    buildJsonObject { put("thinkingBudget", JsonPrimitive(0)) }
++                normalized.startsWith("gemini-3") ->
++                    buildJsonObject { put("thinkingLevel", JsonPrimitive("minimal")) }
++                else -> null
++            }
++            GeminiThinkingMode.LOW -> when {
++                normalized.startsWith("gemini-3") ->
++                    buildJsonObject { put("thinkingLevel", JsonPrimitive("low")) }
++                normalized.startsWith("gemini-2.5") ->
++                    buildJsonObject { put("thinkingBudget", JsonPrimitive(1_024)) }
++                else -> null
++            }
++            GeminiThinkingMode.AUTO -> null
+         }
+     }
+ 
+@@ -261,14 +269,28 @@ internal class GeminiApiException(
+     val providerStatus: String?,
+ ) : Exception("Gemini HTTP $statusCode${providerStatus?.let { " ($it)" }.orEmpty()}")
+ 
+-private data class GeminiErrorSummary(val code: Int?, val statusName: String?)
++internal data class GeminiErrorSummary(
++    val code: Int?,
++    val statusName: String?,
++    val retryDelayMillis: Long? = null,
++)
+ 
+-private fun String.toGeminiErrorSummary(): GeminiErrorSummary = runCatching {
++internal fun String.toGeminiErrorSummary(): GeminiErrorSummary = runCatching {
+     val error = Json.parseToJsonElement(this).jsonObject["error"]?.jsonObject
+         ?: return@runCatching GeminiErrorSummary(null, null)
++    val retryDelay = error["details"]?.jsonArray?.firstNotNullOfOrNull { detailElement ->
++        val detail = detailElement.jsonObject
++        if (detail["@type"]?.jsonPrimitive?.contentOrNull == "type.googleapis.com/google.rpc.RetryInfo") {
++            val secondsStr = detail["retryDelay"]?.jsonPrimitive?.contentOrNull?.removeSuffix("s")?.trim()
++            secondsStr?.toDoubleOrNull()?.let { (it * 1000).toLong() }
++        } else {
++            null
++        }
++    }
+     GeminiErrorSummary(
+         code = error["code"]?.jsonPrimitive?.contentOrNull?.toIntOrNull(),
+         statusName = error["status"]?.jsonPrimitive?.contentOrNull,
++        retryDelayMillis = retryDelay,
+     )
+ }.getOrDefault(GeminiErrorSummary(null, null))
+ 
+@@ -282,14 +304,15 @@ internal fun String.extractGeminiText(): String {
+         ?.get("parts")
+         ?.jsonArray
+         ?: throw GeminiEmptyResponseException("Gemini returned no response candidate")
+-    val text = buildString {
++    val joinedText = buildString {
+         parts.forEach { part ->
+             val partObject = part.jsonObject
+             if (partObject["thought"]?.jsonPrimitive?.booleanOrNull != true) {
+                 append(partObject["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
+             }
+         }
+-    }.trim()
++    }
++    val text = OcrArtifactSanitizer.stripThinkingTags(joinedText)
+     if (text.isBlank()) throw GeminiEmptyResponseException("Gemini returned no usable text")
+     return text
+ }
+diff --git a/app/src/main/java/eu/kanade/translation/translator/TranslationRetry.kt b/app/src/main/java/eu/kanade/translation/translator/TranslationRetry.kt
+index 55f4567..22e4e11 100644
+--- a/app/src/main/java/eu/kanade/translation/translator/TranslationRetry.kt
++++ b/app/src/main/java/eu/kanade/translation/translator/TranslationRetry.kt
+@@ -82,7 +82,7 @@ internal suspend inline fun <T> withTranslationRetry(
+             }
+             val backoff = (baseDelayMs * (1L shl (attempt - 1))) + Random.nextLong(0, 500)
+             val retryAfter = (e as? GeminiApiException)?.retryAfterMillis
+-            val capped = (retryAfter ?: backoff).coerceIn(0L, 30_000L)
++            val capped = (retryAfter ?: backoff).coerceIn(0L, 60_000L)
+             envelopePageKeys?.let { pageKeys ->
+                 BatchTranslationDiagnostics.envelopeLifecycle(
+                     phase = BatchEnvelopeLifecycle.RETRY,
+@@ -111,12 +111,19 @@ internal suspend inline fun <T> withTranslationRetry(
+  */
+ internal fun Throwable.isTransientRateOrServerError(): Boolean {
+     if (this is IOException) return true
++    if (this is GeminiEmptyResponseException) return true
++    if (this is GeminiApiException) {
++        return statusCode == 429 ||
++            statusCode in 500..599 ||
++            providerStatus in listOf("RESOURCE_EXHAUSTED", "UNAVAILABLE", "INTERNAL", "DEADLINE_EXCEEDED")
++    }
+     val msg = message?.lowercase() ?: return false
+     return msg.contains("429") ||
+         msg.contains("rate limit") ||
+         msg.contains("rate_limit") ||
+         msg.contains("ratelimit") ||
+         msg.contains("too many requests") ||
++        msg.contains("500") ||
+         msg.contains("502") ||
+         msg.contains("503") ||
+         msg.contains("504") ||
+@@ -127,5 +134,8 @@ internal fun Throwable.isTransientRateOrServerError(): Boolean {
+         msg.contains("timed out") ||
+         msg.contains("temporarily unavailable") ||
+         msg.contains("server error") ||
+-        msg.contains("overloaded")
++        msg.contains("overloaded") ||
++        msg.contains("resource_exhausted") ||
++        msg.contains("resource exhausted") ||
++        msg.contains("unavailable")
+ }
+diff --git a/app/src/test/java/eu/kanade/translation/model/ChapterQueueConflictDetectionTest.kt b/app/src/test/java/eu/kanade/translation/model/ChapterQueueConflictDetectionTest.kt
+index a37e193..9959e85 100644
+--- a/app/src/test/java/eu/kanade/translation/model/ChapterQueueConflictDetectionTest.kt
++++ b/app/src/test/java/eu/kanade/translation/model/ChapterQueueConflictDetectionTest.kt
+@@ -43,6 +43,14 @@ class ChapterQueueConflictDetectionTest {
+         findRunningSameSourceConflict(queue, requestedChapterId = 2, sourceId = 10) shouldBe null
+     }
+ 
++    @Test
++    fun `findRunningSameSourceConflict ignores stale ERROR entries`() {
++        val queue = listOf(
++            view(chapterId = 1, sourceId = 10, status = Translation.State.ERROR),
++        )
++        findRunningSameSourceConflict(queue, requestedChapterId = 2, sourceId = 10) shouldBe null
++    }
++
+     @Test
+     fun `findRunningSameSourceConflict ignores the requested chapter itself`() {
+         val queue = listOf(
+@@ -60,12 +68,13 @@ class ChapterQueueConflictDetectionTest {
+     }
+ 
+     @Test
+-    fun `staleQueuedChaptersToEvict returns every QUEUE entry of the same source except the keeper`() {
++    fun `staleQueuedChaptersToEvict returns every QUEUE and ERROR entry of the same source except the keeper`() {
+         val queue = listOf(
+             view(chapterId = 1, sourceId = 10, status = Translation.State.QUEUE),
+-            view(chapterId = 2, sourceId = 10, status = Translation.State.QUEUE),
++            view(chapterId = 2, sourceId = 10, status = Translation.State.ERROR),
+             view(chapterId = 3, sourceId = 10, status = Translation.State.TRANSLATING),
+             view(chapterId = 4, sourceId = 11, status = Translation.State.QUEUE),
++            view(chapterId = 5, sourceId = 11, status = Translation.State.ERROR),
+         )
+         val stale = staleQueuedChaptersToEvict(queue, keepChapterId = 99, sourceId = 10)
+         stale.map { it.chapterId } shouldContainExactly listOf(1L, 2L)
+@@ -75,9 +84,10 @@ class ChapterQueueConflictDetectionTest {
+     fun `staleQueuedChaptersToEvict keeps the keeper chapter`() {
+         val queue = listOf(
+             view(chapterId = 1, sourceId = 10, status = Translation.State.QUEUE),
++            view(chapterId = 2, sourceId = 10, status = Translation.State.ERROR),
+         )
+         val stale = staleQueuedChaptersToEvict(queue, keepChapterId = 1, sourceId = 10)
+-        stale shouldHaveSize 0
++        stale.map { it.chapterId } shouldContainExactly listOf(2L)
+     }
+ 
+     @Test
+diff --git a/app/src/test/java/eu/kanade/translation/translator/GeminiRequestPayloadTest.kt b/app/src/test/java/eu/kanade/translation/translator/GeminiRequestPayloadTest.kt
+index 9fd5016..b9f275f 100644
+--- a/app/src/test/java/eu/kanade/translation/translator/GeminiRequestPayloadTest.kt
++++ b/app/src/test/java/eu/kanade/translation/translator/GeminiRequestPayloadTest.kt
+@@ -5,6 +5,7 @@ import kotlinx.serialization.json.Json
+ import kotlinx.serialization.json.jsonObject
+ import kotlinx.serialization.json.jsonPrimitive
+ import org.junit.jupiter.api.Test
++import org.junit.jupiter.api.assertThrows
+ import tachiyomi.domain.translation.GeminiThinkingMode
+ 
+ class GeminiRequestPayloadTest {
+@@ -26,7 +27,7 @@ class GeminiRequestPayloadTest {
+     }
+ 
+     @Test
+-    fun `unsupported thinking mode omits the field instead of sending an invalid request`() {
++    fun `gemini-2 5-pro with DISABLED produces thinkingBudget = 0`() {
+         val request = GeminiRequestPayload.create(
+             modelName = "gemini-2.5-pro",
+             systemPrompt = null,
+@@ -36,15 +37,164 @@ class GeminiRequestPayloadTest {
+             thinkingMode = GeminiThinkingMode.DISABLED,
+         )
+ 
++        val config = Json.parseToJsonElement(request.payload).jsonObject["generationConfig"]!!.jsonObject
++        request.hasThinkingConfig shouldBe true
++        config["thinkingConfig"]!!.jsonObject["thinkingBudget"]!!.jsonPrimitive.content shouldBe "0"
++    }
++
++    @Test
++    fun `models gemini-2 5-flash strips prefix and produces thinkingBudget = 0`() {
++        val request = GeminiRequestPayload.create(
++            modelName = "models/gemini-2.5-flash",
++            systemPrompt = null,
++            prompt = "prompt",
++            maxOutputTokens = 512,
++            temperature = 0.3f,
++            thinkingMode = GeminiThinkingMode.DISABLED,
++        )
++
++        val config = Json.parseToJsonElement(request.payload).jsonObject["generationConfig"]!!.jsonObject
++        request.hasThinkingConfig shouldBe true
++        config["thinkingConfig"]!!.jsonObject["thinkingBudget"]!!.jsonPrimitive.content shouldBe "0"
++    }
++
++    @Test
++    fun `gemini-3-flash with DISABLED produces thinkingLevel = minimal`() {
++        val request = GeminiRequestPayload.create(
++            modelName = "gemini-3-flash",
++            systemPrompt = null,
++            prompt = "prompt",
++            maxOutputTokens = 512,
++            temperature = 0.3f,
++            thinkingMode = GeminiThinkingMode.DISABLED,
++        )
++
++        val config = Json.parseToJsonElement(request.payload).jsonObject["generationConfig"]!!.jsonObject
++        request.hasThinkingConfig shouldBe true
++        config["thinkingConfig"]!!.jsonObject["thinkingLevel"]!!.jsonPrimitive.content shouldBe "minimal"
++    }
++
++    @Test
++    fun `gemini-3-flash with LOW produces thinkingLevel = low`() {
++        val request = GeminiRequestPayload.create(
++            modelName = "gemini-3-flash",
++            systemPrompt = null,
++            prompt = "prompt",
++            maxOutputTokens = 512,
++            temperature = 0.3f,
++            thinkingMode = GeminiThinkingMode.LOW,
++        )
++
++        val config = Json.parseToJsonElement(request.payload).jsonObject["generationConfig"]!!.jsonObject
++        request.hasThinkingConfig shouldBe true
++        config["thinkingConfig"]!!.jsonObject["thinkingLevel"]!!.jsonPrimitive.content shouldBe "low"
++    }
++
++    @Test
++    fun `gemini-2 5-flash with LOW produces thinkingBudget = 1024`() {
++        val request = GeminiRequestPayload.create(
++            modelName = "gemini-2.5-flash",
++            systemPrompt = null,
++            prompt = "prompt",
++            maxOutputTokens = 512,
++            temperature = 0.3f,
++            thinkingMode = GeminiThinkingMode.LOW,
++        )
++
++        val config = Json.parseToJsonElement(request.payload).jsonObject["generationConfig"]!!.jsonObject
++        request.hasThinkingConfig shouldBe true
++        config["thinkingConfig"]!!.jsonObject["thinkingBudget"]!!.jsonPrimitive.content shouldBe "1024"
++    }
++
++    @Test
++    fun `unsupported thinking mode omits the field instead of sending an invalid request`() {
++        val request = GeminiRequestPayload.create(
++            modelName = "gemini-2.0-flash",
++            systemPrompt = null,
++            prompt = "prompt",
++            maxOutputTokens = 512,
++            temperature = 0.3f,
++            thinkingMode = GeminiThinkingMode.DISABLED,
++        )
++
+         request.hasThinkingConfig shouldBe false
+         Json.parseToJsonElement(request.payload).jsonObject["generationConfig"]!!.jsonObject
+             .containsKey("thinkingConfig") shouldBe false
+     }
+ 
+     @Test
+-    fun `Gemini response ignores thought parts and returns visible text`() {
+-        val response = """{"candidates":[{"content":{"parts":[{"thought":true,"text":"hidden"},{"text":"p0000_b0000|Hello"}]}}]}"""
++    fun `toGeminiErrorSummary extracts retryDelayMillis from google rpc RetryInfo`() {
++        val json = """
++            {
++              "error": {
++                "code": 429,
++                "message": "Resource has been exhausted (e.g. check quota).",
++                "status": "RESOURCE_EXHAUSTED",
++                "details": [
++                  {
++                    "@type": "type.googleapis.com/google.rpc.RetryInfo",
++                    "retryDelay": "14.5s"
++                  }
++                ]
++              }
++            }
++        """.trimIndent()
++
++        val summary = json.toGeminiErrorSummary()
++        summary.code shouldBe 429
++        summary.statusName shouldBe "RESOURCE_EXHAUSTED"
++        summary.retryDelayMillis shouldBe 14500L
++    }
++
++    @Test
++    fun `extractGeminiText filters out XML think tags and JSON thought parts`() {
++        val response = """
++            {
++              "candidates": [
++                {
++                  "content": {
++                    "parts": [
++                      {
++                        "thought": true,
++                        "text": "internal thought"
++                      },
++                      {
++                        "text": "<think>some reasoning</think>p0000_b0000|Hello world"
++                      }
++                    ]
++                  }
++                }
++              ]
++            }
++        """.trimIndent()
++
++        response.extractGeminiText() shouldBe "p0000_b0000|Hello world"
++    }
++
++    @Test
++    fun `extractGeminiText throws GeminiEmptyResponseException when text is blank`() {
++        val response = """
++            {
++              "candidates": [
++                {
++                  "content": {
++                    "parts": [
++                      {
++                        "thought": true,
++                        "text": "internal thought"
++                      },
++                      {
++                        "text": "<think>only reasoning here</think>"
++                      }
++                    ]
++                  }
++                }
++              ]
++            }
++        """.trimIndent()
+ 
+-        response.extractGeminiText() shouldBe "p0000_b0000|Hello"
++        assertThrows<GeminiEmptyResponseException> {
++            response.extractGeminiText()
++        }
+     }
+ }
+diff --git a/app/src/test/java/eu/kanade/translation/translator/TranslationRetryTest.kt b/app/src/test/java/eu/kanade/translation/translator/TranslationRetryTest.kt
+index 607ba79..75a81e6 100644
+--- a/app/src/test/java/eu/kanade/translation/translator/TranslationRetryTest.kt
++++ b/app/src/test/java/eu/kanade/translation/translator/TranslationRetryTest.kt
+@@ -58,6 +58,63 @@ class TranslationRetryTest {
+         calls shouldBe 2
+     }
+ 
++    @Test
++    fun `GeminiApiException with HTTP 500 retries and succeeds`() = runTest {
++        var calls = 0
++        val result = withTranslationRetry(maxAttempts = 2, baseDelayMs = 1, logTag = "gemini") {
++            calls++
++            if (calls == 1) throw GeminiApiException(500, null, 500, "INTERNAL")
++            "ok"
++        }
++
++        result shouldBe "ok"
++        calls shouldBe 2
++    }
++
++    @Test
++    fun `GeminiApiException with retryAfterMillis from RetryInfo backs off accurately`() = runTest {
++        var calls = 0
++        val startTime = testScheduler.currentTime
++        val result = withTranslationRetry(maxAttempts = 2, baseDelayMs = 1000, logTag = "gemini") {
++            calls++
++            if (calls == 1) {
++                throw GeminiApiException(
++                    statusCode = 429,
++                    retryAfterMillis = 14500L,
++                    providerCode = 429,
++                    providerStatus = "RESOURCE_EXHAUSTED",
++                )
++            }
++            "ok"
++        }
++
++        result shouldBe "ok"
++        calls shouldBe 2
++        (testScheduler.currentTime - startTime) shouldBe 14500L
++    }
++
++    @Test
++    fun `retry delay is capped at 60 seconds`() = runTest {
++        var calls = 0
++        val startTime = testScheduler.currentTime
++        val result = withTranslationRetry(maxAttempts = 2, baseDelayMs = 1000, logTag = "gemini") {
++            calls++
++            if (calls == 1) {
++                throw GeminiApiException(
++                    statusCode = 429,
++                    retryAfterMillis = 75000L,
++                    providerCode = 429,
++                    providerStatus = "RESOURCE_EXHAUSTED",
++                )
++            }
++            "ok"
++        }
++
++        result shouldBe "ok"
++        calls shouldBe 2
++        (testScheduler.currentTime - startTime) shouldBe 60000L
++    }
++
+     @Test
+     fun `exhaustion throws last transient error`() = runTest {
+         var calls = 0
+@@ -101,13 +158,28 @@ class TranslationRetryTest {
+     }
+ 
+     @Test
+-    fun `isTransientRateOrServerError detects rate limit phrasings`() {
++    fun `isTransientRateOrServerError detects rate limit phrasings and server errors`() {
+         IOException("timeout").isTransientRateOrServerError() shouldBe true
+         RuntimeException("429 Too Many Requests").isTransientRateOrServerError() shouldBe true
+         RuntimeException("Rate Limit Exceeded").isTransientRateOrServerError() shouldBe true
++        RuntimeException("500 Internal Server Error").isTransientRateOrServerError() shouldBe true
+         RuntimeException("503 Service Unavailable").isTransientRateOrServerError() shouldBe true
+         RuntimeException("connection timed out").isTransientRateOrServerError() shouldBe true
+         RuntimeException("overloaded").isTransientRateOrServerError() shouldBe true
++        RuntimeException("resource_exhausted").isTransientRateOrServerError() shouldBe true
++        RuntimeException("resource exhausted").isTransientRateOrServerError() shouldBe true
++        RuntimeException("service unavailable").isTransientRateOrServerError() shouldBe true
++    }
++
++    @Test
++    fun `isTransientRateOrServerError recognizes GeminiApiException and GeminiEmptyResponseException`() {
++        GeminiApiException(statusCode = 429, retryAfterMillis = null, providerCode = 429, providerStatus = "RESOURCE_EXHAUSTED").isTransientRateOrServerError() shouldBe true
++        GeminiApiException(statusCode = 500, retryAfterMillis = null, providerCode = 500, providerStatus = "INTERNAL").isTransientRateOrServerError() shouldBe true
++        GeminiApiException(statusCode = 503, retryAfterMillis = null, providerCode = 503, providerStatus = "UNAVAILABLE").isTransientRateOrServerError() shouldBe true
++        GeminiApiException(statusCode = 200, retryAfterMillis = null, providerCode = 200, providerStatus = "DEADLINE_EXCEEDED").isTransientRateOrServerError() shouldBe true
++        GeminiApiException(statusCode = 400, retryAfterMillis = null, providerCode = 400, providerStatus = "INVALID_ARGUMENT").isTransientRateOrServerError() shouldBe false
++
++        GeminiEmptyResponseException("Gemini returned no usable text").isTransientRateOrServerError() shouldBe true
+     }
+ 
+     @Test

@@ -1,0 +1,76 @@
+diff --git a/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt b/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt
+index ca7a5fc..77c6b07 100644
+--- a/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt
++++ b/app/src/test/java/eu/kanade/translation/scheduling/RollingAutoCoordinatorTest.kt
+@@ -132,7 +132,7 @@ class RollingAutoCoordinatorTest {
+      * reach 2 during the overlap.
+      */
+     @Test
+-    fun `remote overlap - native B starts while translate A is in flight`() = runBlocking {
++    fun `remote overlap - native B starts while translate A is in flight`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = false)
+         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
+         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
+@@ -166,7 +166,7 @@ class RollingAutoCoordinatorTest {
+      * At no point do both run simultaneously.
+      */
+     @Test
+-    fun `local compute serializes prepare and translate through a shared gate`() = runBlocking {
++    fun `local compute serializes prepare and translate through a shared gate`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = false)
+         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
+         val coordinator = newCoordinator(executor, TranslatorComputeClass.LOCAL_COMPUTE)
+@@ -442,7 +442,7 @@ class RollingAutoCoordinatorTest {
+ 
+     /** shutdown clears the snapshot and tears down all lane work. */
+     @Test
+-    fun `shutdown clears snapshot`() = runBlocking {
++    fun `shutdown clears snapshot`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = true)
+         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
+         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
+@@ -885,7 +885,7 @@ class RollingAutoCoordinatorTest {
+     }
+ 
+     @Test
+-    fun `chapter mismatched cancellation leaves the active scheduler owner running`() = runBlocking {
++    fun `chapter mismatched cancellation leaves the active scheduler owner running`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = false)
+         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
+         val scheduler = TranslationScheduler(
+@@ -914,7 +914,7 @@ class RollingAutoCoordinatorTest {
+     }
+ 
+     @Test
+-    fun `same-chapter replacement is suppressed while cancellation is signalling`() = runBlocking {
++    fun `same-chapter replacement is suppressed while cancellation is signalling`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = false)
+         val oldStore = newStore(listOf("old0" to blank()))
+         val newStore = newStore(listOf("new0" to blank()))
+@@ -995,7 +995,7 @@ class RollingAutoCoordinatorTest {
+     }
+ 
+     @Test
+-    fun `global cancellation epoch rejects a concurrent update and permits post-cancel rearm`() = runBlocking {
++    fun `global cancellation epoch rejects a concurrent update and permits post-cancel rearm`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = true)
+         val oldStore = newStore(listOf("old0" to blank()))
+         val newStore = newStore(listOf("new0" to blank()))
+@@ -1093,7 +1093,7 @@ class RollingAutoCoordinatorTest {
+     }
+ 
+     @Test
+-    fun `stable scheduler snapshot switches pointer and rejects same-identity replay`() = runBlocking {
++    fun `stable scheduler snapshot switches pointer and rejects same-identity replay`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = true)
+         val oldStore = newStore(listOf("old0" to blank(), "old1" to blank(), "old2" to blank()))
+         val newStore = newStore(listOf("new0" to blank()))
+@@ -1178,7 +1178,7 @@ class RollingAutoCoordinatorTest {
+     }
+ 
+     @Test
+-    fun `reconcile admission guard suppresses batch or revision recovery poke`() = runBlocking {
++    fun `reconcile admission guard suppresses batch or revision recovery poke`() = runBlocking<Unit> {
+         val executor = ControllableExecutor(autoComplete = false)
+         val store = newStore(listOf("p0" to blank()))
+         val scheduler = TranslationScheduler(
