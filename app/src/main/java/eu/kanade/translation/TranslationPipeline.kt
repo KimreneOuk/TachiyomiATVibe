@@ -55,9 +55,11 @@ import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.pipeline.MemoryGovernance
+import eu.kanade.translation.pipeline.OnnxPhaseResult
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
 import eu.kanade.translation.pipeline.SinglePageHttpRenderPhase
+import eu.kanade.translation.pipeline.SinglePageOnnxPhase
 import eu.kanade.translation.pipeline.copyForResume
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.rendering.RenderColorEstimator
@@ -294,8 +296,6 @@ class TranslationPipeline(
         engines.closeEngines()
     }
 
-    @Volatile
-    private var consecutiveOomCount = 0
 
     /**
      * Listener that lets the translator share the same [ChapterTranslationStore]
@@ -581,6 +581,24 @@ class TranslationPipeline(
             retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
         },
     )
+    // T909 Phase 14: permit-held ONNX phase + resume/native-stage helpers moved
+    // to translation/pipeline/SinglePageOnnxPhase.kt (OnnxPhaseResult moves with
+    // it; bitmap recycle/ownership points moved verbatim). Engine reads go
+    // through [engines]; the engine-rebuild mutex is shared so rebuild ordering
+    // against native-quarantine admission is unchanged.
+    private val singlePageOnnxPhase = SinglePageOnnxPhase(
+        context = context,
+        translationPreferences = translationPreferences,
+        provider = provider,
+        downloadProvider = downloadProvider,
+        streamRegistry = streamRegistry,
+        engines = engines,
+        cleanedPublication = cleanedPublication,
+        pageStoreWriter = pageStoreWriter,
+        activeStoreResolverProvider = { activeStoreResolver },
+        engineRebuildMutex = engineRebuildMutex,
+    )
+
 
     private suspend fun deleteRetiredCleanedFile(
         manga: Manga,
@@ -3174,23 +3192,10 @@ class TranslationPipeline(
         engines.ensureEnginesBuiltFor(fromLang, toLang)
     }
 
-    /**
-     * Phase ONNX of the reader single-page path: runs under native quarantine.
-     *
-     * Sets up the store, resolves the page stream, decodes the bitmap, runs
-     * [processSinglePage] (fused detect+OCR+inpaint), and persists .cleaned.
-     * Returns [OnnxPhaseResult] with the [PageTranslation] (its cleanedBitmap
-     * alive) for the caller to continue with HTTP translate + render OUTSIDE the
-     * permit — the key asymmetry: ONNX for the next prefetch page overlaps this
-     * page's network call.
-     *
-     * Returns null for resume/completed/error paths where the page is already
-     * handled (no further work needed). The caller releases the permit after this
-     * returns regardless of the result, so long-running resume paths
-     * ([renderResumedPage], [resumeInpaintAndRender]) also run under the permit
-     * — they are edge cases and the ONNX overlap benefit applies only to the
-     * fresh translate path.
-     */
+    // T909 Phase 14: permit-held ONNX phase body moved to
+    // translation/pipeline/SinglePageOnnxPhase.kt (OnnxPhaseResult, the resume
+    // paths, and the batch native stages moved with it). Same-signature stub
+    // keeps the call sites; bitmap recycle/ownership points moved verbatim.
     private suspend fun translateSinglePageOnnx(
         manga: Manga,
         chapter: Chapter,
@@ -3199,302 +3204,8 @@ class TranslationPipeline(
         readerStreamFn: (() -> InputStream)? = null,
         force: Boolean = true,
         stageListener: TranslationStageListener? = null,
-    ): OnnxPhaseResult? {
-        val streamFromReader = readerStreamFn ?: peekReaderPageStream(manga, chapter, source, pageKey)
-        val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
-        val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
-        val syntheticTranslation = Translation(source, manga, chapter, fromLang, toLang)
-        syntheticTranslation.status = Translation.State.TRANSLATING
-
-        // The caller already owns native quarantine. Rebuild is therefore ordered
-        // after any timed-out predecessor's real exit and cannot race closeEngines.
-        engineRebuildMutex.withLock {
-            ensureEnginesBuiltFor(fromLang, toLang)
-        }
-
-        var ownStore: ChapterTranslationStore? = null
-        val store = activeStoreResolver?.invoke(syntheticTranslation).also {
-            ownStore = if (it == null) null else syntheticTranslation.let { _ -> it }
-        } ?: run {
-            val mangaDir = provider.getMangaDir(manga.title, source)
-            val saveFile = provider.getTranslationFileName(chapter.name, chapter.scanlator)
-            val parent = mangaDir ?: return null
-            ChapterTranslationStore.openArtifact(parent, saveFile).also { ownStore = it }
-        }
-
-        // Cleanup runs here for resume/error paths; deferred to the fresh path
-        // where the cleaned bitmap crosses the permit boundary.
-        var needsHttpRender = false
-        try {
-            val resumeTranslation = store.state.value[pageKey]?.copyForResume()
-            val desiredModeName = inpaintingModeFromPref().name
-            val modeMatches = resumeTranslation?.inpaintingModeUsed == null || resumeTranslation.inpaintingModeUsed == desiredModeName
-            val adjustedResume = if (resumeTranslation != null && !modeMatches && resumeTranslation.isCleanedImageReady) {
-                resumeTranslation.copy(inpaintStatus = StageStatus.PENDING, cleanedImageName = null)
-            } else {
-                resumeTranslation
-            }
-
-            val workPlan = eu.kanade.translation.model.PageWorkPlanner.plan(adjustedResume, force)
-
-            if (!workPlan.runOcr && !workPlan.runTranslation && !workPlan.runInpaint && !workPlan.runRender) {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT single-page resume skip: pageKey=$pageKey already has final output"
-                }
-                return null
-            }
-
-            if (!workPlan.runOcr && !workPlan.runInpaint) {
-                val cleanedBitmap = loadPersistedCleanedBitmap(manga, chapter, source, adjustedResume!!.cleanedImageName!!)
-                if (cleanedBitmap != null) {
-                    if (!workPlan.runTranslation) {
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT single-page resume: render from cleaned image pageKey=$pageKey cleaned=${adjustedResume.cleanedImageName}"
-                        }
-                        renderResumedPage(
-                            manga,
-                            chapter,
-                            source,
-                            pageKey,
-                            store,
-                            adjustedResume,
-                            cleanedBitmap,
-                            " (resume cleaned)",
-                            stageListener,
-                        )
-                        return null
-                    } else {
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT single-page resume: translate + render from cleaned image pageKey=$pageKey"
-                        }
-
-                        // Fake a decoded page for the sake of the result
-                        val stream = streamFromReader ?: peekReaderPageStream(manga, chapter, source, pageKey)
-                        val streams = if (stream != null) listOf(pageKey to stream) else emptyList()
-
-                        val fakeDecoded = DecodedPage(
-                            bitmap = cleanedBitmap,
-                            sampleSize = adjustedResume.decodeSampleSize,
-                            originalWidth = adjustedResume.originalImgWidth.toInt(),
-                            originalHeight = adjustedResume.originalImgHeight.toInt(),
-                            decodeDecision = eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision(
-                                kind = eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind.FULL,
-                                sampleSize = adjustedResume.decodeSampleSize,
-                                rawBitmapBytes = 0L,
-                                sampledBitmapBytes = 0L,
-                                sourcePixels = 0L,
-                                sampledPixels = 0L,
-                                snapshot = eu.kanade.translation.util.TranslationMemoryBudget.snapshot(),
-                            ),
-                            sourceBytesSize = 0L,
-                        )
-
-                        adjustedResume.cleanedBitmap = cleanedBitmap
-                        if (force) adjustedResume.prepareForcedRetry()
-                        adjustedResume.resetAttemptCharge()
-                        adjustedResume.translationStatus = StageStatus.PENDING
-                        updatePageFromCurrentSnapshot(store, pageKey, "single-page resume translation reset") { adjustedResume }
-
-                        needsHttpRender = true
-                        return OnnxPhaseResult(
-                            pageTranslation = adjustedResume,
-                            store = store,
-                            fromLang = fromLang,
-                            syntheticTranslation = syntheticTranslation,
-                            streams = streams,
-                            decoded = fakeDecoded,
-                            commitPrecondition = store.snapshot(pageKey).toPrecondition(),
-                        )
-                    }
-                } else {
-                    logcat(LogPriority.WARN) { "Cleaned image missing for $pageKey, falling through to re-decode" }
-                }
-            }
-
-            val streams = if (streamFromReader != null) {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT single-page translation using reader stream: pageKey=$pageKey " +
-                        "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
-                }
-                listOf(pageKey to streamFromReader)
-            } else {
-                val chapterPath = downloadProvider.findChapterDir(
-                    chapter.name,
-                    chapter.scanlator,
-                    manga.title,
-                    source,
-                ) ?: run {
-                    logcat(LogPriority.WARN) {
-                        "TachiyomiAT single-page translation cannot start (soft skip, no store write): " +
-                            "chapter files not found pageKey=$pageKey chapter=${chapter.name} " +
-                            "manga=${manga.title} source=${source.id}"
-                    }
-                    return null
-                }
-                getChapterPages(chapterPath)
-            }
-
-            val entry = streams.find { it.first == pageKey } ?: run {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT single-page translation cannot find requested page: pageKey=$pageKey " +
-                        "available=${streams.map { it.first }.take(5)} total=${streams.size}"
-                }
-                updatePageFromCurrentSnapshot(store, pageKey, "single-page page lookup failure") {
-                    (it ?: PageTranslation()).apply {
-                        sourceFileName = pageKey
-                        ocrStatus = StageStatus.FAILED
-                        errorMessage = "Page $pageKey not found in chapter files"
-                        retryCount = (it?.retryCount ?: 0) + 1
-                        attemptCount = (it?.attemptCount ?: 0) + 1
-                        updatedAt = System.currentTimeMillis()
-                    }
-                }
-                return null
-            }
-
-            val decoded = try {
-                decodePageBitmapForTranslation(pageKey, entry.second)
-            } catch (deferred: LowMemoryDecodeDeferredException) {
-                updatePageFromCurrentSnapshot(store, pageKey, "single-page decode deferred") {
-                    (it ?: PageTranslation()).apply {
-                        sourceFileName = pageKey
-                        originalImgWidth = deferred.width.toFloat()
-                        originalImgHeight = deferred.height.toFloat()
-                        decodeSampleSize = 1
-                        ocrStatus = StageStatus.FAILED
-                        translationStatus = StageStatus.PENDING
-                        inpaintStatus = StageStatus.PENDING
-                        renderStatus = StageStatus.PENDING
-                        errorMessage = deferred.message
-                        retryCount = (it?.retryCount ?: 0) + 1
-                        attemptCount = (it?.attemptCount ?: 0) + 1
-                        updatedAt = System.currentTimeMillis()
-                    }
-                }
-                return null
-            }
-
-            if (decoded == null) {
-                updatePageFromCurrentSnapshot(store, pageKey, "single-page decode failed") {
-                    (it ?: PageTranslation()).apply {
-                        sourceFileName = pageKey
-                        ocrStatus = StageStatus.FAILED
-                        errorMessage = "Failed to decode page: null bitmap"
-                        retryCount = (it?.retryCount ?: 0) + 1
-                        attemptCount = (it?.attemptCount ?: 0) + 1
-                        updatedAt = System.currentTimeMillis()
-                    }
-                }
-                return null
-            }
-
-            val bitmap = decoded.bitmap
-
-            if (!workPlan.runOcr && workPlan.runInpaint) {
-                try {
-                    if (!workPlan.runTranslation) {
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT single-page resume: inpaint + render from translated blocks pageKey=$pageKey"
-                        }
-                        if (force) adjustedResume!!.prepareForcedRetry()
-                        adjustedResume!!.resetAttemptCharge()
-                        stageListener?.onStageEntered(pageKey, TranslationStageEvent.CLEANING)
-                        resumeInpaintAndRender(
-                            manga,
-                            chapter,
-                            source,
-                            pageKey,
-                            store,
-                            decoded,
-                            bitmap,
-                            adjustedResume,
-                            stageListener,
-                        )
-                        return null
-                    } else {
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT single-page resume: inpaint + translate + render pageKey=$pageKey"
-                        }
-                        if (force) adjustedResume!!.prepareForcedRetry()
-                        adjustedResume!!.resetAttemptCharge()
-                        adjustedResume.inpaintStatus = StageStatus.RUNNING
-                        updatePageFromCurrentSnapshot(store, pageKey, "single-page inpaint resume start") { adjustedResume }
-                        stageListener?.onStageEntered(pageKey, TranslationStageEvent.CLEANING)
-                        adjustedResume.cleanedBitmap = recognitionEngine.inpaint(bitmap, adjustedResume)
-
-                        needsHttpRender = true
-                        return OnnxPhaseResult(
-                            pageTranslation = adjustedResume,
-                            store = store,
-                            fromLang = fromLang,
-                            syntheticTranslation = syntheticTranslation,
-                            streams = streams,
-                            decoded = decoded,
-                            commitPrecondition = store.snapshot(pageKey).toPrecondition(),
-                        )
-                    }
-                } finally {
-                    try {
-                        bitmap.recycle()
-                    } catch (_: Exception) {}
-                    BitmapPool.releaseAll()
-                }
-            }
-
-            updatePageFromCurrentSnapshot(store, pageKey, "single-page OCR start") {
-                (it ?: PageTranslation()).apply {
-                    sourceFileName = pageKey
-                    if (force || ocrStatus != StageStatus.READY) {
-                        ocrStatus = StageStatus.RUNNING
-                    }
-                    if (force) {
-                        prepareForcedRetry()
-                    }
-                    resetAttemptCharge()
-                    errorMessage = null
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-
-            val pageTranslation: PageTranslation
-            try {
-                stageListener?.onStageEntered(pageKey, TranslationStageEvent.READING)
-                pageTranslation = processSinglePage(
-                    pageKey,
-                    bitmap,
-                    decoded,
-                    store,
-                    stageListener,
-                )
-            } finally {
-                try {
-                    bitmap.recycle()
-                } catch (_: Exception) {}
-                BitmapPool.releaseAll()
-            }
-
-            needsHttpRender = true
-            return OnnxPhaseResult(
-                pageTranslation = pageTranslation,
-                store = store,
-                fromLang = fromLang,
-                syntheticTranslation = syntheticTranslation,
-                streams = streams,
-                decoded = decoded,
-                commitPrecondition = store.snapshot(pageKey).toPrecondition(),
-            )
-        } finally {
-            if (!needsHttpRender) {
-                store.flush()
-                chapter.id?.let { chapterId ->
-                    streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
-                }
-                try {
-                    recognitionEngine.reclaimPooledMemory()
-                } catch (_: Exception) {}
-            }
-        }
-    }
+    ): OnnxPhaseResult? =
+        singlePageOnnxPhase.translateSinglePageOnnx(manga, chapter, source, pageKey, readerStreamFn, force, stageListener)
 
     // T909 Phase 12: single-page HTTP+render phase body moved to
     // translation/pipeline/SinglePageHttpRenderPhase.kt (outcome typing stays
@@ -3552,159 +3263,6 @@ class TranslationPipeline(
         result: OnnxPhaseResult,
     ): OnnxPhaseResult? = cleanedPublication.persistOnnxCleanedImage(manga, chapter, source, pageKey, result)
 
-    private suspend fun renderResumedPage(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        store: ChapterTranslationStore,
-        pageTranslation: PageTranslation,
-        cleanedBitmap: Bitmap,
-        successMessageSuffix: String,
-        stageListener: TranslationStageListener? = null,
-    ) {
-        pageTranslation.sourceFileName = pageKey
-        pageTranslation.ocrStatus = StageStatus.READY
-        pageTranslation.translationStatus = StageStatus.READY
-        pageTranslation.renderStatus = StageStatus.RUNNING
-        pageTranslation.errorMessage = null
-        updatePageFromCurrentSnapshot(store, pageKey, "resumed render running") {
-            (it ?: pageTranslation.copyForResume()).apply {
-                sourceFileName = pageKey
-                renderStatus = StageStatus.RUNNING
-                errorMessage = null
-                updatedAt = System.currentTimeMillis()
-            }
-        }
-        try {
-            stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
-            RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
-            pageTranslation.renderStatus = StageStatus.READY
-            pageTranslation.updatedAt = System.currentTimeMillis()
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            pageTranslation.renderStatus = StageStatus.FAILED
-            // Render failed on a cleaned bitmap — first terminal stage.
-            pageTranslation.recordAttemptFailure()
-            pageTranslation.errorMessage = e.message
-            logcat(LogPriority.ERROR, e) { "Failed to render resumed page $pageKey" }
-        } finally {
-            try {
-                cleanedBitmap.recycle()
-            } catch (_: Exception) {}
-            pageTranslation.cleanedBitmap = null
-            pageTranslation.updatedAt = System.currentTimeMillis()
-            persistPageWithOomRecovery(store, pageKey, pageTranslation)
-        }
-    }
-
-    private suspend fun resumeInpaintAndRender(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        store: ChapterTranslationStore,
-        decoded: DecodedPage,
-        bitmap: Bitmap,
-        pageTranslation: PageTranslation,
-        stageListener: TranslationStageListener? = null,
-    ) {
-        pageTranslation.sourceFileName = pageKey
-        pageTranslation.ocrStatus = StageStatus.READY
-        pageTranslation.translationStatus = StageStatus.READY
-        pageTranslation.inpaintStatus = StageStatus.RUNNING
-        pageTranslation.renderStatus = StageStatus.PENDING
-        pageTranslation.errorMessage = null
-        updatePageFromCurrentSnapshot(store, pageKey, "resumed inpaint running") {
-            (it ?: pageTranslation.copyForResume()).apply {
-                sourceFileName = pageKey
-                inpaintStatus = StageStatus.RUNNING
-                renderStatus = StageStatus.PENDING
-                errorMessage = null
-                updatedAt = System.currentTimeMillis()
-            }
-        }
-
-        val cleaned = try {
-            recognitionEngine.inpaint(bitmap, pageTranslation)
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            pageTranslation.inpaintStatus = StageStatus.FAILED
-            // First terminal stage — owns the charge.
-            pageTranslation.recordAttemptFailure()
-            pageTranslation.errorMessage = e.message
-            logcat(LogPriority.ERROR, e) { "Failed to resume inpaint for $pageKey" }
-            null
-        }
-
-        if (cleaned == null) {
-            pageTranslation.renderStatus = StageStatus.FAILED
-            // Consequence of the inpaint failure above; recordAttemptFailure no-ops once
-            // a stage is already FAILED, so this doesn't double-count.
-            pageTranslation.recordAttemptFailure()
-            val reason = pageTranslation.errorMessage ?: "inpaint unavailable"
-            pageTranslation.errorMessage =
-                "Inpainting unavailable ($reason) — translated text was not rendered."
-            persistPageWithOomRecovery(store, pageKey, pageTranslation)
-            return
-        }
-
-        val companionDir = provider.getCompanionImageDir(
-            manga.title,
-            source,
-            chapter.name,
-            chapter.scanlator,
-        )
-        if (persistCleanedBitmap(
-                pageTranslation,
-                cleaned,
-                companionDir,
-                pageKey,
-                chapter.name,
-                store,
-                source.id,
-                manga.id,
-                chapter.id,
-            ) == null
-        ) {
-            try {
-                cleaned.recycle()
-            } catch (_: Exception) {}
-            pageTranslation.renderStatus = StageStatus.FAILED
-            persistPageWithOomRecovery(store, pageKey, pageTranslation)
-            return
-        }
-        renderResumedPage(
-            manga,
-            chapter,
-            source,
-            pageKey,
-            store,
-            pageTranslation,
-            cleaned,
-            successMessageSuffix = " (resume inpaint)",
-            stageListener = stageListener,
-        )
-    }
-
-    /**
-     * TachiyomiAT: retry-then-block for inpainting. When the first recognize()
-     * produced no cleaned bitmap (inpaint failed/unavailable), re-run the full
-     * recognize() pipeline on a half-sampled decode before giving up.
-     *
-     * Why half-sample: the dominant inpaint-failure cause is heap pressure
-     * (neural inpaint allocates ~WxH float buffers). Re-decoding at sampleSize*2
-     * quarters the pixel count and usually lets the inpainter succeed — a much
-     * better outcome than either overlaying text on the original (the old,
-     * deceptive fallback) or refusing outright.
-     *
-     * Returns a [PageTranslation] whose [PageTranslation.cleanedBitmap] is set
-     * when the retry succeeded, or the original [pageTranslation] (unchanged)
-     * when it also failed. Never renders over the original image — the caller
-     * is responsible for surfacing a FAILED render when this returns without a
-     * cleaned bitmap, so the user sees an honest error instead of a half-
-     * translated page.
-     */
     private suspend fun retryInpaintDownscaled(
         manga: Manga,
         chapter: Chapter,
@@ -3713,400 +3271,26 @@ class TranslationPipeline(
         streams: List<Pair<String, () -> InputStream>>,
         decoded: DecodedPage,
         pageTranslation: PageTranslation,
-    ): PageTranslation {
-        if (pageTranslation.cleanedBitmap != null) return pageTranslation
-        val retrySampleSize = (pageTranslation.decodeSampleSize * 2).coerceAtMost(8)
-        if (retrySampleSize == pageTranslation.decodeSampleSize) {
-            return pageTranslation
-        }
-        val retryBitmap = try {
-            decodePageBitmapAtSize(pageKey, retrySampleSize, streams)
-        } catch (oom: OutOfMemoryError) {
-            BitmapPool.releaseAll()
-            System.gc()
-            logcat(LogPriority.WARN, oom) { "Inpaint-retry decode OOM: $pageKey" }
-            return pageTranslation
-        } ?: return pageTranslation
+    ): PageTranslation =
+        singlePageOnnxPhase.retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)
 
-        try {
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT inpaint retry at sampleSize=$retrySampleSize for $pageKey (first attempt produced no cleaned bitmap)"
-            }
-            // Re-run on the smaller bitmap; only the cleaned bitmap is needed — the
-            // original pageTranslation's OCR/translation results are already good.
-            val retryTranslation = try {
-                recognitionEngine.recognize(retryBitmap)
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                logcat(LogPriority.WARN, e) { "Inpaint-retry recognize failed: $pageKey" }
-                return pageTranslation
-            }
-            val cleaned = retryTranslation.cleanedBitmap
-            if (cleaned != null) {
-                // Scale back to the original decode dimensions: block coordinates are in that
-                // space, so drawing the smaller bitmap then original-scale text would misalign.
-                // Use decoded.originalWidth/Height (the bitmap is recycled by render time).
-                val targetW = decoded.originalWidth / pageTranslation.decodeSampleSize
-                val targetH = decoded.originalHeight / pageTranslation.decodeSampleSize
-                val scaledCleaned = if (cleaned.width == targetW && cleaned.height == targetH) {
-                    cleaned
-                } else {
-                    val s = Bitmap.createScaledBitmap(cleaned, targetW, targetH, true)
-                    if (s !== cleaned) {
-                        try {
-                            cleaned.recycle()
-                        } catch (_: Exception) {}
-                    }
-                    s
-                }
-                pageTranslation.cleanedBitmap = scaledCleaned
-                pageTranslation.inpaintingModeUsed = currentInpaintingMode.name
-                pageTranslation.inpaintStatus = StageStatus.READY
-                pageTranslation.errorMessage = null
-            }
-            retryTranslation.cleanedBitmap = null // we own it now
-        } finally {
-            try {
-                retryBitmap.recycle()
-            } catch (_: Exception) {}
-            BitmapPool.releaseAll()
-        }
-        return pageTranslation
-    }
-
-    /**
-     * TachiyomiAT: STAGE 1 of the staged batch pipeline — detect + OCR only.
-     *
-     * Splits the fused [processSinglePage] (which calls recognize = analyze then
-     * inpaint back-to-back) so the batch path can run DETECT+OCR across a batch
-     * of pages first (persisting blocks + ocrStatus=READY), then inpaint them in
-     * a later stage. analyze() is detect+OCR; it populates [PageTranslation.blocks]
-     * and stashes [PageTranslation.allTextDetections] for inpaint to read back,
-     * and leaves cleanedBitmap null (inpaint's job). See ResumeOrdering /
-     * translateBatchInternal for the orchestration.
-     *
-     * The bitmap is recycled by the CALLER (the batch loop) after this returns —
-     * one page's bitmap is alive at a time, matching the existing memory model.
-     * For the inpaint stage the page is re-decoded (decodePageBitmapForTranslation
-     * already buffers source bytes into a private ByteArray, so no shared-stream
-     * race with a reader display decode).
-     *
-     * Returns a PageTranslation with ocrStatus=READY (or a FAILED placeholder on
-     * OOM/exception). Persists blocks to [store] so the stage is resumable.
-     */
     private suspend fun analyzePage(
         fileName: String,
         bitmap: Bitmap,
         decoded: DecodedPage,
         store: ChapterTranslationStore,
         batchFingerprints: BatchExpectedFingerprints,
-    ): PageTranslation {
-        val pageStart = System.nanoTime()
-        var pageTranslation: PageTranslation
-        val finalSampleSize = decoded.sampleSize
-        // Phase 3 OCR-write precondition: the page version and prior OCR
-        // identity observed before the native pass. Anything that touched the
-        // page during recognition makes this writer stale and the merge is
-        // rejected instead of clobbering the newer work.
-        val preNative = store.snapshot(fileName)
-        var oomDiagnosticMessage: String? = null
-        try {
-            preflightAnalyzeGate(bitmap, fileName)
-            pageTranslation = recognitionEngine.analyze(bitmap)
-            consecutiveOomCount = 0
-        } catch (deferred: LowMemoryRecognitionDeferredException) {
-            logcat(LogPriority.WARN) {
-                "Low memory deferred analyzing $fileName: ${deferred.message}"
-            }
-            pageTranslation = createFailedPagePlaceholder(
-                fileName,
-                "Recognition deferred: ${deferred.message}",
-                imgWidth = bitmap.width.toFloat(),
-                imgHeight = bitmap.height.toFloat(),
-                originalImgWidth = decoded.originalWidth.toFloat(),
-                originalImgHeight = decoded.originalHeight.toFloat(),
-                decodeSampleSize = decoded.sampleSize,
-                retryCount = 1,
-            )
-        } catch (oom: OutOfMemoryError) {
-            handleCriticalTranslationOom("analyzing $fileName", oom)
-            consecutiveOomCount++
-            logcat(LogPriority.ERROR, oom) {
-                "Out of memory analyzing $fileName (oomCount=$consecutiveOomCount)"
-            }
-            pageTranslation = createFailedPagePlaceholder(
-                fileName,
-                "Low memory during recognition. Released translation caches; retry when memory recovers.",
-                imgWidth = bitmap.width.toFloat(),
-                imgHeight = bitmap.height.toFloat(),
-                originalImgWidth = decoded.originalWidth.toFloat(),
-                originalImgHeight = decoded.originalHeight.toFloat(),
-                decodeSampleSize = decoded.sampleSize,
-                retryCount = 1,
-            )
-            if (consecutiveOomCount >= 2) {
-                oomDiagnosticMessage = "ONNX recognition failed due to memory pressure. Retry after memory recovers."
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            logcat(LogPriority.ERROR, e) {
-                "ONNX analyze failed for $fileName"
-            }
-            pageTranslation = createFailedPagePlaceholder(
-                fileName,
-                "ONNX recognition failed: ${e.message ?: e::class.java.simpleName}",
-                imgWidth = bitmap.width.toFloat(),
-                imgHeight = bitmap.height.toFloat(),
-                originalImgWidth = decoded.originalWidth.toFloat(),
-                originalImgHeight = decoded.originalHeight.toFloat(),
-                decodeSampleSize = decoded.sampleSize,
-                retryCount = 1,
-            )
-        }
-        pageTranslation.decodeSampleSize = finalSampleSize
+    ): PageTranslation =
+        singlePageOnnxPhase.analyzePage(fileName, bitmap, decoded, store, batchFingerprints)
 
-        finalizePostOcrStage(pageTranslation, inpaintAlreadyRan = false)
-
-        pageTranslation.originalImgWidth = decoded.originalWidth.toFloat()
-        pageTranslation.originalImgHeight = decoded.originalHeight.toFloat()
-        pageTranslation.sourceFileName = fileName
-        pageTranslation.sourceFingerprint = decoded.sourceFingerprint
-        pageTranslation.detectionFingerprint = batchFingerprints.detection
-        pageTranslation.ocrFingerprint = batchFingerprints.ocr
-        pageTranslation.updatedAt = System.currentTimeMillis()
-        logcat(LogPriority.INFO) {
-            "[translation_analyze] $fileName blocks=${pageTranslation.blocks.size} " +
-                "engine=${pageTranslation.recognitionEngine} sample=${pageTranslation.decodeSampleSize} " +
-                "elapsedMs=${(System.nanoTime() - pageStart) / 1_000_000}"
-        }
-        // Persist blocks + the durable inpaint mask so this stage is resumable: a later
-        // run skips pages whose ocrStatus is READY with non-empty blocks AND a mask matching
-        // the current inpaint revision. The mask lets detector-only + watermark regions
-        // still get erased after a resume/reopen. Phase 3: preconditioned merge — a stale
-        // worker cannot overwrite a page a newer writer owns, and a failed recognition
-        // keeps the existing reusable blocks while recording the failure diagnostics.
-        val ocrPatch = store.mergeOcr(
-            OcrStagePatch(
-                pageKey = fileName,
-                generation = preNative.generation,
-                expectedPageVersion = preNative.pageVersion,
-                expectedLeaseToken = preNative.leaseToken,
-                expectedPriorOcrFingerprints = preNative.page?.ocrBlockFingerprints().orEmpty(),
-                ocrResult = pageTranslation,
-                errorMessage = oomDiagnosticMessage,
-                expectedCandidateGenerationId = preNative.candidateGenerationId,
-                expectedDependencyFingerprint = preNative.dependencyFingerprint,
-                expectedArtifactPageVersion = preNative.artifactPageVersion,
-            ),
-            description = "batch detection/ocr persist",
-        )
-        if (ocrPatch is StagePatchResult.Rejected) {
-            logcat(LogPriority.WARN) {
-                "TachiyomiAT batch OCR persist rejected (stale writer): pageKey=$fileName reason=${ocrPatch.reason}"
-            }
-            throw BatchPersistenceRejectedException(
-                pageKey = fileName,
-                stage = BatchDiagnosticStage.OCR,
-            )
-        }
-        return pageTranslation
-    }
-
-    /**
-     * TachiyomiAT: STAGE 2 of the staged batch pipeline — inpaint only.
-     *
-     * Re-decoded [bitmap] + the analyzed [pageTranslation] (blocks +
-     * allTextDetections) → cleaned bitmap, returned for downstream JPEG
-     * persistence + render. Mirrors the inpaint half of [processSinglePage]
-     * and the standalone resume path [resumeInpaintAndRender]. The caller
-     * recycles the bitmap.
-     *
-     * Sets inpaintStatus=RUNNING, then FAILED (with [recordAttemptFailure] +
-     * errorMessage) on a thrown exception. Does NOT set inpaintStatus=READY or
-     * cleanedImageName — those are written by the caller in
-     * [persistCleanedBitmap] after the JPEG encode moves off the translation
-     * permit. The cleanedBitmap on the returned translation stays alive for
-     * the downstream render stage (caller draws translated text onto it).
-     */
     private suspend fun inpaintPage(
         fileName: String,
         bitmap: Bitmap,
         pageTranslation: PageTranslation,
         batchFingerprint: String?,
         guardedWrite: suspend (String, (PageTranslation?) -> PageTranslation) -> ChapterTranslationStore.PatchResult,
-    ): PageTranslation {
-        try {
-            pageTranslation.inpaintFingerprint = batchFingerprint
-            pageTranslation.inpaintStatus = StageStatus.RUNNING
-            pageTranslation.updatedAt = System.currentTimeMillis()
-            val runningWrite = guardedWrite("batch inpaint running") {
-                (it ?: pageTranslation).apply {
-                    inpaintStatus = StageStatus.RUNNING
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            if (runningWrite is ChapterTranslationStore.PatchResult.Rejected) {
-                throw BatchPersistenceRejectedException(
-                    pageKey = fileName,
-                    stage = BatchDiagnosticStage.INPAINT,
-                )
-            }
-            pageTranslation.cleanedBitmap = recognitionEngine.inpaint(bitmap, pageTranslation)
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            if (e is BatchPersistenceRejectedException) throw e
-            pageTranslation.inpaintStatus = StageStatus.FAILED
-            // First terminal stage — owns the charge.
-            pageTranslation.recordAttemptFailure()
-            pageTranslation.errorMessage = e.message
-            logcat(LogPriority.ERROR, e) { "Failed to inpaint page $fileName" }
-            guardedWrite("batch inpaint failed") {
-                (it ?: pageTranslation).apply {
-                    inpaintStatus = StageStatus.FAILED
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            return pageTranslation
-        }
-
-        // JPEG persistence is deliberately performed after the permit-held ONNX
-        // phase. The cleaned bitmap remains available to the downstream render,
-        // while the next page can start native work during this CPU-only encode.
-        pageTranslation.updatedAt = System.currentTimeMillis()
-        return pageTranslation
-    }
-
-    private suspend fun processSinglePage(
-        fileName: String,
-        bitmap: Bitmap,
-        decoded: DecodedPage,
-        store: ChapterTranslationStore,
-        stageListener: TranslationStageListener? = null,
-    ): PageTranslation {
-        val pageStart = System.nanoTime()
-        var pageTranslation: PageTranslation
-        val finalSampleSize = decoded.sampleSize
-        // P2 alignment: split the fused recognize() into analyze() + inpaint()
-        // so CLEANING fires at the actual inpaint entry, not coalesced into
-        // READING. The recognition engine's recognize() default is literally
-        // analyze() then inpaint(), so the split is semantically identical on
-        // the happy path but makes the Cleaning stage structurally observable
-        // for the rolling coordinator's slot model.
-        try {
-            preflightAnalyzeGate(bitmap, fileName)
-            pageTranslation = recognitionEngine.analyze(bitmap)
-            consecutiveOomCount = 0
-        } catch (deferred: LowMemoryRecognitionDeferredException) {
-            logcat(LogPriority.WARN) {
-                "Low memory deferred recognizing $fileName: ${deferred.message}"
-            }
-            pageTranslation = createFailedPagePlaceholder(
-                fileName,
-                "Recognition/Inpainting deferred: ${deferred.message}",
-                imgWidth = bitmap.width.toFloat(),
-                imgHeight = bitmap.height.toFloat(),
-                originalImgWidth = decoded.originalWidth.toFloat(),
-                originalImgHeight = decoded.originalHeight.toFloat(),
-                decodeSampleSize = decoded.sampleSize,
-                retryCount = 1,
-            )
-        } catch (oom: OutOfMemoryError) {
-            handleCriticalTranslationOom("recognizing $fileName", oom)
-            consecutiveOomCount++
-            logcat(LogPriority.ERROR, oom) {
-                "Out of memory recognizing $fileName (oomCount=$consecutiveOomCount)"
-            }
-            pageTranslation = createFailedPagePlaceholder(
-                fileName,
-                "Low memory during recognition. Released translation caches; retry when memory recovers.",
-                imgWidth = bitmap.width.toFloat(),
-                imgHeight = bitmap.height.toFloat(),
-                originalImgWidth = decoded.originalWidth.toFloat(),
-                originalImgHeight = decoded.originalHeight.toFloat(),
-                decodeSampleSize = decoded.sampleSize,
-                retryCount = 1,
-            )
-            if (consecutiveOomCount >= 2) {
-                updatePageFromCurrentSnapshot(store, fileName, "single-page recognition OOM diagnostic") {
-                    (it ?: PageTranslation()).apply {
-                        errorMessage = "ONNX recognition failed due to memory pressure. Retry after memory recovers."
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            logcat(LogPriority.ERROR, e) {
-                "ONNX recognition failed for $fileName; not falling back to full-page ML Kit"
-            }
-            pageTranslation = createFailedPagePlaceholder(
-                fileName,
-                "ONNX recognition failed: ${e.message ?: e::class.java.simpleName}",
-                imgWidth = bitmap.width.toFloat(),
-                imgHeight = bitmap.height.toFloat(),
-                originalImgWidth = decoded.originalWidth.toFloat(),
-                originalImgHeight = decoded.originalHeight.toFloat(),
-                decodeSampleSize = decoded.sampleSize,
-                retryCount = 1,
-            )
-        }
-
-        // If OCR itself failed, skip inpaint — the placeholder carries the
-        // failure and there is nothing to clean.
-        val ocrFailed = pageTranslation.ocrStatus == StageStatus.FAILED
-        if (!ocrFailed) {
-            stageListener?.onStageEntered(fileName, TranslationStageEvent.CLEANING)
-            try {
-                preflightInpaintGate(bitmap, fileName)
-                pageTranslation.cleanedBitmap = recognitionEngine.inpaint(bitmap, pageTranslation)
-                pageTranslation.cleanedBitmap?.let { cleaned ->
-                    try {
-                        RenderColorEstimator.recomputeFor(cleaned, pageTranslation.blocks)
-                    } catch (_: Exception) {}
-                }
-            } catch (deferred: LowMemoryRecognitionDeferredException) {
-                logcat(LogPriority.WARN) {
-                    "Low memory deferred inpainting $fileName: ${deferred.message}"
-                }
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.errorMessage = deferred.message
-            } catch (oom: OutOfMemoryError) {
-                handleCriticalTranslationOom("inpainting $fileName", oom)
-                consecutiveOomCount++
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                logcat(LogPriority.ERROR, oom) {
-                    "Out of memory inpainting $fileName (oomCount=$consecutiveOomCount)"
-                }
-            } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.errorMessage = e.message
-                logcat(LogPriority.ERROR, e) {
-                    "ONNX inpaint failed for $fileName"
-                }
-            }
-        }
-
-        pageTranslation.decodeSampleSize = finalSampleSize
-        finalizePostOcrStage(pageTranslation, inpaintAlreadyRan = true)
-
-        pageTranslation.originalImgWidth = decoded.originalWidth.toFloat()
-        pageTranslation.originalImgHeight = decoded.originalHeight.toFloat()
-        pageTranslation.sourceFileName = fileName
-        pageTranslation.updatedAt = System.currentTimeMillis()
-        logcat(LogPriority.INFO) {
-            "[translation_page] $fileName blocks=${pageTranslation.blocks.size} " +
-                "engine=${pageTranslation.recognitionEngine} sample=${pageTranslation.decodeSampleSize} " +
-                "cleaned=${pageTranslation.cleanedBitmap != null} " +
-                "elapsedMs=${(System.nanoTime() - pageStart) / 1_000_000}"
-        }
-
-        // Cooperative cancellation checkpoint: recognize()/inpaint() internals (ONNX native
-        // calls) can't observe a cancel, so one issued mid-call only lands at the next suspend
-        // point. Drop out here so we don't render/translate/persist a page the caller no longer wants.
-        coroutineContext.ensureActive()
-
-        return pageTranslation
-    }
+    ): PageTranslation =
+        singlePageOnnxPhase.inpaintPage(fileName, bitmap, pageTranslation, batchFingerprint, guardedWrite)
 
     // T909 Phase 1: memory governance bodies moved to translation/pipeline/MemoryGovernance.kt.
     fun forceReleaseNativeBuffers() {
@@ -4170,21 +3354,6 @@ class TranslationPipeline(
             toLang,
         )
 
-    /**
-     * Result of the permit-held ONNX phase ([translateSinglePageOnnx])
-     * in the reader single-page path. Carries the [PageTranslation] (with its
-     * cleanedBitmap alive across the permit boundary) and the state needed by
-     * the permit-free HTTP+render phase ([translateSinglePageHttpRender]).
-     */
-    internal data class OnnxPhaseResult(
-        val pageTranslation: PageTranslation,
-        val store: ChapterTranslationStore,
-        val fromLang: TextRecognizerLanguage,
-        val syntheticTranslation: Translation,
-        val streams: List<Pair<String, () -> InputStream>>,
-        val decoded: DecodedPage,
-        val commitPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    )
 
     private fun getChapterPages(chapterPath: UniFile): List<Pair<String, () -> InputStream>> =
         eu.kanade.translation.util.getChapterPages(context, chapterPath)

@@ -5,7 +5,6 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.TranslationPipeline.OnnxPhaseResult
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.batch.BatchDiagnosticDecision
 import eu.kanade.translation.batch.BatchDiagnosticReason

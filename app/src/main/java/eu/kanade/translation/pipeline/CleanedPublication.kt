@@ -6,7 +6,6 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.CleanedImagePublisher
 import eu.kanade.translation.ChapterTranslationStore
-import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.PageTranslation
@@ -192,8 +191,8 @@ internal class CleanedPublication(
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
-        result: TranslationPipeline.OnnxPhaseResult,
-    ): TranslationPipeline.OnnxPhaseResult? {
+        result: OnnxPhaseResult,
+    ): OnnxPhaseResult? {
         val page = result.pageTranslation
         val cleaned = page.cleanedBitmap
         if (cleaned == null) {
