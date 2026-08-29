@@ -27,6 +27,7 @@ import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableChapterStatusResolver
 import eu.kanade.translation.manager.DurableStatus
+import eu.kanade.translation.manager.ReaderTeardownCoordinator
 import eu.kanade.translation.manager.TranslationRequestCoordinator
 import eu.kanade.translation.manager.TranslationDocument
 import eu.kanade.translation.model.findRunningSameSourceConflict
@@ -36,11 +37,9 @@ import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.toQueuedChapterView
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -321,43 +320,31 @@ class TranslationManager(
         requestCoordinator.startTranslationAfterDownloadIfRequested(manga, chapter)
     }
 
-    fun stopReaderTranslations(reason: String) {
-        // The cancellation path includes synchronous runBlocking bridges for durable store
-        // cleanup and bounded persist joins. Keep the entire chain on the manager's IO scope so
-        // ReaderActivity lifecycle callbacks return without touching those bridges on main.
-        applicationScope.launch(start = CoroutineStart.DEFAULT) {
-            readerTeardownMutex.withLock {
-                cancelAllPageTranslations(cancelBatchQueue = false)
-                if (!isAnyBatchTranslationActive) {
-                    translatorStop(reason, closeEngines = false)
-                }
-            }
-        }
-    }
+    // T909 Phase 18: reader/page teardown bodies moved to
+    // manager/ReaderTeardownCoordinator.kt. The readerTeardownMutex field
+    // above stays — TranslationManagerReaderTeardownTest reflection-writes it —
+    // so the coordinator is built per access from the current field values and
+    // resolves the mutex through a provider (a swapped mutex still serializes
+    // both stop paths). Same-signature stubs keep the public seams.
+    private val readerTeardown: ReaderTeardownCoordinator
+        get() = ReaderTeardownCoordinator(
+            applicationScopeProvider = { applicationScope },
+            readerTeardownMutexProvider = { readerTeardownMutex },
+            schedulerProvider = { scheduler },
+            activeStoresProvider = { activeStores },
+            translatorProvider = { translator },
+            isAnyBatchTranslationActiveProvider = { isAnyBatchTranslationActive },
+            isBatchTranslationRetainedFn = { chapterId -> isBatchTranslationRetained(chapterId) },
+            unregisterActiveTranslationStoreFn = { chapterId -> unregisterActiveTranslationStore(chapterId) },
+            disposeBatchTrackerFn = { chapterId -> disposeBatchTracker(chapterId) },
+            clearAllPendingTranslationRequestsFn = { clearAllPendingTranslationRequests() },
+        )
 
-    /**
-     * Starts reader-owned teardown on the manager lifetime rather than the
-     * ReaderViewModel scope. The deferred completes only after scheduler
-     * coordinator/native/page jobs have joined and reader stores are evicted.
-     */
-    fun requestReaderStop(reason: String): Deferred<Unit> =
-        applicationScope.async(start = CoroutineStart.DEFAULT) {
-            awaitReaderStop(reason)
-        }
+    fun stopReaderTranslations(reason: String) = readerTeardown.stopReaderTranslations(reason)
 
-    /** Joined counterpart for callers that already own a non-cancelled scope. */
-    suspend fun awaitReaderStop(reason: String) {
-        // This method is also called directly by chapter-switch work. Enforce the same IO fence
-        // here so a future lifecycle caller cannot reintroduce a main-thread synchronous prefix.
-        withContext(Dispatchers.IO) {
-            readerTeardownMutex.withLock {
-                scheduler.awaitReaderStop()
-                val chapterIdsToEvict = activeStores.chapterIds()
-                    .filter { !isBatchTranslationRetained(it) }
-                chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
-            }
-        }
-    }
+    fun requestReaderStop(reason: String): Deferred<Unit> = readerTeardown.requestReaderStop(reason)
+
+    suspend fun awaitReaderStop(reason: String) = readerTeardown.awaitReaderStop(reason)
 
     fun isTranslating(): Boolean = queueState.value.any {
         it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
@@ -1528,77 +1515,25 @@ class TranslationManager(
             chapterId,
         )
 
+    // T909 Phase 18: page-job control bodies moved to
+    // manager/ReaderTeardownCoordinator.kt (runBlocking bridge and
+    // dispatcher-constraint comments moved with them). Same-signature stubs
+    // keep the public seams.
+
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) =
-        scheduler.translatePage(manga, chapter, source, pageKey)
+        readerTeardown.translatePage(manga, chapter, source, pageKey)
 
-    /**
-     * Cancels the in-flight single-page translation job for one [pageKey] within [chapterId] —
-     * the per-page granularity [cancelPageTranslations] (chapter-scoped) is too coarse for.
-     * Returns true if a job was actually cancelled, false if none was running for that page.
-     */
     fun cancelPageTranslation(chapterId: Long, pageKey: String): Boolean =
-        scheduler.cancelPageTranslation(chapterId, pageKey)
+        readerTeardown.cancelPageTranslation(chapterId, pageKey)
 
-    /**
-     * Cancels all in-flight single-page translation jobs for [chapterId] and evicts the shared
-     * [ChapterTranslationStore] so it does not leak across chapter navigations. Call this on
-     * reader navigate-away so the previous chapter's work can no longer hold the executor's
-     * single permit. Job cancellation is delegated to the scheduler; store eviction is manager-owned.
-     */
-    suspend fun cancelPageTranslations(chapterId: Long) {
-        scheduler.cancelPageTranslations(chapterId)
-        if (isBatchTranslationRetained(chapterId)) {
-            return
-        }
-        disposeBatchTracker(chapterId)
-        activeStores.get(chapterId)?.clearTransientQueuePages("Translation cancelled")
-        // Evict the store on chapter exit; the reader re-opens it via observeLiveTranslationStore on the next loadChapter.
-        unregisterActiveTranslationStore(chapterId)
-    }
+    suspend fun cancelPageTranslations(chapterId: Long) =
+        readerTeardown.cancelPageTranslations(chapterId)
 
-    /**
-     * Cancels every in-flight single-page translation job and drops all shared stores. Call this
-     * when the reader is destroyed or the master toggle is switched off, so no orphaned work
-     * keeps running and no collector outlives the session. Job cancellation is delegated to the
-     * scheduler; store eviction + chapter queue clearing are manager-owned.
-     */
-    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) {
-        scheduler.cancelAllPageTranslations()
-        val chapterIdsToEvict = activeStores.chapterIds()
-            .filter { cancelBatchQueue || !isBatchTranslationRetained(it) }
-        val stores = chapterIdsToEvict.mapNotNull { activeStores.get(it) }
-        if (stores.isNotEmpty()) {
-            // TachiyomiAT bug 4 fix: the durable CANCELLED write MUST land before
-            // unregisterActiveTranslationStore marks these stores defunct below.
-            // The previous code launched clearTransientQueuePages on storeScope
-            // and then synchronously called markDefunct in the same pass; the
-            // async clear was rejected as defunct and the durable state was
-            // silently dropped, leaving pages RUNNING in the next session's
-            // rehydrated snapshot. Run the clear to completion here (bounded by
-            // the small number of active chapter stores) before eviction.
-            kotlinx.coroutines.runBlocking {
-                stores.forEach { store ->
-                    store.clearTransientQueuePages("All translation cancelled")
-                }
-            }
-        }
-        chapterIdsToEvict.forEach { unregisterActiveTranslationStore(it) }
-        if (cancelBatchQueue) {
-            translator.clearQueue()
-            clearAllPendingTranslationRequests()
-        }
-    }
+    fun cancelAllPageTranslations(cancelBatchQueue: Boolean = false) =
+        readerTeardown.cancelAllPageTranslations(cancelBatchQueue)
 
-    /**
-     * Runs the synchronous teardown bridge away from the reader main thread.
-     * The underlying method remains synchronous for existing lifecycle callers,
-     * but its SAF-backed store cleanup must never execute on UI dispatchers.
-     */
-    suspend fun cancelAllPageTranslationsOffMain(cancelBatchQueue: Boolean = false) {
-        withContext(Dispatchers.IO) {
-            cancelAllPageTranslations(cancelBatchQueue)
-        }
-    }
+    suspend fun cancelAllPageTranslationsOffMain(cancelBatchQueue: Boolean = false) =
+        readerTeardown.cancelAllPageTranslationsOffMain(cancelBatchQueue)
 
     fun statusFlow(): Flow<Translation> = queueState
         .flatMapLatest { translations ->
