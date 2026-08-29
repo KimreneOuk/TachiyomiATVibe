@@ -52,6 +52,7 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
+import eu.kanade.translation.pipeline.batch.HeldBitmapRegistry
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.pipeline.MemoryGovernance
@@ -190,25 +191,8 @@ class TranslationPipeline(
          */
         const val ONNX_PHASE_TIMEOUT_MS = 90_000L
 
-        /**
-         * Hard cap on the number of in-memory cleaned bitmaps the 3-lane batch
-         * pipeline holds for render reuse at once. A pure count cap is unsafe for
-         * memory (3 tiny pages say nothing about 3x a 48MB webtoon strip), so it
-         * is enforced together with [HELD_BITMAP_BYTE_CEILING]; the byte ceiling is
-         * the real bound and this count just prevents runaway concurrency on many
-         * tiny pages.
-         */
-        const val HELD_BITMAP_MAX_COUNT = 4
-
-        /**
-         * Approximate byte ceiling for the held cleaned-bitmap registry in the
-         * 3-lane batch pipeline (~48 MB; a worst-case webtoon long-strip page).
-         * Pages that would push the registry past this spill to disk (their
-         * versioned .cleaned.jpg is already durable at inpaint) and reload on render —
-         * today's behavior. Keeps peak held memory provable against the ceiling
-         * regardless of page or chunk size.
-         */
-        const val HELD_BITMAP_BYTE_CEILING = 48L * 1024L * 1024L
+        // T909 Phase 20.1: HELD_BITMAP_MAX_COUNT / HELD_BITMAP_BYTE_CEILING moved to
+        // pipeline/batch/HeldBitmapRegistry.kt with the held-bitmap registry.
 
         const val UNKNOWN_SOURCE_FINGERPRINT = "source-fingerprint-unavailable"
     }
@@ -1000,13 +984,13 @@ class TranslationPipeline(
                     store.translatedPairs().forEach { (s, t) -> glossaryStats.add(s, t) }
                 }
 
-                // Held-cleaned-bitmap registry: render reuses the in-memory bitmap instead of
-                // reloading from disk. Bounded by BOTH a byte ceiling and a count cap; a page
-                // exceeding either spills (its .cleaned.jpg is already durable, so the bitmap
-                // recycles immediately and render reloads it).
-                val heldBitmapBytes = AtomicLong(0L)
-                val countSlots = Semaphore(HELD_BITMAP_MAX_COUNT)
-                val bitmapRegistry = ConcurrentHashMap<String, Bitmap>()
+                // T909 Phase 20.1: held-cleaned-bitmap registry moved to
+                // pipeline/batch/HeldBitmapRegistry.kt. The same-name aliases below
+                // keep the not-yet-moved closures reading the same registry state.
+                val heldBitmapRegistry = HeldBitmapRegistry()
+                val heldBitmapBytes = heldBitmapRegistry.heldBitmapBytes
+                val countSlots = heldBitmapRegistry.countSlots
+                val bitmapRegistry = heldBitmapRegistry.bitmapRegistry
                 val translationRegistry = ConcurrentHashMap<String, PageTranslation>()
                 val renderMutexes = ConcurrentHashMap<String, Mutex>()
                 val aborted = AtomicBoolean(false)
@@ -1428,32 +1412,8 @@ class TranslationPipeline(
                     }
                 }
 
-                fun holdCleaned(pageKey: String, cleaned: Bitmap?) {
-                    if (cleaned == null) return
-                    val acquired = countSlots.tryAcquire()
-                    val fits = acquired && heldBitmapBytes.get() + cleaned.byteCount <= HELD_BITMAP_BYTE_CEILING
-                    if (fits) {
-                        heldBitmapBytes.addAndGet(cleaned.byteCount.toLong())
-                        bitmapRegistry[pageKey] = cleaned
-                    } else {
-                        if (acquired) countSlots.release()
-                        try {
-                            cleaned.recycle()
-                        } catch (_: Exception) {}
-                    }
-                }
-
-                fun recycleHeld(pageKey: String) {
-                    val b = bitmapRegistry.remove(pageKey) ?: return
-                    heldBitmapBytes.addAndGet(-b.byteCount.toLong())
-                    try {
-                        b.recycle()
-                    } catch (_: Exception) {}
-                    countSlots.release()
-                }
-
                 suspend fun abortBatchCandidate(pageKey: String, reason: String) {
-                    recycleHeld(pageKey)
+                    heldBitmapRegistry.recycleHeld(pageKey)
                     translationRegistry.remove(pageKey)
                     batchWriteIdentities.remove(pageKey)
                     if (pageKey in durableFailurePageKeys) {
@@ -1485,13 +1445,13 @@ class TranslationPipeline(
                         if (page.isTextlessTerminal) {
                             tracker?.markTranslateSkipped(pageKey)
                             tracker?.markRenderSkipped(pageKey)
-                            recycleHeld(pageKey)
+                            heldBitmapRegistry.recycleHeld(pageKey)
                             translationRegistry.remove(pageKey)
                             releaseBatchLease(pageKey)
                             return@withLock
                         }
                         if (page.renderStatus == StageStatus.READY && !plannedRenderNeedsWork(pageKey)) {
-                            recycleHeld(pageKey)
+                            heldBitmapRegistry.recycleHeld(pageKey)
                             translationRegistry.remove(pageKey)
                             releaseBatchLease(pageKey)
                             tracker?.markRenderDone(pageKey)
@@ -1500,7 +1460,7 @@ class TranslationPipeline(
                         val status = page.translationStatus
                         if (status != StageStatus.READY && status != StageStatus.PARTIAL) {
                             if (status == StageStatus.FAILED) {
-                                recycleHeld(pageKey)
+                                heldBitmapRegistry.recycleHeld(pageKey)
                                 translationRegistry.remove(pageKey)
                                 releaseBatchLease(pageKey)
                             }
@@ -1509,7 +1469,7 @@ class TranslationPipeline(
                         val inpaintStatus = page.inpaintStatus
                         if (inpaintStatus != StageStatus.READY && inpaintStatus != StageStatus.PARTIAL && inpaintStatus != StageStatus.TEXTLESS) {
                             if (inpaintStatus == StageStatus.FAILED) {
-                                recycleHeld(pageKey)
+                                heldBitmapRegistry.recycleHeld(pageKey)
                                 translationRegistry.remove(pageKey)
                                 releaseBatchLease(pageKey)
                             }
@@ -2442,7 +2402,7 @@ class TranslationPipeline(
                                 )
                             }
                         }
-                        holdCleaned(pageKey, target.cleanedBitmap)
+                        heldBitmapRegistry.holdCleaned(pageKey, target.cleanedBitmap)
                         target.cleanedBitmap = null
                     }
 
@@ -2605,7 +2565,7 @@ class TranslationPipeline(
                             tracker?.markAiSucceeded(pageKey)
                             tracker?.markRenderSkipped(pageKey)
                             if (p.inpaintStatus == StageStatus.SKIPPED || p.inpaintStatus == StageStatus.READY) {
-                                recycleHeld(pageKey)
+                                heldBitmapRegistry.recycleHeld(pageKey)
                                 translationRegistry.remove(pageKey)
                                 releaseBatchLease(pageKey)
                             }
