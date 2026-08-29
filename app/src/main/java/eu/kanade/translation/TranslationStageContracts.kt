@@ -185,21 +185,6 @@ sealed interface LeaseAcquisition {
     data class Denied(val reason: String, val owner: PageWriteOrigin?) : LeaseAcquisition
 }
 
-/**
- * Compatibility facade for callers that have not yet adopted request metadata.
- *
- * Provider network boundaries use [eu.kanade.translation.translator.ProviderRequestGovernor]
- * directly. Keeping this no-op shim avoids turning a legacy local caller into a
- * second process-wide lock while the migration is completed in later slices.
- */
-object SharedProviderRequestAdmission {
-    /** New callers should use this metadata-aware, process-wide governor. */
-    val governor: eu.kanade.translation.translator.ProviderRequestGovernor
-        get() = eu.kanade.translation.translator.SharedProviderRequestGovernor.instance
-
-    suspend fun <T> withRequest(block: suspend () -> T): T = block()
-}
-
 /** OCR identity excludes mutable translation, render colors, revision flags, and edits. */
 fun TranslationBlock.ocrFingerprint(): String {
     val canonical = buildString {

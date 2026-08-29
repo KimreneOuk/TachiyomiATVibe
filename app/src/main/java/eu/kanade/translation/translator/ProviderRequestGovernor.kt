@@ -820,7 +820,8 @@ fun classifyProviderFailure(
     )
 }
 
-private fun safeAdd(left: Long, right: Long): Long {
+/** Saturating epoch-ms addition shared with [TranslationRetry] (single canonical copy). */
+internal fun safeAdd(left: Long, right: Long): Long {
     if (right <= 0) return left
     if (left > Long.MAX_VALUE - right) return Long.MAX_VALUE
     return left + right

@@ -116,8 +116,6 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
-import mihon.core.archive.archiveReader
-import tachiyomi.core.common.util.system.ImageUtil
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -4260,76 +4258,6 @@ class TranslationPipeline(
         }
     }
 
-    suspend fun tryRenderStandalone(
-        manga: Manga,
-        chapter: Chapter,
-        source: HttpSource,
-        pageKey: String,
-        store: ChapterTranslationStore,
-    ) {
-        val page = store.state.value[pageKey] ?: return
-        val capturedGeneration = store.currentGeneration
-        if (page.translationStatus != StageStatus.READY && page.translationStatus != StageStatus.PARTIAL) {
-            return
-        }
-        val cleanedName = page.cleanedImageName ?: return
-        val bitmap = loadPersistedCleanedBitmap(manga, chapter, source, cleanedName) ?: return
-        try {
-            store.withGeneration(capturedGeneration) {
-                updatePageFromCurrentSnapshot(
-                    store,
-                    pageKey,
-                    "standalone render running",
-                    expectedGeneration = capturedGeneration,
-                ) { existing ->
-                    (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                        renderStatus = StageStatus.RUNNING
-                    }
-                }
-            }
-            RenderColorEstimator.recomputeFor(bitmap, page.blocks)
-            store.withGeneration(capturedGeneration) {
-                updatePageFromCurrentSnapshot(
-                    store,
-                    pageKey,
-                    "standalone render commit",
-                    expectedGeneration = capturedGeneration,
-                ) { existing ->
-                    (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                        renderStatus = StageStatus.READY
-                        blocks.forEachIndexed { index, b ->
-                            if (index < page.blocks.size) {
-                                b.textColor = page.blocks[index].textColor
-                                b.strokeColor = page.blocks[index].strokeColor
-                            }
-                        }
-                        updatedAt = System.currentTimeMillis()
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            store.withGeneration(capturedGeneration) {
-                updatePageFromCurrentSnapshot(
-                    store,
-                    pageKey,
-                    "standalone render failure",
-                    expectedGeneration = capturedGeneration,
-                ) { existing ->
-                    (existing ?: PageTranslation(sourceFileName = pageKey)).apply {
-                        renderStatus = StageStatus.FAILED
-                        errorMessage = e.message
-                    }
-                }
-            }
-            logcat(LogPriority.ERROR, e) { "Failed to render standalone page $pageKey" }
-        } finally {
-            try {
-                bitmap.recycle()
-            } catch (_: Exception) {}
-        }
-    }
-
     suspend fun getContextualTranslator(engine: AiEngine, model: String): ContextualTextTranslator? {
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
         val toLang = TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
@@ -5367,49 +5295,6 @@ class TranslationPipeline(
         "Low memory translating $fileName: $reason (page=${width}x$height). Retry when memory recovers.",
     )
 
-    private fun getChapterPages(chapterPath: UniFile): List<Pair<String, () -> InputStream>> {
-        if (chapterPath.isFile) {
-            chapterPath.archiveReader(context).use { reader ->
-                return reader.useEntries { entries ->
-                    entries.filter { entry ->
-                        // ImageUtil.isImage handles a null name; throw on unreadable entries
-                        // instead of NPE'ing on the `!!` that used to be here.
-                        entry.isFile &&
-                            ImageUtil.isImage(entry.name) {
-                                reader.getInputStream(entry.name)
-                                    ?: throw java.io.IOException("Archive entry '${entry.name}' could not be opened")
-                            }
-                    }
-                        .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }.map { entry ->
-                            Pair(entry.name) {
-                                chapterPath.archiveReader(context).use { archive ->
-                                    // Throw an explicit IOException instead of an NPE so the caller's
-                                    // try/catch reports the real cause on a corrupt/vanished entry.
-                                    val stream = archive.getInputStream(entry.name)
-                                        ?: throw java.io.IOException(
-                                            "Archive entry '${entry.name}' could not be opened",
-                                        )
-                                    stream.use { it.readBytes() }.inputStream()
-                                }
-                            }
-                        }.toList()
-                }
-            }
-        } else {
-            // listFiles() returns null on I/O error or a revoked SAF tree URI; return empty
-            // (the caller treats "no pages" as a no-op) instead of NPE'ing.
-            val files = chapterPath.listFiles() ?: run {
-                logcat(LogPriority.WARN) {
-                    "TachiyomiAT getChapterPages: listFiles() returned null for ${chapterPath.filePath}"
-                }
-                return emptyList()
-            }
-            return files.mapNotNull { entry ->
-                // entry.name is nullable on some SAF providers; skip nameless entries.
-                val name = entry.name ?: return@mapNotNull null
-                if (!ImageUtil.isImage(name)) return@mapNotNull null
-                Pair(name) { entry.openInputStream() }
-            }.sortedWith { f1, f2 -> f1.first.compareToCaseInsensitiveNaturalOrder(f2.first) }.toList()
-        }
-    }
+    private fun getChapterPages(chapterPath: UniFile): List<Pair<String, () -> InputStream>> =
+        eu.kanade.translation.util.getChapterPages(context, chapterPath)
 }

@@ -277,9 +277,3 @@ internal fun Throwable.isTransientRateOrServerError(): Boolean {
     return failure.retryability == ProviderFailureRetryability.RETRY_NOW ||
         failure.retryability == ProviderFailureRetryability.RETRY_AFTER
 }
-
-private fun safeAdd(left: Long, right: Long): Long {
-    if (right <= 0) return left
-    if (left > Long.MAX_VALUE - right) return Long.MAX_VALUE
-    return left + right
-}

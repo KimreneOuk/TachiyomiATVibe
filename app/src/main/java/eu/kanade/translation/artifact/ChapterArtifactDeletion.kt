@@ -100,10 +100,6 @@ class ChapterArtifactDeletionPlan private constructor(
         )
     }.getOrNull()
 
-    private fun identitiesMatch(expected: LegacySourceIdentity, actual: LegacySourceIdentity): Boolean =
-        expected.sha256.equals(actual.sha256, ignoreCase = true) &&
-            expected.lengthBytes == actual.lengthBytes
-
     companion object {
         /** Captures a deletion plan without opening or migrating a translation store. */
         fun capture(io: ChapterDocumentIo, translationFileName: String): ChapterArtifactDeletionPlan? {

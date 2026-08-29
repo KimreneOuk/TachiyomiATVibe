@@ -9,11 +9,8 @@ import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -199,21 +196,6 @@ class PaddleOcrV6SmallEngine : RoiOcrEngine {
         // right-side padding instead of white, matching the reference pipeline.
         const val PAD_GRAY = 0xFF808080.toInt()
 
-        @Volatile
-        private var diagnosticsInitialized = false
-
-        @Volatile
-        private var diagnosticsEnabled = false
-
-        private fun isDiagnosticsEnabled(): Boolean {
-            if (diagnosticsInitialized) return diagnosticsEnabled
-            diagnosticsEnabled = try {
-                Injekt.get<TranslationPreferences>().translationDiagnostics().get()
-            } catch (_: Throwable) {
-                false
-            }
-            diagnosticsInitialized = true
-            return diagnosticsEnabled
-        }
+        private fun isDiagnosticsEnabled(): Boolean = OcrDiagnostics.isEnabled()
     }
 }

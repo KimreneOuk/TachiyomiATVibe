@@ -254,8 +254,8 @@ if a normal page would otherwise be heap-downsampled. Additionally, to prevent
 chronic native memory pressure accumulation across consecutive page translations,
 the pipeline immediately calls native/off-heap memory reclamation at the end of
 each page. If full-quality decode is still unsafe, the page becomes retryable
-instead of saving blurry output. Only hard source-size limits may produce
-sampled output, and those pages are marked `RenderQuality.SIZE_LIMITED`.
+instead of saving blurry output. Only pages that exceed the hard source-size
+cap may persist sampled output (recorded as `decodeSampleSize > 1`).
 
 Reader-side translated image streams are on demand. `ReaderPageWarmWindow`
 attaches translated streams only for the current page plus two pages on either

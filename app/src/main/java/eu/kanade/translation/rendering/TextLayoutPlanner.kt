@@ -25,8 +25,6 @@ interface TextMeasurer {
      * matching the renderer's legacy stacking height.
      */
     fun lineHeight(fontSizePx: Float): Float
-
-    fun antiAliasInset(fontSizePx: Float): Float = 0f
 }
 
 /**

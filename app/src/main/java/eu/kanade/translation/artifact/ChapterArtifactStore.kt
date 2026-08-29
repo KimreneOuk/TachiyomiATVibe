@@ -1428,11 +1428,6 @@ class ChapterArtifactStore(
         return LegacySourceIdentity(digest, bytes.size.toLong(), io.lastModified(name))
     }
 
-    /** Mtime is diagnostic evidence only; content identity owns adoption. */
-    private fun identitiesMatch(expected: LegacySourceIdentity, actual: LegacySourceIdentity): Boolean =
-        expected.sha256.equals(actual.sha256, ignoreCase = true) &&
-            expected.lengthBytes == actual.lengthBytes
-
     private fun preservationTargetName(
         sourceName: String,
         identity: LegacySourceIdentity,

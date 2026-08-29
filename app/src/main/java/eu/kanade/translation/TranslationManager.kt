@@ -467,11 +467,6 @@ class TranslationManager(
         it.status == Translation.State.QUEUE || it.status == Translation.State.TRANSLATING
     }
 
-    fun getActivePageKeys(chapterId: Long): List<String> {
-        val store = activeStores.get(chapterId) ?: return emptyList()
-        return store.state.value.keys.toList()
-    }
-
     fun isPageActive(chapterId: Long, pageKey: String): Boolean {
         val store = activeStores.get(chapterId) ?: return false
         val page = store.state.value[pageKey] ?: return false
@@ -489,7 +484,6 @@ class TranslationManager(
         return isBatchTranslationActive(chapterId)
     }
 
-    fun translatorStart() = translator.start()
     fun translatorStop(reason: String? = null, closeEngines: Boolean = false) = translator.stop(reason, closeEngines)
 
     fun onMemoryPressure(level: Int) {
@@ -1013,14 +1007,6 @@ class TranslationManager(
         }
     }
 
-    fun openChapterTranslationStore(file: UniFile): StateFlow<Map<String, PageTranslation>> {
-        return kotlinx.coroutines.runBlocking(Dispatchers.IO) {
-            activeStores.getOrCreateFile(file.registryKey()) {
-                ChapterTranslationStore.open(file)
-            }?.state ?: kotlinx.coroutines.flow.MutableStateFlow(emptyMap())
-        }
-    }
-
     fun registerActiveTranslationStore(chapterId: Long, store: ChapterTranslationStore) {
         // Keep the existing instance if already registered so a reader keeps observing the same object.
         activeStores.register(chapterId, store)
@@ -1267,11 +1253,6 @@ class TranslationManager(
         }
     }
 
-    fun openActiveChapterTranslationStore(chapterId: Long, chapterName: String, scanlator: String?, mangaTitle: String, sourceId: Long): StateFlow<Map<String, PageTranslation>>? {
-        val source = sourceManager.get(sourceId) ?: return null
-        return openOrCreateActiveChapterTranslationStore(chapterId, chapterName, scanlator, mangaTitle, source)?.state
-    }
-
     fun openTranslationSession(
         manga: Manga,
         chapter: Chapter,
@@ -1337,8 +1318,6 @@ class TranslationManager(
         scheduler.reconcileAutoWindow()
     }
 
-    fun observeActiveStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? = activeStores.observe(chapterId)
-
     /** Reader-facing projection with the committed display pointer applied. */
     fun observeActiveDisplayStore(chapterId: Long): StateFlow<Map<String, PageTranslation>>? =
         activeStores.get(chapterId)?.display
@@ -1366,8 +1345,6 @@ class TranslationManager(
     }
 
     internal fun terminalSnapshotCacheSize(): Int = batchTrackerRegistry.terminalSnapshotCacheSize()
-
-    fun getBatchTracker(chapterId: Long): TranslationBatchProgressTracker? = batchTrackerRegistry.getLive(chapterId)
 
     /**
      * Live batch progress for [chapterId]. This is the one projection shared
@@ -1988,10 +1965,6 @@ class TranslationManager(
                 throw java.io.FileNotFoundException("Cleaned image not found: $cleanedImageName")
             }
         }
-    }
-
-    fun getCompanionImageDirForChapter(chapterName: String, scanlator: String?, title: String, source: Source): UniFile? {
-        return provider.findCompanionImageDir(title, source, chapterName, scanlator)
     }
 
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) =

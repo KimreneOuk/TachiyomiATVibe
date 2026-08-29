@@ -10,11 +10,8 @@ import android.graphics.Paint
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -465,28 +462,6 @@ class MangaOcrEngine : RoiOcrEngine {
             }
         }
 
-        /**
-         * TachiyomiAT: mirrors the translation_diagnostics preference. The per-ROI
-         * [ocr] timing log in [recognize] fires once per text region (30+ on a
-         * text-heavy page), so reading the preference through SharedPreferences on
-         * every call would itself be hot-path overhead. These @Volatile flags are
-         * initialized lazily once; the diagnostics pref is not toggled mid-read.
-         */
-        @Volatile
-        private var diagnosticsInitialized = false
-
-        @Volatile
-        private var diagnosticsEnabled = false
-
-        private fun isDiagnosticsEnabled(): Boolean {
-            if (diagnosticsInitialized) return diagnosticsEnabled
-            diagnosticsEnabled = try {
-                Injekt.get<TranslationPreferences>().translationDiagnostics().get()
-            } catch (e: Throwable) {
-                false
-            }
-            diagnosticsInitialized = true
-            return diagnosticsEnabled
-        }
+        private fun isDiagnosticsEnabled(): Boolean = OcrDiagnostics.isEnabled()
     }
 }

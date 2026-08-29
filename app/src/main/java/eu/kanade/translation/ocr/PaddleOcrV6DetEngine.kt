@@ -9,11 +9,8 @@ import android.graphics.RectF
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
-import tachiyomi.domain.translation.TranslationPreferences
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
-import uy.kohesive.injekt.Injekt
-import uy.kohesive.injekt.api.get
 import java.io.Closeable
 import java.io.File
 import java.nio.FloatBuffer
@@ -302,21 +299,6 @@ class PaddleOcrV6DetEngine : Closeable {
         private const val STD_G = 0.224f
         private const val STD_R = 0.229f
 
-        @Volatile
-        private var diagnosticsInitialized = false
-
-        @Volatile
-        private var diagnosticsEnabled = false
-
-        private fun isDiagnosticsEnabled(): Boolean {
-            if (diagnosticsInitialized) return diagnosticsEnabled
-            diagnosticsEnabled = try {
-                Injekt.get<TranslationPreferences>().translationDiagnostics().get()
-            } catch (_: Throwable) {
-                false
-            }
-            diagnosticsInitialized = true
-            return diagnosticsEnabled
-        }
+        private fun isDiagnosticsEnabled(): Boolean = OcrDiagnostics.isEnabled()
     }
 }

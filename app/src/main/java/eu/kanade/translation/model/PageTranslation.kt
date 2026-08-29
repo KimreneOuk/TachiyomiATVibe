@@ -274,12 +274,6 @@ object StageStatus {
     const val MAX_STAGE_RETRIES = 2
 }
 
-object RenderQuality {
-    const val UNKNOWN = "UNKNOWN"
-    const val FULL = "FULL"
-    const val SIZE_LIMITED = "SIZE_LIMITED"
-}
-
 @Serializable
 data class TranslationBlock(
     var blockId: String? = null,

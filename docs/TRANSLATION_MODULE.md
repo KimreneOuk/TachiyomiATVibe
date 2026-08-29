@@ -197,11 +197,8 @@ fresh snapshot lets neural inpaint recover on its own (no separate retry path).
 a normal manga page, heap pressure can only produce a retryable low-memory
 failure after reclaiming `BitmapPool`, engine native pools, Coil memory cache,
 and running GC; it must not silently choose `sampleSize > 1`. Only pages that
-exceed the hard source-pixel cap may persist sampled output, and those are
-marked `RenderQuality.SIZE_LIMITED`. New rendered images are saved as
-`.rendered.png` with `renderQuality`, `renderedWidth`, and `renderedHeight`.
-Legacy rendered images with `decodeSampleSize > 1` and unknown quality are
-treated as stale and scheduled again.
+exceed the hard source-pixel cap may persist sampled output (recorded as
+`decodeSampleSize > 1`). New rendered images are saved as `.rendered.png`.
 
 ### 7. BitmapPool aspect-ratio exact keying
 `BitmapPool` keys cached Bitmaps by exact dimensions (`"${width}x${height}"`) instead of area (`width * height`). Area-based keying caused aspect-ratio collisions (e.g., 200x1000 and 1000x200), where the pool returned a bitmap of the wrong orientation. This failed validation and was silently dropped to GC while allocating a new Bitmap, fragmenting heap. **Contract: always key pools by exact dimensions.**
