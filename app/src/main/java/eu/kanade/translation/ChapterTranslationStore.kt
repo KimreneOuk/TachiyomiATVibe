@@ -4,7 +4,6 @@ import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.ArtifactManifestProbe
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
@@ -19,7 +18,6 @@ import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.batch.BatchProgressReconciler
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -29,11 +27,11 @@ import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
-import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
-import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.store.ChapterGlossaryStore
+import eu.kanade.translation.store.StoreStatusInputs
+import eu.kanade.translation.store.StoreStatusProjector
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
@@ -313,15 +311,32 @@ class ChapterTranslationStore(
         snapshotLocked(pageKey)
     }
 
+    // T909 Phase 15: durable status projection (artifactStatus + the
+    // durable-failure read API) moved to store/StoreStatusProjector.kt; these
+    // same-signature stubs keep the old qualified names (ChapterTranslator,
+    // DurableChapterStatusResolver, and the migration/artifact-read tests
+    // resolve them here).
+    private val statusProjector get() = StoreStatusProjector(this)
+
+    /**
+     * One consistent read of the status-projection inputs for
+     * [StoreStatusProjector], captured in the same order the projection body
+     * reads them (manifest → live pages flow → display flow). The flows are
+     * handed over by reference so their `.value` reads keep landing at the
+     * projection body's original points.
+     */
+    internal fun statusProjectionInputs(): StoreStatusInputs =
+        StoreStatusInputs(artifactManifest, state, display)
+
     /** Current durable stage failure, if the artifact manifest owns one. */
     fun durableFailure(
         pageKey: String,
         stage: ArtifactStage = ArtifactStage.TRANSLATION,
-    ): DurableFailureMetadata? = artifactManifest?.durableFailures?.get("$pageKey:${stage.name}")
+    ): DurableFailureMetadata? = statusProjector.durableFailure(pageKey, stage)
 
     /** Immutable view used by queue restoration and planner admission. */
     fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
-        artifactManifest?.durableFailures?.toMap().orEmpty()
+        statusProjector.durableFailuresSnapshot()
 
     /** Establishes artifact authority before a caller installs a new page state. */
     suspend fun ensureArtifactAuthorityForMutation(): MutationAdmission = mutex.withLock {
@@ -1912,76 +1927,9 @@ class ChapterTranslationStore(
 
     fun glossarySnapshot(): Map<String, String> = glossaryStore.glossarySnapshot()
 
-    /** Derives durable artifact status without consulting the legacy summary sidecar. */
-    fun artifactStatus(): Translation.State? {
-        val manifest = artifactManifest ?: return null
-        val pagesSnapshot = state.value
-        val visiblePages = display.value
-        val hasReadableOutput = visiblePages.values.any { it.toPageDisplayProjection().displayReady } ||
-            pagesSnapshot.values.any { it.hasRenderedResult || it.isTextlessTerminal }
-        val hasPartialArtifact = pagesSnapshot.isNotEmpty() || manifest.pages.isNotEmpty()
-        val expectedPageCount = manifest.expectedPageCount
-        val expectedPageCountTrusted = manifest.expectedPageCountTrusted
-        val durableFailures = manifest.durableFailures.values
-        val hasTerminalDurableFailure = durableFailures.any { failure ->
-            failure.status == ArtifactStageStatus.FAILED_TERMINAL ||
-                failure.status == ArtifactStageStatus.CORRUPT ||
-                failure.status == ArtifactStageStatus.STALE
-        }
-        val hasRetryableDurableFailure = durableFailures.any { failure ->
-            failure.status == ArtifactStageStatus.FAILED_RETRYABLE
-        }
-        val retryablePageKeys = durableFailures
-            .filter { it.status == ArtifactStageStatus.FAILED_RETRYABLE }
-            .mapTo(mutableSetOf()) { it.pageKey }
-        val hasInMemoryFailure = pagesSnapshot.any { (pageKey, page) ->
-            page.isStageFailed &&
-                pageKey !in retryablePageKeys &&
-                !page.hasRenderedResult &&
-                !page.isTextlessTerminal
-        }
-        val hasInFlightPage = pagesSnapshot.any { (pageKey, page) ->
-            !page.isStageFailed &&
-                (
-                    manifest.pages[pageKey]?.candidate != null ||
-                        (!page.hasRenderedResult && !page.isTextlessTerminal && page.isStageRunning)
-                    )
-        }
-        if (hasTerminalDurableFailure || hasInMemoryFailure) return Translation.State.ERROR
-        if (hasRetryableDurableFailure) return Translation.State.PAUSED
-        if (hasInFlightPage) {
-            return if ((expectedPageCountTrusted && expectedPageCount != null && expectedPageCount > 0) ||
-                hasReadableOutput ||
-                hasPartialArtifact
-            ) {
-                Translation.State.READY_WITH_WARNINGS
-            } else {
-                null
-            }
-        }
-        val expectedPageCountValue = expectedPageCount
-            ?.takeIf { expectedPageCountTrusted }
-            ?: return if (hasReadableOutput || hasPartialArtifact) {
-                Translation.State.READY_WITH_WARNINGS
-            } else {
-                null
-            }
-        if (expectedPageCountValue <= 0) return null
-        val expectedKeys = manifest.pages.keys.toMutableList()
-        repeat((expectedPageCountValue - expectedKeys.size).coerceAtLeast(0)) { index ->
-            expectedKeys += "__missing_expected_page_$index"
-        }
-        val activeGeneration = pagesSnapshot.values.maxOfOrNull { it.runGeneration } ?: 0L
-        val reconciliation = BatchProgressReconciler.reconcile(pagesSnapshot, expectedKeys, activeGeneration)
-        return if (
-            reconciliation.chapterStatus == Translation.State.ERROR &&
-            pagesSnapshot.values.none { it.isStageFailed }
-        ) {
-            Translation.State.READY_WITH_WARNINGS
-        } else {
-            reconciliation.chapterStatus
-        }
-    }
+    // T909 Phase 15: body moved to store/StoreStatusProjector.kt.
+    // Same-signature stub keeps the call sites.
+    fun artifactStatus(): Translation.State? = statusProjector.artifactStatus()
 
     fun translatedPairs(): List<Pair<String, String>> = glossaryStore.translatedPairs()
 
