@@ -34,7 +34,7 @@ class MigratorTest {
     }
 
     @Test
-    fun initialVersion() = runBlocking {
+    fun initialVersion() = runBlocking<Unit> {
         val strategy = migrationStrategyFactory.create(0, 1)
         assertInstanceOf(InitialMigrationStrategy::class.java, strategy)
 
@@ -49,7 +49,7 @@ class MigratorTest {
     }
 
     @Test
-    fun sameVersion() = runBlocking {
+    fun sameVersion() = runBlocking<Unit> {
         val strategy = migrationStrategyFactory.create(1, 1)
         assertInstanceOf(NoopMigrationStrategy::class.java, strategy)
 
@@ -62,7 +62,7 @@ class MigratorTest {
     }
 
     @Test
-    fun noMigrations() = runBlocking {
+    fun noMigrations() = runBlocking<Unit> {
         val strategy = migrationStrategyFactory.create(1, 2)
         assertInstanceOf(VersionRangeMigrationStrategy::class.java, strategy)
 
@@ -75,7 +75,7 @@ class MigratorTest {
     }
 
     @Test
-    fun smallMigration() = runBlocking {
+    fun smallMigration() = runBlocking<Unit> {
         val strategy = migrationStrategyFactory.create(1, 2)
         assertInstanceOf(VersionRangeMigrationStrategy::class.java, strategy)
 
@@ -90,7 +90,7 @@ class MigratorTest {
     }
 
     @Test
-    fun largeMigration() = runBlocking {
+    fun largeMigration() = runBlocking<Unit> {
         val input = listOf(
             Migration.of(Migration.ALWAYS) { true },
             Migration.of(2f) { true },
@@ -118,7 +118,7 @@ class MigratorTest {
     }
 
     @Test
-    fun withinRangeMigration() = runBlocking {
+    fun withinRangeMigration() = runBlocking<Unit> {
         val strategy = migrationStrategyFactory.create(1, 2)
         assertInstanceOf(VersionRangeMigrationStrategy::class.java, strategy)
 

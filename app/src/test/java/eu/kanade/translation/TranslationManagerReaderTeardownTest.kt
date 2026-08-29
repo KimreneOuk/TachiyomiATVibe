@@ -32,7 +32,7 @@ import java.util.concurrent.atomic.AtomicReference
 class TranslationManagerReaderTeardownTest {
 
     @Test
-    fun `reader stop returns before store cleanup completes and preserves active batch store`() = runBlocking {
+    fun `reader stop returns before store cleanup completes and preserves active batch store`() = runBlocking<Unit> {
         val cleanupStarted = CountDownLatch(1)
         val cleanupRelease = CountDownLatch(1)
         val cleanupThread = AtomicReference<Thread>()
@@ -108,7 +108,7 @@ class TranslationManagerReaderTeardownTest {
     }
 
     @Test
-    fun `reader stop preserves a paused batch store for retry`() = runBlocking {
+    fun `reader stop preserves a paused batch store for retry`() = runBlocking<Unit> {
         val storeDefunct = AtomicBoolean(false)
         val batchStore = mockk<ChapterTranslationStore>(relaxed = true)
         every { batchStore.markDefunct() } answers { storeDefunct.set(true) }

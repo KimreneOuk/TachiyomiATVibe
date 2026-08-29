@@ -117,7 +117,7 @@ class TranslationManagerDownloadFailureRecoveryTest {
     }
 
     @Test
-    fun `completed download advances a failed request into translation`() = runBlocking {
+    fun `completed download advances a failed request into translation`() = runBlocking<Unit> {
         val store = mockk<TranslationPendingRequestStore>(relaxed = true)
         val scheduler = TranslationScheduler(
             executor = mockk<TranslationExecutor>(relaxed = true),

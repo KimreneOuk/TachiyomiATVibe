@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicLong
 class TranslationManagerAutoArbitrationTest {
 
     @Test
-    fun `manager treats a paused chapter as durable but inactive`() = runBlocking {
+    fun `manager treats a paused chapter as durable but inactive`() = runBlocking<Unit> {
         val source = mockk<HttpSource>(relaxed = true)
         val manga = mockk<Manga>(relaxed = true)
         val chapter = mockk<Chapter>(relaxed = true)

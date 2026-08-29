@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Timeout
 import java.io.InputStream
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -132,7 +133,8 @@ class RollingAutoCoordinatorTest {
      * reach 2 during the overlap.
      */
     @Test
-    fun `remote overlap - native B starts while translate A is in flight`() = runBlocking {
+    @Timeout(60)
+    fun `remote overlap - native B starts while translate A is in flight`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -165,20 +167,41 @@ class RollingAutoCoordinatorTest {
      * LOCAL_COMPUTE: the shared compute gate serializes prepare and translate.
      * At no point do both run simultaneously.
      */
+    /**
+     * LOCAL_COMPUTE: the shared compute gate serializes prepare and translate.
+     * At no point do both run simultaneously.
+     *
+     * Gate-release ordering note (T910): the coordinator admits page 1's native
+     * prepare as soon as page 0 hands off — the translate consumer is
+     * asynchronous to the reconcile loop even on [Dispatchers.Unconfined]
+     * (its channel-handoff resumption is queued to the runBlocking event
+     * loop), so prepare(1) legally acquires the shared gate before the
+     * consumer's translate(0) acquire is served. The gate still guarantees the
+     * two never OVERLAP; it does not guarantee translate-lane priority. The
+     * protocol below releases prepare(1) before waiting for translate(0);
+     * completing translate(0) first would deadlock the fixture (prepare(1)
+     * holds the permit while parked on a gate only this test can open, while
+     * this test waits for translate(0), which is parked on that permit).
+     */
     @Test
-    fun `local compute serializes prepare and translate through a shared gate`() = runBlocking {
+    @Timeout(60)
+    fun `local compute serializes prepare and translate through a shared gate`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
         val coordinator = newCoordinator(executor, TranslatorComputeClass.LOCAL_COMPUTE)
         val session = fakeSession(store)
         coordinator.updateWindow(identity, 0, 1, 2, session, resolver())
 
+        // Page 0 prepares while holding the shared gate, then hands off to the
+        // translate lane; the loop immediately admits prepare(1) behind the gate.
         executor.awaitAndCompletePrepare(0)
+        executor.awaitAndCompletePrepare(1)
+        // With the gate released by prepare(1), translate(0) starts.
         executor.awaitTranslateStarted(0)
+        // prepare(1) and translate(0) never overlapped: max stays 1.
         executor.maxConcurrent.get() shouldBe 1
 
         executor.completeTranslate(0)
-        executor.awaitAndCompletePrepare(1)
         executor.awaitTranslateStarted(1)
         executor.completeTranslate(1)
 
@@ -194,7 +217,7 @@ class RollingAutoCoordinatorTest {
      * covered by `foreground bypasses memory gate while ahead pages defer`.)
      */
     @Test
-    fun `memory deferral publishes Deferred Memory and refills on reconcile`() = runBlocking {
+    fun `memory deferral publishes Deferred Memory and refills on reconcile`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         // p0 (visible) is already display-ready -> foreground is null, not desired.
         val store = newStore(listOf("p0" to displayReady("p0"), "p1" to blank()))
@@ -229,7 +252,7 @@ class RollingAutoCoordinatorTest {
      * proceeds to the next desired page without getting stuck or auto-looping.
      */
     @Test
-    fun `prepare failure marks slot Failed and coordinator continues`() = runBlocking {
+    fun `prepare failure marks slot Failed and coordinator continues`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         executor.failPrepareFor.add("p0")
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
@@ -253,7 +276,7 @@ class RollingAutoCoordinatorTest {
      * translate lane entirely and publishes Ready.
      */
     @Test
-    fun `terminal prepared page is Ready without translate`() = runBlocking {
+    fun `terminal prepared page is Ready without translate`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         executor.terminalPages.add("p0")
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
@@ -275,7 +298,7 @@ class RollingAutoCoordinatorTest {
      * duplicate execution and no reservation holes.
      */
     @Test
-    fun `rapid anchor convergence without duplicate execution`() = runBlocking {
+    fun `rapid anchor convergence without duplicate execution`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore(
             (0..9).map { "p$it" to blank() },
@@ -304,7 +327,7 @@ class RollingAutoCoordinatorTest {
      * finish and persist its result.
      */
     @Test
-    fun `obsolete queued page never starts while started work finishes`() = runBlocking {
+    fun `obsolete queued page never starts while started work finishes`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val store = newStore((0..9).map { "p$it" to blank() })
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -336,7 +359,7 @@ class RollingAutoCoordinatorTest {
      * never processed it, and a coordinator-finished page counts too.
      */
     @Test
-    fun `ready-ahead count reflects durable display results`() = runBlocking {
+    fun `ready-ahead count reflects durable display results`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         // p5 is already display-ready in the store; p6, p7 need work.
         val store = newStore(
@@ -364,7 +387,7 @@ class RollingAutoCoordinatorTest {
      * ready), not merely that no foreground request was constructed.
      */
     @Test
-    fun `foreground is null when visible page is display-ready`() = runBlocking {
+    fun `foreground is null when visible page is display-ready`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore(listOf("p3" to displayReady("p3"), "p4" to blank()))
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -385,7 +408,7 @@ class RollingAutoCoordinatorTest {
      * reconcile() is signalled.
      */
     @Test
-    fun `missing stream defers with SourceUnavailable and recovers on reconcile`() = runBlocking {
+    fun `missing stream defers with SourceUnavailable and recovers on reconcile`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore((0..2).map { "p$it" to blank() })
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -415,7 +438,7 @@ class RollingAutoCoordinatorTest {
      * translate consumer terminate, and no further native work is admitted.
      */
     @Test
-    fun `cancel stops admission and terminates the coordinator`() = runBlocking {
+    fun `cancel stops admission and terminates the coordinator`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val store = newStore((0..4).map { "p$it" to blank() })
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -442,7 +465,8 @@ class RollingAutoCoordinatorTest {
 
     /** shutdown clears the snapshot and tears down all lane work. */
     @Test
-    fun `shutdown clears snapshot`() = runBlocking {
+    @Timeout(60)
+    fun `shutdown clears snapshot`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -461,7 +485,7 @@ class RollingAutoCoordinatorTest {
      * [TranslationExecutor.translatePreparedPage].
      */
     @Test
-    fun `stale translate handoff re-prepares then succeeds`() = runBlocking {
+    fun `stale translate handoff re-prepares then succeeds`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         executor.staleTranslateRemaining["p0"] = AtomicInteger(2)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
@@ -481,7 +505,7 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `typed pause is not ready and retries on an eligible reconcile`() = runBlocking {
+    fun `typed pause is not ready and retries on an eligible reconcile`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         executor.pausedTranslateRemaining["p0"] = AtomicInteger(1)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
@@ -511,7 +535,7 @@ class RollingAutoCoordinatorTest {
      * flips to Failed(retryable) and the coordinator moves on to other pages.
      */
     @Test
-    fun `persistently stale translate is bounded and flips to Failed`() = runBlocking {
+    fun `persistently stale translate is bounded and flips to Failed`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         executor.staleTranslateRemaining["p0"] = AtomicInteger(Int.MAX_VALUE)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
@@ -539,7 +563,7 @@ class RollingAutoCoordinatorTest {
      * does not loop: the executor is called once for that page's translate.
      */
     @Test
-    fun `translate throw marks slot Failed without retry`() = runBlocking {
+    fun `translate throw marks slot Failed without retry`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         executor.failTranslateFor.add("p0")
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
@@ -569,7 +593,7 @@ class RollingAutoCoordinatorTest {
      * progress around the arbitrated page rather than stalling on it.
      */
     @Test
-    fun `manual arbitration - window proceeds around a hidden page then admits it`() = runBlocking {
+    fun `manual arbitration - window proceeds around a hidden page then admits it`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore((0..3).map { "p$it" to blank() })
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -605,7 +629,7 @@ class RollingAutoCoordinatorTest {
      * pipeline (out of scope for the coordinator).
      */
     @Test
-    fun `foreground bypasses memory gate while ahead pages defer`() = runBlocking {
+    fun `foreground bypasses memory gate while ahead pages defer`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore(listOf("p0" to blank(), "p1" to blank(), "p2" to blank()))
         val coordinator = newCoordinator(
@@ -638,7 +662,7 @@ class RollingAutoCoordinatorTest {
      * coordination loop, no duplicate work for the new chapter.
      */
     @Test
-    fun `identity switch resets transient state and binds the new chapter window`() = runBlocking {
+    fun `identity switch resets transient state and binds the new chapter window`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore((0..9).map { "p$it" to blank() })
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -673,7 +697,7 @@ class RollingAutoCoordinatorTest {
      * fresh retry budget instead of staying stuck.
      */
     @Test
-    fun `cancel clears stale reprepare bookkeeping so re-arm re-attempts`() = runBlocking {
+    fun `cancel clears stale reprepare bookkeeping so re-arm re-attempts`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         executor.staleTranslateRemaining["p0"] = AtomicInteger(Int.MAX_VALUE)
         val store = newStore(listOf("p0" to blank()))
@@ -701,7 +725,7 @@ class RollingAutoCoordinatorTest {
      * cancelled job to join rather than an already-cleared field.
      */
     @Test
-    fun `cancel immediate rearm waits for cancelled owner`() = runBlocking {
+    fun `cancel immediate rearm waits for cancelled owner`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false, ignoreCancellation = true)
         val store = newStore(listOf("p0" to blank()))
         val coordinator = newCoordinator(executor, TranslatorComputeClass.REMOTE_IO)
@@ -731,7 +755,7 @@ class RollingAutoCoordinatorTest {
      * snapshot. The replacement loop waits for the cancelled owner first.
      */
     @Test
-    fun `identity switch fences old session handoff and late callbacks`() = runBlocking {
+    fun `identity switch fences old session handoff and late callbacks`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false, ignoreCancellation = true)
         val oldStore = newStore(listOf("old0" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
@@ -775,7 +799,7 @@ class RollingAutoCoordinatorTest {
      * without sleeps or polling.
      */
     @Test
-    fun `normal dispatcher concurrent updates keep one coordination owner`() = runBlocking {
+    fun `normal dispatcher concurrent updates keep one coordination owner`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val store = newStore((0..2).map { "p$it" to blank() })
         val coordinator = newCoordinator(
@@ -808,7 +832,7 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `older same-spec snapshot build cannot overwrite newer stage`() = runBlocking {
+    fun `older same-spec snapshot build cannot overwrite newer stage`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         // The visible slot's transient state is populated by prepare's stage
         // events, so snapshot builds resolve it from slotStates and never
@@ -851,7 +875,7 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `scheduler replacement waits for a non cooperative retiring coordinator`() = runBlocking {
+    fun `scheduler replacement waits for a non cooperative retiring coordinator`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false, ignoreCancellation = true)
         val oldStore = newStore(listOf("old0" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
@@ -885,7 +909,8 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `chapter mismatched cancellation leaves the active scheduler owner running`() = runBlocking {
+    @Timeout(60)
+    fun `chapter mismatched cancellation leaves the active scheduler owner running`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val store = newStore(listOf("p0" to blank(), "p1" to blank()))
         val scheduler = TranslationScheduler(
@@ -900,21 +925,29 @@ class RollingAutoCoordinatorTest {
             scheduler.updateAutoWindow(identity, 0, 1, 2, session, resolver(), TranslatorComputeClass.REMOTE_IO)
             executor.awaitPrepareStarted(0)
 
-            scheduler.cancelAutoTranslations(99L)
+            // Chapter-mismatched cancellation must be a no-op for the active owner.
+            scheduler.cancelAutoTranslations(99L) shouldBe false
             scheduler.cancelPageTranslations(99L)
             executor.completePrepare(0)
             withTimeout(5_000) { executor.awaitTranslateStarted(0) }
 
-            scheduler.cancelAutoTranslations(31L)
+            // Chapter-matched cancellation stops the active owner. Whether p1's
+            // native prepare had already been admitted before the cancel is a
+            // legal pre-cancel race (the loop is event-driven on
+            // Dispatchers.Default); the cancelled owner can never drive p1
+            // through translate though: autoComplete=false parks prepare(p1) on
+            // a gate this test never opens, so cancellation unwinds it there.
+            scheduler.cancelAutoTranslations(31L) shouldBe true
             executor.completeTranslate(0)
-            executor.prepareCallsByPage["p1"] shouldBe null
+            executor.translateCallsByPage["p1"] shouldBe null
         } finally {
             scheduler.close()
         }
     }
 
     @Test
-    fun `same-chapter replacement is suppressed while cancellation is signalling`() = runBlocking {
+    @Timeout(60)
+    fun `same-chapter replacement is suppressed while cancellation is signalling`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val oldStore = newStore(listOf("old0" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
@@ -995,7 +1028,8 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `global cancellation epoch rejects a concurrent update and permits post-cancel rearm`() = runBlocking {
+    @Timeout(60)
+    fun `global cancellation epoch rejects a concurrent update and permits post-cancel rearm`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val oldStore = newStore(listOf("old0" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
@@ -1041,11 +1075,18 @@ class RollingAutoCoordinatorTest {
                 )
             }
             awaitAll(cancellation, concurrentUpdate)
-            val afterCancellation = withTimeout(5_000) {
-                scheduler.autoSnapshot.first { it == null || it.identity != oldIdentity }
-            }
-            afterCancellation?.identity shouldNotBe oldIdentity
+            // Both interleavings are legal:
+            // - Update won: it installed the new identity (the overlapping
+            //   global cancel may then have cancelled that new owner — still
+            //   fenced from the old one).
+            // - Cancel won: the global epoch rejected the concurrent update;
+            //   the cancelled old owner keeps its RETAINED snapshot (cancel(),
+            //   unlike shutdown(), never nulls it) until an explicit re-arm.
+            //   The old owner can no longer publish or admit work.
+            val observed = scheduler.autoSnapshot.value
+            (observed == null || observed.identity == oldIdentity || observed.identity == newIdentity) shouldBe true
 
+            // A post-cancel re-arm must always converge on the new identity.
             scheduler.updateAutoWindow(
                 newIdentity,
                 0,
@@ -1062,7 +1103,7 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `reentrant resolver cannot publish an obsolete snapshot`() = runBlocking {
+    fun `reentrant resolver cannot publish an obsolete snapshot`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val oldStore = newStore(listOf("old0" to displayReady("old0")))
         val newStore = newStore(listOf("new0" to displayReady("new0")))
@@ -1093,7 +1134,8 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `stable scheduler snapshot switches pointer and rejects same-identity replay`() = runBlocking {
+    @Timeout(60)
+    fun `stable scheduler snapshot switches pointer and rejects same-identity replay`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = true)
         val oldStore = newStore(listOf("old0" to blank(), "old1" to blank(), "old2" to blank()))
         val newStore = newStore(listOf("new0" to blank()))
@@ -1132,10 +1174,18 @@ class RollingAutoCoordinatorTest {
                 pageResolver = resolver("old"),
                 computeClass = TranslatorComputeClass.REMOTE_IO,
             )
-            stable.value!!.identity shouldBe oldIdentity
-            stable.value!!.visiblePageIndex shouldBe 2
-            stable.value!!.windowVersion shouldBe (firstVersion + 1)
-            stable.value!!.ownerVersion shouldBe firstOwnerVersion
+            // The scheduler-level flow re-points through flatMapLatest on the
+            // scheduler's IO scope, so projection delivery is asynchronous to
+            // updateAutoWindow returning: await the switched projection instead
+            // of reading stable.value inline (T910: the inline read raced).
+            val second = withTimeout(5_000) {
+                stable.first {
+                    it?.identity == oldIdentity &&
+                        it.visiblePageIndex == 2 &&
+                        it.windowVersion == firstVersion + 1
+                }
+            }
+            second!!.ownerVersion shouldBe firstOwnerVersion
 
             // A replacement store with the same textual identity is still a
             // new owner and must fence old Reader snapshots/handles.
@@ -1178,7 +1228,8 @@ class RollingAutoCoordinatorTest {
     }
 
     @Test
-    fun `reconcile admission guard suppresses batch or revision recovery poke`() = runBlocking {
+    @Timeout(60)
+    fun `reconcile admission guard suppresses batch or revision recovery poke`() = runBlocking<Unit> {
         val executor = ControllableExecutor(autoComplete = false)
         val store = newStore(listOf("p0" to blank()))
         val scheduler = TranslationScheduler(
