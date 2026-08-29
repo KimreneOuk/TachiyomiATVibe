@@ -5,10 +5,9 @@ import org.junit.jupiter.api.Test
 
 /**
  * Pure-policy tests for [MemoryPressurePolicy.classify]. Mirrors the plain JUnit5 +
- * Kotest style used by [eu.kanade.translation.batch.BatchOomPolicyTest] and
- * [TranslationMemoryPressureForwarderTest]: raw `Int` trim-memory levels, no
- * `android.content.ComponentCallbacks2` statics (those do not resolve in plain-JVM
- * unit tests — there is no Robolectric on this source set).
+ * Kotest style used by [TranslationMemoryPressureForwarderTest]: raw `Int`
+ * trim-memory levels, no `android.content.ComponentCallbacks2` statics (those do not
+ * resolve in plain-JVM unit tests — there is no Robolectric on this source set).
  *
  * Constants are referenced by name ([MemoryPressurePolicy.LEVEL_RUNNING_CRITICAL],
  * etc.) for boundary clarity; their numeric values mirror `ComponentCallbacks2`.

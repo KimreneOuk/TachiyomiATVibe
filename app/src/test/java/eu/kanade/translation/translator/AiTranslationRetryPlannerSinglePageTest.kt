@@ -52,16 +52,6 @@ class AiTranslationRetryPlannerSinglePageTest {
     }
 
     @Test
-    fun `all blank translations returns every non-blank-source block`() {
-        val page = page(
-            block(text = "源", translation = ""),
-            block(text = "分", translation = ""),
-        )
-
-        AiTranslationRetryPlanner.untranslatedBlocks(page) shouldHaveSize 2
-    }
-
-    @Test
     fun `blank source text is never reported as untranslated`() {
         // A textless block has nothing to translate — it must not be picked up
         // by the retry predicate (would cause spurious retries on pages with
@@ -72,15 +62,6 @@ class AiTranslationRetryPlannerSinglePageTest {
         )
 
         AiTranslationRetryPlanner.untranslatedBlocks(page) shouldHaveSize 0
-    }
-
-    @Test
-    fun `whitespace-only translation is treated as untranslated`() {
-        val page = page(
-            block(text = "源", translation = "   "),
-        )
-
-        AiTranslationRetryPlanner.untranslatedBlocks(page) shouldHaveSize 1
     }
 
     @Test

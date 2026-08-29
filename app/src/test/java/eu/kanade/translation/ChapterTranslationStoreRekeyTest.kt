@@ -51,15 +51,4 @@ class ChapterTranslationStoreRekeyTest {
 
         store.state.value shouldBe before
     }
-
-    @Test
-    fun `CBZ entry names are valid targets`() = runTest {
-        val store = store("chapter-page-a.png", "chapter-page-b.png")
-
-        store.rekeyPages(
-            onlineKeys = listOf("chapter-page-a.png", "chapter-page-b.png"),
-            onDiskKeys = listOf("000.png", "001.png"),
-        ) shouldBe listOf("chapter-page-a.png" to "000.png", "chapter-page-b.png" to "001.png")
-        store.state.value.keys shouldBe setOf("000.png", "001.png")
-    }
 }

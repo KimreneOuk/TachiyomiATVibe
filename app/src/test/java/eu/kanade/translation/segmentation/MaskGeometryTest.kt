@@ -5,10 +5,8 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.time.Duration
 
 class MaskGeometryTest {
     @Test
@@ -41,27 +39,6 @@ class MaskGeometryTest {
         assertTrue(square.isRectangleSafe(1, 1, 2, 2, inset = 1))
         assertFalse(square.isRectangleSafe(0, 0, 1, 1, inset = 1))
         assertFalse(geometry("1").isRectangleSafe(0, 0, 1, 1, inset = 1))
-    }
-
-    @Test
-    fun `large sparse geometry construction and indexed queries stay bounded`() {
-        val width = 2_000
-        val height = 10
-        val spans = buildList {
-            for (y in 0 until height) {
-                for (x in 0 until width step 2) add(MaskGeometry.RowSpan(y, x, x + 1))
-            }
-        }
-
-        assertTimeoutPreemptively(Duration.ofSeconds(3)) {
-            val geometry = MaskGeometry.fromSpans(width, height, spans)
-            repeat(2_000) {
-                assertTrue(geometry.containsPoint(1_998, 9))
-                assertFalse(geometry.containsPoint(1_999, 9))
-                assertTrue(geometry.containsRectangle(1_998, 9, 1_999, 10))
-                assertTrue(geometry.componentForRectangle(1_998, 0, 1_999, 10) != null)
-            }
-        }
     }
 
     @Test

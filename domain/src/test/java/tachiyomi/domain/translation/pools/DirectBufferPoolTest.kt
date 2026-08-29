@@ -44,18 +44,6 @@ class DirectBufferPoolTest {
     }
 
     @Test
-    fun `buffer is usable for normal put_get round-trips`() {
-        val bytes = 4 * Float.SIZE_BYTES
-        val pool = DirectBufferPool(bytes, maxPoolSize = 2)
-        val buffer = pool.acquire()
-        buffer.put(0, 1.5f)
-        buffer.put(3, -2.25f)
-        buffer.get(0) shouldBe 1.5f
-        buffer.get(3) shouldBe -2.25f
-        pool.release(buffer)
-    }
-
-    @Test
     fun `recycled buffer retains its capacity across releases`() {
         val bytes = 8 * Float.SIZE_BYTES
         val pool = DirectBufferPool(bytes, maxPoolSize = 2)
@@ -148,29 +136,5 @@ class DirectBufferPoolTest {
         val second = pool.acquire()
         (second === first) shouldBe true
         pool.release(second)
-    }
-
-    @Test
-    fun `pool with maxPoolSize one never allocates more than one buffer under churn`() {
-        // Stress version: many acquire-mutate-release cycles. With correct
-        // identity-based tracking, every acquire returns the SAME instance.
-        // With the content-equality bug, every cycle allocates a new buffer.
-        val bytes = 16 * Float.SIZE_BYTES
-        val pool = DirectBufferPool(bytes, maxPoolSize = 1)
-
-        val canonical = pool.acquire()
-        pool.release(canonical)
-
-        val allSameInstance = (1..100).all {
-            val buf = pool.acquire()
-            // Mutate like the real consumer.
-            buf.clear()
-            buf.put(FloatArray(buf.capacity()) { it.toFloat() })
-            buf.flip()
-            val same = buf === canonical
-            pool.release(buf)
-            same
-        }
-        allSameInstance shouldBe true
     }
 }

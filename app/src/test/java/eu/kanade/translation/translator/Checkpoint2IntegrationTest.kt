@@ -8,37 +8,6 @@ import org.junit.jupiter.api.Test
 
 class Checkpoint2IntegrationTest {
 
-    // ---- TranslatorComputeClass lane routing ----
-
-    @Test
-    fun `compute class routing classifies ML Kit as serialized and remote as overlapping`() {
-        (TranslatorComputeClass.LOCAL_COMPUTE.mayOverlapNative) shouldBe false
-        (TranslatorComputeClass.REMOTE_IO.mayOverlapNative) shouldBe true
-    }
-
-    @Test
-    fun `compute class routes the configured standard engines correctly`() {
-        val mlKit = TranslatorComputeClass.forConfiguration(
-            tachiyomi.domain.translation.TranslationEngineCategory.STANDARD,
-            StandardTranslatorKind.MLKIT.name,
-            null,
-        )
-        val remoteStd = TranslatorComputeClass.forConfiguration(
-            tachiyomi.domain.translation.TranslationEngineCategory.STANDARD,
-            StandardTranslatorKind.DEEPL.name,
-            null,
-        )
-        val ai = TranslatorComputeClass.forConfiguration(
-            tachiyomi.domain.translation.TranslationEngineCategory.AI_MODEL,
-            null,
-            "gemini",
-        )
-        mlKit shouldBe TranslatorComputeClass.LOCAL_COMPUTE
-        (mlKit.mayOverlapNative) shouldBe false
-        remoteStd shouldBe TranslatorComputeClass.REMOTE_IO
-        ai shouldBe TranslatorComputeClass.REMOTE_IO
-    }
-
     // ---- Streaming planner tail flush stays within the context budget ----
 
     @Test

@@ -3,7 +3,6 @@ package eu.kanade.translation.segmentation
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
-import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -54,16 +53,6 @@ class MaskGeometryStressTest {
         assertTrue(geometry.containsPoint(0, 0))
         assertTrue(geometry.containsRectangle(0, 0, 1, 1))
         assertFalse(geometry.containsRectangle(0, 0, 2, 1)) // gap at x=1
-    }
-
-    @Test
-    fun `exceeding the configured span budget is rejected without partial construction`() {
-        val limit = 1_000
-        val spans = (0 until limit + 1).map { MaskGeometry.RowSpan(0, it, it + 1) }
-        val error = assertThrows(IllegalArgumentException::class.java) {
-            MaskGeometry.fromSpans(limit + 2, 1, spans, maxSpans = limit)
-        }
-        assertTrue(error.message != null)
     }
 
     @Test

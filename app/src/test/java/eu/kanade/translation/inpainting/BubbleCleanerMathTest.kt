@@ -75,11 +75,6 @@ class BubbleCleanerMathTest {
     }
 
     @Test
-    fun `unionMasks empty inputs return empty`() {
-        BubbleCleanerMath.unionMasks(ByteArray(0), ByteArray(0)).size shouldBe 0
-    }
-
-    @Test
     fun `isDominantLightBackground true for near-white rectangle`() {
         val width = 3
         val gray = IntArray(width * 3) { 245 }

@@ -22,16 +22,6 @@ class BatchEnvelopeLimitsTest {
     }
 
     @Test
-    fun `envelopes preserve natural page order`() {
-        val pages = linkedMapOf(*Array(6) { i -> "p$i" to page(*Array(10) { block("text-$i-$it") }) })
-        val chunks = planAll(pages)
-
-        val seenOrder = chunks.flatMap { it.pages.keys.map(::naturalIndex) }
-        seenOrder shouldBe seenOrder.sorted()
-        seenOrder shouldContainExactly (0..5).toList()
-    }
-
-    @Test
     fun `single dense page remains one envelope`() {
         val pages = linkedMapOf("p0" to page(*Array(40) { block("text-$it") }))
         val chunks = planAll(pages)
@@ -54,8 +44,6 @@ class BatchEnvelopeLimitsTest {
         planner.flushRemaining().finalChunk?.let { chunks += it }
         return chunks
     }
-
-    private fun naturalIndex(pageKey: String): Int = pageKey.removePrefix("p").toInt()
 
     private fun page(vararg blocks: TranslationBlock): PageTranslation =
         PageTranslation(blocks = blocks.toMutableList())

@@ -135,7 +135,6 @@ class AiTranslationRetryControllerTest {
         outcome.shouldBeInstanceOf<AiChunkOutcome.Paused>()
         transportCalls shouldBe 5
         translator.calls shouldBe 2
-        (transportCalls <= 5) shouldBe true
     }
 
     @Test

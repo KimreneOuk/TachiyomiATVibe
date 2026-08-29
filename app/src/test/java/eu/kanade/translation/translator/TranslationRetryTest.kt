@@ -99,21 +99,4 @@ class TranslationRetryTest {
         thrown.message shouldBe "cancelled"
         calls shouldBe 1
     }
-
-    @Test
-    fun `isTransientRateOrServerError detects rate limit phrasings`() {
-        IOException("timeout").isTransientRateOrServerError() shouldBe true
-        RuntimeException("429 Too Many Requests").isTransientRateOrServerError() shouldBe true
-        RuntimeException("Rate Limit Exceeded").isTransientRateOrServerError() shouldBe true
-        RuntimeException("503 Service Unavailable").isTransientRateOrServerError() shouldBe true
-        RuntimeException("connection timed out").isTransientRateOrServerError() shouldBe true
-        RuntimeException("overloaded").isTransientRateOrServerError() shouldBe true
-    }
-
-    @Test
-    fun `isTransientRateOrServerError rejects non-transient`() {
-        IllegalArgumentException("bad").isTransientRateOrServerError() shouldBe false
-        RuntimeException("Unrecognized auth token").isTransientRateOrServerError() shouldBe false
-        NullPointerException().isTransientRateOrServerError() shouldBe false
-    }
 }

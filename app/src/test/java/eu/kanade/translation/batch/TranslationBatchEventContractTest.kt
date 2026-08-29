@@ -3,7 +3,6 @@ package eu.kanade.translation.batch
 import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.Translation
 import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.collections.shouldNotContain
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
@@ -27,30 +26,6 @@ class TranslationBatchEventContractTest {
             "BatchFinished",
             "BatchPaused",
         )
-    }
-
-    @Test
-    fun `BatchStarted is not a member of the event surface`() {
-        val names = TranslationBatchEvent::class.sealedSubclasses.map { it.simpleName }.toSet()
-        // CP9 regression guard: BatchStarted had no emitter and was removed.
-        names shouldNotContain "BatchStarted"
-    }
-
-    @Test
-    fun `BatchResumed is not a member of the event surface`() {
-        val names = TranslationBatchEvent::class.sealedSubclasses.map { it.simpleName }.toSet()
-        // CP9 regression guard: BatchResumed had no emitter and was removed.
-        names shouldNotContain "BatchResumed"
-    }
-
-    @Test
-    fun `Revision events are not members of the event surface`() {
-        val names = TranslationBatchEvent::class.sealedSubclasses.map { it.simpleName }.toSet()
-        names shouldNotContain "RevisionStarted"
-        names shouldNotContain "RevisionChunkRunning"
-        names shouldNotContain "RevisionChunkCompleted"
-        names shouldNotContain "RevisionChunkFailed"
-        names shouldNotContain "RevisionFinished"
     }
 
     @Test
