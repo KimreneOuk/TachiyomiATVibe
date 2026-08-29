@@ -414,7 +414,7 @@ class ChapterTranslator(
 
     private fun CoroutineScope.launchTranslationJob(translation: Translation) = launchIO {
         try {
-            val reconciliation = translateChapter(translation)
+            val reconciliation = translateChapterInternal(translation)
             if (translation.status == Translation.State.TRANSLATED ||
                 (
                     translation.status == Translation.State.READY_WITH_WARNINGS &&
@@ -503,10 +503,6 @@ class ChapterTranslator(
         }
         val translation = Translation(source, manga, chapter, fromLang, toLang)
         addToQueue(translation)
-    }
-
-    private suspend fun translateChapter(translation: Translation): ReconciliationResult? {
-        return translateChapterInternal(translation)
     }
 
     private suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
