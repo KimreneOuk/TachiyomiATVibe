@@ -6,10 +6,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
-import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.batch.BatchContextFrontier
 import eu.kanade.translation.batch.BatchDiagnosticDecision
 import eu.kanade.translation.batch.BatchDiagnosticReason
@@ -52,6 +49,8 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
+import eu.kanade.translation.pipeline.batch.BatchWriteGate
+import eu.kanade.translation.pipeline.batch.BatchWriteIdentity
 import eu.kanade.translation.pipeline.batch.HeldBitmapRegistry
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
@@ -133,19 +132,8 @@ import kotlin.coroutines.coroutineContext
 
 class LayoutFailureException(val blockIds: List<String>, message: String) : Exception(message)
 
-private fun ProviderFailure.toFailureCategory(): FailureCategory = when (kind) {
-    ProviderFailureKind.NETWORK,
-    ProviderFailureKind.RATE_LIMIT,
-    ProviderFailureKind.QUOTA_EXHAUSTED,
-    ProviderFailureKind.SERVER,
-    -> FailureCategory.TRANSIENT
-    ProviderFailureKind.REFUSAL -> FailureCategory.PROVIDER_REFUSAL
-    ProviderFailureKind.AUTHENTICATION,
-    ProviderFailureKind.CONFIGURATION,
-    -> FailureCategory.CONFIGURATION
-    ProviderFailureKind.SOURCE -> FailureCategory.SOURCE
-    ProviderFailureKind.PROTOCOL -> FailureCategory.PROTOCOL
-}
+// T909 Phase 20.2: ProviderFailure.toFailureCategory moved to
+// pipeline/batch/BatchWriteGate.kt (its only caller, persistAiFailure).
 
 class TranslationPipeline(
     private val context: Context,
@@ -1041,6 +1029,20 @@ class TranslationPipeline(
                     }
                 }
 
+                // T909 Phase 20.2: the batch write gate moved to
+                // pipeline/batch/BatchWriteGate.kt. It receives the SAME identity-map
+                // and durable-failure-set instances the shell holds; the same-name
+                // local delegates below keep the not-yet-moved closures' call sites.
+                val batchWriteGate = BatchWriteGate(
+                    store = store,
+                    batchWriteIdentities = batchWriteIdentities,
+                    durableFailurePageKeys = durableFailurePageKeys,
+                    expectedBatchFingerprints = expectedBatchFingerprints,
+                    stampBatchProvenance = ::stampBatchProvenance,
+                    releaseBatchPageLeaseFn = ::releaseBatchPageLease,
+                    persistPageWithOomRecoveryFn = ::persistPageWithOomRecovery,
+                )
+
                 // Plan the complete chapter once, in the same natural order
                 // passed to the coordinator.  Native resume gates consume this
                 // snapshot; they never derive work from lastPageRead or the
@@ -1164,121 +1166,21 @@ class TranslationPipeline(
                         }
                     } == true
 
+                // T909 Phase 20.2: guardedBatchUpdate / refreshBatchIdentity /
+                // batchWritePrecondition / persistAiFailure(OrThrow) / releaseBatchLease /
+                // persistBatchPageWithOomRecovery moved to pipeline/batch/BatchWriteGate.kt.
                 suspend fun guardedBatchUpdate(
                     pageKey: String,
                     description: String,
                     stage: BatchStage?,
                     update: (PageTranslation?) -> PageTranslation,
-                ): ChapterTranslationStore.PatchResult {
-                    val identity = batchWriteIdentities[pageKey]
-                        ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
-                    val result = store.updatePageGuarded(
-                        pageKey = pageKey,
-                        expected = ChapterTranslationStore.PatchPrecondition(
-                            generation = identity.generation,
-                            pageVersion = identity.pageVersion,
-                            leaseToken = identity.leaseToken,
-                            candidateGenerationId = identity.candidateGenerationId,
-                            dependencyFingerprint = identity.dependencyFingerprint,
-                            artifactPageVersion = identity.artifactPageVersion,
-                        ),
-                        description = description,
-                        update = { current -> stampBatchProvenance(update(current), stage) },
-                    )
-                    if (result is ChapterTranslationStore.PatchResult.Accepted) {
-                        identity.pageVersion = result.snapshot.pageVersion
-                        identity.candidateGenerationId = result.snapshot.candidateGenerationId
-                        identity.dependencyFingerprint = result.snapshot.dependencyFingerprint
-                        identity.artifactPageVersion = result.snapshot.artifactPageVersion
-                    }
-                    return result
-                }
+                ) = batchWriteGate.guardedBatchUpdate(pageKey, description, stage, update)
 
-                fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) {
-                    batchWriteIdentities[pageKey]?.let { identity ->
-                        identity.pageVersion = snapshot.pageVersion
-                        identity.candidateGenerationId = snapshot.candidateGenerationId
-                        identity.dependencyFingerprint = snapshot.dependencyFingerprint
-                        identity.artifactPageVersion = snapshot.artifactPageVersion
-                    }
-                }
+                fun refreshBatchIdentity(pageKey: String, snapshot: ChapterTranslationStore.PageSnapshot) =
+                    batchWriteGate.refreshBatchIdentity(pageKey, snapshot)
 
                 fun batchWritePrecondition(pageKey: String): ChapterTranslationStore.PatchPrecondition? =
-                    batchWriteIdentities[pageKey]?.let { identity ->
-                        ChapterTranslationStore.PatchPrecondition(
-                            generation = identity.generation,
-                            pageVersion = identity.pageVersion,
-                            leaseToken = identity.leaseToken,
-                            candidateGenerationId = identity.candidateGenerationId,
-                            dependencyFingerprint = identity.dependencyFingerprint,
-                            artifactPageVersion = identity.artifactPageVersion,
-                        )
-                    }
-
-                suspend fun persistAiFailure(
-                    pageKey: String,
-                    page: PageTranslation,
-                    failure: ProviderFailure,
-                    retryable: Boolean,
-                    partialCandidate: Boolean,
-                    envelopeId: String?,
-                    missingBlockIds: Set<String>,
-                ): ChapterTranslationStore.PatchResult {
-                    val expected = batchWritePrecondition(pageKey)
-                        ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
-                    val now = System.currentTimeMillis()
-                    val failureStatus = if (retryable) {
-                        ArtifactStageStatus.FAILED_RETRYABLE
-                    } else {
-                        ArtifactStageStatus.FAILED_TERMINAL
-                    }
-                    val liveStatus = if (retryable && partialCandidate) {
-                        StageStatus.PARTIAL
-                    } else {
-                        StageStatus.FAILED
-                    }
-                    val candidate = page.detachedCopy().apply {
-                        translationStatus = liveStatus
-                        translationError = failure.safeSummary
-                        errorMessage = failure.safeSummary
-                        recordAttemptFailure()
-                        updatedAt = now
-                    }
-                    val durable = DurableFailureMetadata(
-                        pageKey = pageKey,
-                        stage = ArtifactStage.TRANSLATION,
-                        status = failureStatus,
-                        category = failure.toFailureCategory(),
-                        retryCount = candidate.retryCount,
-                        lastFailureMessage = failure.safeSummary,
-                        lastFailedAtEpochMs = now,
-                        nextEligibleRetryAtEpochMs = failure.retryAfterAtEpochMs,
-                        failureFingerprint = expectedBatchFingerprints.translation,
-                        envelopeId = envelopeId,
-                        missingBlockIds = missingBlockIds,
-                    )
-                    val result = store.persistDurableStageFailure(
-                        pageKey = pageKey,
-                        expected = expected,
-                        failure = durable,
-                        description = "batch durable translation failure",
-                    ) { current ->
-                        (current ?: candidate).apply {
-                            blocks = candidate.blocks.toMutableList()
-                            translationStatus = candidate.translationStatus
-                            translationError = candidate.translationError
-                            errorMessage = candidate.errorMessage
-                            retryCount = candidate.retryCount
-                            attemptCount = candidate.attemptCount
-                            updatedAt = now
-                        }
-                    }
-                    if (result is ChapterTranslationStore.PatchResult.Accepted) {
-                        refreshBatchIdentity(pageKey, result.snapshot)
-                        durableFailurePageKeys += pageKey
-                    }
-                    return result
-                }
+                    batchWriteGate.batchWritePrecondition(pageKey)
 
                 suspend fun persistAiFailureOrThrow(
                     pageKey: String,
@@ -1288,46 +1190,23 @@ class TranslationPipeline(
                     partialCandidate: Boolean,
                     envelopeId: String?,
                     missingBlockIds: Set<String>,
-                ) {
-                    when (
-                        val result = persistAiFailure(
-                            pageKey = pageKey,
-                            page = page,
-                            failure = failure,
-                            retryable = retryable,
-                            partialCandidate = partialCandidate,
-                            envelopeId = envelopeId,
-                            missingBlockIds = missingBlockIds,
-                        )
-                    ) {
-                        is ChapterTranslationStore.PatchResult.Accepted -> Unit
-                        is ChapterTranslationStore.PatchResult.Rejected -> {
-                            throw BatchPersistenceRejectedException(
-                                pageKey = pageKey,
-                                stage = BatchDiagnosticStage.TRANSLATION,
-                            )
-                        }
-                    }
-                }
+                ) = batchWriteGate.persistAiFailureOrThrow(
+                    pageKey = pageKey,
+                    page = page,
+                    failure = failure,
+                    retryable = retryable,
+                    partialCandidate = partialCandidate,
+                    envelopeId = envelopeId,
+                    missingBlockIds = missingBlockIds,
+                )
 
-                suspend fun releaseBatchLease(pageKey: String) {
-                    batchWriteIdentities.remove(pageKey)
-                    releaseBatchPageLease(store, pageKey)
-                }
+                suspend fun releaseBatchLease(pageKey: String) =
+                    batchWriteGate.releaseBatchLease(pageKey)
 
                 suspend fun persistBatchPageWithOomRecovery(
                     pageKey: String,
                     pageTranslation: PageTranslation,
-                ): ChapterTranslationStore.PatchResult {
-                    val expected = batchWritePrecondition(pageKey)
-                        ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
-                    return persistPageWithOomRecovery(
-                        store,
-                        pageKey,
-                        pageTranslation,
-                        expectedPrecondition = expected,
-                    )
-                }
+                ) = batchWriteGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
 
                 suspend fun resumeGate(page: PageTranslation?): BatchResumeGate {
                     val planned = page?.sourceFileName?.let(batchPagePlans::get)
@@ -3135,14 +3014,8 @@ class TranslationPipeline(
         return true
     }
 
-    private data class BatchWriteIdentity(
-        val generation: Long,
-        var pageVersion: Long,
-        val leaseToken: Long,
-        var candidateGenerationId: String?,
-        var dependencyFingerprint: String?,
-        var artifactPageVersion: Long?,
-    )
+    // T909 Phase 20.2: BatchWriteIdentity moved to pipeline/batch/BatchWriteGate.kt
+    // (internal top-level, same module reachability).
 
     // T909 Phase 10: rebuild gate body moved to pipeline/EngineLane.kt.
     private suspend fun ensureEnginesBuiltFor(
