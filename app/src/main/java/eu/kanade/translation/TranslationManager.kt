@@ -23,6 +23,7 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.manager.BatchProgressProjector
+import eu.kanade.translation.manager.ChapterDataResetController
 import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableChapterStatusResolver
@@ -1081,384 +1082,71 @@ class TranslationManager(
         queueStatus: Translation.State?,
     ): TranslationProgressSnapshot = progressProjector.projectQueueStatusOf(this, queueStatus)
 
-    suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
-        val chapterId = chapter.id ?: return
-        // Capture the validated authority/legacy-preservation marker before any
-        // teardown can evict the only store that still knows the exact names.
-        // This is read-only and runs off the caller thread because SAF reads can
-        // block; the cancellation ordering below remains unchanged.
-        val deletionDocument = withContext(Dispatchers.IO) {
-            findTranslationDocument(chapter.name, chapter.scanlator, manga.title, source)
-        }
-        val artifactDeletionPlan = deletionDocument?.let { document ->
-            withContext(Dispatchers.IO) {
-                ChapterArtifactDeletionPlan.capture(
-                    UniFileChapterDocumentIo(document.parent),
-                    document.fileName,
-                )
-            }
-        }
-        // SYNCHRONOUS teardown (was fire-and-forget): a delete-then-retranslate let the reader
-        // re-bind to the about-to-be-evicted store while the translator wrote to a fresh instance,
-        // and a cancelled-but-not-joined batch worker kept writing into the old store after its
-        // file/PNGs were deleted (recreating the JSON or stranding pages at RUNNING). Suspending
-        // guarantees callers land on clean state.
-        //
-        // Ordering is load-bearing and strictly sequenced:
-        //   1. cancelAutoTranslations bumps the auto generation so the window stops dispatching new pages.
-        //   2. cancelPageTranslations cancels + JOINs each auto/single-page job so native work unwinds.
-        //   3. removeFromTranslationQueue + cancelTranslatorJobAndJoin drop the batch entry and JOIN the
-        //      batch worker (plain removeFrom only cancel()s) so it releases the translator permit before deletion.
-        //   4. unregisterActiveTranslationStore marks the store defunct so a still-unwinding worker's late writes no-op.
-        //   5. streamRegistry.clearChapter drops stale reader closures pointing at the about-to-be-deleted PNGs.
-        //   6. Only once all work is wound down is it safe to delete the on-disk file + companion images.
-        scheduler.cancelAutoTranslations(chapterId)
-        cancelPageTranslations(chapterId)
-        removeFromTranslationQueue(chapter)
-        translator.cancelTranslatorJobAndJoin()
-        disposeBatchTracker(chapterId)
-        unregisterActiveTranslationStore(chapterId)
-        streamRegistry.clearChapter(source.id, manga.id, chapterId)
-        val file = deletionDocument?.file ?: provider.findTranslationFile(
-            chapter.name,
-            chapter.scanlator,
-            manga.title,
-            source,
+    // T909 Phase 19: the delete/reset region moved to
+    // manager/ChapterDataResetController.kt as a pure move (the copy-paste
+    // dedupe between the active-store and open-store branches stays out of
+    // scope). Same-signature stubs keep the manager's public seams; the
+    // controller is built per access from the current field values.
+    private val chapterDataReset: ChapterDataResetController
+        get() = ChapterDataResetController(
+            findTranslationDocumentFn = { chapterName, scanlator, mangaTitle, source ->
+                findTranslationDocument(chapterName, scanlator, mangaTitle, source)
+            },
+            schedulerProvider = { scheduler },
+            cancelPageTranslationsFn = { chapterId -> cancelPageTranslations(chapterId) },
+            cancelPageTranslationFn = { chapterId, pageKey -> cancelPageTranslation(chapterId, pageKey) },
+            removeFromTranslationQueueFn = { chapter -> removeFromTranslationQueue(chapter) },
+            translatorProvider = { translator },
+            disposeBatchTrackerFn = { chapterId -> disposeBatchTracker(chapterId) },
+            unregisterActiveTranslationStoreFn = { chapterId -> unregisterActiveTranslationStore(chapterId) },
+            streamRegistryProvider = { streamRegistry },
+            providerProvider = { provider },
+            retireChapterCompanionImagesFn = { manga, chapter, source ->
+                retireChapterCompanionImages(manga, chapter, source)
+            },
+            retirePageCompanionImageFn = { manga, chapter, source, pageKey, imageName ->
+                retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
+            },
+            durableStatusResolverProvider = { durableStatusResolver },
+            activeStoresProvider = { activeStores },
+            openExistingChapterTranslationStoreFn = { chapterId, chapterName, scanlator, mangaTitle, source ->
+                openExistingChapterTranslationStore(chapterId, chapterName, scanlator, mangaTitle, source)
+            },
         )
-        var authorityRemoved = true
-        artifactDeletionPlan?.let { plan ->
-            val result = withContext(Dispatchers.IO) { plan.delete() }
-            authorityRemoved = result.manifestRemoved
-            logcat(if (result.complete) LogPriority.INFO else LogPriority.ERROR) {
-                "TachiyomiAT chapter artifact deletion: chapter=${chapter.name} " +
-                    "manifestRemoved=${result.manifestRemoved} " +
-                    "artifactTreeRemoved=${result.artifactTreeRemoved} " +
-                    "deletedLegacy=${result.deletedLegacyNames.size} " +
-                    "retainedLegacy=${result.retainedLegacyNames.size} " +
-                    "failures=${result.failures.size}"
-            }
-            // An artifact-authoritative chapter owns its flat source only when
-            // the migration marker proves its current identity. Unknown or
-            // mismatched legacy files remain untouched by the plan.
-            if (!plan.isArtifactAuthoritative) file?.delete()
-        } ?: file?.delete()
-        if (authorityRemoved) retireChapterCompanionImages(manga, chapter, source)
-        durableStatusResolver.clearDurableStatusCache()
-    }
 
-    suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
-        resetOcrData(chapter, manga, source, pageKey)
-    }
+    suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) =
+        chapterDataReset.deleteTranslation(chapter, manga, source)
+
+    suspend fun deletePageTranslation(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
+        chapterDataReset.deletePageTranslation(chapter, manga, source, pageKey)
 
     suspend fun chapterResetPreflight(
         chapter: Chapter,
         manga: Manga,
         source: Source,
-    ): ChapterResetPreflight {
-        val chapterId = chapter.id
-        val activeStore = chapterId?.let(activeStores::get)
-        if (activeStore != null) return activeStore.resetPreflight()
-
-        return openExistingChapterTranslationStore(
-            chapterId,
-            chapter.name,
-            chapter.scanlator,
-            manga.title,
-            source,
-        )?.resetPreflight() ?: ChapterResetPreflight(0, 0, 0, 0)
-    }
+    ): ChapterResetPreflight = chapterDataReset.chapterResetPreflight(chapter, manga, source)
 
     suspend fun resetChapterTranslationData(
         chapter: Chapter,
         manga: Manga,
         source: Source,
         preserveEdits: Boolean,
-    ) {
-        resetChapterData(chapter, manga, source) { page ->
-            val blocks = page.blocks.map { block ->
-                if (preserveEdits && block.userEditedAt != null) {
-                    block
-                } else {
-                    block.copy(
-                        translation = "",
-                        textColor = 0xFF000000,
-                        strokeColor = 0xFFFFFFFF,
-                        strokeWidth = 0f,
-                    )
-                }
-            }.toMutableList()
-            page.copy(
-                blocks = blocks,
-                translationStatus = StageStatus.PENDING,
-                renderStatus = StageStatus.PENDING,
-            ).also {
-                it.translationError = null
-                it.renderError = null
-            }
-        }
-    }
+    ) = chapterDataReset.resetChapterTranslationData(chapter, manga, source, preserveEdits)
 
-    suspend fun resetChapterInpaintData(chapter: Chapter, manga: Manga, source: Source) {
-        resetChapterData(chapter, manga, source) { page ->
-            page.copy(
-                cleanedImageName = null,
-                inpaintStatus = StageStatus.PENDING,
-                renderStatus = StageStatus.PENDING,
-            ).also {
-                it.inpaintError = null
-                it.renderError = null
-            }
-        }
-        retireChapterCompanionImages(manga, chapter, source)
-    }
+    suspend fun resetChapterInpaintData(chapter: Chapter, manga: Manga, source: Source) =
+        chapterDataReset.resetChapterInpaintData(chapter, manga, source)
 
-    suspend fun resetChapterOcrData(chapter: Chapter, manga: Manga, source: Source) {
-        deleteTranslation(chapter, manga, source)
-    }
+    suspend fun resetChapterOcrData(chapter: Chapter, manga: Manga, source: Source) =
+        chapterDataReset.resetChapterOcrData(chapter, manga, source)
 
-    private suspend fun resetChapterData(
-        chapter: Chapter,
-        manga: Manga,
-        source: Source,
-        transform: (PageTranslation) -> PageTranslation,
-    ) {
-        val chapterId = chapter.id ?: return
-        durableStatusResolver.clearDurableStatusCache()
-        scheduler.cancelAutoTranslations(chapterId)
-        cancelPageTranslations(chapterId)
-        removeFromTranslationQueue(chapter)
-        translator.cancelTranslatorJobAndJoin()
-        streamRegistry.clearChapter(source.id, manga.id, chapterId)
+    suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) =
+        chapterDataReset.resetTranslationData(chapter, manga, source, pageKey, preserveEdits)
 
-        val activeStore = activeStores.get(chapterId)
-        if (activeStore != null) {
-            activeStore.state.value.keys.forEach { pageKey ->
-                activeStore.updatePageFromCurrentSnapshot(pageKey, "chapter data reset") { page -> page?.let(transform) ?: PageTranslation.EMPTY }
-                // Phase 3: an explicit user reset drops the committed display
-                // pointer too, so the reader stops showing the cleared bundle.
-                activeStore.demoteCommittedDisplay(pageKey, "chapter data reset")
-            }
-            activeStore.flush()
-        } else {
-            openExistingChapterTranslationStore(
-                chapterId,
-                chapter.name,
-                chapter.scanlator,
-                manga.title,
-                source,
-            )?.let { store ->
-                store.state.value.keys.forEach { pageKey ->
-                    store.updatePageFromCurrentSnapshot(pageKey, "chapter data reset") { page -> page?.let(transform) ?: PageTranslation.EMPTY }
-                    store.demoteCommittedDisplay(pageKey, "chapter data reset")
-                }
-                store.flush()
-            }
-        }
-        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
-    }
+    suspend fun resetInpaintData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
+        chapterDataReset.resetInpaintData(chapter, manga, source, pageKey)
 
-    suspend fun resetTranslationData(chapter: Chapter, manga: Manga, source: Source, pageKey: String, preserveEdits: Boolean) {
-        val chapterId = chapter.id ?: return
-        durableStatusResolver.clearDurableStatusCache()
-        cancelPageTranslation(chapterId, pageKey)
-        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
-
-        val store = activeStores.get(chapterId)
-        if (store != null) {
-            store.updatePageFromCurrentSnapshot(pageKey, "translation data reset") { page ->
-                page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
-                val newBlocks = page.blocks.map { block ->
-                    if (preserveEdits && block.userEditedAt != null) {
-                        block
-                    } else {
-                        block.copy(
-                            translation = "",
-                            textColor = 0xFF000000,
-                            strokeColor = 0xFFFFFFFF,
-                            strokeWidth = 0f,
-                        )
-                    }
-                }.toMutableList()
-
-                page.copy(
-                    blocks = newBlocks,
-                    translationStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                    renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                ).also {
-                    it.translationError = null
-                    it.renderError = null
-                }
-            }
-            store.demoteCommittedDisplay(pageKey, "translation data reset")
-            store.flush()
-        } else {
-            openExistingChapterTranslationStore(
-                chapterId,
-                chapter.name,
-                chapter.scanlator,
-                manga.title,
-                source,
-            )?.let { s ->
-                s.updatePageFromCurrentSnapshot(pageKey, "translation data reset") { page ->
-                    page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
-                    val newBlocks = page.blocks.map { block ->
-                        if (preserveEdits && block.userEditedAt != null) {
-                            block
-                        } else {
-                            block.copy(
-                                translation = "",
-                                textColor = 0xFF000000,
-                                strokeColor = 0xFFFFFFFF,
-                                strokeWidth = 0f,
-                            )
-                        }
-                    }.toMutableList()
-
-                    page.copy(
-                        blocks = newBlocks,
-                        translationStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                        renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                    ).also {
-                        it.translationError = null
-                        it.renderError = null
-                    }
-                }
-                s.demoteCommittedDisplay(pageKey, "translation data reset")
-                s.flush()
-            }
-        }
-
-        // Reconcile batch progress so summary drops cleared data
-        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
-    }
-
-    suspend fun resetInpaintData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
-        val chapterId = chapter.id ?: return
-        durableStatusResolver.clearDurableStatusCache()
-        cancelPageTranslation(chapterId, pageKey)
-        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
-
-        val store = activeStores.get(chapterId)
-        val persistedCleanedName = store?.state?.value?.get(pageKey)?.cleanedImageName
-        if (store != null) {
-            store.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
-                page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
-                page.copy(
-                    cleanedImageName = null,
-                    inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                    renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                ).also {
-                    it.inpaintError = null
-                    it.renderError = null
-                }
-            }
-            store.demoteCommittedDisplay(pageKey, "inpaint data reset")
-            store.flush()
-        } else {
-            openExistingChapterTranslationStore(
-                chapterId,
-                chapter.name,
-                chapter.scanlator,
-                manga.title,
-                source,
-            )?.let { s ->
-                s.updatePageFromCurrentSnapshot(pageKey, "inpaint data reset") { page ->
-                    page ?: return@updatePageFromCurrentSnapshot eu.kanade.translation.model.PageTranslation.EMPTY
-                    page.copy(
-                        cleanedImageName = null,
-                        inpaintStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                        renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
-                    ).also {
-                        it.inpaintError = null
-                        it.renderError = null
-                    }
-                }
-                s.demoteCommittedDisplay(pageKey, "inpaint data reset")
-                s.flush()
-            }
-        }
-
-        val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val retiredNames = buildSet {
-            persistedCleanedName?.let(::add)
-            add("$safePageKey.cleaned.png")
-            add("$safePageKey.cleaned.jpg")
-            add("$safePageKey.rendered.png")
-            provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
-                ?.listFiles()
-                ?.asSequence()
-                .orEmpty()
-                .mapNotNull { it.name }
-                .filter { it.startsWith("$safePageKey.cleaned.") }
-                .forEach(::add)
-        }
-        retiredNames.forEach { imageName ->
-            retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
-        }
-
-        reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)
-    }
-
-    suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) {
-        val chapterId = chapter.id ?: return
-        durableStatusResolver.clearDurableStatusCache()
-
-        cancelPageTranslation(chapterId, pageKey)
-        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
-
-        val activeStore = activeStores.get(chapterId)
-        val persistedCleanedName = activeStore?.state?.value?.get(pageKey)?.cleanedImageName
-        if (activeStore != null) {
-            activeStore.deletePage(pageKey)
-            activeStore.flush()
-        } else {
-            openExistingChapterTranslationStore(
-                chapterId,
-                chapter.name,
-                chapter.scanlator,
-                manga.title,
-                source,
-            )?.let { store ->
-                store.deletePage(pageKey)
-                store.flush()
-            }
-        }
-
-        val safePageKey = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val retiredNames = buildSet {
-            persistedCleanedName?.let(::add)
-            add("$safePageKey.cleaned.png")
-            add("$safePageKey.cleaned.jpg")
-            add("$safePageKey.rendered.png")
-            // Versioned publication names are unique per replacement attempt;
-            // remove any orphaned versions left after a deleted store entry.
-            provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
-                ?.listFiles()
-                ?.asSequence()
-                .orEmpty()
-                .mapNotNull { it.name }
-                .filter { it.startsWith("$safePageKey.cleaned.") }
-                .forEach(::add)
-        }
-        retiredNames.forEach { imageName ->
-            retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
-        }
-    }
-
-    private suspend fun reconcileBatchProgress(
-        chapterId: Long,
-        chapterName: String,
-        scanlator: String?,
-        mangaTitle: String,
-        source: Source,
-    ) {
-        // Refresh the active-store summary after a stage reset so the chapter
-        // list can drop stale progress data. Only runs when the store is open
-        // (i.e. the reader is active for this chapter); persisted-only chapters
-        // are unaffected because their summary is rebuilt on the next open.
-        val store = activeStores.get(chapterId) ?: return
-        store.flush()
-    }
+    suspend fun resetOcrData(chapter: Chapter, manga: Manga, source: Source, pageKey: String) =
+        chapterDataReset.resetOcrData(chapter, manga, source, pageKey)
 
     fun deleteManga(manga: Manga, source: Source, removeQueued: Boolean = true) {
         launchIO {
