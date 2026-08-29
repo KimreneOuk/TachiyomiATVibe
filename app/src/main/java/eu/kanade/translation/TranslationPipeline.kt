@@ -2,7 +2,6 @@ package eu.kanade.translation
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -51,12 +50,14 @@ import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.pipeline.MemoryGovernance
 import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.pipeline.PageStoreWriter
+import eu.kanade.translation.pipeline.copyForResume
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.recognition.RoiPageRecognitionEngine
@@ -732,11 +733,15 @@ class TranslationPipeline(
         store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
     }
 
-    /**
-     * Deletes cleaned-image files retained by the store after newer committed
-     * display bundles promoted over them. Draining the complete set prevents a
-     * rapid sequence of promotions from orphaning an earlier superseded file.
-     */
+    // T909 Phase 7: cleaned-image publication bodies moved to
+    // translation/pipeline/CleanedPublication.kt (wraps CleanedImagePublisher;
+    // currentInpaintingMode injected as a getter). Same-signature stubs keep call sites.
+    private val cleanedPublication = CleanedPublication(
+        provider = provider,
+        streamRegistry = streamRegistry,
+        currentInpaintingMode = { currentInpaintingMode },
+    )
+
     private suspend fun deleteRetiredCleanedFile(
         manga: Manga,
         chapter: Chapter,
@@ -744,30 +749,7 @@ class TranslationPipeline(
         pageKey: String,
         store: ChapterTranslationStore,
     ) {
-        val chapterId = chapter.id ?: return
-        val retired = store.drainRetiredCleanedImages(pageKey)
-        if (retired.isEmpty()) return
-        retired.forEach { name ->
-            streamRegistry.retireCleanedImage(
-                sourceId = source.id,
-                mangaId = manga.id,
-                chapterId = chapterId,
-                pageKey = pageKey,
-                imageName = name,
-            ) {
-                if (!store.mayDeleteCleanedImage(pageKey, name)) return@retireCleanedImage
-                val deleted = provider.findPageCleanedImage(
-                    manga.title,
-                    source,
-                    chapter.name,
-                    chapter.scanlator,
-                    name,
-                )?.delete() == true
-                logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                    "TachiyomiAT retired cleaned image drain: pageKey=$pageKey file=$name deleted=$deleted"
-                }
-            }
-        }
+        cleanedPublication.deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
     }
 
     /**
@@ -4128,36 +4110,15 @@ class TranslationPipeline(
         return translationOutcome
     }
 
-    private fun PageTranslation.copyForResume(): PageTranslation {
-        return copy(blocks = blocks.map { it.copy() }.toMutableList()).also {
-            it.cleanedBitmap = null
-            it.allTextDetections = emptyList()
-        }
-    }
+    // T909 Phase 7: PageTranslation.copyForResume moved to pipeline/CleanedPublication.kt
+    // (imported top-level extension — call sites below resolve through it).
 
     private suspend fun loadPersistedCleanedBitmap(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,
         cleanedImageName: String,
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        try {
-            val file = provider.findPageCleanedImage(
-                manga.title,
-                source,
-                chapter.name,
-                chapter.scanlator,
-                cleanedImageName,
-            )?.takeIf { it.exists() && it.length() > 0L }
-                ?: return@withContext null
-            file.openInputStream().use { BitmapFactory.decodeStream(it) }
-        } catch (e: Throwable) {
-            logcat(LogPriority.WARN, e) {
-                "TachiyomiAT failed to load cleaned image for resume: cleaned=$cleanedImageName"
-            }
-            null
-        }
-    }
+    ): Bitmap? = cleanedPublication.loadPersistedCleanedBitmap(manga, chapter, source, cleanedImageName)
 
     suspend fun getContextualTranslator(engine: AiEngine, model: String): ContextualTextTranslator? {
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
@@ -4203,87 +4164,18 @@ class TranslationPipeline(
         mangaId: Long,
         chapterId: Long?,
         expectedPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    ): ChapterTranslationStore.PageSnapshot? = withContext(Dispatchers.IO) {
-        val directory = companionDir
-        val previousName = pageTranslation.cleanedImageName
-        val precondition = expectedPrecondition ?: store.snapshot(pageKey).let { snapshot ->
-            ChapterTranslationStore.PatchPrecondition(
-                generation = snapshot.generation,
-                pageVersion = snapshot.pageVersion,
-                blockFingerprints = snapshot.blockFingerprints,
-                leaseToken = snapshot.leaseToken,
-                candidateGenerationId = snapshot.candidateGenerationId,
-                dependencyFingerprint = snapshot.dependencyFingerprint,
-                artifactPageVersion = snapshot.artifactPageVersion,
-            )
-        }
-        val publisher = CleanedImagePublisher(object : CleanedImagePublisher.Files {
-            override fun writeVerifiedVersionedFile(): String {
-                check(directory != null) { "translation output folder is unavailable" }
-                val safeName = pageKey.substringAfterLast('/').replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                val version = System.currentTimeMillis().toString(36) + "-" + System.nanoTime().toString(36).takeLast(6)
-                val finalName = "$safeName.cleaned.$version.jpg"
-                val finalFile = directory.findFile(finalName) ?: directory.createFile(finalName)
-                check(finalFile != null) { "could not create final cleaned image" }
-                finalFile.openOutputStream().use { output ->
-                    check(cleanedBitmap.compress(Bitmap.CompressFormat.JPEG, 90, output)) { "JPEG encoding returned false" }
-                }
-                check(finalFile.exists() && finalFile.length() > 0L) { "published cleaned image is unavailable" }
-                return finalName
-            }
-
-            override fun delete(name: String): Boolean = directory?.findFile(name)?.delete() ?: true
-        })
-        when (
-            val result = publisher.publish(
-                chapterName,
-                pageKey,
-                previousName,
-                commit = { newName ->
-                    store.patchPage(pageKey, precondition, "publish cleaned image") { current ->
-                        (current ?: pageTranslation).apply {
-                            cleanedImageName = newName
-                            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                            inpaintingModeUsed = currentInpaintingMode.name
-                            inpaintFingerprint = pageTranslation.inpaintFingerprint
-                            inpaintStatus = StageStatus.READY
-                            errorMessage = null
-                        }
-                    }
-                },
-                mayDeletePrevious = { name -> store.mayDeleteCleanedImage(pageKey, name) },
-                retirePrevious = { name, delete ->
-                    chapterId?.let { stableChapterId ->
-                        streamRegistry.retireCleanedImage(
-                            sourceId = sourceId,
-                            mangaId = mangaId,
-                            chapterId = stableChapterId,
-                            pageKey = pageKey,
-                            imageName = name,
-                        ) {
-                            if (store.mayDeleteCleanedImage(pageKey, name)) delete()
-                        }
-                    }
-                },
-            )
-        ) {
-            is CleanedImagePublisher.Result.Published -> {
-                pageTranslation.cleanedImageName = result.name
-                pageTranslation.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                pageTranslation.inpaintingModeUsed = currentInpaintingMode.name
-                pageTranslation.inpaintStatus = StageStatus.READY
-                pageTranslation.errorMessage = null
-                result.snapshot
-            }
-            is CleanedImagePublisher.Result.Rejected -> null
-            is CleanedImagePublisher.Result.WriteFailed -> {
-                pageTranslation.inpaintStatus = StageStatus.FAILED
-                pageTranslation.recordAttemptFailure()
-                pageTranslation.errorMessage = "Could not save cleaned image — translation output folder is unavailable. Grant storage permission to the app and retry."
-                null
-            }
-        }
-    }
+    ): ChapterTranslationStore.PageSnapshot? = cleanedPublication.persistCleanedBitmap(
+        pageTranslation,
+        cleanedBitmap,
+        companionDir,
+        pageKey,
+        chapterName,
+        store,
+        sourceId,
+        mangaId,
+        chapterId,
+        expectedPrecondition,
+    )
 
     private suspend fun persistOnnxCleanedImage(
         manga: Manga,
@@ -4291,42 +4183,7 @@ class TranslationPipeline(
         source: HttpSource,
         pageKey: String,
         result: OnnxPhaseResult,
-    ): OnnxPhaseResult? {
-        val page = result.pageTranslation
-        val cleaned = page.cleanedBitmap
-        if (cleaned == null) {
-            val snapshot = result.store.snapshot(pageKey)
-            return result.copy(commitPrecondition = snapshot.toPrecondition())
-        }
-        val companionDir = provider.getCompanionImageDir(
-            manga.title,
-            source,
-            chapter.name,
-            chapter.scanlator,
-        )
-        val published = persistCleanedBitmap(
-            page,
-            cleaned,
-            companionDir,
-            pageKey,
-            chapter.name,
-            result.store,
-            source.id,
-            manga.id,
-            chapter.id,
-            expectedPrecondition = result.commitPrecondition,
-        )
-        if (published == null) {
-            // Do not let HTTP/render consume an in-memory result when the reader
-            // cannot reopen it after publication or a newer page won the race.
-            try {
-                cleaned.recycle()
-            } catch (_: Exception) {}
-            page.cleanedBitmap = null
-            return null
-        }
-        return result.copy(commitPrecondition = published.toPrecondition())
-    }
+    ): OnnxPhaseResult? = cleanedPublication.persistOnnxCleanedImage(manga, chapter, source, pageKey, result)
 
     private suspend fun renderResumedPage(
         manga: Manga,
@@ -4952,7 +4809,7 @@ class TranslationPipeline(
      * cleanedBitmap alive across the permit boundary) and the state needed by
      * the permit-free HTTP+render phase ([translateSinglePageHttpRender]).
      */
-    private data class OnnxPhaseResult(
+    internal data class OnnxPhaseResult(
         val pageTranslation: PageTranslation,
         val store: ChapterTranslationStore,
         val fromLang: TextRecognizerLanguage,
