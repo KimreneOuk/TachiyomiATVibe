@@ -15,6 +15,7 @@ import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.legacy.LegacyFlatFileDecoder
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -58,8 +59,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO
 import tachiyomi.core.common.util.system.logcat
@@ -239,7 +238,9 @@ class TranslationManager(
 
     private val activeStores = ActiveChapterStoreRegistry()
     private val batchTrackerRegistry = TranslationBatchTrackerRegistry()
-    private val legacyPageJson = Json { ignoreUnknownKeys = true }
+    // T909 Phase 3a: the single legacy Json config lives in LegacyFlatFileDecoder;
+    // this field stays for the reflective test seam.
+    private val legacyPageJson = LegacyFlatFileDecoder.legacyPageJson
 
     /** Owns tracker reducer jobs; reader flows observe the selected store directly. */
     private val storeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -761,30 +762,15 @@ class TranslationManager(
         }
     }
 
+    // T909 Phase 3a: legacy decode/quarantine bodies moved to legacy/LegacyFlatFileDecoder.kt.
     private fun decodeLegacyChapterStatus(
         file: UniFile,
         chapterName: String,
-    ): Translation.State? {
-        if (!file.exists() || file.length() <= 2L) return null
-        return runCatching {
-            val pages = file.openInputStream().use {
-                legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(it)
-            }
-            statusFromReadablePages(pages)
-        }.onFailure { error ->
-            quarantineCorruptTranslationFile(file, error)
-            logcat(LogPriority.WARN, error) {
-                "Translation file for $chapterName unreadable; treating as not translated"
-            }
-        }.getOrNull()
-    }
+    ): Translation.State? = LegacyFlatFileDecoder.decodeLegacyChapterStatus(file, chapterName)
 
     private fun statusFromReadablePages(
         pages: Map<String, PageTranslation>,
-    ): Translation.State? {
-        if (pages.values.none { it.toPageDisplayProjection().displayReady }) return null
-        return Translation.State.READY_WITH_WARNINGS
-    }
+    ): Translation.State? = LegacyFlatFileDecoder.statusFromReadablePages(pages)
 
     fun getChapterTranslation(
         chapterName: String,
@@ -918,35 +904,19 @@ class TranslationManager(
         }
     }
 
+    // T909 Phase 3a: legacy decode/quarantine bodies moved to legacy/LegacyFlatFileDecoder.kt.
     private fun decodeLegacyChapterTranslation(
         file: UniFile,
         quarantineOnFailure: Boolean,
-    ): Map<String, PageTranslation> {
-        if (!file.exists()) return emptyMap()
-        return runCatching {
-            file.openInputStream().use {
-                legacyPageJson.decodeFromStream<Map<String, PageTranslation>>(it)
-            }
-        }.getOrElse { error ->
-            if (quarantineOnFailure) quarantineCorruptTranslationFile(file, error)
-            emptyMap()
-        }
-    }
+    ): Map<String, PageTranslation> =
+        LegacyFlatFileDecoder.decodeLegacyChapterTranslation(file, quarantineOnFailure)
 
     private fun quarantineCorruptTranslationFile(file: UniFile, error: Throwable) {
-        val name = file.name ?: "translation.json"
-        val targetName = file.parentFile?.let { parent ->
-            quarantineCorruptDocument(UniFileChapterDocumentIo(parent), name)
-        }
-        val renamed = targetName != null
-        logcat(LogPriority.ERROR, error) {
-            "TachiyomiAT quarantined corrupt translation file: " +
-                "file=$name quarantine=${targetName ?: "unavailable"} renamed=$renamed"
-        }
+        LegacyFlatFileDecoder.quarantineCorruptTranslationFile(file, error)
     }
 
     internal fun quarantineCorruptDocument(io: ChapterDocumentIo, name: String): String? =
-        AtomicChapterDocuments(io).quarantineCorrupt(name)
+        LegacyFlatFileDecoder.quarantineCorruptDocument(io, name)
 
     private fun UniFile.registryKey(): String = filePath ?: uri.toString()
 
