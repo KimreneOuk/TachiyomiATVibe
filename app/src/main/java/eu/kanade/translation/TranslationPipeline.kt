@@ -56,6 +56,8 @@ import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.pipeline.MemoryGovernance
 import eu.kanade.translation.pipeline.PageDecode
+import eu.kanade.translation.pipeline.PageStoreWriter
+import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.recognition.RoiPageRecognitionEngine
 import eu.kanade.translation.rendering.RenderColorEstimator
@@ -481,12 +483,21 @@ class TranslationPipeline(
     @Volatile
     var onBatchClosed: (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)? = null
 
+    // T909 Phase 6: stream peek + canonical FAILED placeholder + store-patch/failure-write
+    // bodies moved to translation/pipeline/PageStoreWriter.kt (stateless over the injected
+    // resolver + store guarded-write API). Same-signature private stubs keep call sites.
+    private val pageStoreWriter = PageStoreWriter(
+        activeStoreResolver = { activeStoreResolver },
+        streamRegistry = streamRegistry,
+        handleCriticalTranslationOom = this::handleCriticalTranslationOom,
+    )
+
     private fun peekReaderPageStream(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
-    ): (() -> InputStream)? = streamRegistry.peek(manga, chapter, source, pageKey)
+    ): (() -> InputStream)? = pageStoreWriter.peekReaderPageStream(manga, chapter, source, pageKey)
 
     private fun createFailedPagePlaceholder(
         fileName: String,
@@ -500,57 +511,23 @@ class TranslationPipeline(
         // Per-attempt exhaustion counter. Merge callers pass (existing.attemptCount + 1);
         // standalone first-failure callers pass the default 1.
         attemptCount: Int = 1,
-    ): PageTranslation {
-        return PageTranslation(
-            sourceFileName = fileName,
-            imgWidth = imgWidth,
-            imgHeight = imgHeight,
-            originalImgWidth = originalImgWidth,
-            originalImgHeight = originalImgHeight,
-            decodeSampleSize = decodeSampleSize,
-            ocrStatus = StageStatus.FAILED,
-            translationStatus = StageStatus.PENDING,
-            inpaintStatus = StageStatus.FAILED,
-            renderStatus = StageStatus.PENDING,
-            updatedAt = System.currentTimeMillis(),
-            retryCount = retryCount,
-        ).apply {
-            this.attemptCount = attemptCount
-            this.translationError = errorMessage
-            this.ocrError = errorMessage
-            this.inpaintError = errorMessage
-        }
-    }
+    ): PageTranslation = pageStoreWriter.createFailedPagePlaceholder(
+        fileName,
+        errorMessage,
+        imgWidth,
+        imgHeight,
+        originalImgWidth,
+        originalImgHeight,
+        decodeSampleSize,
+        retryCount,
+        attemptCount,
+    )
 
-    /**
-     * Writes a FAILED placeholder for [pageKey] into the chapter's shared store
-     * when the single-page translation times out. This is the single-page path's
-     * counterpart to the batch path's timeout handling: without it the page is
-     * stranded as ocrStatus=RUNNING (the first thing [translateSinglePageOnnx]
-     * writes) for the rest of the session, which keeps the reader's
-     * anyRunning flag true — pinning the TRANSLATING state, disabling the
-     * translate icon, and making auto-translate skip the page forever.
-     *
-     * Resolves the store through [activeStoreResolver] (the shared instance the
-     * reader is observing); if none is registered for this chapter the page's
-     * RUNNING status will be cleared on the next chapter open instead. Never
-     * clobbers an already-completed page — only overwrites entries that are still
-     * in a non-terminal (RUNNING/PENDING) state.
-     */
     private fun resolveActiveStore(
         manga: Manga,
         chapter: Chapter,
         source: HttpSource,
-    ): ChapterTranslationStore? {
-        val syntheticTranslation = Translation(
-            source,
-            manga,
-            chapter,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        return activeStoreResolver?.invoke(syntheticTranslation)
-    }
+    ): ChapterTranslationStore? = pageStoreWriter.resolveActiveStore(manga, chapter, source)
 
     private suspend fun markPageTimedOut(
         manga: Manga,
@@ -558,49 +535,11 @@ class TranslationPipeline(
         source: HttpSource,
         pageKey: String,
     ) {
-        // Use SAFE language fallbacks, not the throwing fromPref: this runs in an
-        // error/timeout path, so re-throwing here would mask the original failure.
-        // The store is keyed on manga/chapter (not language).
-        val syntheticTranslation = Translation(
-            source,
-            manga,
-            chapter,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        val store = activeStoreResolver?.invoke(syntheticTranslation) ?: return
-        store.invalidateGeneration("timeout chapter=${chapter.name} pageKey=$pageKey")
-        val snapshot = store.snapshot(pageKey)
-        store.patchPage(pageKey, snapshot.toPrecondition(), "mark page timed out") { existing ->
-            // Don't overwrite a page that already produced a durable result.
-            if (existing?.cleanedImageName != null) {
-                existing
-            } else {
-                createFailedPagePlaceholder(
-                    pageKey,
-                    "Translation timed out after ${SINGLE_PAGE_TIMEOUT_MS / 1000}s",
-                    imgWidth = existing?.imgWidth ?: 0f,
-                    imgHeight = existing?.imgHeight ?: 0f,
-                    originalImgWidth = existing?.originalImgWidth ?: 0f,
-                    originalImgHeight = existing?.originalImgHeight ?: 0f,
-                    decodeSampleSize = existing?.decodeSampleSize ?: 1,
-                    retryCount = (existing?.retryCount ?: 0) + 1,
-                    attemptCount = (existing?.attemptCount ?: 0) + 1,
-                )
-            }
-        }
+        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey)
     }
 
-    private fun ChapterTranslationStore.PageSnapshot.toPrecondition() =
-        ChapterTranslationStore.PatchPrecondition(
-            generation = generation,
-            pageVersion = pageVersion,
-            blockFingerprints = blockFingerprints,
-            leaseToken = leaseToken,
-            candidateGenerationId = candidateGenerationId,
-            dependencyFingerprint = dependencyFingerprint,
-            artifactPageVersion = artifactPageVersion,
-        )
+    // T909 Phase 6: PageSnapshot.toPrecondition moved to pipeline/PageStoreWriter.kt
+    // (imported top-level extension — all call sites below resolve through it).
 
     private suspend fun updatePageFromCurrentSnapshot(
         store: ChapterTranslationStore,
@@ -609,14 +548,7 @@ class TranslationPipeline(
         expectedGeneration: Long? = null,
         update: (PageTranslation?) -> PageTranslation,
     ): ChapterTranslationStore.PatchResult =
-        store.snapshot(pageKey).let { snapshot ->
-            store.updatePageGuarded(
-                pageKey,
-                snapshot.toPrecondition().copy(generation = expectedGeneration ?: snapshot.generation),
-                description,
-                update,
-            )
-        }
+        pageStoreWriter.updatePageFromCurrentSnapshot(store, pageKey, description, expectedGeneration, update)
 
     private suspend fun markPageFailed(
         manga: Manga,
@@ -625,40 +557,7 @@ class TranslationPipeline(
         pageKey: String,
         error: Throwable,
     ) {
-        // SAFE language fallbacks (see markPageTimedOut); re-throwing here would mask the cause.
-        val syntheticTranslation = Translation(
-            source,
-            manga,
-            chapter,
-            TextRecognizerLanguage.JAPANESE,
-            TextTranslatorLanguage.ENGLISH,
-        )
-        val store = activeStoreResolver?.invoke(syntheticTranslation) ?: return
-        updatePageFromCurrentSnapshot(store, pageKey, "single-page failure") { existing ->
-            // Don't overwrite a page that already produced a result (rendered/
-            // cleaned) — a late error after a successful persist would erase it.
-            if (existing != null &&
-                existing.cleanedImageName != null
-            ) {
-                existing
-            } else {
-                val errorMsg = when (error) {
-                    is OutOfMemoryError -> "Out of memory: ${error.message ?: "low memory"}"
-                    else -> error.message ?: error.javaClass.simpleName
-                }
-                createFailedPagePlaceholder(
-                    pageKey,
-                    errorMsg,
-                    imgWidth = existing?.imgWidth ?: 0f,
-                    imgHeight = existing?.imgHeight ?: 0f,
-                    originalImgWidth = existing?.originalImgWidth ?: 0f,
-                    originalImgHeight = existing?.originalImgHeight ?: 0f,
-                    decodeSampleSize = existing?.decodeSampleSize ?: 1,
-                    retryCount = (existing?.retryCount ?: 0) + 1,
-                    attemptCount = (existing?.attemptCount ?: 0) + 1,
-                )
-            }
-        }
+        pageStoreWriter.markPageFailed(manga, chapter, source, pageKey, error)
     }
 
     /**
@@ -5021,43 +4920,8 @@ class TranslationPipeline(
         fileName: String,
         pageTranslation: PageTranslation,
         expectedPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    ): ChapterTranslationStore.PatchResult {
-        suspend fun persist(
-            description: String,
-            update: (PageTranslation?) -> PageTranslation,
-        ): ChapterTranslationStore.PatchResult {
-            if (expectedPrecondition != null) {
-                return store.updatePageGuarded(fileName, expectedPrecondition, description, update)
-            } else {
-                return updatePageFromCurrentSnapshot(store, fileName, description, update = update)
-            }
-        }
-        return try {
-            if (TranslationMemoryBudget.isCriticalHeap()) {
-                handleCriticalTranslationOom("persisting $fileName", OutOfMemoryError("critical heap before persist"))
-            }
-            persist("persist page metadata") { pageTranslation }
-        } catch (oom: OutOfMemoryError) {
-            handleCriticalTranslationOom("persisting $fileName", oom)
-            pageTranslation.cleanedBitmap = null
-            try {
-                persist("retry persist page metadata") { pageTranslation }
-            } catch (retryOom: OutOfMemoryError) {
-                handleCriticalTranslationOom("persisting lightweight failure $fileName", retryOom)
-                persist("persist page OOM failure") {
-                    createFailedPagePlaceholder(
-                        fileName,
-                        "OOM while saving translation metadata: ${retryOom.message}",
-                        imgWidth = pageTranslation.imgWidth,
-                        imgHeight = pageTranslation.imgHeight,
-                        originalImgWidth = pageTranslation.originalImgWidth,
-                        originalImgHeight = pageTranslation.originalImgHeight,
-                        decodeSampleSize = pageTranslation.decodeSampleSize,
-                    )
-                }
-            }
-        }
-    }
+    ): ChapterTranslationStore.PatchResult =
+        pageStoreWriter.persistPageWithOomRecovery(store, fileName, pageTranslation, expectedPrecondition)
 
     // T909 Phase 1: decode/fingerprint bodies moved to translation/pipeline/PageDecode.kt.
     private fun decodePageBitmapAtSize(fileName: String, sampleSize: Int, streams: List<Pair<String, () -> InputStream>>): Bitmap? =
