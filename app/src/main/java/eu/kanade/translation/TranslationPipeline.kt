@@ -49,6 +49,8 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.EngineLane
+import eu.kanade.translation.pipeline.batch.BatchResumeGate
+import eu.kanade.translation.pipeline.batch.BatchResumePlanner
 import eu.kanade.translation.pipeline.batch.BatchWriteGate
 import eu.kanade.translation.pipeline.batch.BatchWriteIdentity
 import eu.kanade.translation.pipeline.batch.HeldBitmapRegistry
@@ -185,9 +187,8 @@ class TranslationPipeline(
         const val UNKNOWN_SOURCE_FINGERPRINT = "source-fingerprint-unavailable"
     }
 
-    /** Per-page resume decision in the 3-lane batch pipeline (Lane A). Lives at
-     *  class scope because Kotlin forbids local enum classes. */
-    private enum class BatchResumeGate { SKIP_ALL, INPAINT_ONLY, FULL }
+    // T909 Phase 20.3: BatchResumeGate enum + resume planning moved to
+    // pipeline/batch/BatchResumePlanner.kt.
 
     /** Native admission is owned by [nativeRunQuarantine]. */
 
@@ -989,16 +990,6 @@ class TranslationPipeline(
                 // remain durable and reusable, but cannot become context until traversal
                 // reaches them; a non-textless terminal gap blocks later AI admission.
                 val contextFrontier = BatchContextFrontier(resolvedNaturalPageIndexes)
-                var rollingContext = contextFrontier.rollingContext
-
-                fun recordContextPage(
-                    pageKey: String,
-                    page: PageTranslation,
-                    terminalFailure: Boolean = false,
-                ) {
-                    contextFrontier.record(pageKey, page, terminalFailure)
-                    rollingContext = contextFrontier.rollingContext
-                }
 
                 // Source identity is a direct input to detection and inpaint.
                 // Hash the downloaded bytes before planning so replacing a
@@ -1013,21 +1004,26 @@ class TranslationPipeline(
                     }.awaitAll().toMap()
                 }
 
-                fun stampBatchProvenance(page: PageTranslation, stage: BatchStage?): PageTranslation = page.apply {
-                    when (stage) {
-                        BatchStage.OCR -> {
-                            detectionFingerprint = expectedBatchFingerprints.detection
-                            ocrFingerprint = expectedBatchFingerprints.ocr
-                        }
-                        BatchStage.INPAINT -> inpaintFingerprint = expectedBatchFingerprints.inpaint
-                        BatchStage.TRANSLATION -> {
-                            translationFingerprint = expectedBatchFingerprints.translation
-                            translationOrigin = PageWriteOrigin.BATCH.name
-                        }
-                        BatchStage.LAYOUT -> layoutFingerprint = expectedBatchFingerprints.layout
-                        else -> {}
-                    }
-                }
+                // T909 Phase 20.3: resume planning (page plans, provenance stamping,
+                // translation failure fence, context-frontier bookkeeping, resume gate)
+                // moved to pipeline/batch/BatchResumePlanner.kt. The frontier is the SAME
+                // instance the shell and the lane workers hold; same-name local delegates
+                // below keep the not-yet-moved closures' call sites.
+                val resumePlanner = BatchResumePlanner(
+                    store = store,
+                    provider = provider,
+                    manga = manga,
+                    source = source,
+                    chapter = chapter,
+                    orderedStreams = orderedStreams,
+                    isAi = isAi,
+                    sourceFingerprints = sourceFingerprints,
+                    expectedBatchFingerprints = expectedBatchFingerprints,
+                    contextFrontier = contextFrontier,
+                    inpaintingModeFromPref = this::inpaintingModeFromPref,
+                )
+                val batchPagePlans by resumePlanner::batchPagePlans
+                val rollingContext by resumePlanner::rollingContext
 
                 // T909 Phase 20.2: the batch write gate moved to
                 // pipeline/batch/BatchWriteGate.kt. It receives the SAME identity-map
@@ -1038,133 +1034,32 @@ class TranslationPipeline(
                     batchWriteIdentities = batchWriteIdentities,
                     durableFailurePageKeys = durableFailurePageKeys,
                     expectedBatchFingerprints = expectedBatchFingerprints,
-                    stampBatchProvenance = ::stampBatchProvenance,
+                    stampBatchProvenance = { page, stage -> resumePlanner.stampBatchProvenance(page, stage) },
                     releaseBatchPageLeaseFn = ::releaseBatchPageLease,
                     persistPageWithOomRecoveryFn = ::persistPageWithOomRecovery,
                 )
 
-                // Plan the complete chapter once, in the same natural order
-                // passed to the coordinator.  Native resume gates consume this
-                // snapshot; they never derive work from lastPageRead or the
-                // reader viewport.
-                fun buildBatchPagePlans() = PageWorkPlanner.planChapter(
-                    orderedStreams.map { (pageKey, _) ->
-                        BatchPlannerInput(
-                            pageKey = pageKey,
-                            page = store.state.value[pageKey],
-                            expectedFingerprints = expectedBatchFingerprints,
-                            sourceFingerprint = sourceFingerprints[pageKey],
-                            durableFailure = store.durableFailure(pageKey),
-                        )
-                    },
-                ).pages.associateBy { it.pageKey }
+                resumePlanner.seed()
 
-                val batchPagePlans = buildBatchPagePlans()
+                fun recordContextPage(
+                    pageKey: String,
+                    page: PageTranslation,
+                    terminalFailure: Boolean = false,
+                ) = resumePlanner.recordContextPage(pageKey, page, terminalFailure)
 
                 fun translationFailureFence(pageKey: String): Boolean =
-                    batchPagePlans[pageKey]
-                        ?.stages
-                        ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
-                        ?.decision in setOf(
-                        eu.kanade.translation.model.StageDecision.FAILED,
-                        eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-                        eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
-                    )
+                    resumePlanner.translationFailureFence(pageKey)
 
-                // Only seed from pages whose current translation plan still proves that
-                // their persisted result is reusable/terminal. A stale page snapshot must
-                // not become a context predecessor merely because its old status is READY.
-                contextFrontier.seed(
-                    pages = store.state.value,
-                    eligible = { pageKey, _ ->
-                        batchPagePlans[pageKey]
-                            ?.stages
-                            ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
-                            ?.decision in setOf(
-                            eu.kanade.translation.model.StageDecision.REUSE,
-                            eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE,
-                        )
-                    },
-                    terminalFailure = { pageKey, page ->
-                        val durableRetryable = store.durableFailure(pageKey)?.status ==
-                            eu.kanade.translation.artifact.ArtifactStageStatus.FAILED_RETRYABLE
-                        val plannedTerminal = batchPagePlans[pageKey]
-                            ?.stages
-                            ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
-                            ?.decision in setOf(
-                            eu.kanade.translation.model.StageDecision.FAILED,
-                            eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
-                        )
-                        (page.translationStatus == StageStatus.FAILED && !durableRetryable) ||
-                            (plannedTerminal && !page.isTextlessTerminal)
-                    },
-                )
-                rollingContext = contextFrontier.rollingContext
-
-                fun plannedTranslationDecision(pageKey: String) =
-                    batchPagePlans[pageKey]?.stages?.firstOrNull { it.stage == BatchStage.TRANSLATION }?.decision
-
-                fun recordReusableContextPage(pageKey: String, page: PageTranslation) {
-                    if (!isAi ||
-                        plannedTranslationDecision(pageKey) !in setOf(
-                            eu.kanade.translation.model.StageDecision.REUSE,
-                            eu.kanade.translation.model.StageDecision.TERMINAL_COMPLETE,
-                        )
-                    ) {
-                        return
-                    }
-                    if (page.ocrStatus in setOf(StageStatus.READY, StageStatus.TEXTLESS) &&
-                        page.translationStatus in setOf(
-                            StageStatus.READY,
-                            StageStatus.SKIPPED,
-                        )
-                    ) {
-                        // A reused page becomes context only when natural traversal reaches it.
-                        // Pages after a missing predecessor remain retained by the frontier until
-                        // that predecessor resolves, so they cannot leak into an earlier request.
-                        recordContextPage(pageKey, page)
-                    }
-                }
+                fun recordReusableContextPage(pageKey: String, page: PageTranslation) =
+                    resumePlanner.recordReusableContextPage(pageKey, page)
 
                 fun plannedTranslationNeedsWork(pageKey: String): Boolean =
-                    plannedTranslationDecision(pageKey) == eu.kanade.translation.model.StageDecision.RUN ||
-                        batchPagePlans[pageKey]
-                            ?.stages
-                            ?.firstOrNull { it.stage == BatchStage.TRANSLATION }
-                            ?.let { decision ->
-                                decision.decision == eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE &&
-                                    decision.retryEligible
-                            } == true
+                    resumePlanner.plannedTranslationNeedsWork(pageKey)
 
                 fun plannedRenderNeedsWork(pageKey: String): Boolean =
-                    batchPagePlans[pageKey]?.let { plan ->
-                        val translation = plan.stages.first { it.stage == BatchStage.TRANSLATION }
-                        val ocr = plan.stages.first { it.stage == BatchStage.OCR }
-                        if (translation.decision in setOf(
-                                eu.kanade.translation.model.StageDecision.FAILED,
-                                eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-                                eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
-                            ) ||
-                            ocr.decision in setOf(
-                                eu.kanade.translation.model.StageDecision.FAILED,
-                                eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE,
-                                eu.kanade.translation.model.StageDecision.FAILED_TERMINAL,
-                            ) ||
-                            translation.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                            translation.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE
-                        ) {
-                            false
-                        } else {
-                            plan.stages.any { decision ->
-                                decision.stage in setOf(BatchStage.TRANSLATION, BatchStage.INPAINT, BatchStage.LAYOUT) &&
-                                    (
-                                        decision.decision == eu.kanade.translation.model.StageDecision.RUN ||
-                                            decision.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
-                                            decision.reason == eu.kanade.translation.model.StageReasonCode.DEPENDENCY_INCOMPLETE
-                                        )
-                            }
-                        }
-                    } == true
+                    resumePlanner.plannedRenderNeedsWork(pageKey)
+
+                suspend fun resumeGate(page: PageTranslation?) = resumePlanner.resumeGate(page)
 
                 // T909 Phase 20.2: guardedBatchUpdate / refreshBatchIdentity /
                 // batchWritePrecondition / persistAiFailure(OrThrow) / releaseBatchLease /
@@ -1208,88 +1103,8 @@ class TranslationPipeline(
                     pageTranslation: PageTranslation,
                 ) = batchWriteGate.persistBatchPageWithOomRecovery(pageKey, pageTranslation)
 
-                suspend fun resumeGate(page: PageTranslation?): BatchResumeGate {
-                    val planned = page?.sourceFileName?.let(batchPagePlans::get)
-                    if (planned != null) {
-                        val ocr = planned.stages.first { it.stage == BatchStage.OCR }
-                        val inpaint = planned.stages.first { it.stage == BatchStage.INPAINT }
-                        val ocrNeedsWork = ocr.decision == eu.kanade.translation.model.StageDecision.RUN ||
-                            ocr.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY ||
-                            ocr.decision == eu.kanade.translation.model.StageDecision.FAILED
-                        if (inpaint.decision == eu.kanade.translation.model.StageDecision.REUSE &&
-                            page.cleanedImageName != null
-                        ) {
-                            val physicallyPresent = withContext(Dispatchers.IO) {
-                                provider.findPageCleanedImage(
-                                    manga.title,
-                                    source,
-                                    chapter.name,
-                                    chapter.scanlator,
-                                    page.cleanedImageName!!,
-                                )?.let { it.exists() && it.length() > 0L } == true
-                            }
-                            if (!physicallyPresent) {
-                                logcat(LogPriority.WARN) {
-                                    "TachiyomiAT planned resume invalidated metadata-only cleaned image: " +
-                                        "pageKey=${page.sourceFileName} cleaned=${page.cleanedImageName}"
-                                }
-                                return if (!ocrNeedsWork && page.hasCurrentInpaintMask) {
-                                    BatchResumeGate.INPAINT_ONLY
-                                } else {
-                                    BatchResumeGate.FULL
-                                }
-                            }
-                        }
-                        return when {
-                            ocrNeedsWork ->
-                                BatchResumeGate.FULL
-                            inpaint.decision == eu.kanade.translation.model.StageDecision.RUN ->
-                                BatchResumeGate.INPAINT_ONLY
-                            else -> BatchResumeGate.SKIP_ALL
-                        }
-                    }
-                    // Null inpaintingModeUsed = legacy page persisted before this field; treat
-                    // as a match so existing chapters are not mass re-translated on first open.
-                    val desiredMode = inpaintingModeFromPref().name
-                    val inpaintModeMatches = page?.inpaintingModeUsed == null || page.inpaintingModeUsed == desiredMode
-                    val decision = BatchResumeGateDecider.decide(
-                        page,
-                        cleanedFileValid = true,
-                        inpaintModeMatches = inpaintModeMatches,
-                    )
-                    if (decision == BatchResumeGateDecider.Decision.SKIP_ALL && page?.cleanedImageName != null) {
-                        val physicallyPresent = withContext(Dispatchers.IO) {
-                            provider.findPageCleanedImage(
-                                manga.title,
-                                source,
-                                chapter.name,
-                                chapter.scanlator,
-                                page.cleanedImageName!!,
-                            )?.let { it.exists() && it.length() > 0L } == true
-                        }
-                        if (!physicallyPresent) {
-                            logcat(LogPriority.WARN) {
-                                "TachiyomiAT resume invalidated metadata-only cleaned image: pageKey=${page.sourceFileName} cleaned=${page.cleanedImageName}"
-                            }
-                            return if (page.hasCurrentInpaintMask) {
-                                BatchResumeGate.INPAINT_ONLY
-                            } else {
-                                BatchResumeGate.FULL
-                            }
-                        }
-                    }
-                    if (!inpaintModeMatches) {
-                        logcat(LogPriority.INFO) {
-                            "TachiyomiAT resume re-inpainting for mode change: pageKey=${page?.sourceFileName} " +
-                                "was=${page?.inpaintingModeUsed} now=$desiredMode"
-                        }
-                    }
-                    return when (decision) {
-                        BatchResumeGateDecider.Decision.SKIP_ALL -> BatchResumeGate.SKIP_ALL
-                        BatchResumeGateDecider.Decision.INPAINT_ONLY -> BatchResumeGate.INPAINT_ONLY
-                        BatchResumeGateDecider.Decision.FULL -> BatchResumeGate.FULL
-                    }
-                }
+                // T909 Phase 20.3: the resumeGate body moved verbatim to
+                // pipeline/batch/BatchResumePlanner.kt (delegate above keeps call sites).
 
                 suspend fun abortBatchCandidate(pageKey: String, reason: String) {
                     heldBitmapRegistry.recycleHeld(pageKey)
