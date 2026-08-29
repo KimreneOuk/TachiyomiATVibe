@@ -31,22 +31,17 @@ import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.store.ChapterGlossaryStore
 import eu.kanade.translation.store.PageStageLeaseTable
+import eu.kanade.translation.store.StorePersistenceScheduler
 import eu.kanade.translation.store.StoreStatusInputs
 import eu.kanade.translation.store.StoreStatusProjector
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.persistentMapOf
 import kotlinx.collections.immutable.toPersistentMap
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -81,14 +76,16 @@ sealed interface MutationAdmission {
 class ChapterTranslationStore(
     // Retained as a source-compatible test seam; artifact-only persistence never
     // invokes this legacy flat-file creator.
-    private var translationFile: UniFile?,
-    private val fileCreator: (() -> UniFile)?,
+    // T909 Phase 17b: internal — the moved StorePersistenceScheduler reads the
+    // memory-only persistence probes (schedulePersist's early return) from them.
+    internal var translationFile: UniFile?,
+    internal val fileCreator: (() -> UniFile)?,
     initialPages: Map<String, PageTranslation> = emptyMap(),
     internal var artifactStore: ChapterArtifactStore? = null,
     initialCommittedPages: Map<String, PageTranslation> = emptyMap(),
     initialArtifactManifest: ChapterArtifactManifest? = null,
     initialRetiredCleanedImages: Map<String, Set<String>> = emptyMap(),
-    private val artifactParent: UniFile? = null,
+    internal val artifactParent: UniFile? = null,
     private val artifactFileName: String? = null,
 ) {
     internal val mutex = Mutex()
@@ -211,11 +208,18 @@ class ChapterTranslationStore(
     // T909 Phase 8: glossary state + bodies moved to store/ChapterGlossaryStore.kt
     // (delegates under the store mutex; legacy read fallback kept). The public
     // glossary API stays at the old qualified names as delegating stubs.
-    private val glossaryStore = ChapterGlossaryStore(this)
-
-    private val persistScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var dirty = false
-    private var persistJob: Job? = null
+    // T909 Phase 17b: internal so the moved StorePersistenceScheduler's
+    // flushDirtyLocked can reach the glossary dirty flag through it.
+    internal val glossaryStore = ChapterGlossaryStore(this)
+    // T909 Phase 17b: the flush/close/debounce/retention machinery moved to
+    // store/StorePersistenceScheduler.kt; the scheduler owns persistScope and
+    // is constructed eagerly (its ctor resolves no store state). `dirty` and
+    // `persistJob` stay here — non-moved bodies (replaceAll/rekeyPages/
+    // clearTransientQueuePages/markDefunct) read and write them directly; the
+    // scheduler reaches them through internal accessors.
+    internal var dirty = false
+    internal var persistJob: Job? = null
+    private val persistenceScheduler = StorePersistenceScheduler(this)
 
     /**
      * TachiyomiAT: set by [markDefunct] when the store is evicted
@@ -252,8 +256,9 @@ class ChapterTranslationStore(
     val isDefunct: Boolean
         get() = defunct
 
+    // T909 Phase 17b: persistCount is incremented by the moved
+    // StorePersistenceScheduler, so the setter is no longer private.
     internal var persistCount = 0
-        private set
 
     init {
         initialRetiredCleanedImages.forEach { (pageKey, names) ->
@@ -1869,7 +1874,9 @@ class ChapterTranslationStore(
         glossaryStore.loadGlossary()
     }
 
-    private fun persistGlossaryLocked(): Boolean = glossaryStore.persistGlossaryLocked()
+    // T909 Phase 17b: internal — the moved StorePersistenceScheduler reaches
+    // it from flushDirtyLocked.
+    internal fun persistGlossaryLocked(): Boolean = glossaryStore.persistGlossaryLocked()
 
     // T909 Phase 8: kept store-side (flat-file plumbing over ctor state); the
     // moved loadGlossary reads them through these internal accessors.
@@ -1925,82 +1932,33 @@ class ChapterTranslationStore(
         return false
     }
 
-    private fun persistLocked(): Boolean {
-        if (defunct) return false
-        // Once the artifact manifest owns this chapter, the flat JSON is a
-        // legacy compatibility snapshot only. Writing the mutable candidate
-        // map back into it would erase the durable committed pointer on the
-        // next reopen, so all page durability is handled by the artifact
-        // bridge in publishLocked().
-        persistCount++
-        // All durable page writes go through the artifact bridge. A legacy
-        // flat file is a migration-time read/recovery source only.
-        return artifactManifest?.authority == ManifestAuthority.ARTIFACTS
-    }
+    // T909 Phase 17b: flush/close/debounce/retention bodies moved to
+    // store/StorePersistenceScheduler.kt; these same-signature stubs keep the
+    // old qualified names (the manager reset flows, the durable resolver's
+    // probe release, the glossary delegate, and the persistence/defunct tests
+    // resolve them here). markDefunct's bounded persist-join keeps its exact
+    // semantics and reads the join timeout through the same-name companion
+    // delegating val below.
 
-    suspend fun flush() {
-        mutex.withLock {
-            flushDirtyLocked()
-        }
-    }
+    private fun persistLocked(): Boolean = persistenceScheduler.persistLocked()
 
-    private fun flushDirtyLocked() {
-        if (dirty) {
-            if (persistLocked()) dirty = false else dirty = true
-        }
-        if (glossaryStore.glossaryDirty) {
-            // Keep dirty on failure so a later completion/close flush can retry.
-            if (persistGlossaryLocked()) glossaryStore.glossaryDirty = false
-        }
-    }
+    suspend fun flush() = persistenceScheduler.flush()
 
-    suspend fun closeAndFlush() {
-        mutex.withLock {
-            flushDirtyLocked()
-            reconcileArtifactRetentionLocked()
-        }
-        persistScope.cancel()
-    }
+    suspend fun closeAndFlush() = persistenceScheduler.closeAndFlush()
 
-    fun close() {
-        persistScope.launch {
-            mutex.withLock {
-                flushDirtyLocked()
-                reconcileArtifactRetentionLocked()
-            }
-        }.invokeOnCompletion {
-            persistScope.cancel()
-        }
-    }
+    fun close() = persistenceScheduler.close()
 
     /** Performs the bounded artifact-tree sweep at a serialized chapter boundary. */
-    suspend fun reconcileArtifactRetention() {
-        mutex.withLock { reconcileArtifactRetentionLocked() }
-    }
+    suspend fun reconcileArtifactRetention() = persistenceScheduler.reconcileArtifactRetention()
 
-    private fun reconcileArtifactRetentionLocked() {
-        val store = artifactStore ?: return
-        val manifest = artifactManifest ?: return
-        store.reconcileRetention(manifest)
-    }
-
-    internal fun schedulePersist(markPageDirty: Boolean = true) {
-        if (markPageDirty) dirty = true
-        // A memory-only store has no future persistence target. Avoid leaving a
-        // delayed job behind for eviction to join; explicit flush() still
-        // remains available for deterministic callers and preserves dirty state.
-        if (translationFile == null && fileCreator == null && artifactParent == null) return
-        if (persistJob?.isActive == true) return
-        persistJob = persistScope.launch {
-            delay(PERSIST_DEBOUNCE_MS)
-            mutex.withLock { flushDirtyLocked() }
-            persistJob = null
-        }
-    }
+    internal fun schedulePersist(markPageDirty: Boolean = true) =
+        persistenceScheduler.schedulePersist(markPageDirty)
 
     companion object {
-        private const val PERSIST_DEBOUNCE_MS = 250L
-        private const val PERSIST_JOIN_TIMEOUT_MS = 2_000L
+        // T909 Phase 17b: the persistence constants moved to
+        // StorePersistenceScheduler; this delegating val keeps markDefunct's
+        // bounded persist-join read unchanged.
+        private val PERSIST_JOIN_TIMEOUT_MS get() = StorePersistenceScheduler.PERSIST_JOIN_TIMEOUT_MS
 
         /** Fallback name for the rename target if [UniFile.getName] is null. */
         private const val DEFAULT_FILE_NAME = "translation.json"
