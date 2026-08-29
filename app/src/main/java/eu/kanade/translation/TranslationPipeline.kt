@@ -3,7 +3,6 @@ package eu.kanade.translation
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import coil3.imageLoader
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
@@ -12,7 +11,6 @@ import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.DurableFailureMetadata
 import eu.kanade.translation.artifact.FailureCategory
-import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.batch.BatchContextFrontier
 import eu.kanade.translation.batch.BatchDiagnosticDecision
 import eu.kanade.translation.batch.BatchDiagnosticReason
@@ -53,6 +51,11 @@ import eu.kanade.translation.model.resetAttemptCharge
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
+import eu.kanade.translation.pipeline.DecodedPage
+import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
+import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
+import eu.kanade.translation.pipeline.MemoryGovernance
+import eu.kanade.translation.pipeline.PageDecode
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.recognition.RoiPageRecognitionEngine
 import eu.kanade.translation.rendering.RenderColorEstimator
@@ -127,7 +130,6 @@ import tachiyomi.domain.translation.pools.BitmapPool
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
-import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -4983,64 +4985,21 @@ class TranslationPipeline(
         return pageTranslation
     }
 
+    // T909 Phase 1: memory governance bodies moved to translation/pipeline/MemoryGovernance.kt.
     fun forceReleaseNativeBuffers() {
-        try {
-            recognitionEngine.forceReleaseNativeBuffers()
-        } catch (_: Exception) {}
+        MemoryGovernance.forceReleaseNativeBuffers { recognitionEngine }
     }
 
     private fun preflightAnalyzeGate(bitmap: Bitmap, fileName: String) {
-        if (recognitionEngine !is RoiPageRecognitionEngine) return
-        val decision = TranslationMemoryBudget.canStartAnalyze(bitmap.width, bitmap.height)
-        if (decision is TranslationMemoryBudget.MemoryPreflightDecision.Defer) {
-            TranslationMemoryBudget.logSnapshot(
-                tag = "onnx_analyze_preflight_defer",
-                width = bitmap.width,
-                height = bitmap.height,
-                extra = "file=$fileName reason=${decision.reason}",
-            )
-            throw LowMemoryRecognitionDeferredException(fileName, bitmap.width, bitmap.height, decision.reason)
-        }
+        MemoryGovernance.preflightAnalyzeGate({ recognitionEngine }, bitmap, fileName)
     }
 
     private fun preflightInpaintGate(bitmap: Bitmap, fileName: String) {
-        if (recognitionEngine !is RoiPageRecognitionEngine) return
-        val decision = TranslationMemoryBudget.canStartInpaint(bitmap.width, bitmap.height)
-        if (decision is TranslationMemoryBudget.MemoryPreflightDecision.Defer) {
-            TranslationMemoryBudget.logSnapshot(
-                tag = "onnx_inpaint_preflight_defer",
-                width = bitmap.width,
-                height = bitmap.height,
-                extra = "file=$fileName reason=${decision.reason}",
-            )
-            throw LowMemoryRecognitionDeferredException(fileName, bitmap.width, bitmap.height, decision.reason)
-        }
+        MemoryGovernance.preflightInpaintGate({ recognitionEngine }, bitmap, fileName)
     }
 
     private fun reclaimTranslationMemory(reason: String, trimImageCache: Boolean) {
-        val before = TranslationMemoryBudget.snapshot()
-        BitmapPool.releaseAll()
-        try {
-            recognitionEngine.forceReleaseNativeBuffers()
-        } catch (e: Throwable) {
-            logcat(LogPriority.WARN, e) { "forceReleaseNativeBuffers threw during memory reclaim: $reason" }
-        }
-        if (trimImageCache) {
-            try {
-                context.imageLoader.memoryCache?.trimToSize(0)
-            } catch (e: Throwable) {
-                logcat(LogPriority.WARN, e) { "Coil memory-cache trim failed during memory reclaim: $reason" }
-            }
-        }
-        System.gc()
-        val after = TranslationMemoryBudget.snapshot()
-        logcat(LogPriority.WARN) {
-            "[translation_reclaim] reason=$reason trimImageCache=$trimImageCache " +
-                "heapBefore=${before.usedHeapBytes.toMiB()}MiB/${before.maxHeapBytes.toMiB()}MiB " +
-                "availBefore=${before.availableHeapBytes.toMiB()}MiB " +
-                "heapAfter=${after.usedHeapBytes.toMiB()}MiB/${after.maxHeapBytes.toMiB()}MiB " +
-                "availAfter=${after.availableHeapBytes.toMiB()}MiB"
-        }
+        MemoryGovernance.reclaimTranslationMemory(context, { recognitionEngine }, reason, trimImageCache)
     }
 
     private fun logDecodeDecision(
@@ -5050,25 +5009,11 @@ class TranslationPipeline(
         beforeReclaim: DecodeDecision?,
         afterReclaim: DecodeDecision,
     ) {
-        val before = beforeReclaim?.let {
-            " before=${it.kind}/sample=${it.sampleSize}/avail=${it.snapshot.availableHeapBytes.toMiB()}MiB"
-        } ?: ""
-        logcat(LogPriority.INFO) {
-            "[translation_decode_decision] file=$fileName page=${width}x$height " +
-                "decision=${afterReclaim.kind} sample=${afterReclaim.sampleSize} " +
-                "raw=${afterReclaim.rawBitmapBytes.toMiB()}MiB " +
-                "sampled=${afterReclaim.sampledBitmapBytes.toMiB()}MiB " +
-                "avail=${afterReclaim.snapshot.availableHeapBytes.toMiB()}MiB$before"
-        }
+        MemoryGovernance.logDecodeDecision(fileName, width, height, beforeReclaim, afterReclaim)
     }
 
-    private fun Long.toMiB(): Long = this / (1024L * 1024L)
-
     private fun handleCriticalTranslationOom(stage: String, oom: OutOfMemoryError) {
-        BitmapPool.releaseAll()
-        forceReleaseNativeBuffers()
-        System.gc()
-        TranslationMemoryBudget.logSnapshot(tag = "oom_recovery", extra = "stage=$stage message=${oom.message}")
+        MemoryGovernance.handleCriticalTranslationOom(this::forceReleaseNativeBuffers, stage, oom)
     }
 
     private suspend fun persistPageWithOomRecovery(
@@ -5114,150 +5059,28 @@ class TranslationPipeline(
         }
     }
 
-    private fun decodePageBitmapAtSize(fileName: String, sampleSize: Int, streams: List<Pair<String, () -> InputStream>>): Bitmap? {
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-            inSampleSize = sampleSize
-        }
-        return try {
-            val entry = streams.find { it.first == fileName } ?: return null
-            entry.second().use { BitmapFactory.decodeStream(it, null, options) }
-        } catch (_: Exception) {
-            null
-        }
-    }
+    // T909 Phase 1: decode/fingerprint bodies moved to translation/pipeline/PageDecode.kt.
+    private fun decodePageBitmapAtSize(fileName: String, sampleSize: Int, streams: List<Pair<String, () -> InputStream>>): Bitmap? =
+        PageDecode.decodePageBitmapAtSize(fileName, sampleSize, streams)
 
-    private suspend fun decodePageBitmapForTranslation(fileName: String, streamFn: () -> InputStream): DecodedPage? = withContext(Dispatchers.IO) {
-        val buffered: ByteArray = try {
-            streamFn().use { it.readBytes() }
-        } catch (oom: OutOfMemoryError) {
-            reclaimTranslationMemory("decode bounds $fileName", trimImageCache = true)
-            logcat(LogPriority.ERROR, oom) { "Out of memory reading page bytes for $fileName" }
-            return@withContext null
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) { "Failed reading page bytes for $fileName" }
-            return@withContext null
-        }
-        val sourceFingerprint = MessageDigest.getInstance("SHA-256")
-            .digest(buffered)
-            .joinToString("") { byte -> "%02x".format(byte) }
+    private suspend fun decodePageBitmapForTranslation(fileName: String, streamFn: () -> InputStream): DecodedPage? =
+        PageDecode.decodePageBitmapForTranslation(context, { recognitionEngine }, fileName, streamFn)
 
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        try {
-            java.io.ByteArrayInputStream(buffered).use { BitmapFactory.decodeStream(it, null, bounds) }
-        } catch (oom: OutOfMemoryError) {
-            reclaimTranslationMemory("decode bounds $fileName", trimImageCache = true)
-            logcat(LogPriority.ERROR, oom) { "Out of memory reading page bounds for $fileName" }
-            return@withContext null
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) { "Failed reading page bounds for $fileName" }
-            return@withContext null
-        }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@withContext null
-
-        var decision = TranslationMemoryBudget.chooseDecodeDecision(bounds.outWidth, bounds.outHeight, buffered.size.toLong())
-        if (decision.kind == DecodeDecisionKind.HEAP_CONSTRAINED) {
-            val before = decision
-            reclaimTranslationMemory("decode preflight $fileName", trimImageCache = true)
-            decision = TranslationMemoryBudget.chooseDecodeDecision(bounds.outWidth, bounds.outHeight, buffered.size.toLong())
-            logDecodeDecision(fileName, bounds.outWidth, bounds.outHeight, before, decision)
-        } else {
-            logDecodeDecision(fileName, bounds.outWidth, bounds.outHeight, null, decision)
-        }
-
-        if (decision.kind == DecodeDecisionKind.HEAP_CONSTRAINED) {
-            throw LowMemoryDecodeDeferredException(fileName, bounds.outWidth, bounds.outHeight, decision)
-        }
-
-        val options = BitmapFactory.Options().apply {
-            inPreferredConfig = Bitmap.Config.ARGB_8888
-            inSampleSize = decision.sampleSize
-        }
-        val bitmap = try {
-            java.io.ByteArrayInputStream(buffered).use { BitmapFactory.decodeStream(it, null, options) }
-        } catch (oom: OutOfMemoryError) {
-            reclaimTranslationMemory("decode bitmap $fileName", trimImageCache = true)
-            logcat(LogPriority.ERROR, oom) {
-                "Out of memory decoding accepted bitmap for $fileName " +
-                    "sample=${decision.sampleSize} reason=${decision.kind}"
-            }
-            throw LowMemoryDecodeDeferredException(fileName, bounds.outWidth, bounds.outHeight, decision)
-        } ?: return@withContext null
-
-        DecodedPage(
-            bitmap = bitmap,
-            sampleSize = decision.sampleSize,
-            originalWidth = bounds.outWidth,
-            originalHeight = bounds.outHeight,
-            decodeDecision = decision,
-            sourceBytesSize = buffered.size.toLong(),
-            sourceFingerprint = sourceFingerprint,
-        )
-    }
-
-    private suspend fun computeSourceFingerprint(streamFn: () -> InputStream): String? = withContext(Dispatchers.IO) {
-        try {
-            val digest = MessageDigest.getInstance("SHA-256")
-            streamFn().use { input ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) break
-                    if (read > 0) digest.update(buffer, 0, read)
-                }
-            }
-            digest.digest().joinToString("") { byte -> "%02x".format(byte) }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) { "Failed hashing translation source bytes" }
-            null
-        }
-    }
+    private suspend fun computeSourceFingerprint(streamFn: () -> InputStream): String? =
+        PageDecode.computeSourceFingerprint(streamFn)
 
     private fun batchExpectedFingerprints(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
-    ): BatchExpectedFingerprints {
-        val translationInput = currentTranslatorSignature.toString()
-        return BatchExpectedFingerprints(
-            detection = StageFingerprints.configuration(
-                ArtifactStage.DETECTION,
-                currentOcrModel.name,
-                currentReadingOrder.name,
-            ),
-            ocr = StageFingerprints.configuration(
-                ArtifactStage.OCR,
-                currentOcrModel.name,
-                fromLang.name,
-            ),
-            inpaint = StageFingerprints.configuration(
-                ArtifactStage.INPAINT,
-                currentInpaintingMode.name,
-                PageTranslation.CURRENT_INPAINT_REVISION,
-            ),
-            translation = StageFingerprints.configuration(
-                ArtifactStage.TRANSLATION,
-                translationInput,
-                fromLang.name,
-                toLang.name,
-            ),
-            layout = StageFingerprints.configuration(
-                ArtifactStage.LAYOUT,
-                currentReadingOrder.name,
-            ),
+    ): BatchExpectedFingerprints =
+        PageDecode.batchExpectedFingerprints(
+            currentTranslatorSignature,
+            currentOcrModel,
+            currentReadingOrder,
+            currentInpaintingMode,
+            fromLang,
+            toLang,
         )
-    }
-
-    private data class DecodedPage(
-        val bitmap: Bitmap,
-        val sampleSize: Int,
-        val originalWidth: Int,
-        val originalHeight: Int,
-        val decodeDecision: DecodeDecision,
-        val sourceBytesSize: Long,
-        val sourceFingerprint: String? = null,
-    )
 
     /**
      * Result of the permit-held ONNX phase ([translateSinglePageOnnx])
@@ -5273,26 +5096,6 @@ class TranslationPipeline(
         val streams: List<Pair<String, () -> InputStream>>,
         val decoded: DecodedPage,
         val commitPrecondition: ChapterTranslationStore.PatchPrecondition? = null,
-    )
-
-    private class LowMemoryDecodeDeferredException(
-        fileName: String,
-        val width: Int,
-        val height: Int,
-        val decision: DecodeDecision,
-    ) : RuntimeException(
-        "Low memory translating $fileName: released caches, but full-quality decode is still unsafe " +
-            "(page=${width}x$height raw=${decision.rawBitmapBytes / (1024L * 1024L)}MiB " +
-            "available=${decision.snapshot.availableHeapBytes / (1024L * 1024L)}MiB). Retry when memory recovers.",
-    )
-
-    private class LowMemoryRecognitionDeferredException(
-        val fileName: String,
-        val width: Int,
-        val height: Int,
-        val reason: String,
-    ) : RuntimeException(
-        "Low memory translating $fileName: $reason (page=${width}x$height). Retry when memory recovers.",
     )
 
     private fun getChapterPages(chapterPath: UniFile): List<Pair<String, () -> InputStream>> =
