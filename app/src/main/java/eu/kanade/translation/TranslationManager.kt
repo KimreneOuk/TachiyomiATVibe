@@ -23,6 +23,7 @@ import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
 import eu.kanade.translation.manager.BatchProgressProjector
+import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableChapterStatusResolver
 import eu.kanade.translation.manager.DurableStatus
@@ -70,11 +71,11 @@ import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-private const val MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP = 64
-private const val ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS = 30_000L
-
+// T909 Phase 16: the orphan-sweep constants and the freshness predicate moved
+// to manager/CleanedImageLifecycleController.kt; this stub keeps the old
+// qualified name (TranslationManagerArtifactReadTest).
 internal fun isFreshOrphanedCleanedImage(lastModified: Long, nowEpochMs: Long): Boolean =
-    lastModified <= 0L || nowEpochMs - lastModified < ORPHANED_CLEANED_IMAGE_FRESHNESS_GRACE_MS
+    eu.kanade.translation.manager.isFreshOrphanedCleanedImage(lastModified, nowEpochMs)
 
 // T909 Phase 9: body moved to manager/TranslationRequestCoordinator.kt; this
 // stub keeps the old qualified name (TranslationManagerPendingAcknowledgementTest).
@@ -919,17 +920,17 @@ class TranslationManager(
         return registered
     }
 
-    /**
-     * Reclaims previous committed cleaned images discovered while opening a
-     * chapter. The store only exposes names after its committed pointer is
-     * reconstructed; deletion still goes through the stream registry so a
-     * reader stream held across a reopen cannot be invalidated.
-     *
-     * Launched on the application IO scope: the registry executes a retired
-     * image's delete callback inline when no lease is held, which is SAF
-     * binder I/O — it must never run on the caller's thread (the reader
-     * resolves stores from page binds).
-     */
+    // T909 Phase 16: cleaned-image lifecycle region moved to
+    // manager/CleanedImageLifecycleController.kt (retired-image drains, orphan
+    // sweeps, companion-image retirement). Same-signature stubs keep the call
+    // sites; the controller is built per access from the current field values.
+    private val cleanedImageLifecycle: CleanedImageLifecycleController
+        get() = CleanedImageLifecycleController(
+            applicationScopeProvider = { applicationScope },
+            streamRegistryProvider = { streamRegistry },
+            providerProvider = { provider },
+        )
+
     private fun scheduleRetiredCleanedImageCleanup(
         store: ChapterTranslationStore,
         chapterId: Long,
@@ -938,44 +939,15 @@ class TranslationManager(
         mangaTitle: String,
         source: Source,
         mangaId: Long?,
-    ) {
-        val stableMangaId = mangaId ?: return
-        applicationScope.launch {
-            store.state.value.keys.forEach { pageKey ->
-                store.drainRetiredCleanedImages(pageKey).forEach { imageName ->
-                    streamRegistry.retireCleanedImage(
-                        sourceId = source.id,
-                        mangaId = stableMangaId,
-                        chapterId = chapterId,
-                        pageKey = pageKey,
-                        imageName = imageName,
-                    ) {
-                        if (!store.mayDeleteCleanedImage(pageKey, imageName)) return@retireCleanedImage
-                        val deleted = provider.findPageCleanedImage(
-                            mangaTitle,
-                            source,
-                            chapterName,
-                            scanlator,
-                            imageName,
-                        )?.delete() == true
-                        logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                            "TachiyomiAT chapter-load retired cleaned image drain: " +
-                                "pageKey=$pageKey file=$imageName deleted=$deleted"
-                        }
-                    }
-                }
-            }
-            sweepOrphanedCleanedImages(
-                store = store,
-                chapterId = chapterId,
-                chapterName = chapterName,
-                scanlator = scanlator,
-                mangaTitle = mangaTitle,
-                source = source,
-                mangaId = stableMangaId,
-            )
-        }
-    }
+    ) = cleanedImageLifecycle.scheduleRetiredCleanedImageCleanup(
+        store,
+        chapterId,
+        chapterName,
+        scanlator,
+        mangaTitle,
+        source,
+        mangaId,
+    )
 
     private fun sweepOrphanedCleanedImages(
         store: ChapterTranslationStore,
@@ -985,54 +957,21 @@ class TranslationManager(
         mangaTitle: String,
         source: Source,
         mangaId: Long,
-    ) {
-        val directory = provider.findCompanionImageDir(mangaTitle, source, chapterName, scanlator) ?: return
-        val referenced = store.referencedCleanedImageNames()
-        val pageKeys = store.state.value.keys
-        val now = System.currentTimeMillis()
-        directory.listFiles()
-            ?.asSequence()
-            ?.mapNotNull { file -> file.name?.let { it to file } }
-            ?.filter { (name, file) -> file.isFile && name.contains(".cleaned.") }
-            ?.filterNot { (name, file) ->
-                name in referenced ||
-                    streamRegistry.activeCleanedImageReadersForChapter(source.id, mangaId, chapterId, name) > 0 ||
-                    pageKeys.any { pageKey -> !store.mayDeleteCleanedImage(pageKey, name) } ||
-                    isFreshOrphanedCleanedImage(file.lastModified(), now)
-            }
-            ?.take(MAX_ORPHANED_CLEANED_IMAGES_PER_SWEEP)
-            ?.forEach { (name, file) ->
-                val deleted = runCatching { file.delete() }.getOrDefault(false)
-                logcat(if (deleted) LogPriority.INFO else LogPriority.WARN) {
-                    "TachiyomiAT orphaned cleaned image sweep: chapter=$chapterName file=$name deleted=$deleted"
-                }
-            }
-    }
+    ) = cleanedImageLifecycle.sweepOrphanedCleanedImages(
+        store,
+        chapterId,
+        chapterName,
+        scanlator,
+        mangaTitle,
+        source,
+        mangaId,
+    )
 
     private fun retireChapterCompanionImages(
         manga: Manga,
         chapter: Chapter,
         source: Source,
-    ) {
-        val chapterId = chapter.id ?: return
-        val directory = provider.findCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
-        val namesAtRetirement = directory
-            ?.listFiles()
-            ?.asSequence()
-            ?.mapNotNull { it.name }
-            ?.filterNot { it == ".nomedia" }
-            ?.toSet()
-            .orEmpty()
-        streamRegistry.retireCleanedImagesForChapter(
-            sourceId = source.id,
-            mangaId = manga.id,
-            chapterId = chapterId,
-        ) {
-            namesAtRetirement.forEach { imageName ->
-                directory?.findFile(imageName)?.delete()
-            }
-        }
-    }
+    ) = cleanedImageLifecycle.retireChapterCompanionImages(manga, chapter, source)
 
     private fun retirePageCompanionImage(
         manga: Manga,
@@ -1040,24 +979,7 @@ class TranslationManager(
         source: Source,
         pageKey: String,
         imageName: String,
-    ) {
-        val chapterId = chapter.id ?: return
-        streamRegistry.retireCleanedImage(
-            sourceId = source.id,
-            mangaId = manga.id,
-            chapterId = chapterId,
-            pageKey = pageKey,
-            imageName = imageName,
-        ) {
-            provider.findPageCleanedImage(
-                manga.title,
-                source,
-                chapter.name,
-                chapter.scanlator,
-                imageName,
-            )?.delete()
-        }
-    }
+    ) = cleanedImageLifecycle.retirePageCompanionImage(manga, chapter, source, pageKey, imageName)
 
     fun openTranslationSession(
         manga: Manga,
@@ -1583,6 +1505,8 @@ class TranslationManager(
         }
     }
 
+    // T909 Phase 16: body moved to manager/CleanedImageLifecycleController.kt.
+    // Same-signature stub keeps the call sites.
     fun getCleanedImageStream(
         mangaTitle: String,
         source: Source,
@@ -1592,28 +1516,17 @@ class TranslationManager(
         pageKey: String? = null,
         mangaId: Long? = null,
         chapterId: Long? = null,
-    ): (() -> java.io.InputStream)? {
-        return {
-            val file = provider.findPageCleanedImage(mangaTitle, source, chapterName, chapterScanlator, cleanedImageName)
-            if (file?.exists() == true) {
-                val raw = { file.openInputStream() }
-                if (pageKey == null || mangaId == null || chapterId == null) {
-                    raw()
-                } else {
-                    streamRegistry.openCleanedImageStream(
-                        sourceId = source.id,
-                        mangaId = mangaId,
-                        chapterId = chapterId,
-                        pageKey = pageKey,
-                        imageName = cleanedImageName,
-                        open = raw,
-                    )
-                }
-            } else {
-                throw java.io.FileNotFoundException("Cleaned image not found: $cleanedImageName")
-            }
-        }
-    }
+    ): (() -> java.io.InputStream)? =
+        cleanedImageLifecycle.getCleanedImageStream(
+            mangaTitle,
+            source,
+            chapterName,
+            chapterScanlator,
+            cleanedImageName,
+            pageKey,
+            mangaId,
+            chapterId,
+        )
 
     fun translatePage(manga: Manga, chapter: Chapter, source: HttpSource, pageKey: String) =
         scheduler.translatePage(manga, chapter, source, pageKey)
