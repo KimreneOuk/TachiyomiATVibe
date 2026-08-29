@@ -5,8 +5,6 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactDeletionPlan
 import eu.kanade.translation.artifact.ChapterDocumentIo
@@ -21,10 +19,10 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.manager.BatchProgressProjector
 import eu.kanade.translation.manager.TranslationRequestCoordinator
 import eu.kanade.translation.model.findRunningSameSourceConflict
 import eu.kanade.translation.model.staleQueuedChaptersToEvict
@@ -44,16 +42,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.merge
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -560,27 +555,46 @@ class TranslationManager(
         removeFromTranslationQueue(chapter)
     }
 
+    // T909 Phase 11: status/progress projection flow graph moved to
+    // manager/BatchProgressProjector.kt (flows only, no locks). Same-signature
+    // stubs keep the manager's public seams.
+    private val progressProjector: BatchProgressProjector
+        get() = BatchProgressProjector(
+            activeStoresProvider = { activeStores },
+            batchTrackerRegistryProvider = { batchTrackerRegistry },
+            queueStateProvider = { queueState },
+            pendingTranslationRequestsProvider = { pendingTranslationRequests },
+            pipelineProvider = { pipeline },
+            getQueuedTranslationOrNull = { chapterId -> getQueuedTranslationOrNull(chapterId) },
+            persistedChapterStatus = { chapterId, chapterName, chapterScanlator, mangaTitle, sourceId ->
+                persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
+            },
+            openOrCreateStoreSuspend = { chapterId, chapterName, scanlator, mangaTitle, source, mangaId ->
+                openOrCreateActiveChapterTranslationStoreSuspend(
+                    chapterId,
+                    chapterName,
+                    scanlator,
+                    mangaTitle,
+                    source,
+                    mangaId,
+                )
+            },
+            observeActiveDisplayStore = { chapterId -> observeActiveDisplayStore(chapterId) },
+        )
+
     fun getChapterTranslationStatus(
         chapterId: Long,
         chapterName: String,
         scanlator: String?,
         title: String,
         sourceId: Long,
-    ): Translation.State {
-        val translation = getQueuedTranslationOrNull(chapterId)
-        if (translation != null) return translation.status
-        activeStores.get(chapterId)?.let { store ->
-            // The reader-facing committed projection is authoritative. A live
-            // OCR/translation candidate must not make the chapter appear ready
-            // or hide an older committed bundle while it is being refreshed.
-            val pages = store.display.value
-            if (pages.values.any { it.toPageDisplayProjection().displayReady }) {
-                return store.artifactStatus() ?: Translation.State.READY_WITH_WARNINGS
-            }
-        }
-        return persistedChapterStatus(chapterId, chapterName, scanlator, title, sourceId)
-            ?: Translation.State.NOT_TRANSLATED
-    }
+    ): Translation.State = progressProjector.getChapterTranslationStatus(
+        chapterId,
+        chapterName,
+        scanlator,
+        title,
+        sourceId,
+    )
 
     fun observeChapterTranslationStatus(
         chapterId: Long,
@@ -588,26 +602,13 @@ class TranslationManager(
         scanlator: String?,
         title: String,
         sourceId: Long,
-    ): Flow<Translation.State> {
-        val queueStatusFlow = queueState.map { queue ->
-            queue.find { it.chapter.id == chapterId }?.status
-        }.distinctUntilChanged()
-
-        val activeStoreStateFlow = activeStores.snapshots.flatMapLatest { map ->
-            val store = map[chapterId]
-            if (store != null) {
-                combine(store.state, store.display) { _, _ ->
-                    getChapterTranslationStatus(chapterId, chapterName, scanlator, title, sourceId)
-                }
-            } else {
-                kotlinx.coroutines.flow.flowOf(null)
-            }
-        }.distinctUntilChanged()
-
-        return kotlinx.coroutines.flow.combine(queueStatusFlow, activeStoreStateFlow) { qStatus, diskStatus ->
-            qStatus ?: diskStatus ?: getChapterTranslationStatus(chapterId, chapterName, scanlator, title, sourceId)
-        }.distinctUntilChanged()
-    }
+    ): Flow<Translation.State> = progressProjector.observeChapterTranslationStatus(
+        chapterId,
+        chapterName,
+        scanlator,
+        title,
+        sourceId,
+    )
 
     /** True when persisted output is readable, including a retry/review-ready warning outcome. */
     fun isChapterTranslated(
@@ -1224,183 +1225,25 @@ class TranslationManager(
 
     internal fun terminalSnapshotCacheSize(): Int = batchTrackerRegistry.terminalSnapshotCacheSize()
 
-    /**
-     * Live batch progress for [chapterId]. This is the one projection shared
-     * by manga, reader, and notification surfaces. It starts with an immediate
-     * request acknowledgement, follows queue status changes, then switches to
-     * the live tracker or shared store without consulting download-cache state.
-     */
-    fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
-        val pending = pendingTranslationRequests
-            .map { requests -> requests[chapterId] }
-            .distinctUntilChanged()
-        return combine(pending, observeQueuedTranslationStatus(chapterId)) { request, queueStatus ->
-            request to queueStatus
-        }
-            .flatMapLatest { (request, queueStatus) ->
-                if (request != null && queueStatus == null) {
-                    flowOf(
-                        TranslationProgressSnapshot.empty(chapterId).copy(
-                            requestState = request,
-                        ),
-                    )
-                } else {
-                    observeBatchProgressProjection(chapterId, queueStatus)
-                        .map { snapshot -> snapshot.copy(requestState = null) }
-                }
-            }
-            .distinctUntilChanged()
-    }
+    fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
+        progressProjector.observeBatchProgress(chapterId)
 
-    private fun observeQueuedTranslationStatus(chapterId: Long): Flow<Translation.State?> =
-        queueState
-            .flatMapLatest { queue ->
-                val translation = queue.firstOrNull { it.chapter.id == chapterId }
-                if (translation == null) {
-                    flowOf(null)
-                } else {
-                    translation.statusFlow
-                        .drop(1)
-                        .map { it }
-                        .onStart { emit(translation.status) }
-                }
-            }
-            .distinctUntilChanged()
+    fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
+        progressProjector.observeTranslationProgress(chapterId)
 
-    private fun observeBatchProgressProjection(
-        chapterId: Long,
-        queueStatus: Translation.State?,
-    ): Flow<TranslationProgressSnapshot> = batchTrackerRegistry.live
-        .flatMapLatest { trackers ->
-            val tracker = trackers[chapterId]
-            if (tracker != null) {
-                tracker.snapshot
-            } else {
-                val terminal = batchTrackerRegistry.terminal.value[chapterId]
-                if (terminal != null) {
-                    flowOf(terminal)
-                } else {
-                    val queued = getQueuedTranslationOrNull(chapterId)
-                    val state = queueStatus ?: queued?.status ?: Translation.State.NOT_TRANSLATED
-                    val store = activeStores.get(chapterId)
-                    if (store == null && queued != null) {
-                        flow {
-                            val resolvedStore = openOrCreateActiveChapterTranslationStoreSuspend(
-                                chapterId = chapterId,
-                                chapterName = queued.chapter.name,
-                                scanlator = queued.chapter.scanlator,
-                                mangaTitle = queued.manga.title,
-                                source = queued.source,
-                                mangaId = queued.manga.id,
-                            )
-                            if (resolvedStore == null) {
-                                emit(TranslationProgressSnapshot.empty(chapterId, state))
-                            } else {
-                                emitAll(
-                                    combine(resolvedStore.state, resolvedStore.display) { pages, display ->
-                                        snapshotFromStore(
-                                            chapterId = chapterId,
-                                            state = state,
-                                            store = resolvedStore,
-                                            pages = pages,
-                                            display = display,
-                                        )
-                                    },
-                                )
-                            }
-                        }
-                    } else if (store == null) {
-                        flowOf(TranslationProgressSnapshot.empty(chapterId, state))
-                    } else {
-                        combine(store.state, store.display) { pages, display ->
-                            snapshotFromStore(
-                                chapterId = chapterId,
-                                state = state,
-                                store = store,
-                                pages = pages,
-                                display = display,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-        .map { snapshot -> snapshot.projectQueueStatus(queueStatus) }
-        .distinctUntilChanged()
+    fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? =
+        progressProjector.observePageView(chapterId, pageKey)
 
-    private fun snapshotFromStore(
-        chapterId: Long,
-        state: Translation.State,
-        store: ChapterTranslationStore,
-        pages: Map<String, PageTranslation>,
-        display: Map<String, PageTranslation>,
-    ): TranslationProgressSnapshot = TranslationProgressSnapshot.compute(
-        chapterId = chapterId,
-        state = state,
-        pageMap = pages,
-        displayPageMap = display,
-        permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
-    ).withDurablePause(store)
-
+    // T909 Phase 11: pure projection bodies moved to BatchProgressProjector; these
+    // same-signature stubs stay because TranslationManagerPausedAffordanceTest
+    // invokes them reflectively on TranslationManager.
     private fun TranslationProgressSnapshot.withDurablePause(
         store: ChapterTranslationStore,
-    ): TranslationProgressSnapshot {
-        if (state != Translation.State.PAUSED) return this
-        val failure = store.durableFailuresSnapshot().values
-            .firstOrNull {
-                it.stage == ArtifactStage.TRANSLATION &&
-                    it.status == ArtifactStageStatus.FAILED_RETRYABLE
-            }
-            ?: return this
-        return copy(
-            pauseAnchorPageKey = pauseAnchorPageKey ?: failure.pageKey,
-            pauseReason = pauseReason ?: failure.lastFailureMessage,
-            nextEligibleRetryAtEpochMs = nextEligibleRetryAtEpochMs ?: failure.nextEligibleRetryAtEpochMs,
-        )
-    }
+    ): TranslationProgressSnapshot = progressProjector.withDurablePauseOf(this, store)
 
     private fun TranslationProgressSnapshot.projectQueueStatus(
         queueStatus: Translation.State?,
-    ): TranslationProgressSnapshot {
-        return when (queueStatus) {
-            null -> this
-            Translation.State.QUEUE -> copy(
-                state = queueStatus,
-                batchPhase = TranslationBatchPhase.IDLE,
-                pauseAnchorPageKey = null,
-                pauseReason = null,
-                nextEligibleRetryAtEpochMs = null,
-            )
-            Translation.State.TRANSLATING -> copy(
-                state = queueStatus,
-                batchPhase = if (batchPhase == TranslationBatchPhase.IDLE) {
-                    TranslationBatchPhase.FIRST_PASS
-                } else {
-                    batchPhase
-                },
-            )
-            Translation.State.PAUSED -> copy(
-                state = queueStatus,
-                batchPhase = TranslationBatchPhase.FINISHED,
-            )
-            else -> copy(state = queueStatus)
-        }
-    }
-
-    /**
-     * Per-chapter batch progress (done/total) for the manga-screen chapter-list indicator, so
-     * the user can watch pre-translation advance without opening the reader. Emits the active
-     * store's page-count progress; empty when no active store exists (no batch in flight).
-     */
-    fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
-        return observeBatchProgress(chapterId)
-    }
-
-    fun observePageView(chapterId: Long, pageKey: String): Flow<PageView>? {
-        return observeActiveDisplayStore(chapterId)
-            ?.map { pages -> pages[pageKey].toPageView() }
-            ?.distinctUntilChanged()
-    }
+    ): TranslationProgressSnapshot = progressProjector.projectQueueStatusOf(this, queueStatus)
 
     suspend fun deleteTranslation(chapter: Chapter, manga: Manga, source: Source) {
         val chapterId = chapter.id ?: return
