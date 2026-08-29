@@ -35,8 +35,6 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.OcrModel
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
-import kotlin.math.max
-import kotlin.math.min
 
 class RoiPageRecognitionEngine(
     private val context: Context,

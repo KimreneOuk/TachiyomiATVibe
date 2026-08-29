@@ -42,7 +42,6 @@ import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.StableBlockIds
 import eu.kanade.translation.translator.StreamingChunkPlanner
 import eu.kanade.translation.translator.TextTranslator
-import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationBlockValidation
 import eu.kanade.translation.translator.TranslationContextChunk
 import eu.kanade.translation.translator.TranslationContextChunkPlanner

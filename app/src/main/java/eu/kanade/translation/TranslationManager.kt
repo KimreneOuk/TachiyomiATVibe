@@ -5,11 +5,8 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactDeletionPlan
 import eu.kanade.translation.artifact.ChapterDocumentIo
 import eu.kanade.translation.artifact.ManifestAuthority
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
@@ -33,8 +30,6 @@ import eu.kanade.translation.manager.TranslationRequestCoordinator
 import eu.kanade.translation.manager.TranslationDocument
 import eu.kanade.translation.model.findRunningSameSourceConflict
 import eu.kanade.translation.model.staleQueuedChaptersToEvict
-import eu.kanade.translation.model.toPageDisplayProjection
-import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.model.toQueuedChapterView
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -46,7 +41,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
@@ -57,7 +51,6 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import logcat.LogPriority
 import tachiyomi.core.common.util.lang.launchIO

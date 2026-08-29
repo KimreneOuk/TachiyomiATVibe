@@ -2,7 +2,6 @@ package eu.kanade.translation
 
 import android.content.Context
 import io.kotest.matchers.collections.shouldContainExactly
-import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
 import org.junit.jupiter.api.Test
