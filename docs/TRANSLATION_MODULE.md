@@ -871,8 +871,10 @@ retry that did or did not reset the bookkeeping is visible in logcat. Pinned
 by `PageTranslationStateTest` (`recordAttemptFailure charges the attempt
 exactly once per attempt`, `a single inpaint failure does not exhaust
 retries`, `prepareForcedRetry resets the attempt counter …`,
-`attemptCount is not serialized …`) and `TranslationBlockValidationTest`
-(`applyTo sets FAILED … attemptCount shouldBe 1`).
+`attemptCount is not serialized …`) and the block-validation
+`applyTo` FAILED path (attemptCount charged once) — exercised indirectly by
+`NumberedLineResponseParserTest`; a dedicated `TranslationBlockValidationTest`
+does not exist (documented coverage gap).
 
 ---
 
@@ -1167,13 +1169,13 @@ tracker disposal/LRU, memory-pressure forwarding, and glossary flush behavior.
 | `inpainting/bubble/BubbleMaskBuilderTest` | andMasks/maskCoverage + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + `FastMarchingMethod.inpaintTelea` (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
 | `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
 | `model/InpaintMaskSerializationTest` | inpaintMaskBoxes round-trips through JSON; InpaintMaskBox.toIntArray; hasCurrentInpaintMask (current / pre-fix-empty / textless) |
-| `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped + attemptCount charged once via recordAttemptFailure) + reason |
+| **(no dedicated test)** | `TranslationBlockValidation` has no direct test; its applyTo FAILED path is exercised indirectly via `translator/providers/NumberedLineResponseParserTest`. Known coverage gap. |
 | `translator/StrictConfigFromPrefTest` | strict no-fallback config: TextRecognizerLanguage/TextTranslatorLanguage `fromPref` throw on unknown value (was → Chinese/English); StandardTranslatorKind.fromPref throw branch is unreachable (closed enum) and documented |
 | `scheduling/TranslationStreamRegistryTest` | per-page/chapter/all/window stream registry eviction semantics |
 | **(no test)** | `TranslationLifecyclePolicy` (scheduling) is currently UNTESTED — the former `TranslationLifecyclePolicyTest` no longer exists. Known coverage gap. |
 | `util/ShortHashTest` | FNV-1a digest: empty input, equality, determinism, hex output |
 | `util/TranslationMemoryBudgetTest` | full-quality vs heap-constrained vs source-size-limited decode decisions |
-| `reader/ReaderPageWarmWindowTest` | current +/-2 warm-window boundaries for long chapters |
+| `tachiyomi/ui/reader/ReaderPageWarmWindowTest` | current +/-2 warm-window boundaries for long chapters |
 
 Run: `.\gradlew.bat :app:testStandardDebugUnitTest`
 
