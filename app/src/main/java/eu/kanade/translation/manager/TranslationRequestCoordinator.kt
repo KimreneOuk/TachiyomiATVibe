@@ -198,6 +198,28 @@ internal class TranslationRequestCoordinator(
         }
     }
 
+    /**
+     * T911 slice 3 (R8): the chapter's files finalized successfully, but the
+     * translation start after the download failed (artifact rekey, handoff or
+     * admission threw). The download stays `DOWNLOADED`; the request is failed
+     * with the R10 admission-failure typing — never a download failure.
+     */
+    fun markTranslationHandoffFailed(
+        chapterId: Long,
+        reason: String? = null,
+    ) {
+        if (pendingTranslationRequestsState.value.containsKey(chapterId) ||
+            pendingRequestStore.load().contains(chapterId)
+        ) {
+            setPendingTranslationRequest(
+                chapterId,
+                TranslationRequestPhase.ADMISSION_FAILED,
+                reason ?: "Translation could not start after the chapter download",
+                TranslationRequestFailureKind.QUEUE_ADMISSION_FAILED,
+            )
+        }
+    }
+
     // T911 slice 2 (R5): download-side lifecycle notifications. Each is a
     // no-op when no pending request exists for the chapter, so ordinary
     // downloads are unaffected.

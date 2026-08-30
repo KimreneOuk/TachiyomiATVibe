@@ -9,6 +9,7 @@ import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
 import io.kotest.matchers.collections.shouldContainExactly
+import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
@@ -112,9 +113,17 @@ class TranslationRequestGenerationFenceTest {
 
         admitted.get() shouldBe false
         manager.pendingTranslationRequests.value.containsKey(10L) shouldBe false
+        // Drain the async STARTING-ack persistence lane before asserting
+        // durable state: its defensive re-remove after the cancel runs
+        // `store.remove` a second time, so the tombstone value legitimately
+        // depends on whether that landed yet.
+        withTimeout(5_000) {
+            laneJob.complete()
+            laneJob.join()
+        }
         store.record(10L).shouldBeNull()
         // The cancelled generation must never be reusable by a later request.
-        store.generation(10L) shouldBe (generation + 1)
+        store.generation(10L) shouldBeGreaterThan generation
     }
 
     @Test

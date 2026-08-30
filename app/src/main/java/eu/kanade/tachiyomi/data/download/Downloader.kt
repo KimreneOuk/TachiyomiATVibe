@@ -360,9 +360,12 @@ class Downloader(
     /**
      * Downloads a chapter.
      *
+     * T911 slice 3: internal so fault-injection tests can drive the
+     * finalize-stage failure boundary directly.
+     *
      * @param download the chapter to be downloaded.
      */
-    private suspend fun downloadChapter(download: Download) {
+    internal suspend fun downloadChapter(download: Download) {
         val mangaDir = provider.getMangaDir(download.manga.title, download.source)
 
         val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
@@ -385,9 +388,15 @@ class Downloader(
         val chapterDirname = provider.getChapterDirName(download.chapter.name, download.chapter.scanlator)
         val tmpDir = mangaDir.createDirectory(chapterDirname + TMP_DIR_SUFFIX)!!
 
+        // T911 slice 3 (R8): the finalize boundary (page validation, metadata
+        // write, archive/rename) ends at `DOWNLOADED`. Rekey and translation
+        // handoff run AFTER it, so a failure there can never flip the already
+        // finalized download back to ERROR.
+        val pageList: List<Page>
+        val onDiskKeys: List<String>
         try {
             // If the page list already exists, start from the file
-            val pageList = download.pages ?: run {
+            pageList = download.pages ?: run {
                 // Otherwise, pull page list from network and add them to download object
                 val pages = download.source.getPageList(download.chapter.toSChapter())
 
@@ -446,7 +455,7 @@ class Downloader(
                 download.source,
             )
 
-            val onDiskKeys = if (translationManager.hasTranslationStore(download.chapter, download.manga, download.source)) {
+            onDiskKeys = if (translationManager.hasTranslationStore(download.chapter, download.manga, download.source)) {
                 tmpDir.listFiles().orEmpty()
                     .filter { file ->
                         if (!file.isFile) {
@@ -474,7 +483,39 @@ class Downloader(
             DiskUtil.createNoMediaFile(tmpDir, context)
 
             download.status = Download.State.DOWNLOADED
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            // If the page list threw, it will resume here
+            logcat(LogPriority.ERROR, error)
+            download.status = Download.State.ERROR
+            translationManager.markTranslationDownloadFailed(download.chapter.id, "Chapter download failed")
+            notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+            // T911 slice 3 (R8): the finalize boundary settled the download's
+            // terminal status; the post-finalization handoff runs below and is
+            // NOT covered by this catch. (Behavior-neutral `return`: the catch
+            // previously fell through to the end of the function.)
+            return
+        }
 
+        handOffAfterFinalization(download, pageList, onDiskKeys)
+    }
+
+    /**
+     * T911 slice 3 (R8): post-finalization translation boundary. The chapter's
+     * files are final and the download's terminal status is settled
+     * (`DOWNLOADED`); a failure in translation artifact rekeying or in the
+     * handoff/admission must NOT flip the download back to `ERROR` — the
+     * translation intent gets the real typed failure instead
+     * ([TranslationManager.markTranslationHandoffFailed]). Normal downloads
+     * without a pending request are unaffected (the seam is existence-checked).
+     * Internal so fault-injection tests can drive the exact boundary.
+     */
+    internal suspend fun handOffAfterFinalization(
+        download: Download,
+        pageList: List<Page>,
+        onDiskKeys: List<String>,
+    ) {
+        try {
             if (onDiskKeys.isNotEmpty()) {
                 val onlineKeys = pageList.map { page -> onlinePageTranslationKey(page.imageUrl, page.url) }
                 translationManager.rekeyTranslationForCompletedDownload(
@@ -488,11 +529,12 @@ class Downloader(
             translationManager.startTranslationAfterDownloadIfRequested(download.manga, download.chapter)
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
-            // If the page list threw, it will resume here
             logcat(LogPriority.ERROR, error)
-            download.status = Download.State.ERROR
-            translationManager.markTranslationDownloadFailed(download.chapter.id, "Chapter download failed")
-            notifier.onError(error.message, download.chapter.name, download.manga.title, download.manga.id)
+            translationManager.markTranslationHandoffFailed(
+                download.chapter.id,
+                "Translation could not start after the chapter download: " +
+                    (error.message ?: error::class.java.simpleName),
+            )
         }
     }
 

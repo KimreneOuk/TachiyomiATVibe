@@ -26,6 +26,7 @@ import eu.kanade.translation.manager.ChapterDataResetController
 import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableChapterStatusResolver
+import eu.kanade.translation.manager.isReconstructibleDurableState
 import eu.kanade.translation.manager.DurableStatus
 import eu.kanade.translation.manager.ReaderTeardownCoordinator
 import eu.kanade.translation.manager.TranslationRequestCoordinator
@@ -329,6 +330,20 @@ class TranslationManager(
         failureKind: TranslationRequestFailureKind = TranslationRequestFailureKind.DOWNLOAD_FAILED,
     ) {
         requestCoordinator.markTranslationDownloadFailed(chapterId, reason, failureKind)
+    }
+
+    /**
+     * T911 slice 3 (R8): the chapter's files finalized, but the translation
+     * start after the download failed (rekey/handoff/admission). The download
+     * keeps its `DOWNLOADED` status; the request gets the R10 admission-failure
+     * typing instead of a false download failure. No-op without a pending
+     * request, so ordinary downloads are unaffected.
+     */
+    fun markTranslationHandoffFailed(
+        chapterId: Long,
+        reason: String? = null,
+    ) {
+        requestCoordinator.markTranslationHandoffFailed(chapterId, reason)
     }
 
     // T911 slice 2 (R5): download-side lifecycle notifications. Every one is a
@@ -850,6 +865,9 @@ class TranslationManager(
                 )
             },
             observeActiveDisplayStore = { chapterId -> observeActiveDisplayStore(chapterId) },
+            reconstructDurableTerminalSnapshot = { chapterId ->
+                reconstructDurableTerminalSnapshot(chapterId)
+            },
         )
 
     fun getChapterTranslationStatus(
@@ -911,6 +929,49 @@ class TranslationManager(
         sourceId: Long,
     ): Translation.State? =
         durableStatusResolver.persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
+
+    /**
+     * T911 slice 3 (contract item 4): read-through terminal reconstruction.
+     * When the bounded tracker registry misses (process death, 20-entry
+     * eviction) and no queue owner exists, the projection rebuilds a
+     * completed/failed chapter's terminal snapshot from the durable store and
+     * artifacts. Read-only by design: it never creates an active store and
+     * adds no new cache — the bounded probe registry and the existing
+     * durable-status cache are the only intermediaries.
+     *
+     * [resolveTranslation] is injectable so focused unit tests can drive the
+     * gate without the database.
+     */
+    internal suspend fun reconstructDurableTerminalSnapshot(
+        chapterId: Long,
+        resolveTranslation: suspend (Long) -> Translation? = { Translation.fromChapterId(it) },
+    ): TranslationProgressSnapshot? {
+        val translation = resolveTranslation(chapterId) ?: return null
+        val chapter = translation.chapter
+        val sourceId = translation.manga.source
+        val state = persistedChapterStatus(
+            chapterId,
+            chapter.name,
+            chapter.scanlator,
+            translation.manga.title,
+            sourceId,
+        ) ?: return null
+        if (!isReconstructibleDurableState(state)) return null
+        return durableStatusResolver.withDurableStore(
+            chapterId = chapterId,
+            chapterName = chapter.name,
+            chapterScanlator = chapter.scanlator,
+            mangaTitle = translation.manga.title,
+            sourceId = sourceId,
+        ) { store ->
+            TranslationProgressSnapshot.compute(
+                chapterId = chapterId,
+                state = state,
+                pageMap = store.state.value,
+                displayPageMap = store.display.value,
+            ).withDurablePause(store)
+        }
+    }
 
     private fun statusFromReadablePages(
         pages: Map<String, PageTranslation>,

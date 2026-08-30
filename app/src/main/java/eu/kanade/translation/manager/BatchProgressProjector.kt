@@ -47,6 +47,22 @@ internal fun translationQueuePosition(
 }
 
 /**
+ * T911 slice 3: whether a durable artifact status is a reconstructible
+ * terminal outcome (completed / warnings / failed, or a durable pause with
+ * explicit resume detail). Live-looking states (queue/translating) are never
+ * reconstructed — a crash mid-run must not look like running work.
+ * Pure so the projection and its tests agree on the gate.
+ */
+internal fun isReconstructibleDurableState(state: Translation.State?): Boolean = when (state) {
+    Translation.State.TRANSLATED,
+    Translation.State.READY_WITH_WARNINGS,
+    Translation.State.ERROR,
+    Translation.State.PAUSED,
+    -> true
+    else -> false
+}
+
+/**
  * Batch progress projection moved from `TranslationManager` (T909 Phase 11).
  * Pure flow graph — no locks. Manager state arrives as providers and is
  * re-read on every access, matching the manager's per-access construction.
@@ -74,6 +90,13 @@ internal class BatchProgressProjector(
         mangaId: Long?,
     ) -> ChapterTranslationStore?,
     private val observeActiveDisplayStore: (Long) -> StateFlow<Map<String, PageTranslation>>?,
+    /**
+     * T911 slice 3: read-through terminal reconstruction from the durable
+     * store/artifacts, used when the bounded registry misses (process death /
+     * eviction) and no queue owner exists. Null when nothing durable is
+     * reconstructible. Read-only: never creates a store, never caches.
+     */
+    private val reconstructDurableTerminalSnapshot: suspend (chapterId: Long) -> TranslationProgressSnapshot? = { null },
 ) {
 
     private val activeStores get() = activeStoresProvider()
@@ -227,7 +250,18 @@ internal class BatchProgressProjector(
                             }
                         }
                     } else if (store == null) {
-                        flowOf(TranslationProgressSnapshot.empty(chapterId, state))
+                        flow {
+                            // T911 slice 3: registry miss and no queue owner —
+                            // reconstruct a completed/failed chapter's terminal
+                            // detail from the durable store/artifacts so
+                            // re-entry and eviction keep truthful totals and
+                            // reasons. Read-through only: no store is created
+                            // and nothing is cached here.
+                            emit(
+                                reconstructDurableTerminalSnapshot(chapterId)
+                                    ?: TranslationProgressSnapshot.empty(chapterId, state),
+                            )
+                        }
                     } else {
                         combine(store.state, store.display) { pages, display ->
                             snapshotFromStore(

@@ -141,6 +141,27 @@ internal class DurableChapterStatusResolver(
         return TranslationDocument(parent, fileName, file ?: parent.findFile(fileName))
     }
 
+    /**
+     * T911 slice 3: read-through durable store access for terminal snapshot
+     * reconstruction (registry miss after process death / eviction). Prefers
+     * the active store; otherwise opens the durable document through the
+     * bounded probe registry and releases it afterwards. No result is cached
+     * here — the caller projects and discards, keeping memory bounded.
+     */
+    internal suspend fun <T> withDurableStore(
+        chapterId: Long?,
+        chapterName: String,
+        chapterScanlator: String?,
+        mangaTitle: String,
+        sourceId: Long,
+        block: suspend (ChapterTranslationStore) -> T,
+    ): T? {
+        val source = sourceManager.get(sourceId) ?: return null
+        val document = findTranslationDocument(chapterName, chapterScanlator, mangaTitle, source)
+            ?: return null
+        return withProbeStore(document, chapterId, block)
+    }
+
     private suspend fun <T> withProbeStore(
         document: TranslationDocument,
         chapterId: Long?,

@@ -1200,19 +1200,36 @@ class ChapterTranslationStore(
     }
 
     /**
+     * T911 slice 3: outcome of [preRegisterPages]. A rejection is observable so
+     * the caller can fail the batch explicitly instead of running a tracker
+     * whose totals silently stay zero.
+     */
+    sealed class PagePreRegistration {
+        data object Accepted : PagePreRegistration()
+
+        /** [reason] names why registration was refused (defunct store, artifact authority, ...). */
+        data class Rejected(val reason: String) : PagePreRegistration()
+    }
+
+    /**
      * Registers the full ordered page set for a chapter before OCR starts.
      *
      * These placeholders are intentionally memory-only: they let progress UI show
      * the chapter total immediately, while the expected-page count is captured
      * in the artifact manifest when an artifact parent is already available.
+     *
+     * T911 slice 3: returns [PagePreRegistration.Rejected] instead of silently
+     * returning Unit when the store refuses the registration (defunct store,
+     * artifact-authority failure), so the caller can surface a typed terminal
+     * error rather than a live zero tracker.
      */
-    suspend fun preRegisterPages(pageKeys: List<String>) {
-        if (pageKeys.isEmpty()) return
+    suspend fun preRegisterPages(pageKeys: List<String>): PagePreRegistration {
+        if (pageKeys.isEmpty()) return PagePreRegistration.Accepted
         if (defunct) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT store preRegisterPages rejected: store is defunct"
             }
-            return
+            return PagePreRegistration.Rejected("store is defunct")
         }
         mutex.withLock {
             when (val admission = admitMutationLocked()) {
@@ -1222,7 +1239,7 @@ class ChapterTranslationStore(
                         "TachiyomiAT store preRegisterPages rejected: " +
                             "code=${admission.code} reason=${admission.message}"
                     }
-                    return@withLock
+                    return PagePreRegistration.Rejected(admission.message)
                 }
             }
             pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, pageKeys.distinct().size)
@@ -1264,6 +1281,7 @@ class ChapterTranslationStore(
                 }
             }
         }
+        return PagePreRegistration.Accepted
     }
 
     /**
