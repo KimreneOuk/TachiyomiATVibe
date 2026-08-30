@@ -11,9 +11,19 @@ class MaskGeometry private constructor(
     private val componentBySpan: IntArray,
 ) {
     data class RowSpan(val y: Int, val start: Int, val endExclusive: Int)
-    data class Component(val id: Int, val spans: List<RowSpan>, val stableKey: String)
 
-    val stableKey: String = key(spans)
+    /**
+     * TachiyomiAT: one connected component. [stableKey] is LAZY so the T912 layout
+     * path never materializes a coordinate string — renderer identity uses the
+     * compact `(planGeometryId, componentId)` pair instead. Legacy callers/tests
+     * that read [stableKey] observe exactly the same value as before.
+     */
+    class Component(val id: Int, val spans: List<RowSpan>) {
+        val stableKey: String by lazy { key(spans) }
+    }
+
+    /** LAZY for the same reason as [Component.stableKey]; value identical to before. */
+    val stableKey: String by lazy { key(spans) }
 
     fun containsPoint(x: Int, y: Int): Boolean {
         if (x !in 0 until width || y !in 0 until height) return false
@@ -100,9 +110,246 @@ class MaskGeometry private constructor(
     companion object {
         internal const val MAX_DIMENSION = 1_000_000
         internal const val MAX_SPANS = 100_000
+        internal const val MAX_COMPONENTS_PER_MASK = 64
 
         internal fun requireValidDimensions(width: Int, height: Int) {
             require(width in 1..MAX_DIMENSION && height in 1..MAX_DIMENSION) { "Invalid mask geometry dimensions" }
+        }
+
+        /**
+         * TachiyomiAT: budgeted ordered RLE → geometry conversion for the T912
+         * layout path. Two-pass, no sorting, never [BubbleMaskRle.decode], never a
+         * `width*height` allocation, and no coordinate-string key before caps.
+         * Internal (not public) because [MaskConversionBudgets] is a module type;
+         * the planner and tests are in-module.
+         */
+        internal fun fromOrderedRle(mask: BubbleMaskRle, budgets: MaskConversionBudgets): OrderedMaskResult {
+            // Page RLE-int budget is checked before any scanning/allocation; the
+            // core re-checks idempotently.
+            if (budgets.rleIntsScanned + mask.runs.size > budgets.maxRleIntsScannedPerPage) {
+                return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.BUDGET_EXCEEDED)
+            }
+            return fromOrderedRleCore(
+                width = mask.width,
+                height = mask.height,
+                bounds = mask.bounds.toIntArray(),
+                runs = mask.runs.toIntArray(),
+                budgets = budgets,
+            )
+        }
+
+        /**
+         * Primitive core of [fromOrderedRle] so tests can exercise invalid and
+         * overflow paths directly. [bounds] is `(left, top, right, bottom)`;
+         * the geometry itself spans the full `width×height`. [runs] are ordered
+         * non-overlapping `(start, length)` pairs (guaranteed by [BubbleMaskRle]
+         * for production input; contract violations throw [IllegalArgumentException]).
+         */
+        internal fun fromOrderedRleCore(
+            width: Int,
+            height: Int,
+            bounds: IntArray,
+            runs: IntArray,
+            budgets: MaskConversionBudgets,
+        ): OrderedMaskResult {
+            if (width < 1 || width > MAX_DIMENSION || height < 1 || height > MAX_DIMENSION) {
+                return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.INVALID_DIMENSIONS)
+            }
+            require(bounds.size == 4) { "bounds must be (left, top, right, bottom)" }
+            require(runs.size % 2 == 0) { "RLE runs must be (start, length) pairs" }
+
+            // Page RLE-int budget is checked BEFORE scanning; nothing is counted
+            // on a would-exceed abort.
+            if (budgets.rleIntsScanned + runs.size > budgets.maxRleIntsScannedPerPage) {
+                return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.BUDGET_EXCEEDED)
+            }
+            budgets.rleIntsScanned += runs.size
+
+            if (runs.isEmpty()) {
+                return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.EMPTY_MASK)
+            }
+
+            val pixelCount = width.toLong() * height.toLong()
+
+            // ---- Pass A: arithmetic row split + span counting, no span/component objects.
+            var spanCount = 0
+            var lastRow = -1L
+            var lastEnd = -1L
+            var previousEnd = 0L
+            var index = 0
+            while (index < runs.size) {
+                val start = runs[index].toLong()
+                val length = runs[index + 1].toLong()
+                require(length > 0) { "RLE run length must be positive" }
+                require(start >= previousEnd) { "RLE runs must be ordered and non-overlapping" }
+                val end = start + length
+                previousEnd = end
+                if (end > pixelCount || end > Int.MAX_VALUE) {
+                    // The run's pixel extent leaves the page's representable space.
+                    return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.ARITHMETIC_OVERFLOW)
+                }
+                var pieceStart = start
+                while (pieceStart < end) {
+                    val row = pieceStart / width
+                    val rowEnd = (row + 1) * width
+                    val pieceEnd = if (end < rowEnd) end else rowEnd
+                    if (row == lastRow && pieceStart == lastEnd) {
+                        // Continuation of the previous span on the same row (adjacent
+                        // RLE runs): merge so semantics match fromSpans normalization.
+                        lastEnd = pieceEnd
+                    } else {
+                        // Stop BEFORE the count would exceed either cap (== allowed).
+                        if (spanCount + 1 > MAX_SPANS ||
+                            budgets.derivedSpans + spanCount + 1 > budgets.maxDerivedSpansPerPage
+                        ) {
+                            return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.BUDGET_EXCEEDED)
+                        }
+                        spanCount++
+                        lastRow = row
+                        lastEnd = pieceEnd
+                    }
+                    pieceStart = pieceEnd
+                }
+                index += 2
+            }
+            budgets.derivedSpans += spanCount
+
+            // ---- Pass B: bounded primitive storage in row-major/start order.
+            val spanRows = IntArray(spanCount)
+            val spanStarts = IntArray(spanCount)
+            val spanEnds = IntArray(spanCount)
+            var filled = 0
+            var lastRowInt = -1
+            var lastEndInt = -1
+            var lastIndex = -1
+            index = 0
+            while (index < runs.size) {
+                val start = runs[index]
+                val length = runs[index + 1]
+                val end = start + length // Pass A proved this fits in an Int.
+                var pieceStart = start
+                while (pieceStart < end) {
+                    val row = pieceStart / width
+                    // Long math: near the top of the Int range (row+1)*width can
+                    // exceed Int.MAX_VALUE even though every stored value fits.
+                    val rowEnd = (row.toLong() + 1) * width
+                    val pieceEnd = minOf(end.toLong(), rowEnd).toInt()
+                    // Spans carry ROW-RELATIVE x coordinates; the merge bookkeeping
+                    // above stays in page space.
+                    val rowBase = row * width
+                    if (row == lastRowInt && pieceStart == lastEndInt) {
+                        spanEnds[lastIndex] = pieceEnd - rowBase
+                        lastEndInt = pieceEnd
+                    } else {
+                        spanRows[filled] = row
+                        spanStarts[filled] = pieceStart - rowBase
+                        spanEnds[filled] = pieceEnd - rowBase
+                        lastRowInt = row
+                        lastEndInt = pieceEnd
+                        lastIndex = filled
+                        filled++
+                    }
+                    pieceStart = pieceEnd
+                }
+                index += 2
+            }
+            check(filled == spanCount) { "Ordered span derivation drifted between passes" }
+
+            // Row offsets built by counting — no sorting.
+            val rowOffsets = IntArray(height + 1)
+            for (s in 0 until filled) rowOffsets[spanRows[s] + 1]++
+            for (y in 1..height) rowOffsets[y] += rowOffsets[y - 1]
+
+            // Union adjacent-row overlaps with the existing two-pointer sweep,
+            // charging every comparison against the page work budget.
+            val parents = IntArray(filled) { it }
+            val ranks = ByteArray(filled)
+            fun root(of: Int): Int {
+                var result = of
+                while (parents[result] != result) result = parents[result]
+                var current = of
+                while (parents[current] != current) {
+                    val next = parents[current]
+                    parents[current] = result
+                    current = next
+                }
+                return result
+            }
+
+            fun union(a: Int, b: Int) {
+                val rootA = root(a)
+                val rootB = root(b)
+                if (rootA == rootB) return
+                when {
+                    ranks[rootA] < ranks[rootB] -> parents[rootA] = rootB
+                    ranks[rootA] > ranks[rootB] -> parents[rootB] = rootA
+                    else -> {
+                        parents[rootB] = rootA
+                        ranks[rootA]++
+                    }
+                }
+            }
+
+            for (y in 1 until height) {
+                var previous = rowOffsets[y - 1]
+                val previousEnd = rowOffsets[y]
+                var current = rowOffsets[y]
+                val currentEnd = rowOffsets[y + 1]
+                while (previous < previousEnd && current < currentEnd) {
+                    if (budgets.sweepComparisons >= budgets.maxSweepComparisonsPerPage) {
+                        // Discard the primitive arrays and fall back.
+                        return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.BUDGET_EXCEEDED)
+                    }
+                    budgets.sweepComparisons++
+                    val aStart = spanStarts[previous]
+                    val aEnd = spanEnds[previous]
+                    val bStart = spanStarts[current]
+                    val bEnd = spanEnds[current]
+                    when {
+                        aEnd <= bStart -> previous++
+                        bEnd <= aStart -> current++
+                        else -> {
+                            union(previous, current)
+                            if (aEnd < bEnd) previous++ else current++
+                        }
+                    }
+                }
+            }
+
+            // Count union roots BEFORE creating any Component, component span
+            // list, string key, or renderer Path.
+            var roots = 0
+            for (s in 0 until filled) if (parents[s] == s) roots++
+            if (roots > MAX_COMPONENTS_PER_MASK || budgets.componentsBuilt + roots > budgets.maxComponentsPerPage) {
+                return OrderedMaskResult.Fallback(OrderedMaskFallbackReason.BUDGET_EXCEEDED)
+            }
+            budgets.componentsBuilt += roots
+
+            // Only now materialize RowSpan objects — already row-major/start
+            // ordered, so no sorting pass exists on this path.
+            val spans = ArrayList<RowSpan>(filled)
+            for (s in 0 until filled) spans += RowSpan(spanRows[s], spanStarts[s], spanEnds[s])
+            val immutableSpans = immutableCopy(spans)
+
+            // Component ids by first appearance (row-major) of the component's
+            // earliest span — deterministic and string-free. These ids
+            // intentionally may differ from fromSpans' key-sorted ids; nothing
+            // may depend on cross-path id equality.
+            val rootToComponent = HashMap<Int, Int>(roots * 2)
+            val componentBySpan = IntArray(filled)
+            var nextComponentId = 0
+            for (s in 0 until filled) {
+                val componentRoot = root(s)
+                val id = rootToComponent.getOrPut(componentRoot) { nextComponentId++ }
+                componentBySpan[s] = id
+            }
+            val componentSpanLists = Array(nextComponentId) { ArrayList<RowSpan>() }
+            for (s in 0 until filled) componentSpanLists[componentBySpan[s]] += spans[s]
+            val components = componentSpanLists.mapIndexed { id, list -> Component(id, immutableCopy(list)) }
+
+            return OrderedMaskResult.Success(
+                MaskGeometry(width, height, immutableSpans, immutableCopy(components), rowOffsets, componentBySpan),
+            )
         }
 
         fun fromSpans(width: Int, height: Int, spans: List<RowSpan>, maxSpans: Int = MAX_SPANS): MaskGeometry {
@@ -202,7 +449,7 @@ class MaskGeometry private constructor(
             val components = orderedGroups.mapIndexed { id, indices ->
                 indices.forEach { componentBySpan[it] = id }
                 val componentSpans = immutableCopy(indices.map(spans::get))
-                Component(id, componentSpans, key(componentSpans))
+                Component(id, componentSpans)
             }
             return ComponentData(immutableCopy(components), componentBySpan)
         }
@@ -213,5 +460,54 @@ class MaskGeometry private constructor(
         private fun key(spans: List<RowSpan>): String = spans.joinToString(";") {
             "${it.y}:${it.start}-${it.endExclusive}"
         }
+    }
+}
+
+/**
+ * TachiyomiAT: why budgeted ordered RLE conversion did not produce a geometry.
+ * Returned instead of thrown so layout always receives an explicit result and
+ * every input keeps exactly one layout on every fallback path.
+ */
+enum class OrderedMaskFallbackReason {
+    EMPTY_MASK,
+    INVALID_DIMENSIONS,
+    ARITHMETIC_OVERFLOW,
+    BUDGET_EXCEEDED,
+}
+
+/** Explicit result of budgeted ordered conversion: a usable geometry or a fallback reason. */
+sealed interface OrderedMaskResult {
+    data class Success(val geometry: MaskGeometry) : OrderedMaskResult
+    data class Fallback(val reason: OrderedMaskFallbackReason) : OrderedMaskResult
+}
+
+/**
+ * TachiyomiAT: page-scoped budgets and counters for ordered RLE → geometry
+ * conversion (T912). ONE instance is shared by every mask on a page so
+ * per-page work stays bounded:
+ *  - [rleIntsScanned]: RLE integers fingerprinted or conversion-scanned;
+ *  - [derivedSpans]: row spans derived across all conversions this page;
+ *  - [componentsBuilt]: components actually materialized (never counts a
+ *    discarded conversion);
+ *  - [sweepComparisons]: union-find two-pointer comparisons performed.
+ *
+ * All limits are documented tunables; tests may construct with overrides.
+ */
+internal class MaskConversionBudgets(
+    val maxDerivedSpansPerPage: Int = DEFAULT_MAX_DERIVED_SPANS_PER_PAGE,
+    val maxRleIntsScannedPerPage: Int = DEFAULT_MAX_RLE_INTS_SCANNED_PER_PAGE,
+    val maxComponentsPerPage: Int = DEFAULT_MAX_COMPONENTS_PER_PAGE,
+    val maxSweepComparisonsPerPage: Int = DEFAULT_MAX_SWEEP_COMPARISONS_PER_PAGE,
+) {
+    internal var rleIntsScanned: Int = 0
+    internal var derivedSpans: Int = 0
+    internal var componentsBuilt: Int = 0
+    internal var sweepComparisons: Int = 0
+
+    internal companion object {
+        internal const val DEFAULT_MAX_DERIVED_SPANS_PER_PAGE = 100_000
+        internal const val DEFAULT_MAX_RLE_INTS_SCANNED_PER_PAGE = 200_000
+        internal const val DEFAULT_MAX_COMPONENTS_PER_PAGE = 64
+        internal const val DEFAULT_MAX_SWEEP_COMPARISONS_PER_PAGE = 1_000_000
     }
 }

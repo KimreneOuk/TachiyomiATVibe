@@ -39,31 +39,22 @@ internal class PageTextRenderer(typeface: Typeface) {
         if (pageWidth <= 0 || pageHeight <= 0) return
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
-        val clipCache = LinkedHashMap<String, Path>()
-        var cachedSpans = 0
+        val clipCache = ComponentClipCache<Path>(MAX_CACHED_COMPONENTS, MAX_CACHED_SPANS) { component ->
+            componentPath(component)
+        }
         prepared = layouts.mapNotNull { layout ->
             val geometry = layout.maskGeometry
-            val componentPath: Path? = when {
+            val componentClip: Path? = when {
                 geometry == null -> null
                 geometry.width != pageWidth || geometry.height != pageHeight -> return@mapNotNull null
-                layout.maskComponentId == null || layout.maskComponentId !in geometry.components.indices -> return@mapNotNull null
-                else -> {
-                    val component = geometry.components[layout.maskComponentId!!]
-                    val cacheKey = "${geometry.width}x${geometry.height}:${component.stableKey}"
-                    clipCache[cacheKey] ?: run {
-                        if (clipCache.size >= MAX_CACHED_COMPONENTS ||
-                            cachedSpans + component.spans.size > MAX_CACHED_SPANS
-                        ) {
-                            return@mapNotNull null
-                        }
-                        componentPath(component).also {
-                            clipCache[cacheKey] = it
-                            cachedSpans += component.spans.size
-                        }
-                    }
-                }
+                // Fail closed on incomplete metadata: the pair is required.
+                layout.planGeometryId == null -> return@mapNotNull null
+                layout.maskComponentId == null || layout.maskComponentId !in geometry.components.indices ->
+                    return@mapNotNull null
+                else -> clipCache.resolve(layout.planGeometryId!!, layout.maskComponentId!!, geometry)
+                    ?: return@mapNotNull null
             }
-            PreparedLayout(layout, componentPath, buildShaped(layout))
+            PreparedLayout(layout, componentClip, layout.cellRect, buildShaped(layout))
         }
     }
 
@@ -78,11 +69,13 @@ internal class PageTextRenderer(typeface: Typeface) {
         prepared.forEach { preparedLayout ->
             val save = canvas.save()
             try {
-                preparedLayout.clip?.let(canvas::clipPath)
-                val clip = preparedLayout.layout.clipRect
-                if (clip != null && preparedLayout.clip == null) {
-                    canvas.clipRect(clip.left, clip.top, clip.right, clip.bottom)
-                }
+                // Structural containment composes all three clips (intersection):
+                // component path → cell rect → legacy collision clip. Unmasked
+                // layouts have null path/cellRect, so their legacy clipRect
+                // behaviour is byte-identical.
+                preparedLayout.componentClip?.let(canvas::clipPath)
+                preparedLayout.cellRect?.let { canvas.clipRect(it.left, it.top, it.right, it.bottom) }
+                preparedLayout.layout.clipRect?.let { canvas.clipRect(it.left, it.top, it.right, it.bottom) }
                 drawLayout(canvas, preparedLayout)
             } finally {
                 canvas.restoreToCount(save)
@@ -244,10 +237,71 @@ internal class PageTextRenderer(typeface: Typeface) {
         val ascent: Float,
     )
 
-    private data class PreparedLayout(val layout: BlockLayout, val clip: Path?, val shaped: Shaped)
+    private data class PreparedLayout(
+        val layout: BlockLayout,
+        val componentClip: Path?,
+        val cellRect: FloatRect?,
+        val shaped: Shaped,
+    )
 
     private companion object {
         private const val MAX_CACHED_COMPONENTS = 64
         private const val MAX_CACHED_SPANS = 100_000
+    }
+}
+
+/**
+ * TachiyomiAT: compact, JVM-pure clip-object cache keyed by the per-page
+ * `(planGeometryId, componentId)` pair. No coordinate strings are built and
+ * there is no `android.graphics` dependency in this class, so JVM tests can
+ * drive it with a fake clip type.
+ *
+ * A hit only counts when the stored entry refers to the SAME geometry instance —
+ * a packed key arriving with a different geometry fails closed. Capacity is
+ * checked BEFORE [create], so a would-exceed lookup never allocates a clip.
+ */
+internal class ComponentClipCache<P : Any>(
+    private val maxComponents: Int,
+    private val maxSpans: Int,
+    private val create: (MaskGeometry.Component) -> P,
+) {
+    private class Entry<C>(val geometry: MaskGeometry, val value: C, val spanCount: Int)
+
+    private val entries = LinkedHashMap<Long, Entry<P>>()
+    private var cachedComponents = 0
+    private var cachedSpans = 0
+
+    /** Distinct components currently cached. */
+    internal val size: Int get() = cachedComponents
+
+    fun resolve(planGeometryId: Int, componentId: Int, geometry: MaskGeometry): P? {
+        // Fail closed on an out-of-range component id.
+        if (componentId !in geometry.components.indices) return null
+        val key = pack(planGeometryId, componentId)
+        val cached = entries[key]
+        if (cached != null) {
+            // Instance identity verification: the pair is only meaningful within
+            // the geometry instance that produced it.
+            return if (cached.geometry === geometry) cached.value else null
+        }
+        val component = geometry.components[componentId]
+        if (cachedComponents + 1 > maxComponents) return null
+        if (cachedSpans + component.spans.size > maxSpans) return null
+        val value = create(component)
+        entries[key] = Entry(geometry, value, component.spans.size)
+        cachedComponents++
+        cachedSpans += component.spans.size
+        return value
+    }
+
+    fun clear() {
+        entries.clear()
+        cachedComponents = 0
+        cachedSpans = 0
+    }
+
+    internal companion object {
+        internal fun pack(planGeometryId: Int, componentId: Int): Long =
+            (planGeometryId.toLong() shl 32) or (componentId.toLong() and 0xFFFF_FFFFL)
     }
 }

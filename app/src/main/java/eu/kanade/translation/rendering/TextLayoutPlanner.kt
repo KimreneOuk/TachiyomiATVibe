@@ -1,9 +1,16 @@
 package eu.kanade.translation.rendering
 
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.segmentation.BubbleMaskRle
+import eu.kanade.translation.segmentation.MaskConversionBudgets
+import eu.kanade.translation.segmentation.MaskGeometry
+import eu.kanade.translation.segmentation.OrderedMaskResult
+import java.util.IdentityHashMap
 import kotlin.math.ceil
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -89,10 +96,142 @@ data class BlockLayout(
     val drawAlign: TextAlign,
     val clipRect: FloatRect?,
     val lines: List<String>,
-    val maskGeometry: eu.kanade.translation.segmentation.MaskGeometry? = null,
-    val maskKey: String? = null,
+    val maskGeometry: MaskGeometry? = null,
+    /**
+     * TachiyomiAT: compact per-page group id of this block's segmentation mask
+     * (see [SharedMaskSession]). Null when the block has no mask or its mask is
+     * groupless. Valid ONLY within the page plan it was produced for.
+     */
+    val planGeometryId: Int? = null,
     val maskComponentId: Int? = null,
+    /**
+     * TachiyomiAT: this block's mask region rect (the same region used for
+     * placement). The renderer intersects it with the component path so shared
+     * components clip structurally instead of only by planning.
+     */
+    val cellRect: FloatRect? = null,
 )
+
+/**
+ * TachiyomiAT: per-page mask grouping for the layout plan.
+ *
+ * Walks block masks in INPUT order and assigns a compact group id:
+ *  - repeated references to the SAME [BubbleMaskRle] instance reuse the group
+ *    with no rescan (production always shares one mask instance per bubble);
+ *  - distinct instances are matched through a bounded 64-bit streaming
+ *    fingerprint (FNV-1a over width/height/bounds/run count/run pairs) used
+ *    ONLY to select a small verification bucket; the group is reused after
+ *    FULL geometry-defining equality (width, height, bounds, runs) is
+ *    verified, so a hash collision can never merge two different masks;
+ *  - [BubbleMaskRle.score] is deliberately excluded from fingerprint and
+ *    equality — it has no geometric effect on partitioning or components.
+ *
+ * Fingerprint scans and conversion scans both consume the session's page
+ * [MaskConversionBudgets]. Beyond [MAX_MASK_REFERENCES_PER_PAGE] references or
+ * [MAX_UNIQUE_MASKS_PER_PAGE] unique masks, further masks are GROUPLESS
+ * (negative group id): they keep legacy region partitioning grouped by
+ * reference identity and never receive component metadata.
+ *
+ * `fingerprint` is injectable so tests can force bucket collisions.
+ */
+internal class SharedMaskSession(
+    val budgets: MaskConversionBudgets = MaskConversionBudgets(),
+    private val fingerprint: (BubbleMaskRle) -> Long = ::defaultMaskFingerprint,
+) {
+    private val referenceGroups = IdentityHashMap<BubbleMaskRle, Int>()
+    private val grouplessIds = IdentityHashMap<BubbleMaskRle, Int>()
+    private val fingerprintBuckets = HashMap<Long, MutableList<Int>>()
+    private val groupMasks = ArrayList<BubbleMaskRle>()
+    private val conversions = ArrayList<MaskGeometry?>()
+    private var converted = false
+    private var nextGrouplessId = -1
+
+    /** Number of distinct verified mask groups on this page. */
+    internal val groupCount: Int get() = groupMasks.size
+
+    /**
+     * Group id for [mask]: `0 until groupCount` when grouped, negative when
+     * groupless. Safe to call repeatedly — reference identity short-circuits
+     * with no rescan.
+     */
+    fun groupIdOf(mask: BubbleMaskRle): Int {
+        referenceGroups[mask]?.let { return it }
+        grouplessIds[mask]?.let { return it }
+        if (referenceGroups.size + grouplessIds.size >= MAX_MASK_REFERENCES_PER_PAGE) {
+            return assignGroupless(mask)
+        }
+        // The fingerprint scan consumes the page RLE-int budget; abort
+        // (groupless) before scanning when the budget would be exceeded.
+        if (budgets.rleIntsScanned + mask.runs.size > budgets.maxRleIntsScannedPerPage) {
+            return assignGroupless(mask)
+        }
+        budgets.rleIntsScanned += mask.runs.size
+        val hash = fingerprint(mask)
+        fingerprintBuckets[hash]?.forEach { candidate ->
+            if (geometricallyEqual(groupMasks[candidate], mask)) {
+                referenceGroups[mask] = candidate
+                return candidate
+            }
+        }
+        if (groupMasks.size >= MAX_UNIQUE_MASKS_PER_PAGE) return assignGroupless(mask)
+        val groupId = groupMasks.size
+        groupMasks += mask
+        fingerprintBuckets.getOrPut(hash) { mutableListOf() }.add(groupId)
+        referenceGroups[mask] = groupId
+        return groupId
+    }
+
+    /** Convert every grouped mask once, in group order. Idempotent. */
+    fun convertAll() {
+        if (converted) return
+        converted = true
+        repeat(groupMasks.size) { groupId ->
+            conversions += when (val result = MaskGeometry.fromOrderedRle(groupMasks[groupId], budgets)) {
+                is OrderedMaskResult.Success -> result.geometry
+                is OrderedMaskResult.Fallback -> null
+            }
+        }
+    }
+
+    /** Geometry for a grouped id, or null when groupless or conversion fell back. */
+    fun geometryFor(groupId: Int): MaskGeometry? {
+        if (groupId < 0) return null
+        convertAll()
+        return conversions.getOrNull(groupId)
+    }
+
+    private fun assignGroupless(mask: BubbleMaskRle): Int {
+        val id = nextGrouplessId
+        nextGrouplessId -= 1
+        grouplessIds[mask] = id
+        return id
+    }
+
+    private fun geometricallyEqual(a: BubbleMaskRle, b: BubbleMaskRle): Boolean =
+        a.width == b.width && a.height == b.height && a.bounds == b.bounds && a.runs == b.runs
+
+    internal companion object {
+        /** Hard guard: distinct mask references grouped per page (beyond → groupless). */
+        internal const val MAX_MASK_REFERENCES_PER_PAGE = 128
+
+        /** Hard guard: distinct unique masks grouped per page (beyond → groupless). */
+        internal const val MAX_UNIQUE_MASKS_PER_PAGE = 32
+    }
+}
+
+/** Bounded FNV-1a-style 64-bit streaming fingerprint over the geometry-defining mask fields. */
+internal fun defaultMaskFingerprint(mask: BubbleMaskRle): Long {
+    var hash = -0x340d631b7bdddcdbL // FNV-1a 64-bit offset basis
+    fun mix(value: Int) {
+        hash = (hash xor value.toLong()) * 0x100000001b3L
+    }
+    mix(mask.width)
+    mix(mask.height)
+    for (bound in mask.bounds) mix(bound)
+    mix(mask.runs.size)
+    for (run in mask.runs) mix(run)
+    return hash
+}
 
 /**
  * TachiyomiAT: pure, neighbour-aware text-layout solver for the render stage.
@@ -150,6 +289,9 @@ object TextLayoutPlanner {
     /** Min visible gap kept between two placed extents, in planner px. */
     private const val MIN_GAP_PX = 2f
 
+    /** Page cap on distinct (groupId, componentId) metadata assignments. */
+    private const val MAX_COMPONENT_ASSIGNMENTS_PER_PAGE = 64
+
     /**
      * Resolve a render plan for every block on the page. Blocks whose chosen text
      * is blank are dropped here so they do not needlessly constrain neighbours as
@@ -174,7 +316,9 @@ object TextLayoutPlanner {
                 .thenBy { it.index },
         )
 
-        val maskRegions = buildMaskRegions(blocks)
+        val maskGrouping = buildMaskRegions(blocks)
+        val maskRegions = maskGrouping.regions
+        val componentAssignments = HashSet<Long>()
         val placed = ArrayList<BlockLayout>(blocks.size)
         for (indexed in ordered) {
             val block = indexed.value
@@ -201,7 +345,19 @@ object TextLayoutPlanner {
                 measurer = measurer,
                 regionOverride = maskRegion,
             )
-            placed.add(resolved)
+            // Metadata is wired AFTER placement and never changes placement,
+            // font, or text — it only lets the renderer clip structurally.
+            placed.add(
+                withMaskMetadata(
+                    resolved,
+                    maskGrouping,
+                    indexed.index,
+                    maskRegion,
+                    pageWidth,
+                    pageHeight,
+                    componentAssignments,
+                ),
+            )
         }
         return equalizeSharedMaskFonts(placed, measurer, scale)
     }
@@ -942,18 +1098,38 @@ object TextLayoutPlanner {
         }
     }
 
+    private class MaskGrouping(
+        val regions: Map<Int, FloatRect>,
+        val groupByIndex: Map<Int, Int>,
+        val session: SharedMaskSession,
+    )
+
     /**
      * Build strict layout regions from persisted segmentation masks. A fused mask
      * may contain multiple OCR children; partition its bounds at the midpoints of
      * the child centers so one child cannot consume the other's space.
+     *
+     * Grouping walks blocks in INPUT order through a [SharedMaskSession] instead
+     * of hashing whole [BubbleMaskRle] data classes. Grouped masks share their
+     * per-page group id (fingerprint-bucketed, full-equality verified); groupless
+     * masks keep a deterministic reference-identity group, so the partition math
+     * below produces the SAME outputs as before for the production case of one
+     * shared mask instance per bubble.
      */
-    private fun buildMaskRegions(blocks: List<TranslationBlock>): Map<Int, FloatRect> {
+    private fun buildMaskRegions(blocks: List<TranslationBlock>): MaskGrouping {
+        val session = SharedMaskSession()
         val regions = HashMap<Int, FloatRect>()
-        val groups = blocks.withIndex()
-            .filter { it.value.segmentationMask != null }
-            .groupBy { it.value.segmentationMask!! }
+        val groups = LinkedHashMap<Int, MutableList<IndexedValue<TranslationBlock>>>()
+        val groupByIndex = HashMap<Int, Int>()
+        for (item in blocks.withIndex()) {
+            val mask = item.value.segmentationMask ?: continue
+            val groupId = session.groupIdOf(mask)
+            groupByIndex[item.index] = groupId
+            groups.getOrPut(groupId) { mutableListOf() }.add(item)
+        }
 
-        for ((mask, indexedBlocks) in groups) {
+        for ((_, indexedBlocks) in groups) {
+            val mask = indexedBlocks.first().value.segmentationMask!!
             val bounds = mask.bounds
             val maskRect = FloatRect(
                 bounds[0].toFloat(),
@@ -1028,7 +1204,49 @@ object TextLayoutPlanner {
                 regions[item.index] = region
             }
         }
-        return regions
+        session.convertAll()
+        return MaskGrouping(regions, groupByIndex, session)
+    }
+
+    /**
+     * Wire renderer clipping metadata onto a finalized layout. Fires ONLY when
+     * the block's mask group converted to geometry whose dimensions equal the
+     * rounded page, and the block's OCR rectangle unambiguously (non-tied) falls
+     * inside one component. Ambiguity/empty conversion ⇒ NO metadata: the legacy
+     * rectangle is still drawn and the one-result-per-input invariant holds.
+     * The page may hold at most [MAX_COMPONENT_ASSIGNMENTS_PER_PAGE] distinct
+     * (groupId, componentId) assignments; excess blocks get no metadata.
+     */
+    private fun withMaskMetadata(
+        layout: BlockLayout,
+        grouping: MaskGrouping,
+        inputIndex: Int,
+        regionOverride: FloatRect?,
+        pageWidth: Float,
+        pageHeight: Float,
+        componentAssignments: MutableSet<Long>,
+    ): BlockLayout {
+        val groupId = grouping.groupByIndex[inputIndex] ?: return layout
+        if (groupId < 0) return layout
+        val geometry = grouping.session.geometryFor(groupId) ?: return layout
+        if (geometry.width != pageWidth.roundToInt() || geometry.height != pageHeight.roundToInt()) return layout
+        if (regionOverride == null) return layout
+        val left = floor(layout.block.x).toInt().coerceAtLeast(0)
+        val top = floor(layout.block.y).toInt().coerceAtLeast(0)
+        val right = ceil(layout.block.x + layout.block.width).toInt().coerceAtMost(geometry.width)
+        val bottom = ceil(layout.block.y + layout.block.height).toInt().coerceAtMost(geometry.height)
+        val componentId = geometry.componentForRectangle(left, top, right, bottom) ?: return layout
+        val assignment = (groupId.toLong() shl 32) or (componentId.toLong() and 0xFFFF_FFFFL)
+        if (assignment !in componentAssignments && componentAssignments.size >= MAX_COMPONENT_ASSIGNMENTS_PER_PAGE) {
+            return layout
+        }
+        componentAssignments += assignment
+        return layout.copy(
+            maskGeometry = geometry,
+            planGeometryId = groupId,
+            maskComponentId = componentId,
+            cellRect = regionOverride,
+        )
     }
 
     /** Give children of one fused mask the same safe fitted font size. */

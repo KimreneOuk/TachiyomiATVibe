@@ -30,6 +30,58 @@ class PageTextRendererInstrumentedTest {
     }
 
     @Test
+    fun componentClipIntersectsCellRect() {
+        // Holey/concave component: a 48x48 square with a 16x16 hole.
+        val spans = buildList {
+            for (y in 8 until 56) {
+                if (y !in 24 until 40) {
+                    add(MaskGeometry.RowSpan(y, 8, 56))
+                } else {
+                    add(MaskGeometry.RowSpan(y, 8, 24))
+                    add(MaskGeometry.RowSpan(y, 40, 56))
+                }
+            }
+        }
+        val geometry = MaskGeometry.fromSpans(64, 64, spans)
+        // cellRect covers only the LEFT half of the component.
+        val clipped = layout(geometry, 0, "MMMM", 20f, 8f, cellRect = FloatRect(8f, 8f, 32f, 56f))
+        val renderer = PageTextRenderer(Typeface.DEFAULT_BOLD)
+        renderer.bind(listOf(clipped), 64, 64)
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        renderer.draw(Canvas(bitmap))
+
+        val component = geometry.components[0]
+        fun inComponent(x: Int, y: Int) =
+            component.spans.any { it.y == y && x in it.start until it.endExclusive }
+
+        // Ink exists inside cellRect ∩ component (left half, outside the hole).
+        var insideCellAndComponent = 0
+        for (y in 8 until 56) {
+            for (x in 8 until 32) {
+                if (inComponent(x, y) && Color.alpha(bitmap.getPixel(x, y)) != 0) insideCellAndComponent++
+            }
+        }
+        assertTrue(insideCellAndComponent > 0)
+
+        // ZERO alpha in the component's right half — inside the component path but
+        // outside cellRect: proves the rect clip intersects the path.
+        for (y in 8 until 56) {
+            for (x in 32 until 56) {
+                assertEquals("right-half alpha at $x,$y", 0, Color.alpha(bitmap.getPixel(x, y)))
+            }
+        }
+
+        // ZERO alpha inside the hole even where cellRect covers it: proves the
+        // component path clip still applies within the rect (intersection, not
+        // mutual exclusion).
+        for (y in 24 until 40) {
+            for (x in 24 until 32) {
+                assertEquals("hole alpha at $x,$y", 0, Color.alpha(bitmap.getPixel(x, y)))
+            }
+        }
+    }
+
+    @Test
     fun disconnectedMaskClipsToAssignedComponentOnly() {
         val spans = buildList {
             for (y in 4 until 60) {
@@ -172,11 +224,20 @@ class PageTextRendererInstrumentedTest {
         return Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).also { renderer.draw(Canvas(it)) }
     }
 
-    private fun layout(geometry: MaskGeometry?, componentId: Int?, text: String, font: Float, stroke: Float) = BlockLayout(
+    private fun layout(
+        geometry: MaskGeometry?,
+        componentId: Int?,
+        text: String,
+        font: Float,
+        stroke: Float,
+        planGeometryId: Int? = if (geometry == null) null else 0,
+        cellRect: FloatRect? = null,
+    ) = BlockLayout(
         block = TranslationBlock(text = text, translation = text, width = 52f, height = 52f, x = 6f, y = 6f, symHeight = 1f, symWidth = 1f, angle = 0f, label = 1, score = 1f),
         text = text, isVertical = false, originX = 32f, originY = 32f, safeW = 56f, safeH = 56f,
         fontSizePx = font, strokeWidth = stroke, drawAlign = TextAlign.CENTER, clipRect = null,
-        lines = listOf(text), maskGeometry = geometry, maskComponentId = componentId,
+        lines = listOf(text), maskGeometry = geometry, planGeometryId = planGeometryId,
+        maskComponentId = componentId, cellRect = cellRect,
     )
 
     private fun renderLayout(layout: BlockLayout): Bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).also {
