@@ -1,10 +1,9 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.translator
+
+import eu.kanade.translation.translator.TranslationContextChunkPlanner.Profile
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.translator.StreamingChunkPlanner
-import eu.kanade.translation.translator.TranslationContextChunk
-import eu.kanade.translation.translator.TranslationContextChunkPlanner.Profile
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test

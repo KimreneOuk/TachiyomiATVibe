@@ -1,12 +1,8 @@
-package eu.kanade.translation.pipeline.batch
+package eu.kanade.translation.translator
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.translator.BaseTranslator
-import eu.kanade.translation.translator.ContextualRequestBuilder
-import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslationPrompts
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldContain
 import kotlinx.coroutines.test.runTest
