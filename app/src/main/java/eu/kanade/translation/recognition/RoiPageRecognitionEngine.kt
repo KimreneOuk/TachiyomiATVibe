@@ -6,7 +6,7 @@ import eu.kanade.translation.model.Detection
 import eu.kanade.translation.detection.OnnxPageTextDetector
 import eu.kanade.translation.detection.OnnxPanelDetector
 import eu.kanade.translation.detection.PanelAssignment
-import eu.kanade.translation.inpainting.AOTInpainting
+import eu.kanade.translation.inpainting.aot.AOTInpainting
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.inpainting.PageInpaintingEngine
 import eu.kanade.translation.inpainting.PageInpaintingPlanner

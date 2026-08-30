@@ -1,4 +1,5 @@
 package eu.kanade.translation.inpainting
+import eu.kanade.translation.inpainting.aot.AOTInpainting
 
 import android.graphics.Bitmap
 import eu.kanade.translation.model.PageTranslation

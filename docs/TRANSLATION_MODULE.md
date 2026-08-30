@@ -54,28 +54,30 @@ translation/
 │  ├─ OnnxPanelDetector.kt        ONNX panel detector
 │  └─ PanelAssignment.kt          Assigns text regions to panels
 │
-├─ inpainting/
-│  ├─ AOTInpainting.kt            AOT-based bubble inpainting
-│  ├─ AotBoxGeometry.kt           AOT box geometry helpers
-│  ├─ AotFallbackCoordinator.kt   AOT fallback orchestration
-│  ├─ AotModelContract.kt         AOT model I/O contract
-│  ├─ AotOutputGuard.kt           ★ PURE neural-output sanity guard (mid-gray-fill detection)
-│  ├─ AotPadPath.kt               AOT padding-path helpers
-│  ├─ AotPixelOps.kt              ★ PURE AOT pixel operations
-│  ├─ AotReportBubbleFill.kt      AOT report-style bubble fill decision
-│  ├─ AotSessionLifecycle.kt      AOT session lifecycle
-│  ├─ BoundaryAwarePipeline.kt    ★ PURE containment flood + tier classification (FLAT/TEXTURED/COLOR)
-│  ├─ BubbleCleanerMath.kt        ★ PURE bubble-cleaner math helpers
-│  ├─ BubbleMaskBuilder.kt        ★ PURE mask/morphology helpers (BubbleMaskBuilderTest)
-│  ├─ FastMarchingMethod.kt       ★ PURE Telea Fast Marching Method inpaint + adaptive threshold
-│  ├─ InpaintingMode.kt           QUALITY / FAST enum
-│  ├─ NnapiCapabilityGate.kt      NNAPI capability gating
-│  ├─ NnapiHealthMonitor.kt       NNAPI health monitoring
-│  ├─ PageInpaintingEngine.kt     Inpaint entry; delegates box planning to PageInpaintingPlanner
+├─ inpainting/                    Inpaint stage — root exposes the orchestrating surface
+│  ├─ InpaintingMode.kt           QUALITY / FAST enum (shared config vocabulary)
+│  ├─ PageInpaintingEngine.kt     Inpaint entry (used by recognition engines); delegates to aot/ + Planner
 │  ├─ PageInpaintingPlanner.kt    ★ PURE erase-mask planner: computeMask (at OCR time) + build (persisted-aware)
-│  ├─ PushPullGradient.kt         ★ PURE push-pull gradient ops
-│  ├─ SmartBubbleTextCleaner.kt   Bubble cleaning core; delegates masks to BubbleMaskBuilder
-│  └─ StrictNnapiFallback.kt      Strict NNAPI fallback policy
+│  ├─ aot/                        AOT neural-inpainting subsystem (incl. its NNAPI EP gates)
+│  │  ├─ AOTInpainting.kt         AOT hub: orchestrates session, fallback, pixel ops, guards
+│  │  ├─ AotBoxGeometry.kt        AOT box geometry helpers
+│  │  ├─ AotFallbackCoordinator.kt  AOT fallback orchestration
+│  │  ├─ AotModelContract.kt      AOT model I/O contract
+│  │  ├─ AotOutputGuard.kt        ★ PURE neural-output sanity guard (mid-gray-fill detection)
+│  │  ├─ AotPadPath.kt            AOT padding-path helpers
+│  │  ├─ AotPixelOps.kt           ★ PURE AOT pixel operations
+│  │  ├─ AotReportBubbleFill.kt   AOT report-style bubble fill decision
+│  │  ├─ AotSessionLifecycle.kt   AOT session lifecycle
+│  │  ├─ NnapiCapabilityGate.kt   NNAPI capability gating (AOT-only)
+│  │  ├─ NnapiHealthMonitor.kt    NNAPI health monitoring (AOT-only)
+│  │  ├─ PushPullGradient.kt      ★ PURE push-pull gradient ops
+│  │  └─ StrictNnapiFallback.kt   Strict NNAPI fallback policy (AOT-only)
+│  └─ bubble/                     Classic bubble-cleaning cluster
+│     ├─ BoundaryAwarePipeline.kt ★ PURE containment flood + tier classification (FLAT/TEXTURED/COLOR)
+│     ├─ BubbleCleanerMath.kt     ★ PURE bubble-cleaner math helpers
+│     ├─ BubbleMaskBuilder.kt     ★ PURE mask/morphology helpers (BubbleMaskBuilderTest)
+│     ├─ FastMarchingMethod.kt    ★ PURE Telea Fast Marching Method inpaint + adaptive threshold
+│     └─ SmartBubbleTextCleaner.kt  Bubble cleaning core; delegates masks to BubbleMaskBuilder
 │
 ├─ manager/                       Manager-side extracted coordinators (consumed by TranslationManager)
 │  ├─ BatchProgressProjector.kt   Projects batch tracker state to UI progress
@@ -1158,8 +1160,8 @@ tracker disposal/LRU, memory-pressure forwarding, and glossary flush behavior.
 | `model/PageTranslationHelperDedupeTest` | geometric dedupe: overlapping different-text/identical/cross-label/nested/touching-bubbles; preserves reading order; no mutation; degenerate-box kept |
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
 | `rendering/PageTextRendererDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
-| `inpainting/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard) |
-| `inpainting/BubbleMaskBuilderTest` | andMasks/maskCoverage + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + `FastMarchingMethod.inpaintTelea` (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
+| `inpainting/bubble/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard) |
+| `inpainting/bubble/BubbleMaskBuilderTest` | andMasks/maskCoverage + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + `FastMarchingMethod.inpaintTelea` (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
 | `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
 | `model/InpaintMaskSerializationTest` | inpaintMaskBoxes round-trips through JSON; InpaintMaskBox.toIntArray; hasCurrentInpaintMask (current / pre-fix-empty / textless) |
 | `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped + attemptCount charged once via recordAttemptFailure) + reason |
