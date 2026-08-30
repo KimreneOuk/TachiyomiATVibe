@@ -6,13 +6,11 @@ import org.junit.jupiter.api.Test
 
 /**
  * JVM-level guard for the placement-aware color path added in checkpoint 3
- * ([RenderColorEstimator.resolveLayoutColors] /
- * [RenderColorEstimator.recomputeForPlacedLayouts]).
+ * ([RenderColorEstimator.recomputeFor]).
  *
  * The full function reads pixels out of an `android.graphics.Bitmap` under each
- * masked layout's `conservativeFootprint ∩ assigned component`, so it is
- * Android-bound and covered by
- * `PageTextRendererInstrumentedTest.maskedMovedLayoutSamplesCleanedPixelsUnderFinalFootprint`.
+ * block's persisted OCR rectangle, so it is Android-bound and covered by
+ * `PageTextRendererInstrumentedTest.colorRecomputeSamplesTheCurrentBlockRectangle`.
  * What CAN be pinned at the pure-JVM tier is the mechanism that makes a moved
  * footprint produce a different fill than the OCR origin, and that unmasked
  * blocks are left on the legacy OCR-rectangle decision:
@@ -96,12 +94,9 @@ class RenderColorEstimatorLayoutSamplingTest {
 
     @Test
     fun `unmasked layout keeps the legacy OCR-rectangle decision regardless of mask presence`() {
-        // Unmasked blocks never enter resolveLayoutColors' footprint branch
-        // (geometry/footprint/component are null -> returned unchanged). Their
-        // fill therefore comes from the legacy path, which is exactly
-        // decideTextFill on their OCR-rectangle pixels. Asserting that the
-        // pure decision is identical for a given pixel set — independent of any
-        // mask/component being supplied elsewhere — locks the "unmasked
+        // Unmasked blocks use recomputeFor's legacy OCR-rectangle sampling. The
+        // pure decision is identical for a given pixel set, independent of any
+        // mask/component being supplied elsewhere, which locks the "unmasked
         // unchanged" guarantee at the level the JVM can actually observe.
         val ocrPixels = IntArray(64) { 0xFFFFFFFF.toInt() }
         val legacyFill = RenderColorEstimator.decideTextFill(

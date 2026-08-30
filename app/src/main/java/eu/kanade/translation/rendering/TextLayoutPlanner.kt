@@ -1243,19 +1243,6 @@ object TextLayoutPlanner {
                 current.append(token)
             }
 
-            // If a single word or token alone exceeds maxWidthPx, split it with a hyphen
-            while (current.isNotEmpty() && measurer.measureTextWidth(current.toString(), fontSizePx) > maxWidthPx && current.length > 3) {
-                var breakPoint = current.length - 1
-                while (breakPoint > 1 && measurer.measureTextWidth(current.substring(0, breakPoint) + "-", fontSizePx) > maxWidthPx) {
-                    breakPoint--
-                }
-                if (breakPoint > 1) {
-                    lines.add(current.substring(0, breakPoint) + "-")
-                    current = StringBuilder(current.substring(breakPoint))
-                } else {
-                    break
-                }
-            }
         }
         if (current.isNotEmpty()) {
             lines.add(current.toString().trimEnd())

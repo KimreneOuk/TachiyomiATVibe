@@ -362,6 +362,8 @@ dependencies {
 
     // Tests
     testImplementation(libs.bundles.test)
+    // Android instrumentation tests (the renderer fixture uses AndroidJUnit4).
+    androidTestImplementation(androidx.test.ext)
 
     // For detecting memory leaks; see https://square.github.io/leakcanary/
     // debugImplementation(libs.leakcanary.android)

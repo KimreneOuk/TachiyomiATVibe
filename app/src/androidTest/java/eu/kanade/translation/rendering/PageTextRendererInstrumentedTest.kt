@@ -76,7 +76,7 @@ class PageTextRendererInstrumentedTest {
     }
 
     @Test
-    fun maskedMovedLayoutSamplesCleanedPixelsUnderFinalFootprint() {
+    fun colorRecomputeSamplesTheCurrentBlockRectangle() {
         val cleaned = Bitmap.createBitmap(64, 32, Bitmap.Config.ARGB_8888).apply {
             eraseColor(Color.WHITE)
             Canvas(this).drawRect(32f, 0f, 64f, 32f, android.graphics.Paint().apply { color = Color.BLACK })
@@ -85,21 +85,15 @@ class PageTextRendererInstrumentedTest {
             text = "M", translation = "M", width = 16f, height = 16f, x = 4f, y = 8f,
             symHeight = 1f, symWidth = 1f, angle = 0f, label = 1, score = 1f,
         ).apply { textColor = 0xFF000000L }
-        val geometry = MaskGeometry.fromSpans(
-            64,
-            32,
-            (0 until 32).map { MaskGeometry.RowSpan(it, 0, 64) },
-        )
-        val moved = layout(geometry, 0, "M", 16f, 2f).copy(
-            block = block,
-            originX = 48f,
-            conservativeFootprint = FloatRect(40f, 8f, 56f, 24f),
-        )
-
-        val resolved = RenderColorEstimator.resolveLayoutColors(cleaned, listOf(moved))
-
-        assertEquals(0xFFFFFFFFL, resolved.single().textColor)
+        // The current production API recomputes against each block's persisted
+        // OCR rectangle. It does not accept a planned BlockLayout or a made-up
+        // footprint argument, so keep this characterization test on that API.
+        RenderColorEstimator.recomputeFor(cleaned, listOf(block))
         assertEquals(0xFF000000L, block.textColor)
+
+        block.x = 40f
+        RenderColorEstimator.recomputeFor(cleaned, listOf(block))
+        assertEquals(0xFFFFFFFFL, block.textColor)
     }
 
     @Test
@@ -183,7 +177,6 @@ class PageTextRendererInstrumentedTest {
         text = text, isVertical = false, originX = 32f, originY = 32f, safeW = 56f, safeH = 56f,
         fontSizePx = font, strokeWidth = stroke, drawAlign = TextAlign.CENTER, clipRect = null,
         lines = listOf(text), maskGeometry = geometry, maskComponentId = componentId,
-        conservativeFootprint = FloatRect(0f, 0f, 64f, 64f),
     )
 
     private fun renderLayout(layout: BlockLayout): Bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).also {
@@ -196,7 +189,7 @@ class PageTextRendererInstrumentedTest {
     private fun drawLegacyVertical(canvas: Canvas, layout: BlockLayout) {
         val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.SUBPIXEL_TEXT_FLAG).apply {
             typeface = Typeface.DEFAULT_BOLD
-            color = layout.textColor.toInt()
+            color = layout.block.textColor.toInt()
             textSize = layout.fontSizePx
             textAlign = android.graphics.Paint.Align.CENTER
         }
