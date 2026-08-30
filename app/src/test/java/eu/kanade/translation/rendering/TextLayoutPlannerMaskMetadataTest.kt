@@ -6,15 +6,18 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
+import kotlin.math.max
 
 /**
- * T912 slice 2: planner metadata wiring for shared segmentation masks.
+ * T912 slice 2/3: planner metadata wiring for shared segmentation masks.
  *
  * Pins the metadata contract on top of the slice-1 fixtures: shared geometry
  * instances and group ids per mask group, per-block component assignment,
- * pairwise-disjoint cell rects, and — critically — that every fallback
- * (empty runs, >64 components, unique/reference caps, tied component overlap)
- * still yields EXACTLY ONE layout per nonblank input with NO metadata.
+ * slice-3 disjoint slab cellRects with independent per-cell fonts, and —
+ * critically — that every ambiguous fallback (tied component overlap,
+ * groupless masks beyond the caps) still yields EXACTLY ONE layout per
+ * nonblank input with NO metadata, while conversion-fallback groups now get
+ * disjoint bounds-rect cells without geometry ids.
  */
 class TextLayoutPlannerMaskMetadataTest {
 
@@ -67,8 +70,9 @@ class TextLayoutPlannerMaskMetadataTest {
             block(210f, 30f, 80f, 60f, "I FORCED YOU INTO THAT RELATIONSHIP.")
                 .copy(blockId = "right", segmentationMask = sharedMask),
         )
+        val m = FakeMeasurer()
 
-        val plan = TextLayoutPlanner.plan(inputs, 300f, 120f, 1, false, FakeMeasurer())
+        val plan = TextLayoutPlanner.plan(inputs, 300f, 120f, 1, false, m)
 
         plan shouldHaveSize 3
         val geometry = plan[0].maskGeometry.shouldNotBeNull()
@@ -77,12 +81,20 @@ class TextLayoutPlannerMaskMetadataTest {
         // One full-rectangle component: every block resolves to it.
         plan.map { it.maskComponentId }.toSet() shouldBe setOf(0)
 
-        // Cell rects are the mask-region partitions: non-null and pairwise disjoint.
+        // Cell rects are the hard disjoint SLABS: centers 50/150/250 → cuts
+        // 100/200, gap 2 → cells [0,99), [101,199), [201,300) with dead
+        // columns {99,100} and {199,200}.
         val cells = plan.map { it.cellRect.shouldNotBeNull() }
+        cells[0] shouldBe FloatRect(0f, 0f, 99f, 120f)
+        cells[1] shouldBe FloatRect(101f, 0f, 199f, 120f)
+        cells[2] shouldBe FloatRect(201f, 0f, 300f, 120f)
         for (i in cells.indices) {
             for (j in i + 1 until cells.size) {
                 (cells[i].overlaps(cells[j])) shouldBe false
             }
+        }
+        for (deadColumn in listOf(99, 100, 199, 200)) {
+            cells.none { it.left <= deadColumn && deadColumn < it.right } shouldBe true
         }
 
         // Per-block text unchanged by metadata wiring.
@@ -91,6 +103,20 @@ class TextLayoutPlannerMaskMetadataTest {
             "middle" to "I'M SORRY!",
             "right" to "I FORCED YOU INTO THAT RELATIONSHIP.",
         )
+
+        // Slice 3: fonts are fitted PER RESULT inside each own cell — no
+        // shared-mask equalization pass exists anymore.
+        plan.forEach { layout ->
+            val cell = layout.cellRect.shouldNotBeNull()
+            val safeW = max(1f, cell.width() - 8f)
+            val safeH = max(1f, cell.height() - 8f)
+            layout.fontSizePx shouldBe
+                TextLayoutPlanner.binarySearchFontSize(layout.text, safeW, safeH, safeW, false, 1f, m)
+            layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(layout.fontSizePx, 1f)
+        }
+        // The longest text in an equal-width cell fits at a strictly smaller
+        // size than the shortest text in its sibling cell.
+        (plan[2].fontSizePx < plan[1].fontSizePx) shouldBe true
     }
 
     @Test
@@ -161,7 +187,7 @@ class TextLayoutPlannerMaskMetadataTest {
     }
 
     @Test
-    fun `empty-runs shared mask produces no metadata and keeps the legacy assertions`() {
+    fun `empty-runs shared mask gets disjoint bounds-rect cells with no geometry ids`() {
         val mask = BubbleMaskRle(
             width = 1000,
             height = 1000,
@@ -205,7 +231,20 @@ class TextLayoutPlannerMaskMetadataTest {
         (plan[1].fontSizePx >= 16f) shouldBe true
         (plan[0].originX >= 100f && plan[0].originX <= 385f) shouldBe true
         (plan[1].originX >= 415f && plan[1].originX <= 715f) shouldBe true
-        plan.forEach(::assertNoMetadata)
+
+        // Slice 3: conversion fell back (empty runs) ⇒ disjoint BOUNDS-RECT
+        // cells over the mask bounds. Parents are valid and facing
+        // (385 <= 415) so the cut biases to the parent-edge midpoint 400;
+        // gap 2 → slabs [100,399) and [401,700) × [100,450). cellRect is set
+        // but there are no geometry ids to clip with.
+        plan[0].cellRect shouldBe FloatRect(100f, 100f, 399f, 450f)
+        plan[1].cellRect shouldBe FloatRect(401f, 100f, 700f, 450f)
+        (plan[0].cellRect!!.overlaps(plan[1].cellRect!!)) shouldBe false
+        plan.forEach { layout ->
+            layout.maskGeometry shouldBe null
+            layout.planGeometryId shouldBe null
+            layout.maskComponentId shouldBe null
+        }
     }
 
     @Test
@@ -225,7 +264,13 @@ class TextLayoutPlannerMaskMetadataTest {
         val plan = TextLayoutPlanner.plan(listOf(input), 300f, 120f, 1, false, FakeMeasurer())
 
         plan shouldHaveSize 1
-        assertNoMetadata(plan.first())
+        val layout = plan.first()
+        // Slice 3: single-member fallback group ⇒ one bounds-rect cell over the
+        // mask bounds, still without geometry ids.
+        layout.maskGeometry shouldBe null
+        layout.planGeometryId shouldBe null
+        layout.maskComponentId shouldBe null
+        layout.cellRect shouldBe FloatRect(0f, 0f, 300f, 120f)
     }
 
     @Test

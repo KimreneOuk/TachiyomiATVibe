@@ -90,6 +90,36 @@ class MaskGeometryOrderedRleTest {
     }
 
     @Test
+    fun `component ids follow row-major first appearance for three or more components`() {
+        // Strengthens the slice-2 review NOTE 6: with ordered runs the
+        // first-appearance order is row-major, so a coordinate-STRING sort
+        // would order "10:..." before "2:..." while the ordered path must not.
+        val width = 100
+        val height = 12
+        val runs = listOf(
+            2 * width + 50, 1, // row 2 — first appearance
+            5 * width + 90, 1, // row 5
+            10 * width + 10, 1, // row 10 — string-sorted keys would rank this first
+        )
+        val geometry = success(MaskGeometry.fromOrderedRle(rle(width, height, runs), MaskConversionBudgets()))
+
+        assertEquals(3, geometry.components.size)
+        assertEquals(listOf(0, 1, 2), geometry.components.map { it.id })
+        assertEquals(listOf(MaskGeometry.RowSpan(2, 50, 51)), geometry.components[0].spans)
+        assertEquals(listOf(MaskGeometry.RowSpan(5, 90, 91)), geometry.components[1].spans)
+        assertEquals(listOf(MaskGeometry.RowSpan(10, 10, 11)), geometry.components[2].spans)
+        // The ids differ from the legacy key-sorted fromSpans ids on purpose:
+        // "10:10-11" < "2:50-51" < "5:90-91" as strings, so legacy ranks the
+        // row-10 island first while the ordered path keeps row-major order.
+        val legacy = MaskGeometry.fromSpans(
+            width,
+            height,
+            listOf(MaskGeometry.RowSpan(2, 50, 51), MaskGeometry.RowSpan(5, 90, 91), MaskGeometry.RowSpan(10, 10, 11)),
+        )
+        assertEquals(listOf(MaskGeometry.RowSpan(10, 10, 11)), legacy.components[0].spans)
+    }
+
+    @Test
     fun `empty invalid and overflow inputs fall back explicitly`() {
         val budgets = MaskConversionBudgets()
 

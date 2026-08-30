@@ -113,6 +113,63 @@ data class BlockLayout(
 )
 
 /**
+ * TachiyomiAT: audit identity of one planner input — the original list index
+ * plus the block id. `blockId` alone is insufficient (nullable and possibly
+ * duplicated), so the identity is the pair.
+ */
+data class InputIdentity(val inputIndex: Int, val blockId: String?)
+
+/**
+ * TachiyomiAT: explicit reason a nonblank input produced no drawable layout.
+ * Slice 3 emits only [INVALID_OR_SUBPIXEL_SOURCE_RECT] and
+ * [EMPTY_SHARED_CELL]; the remaining reasons are declared now so the contract
+ * is complete for the later slices that own them.
+ */
+enum class NonDrawReason {
+    INVALID_OR_SUBPIXEL_SOURCE_RECT,
+    EMPTY_SHARED_CELL,
+    MASK_OR_WORK_BUDGET_EXHAUSTED,
+    POSITIONED_LINE_BUDGET_EXHAUSTED,
+    STATIC_LAYOUT_BUDGET_EXHAUSTED,
+    NO_DISJOINT_POST_ANCHOR_PLACEMENT,
+    INVALID_RENDER_METADATA,
+}
+
+/** TachiyomiAT: explicit per-input planner outcome — exactly one per nonblank input. */
+sealed interface LayoutOutcome {
+    data class Draw(val layout: BlockLayout) : LayoutOutcome
+    data class NonDraw(val reason: NonDrawReason) : LayoutOutcome
+}
+
+/**
+ * TachiyomiAT: one explicit planner result per nonblank input identity.
+ * [chosenText] derives ONLY from [block] (never merged, concatenated, or
+ * substituted). [planningOrdinal] is the 0-based rank among nonblank inputs in
+ * placement (score-descending, then input index) order; [renderOrdinal] is
+ * non-null only for [LayoutOutcome.Draw] and consecutive `0..k-1` in that
+ * placement order — the order of [PageLayoutPlan.drawableInRenderOrder].
+ */
+data class LayoutResult(
+    val identity: InputIdentity,
+    val block: TranslationBlock,
+    val chosenText: String,
+    val planningOrdinal: Int,
+    val renderOrdinal: Int?,
+    val outcome: LayoutOutcome,
+)
+
+/**
+ * TachiyomiAT: full page plan. [resultsInInputOrder] holds exactly one result
+ * per nonblank input (blank inputs are the only intentional absence);
+ * [drawableInRenderOrder] holds the Draw layouts in placement order and is the
+ * only list the renderer consumes.
+ */
+data class PageLayoutPlan(
+    val resultsInInputOrder: List<LayoutResult>,
+    val drawableInRenderOrder: List<BlockLayout>,
+)
+
+/**
  * TachiyomiAT: per-page mask grouping for the layout plan.
  *
  * Walks block masks in INPUT order and assigns a compact group id:
@@ -293,9 +350,9 @@ object TextLayoutPlanner {
     private const val MAX_COMPONENT_ASSIGNMENTS_PER_PAGE = 64
 
     /**
-     * Resolve a render plan for every block on the page. Blocks whose chosen text
-     * is blank are dropped here so they do not needlessly constrain neighbours as
-     * obstacles (the renderer would skip them anyway).
+     * Resolve a render plan for every block on the page. Thin wrapper over
+     * [planPage] returning only the drawable layouts in render order, so
+     * existing callers ([TranslationOverlayView], tests) keep working unchanged.
      */
     fun plan(
         blocks: List<TranslationBlock>,
@@ -304,8 +361,28 @@ object TextLayoutPlanner {
         sampleSize: Int,
         renderSourceText: Boolean,
         measurer: TextMeasurer,
-    ): List<BlockLayout> {
-        if (blocks.isEmpty()) return emptyList()
+    ): List<BlockLayout> = planPage(blocks, pageWidth, pageHeight, sampleSize, renderSourceText, measurer)
+        .drawableInRenderOrder
+
+    /**
+     * Full planner contract (T912): exactly one explicit [LayoutResult] for
+     * every nonblank input — [LayoutOutcome.Draw] with its finalized layout, or
+     * [LayoutOutcome.NonDraw] with a reason. Blank chosen texts remain the only
+     * intentional absence. Blocks are placed highest-[TranslationBlock.score]
+     * first (ties keep reading order); the most confident box takes its
+     * preferred placement and lower-confidence boxes treat it as a fixed
+     * obstacle. [PageLayoutPlan.drawableInRenderOrder] is the placement-ordered
+     * Draw list the renderer consumes.
+     */
+    fun planPage(
+        blocks: List<TranslationBlock>,
+        pageWidth: Float,
+        pageHeight: Float,
+        sampleSize: Int,
+        renderSourceText: Boolean,
+        measurer: TextMeasurer,
+    ): PageLayoutPlan {
+        if (blocks.isEmpty()) return PageLayoutPlan(emptyList(), emptyList())
         val scale = 1f / sampleSize
         val minLegible = minLegibleFont(pageWidth, pageHeight, scale)
 
@@ -318,19 +395,59 @@ object TextLayoutPlanner {
 
         val maskGrouping = buildMaskRegions(blocks)
         val maskRegions = maskGrouping.regions
+        // Slice 3: disjoint shared-cell plans per (group, componentId), built
+        // BEFORE placement because the fit region is the placement override.
+        val cellPlans = buildSharedCellPlans(blocks, maskGrouping, pageWidth, pageHeight, scale, renderSourceText)
+
+        val resultsByInput = arrayOfNulls<LayoutResult>(blocks.size)
+        val drawable = ArrayList<BlockLayout>(blocks.size)
         val componentAssignments = HashSet<Long>()
-        val placed = ArrayList<BlockLayout>(blocks.size)
+        var planningOrdinal = 0
         for (indexed in ordered) {
+            val inputIndex = indexed.index
             val block = indexed.value
             val text = chosenText(block, renderSourceText)
             if (text.isBlank()) continue
+            val ordinal = planningOrdinal++
+            val identity = InputIdentity(inputIndex, block.blockId)
 
-            val maskRegion = maskRegions[indexed.index]
-            val rect = computeRects(block, sampleSize, maskRegion)
-            if (rect.safeW < 1f || rect.safeH < 1f) continue
+            // An optimized member whose cell owns no usable component pixels is
+            // never placed: it keeps its identity as an explicit non-draw
+            // result and is not an obstacle.
+            val cellPlan = cellPlans[inputIndex]
+            if (cellPlan != null && cellPlan.empty) {
+                resultsByInput[inputIndex] = LayoutResult(
+                    identity,
+                    block,
+                    text,
+                    ordinal,
+                    null,
+                    LayoutOutcome.NonDraw(NonDrawReason.EMPTY_SHARED_CELL),
+                )
+                continue
+            }
+
+            val regionOverride = when {
+                cellPlan != null && cellPlan.optimized -> cellPlan.fitRegion
+                // Beyond MAX_SHARED_BLOCKS_OPTIMIZED: own legacy rectangle.
+                cellPlan != null -> null
+                else -> maskRegions[inputIndex]
+            }
+            val rect = computeRects(block, sampleSize, regionOverride)
+            if (rect.safeW < 1f || rect.safeH < 1f) {
+                resultsByInput[inputIndex] = LayoutResult(
+                    identity,
+                    block,
+                    text,
+                    ordinal,
+                    null,
+                    LayoutOutcome.NonDraw(NonDrawReason.INVALID_OR_SUBPIXEL_SOURCE_RECT),
+                )
+                continue
+            }
 
             val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
-            val placedObstacles = placed.map { extentOf(it, measurer) }
+            val placedObstacles = drawable.map { extentOf(it, measurer) }
 
             val resolved = placeBlock(
                 block = block,
@@ -343,23 +460,25 @@ object TextLayoutPlanner {
                 minLegible = minLegible,
                 scale = scale,
                 measurer = measurer,
-                regionOverride = maskRegion,
+                regionOverride = regionOverride,
             )
             // Metadata is wired AFTER placement and never changes placement,
             // font, or text — it only lets the renderer clip structurally.
-            placed.add(
-                withMaskMetadata(
-                    resolved,
-                    maskGrouping,
-                    indexed.index,
-                    maskRegion,
-                    pageWidth,
-                    pageHeight,
-                    componentAssignments,
-                ),
+            val layout = withSharedCellMetadata(resolved, cellPlan, maskGrouping, inputIndex, componentAssignments)
+            drawable.add(layout)
+            resultsByInput[inputIndex] = LayoutResult(
+                identity,
+                block,
+                text,
+                ordinal,
+                drawable.size - 1,
+                LayoutOutcome.Draw(layout),
             )
         }
-        return equalizeSharedMaskFonts(placed, measurer, scale)
+        // Results in INPUT order: one explicit result per nonblank input.
+        val results = ArrayList<LayoutResult>(blocks.size)
+        for (i in blocks.indices) resultsByInput[i]?.let { results.add(it) }
+        return PageLayoutPlan(results, drawable)
     }
 
     /** Legibility floor for a page of [pageWidth]×[pageHeight] at decode [scale]. */
@@ -1102,6 +1221,8 @@ object TextLayoutPlanner {
         val regions: Map<Int, FloatRect>,
         val groupByIndex: Map<Int, Int>,
         val session: SharedMaskSession,
+        /** Input-ordered members per group id (grouped and groupless). */
+        val groups: Map<Int, List<IndexedValue<TranslationBlock>>>,
     )
 
     /**
@@ -1205,78 +1326,206 @@ object TextLayoutPlanner {
             }
         }
         session.convertAll()
-        return MaskGrouping(regions, groupByIndex, session)
+        return MaskGrouping(regions, groupByIndex, session, groups)
+    }
+
+    /** Per-input slice-3 shared-cell decision; null means the legacy region path. */
+    private class SharedCellPlan(
+        /** Hard disjoint slab; null only for a beyond-cap (non-optimized) member. */
+        val slab: FloatRect?,
+        /** Placement override inside the slab; null for empty/non-optimized cells. */
+        val fitRegion: FloatRect?,
+        val optimized: Boolean,
+        /** Non-null only for a span-mode member of a converted geometry group. */
+        val componentId: Int?,
+        /** True when the cell owns no usable component pixels → explicit NonDraw. */
+        val empty: Boolean,
+    )
+
+    /**
+     * Slice 3: build disjoint shared-cell plans per (group, componentId) group
+     * of assigned nonblank members.
+     *
+     *  - Converted geometry with page-matching dimensions: partition per
+     *    component so blocks on different components of one RLE never share
+     *    cuts. Single-member component groups collapse to one cell over the
+     *    component bounds (mask bounds ≈ component bounds keeps single masked
+     *    bubbles on effectively the current behaviour).
+     *  - Grouped mask whose conversion FELL BACK (empty runs / caps): disjoint
+     *    BOUNDS-RECT mode cells over the mask bounds rectangle — still one cell
+     *    per member, still collision-disjoint, no geometry ids.
+     *  - Groupless masks (reference/unique caps) and dimension mismatches:
+     *    no cells — the legacy [buildMaskRegions] partition stays in force.
+     */
+    private fun buildSharedCellPlans(
+        blocks: List<TranslationBlock>,
+        grouping: MaskGrouping,
+        pageWidth: Float,
+        pageHeight: Float,
+        scale: Float,
+        renderSourceText: Boolean,
+    ): Map<Int, SharedCellPlan> {
+        val plans = HashMap<Int, SharedCellPlan>()
+        if (grouping.groups.isEmpty()) return plans
+        val session = grouping.session
+        session.convertAll()
+        val pageWidthInt = pageWidth.roundToInt()
+        val pageHeightInt = pageHeight.roundToInt()
+        val gap = MaskTextRegionPlanner.collisionGapPx(min(pageWidth, pageHeight), scale)
+        val budget = MaskTextRegionPlanner.CellSpanBudget()
+
+        for ((groupId, members) in grouping.groups) {
+            if (groupId < 0) continue
+            val mask = members.first().value.segmentationMask ?: continue
+            val nonblank = members.filter { chosenText(it.value, renderSourceText).isNotBlank() }
+            if (nonblank.isEmpty()) continue
+            val geometry = session.geometryFor(groupId)
+            if (geometry != null && geometry.width == pageWidthInt && geometry.height == pageHeightInt) {
+                val assigned = HashMap<Int, Int>()
+                for (item in nonblank) {
+                    val componentId = resolveComponentId(geometry, item.value) ?: continue
+                    assigned[item.index] = componentId
+                }
+                val byComponent = assigned.entries.groupBy({ it.value }, { it.key })
+                for (componentId in byComponent.keys.sorted()) {
+                    val indexes = byComponent.getValue(componentId)
+                    val component = geometry.components[componentId]
+                    val bounds = componentBounds(component)
+                    val cells = MaskTextRegionPlanner.partition(
+                        MaskTextRegionPlanner.ComponentRegion(
+                            bounds[0],
+                            bounds[1],
+                            bounds[2],
+                            bounds[3],
+                            component.spans,
+                        ),
+                        indexes.map { idx -> plannerMember(blocks[idx], idx) },
+                        gap,
+                        budget,
+                    )
+                    for (cell in cells) {
+                        plans[cell.inputIndex] = SharedCellPlan(
+                            slab = cell.slab,
+                            fitRegion = cell.fitRegion,
+                            optimized = cell.optimized,
+                            componentId = if (cell.optimized) componentId else null,
+                            empty = cell.empty,
+                        )
+                    }
+                }
+            } else if (geometry == null && mask.width == pageWidthInt && mask.height == pageHeightInt) {
+                val bounds = mask.bounds
+                val cells = MaskTextRegionPlanner.partition(
+                    MaskTextRegionPlanner.ComponentRegion(
+                        bounds[0],
+                        bounds[1],
+                        bounds[2],
+                        bounds[3],
+                        spans = null,
+                    ),
+                    nonblank.map { plannerMember(it.value, it.index) },
+                    gap,
+                    budget,
+                )
+                for (cell in cells) {
+                    plans[cell.inputIndex] = SharedCellPlan(
+                        slab = cell.slab,
+                        fitRegion = cell.fitRegion,
+                        optimized = cell.optimized,
+                        componentId = null,
+                        empty = cell.empty,
+                    )
+                }
+            }
+        }
+        return plans
     }
 
     /**
-     * Wire renderer clipping metadata onto a finalized layout. Fires ONLY when
-     * the block's mask group converted to geometry whose dimensions equal the
-     * rounded page, and the block's OCR rectangle unambiguously (non-tied) falls
-     * inside one component. Ambiguity/empty conversion ⇒ NO metadata: the legacy
-     * rectangle is still drawn and the one-result-per-input invariant holds.
-     * The page may hold at most [MAX_COMPONENT_ASSIGNMENTS_PER_PAGE] distinct
-     * (groupId, componentId) assignments; excess blocks get no metadata.
+     * Wire renderer clipping metadata for an optimized shared-cell member AFTER
+     * placement. `cellRect` is the member's hard disjoint SLAB (not its fit
+     * region). Span-mode members additionally carry the compact
+     * `(planGeometryId, componentId)` pair; the page-wide
+     * [MAX_COMPONENT_ASSIGNMENTS_PER_PAGE] cap applies to NEW distinct pairs,
+     * and a capped member keeps its structural slab without ids. Bounds-rect
+     * members (conversion fell back) carry the slab without ids, so the
+     * renderer clips to the slab rectangle only. Non-optimized members and the
+     * legacy path keep their layouts untouched.
      */
-    private fun withMaskMetadata(
+    private fun withSharedCellMetadata(
         layout: BlockLayout,
+        cellPlan: SharedCellPlan?,
         grouping: MaskGrouping,
         inputIndex: Int,
-        regionOverride: FloatRect?,
-        pageWidth: Float,
-        pageHeight: Float,
         componentAssignments: MutableSet<Long>,
     ): BlockLayout {
-        val groupId = grouping.groupByIndex[inputIndex] ?: return layout
-        if (groupId < 0) return layout
-        val geometry = grouping.session.geometryFor(groupId) ?: return layout
-        if (geometry.width != pageWidth.roundToInt() || geometry.height != pageHeight.roundToInt()) return layout
-        if (regionOverride == null) return layout
-        val left = floor(layout.block.x).toInt().coerceAtLeast(0)
-        val top = floor(layout.block.y).toInt().coerceAtLeast(0)
-        val right = ceil(layout.block.x + layout.block.width).toInt().coerceAtMost(geometry.width)
-        val bottom = ceil(layout.block.y + layout.block.height).toInt().coerceAtMost(geometry.height)
-        val componentId = geometry.componentForRectangle(left, top, right, bottom) ?: return layout
+        if (cellPlan == null || !cellPlan.optimized) return layout
+        val slab = cellPlan.slab ?: return layout
+        val componentId = cellPlan.componentId ?: return layout.copy(cellRect = slab)
+        val groupId = grouping.groupByIndex[inputIndex]
+        if (groupId == null || groupId < 0) return layout.copy(cellRect = slab)
+        val geometry = grouping.session.geometryFor(groupId) ?: return layout.copy(cellRect = slab)
         val assignment = (groupId.toLong() shl 32) or (componentId.toLong() and 0xFFFF_FFFFL)
         if (assignment !in componentAssignments && componentAssignments.size >= MAX_COMPONENT_ASSIGNMENTS_PER_PAGE) {
-            return layout
+            return layout.copy(cellRect = slab)
         }
         componentAssignments += assignment
         return layout.copy(
             maskGeometry = geometry,
             planGeometryId = groupId,
             maskComponentId = componentId,
-            cellRect = regionOverride,
+            cellRect = slab,
         )
     }
 
-    /** Give children of one fused mask the same safe fitted font size. */
-    private fun equalizeSharedMaskFonts(
-        layouts: List<BlockLayout>,
-        measurer: TextMeasurer,
-        scale: Float,
-    ): List<BlockLayout> {
-        val groups = layouts.filter { it.block.segmentationMask != null }
-            .groupBy { it.block.segmentationMask!! }
-        if (groups.values.none { it.size > 1 }) return layouts
-        return layouts.map { layout ->
-            val group = groups[layout.block.segmentationMask]
-            if (group == null || group.size < 2) return@map layout
-            val commonFont = group.minOf { it.fontSizePx }
-            layout.copy(
-                fontSizePx = commonFont,
-                strokeWidth = computeStrokeWidth(commonFont, scale),
-                lines = if (layout.isVertical) {
-                    emptyList()
-                } else {
-                    cjkWrap(
-                        layout.text,
-                        commonFont,
-                        layout.safeW,
-                        measurer,
-                    )
-                },
-            )
+    /** Integer bbox `[left, top, right, bottom)` of a component's spans. */
+    private fun componentBounds(component: MaskGeometry.Component): IntArray {
+        var left = Int.MAX_VALUE
+        var top = Int.MAX_VALUE
+        var right = Int.MIN_VALUE
+        var bottom = Int.MIN_VALUE
+        for (span in component.spans) {
+            if (span.start < left) left = span.start
+            if (span.endExclusive > right) right = span.endExclusive
+            if (span.y < top) top = span.y
+            if (span.y + 1 > bottom) bottom = span.y + 1
         }
+        return intArrayOf(left, top, right, bottom)
+    }
+
+    /**
+     * Unambiguous component assignment for a block's OCR rectangle (same
+     * clamped-rectangle resolution as slice 2): null on tie, no overlap, or
+     * out-of-page rectangles, so ambiguous blocks keep the legacy region path.
+     */
+    private fun resolveComponentId(geometry: MaskGeometry, block: TranslationBlock): Int? {
+        val left = floor(block.x).toInt().coerceAtLeast(0)
+        val top = floor(block.y).toInt().coerceAtLeast(0)
+        val right = ceil(block.x + block.width).toInt().coerceAtMost(geometry.width)
+        val bottom = ceil(block.y + block.height).toInt().coerceAtMost(geometry.height)
+        return geometry.componentForRectangle(left, top, right, bottom)
+    }
+
+    /** Build the pure planner's member descriptor for one block. */
+    private fun plannerMember(block: TranslationBlock, inputIndex: Int): MaskTextRegionPlanner.Member {
+        val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
+        return MaskTextRegionPlanner.Member(
+            inputIndex = inputIndex,
+            centerX = block.x + block.width / 2f,
+            centerY = block.y + block.height / 2f,
+            ocrRect = FloatRect(block.x, block.y, block.x + block.width, block.y + block.height),
+            parentRect = if (hasParent) {
+                FloatRect(
+                    block.parentX,
+                    block.parentY,
+                    block.parentX + block.parentWidth,
+                    block.parentY + block.parentHeight,
+                )
+            } else {
+                null
+            },
+            parentValid = hasParent,
+        )
     }
 
     private fun centeredExtentOverlapsObstacle(
