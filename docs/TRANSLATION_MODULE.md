@@ -2,8 +2,9 @@
 
 > Reference for the `eu.kanade.translation` package (TachiyomiAT exclusive),
 > the automatic manga-translation pipeline (Detect → OCR → Translate → Inpaint
-> → Render). Captures the file layout after the readability/structure pass,
-> including which units are unit-tested and which are Android/device-bound.
+> → Render). Captures the file layout after the T909 god-file dismantle, which
+> extracted `pipeline/`, `manager/`, `store/`, `artifact/` and merged batch
+> state + workers into `pipeline/batch/`; root-level files are the facade hubs.
 
 ---
 
@@ -11,100 +12,247 @@
 
 ```
 translation/
-├─ ChapterTranslator.kt          Orchestrates staged, streaming chapter work
-├─ ChapterTranslationStore.kt    Per-chapter JSON store of page translation states
-├─ TranslationManager.kt         Central coordinator: jobs, auto-prefetch, cancel, lifecycle
-├─ TranslationPipeline.kt        Singleton pipeline: engines, decode, persist, OOM recovery
-├─ TranslationSession.kt         Active translation session (work kind + store handle)
+├─ ActiveChapterStoreRegistry.kt  Registry of live per-chapter stores
+├─ ChapterResetPreflight.kt       Pre-reset validation gates
+├─ ChapterTranslationStore.kt     Per-chapter JSON store of page translation states (sole live-state owner)
+├─ ChapterTranslator.kt           Orchestrates staged, streaming chapter work
+├─ CleanedImagePublisher.kt       Cleaned-image publication path
+├─ MemoryPressurePolicy.kt        Heap-pressure classification and response policy
+├─ PageTranslationKey.kt          Page identity key
+├─ PostOcrStageSemantics.kt       Post-OCR stage transition semantics
+├─ TranslationManager.kt          Central coordinator: jobs, auto-prefetch, cancel, lifecycle
+├─ TranslationMemoryPressureForwarder.kt  Forwards memory-pressure signals to engines
+├─ TranslationPendingRequestStore.kt      Durable pending-request bookkeeping
+├─ TranslationPipeline.kt         Singleton pipeline: engines, decode, persist, OOM recovery
+├─ TranslationQueueStore.kt       Persistent queue of pending chapter requests
+├─ TranslationSession.kt          Active translation session (work kind + store handle)
+├─ TranslationStageContracts.kt   Shared stage outcome / pause contracts
+│
+├─ artifact/                      Durable on-disk artifacts + legacy migration
+│  ├─ ArtifactContracts.kt        Shared artifact identity helpers
+│  ├─ ArtifactRetention.kt        Retention/cleanup policy for rendered artifacts
+│  ├─ ChapterArtifactDeletion.kt  Artifact deletion plans
+│  ├─ ChapterArtifactLayout.kt    On-disk layout rules
+│  ├─ ChapterArtifactManifest.kt  Manifest model
+│  ├─ ChapterArtifactManifestReader.kt  Manifest reading/validation
+│  ├─ ChapterArtifactStore.kt     Artifact store (read/write chapter artifacts)
+│  ├─ ChapterDocumentIo.kt        Chapter document IO interface
+│  ├─ CleanedImageProbe.kt        Cleaned-image presence probes
+│  ├─ LegacyArtifactMigration.kt  Legacy artifact migration
+│  ├─ LegacyArtifactRescue.kt     Legacy artifact rescue paths
+│  ├─ LegacyChapterMigrationSource.kt   Legacy chapter migration source
+│  ├─ LegacyFlatFileDecoder.kt    Legacy flat-file chapter decoder
+│  ├─ ModelIdentityCache.kt       Model identity cache
+│  └─ StageFingerprints.kt        Stage fingerprint computation
 │
 ├─ data/
-│  ├─ TranslationFont.kt         Render font enum
-│  └─ TranslationProvider.kt     File/cache path resolution for translated images
+│  ├─ TranslationFont.kt          Render font enum
+│  └─ TranslationProvider.kt      File/cache path resolution for translated images
 │
-├─ detection/
-│  ├─ Detection.kt               Bounding-box + label + score model
-│  └─ OnnxPageTextDetector.kt    ONNX text-region detector (delegates dedupe to BoxGeometry)
+├─ detection/                     ONNX detection stage
+│  ├─ OnnxPageTextDetector.kt     ONNX text-region detector (delegates dedupe to BoxGeometry)
+│  ├─ OnnxPanelDetector.kt        ONNX panel detector
+│  └─ PanelAssignment.kt          Assigns text regions to panels
 │
 ├─ inpainting/
-│  ├─ AOTInpainting.kt           AOT-based bubble inpainting
-│  ├─ AotOutputGuard.kt          ★ PURE neural-output sanity guard (mid-gray-fill detection)
-│  ├─ BoundaryAwarePipeline.kt   ★ PURE containment flood + tier classification (FLAT/TEXTURED/COLOR)
-│  ├─ BubbleMaskBuilder.kt       ★ PURE mask/morphology helpers (BubbleMaskBuilderTest)
-│  ├─ FastMarchingMethod.kt      ★ PURE Telea Fast Marching Method inpaint + adaptive threshold
-│  ├─ InpaintingMode.kt          QUALITY / FAST enum
-│  ├─ PageInpaintingEngine.kt    Inpaint entry; delegates box planning to PageInpaintingPlanner
-│  ├─ PageInpaintingPlanner.kt   ★ PURE erase-mask planner: computeMask (at OCR time) + build (persisted-aware)
-│  └─ SmartBubbleTextCleaner.kt  Bubble cleaning core; delegates masks to BubbleMaskBuilder
+│  ├─ AOTInpainting.kt            AOT-based bubble inpainting
+│  ├─ AotBoxGeometry.kt           AOT box geometry helpers
+│  ├─ AotFallbackCoordinator.kt   AOT fallback orchestration
+│  ├─ AotModelContract.kt         AOT model I/O contract
+│  ├─ AotOutputGuard.kt           ★ PURE neural-output sanity guard (mid-gray-fill detection)
+│  ├─ AotPadPath.kt               AOT padding-path helpers
+│  ├─ AotPixelOps.kt              ★ PURE AOT pixel operations
+│  ├─ AotReportBubbleFill.kt      AOT report-style bubble fill decision
+│  ├─ AotSessionLifecycle.kt      AOT session lifecycle
+│  ├─ BoundaryAwarePipeline.kt    ★ PURE containment flood + tier classification (FLAT/TEXTURED/COLOR)
+│  ├─ BubbleCleanerMath.kt        ★ PURE bubble-cleaner math helpers
+│  ├─ BubbleMaskBuilder.kt        ★ PURE mask/morphology helpers (BubbleMaskBuilderTest)
+│  ├─ FastMarchingMethod.kt       ★ PURE Telea Fast Marching Method inpaint + adaptive threshold
+│  ├─ InpaintingMode.kt           QUALITY / FAST enum
+│  ├─ NnapiCapabilityGate.kt      NNAPI capability gating
+│  ├─ NnapiHealthMonitor.kt       NNAPI health monitoring
+│  ├─ PageInpaintingEngine.kt     Inpaint entry; delegates box planning to PageInpaintingPlanner
+│  ├─ PageInpaintingPlanner.kt    ★ PURE erase-mask planner: computeMask (at OCR time) + build (persisted-aware)
+│  ├─ PushPullGradient.kt         ★ PURE push-pull gradient ops
+│  ├─ SmartBubbleTextCleaner.kt   Bubble cleaning core; delegates masks to BubbleMaskBuilder
+│  └─ StrictNnapiFallback.kt      Strict NNAPI fallback policy
+│
+├─ manager/                       Manager-side extracted coordinators (consumed by TranslationManager)
+│  ├─ BatchProgressProjector.kt   Projects batch tracker state to UI progress
+│  ├─ ChapterDataResetController.kt     Chapter data reset flows
+│  ├─ CleanedImageLifecycleController.kt Cleaned-image lifecycle decisions
+│  ├─ DurableChapterStatusResolver.kt   Durable chapter status resolution
+│  ├─ ReaderTeardownCoordinator.kt      Reader teardown sequencing
+│  └─ TranslationRequestCoordinator.kt  Request admission/dedup coordination
 │
 ├─ model/
-│  ├─ PageTranslation.kt         Page state + TranslationBlock + StageStatus + InpaintMaskBox (durable erase mask)
-│  ├─ PageTranslationHelper.kt   ★ PURE overlapping-block merge (mergeOverlap)
-│  ├─ PageTranslationState.kt    ★ PURE lifecycle/status predicates + cancelInFlightStages + hasCurrentInpaintMask
-│  ├─ PageView.kt                Reader-side view model
-│  ├─ Translation.kt             Per-chapter Translation aggregate
-│  └─ TranslationSettingsSummary.kt ★ PURE read-only config snapshot for the pre-translation confirm popup
+│  ├─ ChapterQueueConflictDetection.kt  ★ PURE queue conflict detection
+│  ├─ ChapterQueuePreflight.kt    Queue preflight checks
+│  ├─ Detection.kt                Bounding-box + label + score model
+│  ├─ PageDisplayProjection.kt    ★ PURE reader display projection
+│  ├─ PageDisplayState.kt         Page display state
+│  ├─ PageTranslation.kt          Page state + TranslationBlock + StageStatus + InpaintMaskBox (durable erase mask)
+│  ├─ PageTranslationHelper.kt    ★ PURE overlapping-block merge (mergeOverlap)
+│  ├─ PageTranslationOwnership.kt Page-state ownership guards
+│  ├─ PageTranslationState.kt     ★ PURE lifecycle/status predicates + cancelInFlightStages + hasCurrentInpaintMask
+│  ├─ PageView.kt                 Reader-side view model
+│  ├─ PageWorkPlan.kt             Per-page work plan model
+│  ├─ PageWorkPlanner.kt          ★ PURE page work planning
+│  ├─ Translation.kt              Per-chapter Translation aggregate
+│  ├─ TranslationProgress.kt      ★ PURE batch progress aggregation
+│  ├─ TranslationProgressSnapshot.kt    Immutable progress snapshots
+│  ├─ TranslationRequestState.kt  Request state model
+│  ├─ TranslationSettingsSummary.kt ★ PURE read-only config snapshot for the pre-translation confirm popup
+│  └─ TranslationUiProjection.kt  ★ PURE UI projections
 │
 ├─ ocr/
-│  ├─ MangaOcrEngine.kt          Japanese manga OCR (ONNX); see Memory contract #2
+│  ├─ DbPostProcess.kt            ★ PURE differentiable-binarization post-process
+│  ├─ MangaOcrEngine.kt           Japanese manga OCR (ONNX); see Memory contract #2
 │  │                              (decoder position bound pos < 128) + ocr-engine-notes.md
-│  ├─ MlKitOcrPreprocessor.kt    ML Kit crop preprocessor (scale/pad/contrast)
-│  ├─ MlKitRoiOcrEngine.kt       ML Kit ROI OCR
-│  ├─ OcrModelCatalog.kt         ★ PURE model/language catalog (entries, coerce, defaults)
-│  ├─ PaddleCtcDecoder.kt        ★ PURE CTC decode (decode, argmaxIndices)
-│  ├─ PaddleOcrV6SmallEngine.kt  PaddleOCR v6 small engine (HF `inference.onnx`)
-│  ├─ RoiOcrEngine.kt            ROI OCR interface + reclaimPooledMemory contract
-│  ├─ TextRecognizer.kt          OCR engine selector facade
-│  └─ TextRecognizerLanguage.kt  Source-language enum
+│  ├─ MlKitOcrPreprocessor.kt     ML Kit crop preprocessor (scale/pad/contrast)
+│  ├─ MlKitRoiOcrEngine.kt        ML Kit ROI OCR
+│  ├─ OcrDiagnostics.kt           ★ PURE OCR diagnostics helpers
+│  ├─ OcrModelCatalog.kt          ★ PURE model/language catalog (entries, coerce, defaults)
+│  ├─ OcrTextFilter.kt            ★ PURE OCR text filtering
+│  ├─ PaddleCtcDecoder.kt         ★ PURE CTC decode (decode, argmaxIndices)
+│  ├─ PaddleOcrV6DetEngine.kt     PaddleOCR v6 detection engine
+│  ├─ PaddleOcrV6SmallEngine.kt   PaddleOCR v6 small engine (HF `inference.onnx`)
+│  ├─ RoiOcrEngine.kt             ROI OCR interface + reclaimPooledMemory contract
+│  ├─ TextRecognizer.kt           OCR engine selector facade
+│  └─ TextRecognizerLanguage.kt   Source-language enum
+│
+├─ pipeline/                      Single-page pipeline phases extracted from TranslationPipeline
+│  ├─ CleanedPublication.kt       Cleaned-image publication step
+│  ├─ EngineLane.kt               Engine construction/signature lane
+│  ├─ MemoryGovernance.kt         Decode/inpaint memory governance
+│  ├─ PageDecode.kt               Page bitmap decode
+│  ├─ PageStoreWriter.kt          Page-state store writes
+│  ├─ SinglePageHttpRenderPhase.kt  Single-page HTTP render phase
+│  ├─ SinglePageOnnxPhase.kt      Single-page ONNX phase
+│  └─ batch/                      Batch translation: state/progress + execution workers
+│     ├─ BatchChapterTranslator.kt      Batch translation entry (owns SequentialBatchCoordinator)
+│     ├─ BatchContextFrontier.kt        ★ PURE context frontier windows
+│     ├─ BatchCoordinatorInterfaces.kt  Lane/worker interfaces + typed outcomes
+│     ├─ BatchLaneWorkers.kt            Native/provider lane workers
+│     ├─ BatchOomPolicy.kt              Batch OOM policy
+│     ├─ BatchProgressReconciler.kt     ★ PURE progress reconciliation
+│     ├─ BatchRenderJoin.kt             Per-page render join gates
+│     ├─ BatchResumeGateDecider.kt      ★ PURE resume gate decisions
+│     ├─ BatchResumePlanner.kt          Batch resume planning
+│     ├─ BatchTranslationDiagnostics.kt ★ PURE batch diagnostics
+│     ├─ BatchWriteGate.kt              Store write gating
+│     ├─ HeldBitmapRegistry.kt          Held-bitmap admission registry
+│     ├─ SequentialBatchCoordinator.kt  Serialized native + provider lanes, chunk barrier
+│     ├─ TranslationBatchEvent.kt       Batch event model
+│     ├─ TranslationBatchProgressTracker.kt   Live batch progress tracker
+│     └─ TranslationBatchTrackerRegistry.kt   Tracker registry
 │
 ├─ recognition/
-│  ├─ BoxGeometry.kt             ★ PURE bbox IoU/area/geometric-dedupe (shared by detector + OCR)
+│  ├─ BoxGeometry.kt              ★ PURE bbox IoU/area/geometric-dedupe (shared by detector + OCR)
 │  ├─ MlKitFullPageRecognitionEngine.kt
-│  ├─ PageRecognitionEngine.kt   Recognition engine interface + reclaimPooledMemory
-│  └─ RoiPageRecognitionEngine.kt ROI recognition (delegates dedupe to BoxGeometry;
-│                                 reclaims sub-engine native caches on OOM)
+│  ├─ OcrBlockDeduplication.kt    ★ PURE OCR block dedupe helpers
+│  ├─ PageRecognitionEngine.kt    Recognition engine interface + reclaimPooledMemory
+│  ├─ ReadingOrderSorter.kt       ★ PURE reading-order sort
+│  ├─ RoiPageRecognitionEngine.kt ROI recognition (delegates dedupe to BoxGeometry;
+│  │                              reclaims sub-engine native caches on OOM)
+│  └─ VerticalLineOcr.kt          ★ PURE vertical-line OCR helpers
+│
+├─ remote/                        Remote (server-assisted) page translation
+│  ├─ BackendPageKey.kt           Backend page identity
+│  ├─ InferenceBackend.kt         Inference backend interface
+│  ├─ RemotePageTranslationEngine.kt    Remote translation engine
+│  └─ RemotePageTranslationException.kt Remote failure types
 │
 ├─ rendering/
-│  ├─ PageTextRenderer.kt        Draws translated text onto cleaned pages (no source-text fallback)
-│  ├─ RenderColorEstimator.kt    ★ PURE colorPolicy/snapGray + Bitmap-bound estimate()
-│  └─ TextLayoutPlanner.kt       ★ PURE neighbour-aware text layout solver (TextLayoutPlannerTest)
+│  ├─ PageTextRenderer.kt         Draws translated text onto cleaned pages (no source-text fallback)
+│  ├─ RenderColorEstimator.kt     ★ PURE colorPolicy/snapGray + Bitmap-bound estimate()
+│  └─ TextLayoutPlanner.kt        ★ PURE neighbour-aware text layout solver (TextLayoutPlannerTest)
 │
 ├─ runtime/onnx/
-│  ├─ DeviceCapability.kt        ONNX EP capability detection
-│  ├─ OnnxModelStore.kt          ONNX model asset loading/caching
-│  └─ OnnxRuntimeProvider.kt     OrtSystem singleton
+│  ├─ CheckNnapi.java             NNAPI availability probe (build-time Java probe)
+│  ├─ CheckXnnpack.java           XNNPACK availability probe
+│  ├─ DeviceCapability.kt         ONNX EP capability detection
+│  ├─ HardwareDiscoveryEngine.kt  EP/hardware discovery
+│  ├─ OnnxModelStore.kt           ONNX model asset loading/caching
+│  ├─ OnnxRuntimeProvider.kt      OrtSystem singleton
+│  ├─ QnnDiagnostics.kt           QNN EP diagnostics
+│  └─ QnnProbeModel.kt            QNN probe model
 │
 ├─ scheduling/
-│  ├─ TranslationExecutor.kt     Per-page work interface
+│  ├─ AutoWindowState.kt          Auto-prefetch window state
+│  ├─ NativeRunQuarantine.kt      Native-run quarantine (invalidates late results)
+│  ├─ PreparedPageBoundary.kt     Prepared-page handoff boundary
+│  ├─ RollingAutoCoordinator.kt   Rolling auto-prefetch coordination
+│  ├─ TranslationExecutor.kt      Per-page work interface (+ TranslationStageListener, PreparedPage)
 │  ├─ TranslationLifecyclePolicy.kt ★ PURE scheduling classification (shouldSchedule/classify)
-│  ├─ TranslationScheduler.kt    Job lifecycle: dedup, cancel, auto-prefetch windows
-│  ├─ TranslationStoreResolver.kt  Resolves live store for a chapter id
+│  ├─ TranslationScheduler.kt     Job lifecycle: dedup, cancel, auto-prefetch windows
+│  ├─ TranslationStoreResolver.kt Resolves live store for a chapter id
 │  └─ TranslationStreamRegistry.kt ★ PURE per-page stream factory registry
 │
-├─ translator/
-│  ├─ AiModelFetcher.kt          ★ PURE parseOpenAiModels/parseGeminiModels/normalizeBaseUrl
-│  ├─ AiTranslatorKind.kt        AI translator enum (Gemini/DeepSeek/OpenRouter/LM Studio)
-│  ├─ DeepSeekTranslator.kt      DeepSeek adapter (pipe-delimited ID/status protocol)
-│  ├─ GeminiTranslator.kt        Gemini adapter
-│  ├─ DeepLApi.kt                DeepL endpoint/auth helper (Free vs Pro host from `:fx` key suffix)
-│  ├─ DeepLTranslator.kt         DeepL adapter
-│  ├─ GoogleTranslator.kt        Google Translate adapter
-│  ├─ LmStudioTranslator.kt      LM Studio adapter (pipe-delimited ID/status protocol)
-│  ├─ MLKitTranslator.kt         On-device ML Kit translator
-│  ├─ NumberedLineResponseParser.kt ★ PURE legacy `[index] text` parser; retained for its standalone contract, not the active AI-provider protocol
-│  ├─ OcrArtifactSanitizer.kt    ★ PURE OCR misread (N°/№/Ｎ０) stripper
-│  ├─ OpenRouterTranslator.kt    OpenRouter adapter
-│  ├─ StandardTranslatorKind.kt  Standard translator enum (ML Kit/Google/DeepL)
-│  ├─ TextTranslator.kt          Translator interface
-│  ├─ TextTranslatorLanguage.kt  Target-language enum
-│  ├─ TranslationBlockFilters.kt ★ PURE watermark (RTMTH) block removal
-│  ├─ TranslationBlockValidation.kt ★ PURE post-translate validation (blank/source-equal → PARTIAL/FAILED; all→READY)
-│  ├─ TranslationPrompts.kt         Shared `bN|Text|[STATUS]` prompt and response parser
-│  └─ TranslationEngineBuilder.kt Resolves active translator from preferences
+├─ segmentation/                  ONNX bubble segmentation
+│  ├─ BubbleMaskRle.kt            ★ PURE RLE mask coding
+│  ├─ BubbleSegmentationDecoder.kt      Segmentation output decoding
+│  ├─ MaskGeometry.kt             ★ PURE mask geometry helpers
+│  └─ OnnxBubbleSegmenter.kt      ONNX bubble segmenter engine
 │
-└─ util/
-   ├─ ShortHash.kt               ★ PURE FNV-1a digest (API-key change detection)
-   ├─ TaskExtensions.kt          gms Task → coroutine bridge
-   └─ TranslationMemoryBudget.kt Heap-aware decode/inpaint gating
+├─ store/                         Store-side extracted collaborators (consumed by ChapterTranslationStore)
+│  ├─ ChapterGlossaryStore.kt     Chapter glossary persistence
+│  ├─ PageStageLeaseTable.kt      Page-stage lease table
+│  ├─ StorePersistenceScheduler.kt      Store persistence scheduling
+│  └─ StoreStatusProjector.kt     Store status projection
+│
+├─ translator/
+│  ├─ AiModelFetcher.kt           ★ PURE parseOpenAiModels/parseGeminiModels/normalizeBaseUrl
+│  ├─ AiTranslatorKind.kt         AI translator enum (Gemini/DeepSeek/OpenRouter/LM Studio)
+│  ├─ AiTranslationRetryController.kt   AI retry controller
+│  ├─ AiTranslationRetryPlanner.kt      ★ PURE AI retry planning
+│  ├─ AITranslator.kt             Legacy-named AI adapter (see casing note below)
+│  ├─ BaseTranslator.kt           Translator base class
+│  ├─ BatchTranslationProtocol.kt Batch prompt/response protocol
+│  ├─ ChapterGlossaryBuilder.kt   ★ PURE glossary building
+│  ├─ ContextualRequestBuilder.kt Contextual (chunked) request building
+│  ├─ ContextualResponseParser.kt Contextual response parsing (request-local IDs)
+│  ├─ ContextualTranslationBatch.kt     Contextual batch model
+│  ├─ DeepLApi.kt                 DeepL endpoint/auth helper (Free vs Pro host from `:fx` key suffix)
+│  ├─ DeepLTranslator.kt          DeepL adapter
+│  ├─ DeepSeekTranslator.kt       DeepSeek adapter (pipe-delimited ID/status protocol)
+│  ├─ GeminiTranslator.kt         Gemini adapter
+│  ├─ GoogleTranslator.kt         Google Translate adapter
+│  ├─ LmStudioTranslator.kt       LM Studio adapter (pipe-delimited ID/status protocol)
+│  ├─ MLKitTranslator.kt          On-device ML Kit translator
+│  ├─ NumberedLineResponseParser.kt ★ PURE legacy `[index] text` parser; retained for its standalone contract, not the active AI-provider protocol
+│  ├─ OcrArtifactSanitizer.kt     ★ PURE OCR misread (N°/№/Ｎ０) stripper
+│  ├─ OpenAiCompatibleTranslator.kt     Shared OpenAI-shape chat adapter base
+│  ├─ OpenRouterTranslator.kt     OpenRouter adapter
+│  ├─ ProviderFailureClassification.kt  ★ PURE provider failure classification (typed pause vs retry)
+│  ├─ ProviderRequestGovernor.kt  Provider-request admission governance (single lane)
+│  ├─ StableBlockIds.kt           ★ PURE stable block-ID derivation
+│  ├─ StandardTranslatorKind.kt   Standard translator enum (ML Kit/Google/DeepL)
+│  ├─ StreamingChunkPlanner.kt    ★ PURE streaming chunk planning (token budget, reading order)
+│  ├─ TextTranslator.kt           Translator interface
+│  ├─ TextTranslatorLanguage.kt   Target-language enum
+│  ├─ TranslationBlockFilters.kt  ★ PURE watermark (RTMTH) block removal
+│  ├─ TranslationBlockValidation.kt ★ PURE post-translate validation (blank/source-equal → PARTIAL/FAILED; all→READY)
+│  ├─ TranslationContextChunkPlanner.kt ★ PURE contextual chunk planning (Pass 2 revision windows)
+│  ├─ TranslationEngineBuilder.kt Resolves active translator from preferences
+│  ├─ TranslationPrompts.kt       Shared `bN|Text|[STATUS]` prompt and response parser
+│  ├─ TranslationResponseFaithfulness.kt ★ PURE response faithfulness checks
+│  ├─ TranslationRetry.kt         ★ PURE retry classification for translation failures
+│  └─ TranslatorComputeClass.kt   LOCAL_COMPUTE / REMOTE_IO classification
+│
+├─ util/
+│  ├─ ChapterPages.kt             Shared chapter page listing helper
+│  ├─ ModelDeployment.kt          Model deployment metadata helpers
+│  ├─ ResumeOrdering.kt           ★ PURE forward-first-then-backfill resume ordering
+│  ├─ ShortHash.kt                ★ PURE FNV-1a digest (API-key change detection)
+│  ├─ TaskExtensions.kt           gms Task → coroutine bridge
+│  ├─ TranslationBlockSorter.kt   ★ PURE block sorting helpers
+│  ├─ TranslationMemoryBudget.kt  Heap-aware decode/inpaint gating
+│  └─ TranslationSafetyPrimitives.kt    Shared concurrency safety primitives
+│
+└─ webtoon/                       Long-strip (webtoon) support
+   ├─ WebtoonSeamStitcher.kt      Seam stitching for sliding detection
+   └─ WebtoonSlidingDetector.kt   Sliding-window strip detection
 ```
 
 ★ = pure JVM-testable logic (no Android/Bitmap/ONNX/ML Kit dependency).
@@ -864,7 +1012,7 @@ path remains separate.
 
 ### Scheduling and translation lanes
 
-`BatchCoordinator` owns one serialized native lane, one serialized provider-request
+`SequentialBatchCoordinator` (in `pipeline/batch/`) owns one serialized native lane, one serialized provider-request
 lane, a bounded translation channel with **capacity 2**, and a per-page render
 join. OCR persistence creates a detached immutable work item. For `REMOTE_IO`, it
 is offered to the translation channel **before same-page inpaint**, allowing the
@@ -890,8 +1038,9 @@ remain untranslated and follow partial/retry handling.
 
 Pass 2 begins after the complete Pass-1 translation barrier, without waiting for
 inpaint/render. Final completion waits for revision, inpaint, rendering,
-persistence, and reconciliation. `RevisionPlanner` preserves reading order, emits
-at most 20 target IDs, respects the token budget without truncation, and includes
+persistence, and reconciliation. The contextual chunk planners (`StreamingChunkPlanner`,
+`TranslationContextChunkPlanner`, driven by `ContextualRequestBuilder`) preserve reading
+order, emit at most 20 target IDs, respect the token budget without truncation, and include
 the chapter glossary plus nearby source/draft dialogue as context. Providers output
 corrections for target IDs only.
 
@@ -993,11 +1142,11 @@ tracker disposal/LRU, memory-pressure forwarding, and glossary flush behavior.
 | `ocr/OcrModelCatalogTest` | entries/coerce/defaultFor/isCompatible/labelsFor |
 | `recognition/BoxGeometryTest` | IoU/area/intersection, degenerate boxes, dedupe thresholds (iou/containment/center+size paths) |
 | `model/PageTranslationStateTest` | lifecycle, retry exhaustion (attemptCount-based, not retryCount), cancelled-page rescheduling, render-quality trust, forced retry reset (attemptCount + retryCount), shouldSurfaceError (FAILED surfaces; PARTIAL/Cancelled/Textless/rendered suppress), hasRecognizedTranslation admits PARTIAL, recordAttemptFailure idempotency (inpaint→render cascade = one attempt), attemptCount not serialized |
-| `model/ChapterTranslatedPredicateTest` | `isChapterTranslated` content predicate: placeholder/pending/failed/running → not translated; rendered or recognized → translated; mixed/empty lists |
+| **(no test)** | `isChapterTranslated` (`TranslationManager`) content predicate is currently UNTESTED — the former `ChapterTranslatedPredicateTest` was deleted without a successor. Known coverage gap. |
 | `model/TranslationProgressTest` | batch (done,total): rendered/textless/retry-exhausted count as done; pending/running don't; empty → (0,0) |
 | `model/TranslationSettingsSummaryTest` | confirm-popup snapshot: STANDARD (no model/tokens rows) vs AI_MODEL (engine+model+tokens); MLKIT/GOOGLE/Gemini/OpenRouter/DeepSeek/LM Studio labels; blank model/tokens → null; unknown source/target language fallback without mutating store; Japanese OCR coercion is read-only; inpainting raw passthrough |
 | `util/ResumeOrderingTest` | forward-first-then-backfill ordering; resume mid/start/end/last; empty; no aliasing |
-| `ChapterTranslationStorePersistTest` | `shouldPersistUpdate`: placeholders (CANCELLED+error, pending, running) not persisted; rendered/cleaned/blocks/failed/transition ARE persisted |
+| `ChapterTranslationStorePersistenceTest` (test root) | `shouldPersistUpdate`: placeholders (CANCELLED+error, pending, running) not persisted; rendered/cleaned/blocks/failed/transition ARE persisted |
 | `model/PageTranslationHelperTest` | overlapping-block merge, orientation guard, transitive merge |
 | `model/PageTranslationHelperDedupeTest` | geometric dedupe: overlapping different-text/identical/cross-label/nested/touching-bubbles; preserves reading order; no mutation; degenerate-box kept |
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
@@ -1009,7 +1158,7 @@ tracker disposal/LRU, memory-pressure forwarding, and glossary flush behavior.
 | `translator/TranslationBlockValidationTest` | full/partial/blank/source-equal/whitespace-equal/textless; applyTo sets READY vs PARTIAL (retryCount untouched) vs FAILED (retryCount bumped + attemptCount charged once via recordAttemptFailure) + reason |
 | `translator/StrictConfigFromPrefTest` | strict no-fallback config: TextRecognizerLanguage/TextTranslatorLanguage `fromPref` throw on unknown value (was → Chinese/English); StandardTranslatorKind.fromPref throw branch is unreachable (closed enum) and documented |
 | `scheduling/TranslationStreamRegistryTest` | per-page/chapter/all/window stream registry eviction semantics |
-| `scheduling/TranslationLifecyclePolicyTest` | shouldSchedule / classify / retry-exhaustion |
+| **(no test)** | `TranslationLifecyclePolicy` (scheduling) is currently UNTESTED — the former `TranslationLifecyclePolicyTest` no longer exists. Known coverage gap. |
 | `util/ShortHashTest` | FNV-1a digest: empty input, equality, determinism, hex output |
 | `util/TranslationMemoryBudgetTest` | full-quality vs heap-constrained vs source-size-limited decode decisions |
 | `reader/ReaderPageWarmWindowTest` | current +/-2 warm-window boundaries for long chapters |
@@ -1023,43 +1172,21 @@ Run: `.\gradlew.bat :app:testStandardDebugUnitTest`
 Each item is grounded in a full read of the current code. Difficulty and payoff
 noted so the next pass can pick the highest-value, lowest-risk item first.
 
-### 1. `TranslationPipeline.kt` — partial split (MEDIUM effort, HIGH payoff)
+### 1. ~~`TranslationPipeline.kt` — partial split~~ — DONE (T909, 2026-08)
 
-Still ~1.65k lines. The single-page path is cohesive, but four responsibilities
-are entangled with it. A full seam map exists (generated by exhaustive read);
-the key constraint is that `recognitionEngine`, `textTranslator`, and
-`autoFallbackToFast` are **three-way shared mutable state**, so most extractions
-must funnel through a single owner rather than becoming stateless helpers.
+The dismantle extracted the prescribed responsibilities into
+`pipeline/` (`PageDecode`, `MemoryGovernance`, `PageStoreWriter`, `CleanedPublication`,
+`EngineLane`, single-page phases), `manager/`, and `store/`, and merged batch
+execution into `pipeline/batch/`. `TranslationPipeline.kt` is now ~1,050 lines
+(was ~5,400). The three-way shared engine state now lives behind `EngineLane`.
 
-**Cleanest remaining extraction — `PageBitmapIO` (do this first):**
-All plain (non-suspend) functions, touching only injected singletons
-(`streamRegistry`, `context`) plus a nested `DecodedPage`. No host mutable state.
-Move these out together:
-- `peekReaderPageStream`, `createFailedPagePlaceholder`, `copyForResume`
-- `loadPersistedCleanedBitmap`, `persistCleanedBitmap`, `persistRenderedBitmap`
-- `decodePageBitmap`, `decodePageBitmapAtSize`, `getChapterPages`
-- nested `DecodedPage` (must move with `decodePageBitmap`; promote to top-level)
-- Callers: `processSinglePage`, `resumeInpaintAndRender`, `retryInpaintDownscaled`
-  take `DecodedPage`, so they need the promoted type.
-
-**Harder extractions — defer until PageBitmapIO lands:**
-- `EngineConfig`: `EngineSignature`, `computeTranslatorSignature`,
-  `inpaintingModeFromPref`, `createRecognitionEngine`, `closeEngines`, and the
-  six engine fields. Must be a **stateful collaborator** (the orchestrator
-  live-mutates `textTranslator`/`recognitionEngine` on config + lang change).
-- `OomRecovery`: `consecutiveOomCount`, `autoFallbackToFast`, `enginesClosed` +
-  `downgradeOnnx*`, `handleCriticalTranslationOom`, `persistPageWithOomRecovery`.
-  Most entangled group — `autoFallbackToFast` is R/W from three places and
-  `downgradeOnnxAfterOom` rewrites `recognitionEngine`. Needs a shared-state
-  design, not a pure helper.
-- Two further implicit responsibilities surfaced: **native-admission/quarantine
-  infrastructure** (`nativeRunQuarantine`, native permits, in-flight keys) and
-  **active-store bookkeeping** (`currentChapterTranslation`,
-  `activeStoreResolver`, `register/unregisterActiveStore`).
-
-**Already done this pass:** extracted `ShortHash`; removed dead
-`currentChapterPath` field (was write-only, never read) and the unused `store`
-parameter of `registerActiveStore`.
+**Current top debt (supersedes the old item):**
+- `pipeline/` + `pipeline/batch/` (~5,900 lines) carry the suite's largest
+  untested region — concurrency seams (lane workers, render join, resume gates)
+  verified today only via `SequentialBatchCoordinator`-adjacent tests and the
+  manual on-device smoke. A test-writing task is the highest-value follow-up.
+- Deferred T909 phases: store stage-merge engine extraction (HIGH risk) and the
+  AOT inpainting split (needs a corpus harness).
 
 ### 2. Translator adapter consolidation (MEDIUM effort, MEDIUM payoff)
 
