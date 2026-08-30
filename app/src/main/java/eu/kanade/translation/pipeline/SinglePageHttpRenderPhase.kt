@@ -6,11 +6,11 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
-import eu.kanade.translation.batch.BatchDiagnosticDecision
-import eu.kanade.translation.batch.BatchDiagnosticReason
-import eu.kanade.translation.batch.BatchDiagnosticStage
-import eu.kanade.translation.batch.BatchTranslationDiagnostics
-import eu.kanade.translation.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
+import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
+import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation

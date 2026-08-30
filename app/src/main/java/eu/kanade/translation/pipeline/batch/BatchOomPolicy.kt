@@ -1,4 +1,4 @@
-package eu.kanade.translation.batch
+package eu.kanade.translation.pipeline.batch
 
 data class AbortDecision(
     val abort: Boolean,

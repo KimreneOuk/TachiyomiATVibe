@@ -1,8 +1,8 @@
 package eu.kanade.translation.translator
 
-import eu.kanade.translation.batch.BatchDiagnosticReason
-import eu.kanade.translation.batch.BatchEnvelopeLifecycle
-import eu.kanade.translation.batch.BatchTranslationDiagnostics
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
+import eu.kanade.translation.pipeline.batch.BatchEnvelopeLifecycle
+import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.util.ShortHash

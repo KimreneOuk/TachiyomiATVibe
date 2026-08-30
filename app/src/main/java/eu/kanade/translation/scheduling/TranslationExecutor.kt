@@ -1,7 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.io.InputStream

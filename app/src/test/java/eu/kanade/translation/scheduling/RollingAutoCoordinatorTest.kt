@@ -2,7 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationSession
-import eu.kanade.translation.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock

@@ -8,10 +8,6 @@ import eu.kanade.translation.RenderBlockPatch
 import eu.kanade.translation.RenderStagePatch
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.ocrBlockFingerprints
-import eu.kanade.translation.batch.BatchDiagnosticStage
-import eu.kanade.translation.batch.BatchPersistenceRejectedException
-import eu.kanade.translation.batch.RenderJoinWorker
-import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageTranslation

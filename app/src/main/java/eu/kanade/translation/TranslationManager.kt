@@ -7,8 +7,8 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ChapterDocumentIo
 import eu.kanade.translation.artifact.ManifestAuthority
-import eu.kanade.translation.batch.TranslationBatchProgressTracker
-import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.model.ChapterQueuePreflight

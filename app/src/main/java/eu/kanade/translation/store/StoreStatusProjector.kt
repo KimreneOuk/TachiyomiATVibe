@@ -5,7 +5,7 @@ import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.DurableFailureMetadata
-import eu.kanade.translation.batch.BatchProgressReconciler
+import eu.kanade.translation.pipeline.batch.BatchProgressReconciler
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.hasRenderedResult

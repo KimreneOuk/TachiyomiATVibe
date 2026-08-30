@@ -8,14 +8,6 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
-import eu.kanade.translation.batch.BatchContextFrontier
-import eu.kanade.translation.batch.BatchDiagnosticStage
-import eu.kanade.translation.batch.BatchPass1Outcome
-import eu.kanade.translation.batch.BatchPass1Status
-import eu.kanade.translation.batch.BatchPersistenceRejectedException
-import eu.kanade.translation.batch.BatchProgressReconciler
-import eu.kanade.translation.batch.SequentialBatchCoordinator
-import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
@@ -196,7 +188,7 @@ internal class BatchChapterTranslator(
         orderedStreams: List<Pair<String, () -> InputStream>>,
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
-    ): eu.kanade.translation.batch.ReconciliationResult? {
+    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
         if (orderedStreams.isEmpty()) return null
         val resolvedNaturalPageIndexes = if (naturalPageIndexes.isNotEmpty()) {
             naturalPageIndexes

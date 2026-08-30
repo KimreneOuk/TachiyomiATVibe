@@ -5,8 +5,8 @@ import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.batch.ChunkCompletionOutcome
-import eu.kanade.translation.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
@@ -845,7 +845,7 @@ class TranslationPipeline(
         orderedStreams: List<Pair<String, () -> InputStream>>,
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
-    ): eu.kanade.translation.batch.ReconciliationResult? =
+    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? =
         batchChapterTranslator.translateBatch(manga, chapter, source, store, orderedStreams, tracker, naturalPageIndexes)
 
     private suspend fun markBatchTranslationFailed(

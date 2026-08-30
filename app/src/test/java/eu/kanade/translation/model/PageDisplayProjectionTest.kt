@@ -7,7 +7,7 @@ import eu.kanade.translation.artifact.DisplayBaseKind
 import eu.kanade.translation.artifact.DisplayBaseReference
 import eu.kanade.translation.artifact.PageArtifactRecord
 import eu.kanade.translation.artifact.StageArtifactRecord
-import eu.kanade.translation.batch.TranslationBatchProgressTracker
+import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
@@ -119,7 +119,7 @@ class PageDisplayProjectionTest {
             it.toPageDisplayProjection().displayReady
         }
         snapshot.displayReadyPages shouldBe committedReadyCount
-        snapshot.perStage.getValue(eu.kanade.translation.batch.BatchPhase.DISPLAY).succeeded shouldBe 1
+        snapshot.perStage.getValue(eu.kanade.translation.pipeline.batch.BatchPhase.DISPLAY).succeeded shouldBe 1
         snapshot.canReadTranslated shouldBe true
         snapshot.pages.map { it.index } shouldBe listOf(7, 20)
         snapshot.pages.first { it.index == 7 }.displayReady shouldBe false

@@ -1,4 +1,4 @@
-package eu.kanade.translation.batch
+package eu.kanade.translation.pipeline.batch
 
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.string.shouldNotContain

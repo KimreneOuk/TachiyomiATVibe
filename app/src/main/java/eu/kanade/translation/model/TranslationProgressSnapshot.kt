@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 import androidx.compose.runtime.Immutable
-import eu.kanade.translation.batch.BatchPhase
+import eu.kanade.translation.pipeline.batch.BatchPhase
 
 /** Terminal and successful work are both processed; skipped work is successful terminal work. */
 @Immutable
@@ -133,7 +133,7 @@ data class TranslationProgressSnapshot(
             } else {
                 TranslationBatchPhase.IDLE
             },
-        ): TranslationProgressSnapshot = eu.kanade.translation.batch.TranslationBatchProgressTracker.computeSnapshot(
+        ): TranslationProgressSnapshot = eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker.computeSnapshot(
             pageMap.orEmpty(),
             state,
             indexResolver = indexResolver,

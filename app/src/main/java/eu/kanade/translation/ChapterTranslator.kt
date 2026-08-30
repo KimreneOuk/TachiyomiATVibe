@@ -7,7 +7,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.translation.artifact.ArtifactStage
-import eu.kanade.translation.batch.ReconciliationResult
+import eu.kanade.translation.pipeline.batch.ReconciliationResult
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -507,7 +507,7 @@ class ChapterTranslator(
 
     private suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
         var store: ChapterTranslationStore? = null
-        var tracker: eu.kanade.translation.batch.TranslationBatchProgressTracker? = null
+        var tracker: eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker? = null
         var batchReconciliation: ReconciliationResult? = null
         var batchOrderedPageKeys: List<String> = emptyList()
         try {
@@ -651,7 +651,7 @@ class ChapterTranslator(
                 }
                 else -> {
                     val pageStates = store.state.value
-                    val reconciliation = eu.kanade.translation.batch.BatchProgressReconciler.reconcile(
+                    val reconciliation = eu.kanade.translation.pipeline.batch.BatchProgressReconciler.reconcile(
                         pageMap = pageStates,
                         orderedKeys = batchOrderedPageKeys,
                         activeGeneration = store.currentGeneration,

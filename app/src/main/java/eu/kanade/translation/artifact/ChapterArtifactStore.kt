@@ -1,8 +1,8 @@
 package eu.kanade.translation.artifact
 
-import eu.kanade.translation.batch.BatchDiagnosticReason
-import eu.kanade.translation.batch.BatchDiagnosticStage
-import eu.kanade.translation.batch.BatchTranslationDiagnostics
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
+import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.detachedCopy

@@ -1,4 +1,4 @@
-package eu.kanade.translation.batch
+package eu.kanade.translation.pipeline.batch
 
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList

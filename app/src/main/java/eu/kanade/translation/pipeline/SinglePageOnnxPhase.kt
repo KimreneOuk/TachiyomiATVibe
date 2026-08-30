@@ -8,8 +8,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.StagePatchResult
-import eu.kanade.translation.batch.BatchDiagnosticStage
-import eu.kanade.translation.batch.BatchPersistenceRejectedException
+import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
+import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.finalizePostOcrStage
 import eu.kanade.translation.inpainting.InpaintingMode

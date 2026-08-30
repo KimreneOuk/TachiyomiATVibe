@@ -14,7 +14,7 @@ import org.junit.jupiter.api.Test
  *
  * The artifact-scan half of bug 3 — a re-queued chapter reuses READY OCR/
  * inpaint/translation and only reruns missing work — is already covered by
- * [eu.kanade.translation.batch.BatchResumeGateDeciderTest], which is the
+ * [eu.kanade.translation.pipeline.batch.BatchResumeGateDeciderTest], which is the
  * helper translateBatch consults per page.
  */
 class ChapterQueueConflictDetectionTest {

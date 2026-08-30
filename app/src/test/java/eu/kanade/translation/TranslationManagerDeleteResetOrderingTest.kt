@@ -1,7 +1,7 @@
 package eu.kanade.translation
 
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation

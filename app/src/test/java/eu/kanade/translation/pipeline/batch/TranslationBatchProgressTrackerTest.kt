@@ -1,4 +1,4 @@
-package eu.kanade.translation.batch
+package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.AiPageProgressState

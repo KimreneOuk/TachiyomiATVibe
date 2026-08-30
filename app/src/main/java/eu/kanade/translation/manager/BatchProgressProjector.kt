@@ -6,7 +6,7 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
-import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
+import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.Translation

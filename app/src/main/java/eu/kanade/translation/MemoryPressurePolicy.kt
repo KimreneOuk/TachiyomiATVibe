@@ -15,7 +15,7 @@ package eu.kanade.translation
  * This object consolidates the thresholds into one pure, JVM-testable classifier
  * (no `ComponentCallbacks2` statics are referenced here: those Android framework
  * constants do not resolve in plain-JVM unit tests, which is how every other policy
- * object in this package — [eu.kanade.translation.batch.BatchOomPolicy],
+ * object in this package — [eu.kanade.translation.pipeline.batch.BatchOomPolicy],
  * [eu.kanade.translation.scheduling.TranslationLifecyclePolicy] — is structured).
  * The numeric values mirror `ComponentCallbacks2` exactly.
  */

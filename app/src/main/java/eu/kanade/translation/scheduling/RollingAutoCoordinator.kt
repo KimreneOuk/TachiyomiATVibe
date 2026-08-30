@@ -1,7 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.TranslationSession
-import eu.kanade.translation.batch.ChunkCompletionOutcome
+import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
 import eu.kanade.translation.translator.ProviderFailureRetryability

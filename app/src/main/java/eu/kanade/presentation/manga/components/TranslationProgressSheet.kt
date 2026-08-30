@@ -61,7 +61,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
-import eu.kanade.translation.batch.BatchPhase
+import eu.kanade.translation.pipeline.batch.BatchPhase
 import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
 import eu.kanade.translation.model.StageCount
