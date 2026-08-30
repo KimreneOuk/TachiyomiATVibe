@@ -28,6 +28,25 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 
 /**
+ * T911 slice 2: the chapter's 1-based position among the outstanding
+ * translation-queue entries (QUEUE/TRANSLATING), and the total. Null when the
+ * chapter is not part of the outstanding work. Pure so the projection and its
+ * test agree on what "2nd of 3" means.
+ */
+internal fun translationQueuePosition(
+    queue: List<Translation>,
+    chapterId: Long,
+): Pair<Int, Int>? {
+    val outstanding = queue.filter { translation ->
+        translation.status == Translation.State.QUEUE ||
+            translation.status == Translation.State.TRANSLATING
+    }
+    val index = outstanding.indexOfFirst { it.chapter.id == chapterId }
+    if (index < 0) return null
+    return (index + 1) to outstanding.size
+}
+
+/**
  * Batch progress projection moved from `TranslationManager` (T909 Phase 11).
  * Pure flow graph — no locks. Manager state arrives as providers and is
  * re-read on every access, matching the manager's per-access construction.
@@ -223,8 +242,25 @@ internal class BatchProgressProjector(
                 }
             }
         }
-        .map { snapshot -> snapshot.projectQueueStatus(queueStatus) }
+        .map { snapshot ->
+            snapshot
+                .projectQueueStatus(queueStatus)
+                .withQueuePosition(chapterId)
+        }
         .distinctUntilChanged()
+
+    /**
+     * T911 slice 2: attach the chapter's truthful position among the
+     * outstanding translation-queue entries so a later chapter's drawer can
+     * say "Queued (2nd of 3)" instead of implying it can resume now.
+     */
+    private fun TranslationProgressSnapshot.withQueuePosition(
+        chapterId: Long,
+    ): TranslationProgressSnapshot {
+        if (state != Translation.State.QUEUE) return this
+        val (position, total) = translationQueuePosition(queueState.value, chapterId) ?: return this
+        return copy(queuePosition = position, queueTotal = total)
+    }
 
     private fun snapshotFromStore(
         chapterId: Long,

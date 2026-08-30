@@ -135,7 +135,14 @@ class MangaScreen(
             onChapterClicked = { openChapter(context, it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
             // TachiyomiAT
-            onTranslationChapter = screenModel::runChapterTranslationActions,
+            onTranslationChapter = { item, action ->
+                screenModel.runChapterTranslationActions(item, action)
+            },
+            // T911 slice 2 (R6): multi-select bottom bar reaches the model's
+            // list API so ONE confirmation represents the whole selection.
+            onTranslationChapters = { items, action ->
+                screenModel.runChapterTranslationActions(items, action)
+            },
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -353,7 +360,9 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.ConfirmTranslation -> {
                 ConfirmTranslationDialog(
-                    chapterName = dialog.item.chapter.name,
+                    chapterNames = dialog.group
+                        .ifEmpty { listOf(dialog.item) }
+                        .map { it.chapter.name },
                     summary = dialog.summary,
                     showAgain = screenModel.translationConfirmPretranslate(),
                     onShowAgainChange = screenModel::setConfirmPretranslate,

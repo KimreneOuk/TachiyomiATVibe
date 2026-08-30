@@ -31,12 +31,15 @@ import tachiyomi.presentation.core.i18n.stringResource
  * change something. The "Don't show this again" checkbox toggles the
  * `translationConfirmPretranslate` preference immediately.
  *
+ * T911 slice 2 (R6): one dialog represents the WHOLE multi-select batch —
+ * every selected chapter is listed by name.
+ *
  * Mirrors the [DeleteChaptersDialog] skeleton (AlertDialog + onDismissRequest /
  * onConfirm) and the [TranslationProgressSheet] summary-column layout.
  */
 @Composable
 fun ConfirmTranslationDialog(
-    chapterName: String,
+    chapterNames: List<String>,
     summary: TranslationSettingsSummary,
     showAgain: Boolean,
     onShowAgainChange: (Boolean) -> Unit,
@@ -71,11 +74,15 @@ fun ConfirmTranslationDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(MaterialTheme.padding.small),
             ) {
-                Text(
-                    text = chapterName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Column {
+                    chapterNames.forEach { name ->
+                        Text(
+                            text = name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
 
                 Spacer(Modifier.height(MaterialTheme.padding.extraSmall))
 

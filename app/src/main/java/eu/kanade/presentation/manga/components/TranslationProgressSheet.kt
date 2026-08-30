@@ -531,7 +531,9 @@ private fun LiveStatusPill(
         isAborted -> MaterialTheme.colorScheme.error
         paused -> WarningAmber
         isTerminal -> SuccessGreen
-        requestPhase == TranslationRequestPhase.DOWNLOAD_FAILED -> MaterialTheme.colorScheme.error
+        requestPhase == TranslationRequestPhase.DOWNLOAD_FAILED ||
+            requestPhase == TranslationRequestPhase.CANCELLED ||
+            requestPhase == TranslationRequestPhase.ADMISSION_FAILED -> MaterialTheme.colorScheme.error
         requestPhase != null -> MaterialTheme.colorScheme.tertiary
         isResuming || isTranslating -> MaterialTheme.colorScheme.primary
         snapshot.state == eu.kanade.translation.model.Translation.State.QUEUE -> WarningAmber
@@ -570,6 +572,10 @@ private fun LiveStatusPill(
                             stringResource(ATMR.strings.manga_batch_phase_preparing)
                         TranslationRequestPhase.DOWNLOAD_FAILED ->
                             stringResource(ATMR.strings.manga_batch_phase_download_failed)
+                        TranslationRequestPhase.CANCELLED ->
+                            stringResource(ATMR.strings.manga_batch_phase_cancelled)
+                        TranslationRequestPhase.ADMISSION_FAILED ->
+                            stringResource(ATMR.strings.manga_batch_phase_admission_failed)
                     }
                     isResuming -> "Resuming..."
                     isTranslating -> "In Progress"
@@ -842,10 +848,32 @@ private fun phaseSubtitleLine(hero: BatchHeroProjection.Phase): String {
         BatchHeroPhase.FINALIZING -> "Finalizing translated chapter..."
         BatchHeroPhase.COMPLETED -> "All pages translated and ready to read"
         BatchHeroPhase.FAILED_NO_PAGES -> "Translation failed — chapter has no readable pages"
+        BatchHeroPhase.CANCELLED -> "Translation cancelled — the chapter download was cancelled or removed"
+        BatchHeroPhase.ADMISSION_FAILED ->
+            "Translation could not be queued — check the source and translation settings"
     }
 }
 
-/** TachiyomiAT T911 slice 1: hero label for unknown-total phases (never 0/0). */
+/** T911 slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ..." (never implies it can resume now). */
+internal fun queuePositionLabel(position: Int, total: Int): String =
+    "Queued (${ordinalSuffix(position)} of $total) — waiting for earlier batches"
+
+/** 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 4 -> "4th", 11-13 -> "th". */
+internal fun ordinalSuffix(value: Int): String {
+    val mod100 = value % 100
+    val suffix = when {
+        mod100 in 11..13 -> "th"
+        else -> when (value % 10) {
+            1 -> "st"
+            2 -> "nd"
+            3 -> "rd"
+            else -> "th"
+        }
+    }
+    return "$value$suffix"
+}
+
+/** T911 slice 1: hero label for unknown-total phases (never 0/0). */
 @Composable
 private fun phaseHeroLabel(hero: BatchHeroProjection.Phase): String = when (hero.phase) {
     BatchHeroPhase.ACCEPTED -> stringResource(ATMR.strings.manga_batch_phase_accepted)
@@ -859,6 +887,8 @@ private fun phaseHeroLabel(hero: BatchHeroProjection.Phase): String = when (hero
     BatchHeroPhase.FINALIZING -> stringResource(ATMR.strings.manga_batch_phase_finalizing)
     BatchHeroPhase.COMPLETED -> stringResource(ATMR.strings.manga_batch_phase_completed)
     BatchHeroPhase.FAILED_NO_PAGES -> stringResource(ATMR.strings.manga_batch_phase_failed_no_pages)
+    BatchHeroPhase.CANCELLED -> stringResource(ATMR.strings.manga_batch_phase_cancelled)
+    BatchHeroPhase.ADMISSION_FAILED -> stringResource(ATMR.strings.manga_batch_phase_admission_failed)
 }
 
 internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isResuming: Boolean = false): String {
@@ -873,6 +903,10 @@ internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, is
                 "Waiting for chapter download before translation"
             eu.kanade.translation.model.TranslationRequestPhase.DOWNLOAD_FAILED ->
                 "Download failed — retry to continue"
+            eu.kanade.translation.model.TranslationRequestPhase.CANCELLED ->
+                "Translation cancelled — the chapter download was cancelled or removed"
+            eu.kanade.translation.model.TranslationRequestPhase.ADMISSION_FAILED ->
+                "Translation could not be queued — check the source and translation settings"
         } + request.reason.orEmpty().takeIf { it.isNotBlank() }?.let { " — $it" }.orEmpty()
     }
     if (snapshot.state == eu.kanade.translation.model.Translation.State.PAUSED ||
@@ -886,7 +920,12 @@ internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, is
     }
     return when (snapshot.batchPhase) {
         TranslationBatchPhase.IDLE -> when (snapshot.state) {
-            eu.kanade.translation.model.Translation.State.QUEUE -> "Queued — ready to resume remaining pages"
+            eu.kanade.translation.model.Translation.State.QUEUE ->
+                // T911 slice 2: a queued chapter that is not first in line must
+                // say so instead of implying it can resume now.
+                snapshot.queuePosition?.takeIf { position -> snapshot.queueTotal != null && position > 1 }
+                    ?.let { position -> queuePositionLabel(position, snapshot.queueTotal ?: position) }
+                    ?: "Queued — ready to resume remaining pages"
             eu.kanade.translation.model.Translation.State.TRANSLATING -> "Building context & scanning completed pages..."
             else -> "No active batch in progress"
         }

@@ -44,6 +44,12 @@ enum class BatchHeroPhase {
 
     /** Terminal failure of a chapter that has no translation pages at all. */
     FAILED_NO_PAGES,
+
+    /** T911 slice 2: the download was cancelled/removed/cleared/stopped. */
+    CANCELLED,
+
+    /** T911 slice 2 (R10): the translation queue refused admission (not a download failure). */
+    ADMISSION_FAILED,
 }
 
 sealed interface BatchHeroProjection {
@@ -117,6 +123,10 @@ sealed interface BatchHeroProjection {
                 return when (request.phase) {
                     TranslationRequestPhase.DOWNLOAD_FAILED ->
                         Phase(phase = BatchHeroPhase.DOWNLOAD_FAILED, isError = true)
+                    TranslationRequestPhase.CANCELLED ->
+                        Phase(phase = BatchHeroPhase.CANCELLED, isError = true)
+                    TranslationRequestPhase.ADMISSION_FAILED ->
+                        Phase(phase = BatchHeroPhase.ADMISSION_FAILED, isError = true)
                     TranslationRequestPhase.STARTING -> Phase(phase = BatchHeroPhase.ACCEPTED)
                     TranslationRequestPhase.PREPARING -> Phase(phase = BatchHeroPhase.PREPARING)
                     TranslationRequestPhase.WAITING_FOR_DOWNLOAD -> when (downloadState) {

@@ -223,4 +223,8 @@
     <string name="manga_batch_phase_finalizing">Finalizing translated chapter</string>
     <string name="manga_batch_phase_completed">Completed</string>
     <string name="manga_batch_phase_failed_no_pages">Translation failed — chapter has no readable pages</string>
+    <!-- TachiyomiAT T911 slice 2: explicit terminal download-side states and the
+         R10 admission-failure state that must never read as a download failure. -->
+    <string name="manga_batch_phase_cancelled">Translation cancelled</string>
+    <string name="manga_batch_phase_admission_failed">Translation could not be queued</string>
 </resources>

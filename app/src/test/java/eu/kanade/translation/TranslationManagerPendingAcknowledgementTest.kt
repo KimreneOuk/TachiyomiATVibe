@@ -130,8 +130,11 @@ class TranslationManagerPendingAcknowledgementTest {
         removals: MutableList<Long> = mutableListOf(),
     ): TranslationPendingRequestStore = mockk<TranslationPendingRequestStore>(relaxed = true).also {
         every { it.load() } returns emptySet()
-        every { it.add(any(), any(), any()) } answers {
-            committed += Triple(firstArg(), secondArg(), thirdArg())
+        every { it.record(any()) } returns null
+        every { it.generation(any()) } returns 0L
+        every { it.add(any<TranslationPendingRequestRecord>()) } answers {
+            val record = firstArg<TranslationPendingRequestRecord>()
+            committed += Triple(record.chapterId, record.phase, record.reason)
         }
         every { it.remove(any()) } answers { removals += firstArg<Long>() }
     }
@@ -162,6 +165,10 @@ class TranslationManagerPendingAcknowledgementTest {
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "pendingRequestMutationLock", Any())
         setField(manager, "storeScope", CoroutineScope(laneJob + Dispatchers.IO))
+        // T911 slice 2: generation/attach/group state the coordinator resolves.
+        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
+        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
+        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
         return manager
     }
 

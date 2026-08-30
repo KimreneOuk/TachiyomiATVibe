@@ -1,9 +1,12 @@
 package eu.kanade.translation
 
 import android.content.Context
+import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldBeNull
+import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.comparables.shouldBeGreaterThan
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -82,5 +85,110 @@ class TranslationPendingRequestStoreTest {
         preferences.entries["junk"] = "not-a-chapter"
 
         store.load() shouldContainExactly setOf(7L)
+    }
+
+    // T911 slice 2: durable record (generation/group/timestamps/typed failure)
+
+    @Test
+    fun `legacy pending entry without new fields parses with defaults`() {
+        // Simulate a pre-slice-2 entry: phase + reason keys only.
+        preferences.entries["9"] = TranslationRequestPhase.WAITING_FOR_DOWNLOAD.name
+        preferences.entries["9.reason"] = "Chapter download failed"
+        val store = newStore()
+
+        val record = store.record(9L).shouldNotBeNull()
+
+        record.chapterId shouldBe 9L
+        record.phase shouldBe TranslationRequestPhase.WAITING_FOR_DOWNLOAD
+        record.reason shouldBe "Chapter download failed"
+        // Migration rule: no generation, no group, no timestamps, no failure kind.
+        record.generation shouldBe 0L
+        record.groupId.shouldBeNull()
+        record.failureKind shouldBe TranslationRequestFailureKind.NONE
+        record.createdAtEpochMs shouldBe 0L
+        record.updatedAtEpochMs shouldBe 0L
+        store.generation(9L) shouldBe 0L
+        store.load() shouldContainExactly setOf(9L)
+    }
+
+    @Test
+    fun `rich record round-trips every new field`() {
+        val store = newStore()
+        val written = TranslationPendingRequestRecord(
+            chapterId = 11L,
+            phase = TranslationRequestPhase.DOWNLOAD_FAILED,
+            reason = "Interrupted",
+            generation = 4L,
+            groupId = "batch-2",
+            failureKind = TranslationRequestFailureKind.INTERRUPTED,
+            createdAtEpochMs = 1_000L,
+            updatedAtEpochMs = 2_000L,
+        )
+
+        store.add(written)
+        val read = store.record(11L)
+
+        read shouldBe written
+        store.generation(11L) shouldBe 4L
+    }
+
+    @Test
+    fun `legacy phase write preserves generation group and failure kind`() {
+        val store = newStore()
+        store.add(
+            TranslationPendingRequestRecord(
+                chapterId = 12L,
+                phase = TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                generation = 6L,
+                groupId = "batch-9",
+                failureKind = TranslationRequestFailureKind.DOWNLOAD_FAILED,
+                createdAtEpochMs = 50L,
+                updatedAtEpochMs = 60L,
+            ),
+        )
+
+        store.add(12L, TranslationRequestPhase.DOWNLOAD_FAILED, "Chapter download failed")
+
+        val record = store.record(12L)!!
+        record.phase shouldBe TranslationRequestPhase.DOWNLOAD_FAILED
+        record.reason shouldBe "Chapter download failed"
+        record.generation shouldBe 6L
+        record.groupId shouldBe "batch-9"
+        record.failureKind shouldBe TranslationRequestFailureKind.DOWNLOAD_FAILED
+        record.createdAtEpochMs shouldBe 50L
+        // The legacy shim refreshes the update timestamp.
+        record.updatedAtEpochMs shouldBeGreaterThan 50L
+    }
+
+    @Test
+    fun `remove keeps a bumped generation tombstone for the next request`() {
+        val store = newStore()
+        store.add(
+            TranslationPendingRequestRecord(
+                chapterId = 13L,
+                phase = TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                generation = 3L,
+            ),
+        )
+
+        store.remove(13L)
+
+        store.record(13L).shouldBeNull()
+        store.load() shouldContainExactly emptySet()
+        // Tombstone: a re-request must never reuse generation 3.
+        store.generation(13L) shouldBe 4L
+        // The tombstone key is not projected as a pending chapter.
+        preferences.entries.keys.none { it == "13" } shouldBe true
+    }
+
+    @Test
+    fun `legacy entry remains loadable after a new-format write and remove cycle`() {
+        val store = newStore()
+        store.add(14L, TranslationRequestPhase.STARTING, null)
+        store.add(14L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD, null)
+        store.remove(14L)
+        // An old-format reader only looks at the numeric phase key: it must be gone.
+        preferences.entries.containsKey("14") shouldBe false
+        store.phase(14L).shouldBeNull()
     }
 }

@@ -15,6 +15,7 @@ import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.DiskUtil.NOMEDIA_FILE
 import eu.kanade.tachiyomi.util.storage.saveTo
 import eu.kanade.translation.TranslationManager
+import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -117,6 +118,13 @@ class Downloader(
         launchNow {
             val chapters = async { store.restore() }
             addAllToQueue(chapters.await())
+            // T911 slice 2 (R9): downloader side of the startup reconciliation
+            // readiness barrier. No-op for the downloader; the translation
+            // manager runs its one-shot pending-request pass once both queues
+            // have restored.
+            translationManager.onDownloadQueueRestored(
+                queueState.value.mapNotNull { it.chapter.id }.toSet(),
+            )
         }
     }
 
@@ -146,9 +154,17 @@ class Downloader(
      */
     fun stop(reason: String? = null) {
         cancelDownloaderJob()
-        queueState.value
-            .filter { it.status == Download.State.DOWNLOADING }
-            .forEach { it.status = Download.State.ERROR }
+        val interrupted = queueState.value.filter { it.status == Download.State.DOWNLOADING }
+        interrupted.forEach { it.status = Download.State.ERROR }
+        // T911 slice 2 (R5): a stop that kills in-flight downloads (offline,
+        // Wi-Fi policy, generic stop) must reach the pending-request owner, or
+        // the batch drawer waits forever. No-op without a pending request.
+        interrupted.forEach { download ->
+            translationManager.onDownloadStoppedForTranslation(
+                download.chapter.id,
+                reason ?: "Downloader stopped",
+            )
+        }
 
         if (reason != null) {
             notifier.onWarning(reason)
@@ -183,7 +199,15 @@ class Downloader(
     fun clearQueue() {
         cancelDownloaderJob()
 
+        val clearedChapterIds = queueState.value
+            .filter { it.status == Download.State.DOWNLOADING || it.status == Download.State.QUEUE }
+            .mapNotNull { it.chapter.id }
         internalClearQueue()
+        // T911 slice 2 (R5): clearing the queue cancels any pending
+        // translation waiting on those downloads. No-op without a request.
+        clearedChapterIds.forEach { chapterId ->
+            translationManager.onDownloadQueueClearedForTranslation(chapterId)
+        }
         notifier.dismissProgress()
     }
 
@@ -249,8 +273,17 @@ class Downloader(
             }
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
+            // T911 slice 2 (R5): failures before the protected try (manga dir,
+            // storage probing, tmp-dir creation) reach this outer catch, which
+            // previously stopped the downloader without telling the
+            // pending-request owner. Existence-checked, so it is a no-op for
+            // ordinary downloads.
             logcat(LogPriority.ERROR, e)
             notifier.onError(e.message)
+            translationManager.markTranslationDownloadFailed(
+                download.chapter.id,
+                e.message ?: "Download failed before it could start",
+            )
             stop()
         }
     }
@@ -273,7 +306,19 @@ class Downloader(
     fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean) {
         if (chapters.isEmpty()) return
 
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+        val source = sourceManager.get(manga.source) as? HttpSource ?: run {
+            // T911 slice 2 (R5): a silent rejection used to strand a pending
+            // translation request in WAITING forever. Fail it explicitly;
+            // no-op for chapters without a pending request.
+            chapters.forEach { chapter ->
+                translationManager.markTranslationDownloadFailed(
+                    chapter.id,
+                    "Source does not support downloads",
+                    TranslationRequestFailureKind.SOURCE_UNSUPPORTED,
+                )
+            }
+            return
+        }
         val wasEmpty = queueState.value.isEmpty()
         val chaptersToQueue = chapters.asSequence()
             // Filter out those already downloaded.
@@ -323,7 +368,11 @@ class Downloader(
         val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
         if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
             download.status = Download.State.ERROR
-            translationManager.markTranslationDownloadFailed(download.chapter.id, "Insufficient storage")
+            translationManager.markTranslationDownloadFailed(
+                download.chapter.id,
+                "Insufficient storage",
+                TranslationRequestFailureKind.STORAGE,
+            )
             notifier.onError(
                 context.stringResource(MR.strings.download_insufficient_space),
                 download.chapter.name,
@@ -684,6 +733,10 @@ class Downloader(
     }
 
     private fun removeFromQueue(download: Download) {
+        // Only an active download's removal cancels the wait; a DOWNLOADED
+        // chapter leaves the queue as part of its successful completion.
+        val wasActive = download.status == Download.State.DOWNLOADING ||
+            download.status == Download.State.QUEUE
         _queueState.update {
             store.remove(download)
             if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
@@ -691,18 +744,30 @@ class Downloader(
             }
             it - download
         }
+        // T911 slice 2 (R5): removing/cancelling the download must reach the
+        // pending-request owner. No-op without a pending request.
+        if (wasActive) {
+            translationManager.onDownloadCancelledForTranslation(download.chapter.id)
+        }
     }
 
     private inline fun removeFromQueueIf(predicate: (Download) -> Boolean) {
+        val removedChapterIds = mutableListOf<Long>()
         _queueState.update { queue ->
             val downloads = queue.filter { predicate(it) }
             store.removeAll(downloads)
             downloads.forEach { download ->
                 if (download.status == Download.State.DOWNLOADING || download.status == Download.State.QUEUE) {
                     download.status = Download.State.NOT_DOWNLOADED
+                    download.chapter.id?.let(removedChapterIds::add)
                 }
             }
             queue - downloads
+        }
+        // T911 slice 2 (R5): bulk removal (chapter delete, manga delete, user
+        // cancel) fails the attached translation requests explicitly.
+        removedChapterIds.forEach { chapterId ->
+            translationManager.onDownloadCancelledForTranslation(chapterId)
         }
     }
 

@@ -896,6 +896,11 @@ class MangaScreenModel(
         val item = items.first()
         when (action) {
             ChapterTranslationAction.START -> {
+                // T911 slice 2 (R6): the whole selection is ONE batch — the
+                // group is stored once and (when enabled) one confirmation
+                // dialog represents all selected chapters. The bottom bar now
+                // calls this list path once instead of looping the
+                // single-item callback, which used to keep only the last item.
                 pendingTranslationGroup = items
                 // TachiyomiAT: gate batch translation behind a read-only settings
                 // review popup so the user can verify source/target language,
@@ -904,7 +909,7 @@ class MangaScreenModel(
                 // (translationConfirmPretranslate preference); the reader per-page
                 // path is unaffected.
                 if (translationPreferences.translationConfirmPretranslate().get()) {
-                    showConfirmTranslationDialog(item)
+                    showConfirmTranslationDialog(items)
                 } else {
                     confirmChapterTranslation(item)
                 }
@@ -1007,10 +1012,19 @@ class MangaScreenModel(
      * TachiyomiAT: shows the read-only settings review popup before a batch
      * translation runs. The popup renders the current [TranslationSettingsSummary]
      * and lets the user proceed, open settings, or suppress future popups.
+     * T911 slice 2 (R6): the popup represents the WHOLE selection; the dialog
+     * lists every selected chapter name.
      */
     fun showConfirmTranslationDialog(item: ChapterList.Item) {
+        showConfirmTranslationDialog(listOf(item))
+    }
+
+    fun showConfirmTranslationDialog(items: List<ChapterList.Item>) {
         val summary = translationPreferences.snapshotTranslationSummary()
-        updateSuccessState { it.copy(dialog = Dialog.ConfirmTranslation(item, summary)) }
+        val primary = items.first()
+        updateSuccessState {
+            it.copy(dialog = Dialog.ConfirmTranslation(primary, summary, items))
+        }
     }
 
     /**
@@ -1039,7 +1053,8 @@ class MangaScreenModel(
         updateTranslationRequests(translationManager.pendingTranslationRequests.value)
         // TachiyomiAT T911 slice 1: confirmation opens the progress drawer
         // immediately — accepted work must be observable without a second tap.
-        // This is the same UI transaction as the acknowledgement above; the
+        // The drawer opens for the primary (first) chapter of the batch; this
+        // is the same UI transaction as the acknowledgement above and the
         // async probe below never performs navigation.
         openTranslationProgressDrawer(item)
         screenModelScope.launch {
@@ -1049,8 +1064,19 @@ class MangaScreenModel(
             // is stale or empty, which previously made this branch queue an
             // in-memory translate-after-download request that the downloader then
             // filtered out silently, so the batch never started at all.
+            //
+            // T911 slice 2 (R7): the request generation captured at
+            // acknowledgement fences every durable mutation below, so a user
+            // cancel landing between a check and its use cannot be undone by
+            // the in-flight probe.
+            val generations = group.mapNotNull { candidate ->
+                candidate.chapter.id?.let { chapterId ->
+                    chapterId to translationManager.pendingRequestGeneration(chapterId)
+                }
+            }.filter { (_, generation) -> generation != null }
+                .associate({ (chapterId, generation) -> chapterId to generation!! })
             val requestedGroup = group.filter { candidate ->
-                candidate.chapter.id?.let(translationManager::hasPendingTranslationRequest) == true
+                candidate.chapter.id?.let { chapterId -> generations.containsKey(chapterId) } == true
             }
             if (requestedGroup.isEmpty()) return@launch
             val (downloaded, awaitingDownload) = withIOContext {
@@ -1064,37 +1090,55 @@ class MangaScreenModel(
                     )
                 }
             }
-            val pendingAwaitingDownload = awaitingDownload.filter { candidate ->
-                candidate.chapter.id?.let(translationManager::hasPendingTranslationRequest) == true
+            // Fenced WAITING writes + download attach (drop cancelled candidates).
+            val admittedAwaitingDownload = awaitingDownload.filter { candidate ->
+                val chapterId = candidate.chapter.id ?: return@filter false
+                val generation = generations[chapterId] ?: return@filter false
+                translationManager.queueTranslationAfterDownloadIfCurrent(
+                    manga,
+                    candidate.chapter,
+                    generation,
+                )
             }
-            pendingAwaitingDownload.forEach { candidate ->
-                translationManager.queueTranslationAfterDownload(manga, candidate.chapter)
-            }
-            if (pendingAwaitingDownload.isNotEmpty()) {
+            if (admittedAwaitingDownload.isNotEmpty()) {
                 enqueueTranslationDownloads(
                     downloadManager,
                     manga,
-                    pendingAwaitingDownload.map { it.chapter },
+                    admittedAwaitingDownload.map { it.chapter },
                 )
             }
+            // Re-check immediately before admission: still the same request.
             val pendingDownloaded = downloaded.filter { candidate ->
-                candidate.chapter.id?.let(translationManager::hasPendingTranslationRequest) == true
+                val chapterId = candidate.chapter.id ?: return@filter false
+                val generation = generations[chapterId] ?: return@filter false
+                translationManager.isTranslationRequestCurrent(chapterId, generation)
             }
             if (pendingDownloaded.isEmpty()) return@launch
-            pendingDownloaded.forEach { candidate ->
-                candidate.chapter.id?.let(translationManager::markTranslationRequestPreparing)
-            }
             if (pendingDownloaded.size > 1) {
-                translationManager.translateChapters(manga, pendingDownloaded.map { it.chapter })
+                // List API: one fenced admission for the whole batch, no
+                // same-source silent eviction (R6).
+                translationManager.translateChaptersIfCurrent(
+                    manga,
+                    pendingDownloaded.map { it.chapter },
+                    generations,
+                )
                 return@launch
             }
             val target = pendingDownloaded.single()
+            val targetGeneration = generations[target.chapter.id]
+            // Keep the row in PREPARING while the conflict preflight runs.
+            target.chapter.id?.let { chapterId ->
+                targetGeneration?.let { generation ->
+                    translationManager.markTranslationRequestPreparingIfCurrent(chapterId, generation)
+                }
+            }
             logcat(LogPriority.INFO) {
                 "TachiyomiAT translate START: chapter=${target.chapter.name} manga=${manga.title} " +
                     "lastPageRead=${target.chapter.lastPageRead}"
             }
             when (val preflight = translationManager.translateChapterPreflight(manga, target.chapter)) {
-                is ChapterQueuePreflight.NoConflict -> launchTranslateChapter(manga, target.chapter)
+                is ChapterQueuePreflight.NoConflict ->
+                    launchTranslateChapter(manga, target.chapter, targetGeneration)
                 is ChapterQueuePreflight.RunningConflict -> {
                     updateSuccessState {
                         it.copy(dialog = Dialog.RunningTranslationConflict(target, preflight))
@@ -1151,9 +1195,13 @@ class MangaScreenModel(
         }
     }
 
-    private fun launchTranslateChapter(manga: Manga, chapter: Chapter) {
+    private fun launchTranslateChapter(
+        manga: Manga,
+        chapter: Chapter,
+        expectedRequestGeneration: Long? = null,
+    ) {
         screenModelScope.launchNonCancellable {
-            translationManager.translateChapter(manga, chapter)
+            translationManager.translateChapter(manga, chapter, expectedRequestGeneration)
         }
     }
 
@@ -1566,6 +1614,9 @@ class MangaScreenModel(
         data class ConfirmTranslation(
             val item: ChapterList.Item,
             val summary: TranslationSettingsSummary,
+            // T911 slice 2 (R6): the confirmation represents the whole
+            // selection; empty means the single [item] (legacy shape).
+            val group: List<ChapterList.Item> = emptyList(),
         ) : Dialog
 
         // TachiyomiAT bug 3: another chapter of the same source is actively

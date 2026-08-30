@@ -474,8 +474,25 @@ class ChapterTranslator(
         }
     }
 
-    fun queueChapter(manga: Manga, chapter: Chapter) {
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+    /**
+     * T911 slice 2 (R10): mirrors [queueChapter]'s config preflight so callers
+     * can classify an admission rejection (config invalid vs source unsupported)
+     * without duplicating preference parsing. Add-only; queueChapter is untouched.
+     */
+    fun isQueueConfigValid(): Boolean = runCatching {
+        if (
+            TranslationEngineBuilder.isMlKitActive(translationPreferences) &&
+            !TextTranslatorLanguage.mlkitSupportedLanguages()
+                .contains(TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage()))
+        ) {
+            return false
+        }
+        TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
+        TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+        true
+    }.getOrDefault(false)
+
+    fun queueChapter(manga: Manga, chapter: Chapter) {        val source = sourceManager.get(manga.source) as? HttpSource ?: return
         if (queueState.value.any { it.chapter.id == chapter.id }) return
         // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
         // (corrupted/migrated pref). This runs on a UI action, so a thrown
