@@ -6,6 +6,14 @@ Research records and investigation documents for the manga translation overlay r
 
 ---
 
+> **Repository note (2026-08-30):** the `companion_server/` Python
+> implementation was removed from the repository (stale, not in active
+> development). It remains recoverable from git history (last touched in
+> commit `1a6f082`, July 2026). References to it in the notes below are
+> historical records of investigations done at the time.
+
+---
+
 ## Document index
 
 ### Rendering & overlay (core)
