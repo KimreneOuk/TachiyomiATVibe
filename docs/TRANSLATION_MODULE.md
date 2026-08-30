@@ -197,44 +197,47 @@ translation/
 │  ├─ StorePersistenceScheduler.kt      Store persistence scheduling
 │  └─ StoreStatusProjector.kt     Store status projection
 │
-├─ translator/
-│  ├─ AiModelFetcher.kt           ★ PURE parseOpenAiModels/parseGeminiModels/normalizeBaseUrl
+├─ translator/                    Translation stage — root is the contract + engine-selection surface
 │  ├─ AiTranslatorKind.kt         AI translator enum (Gemini/DeepSeek/OpenRouter/LM Studio)
-│  ├─ AiTranslationRetryController.kt   AI retry controller
-│  ├─ AiTranslationRetryPlanner.kt      ★ PURE AI retry planning
-│  ├─ AiTranslator.kt              Abstract AI-adapter base (OpenAI-shape HTTP + Gemini SDK)
-│  ├─ BaseTranslator.kt           Translator base class
-│  ├─ BatchTranslationProtocol.kt Batch prompt/response protocol
-│  ├─ ChapterGlossaryBuilder.kt   ★ PURE glossary building
-│  ├─ ContextualRequestBuilder.kt Contextual (chunked) request building
-│  ├─ ContextualResponseParser.kt Contextual response parsing (request-local IDs)
-│  ├─ ContextualTranslationBatch.kt     Contextual batch model
-│  ├─ DeepLApi.kt                 DeepL endpoint/auth helper (Free vs Pro host from `:fx` key suffix)
-│  ├─ DeepLTranslator.kt          DeepL adapter
-│  ├─ DeepSeekTranslator.kt       DeepSeek adapter (pipe-delimited ID/status protocol)
-│  ├─ GeminiTranslator.kt         Gemini adapter
-│  ├─ GoogleTranslator.kt         Google Translate adapter
-│  ├─ LmStudioTranslator.kt       LM Studio adapter (pipe-delimited ID/status protocol)
-│  ├─ MLKitTranslator.kt          On-device ML Kit translator
-│  ├─ NumberedLineResponseParser.kt ★ PURE legacy `[index] text` parser; retained for its standalone contract, not the active AI-provider protocol
-│  ├─ OcrArtifactSanitizer.kt     ★ PURE OCR misread (N°/№/Ｎ０) stripper
-│  ├─ OpenAiCompatibleTranslator.kt     Shared OpenAI-shape chat adapter base
-│  ├─ OpenRouterTranslator.kt     OpenRouter adapter
-│  ├─ ProviderFailureClassification.kt  ★ PURE provider failure classification (typed pause vs retry)
-│  ├─ ProviderRequestGovernor.kt  Provider-request admission governance (single lane)
-│  ├─ StableBlockIds.kt           ★ PURE stable block-ID derivation
+│  ├─ ProviderRequestGovernor.kt  Provider-request admission governance (single lane, retry budgets)
 │  ├─ StandardTranslatorKind.kt   Standard translator enum (ML Kit/Google/DeepL)
-│  ├─ StreamingChunkPlanner.kt    ★ PURE streaming chunk planning (token budget, reading order)
 │  ├─ TextTranslator.kt           Translator interface
 │  ├─ TextTranslatorLanguage.kt   Target-language enum
-│  ├─ TranslationBlockFilters.kt  ★ PURE watermark (RTMTH) block removal
 │  ├─ TranslationBlockValidation.kt ★ PURE post-translate validation (blank/source-equal → PARTIAL/FAILED; all→READY)
-│  ├─ TranslationContextChunkPlanner.kt ★ PURE contextual chunk planning (Pass 2 revision windows)
 │  ├─ TranslationEngineBuilder.kt Resolves active translator from preferences
-│  ├─ TranslationPrompts.kt       Shared `bN|Text|[STATUS]` prompt and response parser
-│  ├─ TranslationResponseFaithfulness.kt ★ PURE response faithfulness checks
-│  ├─ TranslationRetry.kt         ★ PURE retry classification for translation failures
-│  └─ TranslatorComputeClass.kt   LOCAL_COMPUTE / REMOTE_IO classification
+│  ├─ TranslatorComputeClass.kt   LOCAL_COMPUTE / REMOTE_IO classification
+│  ├─ contextual/                 Contextual chunking machinery (the Pass 1/Pass 2 AI-request pipeline)
+│  │  ├─ BatchTranslationProtocol.kt    Batch prompt/response protocol
+│  │  ├─ ChapterGlossaryBuilder.kt      ★ PURE glossary building
+│  │  ├─ ContextualRequestBuilder.kt    Contextual (chunked) request building
+│  │  ├─ ContextualResponseParser.kt    Contextual response parsing (request-local IDs)
+│  │  ├─ ContextualTranslationBatch.kt  Contextual batch model
+│  │  ├─ StableBlockIds.kt              ★ PURE stable block-ID derivation
+│  │  ├─ StreamingChunkPlanner.kt       ★ PURE streaming chunk planning (token budget, reading order)
+│  │  ├─ TranslationBlockFilters.kt     ★ PURE watermark (RTMTH) block removal
+│  │  ├─ TranslationContextChunkPlanner.kt ★ PURE contextual chunk planning (Pass 2 revision windows)
+│  │  ├─ TranslationPrompts.kt          Shared `bN|Text|[STATUS]` prompt and response parser
+│  │  └─ TranslationResponseFaithfulness.kt ★ PURE response faithfulness checks
+│  ├─ providers/                  Provider adapters (HTTP/SDK transports behind TextTranslator)
+│  │  ├─ AiModelFetcher.kt        ★ PURE parseOpenAiModels/parseGeminiModels/normalizeBaseUrl
+│  │  ├─ AiTranslator.kt          Abstract AI-adapter base (OpenAI-shape HTTP + Gemini SDK)
+│  │  ├─ BaseTranslator.kt        Translator base class
+│  │  ├─ DeepLApi.kt              DeepL endpoint/auth helper (Free vs Pro host from `:fx` key suffix)
+│  │  ├─ DeepLTranslator.kt       DeepL adapter
+│  │  ├─ DeepSeekTranslator.kt    DeepSeek adapter (pipe-delimited ID/status protocol)
+│  │  ├─ GeminiTranslator.kt      Gemini adapter
+│  │  ├─ GoogleTranslator.kt      Google Translate adapter
+│  │  ├─ LmStudioTranslator.kt    LM Studio adapter (pipe-delimited ID/status protocol)
+│  │  ├─ MLKitTranslator.kt       On-device ML Kit translator
+│  │  ├─ NumberedLineResponseParser.kt ★ PURE legacy `[index] text` parser; retained for its standalone contract, not the active AI-provider protocol
+│  │  ├─ OcrArtifactSanitizer.kt  ★ PURE OCR misread (N°/№/Ｎ０) stripper
+│  │  ├─ OpenAiCompatibleTranslator.kt  Shared OpenAI-shape chat adapter base
+│  │  └─ OpenRouterTranslator.kt  OpenRouter adapter
+│  └─ retry/                      Provider failure + retry classification
+│     ├─ AiTranslationRetryController.kt  AI retry controller (chunk outcomes)
+│     ├─ AiTranslationRetryPlanner.kt     ★ PURE AI retry planning
+│     ├─ ProviderFailureClassification.kt ★ PURE provider failure classification (typed pause vs retry)
+│     └─ TranslationRetry.kt              ★ PURE retry classification + retry budget primitives
 │
 ├─ util/
 │  ├─ ChapterPages.kt             Shared chapter page listing helper
@@ -1141,11 +1144,11 @@ tracker disposal/LRU, memory-pressure forwarding, and glossary flush behavior.
 
 | Test | Guards |
 |------|--------|
-| `translator/TranslationPromptsTest` | ID-mapped source lines, pipe-delimited Pass 1/Pass 2 prompt contracts, status parsing, language guidance, and rolling/glossary context |
-| `translator/NumberedLineResponseParserTest` | Retained legacy `[index] text` parser contract; not used by current AI adapters |
-| `translator/OcrArtifactSanitizerTest` | N°/Nº/№/Ｎ０/N⁰ strip (before-punct / inline / leading / end-of-string), space collapse, glued-word limitation |
-| `translator/TranslationBlockFiltersTest` | RTMTH watermark removal (case-insensitive, multi-page, embedded) |
-| `translator/AiModelFetcherParseTest` | OpenAI `data[].id` + Gemini model filtering/prefix-strip, kotlinx Json, JSON-null id guard |
+| `translator/contextual/TranslationPromptsTest` | ID-mapped source lines, pipe-delimited Pass 1/Pass 2 prompt contracts, status parsing, language guidance, and rolling/glossary context |
+| `translator/providers/NumberedLineResponseParserTest` | Retained legacy `[index] text` parser contract; not used by current AI adapters |
+| `translator/providers/OcrArtifactSanitizerTest` | N°/Nº/№/Ｎ０/N⁰ strip (before-punct / inline / leading / end-of-string), space collapse, glued-word limitation |
+| `translator/contextual/TranslationBlockFiltersTest` | RTMTH watermark removal (case-insensitive, multi-page, embedded) |
+| `translator/providers/AiModelFetcherParseTest` | OpenAI `data[].id` + Gemini model filtering/prefix-strip, kotlinx Json, JSON-null id guard |
 | `ocr/PaddleCtcDecoderTest` | CTC blank-collapse, space class, argmax |
 | `ocr/MangaOcrDecoderGuardTest` | (REMOVED — the guard helpers it tested were reverted; see Memory contract #2. Do not reintroduce without an on-device regression test.) |
 | `ocr/OcrModelCatalogTest` | entries/coerce/defaultFor/isCompatible/labelsFor |

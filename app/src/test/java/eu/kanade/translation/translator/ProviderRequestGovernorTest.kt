@@ -1,4 +1,7 @@
 package eu.kanade.translation.translator
+import eu.kanade.translation.translator.retry.withTranslationRetry
+import eu.kanade.translation.translator.retry.classifyHttpFailure
+import eu.kanade.translation.translator.retry.RetryAfterParser
 
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf

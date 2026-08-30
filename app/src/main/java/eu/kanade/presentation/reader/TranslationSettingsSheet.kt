@@ -35,7 +35,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.translator.AiModelFetcher
+import eu.kanade.translation.translator.providers.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.StandardTranslatorKind
 import eu.kanade.translation.translator.TextTranslatorLanguage

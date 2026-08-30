@@ -1,4 +1,6 @@
 package eu.kanade.translation.translator
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
 
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock

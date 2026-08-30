@@ -1,4 +1,6 @@
 package eu.kanade.translation.pipeline.batch
+import eu.kanade.translation.translator.retry.AiChunkOutcome
+import eu.kanade.translation.translator.retry.translateAiChunkWithAdaptiveRetry
 
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
@@ -21,22 +23,21 @@ import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.recognition.PageRecognitionEngine
-import eu.kanade.translation.translator.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.ContextualTextTranslator
+import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
+import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.StableBlockIds
-import eu.kanade.translation.translator.StreamingChunkPlanner
+import eu.kanade.translation.translator.contextual.StableBlockIds
+import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TranslationBlockValidation
-import eu.kanade.translation.translator.TranslationContextChunk
-import eu.kanade.translation.translator.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.TranslationResponseFaithfulness
-import eu.kanade.translation.translator.applyAiChunkOutcomeToPages
-import eu.kanade.translation.translator.classifyProviderFailure
-import eu.kanade.translation.translator.translateAiChunkWithAdaptiveRetry
+import eu.kanade.translation.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
+import eu.kanade.translation.translator.retry.applyAiChunkOutcomeToPages
+import eu.kanade.translation.translator.retry.classifyProviderFailure
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -405,9 +406,9 @@ internal class BatchLaneWorkers(
                 .takeWhile(reportedCompletedKeys::contains)
                 .toSet()
             val anchor = when (adaptiveOutcome) {
-                is eu.kanade.translation.translator.AiChunkOutcome.Complete -> null
-                is eu.kanade.translation.translator.AiChunkOutcome.Paused,
-                is eu.kanade.translation.translator.AiChunkOutcome.Terminal,
+                is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete -> null
+                is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused,
+                is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal,
                 -> firstUnresolved(completedKeys)
             }
             val applyKeys = if (anchor == null) {
@@ -554,10 +555,10 @@ internal class BatchLaneWorkers(
             }
             BatchTranslationDiagnostics.envelopeLifecycle(
                 phase = when (adaptiveOutcome) {
-                    is eu.kanade.translation.translator.AiChunkOutcome.Complete ->
+                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete ->
                         BatchEnvelopeLifecycle.SUCCEEDED
-                    is eu.kanade.translation.translator.AiChunkOutcome.Paused,
-                    is eu.kanade.translation.translator.AiChunkOutcome.Terminal,
+                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused,
+                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal,
                     -> BatchEnvelopeLifecycle.FAILED
                 },
                 pageKeys = chunk.pages.keys,
@@ -566,19 +567,19 @@ internal class BatchLaneWorkers(
                     page.blocks.count { block -> block.translation.isNotBlank() }
                 },
                 reason = when (adaptiveOutcome) {
-                    is eu.kanade.translation.translator.AiChunkOutcome.Complete ->
+                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete ->
                         BatchDiagnosticReason.SUCCESS
-                    is eu.kanade.translation.translator.AiChunkOutcome.Paused ->
+                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused ->
                         BatchDiagnosticReason.TRANSIENT_FAILURE
-                    is eu.kanade.translation.translator.AiChunkOutcome.Terminal ->
+                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal ->
                         BatchDiagnosticReason.TERMINAL_FAILURE
                 },
             )
             when (adaptiveOutcome) {
-                is eu.kanade.translation.translator.AiChunkOutcome.Complete -> {
+                is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete -> {
                     return ChunkCompletionOutcome.Completed(committedPages.keys)
                 }
-                is eu.kanade.translation.translator.AiChunkOutcome.Paused -> {
+                is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused -> {
                     val unresolved = anchor ?: firstUnresolved(committedPages.keys)
                     if (unresolved == null) return ChunkCompletionOutcome.Completed(committedPages.keys)
                     val page = translationRegistry[unresolved]
@@ -604,7 +605,7 @@ internal class BatchLaneWorkers(
                         reason = adaptiveOutcome.failure.safeSummary,
                     )
                 }
-                is eu.kanade.translation.translator.AiChunkOutcome.Terminal -> {
+                is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal -> {
                     val unresolved = anchor ?: firstUnresolved(committedPages.keys)
                     if (unresolved == null) return ChunkCompletionOutcome.Completed(committedPages.keys)
                     val page = translationRegistry[unresolved]
@@ -637,7 +638,7 @@ internal class BatchLaneWorkers(
             val failure = if (e is ProviderFailureException) {
                 e.failure
             } else {
-                eu.kanade.translation.translator.classifyProviderFailure(e)
+                eu.kanade.translation.translator.retry.classifyProviderFailure(e)
             }
             val reason = failure.safeSummary
             val anchor = firstUnresolved(emptySet())

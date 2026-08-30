@@ -1,4 +1,11 @@
 package eu.kanade.translation.translator
+import eu.kanade.translation.translator.providers.OpenRouterTranslator
+import eu.kanade.translation.translator.providers.MLKitTranslator
+import eu.kanade.translation.translator.providers.LmStudioTranslator
+import eu.kanade.translation.translator.providers.GoogleTranslator
+import eu.kanade.translation.translator.providers.GeminiTranslator
+import eu.kanade.translation.translator.providers.DeepSeekTranslator
+import eu.kanade.translation.translator.providers.DeepLTranslator
 
 import tachiyomi.domain.translation.TranslationEngineCategory
 

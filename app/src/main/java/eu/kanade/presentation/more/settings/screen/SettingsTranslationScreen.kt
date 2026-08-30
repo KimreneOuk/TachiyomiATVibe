@@ -18,7 +18,7 @@ import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidge
 import eu.kanade.translation.data.TranslationFont
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
-import eu.kanade.translation.translator.AiModelFetcher
+import eu.kanade.translation.translator.providers.AiModelFetcher
 import eu.kanade.translation.translator.AiTranslatorKind
 import eu.kanade.translation.translator.StandardTranslatorKind
 import eu.kanade.translation.translator.TextTranslatorLanguage

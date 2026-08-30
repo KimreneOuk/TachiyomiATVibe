@@ -18,13 +18,13 @@ import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.recognition.PageRecognitionEngine
-import eu.kanade.translation.translator.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.ContextualTextTranslator
-import eu.kanade.translation.translator.LmStudioTranslator
+import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
+import eu.kanade.translation.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.translator.providers.LmStudioTranslator
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage
-import eu.kanade.translation.translator.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.Dispatchers

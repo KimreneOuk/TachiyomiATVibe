@@ -43,7 +43,7 @@ import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
 import eu.kanade.translation.translator.AdmissionPriority
-import eu.kanade.translation.translator.AiTranslationRetryPlanner
+import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.withProviderRequestPriority

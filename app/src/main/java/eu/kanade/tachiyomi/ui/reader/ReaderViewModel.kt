@@ -68,7 +68,7 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
-import eu.kanade.translation.translator.AiModelFetcher
+import eu.kanade.translation.translator.providers.AiModelFetcher
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap

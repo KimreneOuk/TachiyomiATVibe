@@ -1,4 +1,6 @@
 package eu.kanade.translation.pipeline
+import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
+import eu.kanade.translation.translator.retry.withRequestRetryBudget
 
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
@@ -20,21 +22,20 @@ import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.rendering.RenderColorEstimator
 import eu.kanade.translation.scheduling.TranslationStageEvent
 import eu.kanade.translation.scheduling.TranslationStageListener
-import eu.kanade.translation.translator.AiTranslationRetryPlanner
-import eu.kanade.translation.translator.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.ContextualTextTranslator
-import eu.kanade.translation.translator.LmStudioTranslator
+import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
+import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
+import eu.kanade.translation.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.translator.providers.LmStudioTranslator
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
-import eu.kanade.translation.translator.RequestRetryBudget
+import eu.kanade.translation.translator.retry.RequestRetryBudget
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationBlockValidation
-import eu.kanade.translation.translator.TranslationContextChunk
-import eu.kanade.translation.translator.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.classifyProviderFailure
-import eu.kanade.translation.translator.withRequestRetryBudget
+import eu.kanade.translation.translator.contextual.TranslationContextChunk
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.retry.classifyProviderFailure
 import eu.kanade.translation.util.ShortHash
 import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.CancellationException
@@ -230,7 +231,7 @@ internal class SinglePageHttpRenderPhase(
                     rollingContext = "",
                     estimatedPromptTokens = estPrompt,
                     maxOutputTokens = requestedOutputTokens,
-                    protocol = eu.kanade.translation.translator.ContextualRequestProtocol.LEGACY,
+                    protocol = eu.kanade.translation.translator.contextual.ContextualRequestProtocol.LEGACY,
                 )
                 // Recent translated pairs give on-demand single-page translation the
                 // same voice/speaker continuity the batch path gets.
