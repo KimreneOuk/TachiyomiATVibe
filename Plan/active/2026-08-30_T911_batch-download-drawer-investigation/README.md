@@ -2,7 +2,9 @@
 
 ## Status
 
-INVESTIGATION ONLY. No production or test code changes are authorized.
+2026-08-30: Investigation complete (SYNTHESIS.md). The Director authorized the
+full staged repair; implementation contract is `IMPLEMENTATION.md`. All coding
+happens on branch `t911/repair`, slice by slice, with per-slice review gates.
 
 ## Director report (2026-08-30)
 
