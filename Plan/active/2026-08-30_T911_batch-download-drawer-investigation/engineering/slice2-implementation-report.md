@@ -37,6 +37,13 @@ SYNTHESIS "Handoff, cancellation, and persistence" section.
    the fence suite's translator mock never simulated admission (no queue
    insertion), so the happy-path callback test now stubs `queueChapter` to
    insert the QUEUE entry.
+3. **Fence-test determinism (Slice 3 review adjudication, test-only):**
+   `TranslationRequestGenerationFenceTest` now drains the async STARTING-ack
+   persistence lane before its durable assertions and asserts the cancel
+   tombstone monotonically (`shouldBeGreaterThan generation`) instead of an
+   exact value — the exact tombstone legitimately depends on whether the
+   lane's defensive re-remove landed (production unchanged; verified 3/3
+   isolated fence-suite runs, 8 tests each, 0 failures).
 
 ## Contract item 1 — durable request record with generations
 
