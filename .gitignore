@@ -42,3 +42,6 @@ __pycache__/
 
 # Regenerable debug/test outputs from overlay_lab (code is tracked, these are not)
 overlay_lab/debug_*.png
+
+# local agent-tool config containing credentials - never commit
+kilo.json
