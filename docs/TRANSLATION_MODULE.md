@@ -157,12 +157,6 @@ translation/
 │  │                              reclaims sub-engine native caches on OOM)
 │  └─ VerticalLineOcr.kt          ★ PURE vertical-line OCR helpers
 │
-├─ remote/                        Remote (server-assisted) page translation
-│  ├─ BackendPageKey.kt           Backend page identity
-│  ├─ InferenceBackend.kt         Inference backend interface
-│  ├─ RemotePageTranslationEngine.kt    Remote translation engine
-│  └─ RemotePageTranslationException.kt Remote failure types
-│
 ├─ rendering/
 │  ├─ PageTextRenderer.kt         Draws translated text onto cleaned pages (no source-text fallback)
 │  ├─ RenderColorEstimator.kt     ★ PURE colorPolicy/snapGray + Bitmap-bound estimate()

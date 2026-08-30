@@ -1,6 +1,0 @@
-# Manga Render Lab — requirements
-# Reuses companion_server's pinned versions where possible.
--r ../companion_server/requirements-cpu.txt
-
-# Lab-only additions
-ultralytics>=8.2
