@@ -289,9 +289,17 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.TranslationProgress -> {
                 val item = successState.chapters.firstOrNull { it.id == dialog.chapterId }
+                // TachiyomiAT T911 slice 1: read-only download join from the same
+                // chapter-row download state; the downloader never owns
+                // translation state, the drawer only displays it.
+                val activeDownload = screenModel.activeDownloadFor(dialog.chapterId)
                 TranslationProgressSheet(
                     chapterName = item?.chapter?.name.orEmpty(),
                     snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
+                    downloadState = item?.downloadState,
+                    downloadProgress = item?.downloadProgress ?: 0,
+                    downloadedPages = activeDownload?.downloadedImages?.takeIf { it > 0 },
+                    totalDownloadPages = activeDownload?.pages?.size?.takeIf { it > 0 },
                     onDismissRequest = onDismissRequest,
                     onResume = {
                         if (item != null) {

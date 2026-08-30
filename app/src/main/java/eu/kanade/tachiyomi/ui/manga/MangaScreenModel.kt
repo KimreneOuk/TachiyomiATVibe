@@ -554,6 +554,12 @@ class MangaScreenModel(
     // the chapter list item for the determinate "12/40" indicator.
     private val translationProgressJobs = mutableMapOf<Long, kotlinx.coroutines.Job>()
 
+    // TachiyomiAT T911 slice 1: keyed retention of the last live/terminal batch
+    // snapshot so full chapter-list rebuilds (download cache/queue, translation
+    // queue, pending request emissions) and collector cancellation at terminal
+    // status cannot erase an unchanged live or terminal snapshot.
+    private val translationSnapshots = ChapterTranslationSnapshotRegistry()
+
     private fun observeTranslationProgress(chapterId: Long) {
         if (translationProgressJobs[chapterId]?.isActive == true) return
         translationProgressJobs[chapterId] = screenModelScope.launchIO {
@@ -588,6 +594,10 @@ class MangaScreenModel(
     }
 
     private fun updateTranslationProgress(chapterId: Long, progress: TranslationProgressSnapshot?) {
+        // TachiyomiAT T911 slice 1: retain the snapshot in keyed screen-model
+        // state before it reaches the item, so a later full list rebuild reads
+        // it back through the registry.
+        translationSnapshots.remember(chapterId, progress)
         updateSuccessState { successState ->
             val idx = successState.chapters.indexOfFirst { it.id == chapterId }
             if (idx < 0) return@updateSuccessState successState
@@ -649,7 +659,8 @@ class MangaScreenModel(
         }
     }
 
-    private fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
+    // T911 slice 1: internal for the snapshot-retention unit test.
+    internal fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
         val isLocal = manga.isLocal()
         return map { chapter ->
             val activeDownload = if (isLocal) {
@@ -700,7 +711,7 @@ class MangaScreenModel(
                 translationState = translationState,
                 translationRequest = translationRequest,
             )
-        }
+        }.carryingTranslationSnapshots(translationSnapshots)
     }
 
     /**
@@ -847,12 +858,34 @@ class MangaScreenModel(
         }
     }
 
+    /**
+     * TachiyomiAT T911 slice 1: read-only view of the downloader queue for the
+     * batch drawer's download phase (state/progress/page counts). The drawer
+     * only displays this; the downloader never becomes an owner of translation
+     * state.
+     */
+    fun activeDownloadFor(chapterId: Long): Download? =
+        downloadManager.getQueuedDownloadOrNull(chapterId)
+
     // TachiyomiAT
     fun runChapterTranslationActions(
         item: ChapterList.Item,
         action: ChapterTranslationAction,
     ) {
         runChapterTranslationActions(listOf(item), action)
+    }
+
+    /**
+     * TachiyomiAT T911 slice 1: opens the chapter's batch progress drawer in the
+     * same UI transaction that acknowledges or inspects the request, so accepted
+     * work is observable without a second tap. The manga screen is the only
+     * navigation owner; downloader/translation callbacks never select this
+     * dialog.
+     */
+    private fun openTranslationProgressDrawer(item: ChapterList.Item) {
+        val chapterId = item.chapter.id ?: return
+        observeTranslationProgress(chapterId)
+        updateSuccessState { it.copy(dialog = Dialog.TranslationProgress(chapterId)) }
     }
 
     fun runChapterTranslationActions(
@@ -877,11 +910,7 @@ class MangaScreenModel(
                 }
             }
 
-            ChapterTranslationAction.DETAILS -> {
-                val chapterId = item.chapter.id ?: return
-                observeTranslationProgress(chapterId)
-                updateSuccessState { it.copy(dialog = Dialog.TranslationProgress(chapterId)) }
-            }
+            ChapterTranslationAction.DETAILS -> openTranslationProgressDrawer(item)
 
             ChapterTranslationAction.CANCEL -> {
                 items.forEach { item ->
@@ -957,6 +986,8 @@ class MangaScreenModel(
             try {
                 val state = successState ?: return@launchNonCancellable
                 action(translationManager, state)
+                // T911 slice 1: reset/delete invalidates the retained snapshot.
+                item.chapter.id?.let(translationSnapshots::forget)
                 updateSuccessState { current ->
                     val index = current.chapters.indexOfFirst { it.id == item.chapter.id }
                     if (index < 0) return@updateSuccessState current
@@ -1006,6 +1037,11 @@ class MangaScreenModel(
             chapters = group.map { it.chapter },
         )
         updateTranslationRequests(translationManager.pendingTranslationRequests.value)
+        // TachiyomiAT T911 slice 1: confirmation opens the progress drawer
+        // immediately — accepted work must be observable without a second tap.
+        // This is the same UI transaction as the acknowledgement above; the
+        // async probe below never performs navigation.
+        openTranslationProgressDrawer(item)
         screenModelScope.launch {
             // TachiyomiAT bug 5 fix: decide with the same live provider check that
             // Downloader.queueChapters uses to drop already-downloaded chapters. The

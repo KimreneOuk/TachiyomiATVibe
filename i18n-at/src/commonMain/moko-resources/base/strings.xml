@@ -212,4 +212,15 @@
     <string name="manga_batch_cancel_safe_hint">Cancelling only stops background processing. Saved pages and translations are kept intact.</string>
     <string name="manga_batch_status_queued">Queued / Ready to resume</string>
     <string name="manga_batch_status_paused">Paused</string>
+    <!-- TachiyomiAT T911 slice 1: phase-aware drawer hero. Shown instead of a
+         numeric 0% / 0/0 while no real translation page total exists yet. -->
+    <string name="manga_batch_phase_accepted">Accepted — preparing batch</string>
+    <string name="manga_batch_phase_waiting_for_download">Waiting for chapter download</string>
+    <string name="manga_batch_phase_downloading">Downloading %1$d%%</string>
+    <string name="manga_batch_phase_download_failed">Download failed</string>
+    <string name="manga_batch_phase_preparing">Preparing translation batch</string>
+    <string name="manga_batch_phase_queued">Queued for translation</string>
+    <string name="manga_batch_phase_finalizing">Finalizing translated chapter</string>
+    <string name="manga_batch_phase_completed">Completed</string>
+    <string name="manga_batch_phase_failed_no_pages">Translation failed — chapter has no readable pages</string>
 </resources>
