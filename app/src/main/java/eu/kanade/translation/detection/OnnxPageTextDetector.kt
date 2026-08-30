@@ -1,4 +1,5 @@
 package eu.kanade.translation.detection
+import eu.kanade.translation.model.Detection
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtSession

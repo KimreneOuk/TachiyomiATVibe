@@ -1,6 +1,6 @@
 package eu.kanade.translation.webtoon
 
-import eu.kanade.translation.detection.Detection
+import eu.kanade.translation.model.Detection
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 

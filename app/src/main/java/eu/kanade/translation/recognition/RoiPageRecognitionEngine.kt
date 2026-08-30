@@ -2,7 +2,7 @@ package eu.kanade.translation.recognition
 
 import android.content.Context
 import android.graphics.Bitmap
-import eu.kanade.translation.detection.Detection
+import eu.kanade.translation.model.Detection
 import eu.kanade.translation.detection.OnnxPageTextDetector
 import eu.kanade.translation.detection.OnnxPanelDetector
 import eu.kanade.translation.detection.PanelAssignment

@@ -1,7 +1,7 @@
 package eu.kanade.translation.webtoon
 
 import android.graphics.Bitmap
-import eu.kanade.translation.detection.Detection
+import eu.kanade.translation.model.Detection
 import eu.kanade.translation.recognition.BoxGeometry
 import eu.kanade.translation.segmentation.BubbleMaskRle
 import kotlin.math.ceil

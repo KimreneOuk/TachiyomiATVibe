@@ -1,7 +1,7 @@
 package eu.kanade.translation.model
 
 import android.graphics.Bitmap
-import eu.kanade.translation.detection.Detection
+import eu.kanade.translation.model.Detection
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 

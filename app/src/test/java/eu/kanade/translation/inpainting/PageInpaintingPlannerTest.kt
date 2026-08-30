@@ -1,6 +1,6 @@
 package eu.kanade.translation.inpainting
 
-import eu.kanade.translation.detection.Detection
+import eu.kanade.translation.model.Detection
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import io.kotest.matchers.collections.shouldBeEmpty

@@ -1,4 +1,4 @@
-package eu.kanade.translation.detection
+package eu.kanade.translation.model
 
 data class Detection(
     val bbox: IntArray,
