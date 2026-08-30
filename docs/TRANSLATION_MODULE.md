@@ -206,7 +206,7 @@ translation/
 │  ├─ AiTranslatorKind.kt         AI translator enum (Gemini/DeepSeek/OpenRouter/LM Studio)
 │  ├─ AiTranslationRetryController.kt   AI retry controller
 │  ├─ AiTranslationRetryPlanner.kt      ★ PURE AI retry planning
-│  ├─ AITranslator.kt             Legacy-named AI adapter (see casing note below)
+│  ├─ AiTranslator.kt              Abstract AI-adapter base (OpenAI-shape HTTP + Gemini SDK)
 │  ├─ BaseTranslator.kt           Translator base class
 │  ├─ BatchTranslationProtocol.kt Batch prompt/response protocol
 │  ├─ ChapterGlossaryBuilder.kt   ★ PURE glossary building
@@ -256,6 +256,19 @@ translation/
 ```
 
 ★ = pure JVM-testable logic (no Android/Bitmap/ONNX/ML Kit dependency).
+
+### Naming vocabulary (read this before grepping)
+
+- **Stage** — the canonical per-page vocabulary: a durable pipeline step with a
+  persisted status (`StageStatus`, `TranslationStageContracts`, stage fields on
+  `PageTranslation`). Say "stage" when talking about page state.
+- **BatchPhase** — the batch *event-stream* phase enum (`OCR, TRANSLATE,
+  INPAINT, RENDER, DISPLAY` in `pipeline/batch/TranslationBatchEvent.kt`)
+  projected into progress UI. It mirrors the stages but lives in the batch
+  event model, not in durable page state.
+- **Pass 1 / Pass 2** — the contextual translation passes (initial chunked
+  translation, then strict automatic revision); see "Staged batch
+  pre-translation" below.
 
 ---
 

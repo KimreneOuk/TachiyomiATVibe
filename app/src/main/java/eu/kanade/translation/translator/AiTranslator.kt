@@ -5,7 +5,7 @@ import eu.kanade.translation.model.PageTranslation
 /**
  * TachiyomiAT: Base abstraction for AI / LLM translators.
  */
-abstract class AITranslator : BaseTranslator(), ContextualTextTranslator {
+abstract class AiTranslator : BaseTranslator(), ContextualTextTranslator {
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)

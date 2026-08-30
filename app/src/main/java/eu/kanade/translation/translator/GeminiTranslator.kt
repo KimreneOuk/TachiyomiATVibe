@@ -34,7 +34,7 @@ class GeminiTranslator(
     val temp: Float,
     private val thinkingMode: GeminiThinkingMode = GeminiThinkingMode.DISABLED,
     private val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
-) : AITranslator() {
+) : AiTranslator() {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)

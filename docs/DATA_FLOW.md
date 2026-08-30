@@ -198,10 +198,14 @@ Trackers available:
 ## 4. Automatic Translation Pipeline (TachiyomiAT Exclusive)
 
 This is the defining feature of the fork. The pipeline processes each page through
-5 stages:
+5 stages. For the current file-level package map (`pipeline/`, `manager/`,
+`store/`, `artifact/`, `pipeline/batch/`, and friends), see
+`TRANSLATION_MODULE.md` in this directory.
 
 ```
-ChapterTranslator.translate(chapter)
+TranslationManager (request)
+    → ChapterTranslator.queueChapter(manga, chapter)
+    → ChapterTranslator.start() → translateChapterInternal() per queued chapter
     │
     ├── Stage 1: TEXT DETECTION
     │   │  OnnxPageTextDetector

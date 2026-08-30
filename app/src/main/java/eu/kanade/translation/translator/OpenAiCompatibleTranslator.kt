@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 
 abstract class OpenAiCompatibleTranslator(
     protected val requestGovernor: ProviderRequestGovernor = SharedProviderRequestGovernor.instance,
-) : AITranslator() {
+) : AiTranslator() {
 
     protected open val providerBackend: String
         get() = this::class.java.simpleName.removeSuffix("Translator").lowercase(Locale.ROOT)

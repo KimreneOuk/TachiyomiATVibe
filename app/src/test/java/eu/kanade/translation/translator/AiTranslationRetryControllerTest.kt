@@ -360,7 +360,7 @@ class AiTranslationRetryControllerTest {
 
     private class ScriptedTranslator(
         private val responder: suspend (Int, TranslationContextChunk) -> ContextualTranslationBatch,
-    ) : AITranslator() {
+    ) : AiTranslator() {
         val requests = mutableListOf<TranslationContextChunk>()
         val calls: Int get() = requests.size
 
