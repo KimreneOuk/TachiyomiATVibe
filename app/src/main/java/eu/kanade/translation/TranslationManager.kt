@@ -10,7 +10,7 @@ import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.legacy.LegacyFlatFileDecoder
+import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView

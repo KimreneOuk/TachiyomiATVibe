@@ -3,7 +3,7 @@ package eu.kanade.translation.artifact
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.ChapterTranslationStore
-import eu.kanade.translation.legacy.LegacyFlatFileDecoder
+import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import kotlinx.serialization.json.decodeFromStream

@@ -6,7 +6,7 @@ import eu.kanade.translation.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.legacy.LegacyFlatFileDecoder
+import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.Dispatchers
 import tachiyomi.domain.source.service.SourceManager

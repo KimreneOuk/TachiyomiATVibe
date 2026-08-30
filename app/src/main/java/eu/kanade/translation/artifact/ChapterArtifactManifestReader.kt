@@ -1,7 +1,7 @@
 package eu.kanade.translation.artifact
 
 import com.hippo.unifile.UniFile
-import eu.kanade.translation.legacy.LegacyFlatFileDecoder
+import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import kotlinx.serialization.json.decodeFromStream
 
 internal data class ArtifactManifestProbe(

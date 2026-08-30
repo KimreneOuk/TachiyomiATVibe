@@ -1,4 +1,4 @@
-package eu.kanade.translation.legacy
+package eu.kanade.translation.artifact
 
 import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.AtomicChapterDocuments
