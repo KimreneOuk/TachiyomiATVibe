@@ -72,6 +72,36 @@ data class FloatRect(
 enum class TextAlign { CENTER, LEFT, RIGHT }
 
 /**
+ * TachiyomiAT T912 slice 5: one pre-positioned, prewrapped horizontal line.
+ * `leftPx`/`topPx` are integer `floor()` placement results;
+ * `layoutWidthPx = max(1, ceil(advance + 2*SHAPING_GUARD))` is the EXACT width
+ * the renderer must shape the line at (one `StaticLayout` line, left-aligned
+ * inside that width); [conservativeOccupancy] is the un-clipped planning
+ * envelope (advance/line-height rect inflated by stroke, AA guard, and half
+ * collision gap).
+ */
+data class PositionedLine(
+    val text: String,
+    val leftPx: Int,
+    val topPx: Int,
+    val layoutWidthPx: Int,
+    val layoutHeightPx: Int,
+    val conservativeOccupancy: FloatRect,
+)
+
+/**
+ * TachiyomiAT T912 slice 5: the structural render boundary of a layout —
+ * component path (via the `(planGeometryId, componentId)` pair) then the
+ * cell/safety rectangle. Only these clips justify pixel-containment claims;
+ * planning occupancies stay conservative and un-clipped.
+ */
+data class HardClip(
+    val planGeometryId: Int?,
+    val componentId: Int?,
+    val cellRect: FloatRect?,
+)
+
+/**
  * TachiyomiAT: the resolved placement for a single translated block, produced by
  * [TextLayoutPlanner.plan]. The renderer only DRAWS these — it does no further layout.
  *
@@ -110,6 +140,24 @@ data class BlockLayout(
      * components clip structurally instead of only by planning.
      */
     val cellRect: FloatRect? = null,
+    /**
+     * TachiyomiAT slice 5: pre-positioned adaptive lines. Null selects the
+     * EXACT legacy renderer (stacked lines / vertical columns); non-null
+     * selects the positioned-line shaping path (one StaticLayout line per
+     * entry at its integer placement).
+     */
+    val positionedLines: List<PositionedLine>? = null,
+    /**
+     * TachiyomiAT slice 5: per-line conservative planning envelopes (un-clipped,
+     * stroke/AA/half-gap inflated). Empty unless [positionedLines] != null.
+     */
+    val conservativeOccupancy: List<FloatRect> = emptyList(),
+    /**
+     * TachiyomiAT slice 5: structural render boundary mirrored from
+     * [maskGeometry]/[planGeometryId]/[maskComponentId]/[cellRect]; the
+     * renderer composes component path then cell rectangle from it.
+     */
+    val hardClip: HardClip = HardClip(null, null, null),
 )
 
 /**
@@ -291,6 +339,56 @@ internal fun defaultMaskFingerprint(mask: BubbleMaskRle): Long {
 }
 
 /**
+ * TachiyomiAT T912 slice 5: the isolated adaptive-layout tuning envelope (task
+ * contract: thresholds are isolated constants backed by focused tests).
+ * Collision gap itself stays in [MaskTextRegionPlanner.collisionGapPx].
+ */
+internal object TextLayoutTuning {
+    /**
+     * Anti-aliasing guard: `max(1*scale, 0.5)` px kept around shaped text so
+     * fractional transforms cannot push AA samples outside the planned rect.
+     */
+    fun aaGuard(scale: Float): Float = max(1f * scale, 0.5f)
+
+    /**
+     * StaticLayout width guard: `ceil(stroke/2 + AA_GUARD)` — conservative,
+     * not an exact glyph bound; combining marks, emoji/ZWJ, italic overhang,
+     * and fractional transforms are made structurally safe by the
+     * component+cell/safety clips instead.
+     */
+    fun shapingGuardPx(fontPx: Float, scale: Float): Float =
+        ceil(TextLayoutPlanner.computeStrokeWidth(fontPx, scale) / 2f + aaGuard(scale))
+
+    /** Documented tunable: extra visual breathing room around banded lines (px). */
+    const val VISUAL_PADDING_PX = 2f
+
+    /** Band/line stroke inset: `ceil(stroke/2 + AA_GUARD + VISUAL_PADDING_PX)`. */
+    fun strokeInsetPx(fontPx: Float, scale: Float): Float =
+        ceil(TextLayoutPlanner.computeStrokeWidth(fontPx, scale) / 2f + aaGuard(scale) + VISUAL_PADDING_PX)
+
+    /** Hard guard: positioned lines per block (beyond → legacy rectangular layout). */
+    const val MAX_POSITIONED_LINES_PER_BLOCK = 24
+
+    /** Hard guard: positioned lines per page (beyond → legacy single-layout retry). */
+    const val MAX_POSITIONED_LINES_PER_PAGE = 256
+
+    /** Hard guard: StaticLayouts reserved per page (legacy line = 2, positioned line = 2). */
+    const val MAX_STATIC_LAYOUTS_PER_PAGE = 512
+
+    /** Hard guard: font binary-search evaluations per fit (and per trial fitter). */
+    const val MAX_FONT_BINARY_STEPS = 7
+
+    /** Hard guard: vertical alignment attempts per font. */
+    const val MAX_BAND_ALIGNMENTS = 3
+
+    /** Hard guard: centering fixed-point passes per alignment. */
+    const val MAX_BAND_FIXED_POINT_PASSES = 3
+
+    /** Band-interval explosion guard: more intervals ⇒ treat as no valid band. */
+    const val MAX_BAND_INTERVALS = 64
+}
+
+/**
  * TachiyomiAT: pure, neighbour-aware text-layout solver for the render stage.
  *
  * **Why this exists.** [PageTextRenderer] used to lay each block out independently
@@ -403,6 +501,12 @@ object TextLayoutPlanner {
         val drawable = ArrayList<BlockLayout>(blocks.size)
         val componentAssignments = HashSet<Long>()
         var planningOrdinal = 0
+        // Slice 5 page budgets, reserved deterministically in placement order:
+        // legacy horizontal block = 2 StaticLayouts; each positioned line = 2;
+        // vertical = 0.
+        var positionedLinesUsed = 0
+        var staticLayoutsUsed = 0
+        val collisionGap = MaskTextRegionPlanner.collisionGapPx(min(pageWidth, pageHeight), scale)
         for (indexed in ordered) {
             val inputIndex = indexed.index
             val block = indexed.value
@@ -449,30 +553,92 @@ object TextLayoutPlanner {
             val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
             val placedObstacles = drawable.map { extentOf(it, measurer) }
 
-            val resolved = placeBlock(
-                block = block,
-                text = text,
-                isVertical = isVertical,
-                rect = rect,
-                obstacles = placedObstacles,
-                pageWidth = pageWidth,
-                pageHeight = pageHeight,
-                minLegible = minLegible,
-                scale = scale,
-                measurer = measurer,
-                regionOverride = regionOverride,
-            )
+            // Slice 5: adaptive bands REPLACE placeBlock for eligible blocks —
+            // horizontal text in an optimized SPAN-MODE cell. Everything else
+            // (unmasked, vertical, bounds-mode cells, groupless, beyond-8)
+            // goes legacy exactly as before. On band failure or a page budget
+            // overflow the EXISTING legacy single-layout form is retried.
+            var layout: BlockLayout? = null
+            val adaptiveEligible = !isVertical &&
+                cellPlan != null &&
+                cellPlan.optimized &&
+                cellPlan.componentId != null &&
+                cellPlan.spans.isNotEmpty()
+            if (adaptiveEligible) {
+                val slab = cellPlan.slab
+                val adaptive = if (slab != null) {
+                    AdaptiveBandPlanner.fitAdaptiveBands(
+                        text = text,
+                        cellSpans = cellPlan.spans,
+                        slab = slab,
+                        scale = scale,
+                        collisionGapPx = collisionGap,
+                        measurer = measurer,
+                        minFontPx = FIT_MIN_FONT_PX * scale,
+                        maxFontPx = FIT_MAX_FONT_PX * scale,
+                        blockCenterX = block.x + block.width / 2f,
+                        blockCenterY = block.y + block.height / 2f,
+                    )
+                } else {
+                    null
+                }
+                val lineCount = adaptive?.lines?.size ?: 0
+                if (adaptive != null &&
+                    positionedLinesUsed + lineCount <= TextLayoutTuning.MAX_POSITIONED_LINES_PER_PAGE &&
+                    staticLayoutsUsed + 2 * lineCount <= TextLayoutTuning.MAX_STATIC_LAYOUTS_PER_PAGE
+                ) {
+                    positionedLinesUsed += lineCount
+                    staticLayoutsUsed += 2 * lineCount
+                    layout = adaptiveBlockLayout(block, text, slab!!, adaptive, scale)
+                }
+                // adaptive == null → band failure: legacy fallback below.
+                // Budget overflow → legacy single-layout retry below.
+            }
+            if (layout == null) {
+                if (!isVertical) {
+                    if (staticLayoutsUsed + 2 > TextLayoutTuning.MAX_STATIC_LAYOUTS_PER_PAGE) {
+                        resultsByInput[inputIndex] = LayoutResult(
+                            identity,
+                            block,
+                            text,
+                            ordinal,
+                            null,
+                            LayoutOutcome.NonDraw(NonDrawReason.STATIC_LAYOUT_BUDGET_EXHAUSTED),
+                        )
+                        continue
+                    }
+                    staticLayoutsUsed += 2
+                }
+                layout = placeBlock(
+                    block = block,
+                    text = text,
+                    isVertical = isVertical,
+                    rect = rect,
+                    obstacles = placedObstacles,
+                    pageWidth = pageWidth,
+                    pageHeight = pageHeight,
+                    minLegible = minLegible,
+                    scale = scale,
+                    measurer = measurer,
+                    regionOverride = regionOverride,
+                )
+            }
             // Metadata is wired AFTER placement and never changes placement,
             // font, or text — it only lets the renderer clip structurally.
-            val layout = withSharedCellMetadata(resolved, cellPlan, maskGrouping, inputIndex, componentAssignments)
-            drawable.add(layout)
+            // The hard clip mirrors the wired metadata 1:1 (same values on
+            // every path; no behavior change).
+            val wired = withSharedCellMetadata(layout, cellPlan, maskGrouping, inputIndex, componentAssignments)
+            val final = wired.copy(
+                hardClip = HardClip(wired.planGeometryId, wired.maskComponentId, wired.cellRect),
+            )
+            drawable.add(final)
             resultsByInput[inputIndex] = LayoutResult(
                 identity,
                 block,
                 text,
                 ordinal,
                 drawable.size - 1,
-                LayoutOutcome.Draw(layout),
+                LayoutOutcome.Draw(final),
             )
         }
         // Results in INPUT order: one explicit result per nonblank input.
@@ -480,6 +646,48 @@ object TextLayoutPlanner {
         for (i in blocks.indices) resultsByInput[i]?.let { results.add(it) }
         return PageLayoutPlan(results, drawable)
     }
+
+    /**
+     * Slice 5: build the positioned-line [BlockLayout] for a successful
+     * adaptive band fit. The alignment anchor is the origin; `safeW/safeH` are
+     * the hard slab bounds; `lines` stays populated with the wrapped
+     * (trial-resolved) texts so extentOf/tests keep a uniform handle;
+     * `conservativeOccupancy` carries the per-line un-clipped envelopes and
+     * `clipRect` stays null (containment is structural: component path + slab).
+     * `layout.text` remains the block's chosen text — inserted trial hyphens
+     * exist only in the planned lines, never in persisted data.
+     */
+    private fun adaptiveBlockLayout(
+        block: TranslationBlock,
+        text: String,
+        slab: FloatRect,
+        adaptive: AdaptiveResult,
+        scale: Float,
+    ): BlockLayout = BlockLayout(
+        block = block,
+        text = text,
+        isVertical = false,
+        originX = adaptive.anchorX,
+        originY = adaptive.anchorY,
+        safeW = slab.width(),
+        safeH = slab.height(),
+        fontSizePx = adaptive.fontPx,
+        strokeWidth = computeStrokeWidth(adaptive.fontPx, scale),
+        drawAlign = TextAlign.CENTER,
+        clipRect = null,
+        lines = adaptive.lines.map { it.text },
+        positionedLines = adaptive.lines.map { line ->
+            PositionedLine(
+                text = line.text,
+                leftPx = line.leftPx,
+                topPx = line.topPx,
+                layoutWidthPx = line.layoutWidthPx,
+                layoutHeightPx = line.layoutHeightPx,
+                conservativeOccupancy = line.conservativeOccupancy,
+            )
+        },
+        conservativeOccupancy = adaptive.lines.map { it.conservativeOccupancy },
+    )
 
     /** Legibility floor for a page of [pageWidth]×[pageHeight] at decode [scale]. */
     internal fun minLegibleFont(pageWidth: Float, pageHeight: Float, scale: Float): Float =
@@ -1187,8 +1395,25 @@ object TextLayoutPlanner {
      * The rendered pixel extent of a finalized [layout], centered on its origin
      * (or within its clip rect when clipped). Used as the obstacle footprint for
      * subsequently-placed blocks and for the final overlap check.
+     *
+     * Slice 5: adaptive layouts use the union bounding box of the per-line
+     * conservative occupancy rects, so every block kind is measured with the
+     * same conservative convention.
      */
     private fun extentOf(layout: BlockLayout, measurer: TextMeasurer): FloatRect {
+        if (layout.positionedLines != null && layout.conservativeOccupancy.isNotEmpty()) {
+            var left = Float.MAX_VALUE
+            var top = Float.MAX_VALUE
+            var right = Float.MIN_VALUE
+            var bottom = Float.MIN_VALUE
+            for (rect in layout.conservativeOccupancy) {
+                if (rect.left < left) left = rect.left
+                if (rect.top < top) top = rect.top
+                if (rect.right > right) right = rect.right
+                if (rect.bottom > bottom) bottom = rect.bottom
+            }
+            return FloatRect(left, top, right, bottom)
+        }
         val cx = layout.originX
         val cy = layout.originY
         return if (layout.isVertical) {
@@ -1340,6 +1565,11 @@ object TextLayoutPlanner {
         val componentId: Int?,
         /** True when the cell owns no usable component pixels → explicit NonDraw. */
         val empty: Boolean,
+        /**
+         * Slice 5: the cell's slab-intersected row-major spans (empty in
+         * bounds-rect mode). Input to the adaptive band planner.
+         */
+        val spans: List<MaskGeometry.RowSpan> = emptyList(),
     )
 
     /**
@@ -1410,6 +1640,7 @@ object TextLayoutPlanner {
                             optimized = cell.optimized,
                             componentId = if (cell.optimized) componentId else null,
                             empty = cell.empty,
+                            spans = cell.spans,
                         )
                     }
                 }
@@ -1466,7 +1697,7 @@ object TextLayoutPlanner {
         if (groupId == null || groupId < 0) return layout.copy(cellRect = slab)
         val geometry = grouping.session.geometryFor(groupId) ?: return layout.copy(cellRect = slab)
         val assignment = (groupId.toLong() shl 32) or (componentId.toLong() and 0xFFFF_FFFFL)
-        if (assignment !in componentAssignments && componentAssignments.size >= MAX_COMPONENT_ASSIGNMENTS_PER_PAGE) {
+        if (!componentAssignmentAllowed(assignment, componentAssignments)) {
             return layout.copy(cellRect = slab)
         }
         componentAssignments += assignment
@@ -1477,6 +1708,20 @@ object TextLayoutPlanner {
             cellRect = slab,
         )
     }
+
+    /**
+     * Slice-2-carried page cap: a NEW distinct `(planGeometryId, componentId)`
+     * pair is accepted only while fewer than
+     * [MAX_COMPONENT_ASSIGNMENTS_PER_PAGE] distinct pairs exist; an already
+     * assigned pair always passes. A capped member keeps its Draw result with
+     * the structural slab `cellRect` but NO geometry ids. Extracted as an
+     * internal pure predicate so tests can drive the 65th-distinct-pair
+     * semantics directly (see the implementation report: through `planPage`
+     * the page-wide 64-component conversion budget makes a 65th distinct pair
+     * unreachable, so an integration-level fixture cannot exist).
+     */
+    internal fun componentAssignmentAllowed(assignment: Long, assigned: Set<Long>): Boolean =
+        assignment in assigned || assigned.size < MAX_COMPONENT_ASSIGNMENTS_PER_PAGE
 
     /** Integer bbox `[left, top, right, bottom)` of a component's spans. */
     private fun componentBounds(component: MaskGeometry.Component): IntArray {

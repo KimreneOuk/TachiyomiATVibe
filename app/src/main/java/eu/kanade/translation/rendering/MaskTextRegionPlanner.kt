@@ -215,9 +215,12 @@ internal object MaskTextRegionPlanner {
             for (span in componentSpans!!) {
                 if (span.y < orthoLow || span.y >= orthoHigh) continue
                 for (slab in slabs) {
-                    if (slab.start < slab.endExclusive &&
-                        span.start < slab.endExclusive &&
-                        slab.start < span.endExclusive
+                    if (slab.start >= slab.endExclusive) continue
+                    if (if (horizontal) {
+                            span.start < slab.endExclusive && slab.start < span.endExclusive
+                        } else {
+                            span.y >= slab.start && span.y < slab.endExclusive
+                        }
                     ) {
                         derived++
                     }
@@ -232,9 +235,18 @@ internal object MaskTextRegionPlanner {
             for (span in componentSpans!!) {
                 if (span.y < orthoLow || span.y >= orthoHigh) continue
                 for ((k, slab) in slabs.withIndex()) {
-                    val start = max(span.start, slab.start)
-                    val end = min(span.endExclusive, slab.endExclusive)
-                    if (start < end) perSlab[k] += MaskGeometry.RowSpan(span.y, start, end)
+                    if (slab.start >= slab.endExclusive) continue
+                    if (horizontal) {
+                        val start = max(span.start, slab.start)
+                        val end = min(span.endExclusive, slab.endExclusive)
+                        if (start < end) perSlab[k] += MaskGeometry.RowSpan(span.y, start, end)
+                    } else {
+                        // Vertical slab: the cut is on Y — a row belongs to the
+                        // slab WHOLE (its x interval is untouched).
+                        if (span.y >= slab.start && span.y < slab.endExclusive) {
+                            perSlab[k] += MaskGeometry.RowSpan(span.y, span.start, span.endExclusive)
+                        }
+                    }
                 }
             }
             slabs.forEachIndexed { k, slab -> cellSpans[slab.member.inputIndex] = perSlab[k] }

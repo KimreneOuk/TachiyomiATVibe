@@ -6,7 +6,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
-import kotlin.math.max
+import kotlin.math.ceil
 
 /**
  * T912 slice 2/3: planner metadata wiring for shared segmentation masks.
@@ -104,18 +104,26 @@ class TextLayoutPlannerMaskMetadataTest {
             "right" to "I FORCED YOU INTO THAT RELATIONSHIP.",
         )
 
-        // Slice 3: fonts are fitted PER RESULT inside each own cell — no
-        // shared-mask equalization pass exists anymore.
+        // Slice 5: these blocks are span-mode + horizontal → now ADAPTIVE.
+        // Positioned lines replace the legacy stacked form; metadata and
+        // slabs above are unchanged.
         plan.forEach { layout ->
-            val cell = layout.cellRect.shouldNotBeNull()
-            val safeW = max(1f, cell.width() - 8f)
-            val safeH = max(1f, cell.height() - 8f)
-            layout.fontSizePx shouldBe
-                TextLayoutPlanner.binarySearchFontSize(layout.text, safeW, safeH, safeW, false, 1f, m)
+            val positioned = layout.positionedLines.shouldNotBeNull()
+            positioned.isNotEmpty() shouldBe true
+            layout.lines shouldBe positioned.map { it.text }
+            layout.hardClip shouldBe HardClip(layout.planGeometryId, layout.maskComponentId, layout.cellRect)
             layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(layout.fontSizePx, 1f)
+            for (line in positioned) {
+                val advance = m.measureTextWidth(line.text, layout.fontSizePx)
+                line.layoutWidthPx shouldBe
+                    maxOf(1, ceil(advance + 2f * TextLayoutTuning.shapingGuardPx(layout.fontSizePx, 1f)).toInt())
+                val slab = layout.cellRect.shouldNotBeNull()
+                (line.leftPx >= slab.left && line.leftPx + line.layoutWidthPx <= slab.right) shouldBe true
+            }
         }
-        // The longest text in an equal-width cell fits at a strictly smaller
-        // size than the shortest text in its sibling cell.
+        // Fonts stay fitted PER RESULT — the longest text in an equal-width
+        // cell keeps a strictly smaller size than the shortest sibling (no
+        // equalization, and possibly ≠ the legacy rectangular fit).
         (plan[2].fontSizePx < plan[1].fontSizePx) shouldBe true
     }
 

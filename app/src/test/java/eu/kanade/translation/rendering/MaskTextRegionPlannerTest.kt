@@ -323,6 +323,45 @@ class MaskTextRegionPlannerTest {
     }
 
     @Test
+    fun `vertical partition of two stacked members yields exact slabs and dead rows`() {
+        // Slice-3 review NOTE 1 ride-along: the vertical branch (Y spread >
+        // X spread, cuts on y, dead ROWS between slabs). Centers 30/70 → cut
+        // 50; gap 2 → slabs [0,49) and [51,100) × full x, dead rows {49,50}.
+        val component = region(0, 0, 100, 100, fullRowSpans(0, 100, 0, 100))
+        val members = listOf(
+            member(0, 50f, 30f),
+            member(1, 50f, 70f),
+        )
+
+        val cells = MaskTextRegionPlanner.partition(component, members, gap = 2, budget = budget)
+
+        cells shouldHaveSize 2
+        cells[0].slab.shouldNotBeNull().let { slab ->
+            slab.left shouldBe 0f
+            slab.top shouldBe 0f
+            slab.right shouldBe 100f
+            slab.bottom shouldBe 49f
+        }
+        cells[1].slab.shouldNotBeNull().let { slab ->
+            slab.left shouldBe 0f
+            slab.top shouldBe 51f
+            slab.right shouldBe 100f
+            slab.bottom shouldBe 100f
+        }
+        // Dead ROWS (not columns) are owned by none; every other row is owned
+        // exactly once across the full width.
+        for (x in 0 until 100) {
+            for (y in 0 until 100) {
+                val owned = cells.count { cell ->
+                    intervalsOnRow(cell, y).any { (start, end) -> x in start until end }
+                }
+                val expected = if (y == 49 || y == 50) 0 else 1
+                owned shouldBe expected
+            }
+        }
+    }
+
+    @Test
     fun `collisionGapPx clamps at both bounds and scales with the page short side`() {
         // Below the 2*scale floor → 2.
         MaskTextRegionPlanner.collisionGapPx(100f, 1f) shouldBe 2

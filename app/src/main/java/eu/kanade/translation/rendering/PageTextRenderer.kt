@@ -54,7 +54,8 @@ internal class PageTextRenderer(typeface: Typeface) {
                 else -> clipCache.resolve(layout.planGeometryId!!, layout.maskComponentId!!, geometry)
                     ?: return@mapNotNull null
             }
-            PreparedLayout(layout, componentClip, layout.cellRect, buildShaped(layout))
+            val shaped = buildShaped(layout) ?: return@mapNotNull null
+            PreparedLayout(layout, componentClip, layout.cellRect, shaped)
         }
     }
 
@@ -107,15 +108,20 @@ internal class PageTextRenderer(typeface: Typeface) {
         stroke.textSize = layout.fontSizePx
     }
 
-    /** Builds the shaped, reusable render data for one layout at bind time so draw() allocates nothing. */
-    private fun buildShaped(layout: BlockLayout): Shaped {
+    /**
+     * Builds the shaped, reusable render data for one layout at bind time so
+     * draw() allocates nothing. Null means the layout fails closed and is
+     * dropped whole (renderer-side invalid render metadata): e.g. a positioned
+     * line the shaper could not keep on exactly one StaticLayout line.
+     */
+    private fun buildShaped(layout: BlockLayout): Shaped? {
         configure(layout)
-        return if (layout.isVertical) {
-            Shaped.Vertical(
-                prepareVertical(layout),
-            )
-        } else {
-            Shaped.Horizontal(prepareHorizontal(layout))
+        val positioned = layout.positionedLines
+        return when {
+            // Slice 5: adaptive positioned lines (never vertical text).
+            positioned != null -> preparePositioned(positioned)?.let { Shaped.Positioned(it) }
+            layout.isVertical -> Shaped.Vertical(prepareVertical(layout))
+            else -> Shaped.Horizontal(prepareHorizontal(layout))
         }
     }
 
@@ -124,6 +130,57 @@ internal class PageTextRenderer(typeface: Typeface) {
         when (val shaped = prepared.shaped) {
             is Shaped.Horizontal -> drawHorizontal(canvas, shaped.data)
             is Shaped.Vertical -> drawVertical(canvas, shaped.data)
+            is Shaped.Positioned -> drawPositioned(canvas, shaped.lines)
+        }
+    }
+
+    /**
+     * Slice 5: prepare EXACTLY one StaticLayout pair (fill + stroke) per
+     * positioned line, shaped at the planner's integer [PositionedLine.layoutWidthPx]
+     * with simple breaking, no hyphenation, no padding, and maxLines(1). A line
+     * that does not come back as exactly one line drops the WHOLE prepared
+     * layout (fail closed — renderer-side invalid render metadata; the
+     * planner-model reason text is a later slice). Empty lines (forced blank
+     * lines in the source) reserve their stack slot without StaticLayouts.
+     */
+    private fun preparePositioned(lines: List<PositionedLine>): List<PositionedLineData>? {
+        val prepared = ArrayList<PositionedLineData>(lines.size)
+        for (line in lines) {
+            if (line.layoutWidthPx < 1) return null
+            val fillLayout = if (line.text.isEmpty()) null else buildSingleLineStatic(line.text, fill, line.layoutWidthPx) ?: return null
+            val strokeLayout = if (line.text.isEmpty()) null else buildSingleLineStatic(line.text, stroke, line.layoutWidthPx) ?: return null
+            prepared += PositionedLineData(fillLayout, strokeLayout, line.leftPx.toFloat(), line.topPx.toFloat())
+        }
+        return prepared
+    }
+
+    /** Builds a maxLines(1), left-aligned StaticLayout; null when it wraps to more than one line. */
+    private fun buildSingleLineStatic(text: String, paint: TextPaint, widthPx: Int): StaticLayout? {
+        val static = StaticLayout.Builder.obtain(text, 0, text.length, paint, widthPx)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .setMaxLines(1)
+            .build()
+        return if (static.lineCount == 1) static else null
+    }
+
+    /**
+     * Draws the prepared positioned lines. Clips (component → cell → legacy)
+     * already applied ONCE per layout by [draw]; per line: save, translate to
+     * the planner's integer placement, stroke then fill, restore. Allocation-
+     * free: every StaticLayout was built in bind().
+     */
+    private fun drawPositioned(canvas: Canvas, lines: List<PositionedLineData>) {
+        for (line in lines) {
+            val fillLayout = line.fillLayout ?: continue
+            val strokeLayout = line.strokeLayout ?: continue
+            val save = canvas.save()
+            canvas.translate(line.leftPx, line.topPx)
+            strokeLayout.draw(canvas)
+            fillLayout.draw(canvas)
+            canvas.restoreToCount(save)
         }
     }
 
@@ -217,7 +274,21 @@ internal class PageTextRenderer(typeface: Typeface) {
     private sealed class Shaped {
         class Horizontal(val data: HorizontalData) : Shaped()
         class Vertical(val data: VerticalData) : Shaped()
+
+        /** Slice 5: adaptive pre-positioned lines, exactly one shaped line each. */
+        class Positioned(val lines: List<PositionedLineData>) : Shaped()
     }
+
+    /**
+     * One prepared positioned line. The layouts are null only for a forced
+     * blank line (no ink, stack slot reserved). Built entirely in bind().
+     */
+    private class PositionedLineData(
+        val fillLayout: StaticLayout?,
+        val strokeLayout: StaticLayout?,
+        val leftPx: Float,
+        val topPx: Float,
+    )
 
     private data class HorizontalData(
         val fillLayout: StaticLayout?,

@@ -204,6 +204,177 @@ class PageTextRendererInstrumentedTest {
         assertTrue(bitmap.nonTransparentPixels() > 0)
     }
 
+    // ---- T912 slice 5: adaptive positioned-line shaping -------------------
+
+    @Test
+    fun positionedAdaptiveLinesStayInsideComponentWithThickStrokeAndComplexGlyphs() {
+        // Hole/concave component, thick stroke, combining mark (e + U+0301),
+        // emoji ZWJ, and punctuation overhang: one shaped line per planner
+        // placement, zero alpha outside the component and inside the hole.
+        val spans = buildList {
+            for (y in 8 until 56) {
+                if (y !in 24 until 40) {
+                    add(MaskGeometry.RowSpan(y, 8, 56))
+                } else {
+                    add(MaskGeometry.RowSpan(y, 8, 24))
+                    add(MaskGeometry.RowSpan(y, 40, 56))
+                }
+            }
+        }
+        val geometry = MaskGeometry.fromSpans(64, 64, spans)
+        val text = "e\u0301!\uD83D\uDC69\u200D\uD83D\uDE80M"
+        val line = PositionedLine(text, leftPx = 10, topPx = 10, layoutWidthPx = 48, layoutHeightPx = 16, conservativeOccupancy = FloatRect(6f, 6f, 62f, 30f))
+        val bitmap = renderLayout(
+            positionedLayout(geometry, 0, listOf(line), text, font = 12f, stroke = 8f),
+        )
+
+        fun inComponent(x: Int, y: Int) =
+            geometry.components[0].spans.any { it.y == y && x in it.start until it.endExclusive }
+
+        var ink = 0
+        var inkBottom = 0
+        for (y in 0 until 64) {
+            for (x in 0 until 64) {
+                val alpha = Color.alpha(bitmap.getPixel(x, y))
+                if (alpha != 0) {
+                    ink++
+                    inkBottom = maxOf(inkBottom, y)
+                    assertTrue("ink outside component at $x,$y", inComponent(x, y))
+                    if (y in 24 until 40) {
+                        assertTrue("ink in hole at $x,$y", x < 24 || x >= 40)
+                    }
+                }
+            }
+        }
+        assertTrue(ink > 0)
+        // One-line shaping: no second line is drawn below the planned line box.
+        assertTrue("ink bottom $inkBottom crosses a would-be second line", inkBottom <= 10 + 20)
+    }
+
+    @Test
+    fun twoAdaptiveLayoutsSharingOneComponentKeepDisjointCellFootprintsWithAlphaGap() {
+        val geometry = MaskGeometry.fromSpans(64, 64, (0 until 64).map { MaskGeometry.RowSpan(it, 0, 64) })
+        val left = positionedLayout(
+            geometry, 0,
+            listOf(PositionedLine("MMM", 2, 24, 28, 16, FloatRect(0f, 20f, 32f, 44f))),
+            "MMM", 12f, 4f, cellRect = FloatRect(0f, 0f, 31f, 64f),
+        )
+        val right = positionedLayout(
+            geometry, 0,
+            listOf(PositionedLine("MMM", 35, 24, 28, 16, FloatRect(33f, 20f, 65f, 44f))),
+            "MMM", 12f, 4f, cellRect = FloatRect(33f, 0f, 64f, 64f),
+        )
+        val renderer = PageTextRenderer(Typeface.DEFAULT_BOLD)
+        renderer.bind(listOf(left, right), 64, 64)
+        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
+        renderer.draw(Canvas(bitmap))
+
+        // Structural disjointness: nothing in the dead column, each footprint
+        // inside its own hard cell, and at least a 1px alpha gap between them.
+        for (y in 0 until 64) {
+            assertEquals("dead column alpha at 31,$y", 0, Color.alpha(bitmap.getPixel(31, y)))
+            assertEquals("dead column alpha at 32,$y", 0, Color.alpha(bitmap.getPixel(32, y)))
+            assertEquals("dead column alpha at 33,$y", 0, Color.alpha(bitmap.getPixel(33, y)))
+        }
+        val leftBounds = bitmap.alphaBounds(0, 31)
+        val rightBounds = bitmap.alphaBounds(33, 64)
+        assertTrue(leftBounds.width() > 0)
+        assertTrue(rightBounds.width() > 0)
+        assertTrue("no alpha gap: ${leftBounds.right} vs ${rightBounds.left}", rightBounds.left - leftBounds.right >= 1)
+    }
+
+    @Test
+    fun sourceHyphenAndAtomicOverwideWordShapeExactlyOneLine() {
+        val geometry = MaskGeometry.fromSpans(64, 64, (4 until 60).map { MaskGeometry.RowSpan(it, 4, 60) })
+        for (text in listOf("NEE-CHAN", "HANAZUMI")) {
+            // layoutWidthPx is intentionally NARROWER than the text advance:
+            // simple breaking with no hyphenation and maxLines(1) must keep
+            // exactly one line (overflow is contained by the structural clip).
+            val line = PositionedLine(text, 8, 20, 30, 16, FloatRect(4f, 16f, 60f, 40f))
+            val bitmap = renderLayout(positionedLayout(geometry, 0, listOf(line), text, 12f, 4f))
+            var ink = 0
+            var inkBottom = 0
+            for (y in 0 until 64) {
+                for (x in 0 until 64) {
+                    if (Color.alpha(bitmap.getPixel(x, y)) != 0) {
+                        ink++
+                        inkBottom = maxOf(inkBottom, y)
+                        val inComponent = geometry.components[0].spans.any { it.y == y && x in it.start until it.endExclusive }
+                        assertTrue("ink outside component at $x,$y", inComponent)
+                    }
+                }
+            }
+            assertTrue("$text produced no ink", ink > 0)
+            assertTrue("$text drew a second line (ink bottom $inkBottom)", inkBottom <= 20 + 20)
+        }
+    }
+
+    @Test
+    fun fractionalTransformKeepsPositionedLinesInsideComponent() {
+        val geometry = MaskGeometry.fromSpans(64, 64, (10 until 54).map { MaskGeometry.RowSpan(it, 10, 54) })
+        val line = PositionedLine("MMMM", 12, 16, 40, 18, FloatRect(8f, 12f, 56f, 38f))
+        val renderer = PageTextRenderer(Typeface.DEFAULT_BOLD)
+        renderer.bind(listOf(positionedLayout(geometry, 0, listOf(line), "MMMM", 14f, 4f)), 64, 64)
+        val bitmap = Bitmap.createBitmap(130, 130, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.translate(0.35f, 0.65f)
+        canvas.scale(2f, 2f)
+        renderer.draw(canvas)
+        for (y in 0 until bitmap.height) {
+            for (x in 0 until bitmap.width) {
+                val sourceX = (x - 0.35f) / 2f
+                val sourceY = (y - 0.65f) / 2f
+                if (sourceX < 9.5f || sourceX >= 54.5f || sourceY < 9.5f || sourceY >= 54.5f) {
+                    assertEquals("alpha at $x,$y", 0, Color.alpha(bitmap.getPixel(x, y)))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun positionedLinesAreLeftAlignedInsideTheirPlannedWidth() {
+        val geometry = MaskGeometry.fromSpans(64, 64, (0 until 64).map { MaskGeometry.RowSpan(it, 0, 64) })
+        // Two lines sharing leftPx with very different advances: left-aligned
+        // shaping starts both at (approximately) leftPx; centering would push
+        // the short line far right.
+        val lines = listOf(
+            PositionedLine("M", 8, 8, 48, 16, FloatRect(4f, 4f, 60f, 28f)),
+            PositionedLine("MMMMM", 8, 40, 48, 16, FloatRect(4f, 36f, 60f, 60f)),
+        )
+        val bitmap = renderLayout(positionedLayout(geometry, 0, lines, "M MMMMM", 12f, 2f))
+
+        val shortInkLeft = firstInkColumn(bitmap, rows = 8 until 24)
+        val longInkLeft = firstInkColumn(bitmap, rows = 40 until 56)
+        assertTrue("short line ink left $shortInkLeft", shortInkLeft in 8..12)
+        assertTrue("long line ink left $longInkLeft", longInkLeft in 8..12)
+    }
+
+    private fun firstInkColumn(bitmap: Bitmap, rows: IntRange): Int {
+        for (x in 0 until bitmap.width) {
+            for (y in rows) {
+                if (Color.alpha(bitmap.getPixel(x, y)) != 0) return x
+            }
+        }
+        return -1
+    }
+
+    private fun positionedLayout(
+        geometry: MaskGeometry?,
+        componentId: Int?,
+        lines: List<PositionedLine>,
+        text: String,
+        font: Float,
+        stroke: Float,
+        planGeometryId: Int? = if (geometry == null) null else 0,
+        cellRect: FloatRect? = null,
+    ) = BlockLayout(
+        block = TranslationBlock(text = text, translation = text, width = 52f, height = 52f, x = 6f, y = 6f, symHeight = 1f, symWidth = 1f, angle = 0f, label = 1, score = 1f),
+        text = text, isVertical = false, originX = 32f, originY = 32f, safeW = 56f, safeH = 56f,
+        fontSizePx = font, strokeWidth = stroke, drawAlign = TextAlign.CENTER, clipRect = null,
+        lines = lines.map { it.text }, positionedLines = lines, maskGeometry = geometry,
+        planGeometryId = planGeometryId, maskComponentId = componentId, cellRect = cellRect,
+    )
+
     private fun assertExactMask(spans: List<MaskGeometry.RowSpan>, componentId: Int, text: String, font: Float, stroke: Float) {
         val bitmap = render(spans, componentId, text, font, stroke)
         val geometry = MaskGeometry.fromSpans(64, 64, spans)
@@ -283,13 +454,15 @@ class PageTextRendererInstrumentedTest {
         }
     }
 
-    private fun Bitmap.alphaBounds(): android.graphics.Rect {
+    private fun Bitmap.alphaBounds(): android.graphics.Rect = alphaBounds(0, width)
+
+    private fun Bitmap.alphaBounds(minX: Int, maxX: Int): android.graphics.Rect {
         var left = width
         var top = height
         var right = 0
         var bottom = 0
         for (y in 0 until height) {
-            for (x in 0 until width) {
+            for (x in minX until maxX) {
                 if (Color.alpha(getPixel(x, y)) != 0) {
                     left = minOf(left, x)
                     top = minOf(top, y)
