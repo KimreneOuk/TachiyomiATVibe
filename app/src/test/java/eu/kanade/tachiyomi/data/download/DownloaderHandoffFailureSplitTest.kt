@@ -16,6 +16,7 @@ import io.kotest.assertions.throwables.shouldThrow
 import io.kotest.matchers.shouldBe
 import io.mockk.coEvery
 import io.mockk.coVerify
+import io.mockk.coVerifyOrder
 import io.mockk.coVerifySequence
 import io.mockk.every
 import io.mockk.mockk
@@ -158,8 +159,8 @@ class DownloaderHandoffFailureSplitTest {
         )
 
         download.status shouldBe Download.State.DOWNLOADED
-        coVerifySequence {
-            manager.pendingRequestGeneration(chapterId)
+        coVerify(atLeast = 1) { manager.pendingRequestGeneration(chapterId) }
+        coVerifyOrder {
             manager.rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
             manager.startTranslationAfterDownloadIfRequested(any(), any())
         }

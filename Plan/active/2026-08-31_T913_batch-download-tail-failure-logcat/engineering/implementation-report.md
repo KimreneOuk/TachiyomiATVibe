@@ -87,3 +87,16 @@ The actual device-specific tail-page cause remains unknown until reproduction.
 The diagnostic count for `on_disk` is best-effort only when page readiness has
 already failed; `none` means the provider could not be enumerated without
 altering the existing failure path.
+
+## Capture-readiness follow-up
+
+The independent review identified and the follow-up closed the capture-critical
+gaps before device installation. Path operations now record false, null, and
+thrown results for page/temp/final publication; validation counts are gated so
+ordinary downloads retain their prior fast path; and a bounded trace context
+records a generation attachment when a request arrives after download work has
+started. Product state, retry behavior, file mutation, and handoff semantics are
+unchanged. The focused suites now pass 22/0, including the added false-rename,
+late-attachment, and event-sequence tests. A compiler warning remains in the
+existing handoff test (`Any?` passed to an `Any` matcher); it does not fail the
+build.

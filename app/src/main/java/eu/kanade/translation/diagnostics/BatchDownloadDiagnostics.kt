@@ -7,6 +7,9 @@ import logcat.logcat
 import java.util.Locale
 
 internal enum class BatchDownloadStage {
+    TEMP_LOOKUP,
+    TEMP_DELETE,
+    DIRECTORY_LIST,
     RESOLVE_IMAGE_URL,
     HTTP_FETCH,
     CREATE_TEMP,
@@ -21,6 +24,30 @@ internal enum class BatchDownloadStage {
     CACHE,
     REKEY,
     ADMISSION,
+}
+
+internal enum class BatchDownloadResult {
+    START,
+    SUCCESS,
+    FAILED,
+    FALSE,
+    NULL,
+    THREW,
+    CANCELLED,
+}
+
+internal enum class BatchDownloadTerminalState {
+    ERROR,
+    DOWNLOADED,
+}
+
+internal enum class BatchDownloadTraceBoundary {
+    CHAPTER_START,
+    PAGE,
+    VALIDATION,
+    FINALIZATION,
+    DOWNLOAD_TERMINAL,
+    HANDOFF,
 }
 
 internal enum class BatchDownloadCause {
@@ -42,6 +69,29 @@ internal enum class BatchDownloadQueueResult {
     UNSUPPORTED_SOURCE,
 }
 
+/** Bounded correlation state for one physical chapter download. */
+internal class BatchDownloadTraceContext(
+    private val chapterId: Long,
+    private val generationProvider: () -> Long?,
+) {
+    private var observedGeneration: Long? = generationProvider()
+
+    @Synchronized
+    fun generation(boundary: BatchDownloadTraceBoundary): Long? {
+        val current = generationProvider()
+        if (current != observedGeneration) {
+            BatchDownloadDiagnostics.attachment(
+                chapterId = chapterId,
+                fromGeneration = observedGeneration,
+                toGeneration = current,
+                boundary = boundary,
+            )
+            observedGeneration = current
+        }
+        return current
+    }
+}
+
 /**
  * Privacy-safe, bounded trace for translation-driven chapter downloads.
  *
@@ -54,6 +104,23 @@ internal object BatchDownloadDiagnostics {
     private const val SCHEMA_VERSION = 1
     internal const val ERROR_PAGE_LIMIT = 8
     private val safeTokenPattern = Regex("[A-Za-z0-9_.,\\$-]+")
+
+    @Volatile
+    internal var recordObserver: ((String) -> Unit)? = null
+
+    fun attachment(
+        chapterId: Long,
+        fromGeneration: Long?,
+        toGeneration: Long?,
+        boundary: BatchDownloadTraceBoundary,
+    ) = emit(
+        event = "attachment",
+        chapterId = chapterId,
+        generation = toGeneration,
+        "from_generation" to (fromGeneration?.toString() ?: "none"),
+        "to_generation" to (toGeneration?.toString() ?: "none"),
+        "boundary" to token(boundary),
+    )
 
     fun requestPhase(
         chapterId: Long,
@@ -115,7 +182,7 @@ internal object BatchDownloadDiagnostics {
         attempt: Int,
         stage: BatchDownloadStage,
         cause: BatchDownloadCause,
-        error: Throwable,
+        error: Throwable?,
     ) = emit(
         event = "page_attempt_failed",
         chapterId = chapterId,
@@ -135,7 +202,7 @@ internal object BatchDownloadDiagnostics {
         pageNumber: Int,
         stage: BatchDownloadStage,
         cause: BatchDownloadCause,
-        error: Throwable,
+        error: Throwable?,
     ) = emit(
         event = "page_terminal_failed",
         chapterId = chapterId,
@@ -147,34 +214,54 @@ internal object BatchDownloadDiagnostics {
         "error_class" to errorClass(error),
     )
 
+    fun pathOperation(
+        chapterId: Long,
+        generation: Long,
+        pageIndex: Int?,
+        pageNumber: Int?,
+        stage: BatchDownloadStage,
+        result: BatchDownloadResult,
+        error: Throwable? = null,
+    ) = emit(
+        event = "path_operation",
+        chapterId = chapterId,
+        generation = generation,
+        "page_index" to count(pageIndex),
+        "page_number" to count(pageNumber),
+        "stage" to token(stage),
+        "result" to token(result),
+        "error_class" to errorClass(error),
+    )
+
     fun validation(
         chapterId: Long,
         generation: Long,
         expected: Int,
         ready: Int,
         onDisk: Int?,
+        errorCount: Int,
         errorPages: List<Int>,
-    ) = emit(validationRecord(chapterId, generation, expected, ready, onDisk, errorPages))
+    ) = emit(validationRecord(chapterId, generation, expected, ready, onDisk, errorCount, errorPages))
 
     fun finalization(
         chapterId: Long,
         generation: Long,
         stage: BatchDownloadStage,
-        result: String,
+        result: BatchDownloadResult,
         error: Throwable? = null,
     ) = emit(
         event = "finalization",
         chapterId = chapterId,
         generation = generation,
         "stage" to token(stage),
-        "result" to safeToken(result),
+        "result" to token(result),
         "error_class" to errorClass(error),
     )
 
     fun downloadTerminal(
         chapterId: Long,
         generation: Long,
-        state: String,
+        state: BatchDownloadTerminalState,
         cause: BatchDownloadCause,
         expected: Int? = null,
         ready: Int? = null,
@@ -184,7 +271,7 @@ internal object BatchDownloadDiagnostics {
         event = "download_terminal",
         chapterId = chapterId,
         generation = generation,
-        "state" to safeToken(state),
+        "state" to token(state),
         "cause" to token(cause),
         "expected" to count(expected),
         "ready" to count(ready),
@@ -196,14 +283,14 @@ internal object BatchDownloadDiagnostics {
         chapterId: Long,
         generation: Long,
         stage: BatchDownloadStage,
-        result: String,
+        result: BatchDownloadResult,
         error: Throwable? = null,
     ) = emit(
         event = "handoff",
         chapterId = chapterId,
         generation = generation,
         "stage" to token(stage),
-        "result" to safeToken(result),
+        "result" to token(result),
         "error_class" to errorClass(error),
     )
 
@@ -213,6 +300,7 @@ internal object BatchDownloadDiagnostics {
         expected: Int,
         ready: Int,
         onDisk: Int?,
+        errorCount: Int,
         errorPages: List<Int>,
     ): String {
         val boundedPages = errorPages.take(ERROR_PAGE_LIMIT)
@@ -223,9 +311,9 @@ internal object BatchDownloadDiagnostics {
             "expected" to expected.toString(),
             "ready" to ready.toString(),
             "on_disk" to count(onDisk),
-            "error_count" to errorPages.size.toString(),
+            "error_count" to errorCount.toString(),
             "error_pages" to if (boundedPages.isEmpty()) "none" else boundedPages.joinToString(","),
-            "error_pages_truncated" to (errorPages.size > ERROR_PAGE_LIMIT).toString(),
+            "error_pages_truncated" to (errorCount > ERROR_PAGE_LIMIT).toString(),
         )
     }
 
@@ -241,6 +329,7 @@ internal object BatchDownloadDiagnostics {
     private fun count(value: Int?): String = value?.toString() ?: "none"
 
     private fun emit(record: String) {
+        recordObserver?.invoke(record)
         logcat(tag = TAG, priority = LogPriority.INFO) { record }
     }
 

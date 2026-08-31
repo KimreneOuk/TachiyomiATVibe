@@ -18,7 +18,11 @@ import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.diagnostics.BatchDownloadCause
 import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.diagnostics.BatchDownloadQueueResult
+import eu.kanade.translation.diagnostics.BatchDownloadResult
 import eu.kanade.translation.diagnostics.BatchDownloadStage
+import eu.kanade.translation.diagnostics.BatchDownloadTerminalState
+import eu.kanade.translation.diagnostics.BatchDownloadTraceBoundary
+import eu.kanade.translation.diagnostics.BatchDownloadTraceContext
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.onlinePageTranslationKey
 import kotlinx.coroutines.CancellationException
@@ -309,17 +313,22 @@ class Downloader(
      */
     fun queueChapters(manga: Manga, chapters: List<Chapter>, autoStart: Boolean) {
         if (chapters.isEmpty()) return
+        val traceQueue = chapters.any { chapter ->
+            translationManager.pendingRequestGeneration(chapter.id) != null
+        }
 
         val source = sourceManager.get(manga.source) as? HttpSource ?: run {
             // T911 slice 2 (R5): a silent rejection used to strand a pending
             // translation request in WAITING forever. Fail it explicitly;
             // no-op for chapters without a pending request.
             chapters.forEach { chapter ->
-                traceQueueResult(
-                    chapter.id,
-                    BatchDownloadQueueResult.UNSUPPORTED_SOURCE,
-                    autoStart,
-                )
+                if (traceQueue) {
+                    traceQueueResult(
+                        chapter.id,
+                        BatchDownloadQueueResult.UNSUPPORTED_SOURCE,
+                        autoStart,
+                    )
+                }
                 translationManager.markTranslationDownloadFailed(
                     chapter.id,
                     "Source does not support downloads",
@@ -329,8 +338,8 @@ class Downloader(
             return
         }
         val wasEmpty = queueState.value.isEmpty()
-        val alreadyDownloadedIds = mutableSetOf<Long>()
-        val alreadyQueuedIds = mutableSetOf<Long>()
+        val alreadyDownloadedIds = if (traceQueue) mutableSetOf<Long>() else null
+        val alreadyQueuedIds = if (traceQueue) mutableSetOf<Long>() else null
         val chaptersToQueue = chapters.asSequence()
             // Filter out those already downloaded.
             .filter { chapter ->
@@ -340,7 +349,7 @@ class Downloader(
                     manga.title,
                     source,
                 ) == null
-                if (!shouldQueue) alreadyDownloadedIds += chapter.id
+                if (!shouldQueue) alreadyDownloadedIds?.add(chapter.id)
                 shouldQueue
             }
             // Add chapters to queue from the start.
@@ -348,7 +357,7 @@ class Downloader(
             // Filter out those already enqueued.
             .filter { chapter ->
                 val shouldQueue = queueState.value.none { it.chapter.id == chapter.id }
-                if (!shouldQueue) alreadyQueuedIds += chapter.id
+                if (!shouldQueue) alreadyQueuedIds?.add(chapter.id)
                 shouldQueue
             }
             // Create a download for each one.
@@ -379,15 +388,17 @@ class Downloader(
                 DownloadJob.start(context)
             }
         }
-        val enqueuedIds = chaptersToQueue.mapTo(mutableSetOf()) { it.chapter.id }
-        chapters.forEach { chapter ->
-            val result = when (chapter.id) {
-                in alreadyDownloadedIds -> BatchDownloadQueueResult.ALREADY_DOWNLOADED
-                in alreadyQueuedIds -> BatchDownloadQueueResult.ALREADY_QUEUED
-                in enqueuedIds -> BatchDownloadQueueResult.ENQUEUED
-                else -> return@forEach
+        if (traceQueue) {
+            val enqueuedIds = chaptersToQueue.mapTo(mutableSetOf()) { it.chapter.id }
+            chapters.forEach { chapter ->
+                val result = when (chapter.id) {
+                    in alreadyDownloadedIds.orEmpty() -> BatchDownloadQueueResult.ALREADY_DOWNLOADED
+                    in alreadyQueuedIds.orEmpty() -> BatchDownloadQueueResult.ALREADY_QUEUED
+                    in enqueuedIds -> BatchDownloadQueueResult.ENQUEUED
+                    else -> return@forEach
+                }
+                traceQueueResult(chapter.id, result, autoStart)
             }
-            traceQueueResult(chapter.id, result, autoStart)
         }
     }
 
@@ -400,17 +411,19 @@ class Downloader(
      * @param download the chapter to be downloaded.
      */
     internal suspend fun downloadChapter(download: Download) {
-        val traceGeneration = translationManager.pendingRequestGeneration(download.chapter.id)
+        val traceContext = BatchDownloadTraceContext(download.chapter.id) {
+            translationManager.pendingRequestGeneration(download.chapter.id)
+        }
         val mangaDir = provider.getMangaDir(download.manga.title, download.source)
 
         val availSpace = DiskUtil.getAvailableStorageSpace(mangaDir)
         if (availSpace != -1L && availSpace < MIN_DISK_SPACE) {
             download.status = Download.State.ERROR
-            traceGeneration?.let { generation ->
+            traceContext.generation(BatchDownloadTraceBoundary.DOWNLOAD_TERMINAL)?.let { generation ->
                 BatchDownloadDiagnostics.downloadTerminal(
                     chapterId = download.chapter.id,
                     generation = generation,
-                    state = Download.State.ERROR.name.lowercase(Locale.ROOT),
+                    state = BatchDownloadTerminalState.ERROR,
                     cause = BatchDownloadCause.STORAGE,
                 )
             }
@@ -453,7 +466,7 @@ class Downloader(
                 download.pages = reIndexedPages
                 reIndexedPages
             }
-            traceGeneration?.let { generation ->
+            traceContext.generation(BatchDownloadTraceBoundary.CHAPTER_START)?.let { generation ->
                 BatchDownloadDiagnostics.chapterStart(
                     chapterId = download.chapter.id,
                     generation = generation,
@@ -464,9 +477,54 @@ class Downloader(
             }
 
             // Delete all temporary (unfinished) files
-            tmpDir.listFiles()
+            val cleanupFiles = try {
+                tmpDir.listFiles()
+            } catch (error: Throwable) {
+                tracePathOperation(
+                    download.chapter.id,
+                    traceContext,
+                    null,
+                    BatchDownloadStage.DIRECTORY_LIST,
+                    BatchDownloadResult.THREW,
+                    error,
+                )
+                throw error
+            }
+            if (cleanupFiles == null) {
+                tracePathOperation(
+                    download.chapter.id,
+                    traceContext,
+                    null,
+                    BatchDownloadStage.DIRECTORY_LIST,
+                    BatchDownloadResult.NULL,
+                )
+            }
+            cleanupFiles
                 ?.filter { it.extension == "tmp" }
-                ?.forEach { it.delete() }
+                ?.forEach { file ->
+                    val deleted = try {
+                        file.delete()
+                    } catch (error: Throwable) {
+                        tracePathOperation(
+                            download.chapter.id,
+                            traceContext,
+                            null,
+                            BatchDownloadStage.TEMP_DELETE,
+                            BatchDownloadResult.THREW,
+                            error,
+                        )
+                        throw error
+                    }
+                    if (!deleted) {
+                        tracePathOperation(
+                            download.chapter.id,
+                            traceContext,
+                            null,
+                            BatchDownloadStage.TEMP_DELETE,
+                            BatchDownloadResult.FALSE,
+                        )
+                    }
+                }
 
             download.status = Download.State.DOWNLOADING
 
@@ -482,7 +540,7 @@ class Downloader(
                                 page.imageUrl = download.source.getImageUrl(page)
                             } catch (e: Throwable) {
                                 page.status = Page.State.ERROR
-                                traceGeneration?.let { generation ->
+                                traceContext.generation(BatchDownloadTraceBoundary.PAGE)?.let { generation ->
                                     BatchDownloadDiagnostics.pageAttemptFailed(
                                         download.chapter.id,
                                         generation,
@@ -506,7 +564,7 @@ class Downloader(
                             }
                         }
 
-                        withIOContext { getOrDownloadImage(page, download, tmpDir, traceGeneration) }
+                        withIOContext { getOrDownloadImage(page, download, tmpDir, traceContext) }
                         emit(page)
                     }.flowOn(Dispatchers.IO)
                 }
@@ -517,15 +575,15 @@ class Downloader(
 
             // Do after download completes
 
-            val currentValidation = validateDownload(download, tmpDir, traceGeneration)
+            val currentValidation = validateDownload(download, tmpDir, traceContext)
             validation = currentValidation
             if (!currentValidation.success) {
                 download.status = Download.State.ERROR
-                traceGeneration?.let { generation ->
+                traceContext.generation(BatchDownloadTraceBoundary.DOWNLOAD_TERMINAL)?.let { generation ->
                     BatchDownloadDiagnostics.downloadTerminal(
                         chapterId = download.chapter.id,
                         generation = generation,
-                        state = Download.State.ERROR.name.lowercase(Locale.ROOT),
+                        state = BatchDownloadTerminalState.ERROR,
                         cause = if (currentValidation.errorPages.isNotEmpty()) {
                             BatchDownloadCause.INVALID_PAGE
                         } else {
@@ -541,18 +599,28 @@ class Downloader(
             }
 
             finalizationStage = BatchDownloadStage.METADATA
-            traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.METADATA, "start")
+            traceFinalization(download.chapter.id, traceContext, BatchDownloadStage.METADATA, BatchDownloadResult.START)
             createComicInfoFile(
                 tmpDir,
                 download.manga,
                 download.chapter,
                 download.source,
             )
-            traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.METADATA, "success")
+            traceFinalization(download.chapter.id, traceContext, BatchDownloadStage.METADATA, BatchDownloadResult.SUCCESS)
             finalizationStage = null
 
             onDiskKeys = if (translationManager.hasTranslationStore(download.chapter, download.manga, download.source)) {
-                tmpDir.listFiles().orEmpty()
+                val files = tmpDir.listFiles()
+                if (files == null) {
+                    tracePathOperation(
+                        download.chapter.id,
+                        traceContext,
+                        null,
+                        BatchDownloadStage.DIRECTORY_LIST,
+                        BatchDownloadResult.NULL,
+                    )
+                }
+                files.orEmpty()
                     .filter { file ->
                         if (!file.isFile) {
                             false
@@ -571,29 +639,58 @@ class Downloader(
             // Only rename the directory if it's downloaded
             if (downloadPreferences.saveChaptersAsCBZ().get()) {
                 finalizationStage = BatchDownloadStage.ARCHIVE
-                traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.ARCHIVE, "start")
-                archiveChapter(mangaDir, chapterDirname, tmpDir)
-                traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.ARCHIVE, "success")
+                traceFinalization(
+                    download.chapter.id,
+                    traceContext,
+                    BatchDownloadStage.ARCHIVE,
+                    BatchDownloadResult.START,
+                )
+                val archive = archiveChapter(mangaDir, chapterDirname, tmpDir)
+                if (!archive.entriesListed) {
+                    tracePathOperation(
+                        download.chapter.id,
+                        traceContext,
+                        null,
+                        BatchDownloadStage.DIRECTORY_LIST,
+                        BatchDownloadResult.NULL,
+                    )
+                }
+                traceFinalization(
+                    download.chapter.id,
+                    traceContext,
+                    BatchDownloadStage.ARCHIVE,
+                    archive.renamed.toTraceResult(),
+                )
             } else {
                 finalizationStage = BatchDownloadStage.RENAME
-                traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.RENAME, "start")
-                tmpDir.renameTo(chapterDirname)
-                traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.RENAME, "success")
+                traceFinalization(
+                    download.chapter.id,
+                    traceContext,
+                    BatchDownloadStage.RENAME,
+                    BatchDownloadResult.START,
+                )
+                val renamed = tmpDir.renameTo(chapterDirname)
+                traceFinalization(
+                    download.chapter.id,
+                    traceContext,
+                    BatchDownloadStage.RENAME,
+                    renamed.toTraceResult(),
+                )
             }
             finalizationStage = BatchDownloadStage.CACHE
-            traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.CACHE, "start")
+            traceFinalization(download.chapter.id, traceContext, BatchDownloadStage.CACHE, BatchDownloadResult.START)
             cache.addChapter(chapterDirname, mangaDir, download.manga)
-            traceFinalization(download.chapter.id, traceGeneration, BatchDownloadStage.CACHE, "success")
+            traceFinalization(download.chapter.id, traceContext, BatchDownloadStage.CACHE, BatchDownloadResult.SUCCESS)
             finalizationStage = null
 
             DiskUtil.createNoMediaFile(tmpDir, context)
 
             download.status = Download.State.DOWNLOADED
-            traceGeneration?.let { generation ->
+            traceContext.generation(BatchDownloadTraceBoundary.DOWNLOAD_TERMINAL)?.let { generation ->
                 BatchDownloadDiagnostics.downloadTerminal(
                     chapterId = download.chapter.id,
                     generation = generation,
-                    state = Download.State.DOWNLOADED.name.lowercase(Locale.ROOT),
+                    state = BatchDownloadTerminalState.DOWNLOADED,
                     cause = BatchDownloadCause.UNKNOWN,
                     expected = currentValidation.expected,
                     ready = currentValidation.ready,
@@ -603,13 +700,13 @@ class Downloader(
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             finalizationStage?.let { stage ->
-                traceFinalization(download.chapter.id, traceGeneration, stage, "failed", error)
+                traceFinalization(download.chapter.id, traceContext, stage, BatchDownloadResult.FAILED, error)
             }
-            traceGeneration?.let { generation ->
+            traceContext.generation(BatchDownloadTraceBoundary.DOWNLOAD_TERMINAL)?.let { generation ->
                 BatchDownloadDiagnostics.downloadTerminal(
                     chapterId = download.chapter.id,
                     generation = generation,
-                    state = Download.State.ERROR.name.lowercase(Locale.ROOT),
+                    state = BatchDownloadTerminalState.ERROR,
                     cause = finalizationStage?.let(::causeForStage) ?: BatchDownloadCause.UNKNOWN,
                     expected = validation?.expected ?: download.pages?.size,
                     ready = validation?.ready ?: download.downloadedImages,
@@ -629,7 +726,7 @@ class Downloader(
             return
         }
 
-        handOffAfterFinalization(download, pageList, onDiskKeys)
+        handOffAfterFinalization(download, pageList, onDiskKeys, traceContext)
     }
 
     /**
@@ -646,18 +743,20 @@ class Downloader(
         download: Download,
         pageList: List<Page>,
         onDiskKeys: List<String>,
+        traceContext: BatchDownloadTraceContext = BatchDownloadTraceContext(download.chapter.id) {
+            translationManager.pendingRequestGeneration(download.chapter.id)
+        },
     ) {
-        val traceGeneration = translationManager.pendingRequestGeneration(download.chapter.id)
         var stage = BatchDownloadStage.ADMISSION
         try {
             if (onDiskKeys.isNotEmpty()) {
                 stage = BatchDownloadStage.REKEY
-                traceGeneration?.let { generation ->
+                traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
                     BatchDownloadDiagnostics.handoff(
                         download.chapter.id,
                         generation,
                         stage,
-                        "start",
+                        BatchDownloadResult.START,
                     )
                 }
                 val onlineKeys = pageList.map { page -> onlinePageTranslationKey(page.imageUrl, page.url) }
@@ -668,42 +767,52 @@ class Downloader(
                     onlineKeyByPageIndex = onlineKeys,
                     onDiskKeyByPageIndex = onDiskKeys,
                 )
-                traceGeneration?.let { generation ->
+                traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
                     BatchDownloadDiagnostics.handoff(
                         download.chapter.id,
                         generation,
                         stage,
-                        "success",
+                        BatchDownloadResult.SUCCESS,
                     )
                 }
             }
             stage = BatchDownloadStage.ADMISSION
-            traceGeneration?.let { generation ->
-                BatchDownloadDiagnostics.handoff(download.chapter.id, generation, stage, "start")
+            traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
+                BatchDownloadDiagnostics.handoff(
+                    download.chapter.id,
+                    generation,
+                    stage,
+                    BatchDownloadResult.START,
+                )
             }
             translationManager.startTranslationAfterDownloadIfRequested(download.manga, download.chapter)
-            traceGeneration?.let { generation ->
-                BatchDownloadDiagnostics.handoff(download.chapter.id, generation, stage, "success")
+            traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
+                BatchDownloadDiagnostics.handoff(
+                    download.chapter.id,
+                    generation,
+                    stage,
+                    BatchDownloadResult.SUCCESS,
+                )
             }
         } catch (error: Throwable) {
             if (error is CancellationException) {
-                traceGeneration?.let { generation ->
+                traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
                     BatchDownloadDiagnostics.handoff(
                         download.chapter.id,
                         generation,
                         stage,
-                        "cancelled",
+                        BatchDownloadResult.CANCELLED,
                         error,
                     )
                 }
                 throw error
             }
-            traceGeneration?.let { generation ->
+            traceContext.generation(BatchDownloadTraceBoundary.HANDOFF)?.let { generation ->
                 BatchDownloadDiagnostics.handoff(
                     download.chapter.id,
                     generation,
                     stage,
-                    "failed",
+                    BatchDownloadResult.FAILED,
                     error,
                 )
             }
@@ -727,7 +836,7 @@ class Downloader(
         page: Page,
         download: Download,
         tmpDir: UniFile,
-        traceGeneration: Long?,
+        traceContext: BatchDownloadTraceContext,
     ) {
         // If the image URL is empty, do nothing
         if (page.imageUrl == null) {
@@ -736,13 +845,70 @@ class Downloader(
 
         val digitCount = (download.pages?.size ?: 0).toString().length.coerceAtLeast(3)
         val filename = "%0${digitCount}d".format(Locale.ENGLISH, page.number)
-        val tmpFile = tmpDir.findFile("$filename.tmp")
+        val tmpFile = try {
+            tmpDir.findFile("$filename.tmp")
+        } catch (error: Throwable) {
+            tracePathOperation(
+                download.chapter.id,
+                traceContext,
+                page,
+                BatchDownloadStage.TEMP_LOOKUP,
+                BatchDownloadResult.THREW,
+                error,
+            )
+            throw error
+        }
 
         // Delete temp file if it exists
-        tmpFile?.delete()
+        if (tmpFile != null) {
+            try {
+                val deleted = tmpFile.delete()
+                if (!deleted) {
+                    tracePathOperation(
+                        download.chapter.id,
+                        traceContext,
+                        page,
+                        BatchDownloadStage.TEMP_DELETE,
+                        BatchDownloadResult.FALSE,
+                    )
+                }
+            } catch (error: Throwable) {
+                tracePathOperation(
+                    download.chapter.id,
+                    traceContext,
+                    page,
+                    BatchDownloadStage.TEMP_DELETE,
+                    BatchDownloadResult.THREW,
+                    error,
+                )
+                throw error
+            }
+        }
 
         // Try to find the image file
-        val imageFile = tmpDir.listFiles()?.firstOrNull {
+        val listedFiles = try {
+            tmpDir.listFiles()
+        } catch (error: Throwable) {
+            tracePathOperation(
+                download.chapter.id,
+                traceContext,
+                page,
+                BatchDownloadStage.DIRECTORY_LIST,
+                BatchDownloadResult.THREW,
+                error,
+            )
+            throw error
+        }
+        if (listedFiles == null) {
+            tracePathOperation(
+                download.chapter.id,
+                traceContext,
+                page,
+                BatchDownloadStage.DIRECTORY_LIST,
+                BatchDownloadResult.NULL,
+            )
+        }
+        val imageFile = listedFiles?.firstOrNull {
             it.name!!.startsWith("$filename.") || it.name!!.startsWith("${filename}__001")
         }
 
@@ -755,7 +921,14 @@ class Downloader(
                     page.imageUrl!!,
                 ) -> {
                     stage = BatchDownloadStage.CACHE_COPY
-                    copyImageFromCache(chapterCache.getImageFile(page.imageUrl!!), tmpDir, filename)
+                    copyImageFromCache(
+                        chapterCache.getImageFile(page.imageUrl!!),
+                        tmpDir,
+                        filename,
+                        download.chapter.id,
+                        page,
+                        traceContext,
+                    )
                 }
                 else -> {
                     stage = BatchDownloadStage.HTTP_FETCH
@@ -765,14 +938,14 @@ class Downloader(
                         tmpDir,
                         filename,
                         download.chapter.id,
-                        traceGeneration,
+                        traceContext,
                     )
                 }
             }
 
             // When the page is ready, set page path, progress (just in case) and status
             stage = BatchDownloadStage.SPLIT
-            splitTallImageIfNeeded(page, tmpDir, download.chapter.id, traceGeneration)
+            splitTallImageIfNeeded(page, tmpDir, download.chapter.id, traceContext)
 
             page.uri = file.uri
             page.progress = 100
@@ -780,7 +953,7 @@ class Downloader(
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
             if (stage != BatchDownloadStage.HTTP_FETCH) {
-                traceGeneration?.let { generation ->
+                traceContext.generation(BatchDownloadTraceBoundary.PAGE)?.let { generation ->
                     val cause = causeForStage(stage)
                     BatchDownloadDiagnostics.pageAttemptFailed(
                         download.chapter.id,
@@ -824,7 +997,7 @@ class Downloader(
         tmpDir: UniFile,
         filename: String,
         chapterId: Long,
-        traceGeneration: Long?,
+        traceContext: BatchDownloadTraceContext,
     ): UniFile {
         page.status = Page.State.DOWNLOAD_IMAGE
         page.progress = 0
@@ -838,7 +1011,7 @@ class Downloader(
                     source.getImage(page)
                 } catch (error: Throwable) {
                     if (error is CancellationException) throw error
-                    tracePageAttemptFailure(chapterId, traceGeneration, page, attempt, stage, error)
+                    tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, error)
                     throw error
                 }
                 stage = BatchDownloadStage.CREATE_TEMP
@@ -846,7 +1019,7 @@ class Downloader(
                     tmpDir.createFile("$filename.tmp")!!
                 } catch (error: Throwable) {
                     if (error is CancellationException) throw error
-                    tracePageAttemptFailure(chapterId, traceGeneration, page, attempt, stage, error)
+                    tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, error)
                     throw error
                 }
                 try {
@@ -855,9 +1028,13 @@ class Downloader(
                     stage = BatchDownloadStage.DETECT_TYPE
                     val extension = getImageExtension(response, file)
                     stage = BatchDownloadStage.RENAME_TEMP
-                    file.renameTo("$filename.$extension")
+                    val renamed = file.renameTo("$filename.$extension")
+                    if (!renamed) {
+                        tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, null)
+                        tracePageTerminalFailure(chapterId, traceContext, page, stage, null)
+                    }
                 } catch (e: Exception) {
-                    tracePageAttemptFailure(chapterId, traceGeneration, page, attempt, stage, e)
+                    tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, e)
                     response.close()
                     file.delete()
                     throw e
@@ -876,7 +1053,7 @@ class Downloader(
                 .first()
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
-            traceGeneration?.let { generation ->
+            traceContext.generation(BatchDownloadTraceBoundary.PAGE)?.let { generation ->
                 BatchDownloadDiagnostics.pageTerminalFailed(
                     chapterId,
                     generation,
@@ -898,15 +1075,56 @@ class Downloader(
      * @param tmpDir the temporary directory of the download.
      * @param filename the filename of the image.
      */
-    private fun copyImageFromCache(cacheFile: File, tmpDir: UniFile, filename: String): UniFile {
+    private fun copyImageFromCache(
+        cacheFile: File,
+        tmpDir: UniFile,
+        filename: String,
+        chapterId: Long,
+        page: Page,
+        traceContext: BatchDownloadTraceContext,
+    ): UniFile {
         val tmpFile = tmpDir.createFile("$filename.tmp")!!
         cacheFile.inputStream().use { input ->
             tmpFile.openOutputStream().use { output ->
                 input.copyTo(output)
             }
         }
-        val extension = ImageUtil.findImageType(cacheFile.inputStream()) ?: return tmpFile
-        tmpFile.renameTo("$filename.${extension.extension}")
+        val extension = ImageUtil.findImageType(cacheFile.inputStream()) ?: run {
+            tracePageAttemptFailure(
+                chapterId,
+                traceContext,
+                page,
+                1,
+                BatchDownloadStage.DETECT_TYPE,
+                null,
+            )
+            tracePageTerminalFailure(
+                chapterId,
+                traceContext,
+                page,
+                BatchDownloadStage.DETECT_TYPE,
+                null,
+            )
+            return tmpFile
+        }
+        val renamed = tmpFile.renameTo("$filename.${extension.extension}")
+        if (!renamed) {
+            tracePageAttemptFailure(
+                chapterId,
+                traceContext,
+                page,
+                1,
+                BatchDownloadStage.RENAME_TEMP,
+                null,
+            )
+            tracePageTerminalFailure(
+                chapterId,
+                traceContext,
+                page,
+                BatchDownloadStage.RENAME_TEMP,
+                null,
+            )
+        }
         cacheFile.delete()
         return tmpFile
     }
@@ -927,7 +1145,7 @@ class Downloader(
         page: Page,
         tmpDir: UniFile,
         chapterId: Long,
-        traceGeneration: Long?,
+        traceContext: BatchDownloadTraceContext,
     ) {
         if (!downloadPreferences.splitTallImages().get()) return
 
@@ -943,7 +1161,7 @@ class Downloader(
         } catch (e: Exception) {
             tracePageAttemptFailure(
                 chapterId,
-                traceGeneration,
+                traceContext,
                 page,
                 1,
                 BatchDownloadStage.SPLIT,
@@ -970,16 +1188,16 @@ class Downloader(
 
     private fun tracePageAttemptFailure(
         chapterId: Long,
-        traceGeneration: Long?,
+        traceContext: BatchDownloadTraceContext,
         page: Page,
         attempt: Int,
         stage: BatchDownloadStage,
-        error: Throwable,
+        error: Throwable?,
     ) {
-        traceGeneration ?: return
+        val generation = traceContext.generation(BatchDownloadTraceBoundary.PAGE) ?: return
         BatchDownloadDiagnostics.pageAttemptFailed(
             chapterId = chapterId,
-            generation = traceGeneration,
+            generation = generation,
             pageIndex = page.index,
             pageNumber = page.number,
             attempt = attempt,
@@ -989,17 +1207,56 @@ class Downloader(
         )
     }
 
-    private fun traceFinalization(
+    private fun tracePageTerminalFailure(
         chapterId: Long,
-        traceGeneration: Long?,
+        traceContext: BatchDownloadTraceContext,
+        page: Page,
         stage: BatchDownloadStage,
-        result: String,
+        error: Throwable?,
+    ) {
+        val generation = traceContext.generation(BatchDownloadTraceBoundary.PAGE) ?: return
+        BatchDownloadDiagnostics.pageTerminalFailed(
+            chapterId = chapterId,
+            generation = generation,
+            pageIndex = page.index,
+            pageNumber = page.number,
+            stage = stage,
+            cause = causeForStage(stage, error),
+            error = error,
+        )
+    }
+
+    private fun tracePathOperation(
+        chapterId: Long,
+        traceContext: BatchDownloadTraceContext,
+        page: Page?,
+        stage: BatchDownloadStage,
+        result: BatchDownloadResult,
         error: Throwable? = null,
     ) {
-        traceGeneration ?: return
+        val generation = traceContext.generation(BatchDownloadTraceBoundary.PAGE) ?: return
+        BatchDownloadDiagnostics.pathOperation(
+            chapterId = chapterId,
+            generation = generation,
+            pageIndex = page?.index,
+            pageNumber = page?.number,
+            stage = stage,
+            result = result,
+            error = error,
+        )
+    }
+
+    private fun traceFinalization(
+        chapterId: Long,
+        traceContext: BatchDownloadTraceContext,
+        stage: BatchDownloadStage,
+        result: BatchDownloadResult,
+        error: Throwable? = null,
+    ) {
+        val generation = traceContext.generation(BatchDownloadTraceBoundary.FINALIZATION) ?: return
         BatchDownloadDiagnostics.finalization(
             chapterId = chapterId,
-            generation = traceGeneration,
+            generation = generation,
             stage = stage,
             result = result,
             error = error,
@@ -1007,6 +1264,10 @@ class Downloader(
     }
 
     private fun causeForStage(stage: BatchDownloadStage, error: Throwable? = null): BatchDownloadCause = when (stage) {
+        BatchDownloadStage.TEMP_LOOKUP,
+        BatchDownloadStage.TEMP_DELETE,
+        BatchDownloadStage.DIRECTORY_LIST,
+        -> BatchDownloadCause.STORAGE
         BatchDownloadStage.RESOLVE_IMAGE_URL -> BatchDownloadCause.SOURCE
         BatchDownloadStage.HTTP_FETCH -> if (error?.javaClass?.simpleName?.contains("Http", ignoreCase = true) == true) {
             BatchDownloadCause.HTTP
@@ -1039,7 +1300,7 @@ class Downloader(
     private fun validateDownload(
         download: Download,
         tmpDir: UniFile,
-        traceGeneration: Long?,
+        traceContext: BatchDownloadTraceContext,
     ): DownloadValidation {
         // Page list hasn't been initialized
         val pages = download.pages ?: return DownloadValidation(
@@ -1051,11 +1312,26 @@ class Downloader(
         )
         val downloadPageCount = pages.size
         val readyCount = download.downloadedImages
-        val errorPages = pages.filter { it.status == Page.State.ERROR }.map { it.index }
+        val traceGeneration = traceContext.generation(BatchDownloadTraceBoundary.VALIDATION)
+        val errorCount = if (traceGeneration != null) {
+            pages.count { it.status == Page.State.ERROR }
+        } else {
+            0
+        }
+        val errorPages = if (errorCount > 0) {
+            pages.asSequence()
+                .filter { it.status == Page.State.ERROR }
+                .map { it.index }
+                .take(BatchDownloadDiagnostics.ERROR_PAGE_LIMIT)
+                .toList()
+        } else {
+            emptyList()
+        }
 
         // Ensure that the chapter folder has all the pages
-        val countOnDisk = {
-            tmpDir.listFiles().orEmpty().count {
+        val countOnDisk = fun(): Int? {
+            val files = tmpDir.listFiles() ?: return null
+            return files.count {
                 val fileName = it.name.orEmpty()
                 when {
                     fileName in listOf(COMIC_INFO_FILE, NOMEDIA_FILE) -> false
@@ -1068,10 +1344,10 @@ class Downloader(
         }
         // Preserve the original success-path exception behavior. On a page
         // mismatch, the extra best-effort count is diagnostic-only.
-        val downloadedImagesCount = if (readyCount == downloadPageCount) {
-            countOnDisk()
-        } else {
-            runCatching(countOnDisk).getOrNull()
+        val downloadedImagesCount = when {
+            readyCount == downloadPageCount -> countOnDisk()
+            traceGeneration != null -> runCatching(countOnDisk).getOrNull()
+            else -> null
         }
         traceGeneration?.let { generation ->
             BatchDownloadDiagnostics.validation(
@@ -1080,6 +1356,7 @@ class Downloader(
                 expected = downloadPageCount,
                 ready = readyCount,
                 onDisk = downloadedImagesCount,
+                errorCount = errorCount,
                 errorPages = errorPages,
             )
         }
@@ -1088,7 +1365,7 @@ class Downloader(
             ready = readyCount,
             onDisk = downloadedImagesCount,
             errorPages = errorPages,
-            success = readyCount == downloadPageCount && downloadedImagesCount == downloadPageCount,
+            success = readyCount == downloadPageCount && (downloadedImagesCount ?: 0) == downloadPageCount,
         )
     }
 
@@ -1107,16 +1384,31 @@ class Downloader(
         mangaDir: UniFile,
         dirname: String,
         tmpDir: UniFile,
-    ) {
+    ): ArchiveObservation {
         val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")!!
+        var entriesListed = false
         ZipWriter(context, zip).use { writer ->
-            tmpDir.listFiles()?.forEach { file ->
+            val files = tmpDir.listFiles()
+            entriesListed = files != null
+            files?.forEach { file ->
                 writer.write(file)
             }
         }
-        zip.renameTo("$dirname.cbz")
+        val renamed = zip.renameTo("$dirname.cbz")
         tmpDir.delete()
+        return ArchiveObservation(
+            entriesListed = entriesListed,
+            renamed = renamed,
+        )
     }
+
+    private data class ArchiveObservation(
+        val entriesListed: Boolean,
+        val renamed: Boolean,
+    )
+
+    private fun Boolean.toTraceResult(): BatchDownloadResult =
+        if (this) BatchDownloadResult.SUCCESS else BatchDownloadResult.FALSE
 
     /**
      * Creates a ComicInfo.xml file inside the given directory.
