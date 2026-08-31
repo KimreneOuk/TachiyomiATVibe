@@ -317,4 +317,118 @@ class TextLayoutPlannerMaskMetadataTest {
         plan shouldHaveSize 129
         plan.map { it.block.blockId }.toSet() shouldBe (0 until 129).map { "b$it" }.toSet()
     }
+
+    // ---- T912 slice 4 formal deferral: joined lobes are golden and --------
+    // repeatable on the deterministic midpoint/parent-biased partition.
+
+    /** All LayoutResult/BlockLayout fields equal; geometry compared by value. */
+    private fun assertByteIdentical(first: PageLayoutPlan, second: PageLayoutPlan) {
+        first.resultsInInputOrder.map { it.identity } shouldBe second.resultsInInputOrder.map { it.identity }
+        first.resultsInInputOrder.map { it.chosenText } shouldBe second.resultsInInputOrder.map { it.chosenText }
+        first.resultsInInputOrder.map { it.planningOrdinal } shouldBe second.resultsInInputOrder.map { it.planningOrdinal }
+        first.resultsInInputOrder.map { it.renderOrdinal } shouldBe second.resultsInInputOrder.map { it.renderOrdinal }
+        first.resultsInInputOrder.zip(second.resultsInInputOrder).forEach { (a, b) ->
+            val da = (a.outcome as? LayoutOutcome.Draw)?.layout
+            val db = (b.outcome as? LayoutOutcome.Draw)?.layout
+            if (da == null || db == null) {
+                a.outcome shouldBe b.outcome
+            } else {
+                assertSameLayout(da, db)
+            }
+        }
+        first.drawableInRenderOrder shouldHaveSize second.drawableInRenderOrder.size
+        first.drawableInRenderOrder.zip(second.drawableInRenderOrder).forEach { (a, b) ->
+            assertSameLayout(a, b)
+        }
+    }
+
+    /** MaskGeometry instances are per-plan; every other field must match exactly. */
+    private fun assertSameLayout(a: BlockLayout, b: BlockLayout) {
+        a.copy(maskGeometry = null) shouldBe b.copy(maskGeometry = null)
+        a.maskGeometry?.spans shouldBe b.maskGeometry?.spans
+        a.maskGeometry?.components?.map { it.id to it.spans } shouldBe
+            b.maskGeometry?.components?.map { it.id to it.spans }
+    }
+
+    @Test
+    fun `joined lobes with diagonal centers keep exact parent biased slabs and repeat byte identically`() {
+        // One continuous converted mask (full 200x300 rectangle) with two
+        // members whose centers are diagonal: (60, 80) and (140, 220). The Y
+        // spread wins, so the partition is VERTICAL; the facing parents
+        // (bottom 160 <= top 180) bias the cut to floor((160+180)/2) = 170.
+        val mask = fullMask(200, 300)
+        val inputs = listOf(
+            block(30f, 50f, 60f, 60f, "A", score = 0.9f).copy(
+                blockId = "upper",
+                segmentationMask = mask,
+                parentX = 0f,
+                parentY = 0f,
+                parentWidth = 100f,
+                parentHeight = 160f,
+            ),
+            block(110f, 190f, 60f, 60f, "B", score = 0.8f).copy(
+                blockId = "lower",
+                segmentationMask = mask,
+                parentX = 50f,
+                parentY = 180f,
+                parentWidth = 150f,
+                parentHeight = 120f,
+            ),
+        )
+
+        val first = TextLayoutPlanner.planPage(inputs, 200f, 300f, 1, false, FakeMeasurer())
+        val second = TextLayoutPlanner.planPage(inputs, 200f, 300f, 1, false, FakeMeasurer())
+
+        assertByteIdentical(first, second)
+
+        // gap = ceil(clamp(0.2, 2, 4)) = 2 -> one dead row on each side of the cut.
+        val byId = first.resultsInInputOrder.associate { it.identity.blockId to it }
+        val upper = (byId.getValue("upper").outcome as LayoutOutcome.Draw).layout
+        val lower = (byId.getValue("lower").outcome as LayoutOutcome.Draw).layout
+        upper.cellRect shouldBe FloatRect(0f, 0f, 200f, 169f)
+        lower.cellRect shouldBe FloatRect(0f, 171f, 200f, 300f)
+        (upper.cellRect!!.overlaps(lower.cellRect!!)) shouldBe false
+        for (deadRow in listOf(169, 170)) {
+            listOf(upper, lower).none {
+                val cell = it.cellRect!!
+                cell.top <= deadRow && deadRow < cell.bottom
+            } shouldBe true
+        }
+        upper.planGeometryId shouldBe 0
+        upper.maskComponentId shouldBe 0
+        lower.planGeometryId shouldBe 0
+        lower.maskComponentId shouldBe 0
+        (upper.maskGeometry.shouldNotBeNull() === lower.maskGeometry) shouldBe true
+    }
+
+    @Test
+    fun `joined lobes with equal centers keep exact midpoint slabs and repeat byte identically`() {
+        // One continuous converted mask with two members sharing the center
+        // (150, 60): X spread >= Y spread keeps the partition horizontal and
+        // the single midpoint cut lands ON the shared center 150.
+        val mask = fullMask(300, 120)
+        val inputs = listOf(
+            block(110f, 30f, 80f, 60f, "L", score = 0.9f).copy(blockId = "a", segmentationMask = mask),
+            block(120f, 30f, 60f, 60f, "R", score = 0.8f).copy(blockId = "b", segmentationMask = mask),
+        )
+
+        val first = TextLayoutPlanner.planPage(inputs, 300f, 120f, 1, false, FakeMeasurer())
+        val second = TextLayoutPlanner.planPage(inputs, 300f, 120f, 1, false, FakeMeasurer())
+
+        assertByteIdentical(first, second)
+
+        // gap 2 -> slabs [0,149) and [151,300); dead columns {149, 150}.
+        val byId = first.resultsInInputOrder.associate { it.identity.blockId to it }
+        val la = (byId.getValue("a").outcome as LayoutOutcome.Draw).layout
+        val lb = (byId.getValue("b").outcome as LayoutOutcome.Draw).layout
+        la.cellRect shouldBe FloatRect(0f, 0f, 149f, 120f)
+        lb.cellRect shouldBe FloatRect(151f, 0f, 300f, 120f)
+        (la.cellRect!!.overlaps(lb.cellRect!!)) shouldBe false
+        for (deadColumn in listOf(149, 150)) {
+            listOf(la, lb).none {
+                val cell = it.cellRect!!
+                cell.left <= deadColumn && deadColumn < cell.right
+            } shouldBe true
+        }
+    }
 }

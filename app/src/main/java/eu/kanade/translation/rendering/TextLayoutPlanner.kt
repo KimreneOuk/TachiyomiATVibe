@@ -6,6 +6,7 @@ import eu.kanade.translation.segmentation.MaskConversionBudgets
 import eu.kanade.translation.segmentation.MaskGeometry
 import eu.kanade.translation.segmentation.OrderedMaskResult
 import java.util.IdentityHashMap
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
@@ -386,6 +387,27 @@ internal object TextLayoutTuning {
 
     /** Band-interval explosion guard: more intervals ⇒ treat as no valid band. */
     const val MAX_BAND_INTERVALS = 64
+
+    // ---- T912 slice 6: bounded long `text_free` widening envelope ---------
+
+    /** Min non-whitespace graphemes before a `text_free` widening trial may run. */
+    const val FREE_TEXT_MIN_GRAPHEMES = 24
+
+    /** Original OCR aspect (`height/width`) at or above which the trial may run. */
+    const val FREE_TEXT_TALL_RATIO = 2.0f
+
+    /** Widening trial factors, tried in this order; the smallest useful one wins. */
+    const val FREE_TEXT_WIDEN_FACTOR_1 = 1.25f
+    const val FREE_TEXT_WIDEN_FACTOR_2 = 1.50f
+
+    /** Hard cap on the added width, relative to the page short side. */
+    const val FREE_TEXT_MAX_PAGE_ADD_FRACTION = 0.08f
+
+    /** A wider candidate must lift the fitted font by this factor (or remove overflow). */
+    const val FREE_TEXT_MIN_FONT_GAIN = 1.15f
+
+    /** Width-equality epsilon (px) for candidate dedup after clamping. */
+    const val FREE_TEXT_WIDTH_EPSILON = 0.01f
 }
 
 /**
@@ -537,7 +559,32 @@ object TextLayoutPlanner {
                 cellPlan != null -> null
                 else -> maskRegions[inputIndex]
             }
-            val rect = computeRects(block, sampleSize, regionOverride)
+
+            val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
+            val placedObstacles = drawable.map { extentOf(it, measurer) }
+
+            // T912 slice 6: bounded long `text_free` widening. Evaluated BEFORE
+            // the legacy rect so an ELIGIBLE block never reaches the legacy
+            // reshape branch; null (ineligible / no fit pressure) keeps the
+            // exact legacy path below — including the reshape for ineligible
+            // tall boxes.
+            val freeText = if (!isVertical) {
+                boundedFreeTextWideningPlan(
+                    block = block,
+                    text = text,
+                    isVertical = isVertical,
+                    sampleSize = sampleSize,
+                    obstacles = placedObstacles,
+                    pageWidth = pageWidth,
+                    pageHeight = pageHeight,
+                    minLegible = minLegible,
+                    scale = scale,
+                    measurer = measurer,
+                )
+            } else {
+                null
+            }
+            val rect = if (freeText == null) computeRects(block, sampleSize, regionOverride) else freeText.rect
             if (rect.safeW < 1f || rect.safeH < 1f) {
                 resultsByInput[inputIndex] = LayoutResult(
                     identity,
@@ -549,9 +596,6 @@ object TextLayoutPlanner {
                 )
                 continue
             }
-
-            val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
-            val placedObstacles = drawable.map { extentOf(it, measurer) }
 
             // Slice 5: adaptive bands REPLACE placeBlock for eligible blocks —
             // horizontal text in an optimized SPAN-MODE cell. Everything else
@@ -620,7 +664,7 @@ object TextLayoutPlanner {
                     minLegible = minLegible,
                     scale = scale,
                     measurer = measurer,
-                    regionOverride = regionOverride,
+                    regionOverride = if (freeText != null) freeText.regionOverride else regionOverride,
                 )
             }
             // Metadata is wired AFTER placement and never changes placement,
@@ -1284,6 +1328,161 @@ object TextLayoutPlanner {
         val grewRight: Boolean,
         val grewLeft: Boolean,
     )
+
+    /**
+     * T912 slice 6: the bounded long-`text_free` placement decision for one
+     * eligible block — the [rect] to place and the [regionOverride] to place
+     * it with (null keeps the block's own legacy containment/anchor behavior).
+     */
+    private class FreeTextWideningPlan(val rect: RectResult, val regionOverride: FloatRect?)
+
+    /**
+     * T912 slice 6: the bounded long-`text_free` widening trial, or null when
+     * the block must take the exact legacy path.
+     *
+     * Eligibility (architecture "Slice 6", evaluated in order):
+     *  0. path precondition — the trial is defined only on the plain unmasked
+     *     legacy path (today's `regionOverride == null`); masked blocks are
+     *     governed by the slice 2/3/5 mask/cell contracts and keep their
+     *     current behavior (where the reshape can never fire anyway);
+     *  1. `label == 2`;
+     *  2. no valid parent;
+     *  3. resolved horizontal (`isVertical == false`);
+     *  4. at least [TextLayoutTuning.FREE_TEXT_MIN_GRAPHEMES] non-whitespace
+     *     graphemes;
+     *  5. original OCR `height / width >= [TextLayoutTuning.FREE_TEXT_TALL_RATIO]`
+     *     (float division, `width > 0` guarded);
+     *  6. OCR-box fit pressure: the largest font fitting the unreshaped OCR box
+     *     (parentless padding, [binarySearchFontSize]) is below [minLegible] OR
+     *     the text overflows the box at [minLegible].
+     *
+     * Candidate 1 is always the UNRESHAPED original OCR box; candidates 2/3
+     * keep the OCR center X/Y and the original height with widths
+     * `min(w*factor, w + 0.08*pageShortSide, page-clamped, collision-free)` for
+     * the two [TextLayoutTuning] factors, deduplicated after clamping. The
+     * smallest wider candidate whose fitted font improves by
+     * [TextLayoutTuning.FREE_TEXT_MIN_FONT_GAIN] OR that removes overflow wins;
+     * otherwise the OCR baseline is kept with NO region override so the block
+     * takes today's exact label-2 legacy behavior (containment clip preserved
+     * through the OCR-center anchor branch). The legacy reshape is unreachable
+     * on this path. Final collision validation stays slice 7's job.
+     */
+    private fun boundedFreeTextWideningPlan(
+        block: TranslationBlock,
+        text: String,
+        isVertical: Boolean,
+        sampleSize: Int,
+        obstacles: List<FloatRect>,
+        pageWidth: Float,
+        pageHeight: Float,
+        minLegible: Float,
+        scale: Float,
+        measurer: TextMeasurer,
+    ): FreeTextWideningPlan? {
+        if (block.segmentationMask != null) return null // path precondition (see doc)
+        if (block.label != 2) return null
+        if (block.parentWidth > 0f && block.parentHeight > 0f) return null
+        if (isVertical) return null
+        val graphemes = graphemeClusters(text).count { !it.isBlank() }
+        if (graphemes < TextLayoutTuning.FREE_TEXT_MIN_GRAPHEMES) return null
+        if (block.width <= 0f || block.height / block.width < TextLayoutTuning.FREE_TEXT_TALL_RATIO) return null
+
+        // Baseline: the UNRESHAPED original OCR box. computeRects with the OCR
+        // rect as the region override yields exactly the parentless padding and
+        // safe dims the legacy path computes — minus the tall-box reshape.
+        val baseline = computeRects(
+            block,
+            sampleSize,
+            FloatRect(block.x, block.y, block.x + block.width, block.y + block.height),
+        )
+        val baselineFont = binarySearchFontSize(
+            text,
+            baseline.safeW,
+            baseline.safeH,
+            baseline.baseW,
+            false,
+            scale,
+            measurer,
+        )
+        val baselineOverflows = overflows(text, baselineFont, false, baseline.safeW, baseline.safeH, measurer)
+        val hasFitPressure = baselineFont < minLegible ||
+            overflows(text, minLegible, false, baseline.safeW, baseline.safeH, measurer)
+        if (!hasFitPressure) return null
+
+        val centerX = block.x + block.width / 2f
+        val bandTop = block.y
+        val bandBottom = block.y + block.height
+        val pageShortSide = min(pageWidth, pageHeight)
+        val pageClampedWidth = 2f * min(centerX, pageWidth - centerX)
+        val collisionFreeWidth = collisionFreeWidthForBand(centerX, bandTop, bandBottom, pageWidth, obstacles)
+
+        var previousWidth = Float.NaN
+        for (factor in listOf(TextLayoutTuning.FREE_TEXT_WIDEN_FACTOR_1, TextLayoutTuning.FREE_TEXT_WIDEN_FACTOR_2)) {
+            val width = minOf(
+                block.width * factor,
+                block.width + TextLayoutTuning.FREE_TEXT_MAX_PAGE_ADD_FRACTION * pageShortSide,
+                pageClampedWidth,
+                collisionFreeWidth,
+            )
+            // Not a widening trial, or clamped to the same width as a previous
+            // candidate: deduplicate with the documented 0.01 px epsilon.
+            if (width - block.width <= TextLayoutTuning.FREE_TEXT_WIDTH_EPSILON) continue
+            if (!previousWidth.isNaN() && abs(width - previousWidth) <= TextLayoutTuning.FREE_TEXT_WIDTH_EPSILON) {
+                continue
+            }
+            previousWidth = width
+            val region = FloatRect(
+                centerX - width / 2f,
+                block.y,
+                centerX + width / 2f,
+                block.y + block.height,
+            )
+            val candidate = computeRects(block, sampleSize, region)
+            val font = binarySearchFontSize(
+                text,
+                candidate.safeW,
+                candidate.safeH,
+                candidate.baseW,
+                false,
+                scale,
+                measurer,
+            )
+            val qualifies = font >= TextLayoutTuning.FREE_TEXT_MIN_FONT_GAIN * baselineFont ||
+                (baselineOverflows && !overflows(text, font, false, candidate.safeW, candidate.safeH, measurer))
+            if (qualifies) return FreeTextWideningPlan(candidate, region)
+        }
+        // No candidate qualified: keep the unreshaped OCR baseline with no
+        // region override (today's exact label-2 legacy behavior).
+        return FreeTextWideningPlan(baseline, null)
+    }
+
+    /**
+     * T912 slice 6: widest symmetric box centered at [centerX] that stays on
+     * the page and does not overlap any already-placed obstacle extent whose
+     * vertical extent overlaps the candidate's band `[bandTop, bandBottom)`.
+     * Extends the [freeSpaceLeft]/[freeSpaceRight] bound scan with that band
+     * filter; deterministic in [obstacles] order.
+     */
+    private fun collisionFreeWidthForBand(
+        centerX: Float,
+        bandTop: Float,
+        bandBottom: Float,
+        pageWidth: Float,
+        obstacles: List<FloatRect>,
+    ): Float {
+        var leftBound = 0f
+        var rightBound = pageWidth
+        for (obs in obstacles) {
+            if (!(obs.top < bandBottom && bandTop < obs.bottom)) continue
+            if (obs.left < centerX && obs.right > centerX) return 0f // straddles the center
+            if (obs.right <= centerX && obs.right > leftBound) leftBound = obs.right
+            if (obs.left >= centerX && obs.left < rightBound) rightBound = obs.left
+        }
+        return 2f * min(
+            (centerX - leftBound).coerceAtLeast(0f),
+            (rightBound - centerX).coerceAtLeast(0f),
+        )
+    }
 
     /** True when the rendered text at [font] would exceed the safe rect. */
     private fun overflows(
