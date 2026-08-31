@@ -2,9 +2,11 @@
 
 ## Status
 
-INVESTIGATION AUTHORIZED by Director (2026-08-31). Diagnostic logging may be
-added only if the existing Logcat coverage cannot identify the failing
-download-to-translation transition.
+REPAIR IMPLEMENTED; DEVICE APK INSTALLED (2026-08-31). The diagnostic APK
+capture identified a deterministic SAF temporary-file publication/listing
+failure. The checked publication and validation repair is built and installed
+without clearing app data; a fresh batch-translation reproduction remains for
+final behavioral confirmation.
 
 ## Director report
 
@@ -32,6 +34,16 @@ Logcat capture before asking the Director to tap Batch Translate.
 - Keep logging bounded; no image bytes or repeated high-frequency progress spam.
 - Android 8.0+ and bounded memory remain required.
 - Preserve unrelated working-tree changes.
+
+## Authorized repair scope
+
+- Pass exact published page handles into tall-image processing.
+- Treat failed page publication/rename as a page failure rather than READY.
+- Keep strict all-page completion while using verified handles when SAF
+  directory enumeration is stale or temporarily empty.
+- Verify CBZ publication before reporting the chapter as downloaded.
+- Do not replace durable batch acquisition with the reader loader or evictable
+  reader cache.
 
 ## Required investigation
 
@@ -64,4 +76,3 @@ Logcat capture before asking the Director to tap Batch Translate.
 - `app/src/main/java/eu/kanade/translation/TranslationManager.kt`
 - `app/src/main/java/eu/kanade/translation/batch/`
 - related tests under `app/src/test/`
-

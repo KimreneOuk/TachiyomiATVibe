@@ -88,6 +88,24 @@ The diagnostic count for `on_disk` is best-effort only when page readiness has
 already failed; `none` means the provider could not be enumerated without
 altering the existing failure path.
 
+## Repair follow-up
+
+The Director authorized the repair after the device capture. The downloader
+now keeps the exact page file handle through publication and tall-image
+processing, rejects false temporary-file renames, records a page as `READY`
+only after a published handle is available, and uses verified per-page handles
+when SAF directory enumeration is stale or empty. Archive input is the union
+of the provider listing and the known published handles, and failed final
+directory/CBZ renames now remain download failures. The all-pages gate and
+reader/batch ownership boundaries are unchanged.
+
+Focused verification covers rejected renames, strict validation with an empty
+SAF listing plus verified handles, and refusal to accept an unavailable
+listing without a handle. The focused suites passed 25/0, the Standard arm64
+debug APK assembled successfully, and version `0.17.1-300` was installed on
+the connected device without clearing app data. A fresh user-triggered batch
+translation is still needed for final behavioral confirmation.
+
 ## Capture-readiness follow-up
 
 The independent review identified and the follow-up closed the capture-critical

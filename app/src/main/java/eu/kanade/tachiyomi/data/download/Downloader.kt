@@ -71,7 +71,9 @@ import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.File
+import java.io.IOException
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * This class is the one in charge of downloading chapters.
@@ -90,6 +92,19 @@ class Downloader(
     private val getTracks: GetTracks = Injekt.get(),
     private val translationManager: TranslationManager = Injekt.get(),
 ) {
+
+    /**
+     * Files that were durably published for one logical page during the
+     * current download. A page can have more than one file when a tall image
+     * is split. Keeping the handles avoids depending on a freshly-written SAF
+     * directory being immediately enumerable.
+     */
+    internal data class PublishedPageFiles(
+        val files: List<UniFile>,
+    ) {
+        val primary: UniFile?
+            get() = files.firstOrNull()
+    }
 
     /**
      * Store for persisting downloads across restarts.
@@ -450,6 +465,7 @@ class Downloader(
         // finalized download back to ERROR.
         val pageList: List<Page>
         val onDiskKeys: List<String>
+        val publishedFiles = ConcurrentHashMap<Int, PublishedPageFiles>()
         var finalizationStage: BatchDownloadStage? = null
         var validation: DownloadValidation? = null
         try {
@@ -565,6 +581,7 @@ class Downloader(
                         }
 
                         withIOContext { getOrDownloadImage(page, download, tmpDir, traceContext) }
+                            ?.let { publishedFiles[page.index] = it }
                         emit(page)
                     }.flowOn(Dispatchers.IO)
                 }
@@ -575,7 +592,7 @@ class Downloader(
 
             // Do after download completes
 
-            val currentValidation = validateDownload(download, tmpDir, traceContext)
+            val currentValidation = validateDownload(download, tmpDir, traceContext, publishedFiles)
             validation = currentValidation
             if (!currentValidation.success) {
                 download.status = Download.State.ERROR
@@ -610,8 +627,8 @@ class Downloader(
             finalizationStage = null
 
             onDiskKeys = if (translationManager.hasTranslationStore(download.chapter, download.manga, download.source)) {
-                val files = tmpDir.listFiles()
-                if (files == null) {
+                val chapterFiles = collectChapterFiles(tmpDir, publishedFiles)
+                if (!chapterFiles.listingAvailable) {
                     tracePathOperation(
                         download.chapter.id,
                         traceContext,
@@ -620,7 +637,7 @@ class Downloader(
                         BatchDownloadResult.NULL,
                     )
                 }
-                files.orEmpty()
+                chapterFiles.files
                     .filter { file ->
                         if (!file.isFile) {
                             false
@@ -645,7 +662,7 @@ class Downloader(
                     BatchDownloadStage.ARCHIVE,
                     BatchDownloadResult.START,
                 )
-                val archive = archiveChapter(mangaDir, chapterDirname, tmpDir)
+                val archive = archiveChapter(mangaDir, chapterDirname, tmpDir, publishedFiles)
                 if (!archive.entriesListed) {
                     tracePathOperation(
                         download.chapter.id,
@@ -654,6 +671,9 @@ class Downloader(
                         BatchDownloadStage.DIRECTORY_LIST,
                         BatchDownloadResult.NULL,
                     )
+                }
+                if (!archive.renamed) {
+                    throw IOException("Unable to publish chapter archive")
                 }
                 traceFinalization(
                     download.chapter.id,
@@ -676,6 +696,9 @@ class Downloader(
                     BatchDownloadStage.RENAME,
                     renamed.toTraceResult(),
                 )
+                if (!renamed) {
+                    throw IOException("Unable to publish chapter directory")
+                }
             }
             finalizationStage = BatchDownloadStage.CACHE
             traceFinalization(download.chapter.id, traceContext, BatchDownloadStage.CACHE, BatchDownloadResult.START)
@@ -837,10 +860,12 @@ class Downloader(
         download: Download,
         tmpDir: UniFile,
         traceContext: BatchDownloadTraceContext,
-    ) {
+    ): PublishedPageFiles? {
         // If the image URL is empty, do nothing
         if (page.imageUrl == null) {
-            return
+            return page.uri?.let { uri ->
+                UniFile.fromUri(context, uri)?.let { PublishedPageFiles(listOf(it)) }
+            }
         }
 
         val digitCount = (download.pages?.size ?: 0).toString().length.coerceAtLeast(3)
@@ -885,35 +910,12 @@ class Downloader(
             }
         }
 
-        // Try to find the image file
-        val listedFiles = try {
-            tmpDir.listFiles()
-        } catch (error: Throwable) {
-            tracePathOperation(
-                download.chapter.id,
-                traceContext,
-                page,
-                BatchDownloadStage.DIRECTORY_LIST,
-                BatchDownloadResult.THREW,
-                error,
-            )
-            throw error
-        }
-        if (listedFiles == null) {
-            tracePathOperation(
-                download.chapter.id,
-                traceContext,
-                page,
-                BatchDownloadStage.DIRECTORY_LIST,
-                BatchDownloadResult.NULL,
-            )
-        }
-        val imageFile = listedFiles?.firstOrNull {
-            it.name!!.startsWith("$filename.") || it.name!!.startsWith("${filename}__001")
-        }
-
-        var stage = BatchDownloadStage.SPLIT
+        var stage = BatchDownloadStage.TEMP_LOOKUP
         try {
+            // Resolve known final names directly first. Some SAF providers lag
+            // behind on directory enumeration immediately after a write.
+            val imageFile = findExistingPageFile(tmpDir, filename)
+
             // If the image is already downloaded, do nothing. Otherwise download from network
             val file = when {
                 imageFile != null -> imageFile
@@ -943,13 +945,24 @@ class Downloader(
                 }
             }
 
-            // When the page is ready, set page path, progress (just in case) and status
+            // When the page is ready, set page path, progress (just in case) and status.
+            // The splitter receives the exact file handle returned by the
+            // publication step; it must not rediscover a freshly-written SAF
+            // entry through directory enumeration.
             stage = BatchDownloadStage.SPLIT
-            splitTallImageIfNeeded(page, tmpDir, download.chapter.id, traceContext)
+            val publishedPage = splitTallImageIfNeeded(
+                page = page,
+                tmpDir = tmpDir,
+                imageFile = file,
+                filename = filename,
+                chapterId = download.chapter.id,
+                traceContext = traceContext,
+            )
 
-            page.uri = file.uri
+            page.uri = publishedPage.primary?.uri
             page.progress = 100
             page.status = Page.State.READY
+            return publishedPage
         } catch (e: Throwable) {
             if (e is CancellationException) throw e
             if (stage != BatchDownloadStage.HTTP_FETCH) {
@@ -980,6 +993,7 @@ class Downloader(
             page.progress = 0
             page.status = Page.State.ERROR
             notifier.onError(e.message, download.chapter.name, download.manga.title, download.manga.id)
+            return null
         }
     }
 
@@ -1028,18 +1042,21 @@ class Downloader(
                     stage = BatchDownloadStage.DETECT_TYPE
                     val extension = getImageExtension(response, file)
                     stage = BatchDownloadStage.RENAME_TEMP
-                    val renamed = file.renameTo("$filename.$extension")
-                    if (!renamed) {
+                    val finalName = "$filename.$extension"
+                    try {
+                        publishDownloadedFile(file, finalName)
+                    } catch (error: IOException) {
                         tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, null)
                         tracePageTerminalFailure(chapterId, traceContext, page, stage, null)
+                        throw error
                     }
+                    emit(file)
                 } catch (e: Exception) {
                     tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, e)
                     response.close()
                     file.delete()
                     throw e
                 }
-                emit(file)
             }
                 // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
                 .retryWhen { _, retry ->
@@ -1105,10 +1122,12 @@ class Downloader(
                 BatchDownloadStage.DETECT_TYPE,
                 null,
             )
-            return tmpFile
+            tmpFile.delete()
+            throw IOException("Cached image is not a valid image")
         }
-        val renamed = tmpFile.renameTo("$filename.${extension.extension}")
-        if (!renamed) {
+        try {
+            publishDownloadedFile(tmpFile, "$filename.${extension.extension}")
+        } catch (error: IOException) {
             tracePageAttemptFailure(
                 chapterId,
                 traceContext,
@@ -1124,6 +1143,8 @@ class Downloader(
                 BatchDownloadStage.RENAME_TEMP,
                 null,
             )
+            tmpFile.delete()
+            throw error
         }
         cacheFile.delete()
         return tmpFile
@@ -1141,23 +1162,40 @@ class Downloader(
         return ImageUtil.getExtensionFromMimeType(mime) { file.openInputStream() }
     }
 
-    private fun splitTallImageIfNeeded(
+    private suspend fun splitTallImageIfNeeded(
         page: Page,
         tmpDir: UniFile,
+        imageFile: UniFile,
+        filename: String,
         chapterId: Long,
         traceContext: BatchDownloadTraceContext,
-    ) {
-        if (!downloadPreferences.splitTallImages().get()) return
+    ): PublishedPageFiles {
+        if (!downloadPreferences.splitTallImages().get()) {
+            return PublishedPageFiles(listOf(imageFile))
+        }
 
         try {
-            val filenamePrefix = "%03d".format(Locale.ENGLISH, page.number)
-            val imageFile = tmpDir.listFiles()?.firstOrNull { it.name.orEmpty().startsWith(filenamePrefix) }
-                ?: error(context.stringResource(MR.strings.download_notifier_split_page_not_found, page.number))
-
             // If the original page was previously split, then skip
-            if (imageFile.name.orEmpty().startsWith("${filenamePrefix}__")) return
+            if (imageFile.name.orEmpty().startsWith("${filename}__")) {
+                val splitFiles = findSplitFiles(tmpDir, filename)
+                return PublishedPageFiles(splitFiles.ifEmpty { listOf(imageFile) })
+            }
 
-            ImageUtil.splitTallImage(tmpDir, imageFile, filenamePrefix)
+            val splitSucceeded = ImageUtil.splitTallImage(tmpDir, imageFile, filename)
+            if (!splitSucceeded) {
+                // ImageUtil preserves the original when splitting cannot be
+                // completed. It remains a valid published page in that case.
+                if (isPublishedFile(imageFile)) return PublishedPageFiles(listOf(imageFile))
+                error(context.stringResource(MR.strings.download_notifier_split_page_not_found, page.number))
+            }
+
+            val splitFiles = findSplitFiles(tmpDir, filename)
+            if (splitFiles.isNotEmpty()) return PublishedPageFiles(splitFiles)
+
+            // A non-tall/animated image returns true without creating split
+            // files, so retain the original handle when it is still present.
+            if (isPublishedFile(imageFile)) return PublishedPageFiles(listOf(imageFile))
+            error(context.stringResource(MR.strings.download_notifier_split_page_not_found, page.number))
         } catch (e: Exception) {
             tracePageAttemptFailure(
                 chapterId,
@@ -1168,7 +1206,71 @@ class Downloader(
                 e,
             )
             logcat(LogPriority.ERROR, e) { "Failed to split downloaded image" }
+            if (isPublishedFile(imageFile)) return PublishedPageFiles(listOf(imageFile))
+            throw e
         }
+    }
+
+    private suspend fun findSplitFiles(tmpDir: UniFile, filename: String): List<UniFile> {
+        val splitFiles = mutableListOf<UniFile>()
+        for (index in 1..MAX_SPLIT_PARTS) {
+            val splitName = "${filename}__${"%03d".format(Locale.ENGLISH, index)}.jpg"
+            val splitFile = findFileWithRetry(tmpDir, splitName) ?: break
+            splitFiles += splitFile
+        }
+        return splitFiles
+    }
+
+    private suspend fun findExistingPageFile(tmpDir: UniFile, filename: String): UniFile? {
+        val listedFiles = runCatching { tmpDir.listFiles() }.getOrNull()
+        listedFiles?.firstOrNull { file ->
+            file.name.orEmpty().startsWith("$filename.") ||
+                file.name.orEmpty().startsWith("${filename}__001")
+        }?.let { return it }
+
+        // Only fall back to direct SAF lookups when enumeration is unavailable
+        // or empty. This avoids a repeated multi-extension probe on ordinary
+        // filesystem directories while still covering the observed provider.
+        if (!listedFiles.isNullOrEmpty()) return null
+        findFileWithRetry(tmpDir, "${filename}__001.jpg")?.let { return it }
+        IMAGE_EXTENSIONS.forEach { extension ->
+            runCatching { tmpDir.findFile("$filename.$extension") }
+                .getOrNull()
+                ?.let { return it }
+        }
+        return null
+    }
+
+    private suspend fun findFileWithRetry(tmpDir: UniFile, name: String): UniFile? {
+        repeat(FILE_LOOKUP_ATTEMPTS) { attempt ->
+            val file = tmpDir.findFile(name)
+            if (file != null) return file
+            if (attempt + 1 < FILE_LOOKUP_ATTEMPTS) delay(FILE_LOOKUP_DELAY_MS)
+        }
+        return null
+    }
+
+    private fun isPublishedFile(file: UniFile): Boolean = runCatching {
+        file.exists() && file.isFile
+    }.getOrDefault(false)
+
+    internal data class ChapterFiles(
+        val files: List<UniFile>,
+        val listingAvailable: Boolean,
+    )
+
+    internal fun collectChapterFiles(
+        tmpDir: UniFile,
+        publishedFiles: Map<Int, PublishedPageFiles>,
+    ): ChapterFiles {
+        val listedFiles = runCatching { tmpDir.listFiles() }.getOrNull()
+        val knownFiles = publishedFiles.values.flatMap { it.files }
+        val metadataFiles = listOfNotNull(
+            runCatching { tmpDir.findFile(COMIC_INFO_FILE) }.getOrNull(),
+        )
+        val files = (listedFiles.orEmpty().asList() + knownFiles + metadataFiles)
+            .distinctBy { it.name ?: it.uri.toString() }
+        return ChapterFiles(files, listingAvailable = listedFiles != null)
     }
 
     private fun traceQueueResult(
@@ -1297,10 +1399,11 @@ class Downloader(
      * @param download the download to check.
      * @param tmpDir the directory where the download is currently stored.
      */
-    private fun validateDownload(
+    internal fun validateDownload(
         download: Download,
         tmpDir: UniFile,
         traceContext: BatchDownloadTraceContext,
+        publishedFiles: Map<Int, PublishedPageFiles> = emptyMap(),
     ): DownloadValidation {
         // Page list hasn't been initialized
         val pages = download.pages ?: return DownloadValidation(
@@ -1329,8 +1432,20 @@ class Downloader(
         }
 
         // Ensure that the chapter folder has all the pages
-        val countOnDisk = fun(): Int? {
-            val files = tmpDir.listFiles() ?: return null
+        val countListedFiles = fun(): Int? {
+            val files = try {
+                tmpDir.listFiles()
+            } catch (error: Throwable) {
+                tracePathOperation(
+                    download.chapter.id,
+                    traceContext,
+                    null,
+                    BatchDownloadStage.DIRECTORY_LIST,
+                    BatchDownloadResult.THREW,
+                    error,
+                )
+                return null
+            } ?: return null
             return files.count {
                 val fileName = it.name.orEmpty()
                 when {
@@ -1342,11 +1457,23 @@ class Downloader(
                 }
             }
         }
-        // Preserve the original success-path exception behavior. On a page
-        // mismatch, the extra best-effort count is diagnostic-only.
+
+        val countPublishedFiles = publishedFiles.values.count { pageFiles ->
+            pageFiles.primary?.let(::isPublishedFile) == true
+        }
+        // A directory listing can lag on SAF. Prefer the verified handles from
+        // this download, and fall back to the listing only when no complete
+        // handle set is available. Missing evidence still fails validation.
         val downloadedImagesCount = when {
-            readyCount == downloadPageCount -> countOnDisk()
-            traceGeneration != null -> runCatching(countOnDisk).getOrNull()
+            readyCount == downloadPageCount -> {
+                val listedCount = countListedFiles()
+                when {
+                    countPublishedFiles == downloadPageCount -> downloadPageCount
+                    listedCount != null -> listedCount
+                    else -> countPublishedFiles.takeIf { it > 0 }
+                }
+            }
+            traceGeneration != null -> runCatching(countListedFiles).getOrNull()
             else -> null
         }
         traceGeneration?.let { generation ->
@@ -1369,7 +1496,7 @@ class Downloader(
         )
     }
 
-    private data class DownloadValidation(
+    internal data class DownloadValidation(
         val expected: Int,
         val ready: Int,
         val onDisk: Int?,
@@ -1384,18 +1511,19 @@ class Downloader(
         mangaDir: UniFile,
         dirname: String,
         tmpDir: UniFile,
+        publishedFiles: Map<Int, PublishedPageFiles>,
     ): ArchiveObservation {
         val zip = mangaDir.createFile("$dirname.cbz$TMP_DIR_SUFFIX")!!
         var entriesListed = false
         ZipWriter(context, zip).use { writer ->
-            val files = tmpDir.listFiles()
-            entriesListed = files != null
-            files?.forEach { file ->
+            val chapterFiles = collectChapterFiles(tmpDir, publishedFiles)
+            entriesListed = chapterFiles.listingAvailable
+            chapterFiles.files.forEach { file ->
                 writer.write(file)
             }
         }
         val renamed = zip.renameTo("$dirname.cbz")
-        tmpDir.delete()
+        if (renamed) tmpDir.delete()
         return ArchiveObservation(
             entriesListed = entriesListed,
             renamed = renamed,
@@ -1543,7 +1671,23 @@ class Downloader(
         const val WARNING_NOTIF_TIMEOUT_MS = 30_000L
         const val CHAPTERS_PER_SOURCE_QUEUE_WARNING_THRESHOLD = 15
         private const val DOWNLOADS_QUEUED_WARNING_THRESHOLD = 30
+        private const val FILE_LOOKUP_ATTEMPTS = 3
+        private const val FILE_LOOKUP_DELAY_MS = 50L
+        private const val MAX_SPLIT_PARTS = 1024
+        private val IMAGE_EXTENSIONS = arrayOf("avif", "gif", "heif", "jpg", "jxl", "png", "webp")
     }
+}
+
+/**
+ * Publishes a temporary page under its final name. A false UniFile rename is
+ * not a successful download: accepting it would make the page appear READY
+ * while validation can no longer find durable bytes.
+ */
+internal fun publishDownloadedFile(file: UniFile, finalName: String): UniFile {
+    if (!file.renameTo(finalName)) {
+        throw IOException("Unable to publish downloaded page")
+    }
+    return file
 }
 
 // Arbitrary minimum required space to start a download: 200 MB
