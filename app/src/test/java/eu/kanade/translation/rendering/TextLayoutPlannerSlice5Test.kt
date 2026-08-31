@@ -7,7 +7,6 @@ import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
-import kotlin.math.ceil
 
 /**
  * T912 slice 5: planner integration of adaptive bands and the page budgets —
@@ -57,7 +56,13 @@ class TextLayoutPlannerSlice5Test {
     // ---- eligibility and positioned-line contract -------------------------
 
     @Test
-    fun `span mode horizontal block becomes adaptive with the full positioned line contract`() {
+    fun `span mode horizontal block on a rectangle cell keeps the legacy rectangle layout`() {
+        // T912 quality repair (Fix 2): the cell's content bounds span the whole
+        // 300x120 rectangle, so the band fit (font 43) does NOT beat the
+        // conservative rectangle fit (font 44) of the same cell — bands must
+        // win by BAND_ACCEPT_FACTOR to be accepted. The adaptive result is
+        // REJECTED and the block keeps the EXISTING legacy rectangle form in
+        // the cell's fit region, with the identical metadata contract.
         val mask = fullMask(300, 120)
         val input = block(60f, 40f, 120f, 40f, "Hello there friend").copy(segmentationMask = mask)
 
@@ -65,40 +70,24 @@ class TextLayoutPlannerSlice5Test {
 
         val result = plan.resultsInInputOrder.single()
         val layout = (result.outcome as LayoutOutcome.Draw).layout
-        val lines = layout.positionedLines.shouldNotBeNull()
-        (lines.isEmpty()) shouldBe false
-        // `lines` keeps the uniform wrapped-texts handle; text stays the block's own.
-        layout.lines shouldBe lines.map { it.text }
+        layout.positionedLines.shouldBeNull()
+        layout.lines.isNotEmpty() shouldBe true
         layout.text shouldBe "Hello there friend"
-        layout.conservativeOccupancy shouldHaveSize lines.size
-        layout.conservativeOccupancy shouldBe lines.map { it.conservativeOccupancy }
-        // Adaptive geometry: slab bounds, centered anchor at the OCR center,
-        // structural (not collision) clipping.
-        layout.safeW shouldBe 300f
-        layout.safeH shouldBe 120f
+        // Legacy rectangle placement inside the cell's fit region: centered on
+        // the region, region-minus-padding safe rect, region-fit font.
+        layout.safeW shouldBe 292f
+        layout.safeH shouldBe 112f
         layout.drawAlign shouldBe TextAlign.CENTER
         layout.clipRect.shouldBeNull()
-        layout.originX shouldBe 120f // block OCR center wins alignment (a)
+        layout.originX shouldBe 150f
         layout.originY shouldBe 60f
-        // hard clip mirrors the span-mode metadata: ids + the slab.
+        layout.fontSizePx shouldBe 44f
+        layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(44f, 1f)
+        // Hard clip mirrors the span-mode metadata: ids + the slab.
         layout.hardClip shouldBe HardClip(0, 0, FloatRect(0f, 0f, 300f, 120f))
         layout.cellRect shouldBe FloatRect(0f, 0f, 300f, 120f)
         layout.planGeometryId shouldBe 0
         layout.maskComponentId shouldBe 0
-
-        // Per-line contract: exact integer width formula and floor placement
-        // inside the hard slab.
-        for (line in lines) {
-            val advance = m.measureTextWidth(line.text, layout.fontSizePx)
-            line.layoutWidthPx shouldBe
-                maxOf(1, ceil(advance + 2f * TextLayoutTuning.shapingGuardPx(layout.fontSizePx, 1f)).toInt())
-            (line.leftPx >= 0 && line.leftPx + line.layoutWidthPx <= 300) shouldBe true
-            (line.topPx >= 0 && line.topPx + line.layoutHeightPx <= 120) shouldBe true
-            // Conservative occupancy is un-clipped and inflated past the line rect.
-            val occ = line.conservativeOccupancy
-            (occ.width() >= line.layoutWidthPx) shouldBe true
-            (occ.height() >= line.layoutHeightPx) shouldBe true
-        }
     }
 
     @Test
@@ -151,8 +140,13 @@ class TextLayoutPlannerSlice5Test {
         // 255 legacy horizontal blocks: 4 + 2k <= 512 → k <= 254 draws, the
         // 255th legacy block NonDraws. If the adaptive block reserved only 2,
         // all 255 legacy blocks would draw — the count discriminates.
+        // T912 quality repair (Fix 2): the ALL-CAPS trial text is what lets
+        // the bands beat the rectangle fit of this tall cell (the 8-char
+        // token admits exactly one balanced break, so the hyphenated halves
+        // wrap to two lines at a far larger font than the atomic rectangle
+        // fit) and the adaptive result survives the acceptance guard.
         val mask = fullMask(300, 1200)
-        val adaptive = block(50f, 550f, 100f, 100f, "AAA BBB", score = 1f)
+        val adaptive = block(50f, 550f, 100f, 100f, "A".repeat(8), score = 1f)
             .copy(blockId = "adaptive", segmentationMask = mask)
         val legacy = (0 until 255).map { i ->
             block((i * 7 % 290).toFloat(), (i * 11 % 1150).toFloat(), 20f, 8f, "M", score = 0.5f)
@@ -214,13 +208,17 @@ class TextLayoutPlannerSlice5Test {
 
     @Test
     fun `page positioned line budget retries the legacy single layout form`() {
-        // 11 blocks, each on its own full-width 240-row strip of one 300x2640
-        // page. Every strip fits 24 positioned lines at the minimum font, so
-        // blocks 0-9 consume 24 lines each (240 total) and block 10 would push
-        // past MAX_POSITIONED_LINES_PER_PAGE=256 → legacy single-layout retry.
+        // 11 blocks, each on its own full-width strip of one 300x2596 page.
+        // Every strip fits 24 positioned lines at the minimum font (the stack
+        // spans the full strip height), so blocks 0-9 consume 24 lines each
+        // (240 total) and block 10 would push past
+        // MAX_POSITIONED_LINES_PER_PAGE=256 → legacy single-layout retry.
+        // T912 quality repair (Fix 2): the 236-row strip is exactly the shape
+        // where the rectangle fit overflows at its floor font while the bands
+        // consume the text fully — the guard's second acceptance clause.
         val pageWidth = 300
-        val pageHeight = 2640
-        val strip = 240
+        val pageHeight = 2596
+        val strip = 236
         val text24 = "ab ".repeat(480).trimEnd() // 20 tokens per 292px line → 24 lines
         val inputs = (0 until 11).map { k ->
             val top = k * strip

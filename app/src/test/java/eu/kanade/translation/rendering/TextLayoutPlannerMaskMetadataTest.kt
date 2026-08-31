@@ -3,10 +3,10 @@ package eu.kanade.translation.rendering
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.BubbleMaskRle
 import io.kotest.matchers.collections.shouldHaveSize
+import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
-import kotlin.math.ceil
 
 /**
  * T912 slice 2/3: planner metadata wiring for shared segmentation masks.
@@ -104,26 +104,20 @@ class TextLayoutPlannerMaskMetadataTest {
             "right" to "I FORCED YOU INTO THAT RELATIONSHIP.",
         )
 
-        // Slice 5: these blocks are span-mode + horizontal → now ADAPTIVE.
-        // Positioned lines replace the legacy stacked form; metadata and
-        // slabs above are unchanged.
+        // T912 quality repair (Fix 2): these full-height rectangle cells give
+        // the adaptive bands no meaningful win over the conservative rectangle
+        // fit of the cell's content bounds, so every member takes the EXISTING
+        // legacy rectangle layout inside its own cell (still Draw, still
+        // cell'd); the metadata contract above is unchanged.
         plan.forEach { layout ->
-            val positioned = layout.positionedLines.shouldNotBeNull()
-            positioned.isNotEmpty() shouldBe true
-            layout.lines shouldBe positioned.map { it.text }
+            layout.positionedLines.shouldBeNull()
+            layout.lines.isNotEmpty() shouldBe true
             layout.hardClip shouldBe HardClip(layout.planGeometryId, layout.maskComponentId, layout.cellRect)
             layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(layout.fontSizePx, 1f)
-            for (line in positioned) {
-                val advance = m.measureTextWidth(line.text, layout.fontSizePx)
-                line.layoutWidthPx shouldBe
-                    maxOf(1, ceil(advance + 2f * TextLayoutTuning.shapingGuardPx(layout.fontSizePx, 1f)).toInt())
-                val slab = layout.cellRect.shouldNotBeNull()
-                (line.leftPx >= slab.left && line.leftPx + line.layoutWidthPx <= slab.right) shouldBe true
-            }
         }
         // Fonts stay fitted PER RESULT — the longest text in an equal-width
         // cell keeps a strictly smaller size than the shortest sibling (no
-        // equalization, and possibly ≠ the legacy rectangular fit).
+        // equalization; the font-harmony median cap does not bind here).
         (plan[2].fontSizePx < plan[1].fontSizePx) shouldBe true
     }
 

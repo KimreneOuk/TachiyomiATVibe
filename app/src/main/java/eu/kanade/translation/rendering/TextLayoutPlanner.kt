@@ -431,6 +431,22 @@ internal object TextLayoutTuning {
 
     /** Hard guard: evaluated post-anchor candidates per colliding block. */
     const val MAX_FINAL_PLACEMENT_ATTEMPTS = 8
+
+    // ---- T912 quality repair: band acceptance and sibling font harmony -----
+
+    /**
+     * Documented tunable: adaptive bands are accepted only when their fitted
+     * font beats the conservative rectangle fit of the same cell by this
+     * factor — or when the rectangle cannot host the text at all while the
+     * bands consume it fully inside the cell.
+     */
+    const val BAND_ACCEPT_FACTOR = 1.15f
+
+    /**
+     * Documented tunable: same-component sibling fonts are capped DOWN to this
+     * multiple of the group's median fitted font (never inflated).
+     */
+    const val FONT_HARMONY_MEDIAN_CAP = 1.4f
 }
 
 /**
@@ -675,14 +691,22 @@ object TextLayoutPlanner {
                     null
                 }
                 val lineCount = adaptiveFit?.lines?.size ?: 0
-                if (adaptiveFit != null &&
+                // T912 quality repair (Fix 2): bands are accepted only when
+                // they MEANINGFULLY beat the conservative rectangle layout of
+                // the same cell. A rejected fit reserves NOTHING — the budget
+                // accounting below runs on acceptance only — and the block
+                // falls through to the existing legacy placeBlock path with
+                // the same fit region.
+                val beatsRectangle = adaptiveFit != null &&
+                    bandBeatsRectangleFit(text, adaptiveFit, cellPlan, scale, measurer)
+                if (beatsRectangle &&
                     positionedLinesUsed + lineCount <= TextLayoutTuning.MAX_POSITIONED_LINES_PER_PAGE &&
                     staticLayoutsUsed + 2 * lineCount <= TextLayoutTuning.MAX_STATIC_LAYOUTS_PER_PAGE
                 ) {
                     positionedLinesUsed += lineCount
                     staticLayoutsUsed += 2 * lineCount
                     adaptive = adaptiveFit
-                    layout = adaptiveBlockLayout(block, text, slab!!, adaptiveFit, scale)
+                    layout = adaptiveBlockLayout(block, text, slab!!, adaptiveFit!!, scale)
                 }
                 // adaptive == null → band failure: legacy fallback below.
                 // Budget overflow → legacy single-layout retry below.
@@ -783,6 +807,23 @@ object TextLayoutPlanner {
                 LayoutOutcome.Draw(final),
             )
         }
+        // T912 quality repair (Fix 3): font harmony for same-component
+        // siblings, applied AFTER placement. Capped members only shrink, so
+        // the accepted collision set needs no re-validation.
+        applySiblingFontHarmony(
+            drawable = drawable,
+            resultsByInput = resultsByInput,
+            blocks = blocks,
+            cellPlans = cellPlans,
+            grouping = maskGrouping,
+            collisionGap = collisionGap,
+            sampleSize = sampleSize,
+            scale = scale,
+            minLegible = minLegible,
+            pageWidth = pageWidth,
+            pageHeight = pageHeight,
+            measurer = measurer,
+        )
         // Results in INPUT order: one explicit result per nonblank input.
         val results = ArrayList<LayoutResult>(blocks.size)
         for (i in blocks.indices) resultsByInput[i]?.let { results.add(it) }
@@ -830,6 +871,197 @@ object TextLayoutPlanner {
         },
         conservativeOccupancy = adaptive.lines.map { it.conservativeOccupancy },
     )
+
+    /**
+     * T912 quality repair (Fix 2): the beats-the-rectangle rule. Adaptive
+     * bands are accepted only when they MEANINGFULLY beat the conservative
+     * rectangle layout of the same cell:
+     *
+     *  - the rectangle fit is the largest font whose wrapped text fits the
+     *    cell's content bounds ([SharedCellPlan.fitRegion] — the span content
+     *    bbox — else the slab) shrunk by the band planner's stroke inset
+     *    (stroke/2 + AA guard + visual padding per side);
+     *  - bands win when their fitted font is at least
+     *    [TextLayoutTuning.BAND_ACCEPT_FACTOR] × the rectangle fit, OR when
+     *    the rectangle overflows at its fitted font (nothing fits the shrunk
+     *    rect) while the band result consumes the text fully without overflow.
+     *    A successful band fit's lines are the complete wrap of the (trial)
+     *    text, each validated band-contained and slab-contained by the band
+     *    planner, so "consumes fully without overflow" holds by construction
+     *    whenever the fit returned non-null with at least one line.
+     */
+    private fun bandBeatsRectangleFit(
+        text: String,
+        adaptiveFit: AdaptiveResult,
+        cellPlan: SharedCellPlan,
+        scale: Float,
+        measurer: TextMeasurer,
+    ): Boolean {
+        val content = cellPlan.fitRegion ?: cellPlan.slab
+        if (content == null || content.width() < 1f || content.height() < 1f) return true
+        val inset = TextLayoutTuning.strokeInsetPx(adaptiveFit.fontPx, scale)
+        val safeW = (content.width() - 2f * inset).coerceAtLeast(1f)
+        val safeH = (content.height() - 2f * inset).coerceAtLeast(1f)
+        val rectFitFont = binarySearchFontSize(text, safeW, safeH, safeW, false, scale, measurer)
+        if (adaptiveFit.fontPx >= TextLayoutTuning.BAND_ACCEPT_FACTOR * rectFitFont) return true
+        return overflows(text, rectFitFont, false, safeW, safeH, measurer) && adaptiveFit.lines.isNotEmpty()
+    }
+
+    /**
+     * T912 quality repair (Fix 3): font harmony for same-component siblings.
+     * For every `(group, componentId)` cell group with at least two accepted
+     * Draw layouts, members whose fitted font exceeds
+     * [TextLayoutTuning.FONT_HARMONY_MEDIAN_CAP] × the group's median font
+     * are capped DOWN to that multiple (never inflated). Deterministic:
+     * groups are processed in first-appearance (render) order, members by
+     * input index; the median of an even-sized group is the LOWER-middle
+     * element of the sorted fonts. Unmasked/legacy (non-cell) blocks and
+     * bounds-rect cells (no component id) are never touched.
+     */
+    private fun applySiblingFontHarmony(
+        drawable: ArrayList<BlockLayout>,
+        resultsByInput: Array<LayoutResult?>,
+        blocks: List<TranslationBlock>,
+        cellPlans: Map<Int, SharedCellPlan>,
+        grouping: MaskGrouping,
+        collisionGap: Int,
+        sampleSize: Int,
+        scale: Float,
+        minLegible: Float,
+        pageWidth: Float,
+        pageHeight: Float,
+        measurer: TextMeasurer,
+    ) {
+        val groups = LinkedHashMap<Long, MutableList<Int>>()
+        for (i in blocks.indices) {
+            val result = resultsByInput[i] ?: continue
+            if (result.outcome !is LayoutOutcome.Draw) continue
+            val cellPlan = cellPlans[i]?.takeUnless { it.empty } ?: continue
+            val componentId = cellPlan.componentId ?: continue
+            if (!cellPlan.optimized || cellPlan.slab == null) continue
+            val groupId = grouping.groupByIndex[i] ?: continue
+            if (groupId < 0) continue
+            groups.getOrPut((groupId.toLong() shl 32) or (componentId.toLong() and 0xFFFF_FFFFL)) {
+                mutableListOf()
+            }.add(i)
+        }
+        for ((_, members) in groups) {
+            if (members.size < 2) continue
+            val fonts = members.map { i ->
+                (resultsByInput[i]!!.outcome as LayoutOutcome.Draw).layout.fontSizePx
+            }
+            // Even-sized groups take the lower-middle element (documented).
+            val median = fonts.sorted()[(fonts.size - 1) / 2]
+            val cap = TextLayoutTuning.FONT_HARMONY_MEDIAN_CAP * median
+            for (inputIndex in members) {
+                val result = resultsByInput[inputIndex] ?: continue
+                val layout = (result.outcome as? LayoutOutcome.Draw)?.layout ?: continue
+                if (layout.fontSizePx <= cap) continue
+                val renderOrdinal = result.renderOrdinal ?: continue
+                val cellPlan = cellPlans.getValue(inputIndex)
+                val replacement = harmonizedReplacement(
+                    layout = layout,
+                    block = blocks[inputIndex],
+                    cellSpans = cellPlan.spans,
+                    slab = cellPlan.slab,
+                    fitRegion = cellPlan.fitRegion,
+                    cap = cap,
+                    collisionGap = collisionGap,
+                    sampleSize = sampleSize,
+                    scale = scale,
+                    minLegible = minLegible,
+                    pageWidth = pageWidth,
+                    pageHeight = pageHeight,
+                    obstacles = drawable.subList(0, renderOrdinal).map { extentOf(it, measurer) },
+                    measurer = measurer,
+                )
+                drawable[renderOrdinal] = replacement
+                resultsByInput[inputIndex] = result.copy(outcome = LayoutOutcome.Draw(replacement))
+            }
+        }
+    }
+
+    /**
+     * T912 quality repair (Fix 3): the replacement layout for one member
+     * capped DOWN to [cap]. Fonts are never inflated. Legacy members are
+     * re-wrapped at the capped font (vertical members keep their empty line
+     * list — columns derive from the font at draw time) in their unchanged
+     * box. Adaptive members re-run the band fitter with the capped maximum
+     * font (bounded); when the refit fails — or the accepted form carried a
+     * containment clip a re-fit could not honor — the member takes its legacy
+     * rectangle form: the exact [placeBlock] call with the same fit region
+     * the placement loop would have made without bands. Render metadata
+     * (cell rect, ids, hard clip) is preserved on every path.
+     *
+     * Internal test seam: the refit-failure fallback cannot be reached
+     * through [planPage] with well-formed span geometry (band fitting is
+     * downward-closed in the font for a fixed cell), so tests drive this
+     * function directly with a failing span set.
+     */
+    internal fun harmonizedReplacement(
+        layout: BlockLayout,
+        block: TranslationBlock,
+        cellSpans: List<MaskGeometry.RowSpan>,
+        slab: FloatRect?,
+        fitRegion: FloatRect?,
+        cap: Float,
+        collisionGap: Int,
+        sampleSize: Int,
+        scale: Float,
+        minLegible: Float,
+        pageWidth: Float,
+        pageHeight: Float,
+        obstacles: List<FloatRect>,
+        measurer: TextMeasurer,
+    ): BlockLayout {
+        val text = layout.text
+        if (layout.positionedLines == null) {
+            return layout.copy(
+                fontSizePx = cap,
+                strokeWidth = computeStrokeWidth(cap, scale),
+                lines = if (layout.isVertical) layout.lines else cjkWrap(text, cap, layout.safeW, measurer),
+            )
+        }
+        val refit = if (slab != null && layout.clipRect == null) {
+            AdaptiveBandPlanner.fitAdaptiveBands(
+                text = text,
+                cellSpans = cellSpans,
+                slab = slab,
+                scale = scale,
+                collisionGapPx = collisionGap,
+                measurer = measurer,
+                minFontPx = FIT_MIN_FONT_PX * scale,
+                maxFontPx = cap,
+                blockCenterX = block.x + block.width / 2f,
+                blockCenterY = block.y + block.height / 2f,
+            )
+        } else {
+            null
+        }
+        if (refit != null) {
+            return adaptiveBlockLayout(block, text, slab!!, refit, scale).copy(
+                maskGeometry = layout.maskGeometry,
+                planGeometryId = layout.planGeometryId,
+                maskComponentId = layout.maskComponentId,
+                cellRect = layout.cellRect,
+                hardClip = layout.hardClip,
+            )
+        }
+        val rect = computeRects(block, sampleSize, fitRegion)
+        return placeBlock(
+            block = block,
+            text = text,
+            isVertical = false,
+            rect = rect,
+            obstacles = obstacles,
+            pageWidth = pageWidth,
+            pageHeight = pageHeight,
+            minLegible = minLegible,
+            scale = scale,
+            measurer = measurer,
+            regionOverride = fitRegion,
+        )
+    }
 
     // ---- T912 slice 7: finite final post-anchor safety ---------------------
 

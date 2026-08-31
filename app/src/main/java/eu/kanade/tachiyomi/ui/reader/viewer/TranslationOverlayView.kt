@@ -141,6 +141,14 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         stroke.color = if (luma < 128) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
         stroke.strokeWidth = max(2f, layout.strokeWidth)
         stroke.textSize = layout.fontSizePx
+        // T912 quality repair: positioned lines consume the planner's layout
+        // model (cell containment + per-line placement). Every other layout
+        // keeps the EXACT legacy rendering below.
+        val positioned = layout.positionedLines
+        if (positioned != null) {
+            drawPositionedLayout(canvas, layout, positioned)
+            return
+        }
         val saved = layout.clipRect?.let { clip ->
             canvas.save().also { canvas.clipRect(RectF(clip.left, clip.top, clip.right, clip.bottom)) }
         }
@@ -166,6 +174,42 @@ internal class TranslationOverlayView @JvmOverloads constructor(
             }
         } finally {
             if (saved != null) canvas.restoreToCount(saved)
+        }
+    }
+
+    /**
+     * T912 quality repair: draws the planner's positioned lines with the same
+     * convention [PageTextRenderer]'s one-line StaticLayouts produce. Clips are
+     * applied ONCE per layout — the cell rect first (structural bound; the
+     * overlay has no component path), then the legacy clip rect — then each
+     * line is translated to its integer placement and drawn stroke-then-fill
+     * top-anchored at (leftPx, topPx), i.e. baseline = top - ascent, x = left,
+     * LEFT-aligned. Per-frame allocation stays limited to the draw calls
+     * themselves (no StaticLayout in the overlay).
+     */
+    private fun drawPositionedLayout(
+        canvas: Canvas,
+        layout: eu.kanade.translation.rendering.BlockLayout,
+        lines: List<eu.kanade.translation.rendering.PositionedLine>,
+    ) {
+        val saved = canvas.save()
+        try {
+            layout.cellRect?.let { cell -> canvas.clipRect(cell.left, cell.top, cell.right, cell.bottom) }
+            layout.clipRect?.let { clip -> canvas.clipRect(clip.left, clip.top, clip.right, clip.bottom) }
+            fill.textAlign = Paint.Align.LEFT
+            stroke.textAlign = Paint.Align.LEFT
+            val ascent = fill.fontMetrics.ascent
+            for (line in lines) {
+                if (line.text.isEmpty()) continue
+                val lineSave = canvas.save()
+                canvas.translate(line.leftPx.toFloat(), line.topPx.toFloat())
+                val baseline = -ascent
+                canvas.drawText(line.text, 0f, baseline, stroke)
+                canvas.drawText(line.text, 0f, baseline, fill)
+                canvas.restoreToCount(lineSave)
+            }
+        } finally {
+            canvas.restoreToCount(saved)
         }
     }
 
