@@ -81,6 +81,79 @@ class MaskGeometry private constructor(
         return if (tied) null else bestId
     }
 
+    /**
+     * TachiyomiAT T912 repair (R3): DETERMINISTIC component assignment for the
+     * layout path — a block is never left cell-less by ambiguity. Resolution:
+     *  1. the max-overlap component when the maximum is unique and positive;
+     *  2. on an exact overlap tie: among the TIED components, the one whose
+     *     integer bounds center is nearest the rectangle's center;
+     *  3. a further distance tie: the LOWER component id;
+     *  4. zero overlap with every component: the nearest bounds center over
+     *     all components (rules 2/3 apply).
+     *
+     * [componentForRectangle] keeps its existing null-on-tie contract for its
+     * other callers; only the T912 assignment path uses this variant.
+     */
+    fun componentForRectangleDeterministic(left: Int, top: Int, right: Int, bottom: Int): Int? {
+        if (right <= left || bottom <= top || components.isEmpty()) return null
+        val overlapByComponent = IntArray(components.size)
+        for (y in top.coerceAtLeast(0) until bottom.coerceAtMost(height)) {
+            var index = firstSpanEndingAfter(y, left)
+            val rowEnd = rowOffsets[y + 1]
+            while (index < rowEnd && spans[index].start < right) {
+                val span = spans[index]
+                val overlap = minOf(span.endExclusive, right) - maxOf(span.start, left)
+                if (overlap > 0) overlapByComponent[componentBySpan[index]] += overlap
+                index++
+            }
+        }
+        var bestOverlap = 0
+        var bestByOverlap = -1
+        var tied = false
+        overlapByComponent.forEachIndexed { id, overlap ->
+            when {
+                overlap > bestOverlap -> {
+                    bestOverlap = overlap
+                    bestByOverlap = id
+                    tied = false
+                }
+                overlap > 0 && overlap == bestOverlap -> tied = true
+            }
+        }
+        if (bestOverlap > 0 && !tied) return bestByOverlap
+
+        // Tie on overlap (or zero overlap everywhere): among the tied
+        // components — all of them when every overlap is zero — take the
+        // nearest integer bounds center, then the lower component id
+        // (ascending iteration + strict `<`).
+        val tiedOverlap = bestOverlap
+        val centerX = (left + right) / 2f
+        val centerY = (top + bottom) / 2f
+        var nearestId = -1
+        var nearestDistance = Float.MAX_VALUE
+        components.forEachIndexed { id, component ->
+            if (overlapByComponent[id] != tiedOverlap) return@forEachIndexed
+            var boundsLeft = Int.MAX_VALUE
+            var boundsTop = Int.MAX_VALUE
+            var boundsRight = Int.MIN_VALUE
+            var boundsBottom = Int.MIN_VALUE
+            for (span in component.spans) {
+                if (span.start < boundsLeft) boundsLeft = span.start
+                if (span.endExclusive > boundsRight) boundsRight = span.endExclusive
+                if (span.y < boundsTop) boundsTop = span.y
+                if (span.y + 1 > boundsBottom) boundsBottom = span.y + 1
+            }
+            val dx = (boundsLeft + boundsRight) / 2f - centerX
+            val dy = (boundsTop + boundsBottom) / 2f - centerY
+            val distance = dx * dx + dy * dy
+            if (distance < nearestDistance) {
+                nearestDistance = distance
+                nearestId = id
+            }
+        }
+        return nearestId
+    }
+
     fun isRectangleSafe(left: Int, top: Int, right: Int, bottom: Int, inset: Int): Boolean {
         require(inset >= 0) { "Inset must be non-negative" }
         val safeLeft = left.toLong() - inset

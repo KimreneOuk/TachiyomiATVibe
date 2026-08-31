@@ -175,7 +175,7 @@ class TextLayoutPlannerMaskMetadataTest {
     }
 
     @Test
-    fun `tied overlap across two components yields no metadata but keeps the result`() {
+    fun `tied overlap resolves deterministically to the lower component id with metadata (R3 repair)`() {
         val width = 100
         val height = 10
         val mask = BubbleMaskRle(
@@ -186,12 +186,22 @@ class TextLayoutPlannerMaskMetadataTest {
             score = 1f,
         )
         // The block rect overlaps both 1px islands by exactly one pixel: a tie.
+        // T912 REPAIR (R3, documented deviation): this fixture previously
+        // asserted NO metadata (null-on-tie assignment left the block
+        // cell-less). The deterministic assignment resolves the tie to the
+        // nearest bounds center — symmetric here — then the LOWER component
+        // id 0, so the block gets a cell and full span-mode metadata.
         val spanning = block(10f, 5f, 81f, 1f, "X").copy(segmentationMask = mask)
 
         val plan = TextLayoutPlanner.plan(listOf(spanning), 100f, 10f, 1, false, FakeMeasurer())
 
         plan shouldHaveSize 1
-        assertNoMetadata(plan.first())
+        val layout = plan.first()
+        layout.planGeometryId shouldBe 0
+        layout.maskComponentId shouldBe 0
+        layout.maskGeometry.shouldNotBeNull()
+        // Single member on component 0: the slab is the island's own bounds.
+        layout.cellRect shouldBe FloatRect(10f, 5f, 11f, 6f)
     }
 
     @Test

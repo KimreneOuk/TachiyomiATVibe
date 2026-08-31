@@ -45,8 +45,11 @@ import kotlin.math.min
  *     cells (same slabs, no span lists).
  *  8. At most [MAX_SHARED_BLOCKS_OPTIMIZED] members per component are
  *     optimized; members beyond the first 8 in stable order get no cell at all
- *     ([Cell.slab] == null, [Cell.optimized] == false) and the planner
- *     integration keeps them on their own legacy rectangle.
+ *     ([Cell.slab] == null, [Cell.optimized] == false). T912 repair (R4b):
+ *     they additionally carry [Cell.overflowSlab] — a disjoint bounds-rect
+ *     slab cut from the same partition sequence — so the integration can give
+ *     them a hard `cellRect` (no component path) and the hard-cell exemption
+ *     applies to them too.
  *  9. The fit region is the bounding box of the cell's spans (span mode) or
  *     the slab itself (bounds mode). A slab without component pixels, or whose
  *     spans do not overlap the member's own OCR rectangle, is resolved by the
@@ -122,6 +125,11 @@ internal object MaskTextRegionPlanner {
      * by it, `null` for an empty cell); [spans] is the bounded cell segment
      * list (empty in bounds-rect mode); [empty] marks a cell with no usable
      * component pixels; [optimized] is false only for beyond-cap members.
+     *
+     * T912 repair (R4b): beyond-cap members carry [overflowSlab] — a disjoint
+     * BOUNDS-RECT slab cut from the SAME partition sequence (cuts span all
+     * members), so the integration can give them a hard `cellRect` without a
+     * component path. Null when their own slab would be degenerate.
      */
     data class Cell(
         val inputIndex: Int,
@@ -130,6 +138,7 @@ internal object MaskTextRegionPlanner {
         val spans: List<MaskGeometry.RowSpan>,
         val empty: Boolean,
         val optimized: Boolean,
+        val overflowSlab: FloatRect? = null,
     )
 
     /**
@@ -171,6 +180,10 @@ internal object MaskTextRegionPlanner {
         )
         val optimizedCount = min(members.size, MAX_SHARED_BLOCKS_OPTIMIZED)
         val optimized = sorted.subList(0, optimizedCount)
+        // T912 repair (R4b): members beyond the cap keep a bounds-rect slab
+        // cut from the SAME partition sequence (see [Cell.overflowSlab]).
+        val overflowInputs = HashSet<Int>(sorted.size - optimizedCount)
+        for (i in optimizedCount until sorted.size) overflowInputs += sorted[i].member.inputIndex
         val cellsByInput = HashMap<Int, Cell>(members.size)
         // 8. Members beyond the cap are NOT optimized — no cell at all.
         for (i in optimizedCount until sorted.size) {
@@ -179,28 +192,30 @@ internal object MaskTextRegionPlanner {
                 Cell(member.inputIndex, null, null, emptyList(), empty = false, optimized = false)
         }
 
-        // 4. Center-midpoint cuts with the facing-parent bias.
-        val cuts = ArrayList<Int>(optimizedCount - 1)
-        for (i in 0 until optimizedCount - 1) {
-            cuts += cutBetween(optimized[i], optimized[i + 1], horizontal)
+        // 4. Center-midpoint cuts with the facing-parent bias. The cut sequence
+        // spans ALL stable-ordered members so overflow slabs stay disjoint from
+        // the optimized cells (for groups within the cap this is unchanged).
+        val cuts = ArrayList<Int>(sorted.size - 1)
+        for (i in 0 until sorted.size - 1) {
+            cuts += cutBetween(sorted[i], sorted[i + 1], horizontal)
         }
         // 5. Strictly monotonic cuts, else deterministic equal-width slabs.
         val monotonic = cuts.zipWithNext().all { (previous, next) -> previous < next }
         val slabs: List<Slab> = if (monotonic) {
             val gapBefore = gap / 2
             val gapAfter = gap - gapBefore
-            optimized.mapIndexed { k, scan ->
+            sorted.mapIndexed { k, scan ->
                 val start = if (k == 0) axisLow else cuts[k - 1] + gapAfter
-                val end = if (k == optimizedCount - 1) axisHigh else cuts[k] - gapBefore
+                val end = if (k == sorted.size - 1) axisHigh else cuts[k] - gapBefore
                 Slab(scan.member, start, end)
             }
         } else {
             val width = axisHigh - axisLow
-            optimized.mapIndexed { k, scan ->
+            sorted.mapIndexed { k, scan ->
                 Slab(
                     scan.member,
-                    axisLow + Math.floorDiv(k * width, optimizedCount),
-                    axisLow + Math.floorDiv((k + 1) * width, optimizedCount),
+                    axisLow + Math.floorDiv(k * width, sorted.size),
+                    axisLow + Math.floorDiv((k + 1) * width, sorted.size),
                 )
             }
         }
@@ -257,6 +272,21 @@ internal object MaskTextRegionPlanner {
             val member = slab.member
             val rect = slabRect(horizontal, slab, orthoLow, orthoHigh)
             val degenerate = slab.start >= slab.endExclusive
+            if (member.inputIndex in overflowInputs) {
+                // T912 repair (R4b): beyond-cap member — no cell, but a
+                // disjoint bounds-rect slab from the same cut sequence when it
+                // has positive area.
+                cellsByInput[member.inputIndex] = Cell(
+                    member.inputIndex,
+                    slab = null,
+                    fitRegion = null,
+                    spans = emptyList(),
+                    empty = false,
+                    optimized = false,
+                    overflowSlab = if (degenerate) null else rect,
+                )
+                continue
+            }
             if (!useSpans) {
                 // Bounds-rect mode: the slab IS the cell; spans stay empty and
                 // only a degenerate slab is an empty cell.

@@ -529,3 +529,32 @@ errors, skipped tests, wall times, and relevant heap/allocation measurements.
 10. All span/component/cell/work/positioned-line/`StaticLayout` budgets are checked
     before their corresponding allocations, and `PageTextRenderer.draw()` remains
     allocation-free.
+
+## Revision 2 addendum — visibility override
+
+Director mandate (T912 repair, overriding the rev-2 non-draw contracts above):
+
+> The T912 safety passes (slices 3/7) may blank regions that have text — on
+> fresh translations too. New guarantee: **placement safety may never remove
+> text from the page. Worst case is clipped or overlapping text, never a
+> missing block.**
+
+Amended fallback outcomes (supersede the failure/fallback matrix rows above;
+the `EMPTY_SHARED_CELL` and `NO_DISJOINT_POST_ANCHOR_PLACEMENT` enum values
+stay declared but are never emitted by the planner):
+
+| Condition | Rev-2 outcome (superseded) | Amended outcome |
+|---|---|---|
+| Empty/degenerate shared cell (inverted slab, span mode with no owned pixels — span AND bounds mode) | `NonDraw(EMPTY_SHARED_CELL)` | R1: the block falls back to its own pre-slice-3 region path (parent box if valid, else the legacy mask region / OCR rectangle) with NO `cellRect`/`hardClip` — it draws exactly like the legacy renderer |
+| Final eight candidates unsafe | `NonDraw(NO_DISJOINT_POST_ANCHOR_PLACEMENT)` | R2: accept a CLIPPED DRAW — the candidate-8 refit hard-clipped to the largest axis-aligned free rectangle (disjoint from every applicable accepted occupancy by construction; text may be partially clipped); if NO positive-area free rectangle exists (fully enclosed), draw with a containment clip of the block's own rect. The clip fallback is not an extra candidate: the evaluated-candidate cap stays at 8 |
+| Ambiguous component assignment (exact overlap tie) | No cell — legacy region path | R3: deterministic assignment — max-overlap component; tie → among the tied components, the nearest integer bounds center to the OCR center; further tie → lower component id (`MaskGeometry.componentForRectangleDeterministic`; `componentForRectangle` keeps its null-on-tie contract for other callers) |
+| Zero overlap with every component | No cell — legacy region path | R3: nearest component bounds center (then lower id) |
+| Mask/page dims mismatch | No cells at all for the group | R4a: disjoint BOUNDS-RECT-mode cells over the mask bounds scaled into page space (same machinery as conversion-fallback groups), no geometry ids |
+| Beyond-8 members of a component (`MAX_SHARED_BLOCKS_OPTIMIZED`) | No cell, no region override | R4b: a disjoint bounds-rect slab cell cut from the SAME partition sequence (`Cell.overflowSlab`), no component path — exemption-protected and drawing in place |
+
+Outcome: every member of a shared mask group ends up with SOME disjoint hard
+cell (or the R1 legacy-region fallback), so the hard-cell exemption prevents
+occupancy vetoes between siblings everywhere. The page-wide
+`StaticLayout` resource guard (`NonDraw(STATIC_LAYOUT_BUDGET_EXHAUSTED)`)
+remains in force as a bounded-memory guard; it is unreachable for real manga
+pages and is pinned by its own suite.

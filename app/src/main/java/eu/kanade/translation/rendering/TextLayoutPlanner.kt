@@ -588,25 +588,21 @@ object TextLayoutPlanner {
             val ordinal = planningOrdinal++
             val identity = InputIdentity(inputIndex, block.blockId)
 
-            // An optimized member whose cell owns no usable component pixels is
-            // never placed: it keeps its identity as an explicit non-draw
-            // result and is not an obstacle.
-            val cellPlan = cellPlans[inputIndex]
-            if (cellPlan != null && cellPlan.empty) {
-                resultsByInput[inputIndex] = LayoutResult(
-                    identity,
-                    block,
-                    text,
-                    ordinal,
-                    null,
-                    LayoutOutcome.NonDraw(NonDrawReason.EMPTY_SHARED_CELL),
-                )
-                continue
-            }
+            // T912 repair (R1): an optimized member whose cell is empty or
+            // degenerate (inverted slab, span mode with no owned pixels) is no
+            // longer dropped. The identity falls back to the block's own
+            // pre-slice-3 region path (parent box if valid, else the legacy
+            // mask region / OCR rectangle) with NO cellRect/hardClip, so it
+            // draws exactly like the legacy renderer did.
+            // EMPTY_SHARED_CELL stays declared but is never emitted.
+            val rawCellPlan = cellPlans[inputIndex]
+            val cellPlan = if (rawCellPlan?.empty == true) null else rawCellPlan
 
             val regionOverride = when {
                 cellPlan != null && cellPlan.optimized -> cellPlan.fitRegion
-                // Beyond MAX_SHARED_BLOCKS_OPTIMIZED: own legacy rectangle.
+                // Beyond MAX_SHARED_BLOCKS_OPTIMIZED (R4b: hard slab cell, no
+                // fit override) and empty cells (R1: handled above by nulling
+                // the plan) keep their own legacy rectangle.
                 cellPlan != null -> null
                 else -> maskRegions[inputIndex]
             }
@@ -757,20 +753,11 @@ object TextLayoutPlanner {
                 null
             }
             finalPlacementAttempts += resolution?.attempts ?: 0
-            if (resolution != null && resolution.layout == null) {
-                // Every finite candidate failed: the identity stays intact as
-                // an explicit non-draw result; the block is not placed and is
-                // not an obstacle.
-                resultsByInput[inputIndex] = LayoutResult(
-                    identity,
-                    block,
-                    text,
-                    ordinal,
-                    null,
-                    LayoutOutcome.NonDraw(NonDrawReason.NO_DISJOINT_POST_ANCHOR_PLACEMENT),
-                )
-                continue
-            }
+            // T912 repair (R2): the eight-candidate ladder no longer drops the
+            // block. resolvePostAnchorPlacement ALWAYS returns an accepted
+            // layout now — a clipped draw when the ladder was exhausted (see
+            // its tail). NO_DISJOINT_POST_ANCHOR_PLACEMENT stays declared but
+            // is never emitted.
             val chosen = resolution?.layout ?: layout
             // Metadata is wired AFTER placement and never changes placement,
             // font, or text — it only lets the renderer clip structurally.
@@ -848,8 +835,11 @@ object TextLayoutPlanner {
 
     /** Outcome of the bounded final post-anchor resolution for one colliding block. */
     private class FinalResolution(
-        /** The accepted replacement layout, or null when every candidate failed. */
-        val layout: BlockLayout?,
+        /**
+         * The accepted layout — never null since the T912 repair (R2): a
+         * ladder that exhausts every candidate accepts a clipped draw instead.
+         */
+        val layout: BlockLayout,
         /** Deterministic count of EVALUATED candidates (duplicates are skipped uncounted). */
         val attempts: Int,
     )
@@ -1044,9 +1034,16 @@ object TextLayoutPlanner {
      * fallback); (4-7) minimum legal left/right/up/down shift; (8) one hard
      * disjoint clip/refit candidate into the best of the four axis-aligned free
      * rectangles around the current occupancy. Duplicates after clamping are
-     * skipped without counting; the FIRST validating candidate wins; when every
-     * candidate fails, [FinalResolution.layout] is null and the caller emits
-     * `NonDraw(NO_DISJOINT_POST_ANCHOR_PLACEMENT)` with the identity intact.
+     * skipped without counting; the FIRST validating candidate wins.
+     *
+     * T912 repair (R2): the ladder NEVER drops the block. When every candidate
+     * fails validation, a clipped draw is accepted (visibility override —
+     * placement safety may never remove text from the page): the candidate-8
+     * refit when a positive-area free rectangle exists (its `clipRect` is the
+     * free rectangle, disjoint from every applicable accepted occupancy by
+     * construction), otherwise the selected geometry with a containment clip
+     * of its own rect (fully enclosed). The fallback is not an extra
+     * evaluated candidate — the cap stays at eight.
      */
     private fun resolvePostAnchorPlacement(
         layout: BlockLayout,
@@ -1310,6 +1307,7 @@ object TextLayoutPlanner {
                 freeRects.add(FreeRectCandidate(candidate, direction))
             }
         }
+        var clipCandidate: BlockLayout? = null
         if (freeRects.isNotEmpty()) {
             // Maximum area, then shortest displacement (into the adjacent free
             // rectangle), then fixed order left/right/up/down.
@@ -1318,7 +1316,7 @@ object TextLayoutPlanner {
                     .thenBy { freeRectDisplacement(it.rect, it.direction, occupancy) }
                     .thenBy { it.direction },
             ).first()
-            val clipCandidate = fitIntoFreeRect(
+            clipCandidate = fitIntoFreeRect(
                 block = block,
                 text = text,
                 isVertical = isVertical,
@@ -1330,7 +1328,23 @@ object TextLayoutPlanner {
             tryCandidate(clipCandidate)?.let { return FinalResolution(it, attempts) }
         }
 
-        return FinalResolution(null, attempts)
+        // T912 repair (R2): ladder exhausted → accept a CLIPPED DRAW, never
+        // `NonDraw(NO_DISJOINT_POST_ANCHOR_PLACEMENT)` (visibility override:
+        // placement safety may never remove text from the page).
+        //  - A positive-area free rectangle exists: the candidate-8 refit is
+        //    accepted as-is. Its hard `clipRect` is the chosen free rectangle,
+        //    disjoint from every applicable accepted occupancy by
+        //    construction, so the painted pixels cannot overlap the accepted
+        //    set; the text may be partially clipped (the accepted worst case).
+        //  - Fully enclosed (no positive-area free rectangle anywhere): the
+        //    block draws with a containment clip of its own rect — still a
+        //    Draw with visible text (worst case overlapping text).
+        // The fallback is NOT an extra candidate: the evaluated-candidate cap
+        // stays at [TextLayoutTuning.MAX_FINAL_PLACEMENT_ATTEMPTS].
+        return FinalResolution(
+            clipCandidate ?: layout.copy(clipRect = inkRectOf(layout, measurer)),
+            attempts,
+        )
     }
 
     /** Displacement needed to move the occupancy fully into an adjacent free rect. */
@@ -2422,14 +2436,20 @@ object TextLayoutPlanner {
 
     /** Per-input slice-3 shared-cell decision; null means the legacy region path. */
     private class SharedCellPlan(
-        /** Hard disjoint slab; null only for a beyond-cap (non-optimized) member. */
+        /**
+         * Hard disjoint slab; null only when the member has no usable cell at
+         * all (degenerate overflow slab / no cell from the partition).
+         */
         val slab: FloatRect?,
         /** Placement override inside the slab; null for empty/non-optimized cells. */
         val fitRegion: FloatRect?,
         val optimized: Boolean,
         /** Non-null only for a span-mode member of a converted geometry group. */
         val componentId: Int?,
-        /** True when the cell owns no usable component pixels → explicit NonDraw. */
+        /**
+         * True when the cell owns no usable component pixels → R1 legacy-region
+         * fallback (never `NonDraw(EMPTY_SHARED_CELL)` since the repair).
+         */
         val empty: Boolean,
         /**
          * Slice 5: the cell's slab-intersected row-major spans (empty in
@@ -2446,12 +2466,17 @@ object TextLayoutPlanner {
      *    component so blocks on different components of one RLE never share
      *    cuts. Single-member component groups collapse to one cell over the
      *    component bounds (mask bounds ≈ component bounds keeps single masked
-     *    bubbles on effectively the current behaviour).
-     *  - Grouped mask whose conversion FELL BACK (empty runs / caps): disjoint
-     *    BOUNDS-RECT mode cells over the mask bounds rectangle — still one cell
-     *    per member, still collision-disjoint, no geometry ids.
-     *  - Groupless masks (reference/unique caps) and dimension mismatches:
-     *    no cells — the legacy [buildMaskRegions] partition stays in force.
+     *    bubbles on effectively the current behaviour). Members beyond
+     *    [MaskTextRegionPlanner.MAX_SHARED_BLOCKS_OPTIMIZED] receive a disjoint
+     *    bounds-rect slab cell from the same partition (R4b) — no component
+     *    path, but exemption-protected.
+     *  - Grouped mask whose conversion FELL BACK (empty runs / caps), OR whose
+     *    geometry dimensions mismatch the page (R4a): disjoint BOUNDS-RECT mode
+     *    cells over the mask bounds rectangle, scaled into page space when the
+     *    dims mismatch — still one cell per member, still collision-disjoint,
+     *    no geometry ids.
+     *  - Groupless masks (reference/unique caps): no cells — the legacy
+     *    [buildMaskRegions] partition stays in force.
      */
     private fun buildSharedCellPlans(
         blocks: List<TranslationBlock>,
@@ -2500,6 +2525,21 @@ object TextLayoutPlanner {
                         budget,
                     )
                     for (cell in cells) {
+                        // R4b: beyond-cap members get their disjoint
+                        // bounds-rect slab from the same partition — a hard
+                        // cell with NO component path, so the hard-cell
+                        // exemption protects them too.
+                        val overflowSlab = cell.overflowSlab
+                        if (overflowSlab != null) {
+                            plans[cell.inputIndex] = SharedCellPlan(
+                                slab = overflowSlab,
+                                fitRegion = null,
+                                optimized = true,
+                                componentId = null,
+                                empty = false,
+                            )
+                            continue
+                        }
                         plans[cell.inputIndex] = SharedCellPlan(
                             slab = cell.slab,
                             fitRegion = cell.fitRegion,
@@ -2510,14 +2550,24 @@ object TextLayoutPlanner {
                         )
                     }
                 }
-            } else if (geometry == null && mask.width == pageWidthInt && mask.height == pageHeightInt) {
+            } else {
+                // R4a + conversion fallback: disjoint BOUNDS-RECT cells over
+                // the mask bounds, scaled into page space when the mask dims
+                // mismatch the page (the slabs are page-space clip rects).
                 val bounds = mask.bounds
+                val scaleX = if (mask.width > 0) pageWidth / mask.width.toFloat() else 1f
+                val scaleY = if (mask.height > 0) pageHeight / mask.height.toFloat() else 1f
+                val left = (floor(bounds[0] * scaleX).toInt()).coerceIn(0, pageWidthInt)
+                val top = (floor(bounds[1] * scaleY).toInt()).coerceIn(0, pageHeightInt)
+                val right = (ceil(bounds[2] * scaleX).toInt()).coerceIn(0, pageWidthInt)
+                val bottom = (ceil(bounds[3] * scaleY).toInt()).coerceIn(0, pageHeightInt)
+                if (right <= left || bottom <= top) continue
                 val cells = MaskTextRegionPlanner.partition(
                     MaskTextRegionPlanner.ComponentRegion(
-                        bounds[0],
-                        bounds[1],
-                        bounds[2],
-                        bounds[3],
+                        left,
+                        top,
+                        right,
+                        bottom,
                         spans = null,
                     ),
                     nonblank.map { plannerMember(it.value, it.index) },
@@ -2525,6 +2575,17 @@ object TextLayoutPlanner {
                     budget,
                 )
                 for (cell in cells) {
+                    val overflowSlab = cell.overflowSlab
+                    if (overflowSlab != null) {
+                        plans[cell.inputIndex] = SharedCellPlan(
+                            slab = overflowSlab,
+                            fitRegion = null,
+                            optimized = true,
+                            componentId = null,
+                            empty = false,
+                        )
+                        continue
+                    }
                     plans[cell.inputIndex] = SharedCellPlan(
                         slab = cell.slab,
                         fitRegion = cell.fitRegion,
@@ -2545,9 +2606,10 @@ object TextLayoutPlanner {
      * `(planGeometryId, componentId)` pair; the page-wide
      * [MAX_COMPONENT_ASSIGNMENTS_PER_PAGE] cap applies to NEW distinct pairs,
      * and a capped member keeps its structural slab without ids. Bounds-rect
-     * members (conversion fell back) carry the slab without ids, so the
-     * renderer clips to the slab rectangle only. Non-optimized members and the
-     * legacy path keep their layouts untouched.
+     * members (conversion fell back, R4a dims mismatch) and R4b beyond-cap
+     * slab cells carry the slab without ids, so the renderer clips to the slab
+     * rectangle only. Non-optimized members and the legacy path keep their
+     * layouts untouched.
      */
     private fun withSharedCellMetadata(
         layout: BlockLayout,
@@ -2605,16 +2667,20 @@ object TextLayoutPlanner {
     }
 
     /**
-     * Unambiguous component assignment for a block's OCR rectangle (same
-     * clamped-rectangle resolution as slice 2): null on tie, no overlap, or
-     * out-of-page rectangles, so ambiguous blocks keep the legacy region path.
+     * T912 repair (R3): DETERMINISTIC component assignment for a block's OCR
+     * rectangle (same clamped-rectangle resolution as slice 2, now over
+     * [MaskGeometry.componentForRectangleDeterministic]). A tie across
+     * components or a zero-overlap rectangle no longer leaves the block
+     * cell-less: it resolves to the max-overlap component, else the tied (or,
+     * when all overlaps are zero, any) component with the bounds center
+     * nearest the OCR center, then the lower component id.
      */
     private fun resolveComponentId(geometry: MaskGeometry, block: TranslationBlock): Int? {
         val left = floor(block.x).toInt().coerceAtLeast(0)
         val top = floor(block.y).toInt().coerceAtLeast(0)
         val right = ceil(block.x + block.width).toInt().coerceAtMost(geometry.width)
         val bottom = ceil(block.y + block.height).toInt().coerceAtMost(geometry.height)
-        return geometry.componentForRectangle(left, top, right, bottom)
+        return geometry.componentForRectangleDeterministic(left, top, right, bottom)
     }
 
     /** Build the pure planner's member descriptor for one block. */

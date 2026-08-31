@@ -176,13 +176,19 @@ class TextLayoutPlannerFinalSafetyTest {
     // ---- concave external mask ---------------------------------------------
 
     @Test
-    fun `concave external mask resolves on the conservative bbox without entering the empty interior`() {
-        // One U-shaped component (two 40px arms joined at the rows): A wraps
-        // into four lines at font 19 (region-rect placement, no clip), so its
-        // conservative occupancy [~9.2,~290.8]x[~100.4,~199.6] spans the EMPTY
-        // interior x[40,260) — the bbox of the concave component. B sits
-        // exactly in that interior, so a hole-aware check would see no
-        // conflict but the conservative rectangle does.
+    fun `concave U mask resolves deterministically to the nearest arm and never drops a block`() {
+        // One U-shaped mask (two 40px arms joined across the rows → TWO
+        // components). The U-shaped OCR rectangle of A overlaps both arms by
+        // exactly the same pixel count — an assignment TIE.
+        //
+        // T912 REPAIR (R3, documented deviation): this fixture previously
+        // asserted that the tied block "keeps the legacy region path" and
+        // displaced B with a bbox-wide conservative occupancy (6 ladder
+        // attempts, B shifted up). The deterministic assignment now resolves
+        // the tie by nearest integer bounds center — arm 1 (x [40,80)) — so A
+        // gets a hard CELL on that arm, draws confined there, and its
+        // conservative occupancy no longer blankets the empty interior where B
+        // sits: zero collisions, zero evaluated attempts, nobody displaced.
         val runs = buildList {
             for (y in 100 until 200) {
                 add(y * 300)
@@ -198,27 +204,27 @@ class TextLayoutPlannerFinalSafetyTest {
 
         val resolution = TextLayoutPlanner.planPageInternal(listOf(a, b), 300f, 300f, 1, false, m)
 
-        // Candidates 1/2 collide inside the bbox; candidate 3 (the ungrown
-        // baseline, re-centered on the OCR box) differs from candidate 1 and
-        // still collides; left/right shifts stay inside the bbox; candidate 6,
-        // the min UP shift to A's occupancy top edge, wins.
-        resolution.finalPlacementAttempts shouldBe 6
+        // A is confined to its arm cell, B draws unmasked in the interior:
+        // the conservative occupancies no longer collide.
+        resolution.finalPlacementAttempts shouldBe 0
 
         val plan = resolution.plan
+        plan.resultsInInputOrder shouldHaveSize 2
+        plan.resultsInInputOrder.forEach { result ->
+            (result.outcome as? LayoutOutcome.Draw).shouldNotBeNull()
+        }
         val layoutA = draw(plan.resultsInInputOrder.first { it.chosenText.startsWith("ab") })
-        // The U-shaped OCR rectangle does not resolve to a single component
-        // (its bbox also covers the interior), so A keeps the legacy region
-        // path: a rectangular containment-clipped layout whose conservative
-        // occupancy spans the whole component bbox.
+        // R3: the tied block is assigned to arm 1 (nearest bounds center is
+        // symmetric here — both arms are 130px from the OCR center — so the
+        // LOWER component id wins) and carries its hard slab as the cell.
+        layoutA.maskComponentId shouldBe 0
+        layoutA.cellRect shouldBe FloatRect(0f, 100f, 40f, 200f)
+        // The 40px-wide arm cannot host 20+ adaptive lines: legacy fallback.
         layoutA.positionedLines.shouldBeNull()
 
         val layoutB = draw(plan.resultsInInputOrder.first { it.chosenText == "Zz" })
-        layoutB.fontSizePx shouldBe 10f
-        layoutB.originX shouldBe 140f // LEFT edge anchor from the growth stage
-        // The min UP shift moves B fully above A's conservative occupancy top
-        // edge (~100.1): out of the bbox — never tucked into the concave
-        // interior x[40,260) where B's box sits.
-        (abs(layoutB.originY - 90.12f) < 0.05f) shouldBe true
+        // B is not a member of the mask group: legacy path, no cell.
+        layoutB.cellRect.shouldBeNull()
     }
 
     // ---- page edge ----------------------------------------------------------
@@ -264,7 +270,7 @@ class TextLayoutPlannerFinalSafetyTest {
     }
 
     @Test
-    fun `impossible space evaluates exactly eight candidates and non-draws explicitly`() {
+    fun `impossible space evaluates exactly eight candidates and falls back to a clipped draw`() {
         // Page 100x70. D (top band) and A (mid box) and C (lower box) tile the
         // page; B is a tall box reshaped to 31.62x31.62, displaced right of A,
         // grown right, and clipped by the clip net to [49.2,28.19,96,51.81]
@@ -278,7 +284,14 @@ class TextLayoutPlannerFinalSafetyTest {
         //    (A above-left, C below, D above, page right edge);
         //  - candidate 8 refits into the up free rectangle [45.2,23.8,96.4,28.8],
         //    but the floor-font ink pokes above it into D's occupancy.
-        // All eight finite candidates fail → explicit non-draw.
+        //
+        // T912 REPAIR (R2, documented deviation): this fixture previously
+        // asserted `NonDraw(NO_DISJOINT_POST_ANCHOR_PLACEMENT)` after the
+        // eight candidates. The Director's visibility override ("never a
+        // missing block") now accepts a CLIPPED DRAW: the candidate-8 refit is
+        // accepted as-is, hard-clipped to the free rectangle, which is
+        // disjoint from every accepted occupancy by construction. The
+        // evaluated-candidate cap stays at exactly 8.
         val d = block(0f, 10f, 10f, 10f, "DDDDDDDDDDDDDDD", score = 0.98f)
         val a = block(30f, 35f, 10f, 10f, "AAAA", score = 0.9f)
         val c = block(40f, 53f, 10f, 10f, "CCCCCC", score = 0.95f)
@@ -300,17 +313,48 @@ class TextLayoutPlannerFinalSafetyTest {
             "BBBBBB",
         )
 
-        val bResult = plan.resultsInInputOrder.last()
-        bResult.outcome shouldBe LayoutOutcome.NonDraw(NonDrawReason.NO_DISJOINT_POST_ANCHOR_PLACEMENT)
-        bResult.renderOrdinal.shouldBeNull()
+        // Every block now draws (no NonDraw); B carries the free-rect clip.
+        val byText = plan.resultsInInputOrder.associate { it.chosenText to draw(it) }
+        val bLayout = byText.getValue("BBBBBB")
+        val clip = bLayout.clipRect.shouldNotBeNull()
+        (clip.width() > 0f && clip.height() > 0f) shouldBe true
 
-        // Survivors keep consecutive render ordinals in placement order
-        // (score desc: D 0.98, C 0.95, A 0.9 — B non-draws).
-        plan.resultsInInputOrder.take(3).map { it.renderOrdinal } shouldBe listOf(0, 2, 1)
+        // Pixel safety: the clip rectangle is disjoint from the conservative
+        // occupancy of every accepted block (it is a free strip cut back past
+        // them). Occupancy mirror: extent ± (stroke + AA guard + half gap 1).
+        fun occupancy(layout: BlockLayout): FloatRect {
+            val lines = TextLayoutPlanner.cjkWrap(layout.text, layout.fontSizePx, layout.safeW, m)
+            val totalH = lines.size * m.lineHeight(layout.fontSizePx)
+            val maxW = lines.maxOfOrNull { m.measureTextWidth(it, layout.fontSizePx) } ?: 0f
+            val extent = when (layout.drawAlign) {
+                TextAlign.LEFT ->
+                    FloatRect(layout.originX, layout.originY - totalH / 2f, layout.originX + maxW, layout.originY + totalH / 2f)
+                TextAlign.RIGHT ->
+                    FloatRect(layout.originX - maxW, layout.originY - totalH / 2f, layout.originX, layout.originY + totalH / 2f)
+                TextAlign.CENTER ->
+                    FloatRect(layout.originX - maxW / 2f, layout.originY - totalH / 2f, layout.originX + maxW / 2f, layout.originY + totalH / 2f)
+            }
+            val inflate = TextLayoutPlanner.computeStrokeWidth(layout.fontSizePx, 1f) +
+                TextLayoutTuning.aaGuard(1f) + 1f
+            return FloatRect(
+                extent.left - inflate,
+                extent.top - inflate,
+                extent.right + inflate,
+                extent.bottom + inflate,
+            )
+        }
+        for (survivor in listOf("DDDDDDDDDDDDDDD", "AAAA", "CCCCCC")) {
+            (clip.overlaps(occupancy(byText.getValue(survivor)))) shouldBe false
+        }
+
+        // All four draw: consecutive render ordinals in placement order
+        // (score desc: D 0.98, C 0.95, A 0.9, B 0.5).
+        plan.resultsInInputOrder.map { it.renderOrdinal } shouldBe listOf(0, 2, 1, 3)
         plan.drawableInRenderOrder.map { it.text } shouldBe listOf(
             "DDDDDDDDDDDDDDD",
             "CCCCCC",
             "AAAA",
+            "BBBBBB",
         )
 
         // Deterministic replay: identical plans and attempt counts.
