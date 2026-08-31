@@ -159,6 +159,7 @@ class DownloaderHandoffFailureSplitTest {
 
         download.status shouldBe Download.State.DOWNLOADED
         coVerifySequence {
+            manager.pendingRequestGeneration(chapterId)
             manager.rekeyTranslationForCompletedDownload(any(), any(), any(), any(), any())
             manager.startTranslationAfterDownloadIfRequested(any(), any())
         }

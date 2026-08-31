@@ -3,6 +3,7 @@ package eu.kanade.translation.manager
 import eu.kanade.translation.ChapterTranslator
 import eu.kanade.translation.TranslationPendingRequestRecord
 import eu.kanade.translation.TranslationPendingRequestStore
+import eu.kanade.translation.diagnostics.BatchDownloadDiagnostics
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
@@ -165,6 +166,15 @@ internal class TranslationRequestCoordinator(
                     groupId = groupId,
                 )
             }
+        }
+        versions.forEach { (chapterId, acknowledgement) ->
+            BatchDownloadDiagnostics.requestPhase(
+                chapterId = chapterId,
+                generation = acknowledgement.generation,
+                from = null,
+                to = TranslationRequestPhase.STARTING,
+                failureKind = TranslationRequestFailureKind.NONE,
+            )
         }
         storeScope.launch(Dispatchers.IO) {
             versions.forEach { (chapterId, acknowledgement) ->
@@ -370,11 +380,19 @@ internal class TranslationRequestCoordinator(
                     )
                     )
             }
+            BatchDownloadDiagnostics.requestPhase(
+                chapterId = chapterId,
+                generation = generation,
+                from = current?.phase ?: durable?.phase,
+                to = phase,
+                failureKind = kind,
+            )
         }
     }
 
     fun clearPendingTranslationRequest(chapterId: Long) {
         synchronized(pendingRequestMutationLock) {
+            val current = currentRequest(chapterId)
             nextPendingRequestVersion(chapterId)
             // Generation bump on cancel/removal: a later request for the same
             // chapter must never reuse the removed request's generation.
@@ -384,21 +402,30 @@ internal class TranslationRequestCoordinator(
             downloadAttachGenerations.remove(chapterId)
             pendingRequestStore.remove(chapterId)
             pendingTranslationRequestsState.update { it - chapterId }
+            if (current != null) {
+                BatchDownloadDiagnostics.requestCleared(chapterId, current.generation, current.phase)
+            }
         }
     }
 
     fun clearAllPendingTranslationRequests() {
         synchronized(pendingRequestMutationLock) {
-            (pendingTranslationRequestsState.value.keys + pendingRequestStore.load()).distinct()
-                .forEach { chapterId ->
-                    nextPendingRequestVersion(chapterId)
-                    generationCounters.computeIfAbsent(chapterId) {
-                        AtomicLong(pendingRequestStore.generation(chapterId))
-                    }.incrementAndGet()
-                    downloadAttachGenerations.remove(chapterId)
-                }
+            val requests = (pendingTranslationRequestsState.value.keys + pendingRequestStore.load())
+                .distinct()
+                .mapNotNull(::currentRequest)
+            requests.forEach { request ->
+                val chapterId = request.chapterId
+                nextPendingRequestVersion(chapterId)
+                generationCounters.computeIfAbsent(chapterId) {
+                    AtomicLong(pendingRequestStore.generation(chapterId))
+                }.incrementAndGet()
+                downloadAttachGenerations.remove(chapterId)
+            }
             pendingRequestStore.clear()
             pendingTranslationRequestsState.value = emptyMap()
+            requests.forEach { request ->
+                BatchDownloadDiagnostics.requestCleared(request.chapterId, request.generation, request.phase)
+            }
         }
     }
 

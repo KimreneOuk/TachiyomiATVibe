@@ -1,0 +1,89 @@
+# T913 implementation report — batch-download diagnostic trace
+
+## Outcome
+
+Implemented a diagnostic-only, translation-request-scoped Logcat stream with
+the fixed tag `BatchDownloadTrace`. The trace now correlates the request
+generation through queue admission, chapter/page download, final validation,
+publication, and translation handoff. No retry count/delay, download ordering,
+storage mutation, UI, request state, or handoff behavior was intentionally
+changed.
+
+## Implementation
+
+- Added `BatchDownloadDiagnostics`, a versioned one-line schema that accepts
+  only chapter/generation IDs, controlled enums, numeric counts, booleans, and
+  sanitized throwable class names.
+- Added central `request_phase` and `request_cleared` events.
+- Added translation-driven `queue_result` and `chapter_start` events.
+- Added bounded `page_attempt_failed` events (at most the existing four network
+  attempts), one `page_terminal_failed` event, and stage/cause classification
+  for URL resolution, HTTP fetch, temporary-file create/write/type/rename,
+  cache copy, and split handling.
+- Added one final `validation` event with expected/ready/on-disk counts and at
+  most eight numeric failed-page indexes.
+- Added `finalization`, `download_terminal`, and `handoff` events to distinguish
+  completed bytes from metadata/archive/rename/cache publication and
+  rekey/admission failures.
+- Logging is emitted only when a translation request generation exists, except
+  for the request-origin event itself. Ordinary manga downloads do not emit
+  this trace.
+
+The trace API cannot accept titles, URLs, paths, messages, response bodies,
+headers, cookies, prompts, content, or credentials. Throwable messages are
+never rendered.
+
+## Verification
+
+Passed:
+
+```text
+./gradlew.bat :app:testStandardDebugUnitTest \
+  --tests eu.kanade.translation.diagnostics.BatchDownloadDiagnosticsTest \
+  --tests eu.kanade.tachiyomi.data.download.DownloaderHandoffFailureSplitTest \
+  --tests eu.kanade.translation.TranslationRequestGenerationFenceTest \
+  --no-daemon
+
+19 tests completed, 0 failed
+BUILD SUCCESSFUL
+```
+
+The new focused tests verify the exact schema, single-line output, eight-index
+cap, controlled enum tokens, and exclusion of throwable messages/URLs.
+
+Passed:
+
+```text
+./gradlew.bat :app:compileStandardDebugKotlin --no-daemon
+BUILD SUCCESSFUL
+```
+
+`spotlessCheck --no-daemon` was run and remains blocked by the repository
+baseline: 84 pre-existing Kotlin formatting violations were reported, starting
+with `PageTextRendererInstrumentedTest.kt`, `ChapterTranslationIndicator.kt`,
+and `TranslationProgressSheet.kt`. The generated Spotless clean-output set
+showed one touched-file indentation issue in
+`TranslationRequestCoordinator.kt`; that issue was corrected. No unrelated
+files were formatted or modified. `git diff --check` passes.
+
+## Device capture handoff
+
+After installing the instrumented debug APK, use package
+`app.kanade.tachiyomi.at.debug`, clear Logcat (not app data), resolve the process
+PID, and capture only:
+
+```text
+adb logcat --pid=<pid> -v threadtime BatchDownloadTrace:V *:S
+```
+
+Save the output to
+`Plan/active/2026-08-31_T913_batch-download-tail-failure-logcat/batch-download-trace.txt`.
+The implementation is ready for the Director's single Batch Translate
+reproduction after the APK is installed and the filtered capture is waiting.
+
+## Remaining risk
+
+The actual device-specific tail-page cause remains unknown until reproduction.
+The diagnostic count for `on_disk` is best-effort only when page readiness has
+already failed; `none` means the provider could not be enumerated without
+altering the existing failure path.
