@@ -282,7 +282,7 @@ class TextLayoutPlannerMaskMetadataTest {
     }
 
     @Test
-    fun `more than 32 distinct masks leave late masks groupless with one layout per block`() {
+    fun `more than 32 distinct masks leave late masks groupless with one explicit result per block`() {
         val width = 300
         val height = 120
         val inputs = (0 until 34).map { i ->
@@ -291,16 +291,30 @@ class TextLayoutPlannerMaskMetadataTest {
             block(i * 9f, 0f, 9f, 10f, "T$i").copy(blockId = "b$i", segmentationMask = mask)
         }
 
-        val plan = TextLayoutPlanner.plan(inputs, 300f, 120f, 1, false, FakeMeasurer())
+        val page = TextLayoutPlanner.planPage(inputs, 300f, 120f, 1, false, FakeMeasurer())
 
-        plan shouldHaveSize 34
-        plan.map { it.block.blockId }.toSet() shouldBe (0 until 34).map { "b$it" }.toSet()
+        // Slice 7: one EXPLICIT result per nonblank input — the identity
+        // multiset stays exact even though the 34 giant legacy layouts overlap
+        // one shared spot and the final post-anchor safety pass must non-draw
+        // the unresolvable ones (at HEAD they stacked with overlapping ink).
+        page.resultsInInputOrder shouldHaveSize 34
+        page.resultsInInputOrder.map { it.identity.blockId }.toSet() shouldBe (0 until 34).map { "b$it" }.toSet()
+        page.resultsInInputOrder.forEach {
+            when (val outcome = it.outcome) {
+                is LayoutOutcome.Draw -> {}
+                is LayoutOutcome.NonDraw -> outcome.reason shouldBe NonDrawReason.NO_DISJOINT_POST_ANCHOR_PLACEMENT
+            }
+        }
         // Masks beyond the 32-unique cap are groupless: no geometry, no metadata.
-        assertNoMetadata(plan.first { it.block.blockId == "b32" })
+        val b32 = page.resultsInInputOrder.first { it.identity.blockId == "b32" }
+        when (val outcome = b32.outcome) {
+            is LayoutOutcome.Draw -> assertNoMetadata(outcome.layout)
+            is LayoutOutcome.NonDraw -> outcome.reason shouldBe NonDrawReason.NO_DISJOINT_POST_ANCHOR_PLACEMENT
+        }
     }
 
     @Test
-    fun `129 masked blocks hit the reference cap and every block still yields one layout`() {
+    fun `129 masked blocks hit the reference cap and every block still yields one explicit result`() {
         val width = 300
         val height = 120
         val sharedContent = fullMask(width, height)
@@ -312,10 +326,23 @@ class TextLayoutPlannerMaskMetadataTest {
                 .copy(blockId = "b$i", segmentationMask = mask)
         }
 
-        val plan = TextLayoutPlanner.plan(inputs, 300f, 120f, 1, false, FakeMeasurer())
+        val page = TextLayoutPlanner.planPage(inputs, 300f, 120f, 1, false, FakeMeasurer())
 
-        plan shouldHaveSize 129
-        plan.map { it.block.blockId }.toSet() shouldBe (0 until 129).map { "b$it" }.toSet()
+        // Slice 7: identity cardinality is intact — one explicit result per
+        // input — but the 13x10 grid on a 300x120 page needs more conservative
+        // (stroke/AA/gap-inflated) occupancy than the page holds, so blocks with
+        // no disjoint post-anchor placement are explicit non-draws instead of
+        // overlapping draws (the pre-slice-7 behavior).
+        page.resultsInInputOrder shouldHaveSize 129
+        page.resultsInInputOrder.map { it.identity.blockId }.toSet() shouldBe (0 until 129).map { "b$it" }.toSet()
+        page.resultsInInputOrder.mapNotNull { it.renderOrdinal } shouldBe
+            (0 until page.drawableInRenderOrder.size).toList()
+        page.resultsInInputOrder.forEach {
+            when (val outcome = it.outcome) {
+                is LayoutOutcome.Draw -> {}
+                is LayoutOutcome.NonDraw -> outcome.reason shouldBe NonDrawReason.NO_DISJOINT_POST_ANCHOR_PLACEMENT
+            }
+        }
     }
 
     // ---- T912 slice 4 formal deferral: joined lobes are golden and --------
