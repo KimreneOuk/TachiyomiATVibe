@@ -466,6 +466,23 @@ internal object TextLayoutTuning {
     /** Font step of the containment walk-down. */
     const val CONTAINMENT_WALK_STEP_PX = 0.5f
 
+    /**
+     * A tier's contained fit is accepted immediately when its font reaches
+     * this fraction of the block's natural OCR-box fit — near-maximal size
+     * without evaluating every remaining tier (entry-cost guard: planning
+     * runs on the main thread; see MAX_RESCUE_FIT_CALLS_PER_PAGE).
+     */
+    const val MIN_RESCUE_ACCEPT_FRACTION = 0.9f
+
+    /**
+     * Hard page-wide cap on band-fit evaluations the contained-fit rescue may
+     * spend (each tier trial + walk-down step is one call). When exhausted,
+     * remaining colliding masked blocks skip the rescue and fall through the
+     * standard ladder + fail-open tail. Bounds the worst case regardless of
+     * block density or JIT warmth.
+     */
+    const val MAX_RESCUE_FIT_CALLS_PER_PAGE = 24
+
     // ---- T912 quality repair: band acceptance and sibling font harmony -----
 
     /**
@@ -621,6 +638,8 @@ object TextLayoutPlanner {
         // placement (score) order.
         val placed = ArrayList<PlacedFootprint>(blocks.size)
         var finalPlacementAttempts = 0
+        // T912 contained-fit rescue: page-wide band-fit budget (entry-cost guard).
+        val rescueBudget = RescueBudget()
         val componentAssignments = HashSet<Long>()
         var planningOrdinal = 0
         // Slice 5 page budgets, reserved deterministically in placement order:
@@ -806,6 +825,7 @@ object TextLayoutPlanner {
                     scale = scale,
                     sampleSize = sampleSize,
                     measurer = measurer,
+                    rescueBudget = rescueBudget,
                 )
             } else {
                 null
@@ -1277,19 +1297,23 @@ object TextLayoutPlanner {
         return out
     }
 
+    /** Per-page budget for the contained-fit rescue's band-fit evaluations. */
+    private class RescueBudget(var remaining: Int = TextLayoutTuning.MAX_RESCUE_FIT_CALLS_PER_PAGE)
+
     /**
      * T912 contained-fit rescue (Director-validated iteration 9 model): the
      * OCR bounding box is the home position. The text column keeps the OCR
      * box's x-range while tiers grow it VERTICALLY only; the font never
      * exceeds the box's natural reflow fit; the mask component is a pure
      * ceiling validated per row with the exact painted-envelope predicate.
-     * Every tier is evaluated and the largest fully-contained font wins
-     * (ties keep the more local tier). Returns null when no tier contains
-     * the complete text at the render floor — the mask-unusable signal.
+     * A tier is accepted immediately when its contained font reaches
+     * [TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION] of the natural fit;
+     * otherwise the largest fully-contained font across tiers wins. Returns
+     * null when no tier contains the complete text at the render floor (or
+     * the [budget] is exhausted) — the mask-unusable signal.
      *
-     * Bounded: at most [TextLayoutTuning.OCR_GROW_FACTORS].size + 1 regions ×
-     * (one band fit + up to [TextLayoutTuning.MAX_CONTAINMENT_WALK_STEPS]
-     * walk-down validations) per masked resolver entry; no dense allocation.
+     * Bounded: every band-fit call charges the page-wide [budget]; no dense
+     * allocation.
      */
     private fun containedReflowRescue(
         block: TranslationBlock,
@@ -1298,6 +1322,7 @@ object TextLayoutPlanner {
         scale: Float,
         collisionGap: Int,
         measurer: TextMeasurer,
+        budget: RescueBudget,
     ): BlockLayout? {
         val spans = cellPlan.spans
         if (spans.isEmpty()) return null
@@ -1342,6 +1367,8 @@ object TextLayoutPlanner {
             var steps = 0
             while (steps < TextLayoutTuning.MAX_CONTAINMENT_WALK_STEPS) {
                 steps++
+                if (budget.remaining <= 0) return best
+                budget.remaining--
                 val fit = AdaptiveBandPlanner.fitAdaptiveBands(
                     text = text,
                     cellSpans = regionSpans,
@@ -1356,6 +1383,12 @@ object TextLayoutPlanner {
                 ) ?: break
                 val candidate = adaptiveBlockLayout(block, text, region, fit, scale)
                 if (paintEnvelopeContainedInSpans(candidate, spans, measurer, scale)) {
+                    if (fit.fontPx >= TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION * maxFont) {
+                        // Near-natural contained fit: accept immediately and
+                        // leave the remaining budget for other blocks on the
+                        // page (entry-cost guard).
+                        return candidate
+                    }
                     if (fit.fontPx > bestFont) {
                         bestFont = fit.fontPx
                         best = candidate
@@ -1556,6 +1589,7 @@ object TextLayoutPlanner {
         scale: Float,
         sampleSize: Int,
         measurer: TextMeasurer,
+        rescueBudget: RescueBudget,
     ): FinalResolution {
         // Shift and free-rectangle constraint bounds: page ∩ hard cell slab when
         // one exists (component/cell containment is structural), else the page.
@@ -1578,9 +1612,11 @@ object TextLayoutPlanner {
         // T912 contained-fit rescue: computed once per resolver entry, BEFORE
         // the ladder. Not a counted candidate — it replaces masked candidate 1
         // and serves as the terminal contained-with-overlap result. Non-
-        // colliding masked blocks never reach the resolver and never pay for it.
+        // colliding masked blocks never reach the resolver and never pay for
+        // it; the page-wide budget bounds total entry cost no matter how many
+        // blocks collide.
         val containedRescue = if (block.segmentationMask != null && cellPlan != null) {
-            containedReflowRescue(block, text, cellPlan, scale, collisionGap, measurer)
+            containedReflowRescue(block, text, cellPlan, scale, collisionGap, measurer, rescueBudget)
         } else {
             null
         }

@@ -698,6 +698,37 @@ class Page15MockRig {
         return BubbleMaskRle(w, h, listOf(minL, minT, maxR, maxB), runs, 0.95f)
     }
 
+    /** Wall-clock cost of the production planner on page 15 and worst-case dense pages. */
+    @Test
+    fun planningCost() {
+        org.junit.jupiter.api.Assumptions.assumeTrue(fixturesPresent(), "page15 fixtures not present")
+        val page = Json.parseToJsonElement(File(fixtureDir, "page15-committed.json").readText()).jsonObject
+        val pageW = page["imgWidth"]!!.jsonPrimitive.content.toFloat()
+        val pageH = page["imgHeight"]!!.jsonPrimitive.content.toFloat()
+        val blocks = page["blocks"]!!.jsonArray.map { parseBlock(it.jsonObject) }
+
+        fun timePlan(name: String, bs: List<TranslationBlock>, w: Float, h: Float, reps: Int = 3) {
+            var best = Long.MAX_VALUE
+            repeat(reps) {
+                val t0 = System.nanoTime()
+                TextLayoutPlanner.planPage(bs, w, h, 1, false, measurer)
+                val ms = (System.nanoTime() - t0) / 1_000_000L
+                if (ms < best) best = ms
+            }
+            println("COST $name: best ${best}ms (${bs.size} blocks)")
+        }
+
+        timePlan("page15-real", blocks, pageW, pageH)
+        // Worst case: EVERY block carries the fused cloud mask -> maximal masked collisions.
+        val cloudMask = blocks.firstNotNullOf { it.segmentationMask }
+        val allMasked = blocks.map { it.copy(segmentationMask = cloudMask) }
+        timePlan("page15-all-masked", allMasked, pageW, pageH)
+        // Dense: cloud mask + doubled blocks (two per OCR box, forced collisions).
+        val doubled = blocks.map { it.copy(segmentationMask = cloudMask) } +
+            blocks.map { it.copy(blockId = "dup${it.blockId}", segmentationMask = cloudMask, score = 0.4f) }
+        timePlan("page15-dense-x2", doubled, pageW, pageH)
+    }
+
     @Test
     fun randomizedStress() {
         // Fully synthetic (fixed seed): needs no fixture files.
