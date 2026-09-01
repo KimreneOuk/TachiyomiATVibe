@@ -143,3 +143,174 @@ d2f981b t917(p1): Reviewer condition 1 — ...
 git status --short
 (empty — clean)
 ```
+
+---
+
+# T917 Phase 2 — Implementation Log, part B (D2 + D3)
+
+Branch: `t917/coexistence-v3`. Scope: production changes D2 (wait-and-attach)
+and D3 (defer-and-rescan) per `engineering/phase2-design.md` §2 + §3, plus one
+documented enabling fix at the single-page commit boundary (deviation 3 below).
+No dependency additions, no UI work, no new threads/channels; waiter entries are
+removed on completion and the scheduler manualOutcomes map is capped at 32.
+
+## B1. Files changed per commit
+
+### Commit `48ddee1` — `t917(p2): D2 wait-and-attach`
+
+Production:
+
+| File | Change |
+|---|---|
+| `pipeline/batch/BatchCoordinatorInterfaces.kt` | `ChunkCompletionOutcome.Attached` / `AttachedUnresolved` / `Rejected` typed outcomes (§2.1) |
+| `TranslationPipeline.kt` | `translateSinglePage` returns typed `SinglePageOutcome` (§1.4.1 completion); `runObservedSinglePageBoundary` — the Denied branch performs ZERO native/provider/render work and observes the owner's terminal commit through `store.state` (`attachToOwnerTerminal`, bounded by `ATTACH_TIMEOUT_MS`, cancellation-safe); scheduler-facing `manualOutcomes` map (cap 32) records per-page outcomes for the attach family; attach-family cancel guard |
+| `scheduling/TranslationScheduler.kt` | `translatePage` surfaces the typed outcome; records into `manualOutcomes`; cancels recorded entries on `close()` |
+
+Tests (harness only — the two latent harness bugs below were never reachable while the D2 tests were RED):
+
+| File | Change |
+|---|---|
+| `coexistence/CoexistenceBarrier.kt` | Fix 1: `arrive()` no longer removes the gate before awaiting — a claimed gate stays listed with a `taken` AtomicBoolean claim, so `release()` can find and unpark a PARKED arrival (release-after-park was impossible before) |
+| `coexistence/TranslationCoexistenceHarness.kt` | Fix 2: RENDER barrier arrival keys on `cleanedImageName.removeSuffix(".cleaned.jpg")` — the production `loadPersistedCleanedBitmap` seam receives the cleaned FILE NAME, not the page key |
+
+### Commit `37c0902` — `t917(p2): D3 defer-and-rescan`
+
+| File | Change |
+|---|---|
+| `pipeline/batch/BatchCoordinatorInterfaces.kt` | `BatchScheduleListener.ocrDeferred(pageKey, owner)` NOOP-default event (§3.1) |
+| `store/PageStageLeaseTable.kt` | §3.2 waiter registry: `leaseReleaseWaiters: ConcurrentHashMap<String, CopyOnWriteArrayList<CompletableDeferred<Unit>>>` + `awaitPageLeaseRelease(pageKey, timeoutMs)` (register under `synchronized(pageLeases)`, `withTimeoutOrNull` bounded, waiter removed in `finally`); `releasePageStageLease`/`cancelPageStageWork`/`releaseAllPageLeases` complete matching waiters inside the same monitor that removes the lease (wake ⇒ real release) |
+| `ChapterTranslationStore.kt` | `awaitPageLeaseRelease` delegator (§3.2) |
+| `pipeline/batch/BatchLaneWorkers.kt` | Denied-lease branch records the deferral into the shared `deferredPages` map AND emits `ocrDeferred`; externally-completed gate — an existing `hasRenderedResult` page that this pass deferred is forced to `BatchResumeGate.SKIP_ALL`, so the rescan never repeats the provider call another origin already paid |
+| `pipeline/batch/SequentialBatchCoordinator.kt` | §3.3 in-pass rescan: ctor gains `awaitLeaseHandback`/`deferredPages` (both defaulted ⇒ existing coordinator tests untouched); COMPLETED-path-only rescan loop, original order, `RESCAN_MAX_ATTEMPTS = 2`, each page gated on handback, re-run via the same single-page `runOcr` + `processChunk(finalChunk = true)` machinery; stop paths never rescan |
+| `pipeline/batch/BatchChapterTranslator.kt` | Wires listener + recorder + `awaitLeaseHandback = store.awaitPageLeaseRelease(it, LEASE_HANDBACK_WAIT_MS)` (`LEASE_HANDBACK_WAIT_MS = SINGLE_PAGE_TIMEOUT_MS`); `deferredPages` shared between worker and coordinator (per-batch lifetime) |
+| `pipeline/SinglePageHttpRenderPhase.kt` | Enabling fix (deviation 3): lease-owned commit precondition refresh at the final `patchPage` |
+
+### Commit (this one) — part B log
+
+| File | Change |
+|---|---|
+| `engineering/phase2-implementation-log.md` | Appended this part B section |
+
+## B2. Exact commands (Git Bash, `JAVA_HOME` = Android Studio JBR)
+
+```
+# after D2 (step 3) — D2.1 green at all three barriers, D3 still RED
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.D2ManualBatchInterleavingTest" --rerun
+# after D3 (step 4) — former-RED set + neighbors
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.D3ReaderOwnedPageAcrossBatchTest" --rerun
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.D2ManualBatchInterleavingTest" --tests "eu.kanade.translation.coexistence.D3ReaderOwnedPageAcrossBatchTest" --tests "eu.kanade.translation.coexistence.SequentialBatchCoordinatorTest" --tests "eu.kanade.translation.ChapterTranslatorTerminalExitsTest" --rerun
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.*" --tests "eu.kanade.translation.ChapterTranslatorTerminalExitsTest" --rerun
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.pipeline.batch.SequentialBatchCoordinatorTest" --tests "eu.kanade.translation.TranslationManagerAutoArbitrationTest" --rerun
+# verification sweep (step 5)
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.*" --rerun
+# determinism soak (5 consecutive forced reruns)
+for i in 1 2 3 4 5; do ./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.*" --rerun; done
+```
+
+## B3. Green oracle evidence
+
+- STEP 4: coexistence package 5/5 green — `D1OriginPriorityTest` 1/0,
+  `D2ManualBatchInterleavingTest` 2/0 (both methods), `D3ReaderOwnedPageAcrossBatchTest`
+  1/0, `NormalMangaIsolationTest` 1/0 (tests/failures from
+  `TEST-*.xml`); `ChapterTranslatorTerminalExitsTest` 3/0;
+  `SequentialBatchCoordinatorTest` and `TranslationManagerAutoArbitrationTest`
+  BUILD SUCCESSFUL. D3's paid-call oracle held: `callsFor(p0) == 1 &&
+  callsFor(p1) == 1` — the rescan took the externally-completed SKIP_ALL route,
+  no second provider call for p1.
+- STEP 5 sweep: `--tests "eu.kanade.translation.*"` ⇒ **161 test classes,
+  1232 tests, 0 failures, 0 errors, 0 skipped** (aggregated from
+  `app/build/test-results/testStandardDebugUnitTest/TEST-*.xml`); includes
+  `NormalMangaIsolationTest` GREEN.
+- Determinism: 5 consecutive forced `--rerun` coexistence runs — **5/5 exit 0
+  (BUILD SUCCESSFUL), each run 5 tests / 0 failures / 0 errors** (last run's
+  XMLs: D1 1+0, D2 2+0, D3 1+0, isolation 1+0).
+- Test sources: `git status` shows ZERO modified files under
+  `app/src/test/` in both part B commits — all former-RED tests flipped green
+  on production changes plus the two part-A-harness repairs in 48ddee1 only.
+
+## B4. Deviations / decisions (all within D2+D3 scope)
+
+1. **D2.2 went green at step 3 (early, planned for step 4)** — documented in the
+   48ddee1 commit message. Root cause: the two harness repairs let D2.2's
+   manual complete its own render after release; the batch's engine setup is
+   slow enough that p1's OCR ran after the manual released, so no denial was
+   ever recorded and the manual's commit won the generation race naturally.
+   D2.2's assertions therefore pass without the rescan. D2.1's REQUIRED green
+   (wait-and-attach at all three barriers) was achieved in the same commit;
+   D3 stayed RED with its message unchanged at step 3, as specified.
+2. **Harness repairs committed with 48ddee1**: the one-shot gate
+   release-after-park fix and the RENDER page-key fix are phase-1 harness bugs
+   of exactly the class phase-1 §4.6 predicted (paths first executed when D2/D3
+   flip green). They are test-infrastructure only; the RED contract tests were
+   never modified.
+3. **Generation/candidate fence vs the live lease (the load-bearing finding)**:
+   the approved design (phase2-design.md) never models the store's run-level
+   write fences — `grep -i generation` on the design returns nothing. In D3's
+   scenario the batch's `beginGeneration("batch start ...")` plus its
+   engine-setup candidate re-plan (page identity + dependency fingerprints for
+   ALL pages, including the reader-owned one) fenced the parked manual's final
+   commit: first `Rejected reason=generation expected=0 actual=1`, and after
+   refreshing the generation, `Rejected reason=candidate dependency fingerprint
+   changed`. The manual therefore never reached terminal — contradicting
+   design §3.3's explicit assumption "a handback page is terminal from its own
+   owner's commit (hasRenderedResult → doneCount)". Enabling fix (in
+   37c0902, `SinglePageHttpRenderPhase`): when the boundary STILL OWNS the page
+   lease at commit time, the precondition is re-derived from a fresh snapshot
+   keeping the writer fences (generation, pageVersion, lease token, block
+   fingerprints) and dropping the batch-run plan identity
+   (`candidateGenerationId`/`dependencyFingerprint`/`artifactPageVersion`) —
+   D1's rule is that the live lease holder is the page's exclusive writer, so
+   run-level plan re-planning must not invalidate its in-flight result. Any
+   real intervening write is still rejected (pageVersion/lease-token are
+   re-checked). No store-level semantics were changed; direct `patchPage`
+   callers and every existing generation-fence test are untouched.
+   **Reviewer follow-up recommended**: confirm this lease-over-plan precedence
+   is the intended long-term semantics (or whether batch engine setup should
+   skip candidate re-planning for lease-held pages instead).
+4. **Phase-2 handback terminal wait removed in favor of the design-pure lease
+   wait**: an intermediate implementation also waited (bounded) for the owner's
+   terminal state after the lease release. Instrumentation proved it can never
+   fire under the fence (the manual commits BEFORE releasing, so once the lease
+   is free the terminal state is already published) — the commit in 37c0902
+   uses exactly the design §3.2 `awaitPageLeaseRelease` shape, with a comment
+   recording why that is sufficient.
+5. **D3's reconciliation stranding branch now unreachable for C-02** (as the
+   design §3.3 argues): with the rescan in-line, `reconcile` runs only after
+   every deferred page was re-offered; the deferred pages map never outlives
+   the pass (per-batch `LinkedHashMap`, worker + coordinator + listener share
+   one map), and waiter entries never outlive a release/timeout.
+
+## B5. End state (before the log commit)
+
+```
+git log --oneline -8
+37c0902 t917(p2): D3 defer-and-rescan — ocrDeferred event + lease-waiter registry +
+in-pass rescan (COMPLETED path only) + externally-completed SKIP_ALL gate +
+lease-owned commit precondition refresh; D3+D2+coexistence+neighbors GREEN,
+sweep 1232/0, determinism 5/5
+48ddee1 t917(p2): D2 wait-and-attach — SinglePageOutcome typed outcome
+(Completed/Attached/AttachedUnresolved/Rejected), Denied->attachToOwnerTerminal
+observes owner terminal commit within ATTACH_TIMEOUT_MS (zero
+native/provider/render work, cancellation-safe), scheduler manualOutcomes
+bounded map (cap 32) + attach-family cancel guard; harness repairs (latent,
+never-executed-in-RED): barrier release unparks parked arrivals via taken-gate,
+RENDER arrival keyed by page key not cleaned file name; D2.1 GREEN at all 3
+barriers paid-calls==1, D3 RED unchanged, D2.2 GREEN (documented deviation),
+isolation GREEN
+a3b22e9 t917(p2): part A implementation log (D1+D4) — commits d99a93b + dd9f17b,
+sweep 1232/3 identical reds, determinism 5/5, deviations recorded
+dd9f17b t917(p2): D4 suppression — batch-retained guard (QUEUE|TRANSLATING|PAUSED)
+on manager updateAutoWindow/requestAutoWindow early-return and
+reconcileAutoWindow admissionGuard; TranslationManagerAutoArbitrationTest D4
+GREEN (2/2), coexistence unchanged (3 RED identical msgs + 2 GREEN)
+d99a93b t917(p2): D1 origins — PageWriteOrigin MANUAL/AUTO/BATCH (READER_ADHOC
+deleted), MANUAL-evicts-AUTO lease rule with origin-checked release,
+origin-typed acquisition call sites, two-vocabulary artifact stamp mapping;
+D2:140/D3:70/Phase3Test compile fixes; new D1OriginPriorityTest GREEN
+277dc0e t917(p2): plan correction per phase2-design §0 — ...
+861e4f8 t917(p1): phase gate — determinism soak 100/100 ...
+d2f981b t917(p1): Reviewer condition 1 — ...
+
+git status --short
+(only this log file modified)
+```
