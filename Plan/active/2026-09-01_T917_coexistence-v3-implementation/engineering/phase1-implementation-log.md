@@ -111,3 +111,29 @@ the Reviewer's Phase-1 verification.)
 
 All touched production-tree paths are under `app/src/test/**`; the `engineering/`
 directory contains the T917 planning docs (harness notes + this log).
+
+## 8. Reviewer condition 1 — applied (post-verification edit)
+
+Reviewer Finding 1 (review/phase1-verification.md): D2.2/D3 asserted the reconciliation
+oracles while the reader-owned page was still parked at PROVIDER_END with its lease held;
+once Phase 2 lands defer-and-rescan ("rescans after lease release within the pass;
+reconciliation only after rescan", PLAN.md:59) the reconciliation could only complete after
+the manual release, so a green run would have hit the 10 s bound. Fix applied —
+choreography-only, RED oracles untouched:
+
+- `D2ManualBatchInterleavingTest.kt` (`manual to batch …`): order is now
+  launchBatch → `release(PROVIDER_END,"p1")` → await `batch.reconciliation` → assert
+  stranded-empty / chapter-TRANSLATED → joinAll → terminal render-state + exactly-once
+  paid-call asserts. Also fixed the Finding-4 message wording ("each page translated exactly
+  once (batch p0, manual p1)"). A first attempt placed `joinAll` between release and the
+  reconciliation await; that timed out (10 s) because the manual's post-release render path
+  — today still defective/unsettled — was being joined before the RED assertion could fire.
+  The reconciliation await is the pass-end event the release unblocks, so it is asserted
+  before the job joins; `joinAll` remains as a green-state completeness gate.
+- `D3ReaderOwnedPageAcrossBatchTest.kt`: same reordering — `release(PROVIDER_END,"p1")`
+  now happens before the reconciliation + tracker-terminal awaits and the C-02 assertions;
+  joinAll + p1-terminal/paid-call asserts follow.
+
+Verification (coexistence filter re-run): identical outcome set — 4 tests, 3 failed with
+byte-identical messages (D2.1 C-01 @ PROVIDER_START 0.35 s; D2.2 C-02 stranded-p1 5.45 s;
+D3 C-02 stranded-p1 0.33 s), `NormalMangaIsolationTest` PASSED (2.34 s). No timeouts.

@@ -98,8 +98,15 @@ class D3ReaderOwnedPageAcrossBatchTest {
                 harness.store.state.first { it["p0"]?.renderStatus == StageStatus.READY }
             }
 
-            // The batch passed p0 (denied) and reached reconciliation while the
-            // reader still holds the lease (the manual is still parked).
+            // The reader releases p1 BEFORE the reconciliation is awaited: the
+            // Phase-2 green path (defer-and-rescan) rescans the reader-owned
+            // page only after the lease is free, so the pass — and its
+            // reconciliation — can only complete after the release (Reviewer
+            // condition 1). Today the batch already finished the pass with a
+            // plain skip, so the same stranded result is observed and the RED
+            // message below is byte-identical, only later in the test body.
+            harness.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p1")
+
             val reconciliation = checkNotNull(
                 withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.reconciliation.await() },
             ) { "batch reconciliation missing" }
@@ -126,12 +133,11 @@ class D3ReaderOwnedPageAcrossBatchTest {
                 tracker.failedCount shouldBe 0
             }
 
-            // Releasing the reader intent must still leave p1 in exactly one
-            // terminal state.
-            harness.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p1")
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
                 listOf(batch.job, manualJob).joinAll()
             }
+            // Releasing the reader intent must still leave p1 in exactly one
+            // terminal state.
             withClue("p1 must end in exactly one terminal state") {
                 harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.READY
             }

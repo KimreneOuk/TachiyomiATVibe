@@ -141,17 +141,29 @@ class D2ManualBatchInterleavingTest {
             }
 
             // 2. Start the batch while the manual holds the page. The batch
-            //    finishes p0 (free page), reaches p1 (denied — manually owned,
-            //    plain skip), and runs reconciliation — all while the manual
-            //    is parked and cannot commit.
+            //    finishes p0 (free page) and reaches p1 (denied — manually
+            //    owned). The reconciliation is deliberately NOT awaited here:
+            //    the Phase-2 green path (defer-and-rescan) can only rescan p1
+            //    after the lease is free, so the pass can only complete after
+            //    the release below (Reviewer condition 1).
             val batch = harness.launchBatch(listOf("p0", "p1"))
-            val reconciliation = checkNotNull(
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.reconciliation.await() },
-            ) { "batch reconciliation missing" }
+
+            // 3. Release the manual; in the green state (Phase 2 defer-and-
+            //    rescan) the batch rescans p1 only after the lease is free, so
+            //    the pass can only complete after this release. The manual
+            //    lease release — not the job join — is the event the rescan
+            //    waits on (Reviewer condition 1).
+            harness.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p1")
 
             // Target contract: the manually-owned page must be deferred and
             // re-run within the same pass once the lease is free — never
-            // stranded, never double-paid.
+            // stranded, never double-paid. Today the pass already completed
+            // with a plain skip, so this await returns the same stranded
+            // result and the RED message is byte-identical, only later in the
+            // test body.
+            val reconciliation = checkNotNull(
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.reconciliation.await() },
+            ) { "batch reconciliation missing" }
             withClue(
                 "D2 manual→batch (C-02): batch stranded the manually-owned page instead of " +
                     "defer-and-rescan within the pass: stranded=${reconciliation.strandedPages}",
@@ -162,17 +174,16 @@ class D2ManualBatchInterleavingTest {
                 reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
             }
 
-            // 3. Release the manual; it must complete with a real render commit.
-            harness.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p1")
+            // 4. Both intents must settle; the manual must complete with a
+            //    real render commit.
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
                 listOf(batch.job, manualJob).joinAll()
             }
-
             withClue("manual must reach its terminal render state") {
                 harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
                 harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.READY
             }
-            withClue("exactly-once paid-call oracle: manual translated p0 once, batch never competed") {
+            withClue("exactly-once paid-call oracle: each page translated exactly once (batch p0, manual p1)") {
                 harness.fakeTransport.callsFor("p0") shouldBe 1
                 harness.fakeTransport.callsFor("p1") shouldBe 1
             }
