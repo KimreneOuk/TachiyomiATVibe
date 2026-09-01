@@ -107,6 +107,7 @@ No force-push, no history rewrite on `main`, ever.
 | Paid-provider tests must not call real providers | Harness barrier stubs the transport; governor tests use fake windows |
 | Gradle/toolchain drift | Phase 0 records toolchain state; phase gates re-run module tests |
 | Scope creep into downloader/reader fixes | README scope 'Out' list is binding |
+| P2 carry-over (Reviewer, non-blocking): `patchPage` vs `publishLocked` candidate-grace asymmetry | Align in Phase 3/4 with regression test (batch registration between manual capture and commit, lease held → accepted) |
 
 ## 6. Definition of done (T917)
 
