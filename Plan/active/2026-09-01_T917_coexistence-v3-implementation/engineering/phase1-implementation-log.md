@@ -1,5 +1,8 @@
 # T917 Phase 1 — Implementation Log (finishing session)
 
+> Phase 2 continuation: part A (D1 + D4) is logged in
+> `engineering/phase2-implementation-log.md` (new file, chosen over appending here).
+
 Branch: `t917/coexistence-v3`. Scope: test code only, no production changes, no git
 write commands. This session finished and verified the harness/tests built by the
 previous (cancelled) implementer session.
