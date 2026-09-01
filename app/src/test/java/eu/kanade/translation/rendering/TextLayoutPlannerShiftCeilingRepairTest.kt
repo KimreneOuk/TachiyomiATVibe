@@ -110,7 +110,16 @@ class TextLayoutPlannerShiftCeilingRepairTest {
             is eu.kanade.translation.segmentation.OrderedMaskResult.Success -> r.geometry
             else -> null
         }.shouldNotBeNull()
-        TextLayoutPlanner.paintEnvelopeContainedInSpans(moved, geometry.components[0].spans, measurer, 1f) shouldBe true
+        // The rescue's ceiling is the component spans dilated by the
+        // CONTAINMENT_CEILING_MARGIN_PX margin.
+        val ceiling = geometry.components[0].spans.map {
+            eu.kanade.translation.segmentation.MaskGeometry.RowSpan(
+                it.y,
+                (it.start - TextLayoutTuning.CONTAINMENT_CEILING_MARGIN_PX).coerceAtLeast(0),
+                it.endExclusive + TextLayoutTuning.CONTAINMENT_CEILING_MARGIN_PX,
+            )
+        }
+        TextLayoutPlanner.paintEnvelopeContainedInSpans(moved, ceiling, measurer, 1f) shouldBe true
         first.plan.resultsInInputOrder shouldHaveSize 2
         moved.copy(maskGeometry = null) shouldBe replay.copy(maskGeometry = null)
         first.finalPlacementAttempts shouldBe second.finalPlacementAttempts

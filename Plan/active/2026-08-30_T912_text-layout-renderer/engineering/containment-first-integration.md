@@ -132,6 +132,43 @@ identical planning), which is the actual "normal manga must not regress"
 contract. Candidate follow-up: bring the rig's contact-scoot into production
 for mixed-page neighbors instead of letting the ladder floor their fonts.
 
+## De-shrink pass (Director feedback: "shrinking text is not ideal")
+
+The first containment-first build capped the rescue font at the OCR box's
+natural reflow fit, which regressed visible sizes on real pages (page-15
+masked fonts vs the shipped baseline: 27→17, 24→14, 31→21). Three changes:
+
+1. **Font cap = max(OCR natural fit, legacy rectangle fit)** — the size the
+   old plan's own box supported is preserved as head-room; the exact
+   containment walk still shrinks when the dilated mask cannot host it.
+2. **Unslabbed tiers** — tier regions grow from the OCR box with NO clamp to
+   the disjoint cell slab (slabs are partition artifacts, often smaller than
+   the OCR box; clamping re-shrank the very fonts the cap raise freed).
+   The mask ceiling alone governs growth — the rig-validated model.
+3. **Ceiling dilation (`CONTAINMENT_CEILING_MARGIN_PX = 6`)** — the mask is a
+   segmentation estimate, not the bubble contour; the containment predicate
+   now checks against spans dilated by 6 px so edge-hugging text is not
+   punished for segmentation tightness.
+
+Measured on real page 15 (baseline → first containment-first → now):
+b2 12→10→12, b3 16→13→15, b5 16.8→15→16, b7 12→12→15 (above baseline),
+b8 10→10→12 (above), b12 31→21→25, b0 27→17→19. Containment still 10/10
+metadata-checked, 13/13 positioned, far shifts still gone. Remaining below
+baseline: b0 (27→19), b10 (24→14), b11 (18→13) — bound by genuine mask
+containment at their homes (their baseline sizes crossed mask edges), and
+unmasked block 23 (17→8) whose box-widening is starved by changed obstacle
+geometry. That last class is the contact-scoot candidate: port the rig's
+bounded contact-scoot so such blocks keep their font and dodge instead of
+shrinking. The margin and cap are tuning knobs the Director can adjust.
+
+Test updates: two containment assertions now check against the DILATED
+ceiling (the contract); the Slice5 rescue fixture re-pinned to its
+legacy-rect-fit font 43 (synthetic page-wide mask) with stroke/region pins
+following; the harmony test re-pinned to the new median/cap arithmetic
+(a capped 41→18, median 13). Planner gate 89 green; full module suite green
+(one known-unrelated timing flake in MangaScreenModelTranslationDrawerTest
+passes in isolation); androidTest compiles.
+
 ## Deployment state
 
 Committed on `codex/text-layout-renderer`; APK rebuilt (`assembleDevDebug`,

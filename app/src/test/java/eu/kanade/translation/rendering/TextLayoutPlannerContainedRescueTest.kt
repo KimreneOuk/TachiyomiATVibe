@@ -101,6 +101,12 @@ class TextLayoutPlannerContainedRescueTest {
             score = 1f,
         )
 
+    /** The rescue's ceiling is the raw component spans dilated by the margin. */
+    private fun dilatedMaskSpans(mask: BubbleMaskRle): List<MaskGeometry.RowSpan> =
+        spansOf(mask).map {
+            MaskGeometry.RowSpan(it.y, (it.start - 6).coerceAtLeast(0), it.endExclusive + 6)
+        }
+
     private fun draw(result: LayoutResult): BlockLayout = (result.outcome as LayoutOutcome.Draw).layout
 
     private fun spansOf(mask: BubbleMaskRle): List<MaskGeometry.RowSpan> =
@@ -198,7 +204,7 @@ class TextLayoutPlannerContainedRescueTest {
         // At home: the origin stays inside the OCR box.
         (layout.originX >= b.x && layout.originX <= b.x + b.width) shouldBe true
         (layout.originY >= b.y && layout.originY <= b.y + b.height) shouldBe true
-        TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, spansOf(mask), measurer, 1f) shouldBe true
+        TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, dilatedMaskSpans(mask), measurer, 1f) shouldBe true
         plan.finalPlacementAttempts shouldBe 0
     }
 
@@ -227,7 +233,7 @@ class TextLayoutPlannerContainedRescueTest {
         layouts.forEachIndexed { i, layout ->
             layout.positionedLines.shouldNotBeNull()
             layout.maskUsable shouldBe true
-            TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, spansOf(mask), measurer, 1f) shouldBe true
+            TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, dilatedMaskSpans(mask), measurer, 1f) shouldBe true
             val b = blocks[i]
             (layout.originY >= b.y - 1f && layout.originY <= b.y + b.height + 1f) shouldBe true
         }

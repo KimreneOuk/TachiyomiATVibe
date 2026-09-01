@@ -160,15 +160,13 @@ class TextLayoutPlannerQualityRepairTest {
     fun `harmony caps a wild sibling to the median multiple and is deterministic`() {
         // Three members of one full-rectangle 1200x300 component, partitioned
         // horizontally into three slabs (OCR centers x = 200 / 600 / 1000).
-        // Re-pinned for T912 containment-first: a's OCR box is large (300x300),
-        // so its contained rescue adopts the atomic token on one line at font
-        // 30 (the OCR box's own natural reflow fit) — far above its siblings.
-        // B and C carry long texts that get no contained fit at the render
-        // floor (rescue null) and whose band fits now land as positioned lines
-        // at the font floor 8. Median = 8 → cap = 11.2 → A is capped DOWN: the
-        // band refit bounded at the cap lands on the unhyphenated token at
-        // font 11; B and C are untouched. The cap demonstrably binds on an
-        // ADOPTED rescue layout and only ever shrinks.
+        // Re-pinned for T912 containment-first + the legacy-fit cap: a's
+        // rescue adopts the atomic token at its cell-fit font (41), b and c
+        // adopt their long texts at font 13 (their cells' legacy fit). Median
+        // = 13 → cap = 18.2 → A is capped DOWN: the refit bounded at the cap
+        // lands on the unhyphenated token at font 18; B and C are untouched.
+        // The cap demonstrably binds on an ADOPTED rescue layout and only
+        // ever shrinks.
         val longText = "ab ".repeat(300).trimEnd()
         val token = "A".repeat(16)
         val mask = fullMask(1200, 300)
@@ -187,21 +185,20 @@ class TextLayoutPlannerQualityRepairTest {
         val a = byId.getValue("a")
         val b = byId.getValue("b")
         val c = byId.getValue("c")
-        // Capped DOWN to the refit under the 11.2 cap (never inflated): the
-        // refit's own trial does not qualify under the bounded font, so the
-        // atomic text fits on one line at font 11.
+        // Capped DOWN to the refit under the 18.2 cap (never inflated): the
+        // atomic text fits on one line at font 18.
         val aLines = a.positionedLines.shouldNotBeNull()
         aLines shouldHaveSize 1
         aLines.single().text shouldBe token
-        a.fontSizePx shouldBe 11f
+        a.fontSizePx shouldBe 18f
         a.cellRect shouldBe FloatRect(401f, 0f, 799f, 300f)
         a.planGeometryId shouldBe 0
         a.maskComponentId shouldBe 0
-        // Below-cap members are untouched (positioned band fits at the floor).
+        // Below-cap members are untouched (positioned fits at their cell fit).
         b.positionedLines.shouldNotBeNull()
-        b.fontSizePx shouldBe 8f
+        b.fontSizePx shouldBe 13f
         c.positionedLines.shouldNotBeNull()
-        c.fontSizePx shouldBe 8f
+        c.fontSizePx shouldBe 13f
         // Every member is within the cap multiple of the median font.
         val median = listOf(a.fontSizePx, b.fontSizePx, c.fontSizePx).sorted()[1]
         listOf(a, b, c).forEach { layout ->

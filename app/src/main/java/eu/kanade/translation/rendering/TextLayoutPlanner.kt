@@ -467,6 +467,15 @@ internal object TextLayoutTuning {
     const val CONTAINMENT_WALK_STEP_PX = 0.5f
 
     /**
+     * Containment-first ceiling dilation (px, page-space): the segmentation
+     * mask is an estimate of the bubble, not its exact contour. Dilating the
+     * ceiling by this margin stops the exact containment predicate from
+     * shrinking edge-hugging text for segmentation tightness while still
+     * keeping painted ink visually inside the bubble.
+     */
+    const val CONTAINMENT_CEILING_MARGIN_PX = 6
+
+    /**
      * A tier's contained fit is accepted immediately when its font reaches
      * this fraction of the block's natural OCR-box fit — near-maximal size
      * without evaluating every remaining tier (entry-cost guard: planning
@@ -657,6 +666,8 @@ object TextLayoutPlanner {
             block: TranslationBlock,
             text: String,
             cellPlan: SharedCellPlan?,
+            legacyFitW: Float,
+            legacyFitH: Float,
         ): BlockLayout? {
             if (rescueCache.containsKey(inputIndex)) return rescueCache[inputIndex]
             val ceiling = rescueCeilingSpans(
@@ -667,7 +678,7 @@ object TextLayoutPlanner {
                 pageWidth,
                 pageHeight,
                 rescueConversionBudgets,
-            )
+            )?.let { dilateSpans(it, TextLayoutTuning.CONTAINMENT_CEILING_MARGIN_PX) }
             val result = if (ceiling.isNullOrEmpty()) {
                 null
             } else {
@@ -676,6 +687,8 @@ object TextLayoutPlanner {
                     text = text,
                     cellPlan = cellPlan,
                     ceilingSpans = ceiling,
+                    legacyFitW = legacyFitW,
+                    legacyFitH = legacyFitH,
                     scale = scale,
                     collisionGap = collisionGap,
                     measurer = measurer,
@@ -770,7 +783,14 @@ object TextLayoutPlanner {
             // resolver (its pre-existing masked tail) but never adopt it as
             // their layout.
             val rescueForBlock = if (block.segmentationMask != null) {
-                cachedContainmentRescue(inputIndex, block, text, cellPlan)
+                cachedContainmentRescue(
+                    inputIndex,
+                    block,
+                    text,
+                    cellPlan,
+                    rect.safeW,
+                    rect.safeH,
+                )
             } else {
                 null
             }
@@ -1350,6 +1370,34 @@ object TextLayoutPlanner {
         return paintRectContainedInSpans(inkRectOf(layout, measurer), inflate, spans)
     }
 
+    /**
+     * T912: ceiling spans dilated by [margin] px per row (merged when dilated
+     * spans touch). The mask is a segmentation estimate, not ground truth — a
+     * small dilation stops the exact containment predicate from punishing
+     * edge-hugging text for segmentation tightness.
+     */
+    private fun dilateSpans(
+        spans: List<MaskGeometry.RowSpan>,
+        margin: Int,
+    ): List<MaskGeometry.RowSpan> {
+        if (margin <= 0 || spans.isEmpty()) return spans
+        val out = ArrayList<MaskGeometry.RowSpan>(spans.size)
+        for (span in spans) {
+            val dilated = MaskGeometry.RowSpan(
+                span.y,
+                max(0, span.start - margin),
+                span.endExclusive + margin,
+            )
+            val previous = out.lastOrNull()
+            if (previous != null && previous.y == dilated.y && previous.endExclusive >= dilated.start) {
+                out[out.lastIndex] = previous.copy(endExclusive = max(previous.endExclusive, dilated.endExclusive))
+            } else {
+                out += dilated
+            }
+        }
+        return out
+    }
+
     /** Row spans of [spans] clipped to [rect] (input is row-major sorted). */
     private fun clipSpansToRect(
         spans: List<MaskGeometry.RowSpan>,
@@ -1426,13 +1474,16 @@ object TextLayoutPlanner {
     /**
      * T912 contained-fit rescue (Director-validated iteration 9 model): the
      * OCR bounding box is the home position. The text column keeps the OCR
-     * box's x-range while tiers grow it VERTICALLY only; the font never
-     * exceeds the box's natural reflow fit; [ceilingSpans] — the block's own
-     * cell spans, its assigned mask component, or the raw persisted mask — is
-     * a pure ceiling validated per row with the exact painted-envelope
-     * predicate. A tier is accepted immediately when its contained font
-     * reaches [TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION] of the natural
-     * fit; otherwise the largest fully-contained font across tiers wins.
+     * box's x-range while tiers grow it VERTICALLY only; the font is capped
+     * at the LARGER of the OCR box's natural reflow fit and the legacy
+     * rectangle fit ([legacyFitW]/[legacyFitH]) — the size the old plan
+     * actually rendered is preserved wherever the mask can host it, and the
+     * exact containment walk shrinks only when it must. [ceilingSpans] — the
+     * block's own cell spans, its assigned mask component, or the raw
+     * persisted mask — is a pure ceiling validated per row with the exact
+     * painted-envelope predicate. A tier is accepted immediately when its
+     * contained font reaches [TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION] of
+     * the cap; otherwise the largest fully-contained font across tiers wins.
      * Returns null when there is no ceiling, no tier contains the complete
      * text at the render floor, or the [budget] is exhausted — the
      * mask-unusable signal.
@@ -1445,6 +1496,8 @@ object TextLayoutPlanner {
         text: String,
         cellPlan: SharedCellPlan?,
         ceilingSpans: List<MaskGeometry.RowSpan>?,
+        legacyFitW: Float,
+        legacyFitH: Float,
         scale: Float,
         collisionGap: Int,
         measurer: TextMeasurer,
@@ -1460,27 +1513,31 @@ object TextLayoutPlanner {
         if (ocrW < 4f || ocrH < 4f) return null
         val centerX = block.x + block.width / 2f
         val centerY = block.y + block.height / 2f
-        // Natural cap: the largest font the text's own OCR box supports by
-        // reflow alone — recovery target for blocks the current plan crushed.
-        val maxFont = binarySearchFontSize(text, ocrW, ocrH, ocrW, false, scale, measurer)
+        // Font cap: the LARGER of the OCR box's natural reflow fit and the
+        // legacy rectangle fit. The OCR fit alone regressed visible sizes on
+        // real pages (page-15: 27→17, 24→14, 31→21) because the old plan's
+        // larger fonts came from its wider boxes; the legacy fit restores
+        // that size head-room and the containment walk still shrinks when the
+        // mask cannot host it.
+        val ocrFit = binarySearchFontSize(text, ocrW, ocrH, ocrW, false, scale, measurer)
+        val maxFont = if (legacyFitW >= 4f && legacyFitH >= 4f) {
+            max(
+                ocrFit,
+                binarySearchFontSize(text, legacyFitW, legacyFitH, legacyFitW, false, scale, measurer),
+            )
+        } else {
+            ocrFit
+        }
         val fitMinFont = FIT_MIN_FONT_PX * scale
         val regions = ArrayList<FloatRect>(TextLayoutTuning.OCR_GROW_FACTORS.size + 1)
-        // Containment-first (T912 repair): the tier region is clamped to the
-        // slab ONLY for a real assigned component cell. Overflow/bounds slabs
-        // can be degenerate (zero-width strips from the partition fallback)
-        // and would strangle every tier — for those members the mask ceiling
-        // alone governs, which is the Director-validated model.
-        val slab = cellPlan?.takeIf { it.componentId != null }?.slab
+        // Containment-first (T912 repair): tiers grow from the OCR box with
+        // NO slab clamp — the rig-validated model. Slabs are disjoint-cell
+        // optimization artifacts (often far smaller than the OCR box) and
+        // shrank real-page fonts back down after the cap raise; the mask
+        // ceiling alone governs how far a tier may grow.
         for (factor in TextLayoutTuning.OCR_GROW_FACTORS) {
             val halfH = ocrH * factor / 2f
-            var region = FloatRect(ocrLeft, centerY - halfH, ocrRight, centerY + halfH)
-            // Keep every acceptable candidate inside the block's own disjoint
-            // cell when one exists: the hard-cell containment check and the
-            // cell-disjointness exemption both assume a block never paints
-            // outside its slab. Groupless masks have no slab — the mask itself
-            // is the only ceiling.
-            if (slab != null) region = region.intersection(slab)
-            regions += region
+            regions += FloatRect(ocrLeft, centerY - halfH, ocrRight, centerY + halfH)
         }
         // The unbounded cell-content tier exists ONLY for a real assigned
         // component cell — the mask is a ceiling, never a region supplier.

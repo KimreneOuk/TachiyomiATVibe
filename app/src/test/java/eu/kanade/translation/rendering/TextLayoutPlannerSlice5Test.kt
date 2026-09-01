@@ -78,13 +78,14 @@ class TextLayoutPlannerSlice5Test {
         lines.map { it.text } shouldBe listOf("Hello there", "friend")
         lines.joinToString(" ") { it.text } shouldBe "Hello there friend"
         layout.text shouldBe "Hello there friend"
-        // Contained rescue placement: anchored at the OCR home, font bounded
-        // by the OCR box's own reflow fit, region = the OCR box.
+        // Contained rescue placement: anchored at the OCR home. The font cap
+        // is the LARGER of the OCR box fit and the legacy rectangle fit (16
+        // vs 43 here) — containment against the dilated ceiling decided 43.
         layout.originX shouldBe 120f
         layout.originY shouldBe 60f
-        layout.fontSizePx shouldBe 16f
-        layout.safeW shouldBe 120f
-        layout.safeH shouldBe 40f
+        layout.fontSizePx shouldBe 43f
+        (layout.safeW >= 120f) shouldBe true
+        (layout.safeH >= 40f) shouldBe true
         layout.maskUsable shouldBe true
         // Contained: every line's painted envelope lies inside the mask
         // ceiling (the assigned component's row spans).
@@ -93,7 +94,7 @@ class TextLayoutPlannerSlice5Test {
         TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, spans, m, 1f) shouldBe true
         layout.drawAlign shouldBe TextAlign.CENTER
         layout.clipRect.shouldBeNull()
-        layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(16f, 1f)
+        layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(43f, 1f)
         // Hard clip mirrors the span-mode metadata: ids + the slab.
         layout.hardClip shouldBe HardClip(0, 0, FloatRect(0f, 0f, 300f, 120f))
         layout.cellRect shouldBe FloatRect(0f, 0f, 300f, 120f)
