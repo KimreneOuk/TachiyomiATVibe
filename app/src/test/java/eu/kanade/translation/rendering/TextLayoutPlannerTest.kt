@@ -72,6 +72,38 @@ class TextLayoutPlannerTest {
     }
 
     @Test
+    fun `each nonblank shared-mask block keeps its own identity and text`() {
+        // One continuous, borderless segmentation mask can contain several
+        // distinct OCR blocks. The planner's current public result is a list of
+        // BlockLayout values, so blockId is the observable identity key here.
+        val sharedMask = BubbleMaskRle(
+            width = 300,
+            height = 120,
+            bounds = listOf(0, 0, 300, 120),
+            runs = listOf(0, 300 * 120),
+            score = 1f,
+        )
+        val inputs = listOf(
+            block(10f, 30f, 80f, 60f, "I WAS A FAN!").copy(blockId = "left", segmentationMask = sharedMask),
+            block(110f, 30f, 80f, 60f, "I'M SORRY!").copy(blockId = "middle", segmentationMask = sharedMask),
+            block(210f, 30f, 80f, 60f, "I FORCED YOU INTO THAT RELATIONSHIP.").copy(
+                blockId = "right",
+                segmentationMask = sharedMask,
+            ),
+        )
+
+        val plan = TextLayoutPlanner.plan(inputs, 300f, 120f, 1, false, FakeMeasurer())
+
+        plan shouldHaveSize inputs.size
+        plan.map { it.block.blockId }.toSet() shouldBe setOf("left", "middle", "right")
+        plan.associate { it.block.blockId to it.text } shouldBe mapOf(
+            "left" to "I WAS A FAN!",
+            "middle" to "I'M SORRY!",
+            "right" to "I FORCED YOU INTO THAT RELATIONSHIP.",
+        )
+    }
+
+    @Test
     fun `single isolated block keeps its box centre (no regression for the common case)`() {
         val b = block(x = 200f, y = 200f, w = 120f, h = 60f, text = "Hi", score = 0.8f)
 
@@ -671,13 +703,17 @@ class TextLayoutPlannerTest {
     }
 
     @Test
-    fun `cjkWrap splits on hyphens and breaks oversized words into narrow lines`() {
+    fun `cjkWrap keeps ordinary Latin words atomic but honors source hyphens`() {
         val m = FakeMeasurer(0.6f)
-        // 10px font => each char is 6px wide.
-        // "NEE-CHAN" is 8 chars = 48px wide. In maxWidth = 30px, "NEE-" is 4 chars = 24px <= 30px.
-        val wrapped = TextLayoutPlanner.cjkWrap("HANAZUMI NEE-CHAN", 10f, 30f, m)
-        wrapped.any { it.startsWith("NEE-") || it == "NEE-" } shouldBe true
-        wrapped.all { m.measureTextWidth(it, 10f) <= 30f } shouldBe true
+        // 10px font => each character is 6px wide. Ordinary Latin words are
+        // atomic: the too-wide token remains intact and no hyphen is invented.
+        val oversized = TextLayoutPlanner.cjkWrap("HANAZUMI", 10f, 30f, m)
+        oversized shouldBe listOf("HANAZUMI")
+        oversized.none { it.contains('-') } shouldBe true
+
+        // A hyphen present in source text remains a legal break point.
+        val sourceHyphen = TextLayoutPlanner.cjkWrap("NEE-CHAN", 10f, 30f, m)
+        sourceHyphen shouldBe listOf("NEE-", "CHAN")
     }
 
     @Test

@@ -208,7 +208,10 @@ class TranslationManagerArtifactReadTest {
     }
 
     @Test
-    fun `corrupt flat file is quarantined without deletion`() {
+    // T912 ANR fix: getChapterTranslationStatus is now suspend (durable
+    // resolution must leave the caller thread free). runBlocking keeps the
+    // original real-I/O execution semantics of this test.
+    fun `corrupt flat file is quarantined without deletion`() = kotlinx.coroutines.runBlocking {
         val original = File(mangaDir, "Chapter 3.json")
         original.writeText("{ not json")
         val file = translationFile("Chapter 3").also { check(it.exists()) }
@@ -258,7 +261,7 @@ class TranslationManagerArtifactReadTest {
     }
 
     @Test
-    fun `recoverable missing legacy input is retried by the same manager`() {
+    fun `recoverable missing legacy input is retried by the same manager`() = kotlinx.coroutines.runBlocking {
         File(mangaDir, "Chapter 7.json").createNewFile()
         val file = translationFile("Chapter 7")
         val manager = newManager(file)

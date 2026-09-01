@@ -474,8 +474,25 @@ class ChapterTranslator(
         }
     }
 
-    fun queueChapter(manga: Manga, chapter: Chapter) {
-        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+    /**
+     * T911 slice 2 (R10): mirrors [queueChapter]'s config preflight so callers
+     * can classify an admission rejection (config invalid vs source unsupported)
+     * without duplicating preference parsing. Add-only; queueChapter is untouched.
+     */
+    fun isQueueConfigValid(): Boolean = runCatching {
+        if (
+            TranslationEngineBuilder.isMlKitActive(translationPreferences) &&
+            !TextTranslatorLanguage.mlkitSupportedLanguages()
+                .contains(TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage()))
+        ) {
+            return false
+        }
+        TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
+        TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage())
+        true
+    }.getOrDefault(false)
+
+    fun queueChapter(manga: Manga, chapter: Chapter) {        val source = sourceManager.get(manga.source) as? HttpSource ?: return
         if (queueState.value.any { it.chapter.id == chapter.id }) return
         // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
         // (corrupted/migrated pref). This runs on a UI action, so a thrown
@@ -505,7 +522,10 @@ class ChapterTranslator(
         addToQueue(translation)
     }
 
-    private suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
+    // T911 slice 3: internal so focused unit tests can drive the exact
+    // exceptional exits (missing files, unexpected exceptions) without the
+    // async queue worker.
+    internal suspend fun translateChapterInternal(translation: Translation): ReconciliationResult? {
         var store: ChapterTranslationStore? = null
         var tracker: eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker? = null
         var batchReconciliation: ReconciliationResult? = null
@@ -562,7 +582,14 @@ class ChapterTranslator(
                 logcat(LogPriority.ERROR) {
                     "TachiyomiAT chapter files not found for ${translation.chapter.name}"
                 }
-                translation.status = Translation.State.ERROR
+                // T911 slice 3: emit the typed terminal snapshot so the drawer
+                // shows the real reason instead of a bare/living 0/0.
+                failBeforePipeline(
+                    translation,
+                    store,
+                    batchOrderedPageKeys,
+                    reason = "Chapter files not found — the download may have been deleted",
+                )
                 return null
             }
             translation.status = Translation.State.TRANSLATING
@@ -603,7 +630,20 @@ class ChapterTranslator(
                 // pipeline planner while pages remain 1..N.
                 val orderedStreams = eu.kanade.translation.util.ResumeOrdering.naturalOrder(streams)
                 batchOrderedPageKeys = orderedStreams.map { it.first }
-                store.preRegisterPages(batchOrderedPageKeys)
+                // T911 slice 3: a rejected pre-registration is an explicit
+                // pipeline error. Fail the chapter with a typed terminal tracker
+                // snapshot instead of running a live tracker whose totals would
+                // silently stay zero.
+                val preRegistration = store.preRegisterPages(batchOrderedPageKeys)
+                if (preRegistration is ChapterTranslationStore.PagePreRegistration.Rejected) {
+                    failBeforePipeline(
+                        translation,
+                        store,
+                        batchOrderedPageKeys,
+                        reason = "Page pre-registration was rejected: ${preRegistration.reason}",
+                    )
+                    return null
+                }
                 val chapterId = translation.chapter.id
                 tracker = if (chapterId != null) {
                     pipeline.batchTrackerFactory?.invoke(chapterId, store, orderedStreams.map { it.first })
@@ -672,9 +712,40 @@ class ChapterTranslator(
             }
             BitmapPool.releaseAll()
             translation.status = Translation.State.ERROR
+            // T911 slice 3: an unexpected exception must leave a terminal
+            // snapshot with the reason, never a live nonterminal tracker. Safe
+            // when the batch already finished: a late event is ignored.
+            tracker?.abort(
+                batchOrderedPageKeys.toSet(),
+                reason = "Translation failed unexpectedly: ${error.message ?: error::class.java.simpleName}",
+            )
             logcat(LogPriority.ERROR, error)
             return null
         }
+    }
+
+    /**
+     * T911 slice 3: typed terminal exit for a batch that failed before the
+     * pipeline could run (pre-registration rejected, chapter files missing).
+     * Marks the queue entry ERROR and emits an aborted terminal tracker
+     * snapshot carrying [reason] through the registry, so the UI shows the
+     * real cause and no live nonterminal `0/0` tracker survives the exit.
+     * No-op when the chapter has no id or no tracker factory (nothing to
+     * project through).
+     */
+    private fun failBeforePipeline(
+        translation: Translation,
+        store: ChapterTranslationStore,
+        orderedPageKeys: List<String>,
+        reason: String,
+    ) {
+        translation.status = Translation.State.ERROR
+        val chapterId = translation.chapter.id ?: return
+        val tracker = pipeline.batchTrackerFactory?.invoke(chapterId, store, orderedPageKeys) ?: return
+        // Publish the known ordered-key totals before the terminal event so
+        // the aborted snapshot carries the real work set, not 0/0.
+        tracker.rebuildFromStore()
+        tracker.abort(orderedPageKeys.toSet(), reason)
     }
 
     private fun getChapterPages(chapterPath: UniFile): List<Pair<String, () -> InputStream>> =

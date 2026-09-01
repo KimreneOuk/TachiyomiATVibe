@@ -39,31 +39,23 @@ internal class PageTextRenderer(typeface: Typeface) {
         if (pageWidth <= 0 || pageHeight <= 0) return
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
-        val clipCache = LinkedHashMap<String, Path>()
-        var cachedSpans = 0
+        val clipCache = ComponentClipCache<Path>(MAX_CACHED_COMPONENTS, MAX_CACHED_SPANS) { component ->
+            componentPath(component)
+        }
         prepared = layouts.mapNotNull { layout ->
             val geometry = layout.maskGeometry
-            val componentPath: Path? = when {
+            val componentClip: Path? = when {
                 geometry == null -> null
                 geometry.width != pageWidth || geometry.height != pageHeight -> return@mapNotNull null
-                layout.maskComponentId == null || layout.maskComponentId !in geometry.components.indices -> return@mapNotNull null
-                else -> {
-                    val component = geometry.components[layout.maskComponentId!!]
-                    val cacheKey = "${geometry.width}x${geometry.height}:${component.stableKey}"
-                    clipCache[cacheKey] ?: run {
-                        if (clipCache.size >= MAX_CACHED_COMPONENTS ||
-                            cachedSpans + component.spans.size > MAX_CACHED_SPANS
-                        ) {
-                            return@mapNotNull null
-                        }
-                        componentPath(component).also {
-                            clipCache[cacheKey] = it
-                            cachedSpans += component.spans.size
-                        }
-                    }
-                }
+                // Fail closed on incomplete metadata: the pair is required.
+                layout.planGeometryId == null -> return@mapNotNull null
+                layout.maskComponentId == null || layout.maskComponentId !in geometry.components.indices ->
+                    return@mapNotNull null
+                else -> clipCache.resolve(layout.planGeometryId!!, layout.maskComponentId!!, geometry)
+                    ?: return@mapNotNull null
             }
-            PreparedLayout(layout, componentPath, buildShaped(layout))
+            val shaped = buildShaped(layout) ?: return@mapNotNull null
+            PreparedLayout(layout, componentClip, layout.cellRect, shaped)
         }
     }
 
@@ -78,11 +70,13 @@ internal class PageTextRenderer(typeface: Typeface) {
         prepared.forEach { preparedLayout ->
             val save = canvas.save()
             try {
-                preparedLayout.clip?.let(canvas::clipPath)
-                val clip = preparedLayout.layout.clipRect
-                if (clip != null && preparedLayout.clip == null) {
-                    canvas.clipRect(clip.left, clip.top, clip.right, clip.bottom)
-                }
+                // Structural containment composes all three clips (intersection):
+                // component path → cell rect → legacy collision clip. Unmasked
+                // layouts have null path/cellRect, so their legacy clipRect
+                // behaviour is byte-identical.
+                preparedLayout.componentClip?.let(canvas::clipPath)
+                preparedLayout.cellRect?.let { canvas.clipRect(it.left, it.top, it.right, it.bottom) }
+                preparedLayout.layout.clipRect?.let { canvas.clipRect(it.left, it.top, it.right, it.bottom) }
                 drawLayout(canvas, preparedLayout)
             } finally {
                 canvas.restoreToCount(save)
@@ -114,15 +108,20 @@ internal class PageTextRenderer(typeface: Typeface) {
         stroke.textSize = layout.fontSizePx
     }
 
-    /** Builds the shaped, reusable render data for one layout at bind time so draw() allocates nothing. */
-    private fun buildShaped(layout: BlockLayout): Shaped {
+    /**
+     * Builds the shaped, reusable render data for one layout at bind time so
+     * draw() allocates nothing. Null means the layout fails closed and is
+     * dropped whole (renderer-side invalid render metadata): e.g. a positioned
+     * line the shaper could not keep on exactly one StaticLayout line.
+     */
+    private fun buildShaped(layout: BlockLayout): Shaped? {
         configure(layout)
-        return if (layout.isVertical) {
-            Shaped.Vertical(
-                prepareVertical(layout),
-            )
-        } else {
-            Shaped.Horizontal(prepareHorizontal(layout))
+        val positioned = layout.positionedLines
+        return when {
+            // Slice 5: adaptive positioned lines (never vertical text).
+            positioned != null -> preparePositioned(positioned)?.let { Shaped.Positioned(it) }
+            layout.isVertical -> Shaped.Vertical(prepareVertical(layout))
+            else -> Shaped.Horizontal(prepareHorizontal(layout))
         }
     }
 
@@ -131,6 +130,57 @@ internal class PageTextRenderer(typeface: Typeface) {
         when (val shaped = prepared.shaped) {
             is Shaped.Horizontal -> drawHorizontal(canvas, shaped.data)
             is Shaped.Vertical -> drawVertical(canvas, shaped.data)
+            is Shaped.Positioned -> drawPositioned(canvas, shaped.lines)
+        }
+    }
+
+    /**
+     * Slice 5: prepare EXACTLY one StaticLayout pair (fill + stroke) per
+     * positioned line, shaped at the planner's integer [PositionedLine.layoutWidthPx]
+     * with simple breaking, no hyphenation, no padding, and maxLines(1). A line
+     * that does not come back as exactly one line drops the WHOLE prepared
+     * layout (fail closed — renderer-side invalid render metadata; the
+     * planner-model reason text is a later slice). Empty lines (forced blank
+     * lines in the source) reserve their stack slot without StaticLayouts.
+     */
+    private fun preparePositioned(lines: List<PositionedLine>): List<PositionedLineData>? {
+        val prepared = ArrayList<PositionedLineData>(lines.size)
+        for (line in lines) {
+            if (line.layoutWidthPx < 1) return null
+            val fillLayout = if (line.text.isEmpty()) null else buildSingleLineStatic(line.text, fill, line.layoutWidthPx) ?: return null
+            val strokeLayout = if (line.text.isEmpty()) null else buildSingleLineStatic(line.text, stroke, line.layoutWidthPx) ?: return null
+            prepared += PositionedLineData(fillLayout, strokeLayout, line.leftPx.toFloat(), line.topPx.toFloat())
+        }
+        return prepared
+    }
+
+    /** Builds a maxLines(1), left-aligned StaticLayout; null when it wraps to more than one line. */
+    private fun buildSingleLineStatic(text: String, paint: TextPaint, widthPx: Int): StaticLayout? {
+        val static = StaticLayout.Builder.obtain(text, 0, text.length, paint, widthPx)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setIncludePad(false)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .setMaxLines(1)
+            .build()
+        return if (static.lineCount == 1) static else null
+    }
+
+    /**
+     * Draws the prepared positioned lines. Clips (component → cell → legacy)
+     * already applied ONCE per layout by [draw]; per line: save, translate to
+     * the planner's integer placement, stroke then fill, restore. Allocation-
+     * free: every StaticLayout was built in bind().
+     */
+    private fun drawPositioned(canvas: Canvas, lines: List<PositionedLineData>) {
+        for (line in lines) {
+            val fillLayout = line.fillLayout ?: continue
+            val strokeLayout = line.strokeLayout ?: continue
+            val save = canvas.save()
+            canvas.translate(line.leftPx, line.topPx)
+            strokeLayout.draw(canvas)
+            fillLayout.draw(canvas)
+            canvas.restoreToCount(save)
         }
     }
 
@@ -224,7 +274,21 @@ internal class PageTextRenderer(typeface: Typeface) {
     private sealed class Shaped {
         class Horizontal(val data: HorizontalData) : Shaped()
         class Vertical(val data: VerticalData) : Shaped()
+
+        /** Slice 5: adaptive pre-positioned lines, exactly one shaped line each. */
+        class Positioned(val lines: List<PositionedLineData>) : Shaped()
     }
+
+    /**
+     * One prepared positioned line. The layouts are null only for a forced
+     * blank line (no ink, stack slot reserved). Built entirely in bind().
+     */
+    private class PositionedLineData(
+        val fillLayout: StaticLayout?,
+        val strokeLayout: StaticLayout?,
+        val leftPx: Float,
+        val topPx: Float,
+    )
 
     private data class HorizontalData(
         val fillLayout: StaticLayout?,
@@ -244,10 +308,71 @@ internal class PageTextRenderer(typeface: Typeface) {
         val ascent: Float,
     )
 
-    private data class PreparedLayout(val layout: BlockLayout, val clip: Path?, val shaped: Shaped)
+    private data class PreparedLayout(
+        val layout: BlockLayout,
+        val componentClip: Path?,
+        val cellRect: FloatRect?,
+        val shaped: Shaped,
+    )
 
     private companion object {
         private const val MAX_CACHED_COMPONENTS = 64
         private const val MAX_CACHED_SPANS = 100_000
+    }
+}
+
+/**
+ * TachiyomiAT: compact, JVM-pure clip-object cache keyed by the per-page
+ * `(planGeometryId, componentId)` pair. No coordinate strings are built and
+ * there is no `android.graphics` dependency in this class, so JVM tests can
+ * drive it with a fake clip type.
+ *
+ * A hit only counts when the stored entry refers to the SAME geometry instance —
+ * a packed key arriving with a different geometry fails closed. Capacity is
+ * checked BEFORE [create], so a would-exceed lookup never allocates a clip.
+ */
+internal class ComponentClipCache<P : Any>(
+    private val maxComponents: Int,
+    private val maxSpans: Int,
+    private val create: (MaskGeometry.Component) -> P,
+) {
+    private class Entry<C>(val geometry: MaskGeometry, val value: C, val spanCount: Int)
+
+    private val entries = LinkedHashMap<Long, Entry<P>>()
+    private var cachedComponents = 0
+    private var cachedSpans = 0
+
+    /** Distinct components currently cached. */
+    internal val size: Int get() = cachedComponents
+
+    fun resolve(planGeometryId: Int, componentId: Int, geometry: MaskGeometry): P? {
+        // Fail closed on an out-of-range component id.
+        if (componentId !in geometry.components.indices) return null
+        val key = pack(planGeometryId, componentId)
+        val cached = entries[key]
+        if (cached != null) {
+            // Instance identity verification: the pair is only meaningful within
+            // the geometry instance that produced it.
+            return if (cached.geometry === geometry) cached.value else null
+        }
+        val component = geometry.components[componentId]
+        if (cachedComponents + 1 > maxComponents) return null
+        if (cachedSpans + component.spans.size > maxSpans) return null
+        val value = create(component)
+        entries[key] = Entry(geometry, value, component.spans.size)
+        cachedComponents++
+        cachedSpans += component.spans.size
+        return value
+    }
+
+    fun clear() {
+        entries.clear()
+        cachedComponents = 0
+        cachedSpans = 0
+    }
+
+    internal companion object {
+        internal fun pack(planGeometryId: Int, componentId: Int): Long =
+            (planGeometryId.toLong() shl 32) or (componentId.toLong() and 0xFFFF_FFFFL)
     }
 }

@@ -93,6 +93,8 @@ fun MangaScreen(
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     // TachiyomiAT
     onTranslationChapter: ((ChapterList.Item, ChapterTranslationAction) -> Unit)?,
+    // T911 slice 2 (R6): list API for multi-select — one batch, one confirmation.
+    onTranslationChapters: ((List<ChapterList.Item>, ChapterTranslationAction) -> Unit)?,
     onAddToLibraryClicked: () -> Unit,
     onWebViewClicked: (() -> Unit)?,
     onWebViewLongClicked: (() -> Unit)?,
@@ -172,6 +174,7 @@ fun MangaScreen(
             onAllChapterSelected = onAllChapterSelected,
             onInvertSelection = onInvertSelection,
             onTranslationChapter = onTranslationChapter,
+            onTranslationChapters = onTranslationChapters,
         )
     } else {
         MangaScreenLargeImpl(
@@ -208,6 +211,7 @@ fun MangaScreen(
             onAllChapterSelected = onAllChapterSelected,
             onInvertSelection = onInvertSelection,
             onTranslationChapter = onTranslationChapter,
+            onTranslationChapters = onTranslationChapters,
         )
     }
 }
@@ -224,6 +228,8 @@ private fun MangaScreenSmallImpl(
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     // TachiyomiAT
     onTranslationChapter: ((ChapterList.Item, ChapterTranslationAction) -> Unit)?,
+    // T911 slice 2 (R6): list API for multi-select — one batch, one confirmation.
+    onTranslationChapters: ((List<ChapterList.Item>, ChapterTranslationAction) -> Unit)?,
     onAddToLibraryClicked: () -> Unit,
     onWebViewClicked: (() -> Unit)?,
     onWebViewLongClicked: (() -> Unit)?,
@@ -327,9 +333,12 @@ private fun MangaScreenSmallImpl(
                 onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                 onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                 onDownloadChapter = onDownloadChapter,
-                onTranslateChapter = onTranslationChapter?.let { handler ->
+                onTranslateChapter = onTranslationChapters?.let { handler ->
                     { items: List<ChapterList.Item> ->
-                        items.forEach { handler(it, ChapterTranslationAction.START) }
+                        // T911 slice 2 (R6): one call for the whole selection —
+                        // the single-item loop used to overwrite the dialog per
+                        // chapter so only the last selection survived.
+                        handler(items, ChapterTranslationAction.START)
                     }
                 },
                 onMultiDeleteClicked = onMultiDeleteClicked,
@@ -476,6 +485,8 @@ fun MangaScreenLargeImpl(
     onDownloadChapter: ((List<ChapterList.Item>, ChapterDownloadAction) -> Unit)?,
     // TachiyomiAT
     onTranslationChapter: ((ChapterList.Item, ChapterTranslationAction) -> Unit)?,
+    // T911 slice 2 (R6): list API for multi-select — one batch, one confirmation.
+    onTranslationChapters: ((List<ChapterList.Item>, ChapterTranslationAction) -> Unit)?,
     onAddToLibraryClicked: () -> Unit,
     onWebViewClicked: (() -> Unit)?,
     onWebViewLongClicked: (() -> Unit)?,
@@ -576,9 +587,12 @@ fun MangaScreenLargeImpl(
                     onMultiMarkAsReadClicked = onMultiMarkAsReadClicked,
                     onMarkPreviousAsReadClicked = onMarkPreviousAsReadClicked,
                     onDownloadChapter = onDownloadChapter,
-                    onTranslateChapter = onTranslationChapter?.let { handler ->
+                    onTranslateChapter = onTranslationChapters?.let { handler ->
                         { items: List<ChapterList.Item> ->
-                            items.forEach { handler(it, ChapterTranslationAction.START) }
+                            // T911 slice 2 (R6): one call for the whole selection —
+                            // the single-item loop used to overwrite the dialog per
+                            // chapter so only the last selection survived.
+                            handler(items, ChapterTranslationAction.START)
                         }
                     },
                     onMultiDeleteClicked = onMultiDeleteClicked,

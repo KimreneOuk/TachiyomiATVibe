@@ -28,6 +28,41 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 
 /**
+ * T911 slice 2: the chapter's 1-based position among the outstanding
+ * translation-queue entries (QUEUE/TRANSLATING), and the total. Null when the
+ * chapter is not part of the outstanding work. Pure so the projection and its
+ * test agree on what "2nd of 3" means.
+ */
+internal fun translationQueuePosition(
+    queue: List<Translation>,
+    chapterId: Long,
+): Pair<Int, Int>? {
+    val outstanding = queue.filter { translation ->
+        translation.status == Translation.State.QUEUE ||
+            translation.status == Translation.State.TRANSLATING
+    }
+    val index = outstanding.indexOfFirst { it.chapter.id == chapterId }
+    if (index < 0) return null
+    return (index + 1) to outstanding.size
+}
+
+/**
+ * T911 slice 3: whether a durable artifact status is a reconstructible
+ * terminal outcome (completed / warnings / failed, or a durable pause with
+ * explicit resume detail). Live-looking states (queue/translating) are never
+ * reconstructed — a crash mid-run must not look like running work.
+ * Pure so the projection and its tests agree on the gate.
+ */
+internal fun isReconstructibleDurableState(state: Translation.State?): Boolean = when (state) {
+    Translation.State.TRANSLATED,
+    Translation.State.READY_WITH_WARNINGS,
+    Translation.State.ERROR,
+    Translation.State.PAUSED,
+    -> true
+    else -> false
+}
+
+/**
  * Batch progress projection moved from `TranslationManager` (T909 Phase 11).
  * Pure flow graph — no locks. Manager state arrives as providers and is
  * re-read on every access, matching the manager's per-access construction.
@@ -39,7 +74,9 @@ internal class BatchProgressProjector(
     private val pendingTranslationRequestsProvider: () -> StateFlow<Map<Long, TranslationRequestState>>,
     private val pipelineProvider: () -> TranslationPipeline,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
-    private val persistedChapterStatus: (
+    // T912 ANR fix: suspend — durable resolution performs SAF/FUSE I/O and
+    // must never be synchronously reachable from the main thread.
+    private val persistedChapterStatus: suspend (
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
@@ -55,6 +92,13 @@ internal class BatchProgressProjector(
         mangaId: Long?,
     ) -> ChapterTranslationStore?,
     private val observeActiveDisplayStore: (Long) -> StateFlow<Map<String, PageTranslation>>?,
+    /**
+     * T911 slice 3: read-through terminal reconstruction from the durable
+     * store/artifacts, used when the bounded registry misses (process death /
+     * eviction) and no queue owner exists. Null when nothing durable is
+     * reconstructible. Read-only: never creates a store, never caches.
+     */
+    private val reconstructDurableTerminalSnapshot: suspend (chapterId: Long) -> TranslationProgressSnapshot? = { null },
 ) {
 
     private val activeStores get() = activeStoresProvider()
@@ -73,7 +117,11 @@ internal class BatchProgressProjector(
     ): ChapterTranslationStore? =
         openOrCreateStoreSuspend(chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
 
-    fun getChapterTranslationStatus(
+    // T912 ANR fix: suspend. Priority order and returned states are unchanged
+    // (queued translation → active-store display → durable store →
+    // NOT_TRANSLATED); only the threading changed. In-memory steps (queue
+    // check, active-store shortcut) stay synchronous inside the suspend body.
+    suspend fun getChapterTranslationStatus(
         chapterId: Long,
         chapterName: String,
         scanlator: String?,
@@ -208,7 +256,18 @@ internal class BatchProgressProjector(
                             }
                         }
                     } else if (store == null) {
-                        flowOf(TranslationProgressSnapshot.empty(chapterId, state))
+                        flow {
+                            // T911 slice 3: registry miss and no queue owner —
+                            // reconstruct a completed/failed chapter's terminal
+                            // detail from the durable store/artifacts so
+                            // re-entry and eviction keep truthful totals and
+                            // reasons. Read-through only: no store is created
+                            // and nothing is cached here.
+                            emit(
+                                reconstructDurableTerminalSnapshot(chapterId)
+                                    ?: TranslationProgressSnapshot.empty(chapterId, state),
+                            )
+                        }
                     } else {
                         combine(store.state, store.display) { pages, display ->
                             snapshotFromStore(
@@ -223,8 +282,25 @@ internal class BatchProgressProjector(
                 }
             }
         }
-        .map { snapshot -> snapshot.projectQueueStatus(queueStatus) }
+        .map { snapshot ->
+            snapshot
+                .projectQueueStatus(queueStatus)
+                .withQueuePosition(chapterId)
+        }
         .distinctUntilChanged()
+
+    /**
+     * T911 slice 2: attach the chapter's truthful position among the
+     * outstanding translation-queue entries so a later chapter's drawer can
+     * say "Queued (2nd of 3)" instead of implying it can resume now.
+     */
+    private fun TranslationProgressSnapshot.withQueuePosition(
+        chapterId: Long,
+    ): TranslationProgressSnapshot {
+        if (state != Translation.State.QUEUE) return this
+        val (position, total) = translationQueuePosition(queueState.value, chapterId) ?: return this
+        return copy(queuePosition = position, queueTotal = total)
+    }
 
     private fun snapshotFromStore(
         chapterId: Long,

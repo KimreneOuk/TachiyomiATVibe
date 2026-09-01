@@ -47,7 +47,11 @@ class TranslationBatchProgressTracker(
     private val terminalSnapshot = CompletableDeferred<TranslationProgressSnapshot>()
     private val indexResolver = orderedPageKeys.withIndex().associate { it.value to it.index + 1 }
     private var projection = Projection()
-    private val _snapshot = MutableStateFlow(emptySnapshot())
+
+    // T911 slice 3: the ordered work keys define the batch's real total, so the
+    // first snapshot is derived from them at construction — never from an empty
+    // store (a delayed/rejected pre-registration must not project 0/0).
+    private val _snapshot = MutableStateFlow(snapshotFor(Projection()))
     val snapshot: StateFlow<TranslationProgressSnapshot> = _snapshot.asStateFlow()
     private val reducerJob: Job = scope.launch {
         for (event in events) {
@@ -67,8 +71,6 @@ class TranslationBatchProgressTracker(
             }
         }
     }
-
-    private fun emptySnapshot() = TranslationProgressSnapshot.empty(chapterId, Translation.State.TRANSLATING)
 
     fun rebuildFromStore() {
         if (!finished) _snapshot.value = snapshotFor(projection)
@@ -164,42 +166,49 @@ class TranslationBatchProgressTracker(
         if (!terminalEventQueued.get()) reducerJob.cancel()
     }
 
-    private fun snapshotFor(state: Projection): TranslationProgressSnapshot = computeSnapshot(
-        // The batch's ordered keys define its work set. Persisted leftovers may be
-        // useful diagnostically, but must never inflate progress totals.
-        pageMap = orderedPageKeys.distinct().mapNotNull { pageKey ->
-            store.state.value[pageKey]?.let { page ->
-                pageKey to (
-                    state.pagePhases[pageKey]?.entries?.fold(page) { current, (phase, status) ->
-                        when (phase) {
-                            BatchPhase.OCR -> current.copy(ocrStatus = status)
-                            BatchPhase.TRANSLATE -> current.copy(translationStatus = status)
-                            BatchPhase.INPAINT -> current.copy(inpaintStatus = status)
-                            BatchPhase.RENDER -> current.copy(renderStatus = status)
-                            // DISPLAY has no per-page status override: it is
-                            // derived from hasRenderedResult in count().
-                            BatchPhase.DISPLAY -> current
-                        }
-                    } ?: page
-                    )
-            }
-        }.toMap(),
-        displayPageMap = orderedPageKeys.distinct().mapNotNull { pageKey ->
-            store.display.value[pageKey]?.let { pageKey to it }
-        }.toMap(),
-        chapterState = state.chapterState,
-        indexResolver = indexResolver,
-        permitHolderPageKey = permitHolderResolver?.invoke(),
-        batchPhase = state.batchPhase,
-        chapterId = chapterId,
-        aiPageStates = state.aiPageStates,
-    ).copy(
-        aborted = state.aborted,
-        abortedReason = state.abortReason,
-        pauseAnchorPageKey = state.pauseAnchorPageKey,
-        pauseReason = state.pauseReason,
-        nextEligibleRetryAtEpochMs = state.nextEligibleRetryAtEpochMs,
-    )
+    private fun snapshotFor(state: Projection): TranslationProgressSnapshot {
+        val storePages = store.state.value
+        return computeSnapshot(
+            // T911 slice 3: the batch's ordered keys define its work set AND its
+            // total. A known key whose store placeholder was rejected/delayed is
+            // projected as a fresh pending placeholder so the total is never
+            // silently zero; completed counts still come only from the store
+            // intersection (placeholders are queued and claim no completion).
+            // Persisted leftovers may be useful diagnostically, but must never
+            // inflate progress totals.
+            pageMap = orderedPageKeys.distinct().associateWith { pageKey ->
+                val stored = storePages[pageKey] ?: PageTranslation(sourceFileName = pageKey)
+                state.pagePhases[pageKey]?.entries?.fold(stored) { current, (phase, status) ->
+                    when (phase) {
+                        BatchPhase.OCR -> current.copy(ocrStatus = status)
+                        BatchPhase.TRANSLATE -> current.copy(translationStatus = status)
+                        BatchPhase.INPAINT -> current.copy(inpaintStatus = status)
+                        BatchPhase.RENDER -> current.copy(renderStatus = status)
+                        // DISPLAY has no per-page status override: it is
+                        // derived from hasRenderedResult in count().
+                        BatchPhase.DISPLAY -> current
+                    }
+                } ?: stored
+            },
+            displayPageMap = store.display.value.let { displayPages ->
+                orderedPageKeys.distinct().mapNotNull { pageKey ->
+                    displayPages[pageKey]?.let { pageKey to it }
+                }.toMap()
+            },
+            chapterState = state.chapterState,
+            indexResolver = indexResolver,
+            permitHolderPageKey = permitHolderResolver?.invoke(),
+            batchPhase = state.batchPhase,
+            chapterId = chapterId,
+            aiPageStates = state.aiPageStates,
+        ).copy(
+            aborted = state.aborted,
+            abortedReason = state.abortReason,
+            pauseAnchorPageKey = state.pauseAnchorPageKey,
+            pauseReason = state.pauseReason,
+            nextEligibleRetryAtEpochMs = state.nextEligibleRetryAtEpochMs,
+        )
+    }
 
     data class Projection(
         val chapterState: Translation.State = Translation.State.TRANSLATING,

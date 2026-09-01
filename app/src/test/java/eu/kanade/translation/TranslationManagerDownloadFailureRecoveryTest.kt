@@ -75,7 +75,15 @@ class TranslationManagerDownloadFailureRecoveryTest {
         state?.phase shouldBe TranslationRequestPhase.WAITING_FOR_DOWNLOAD
         state?.reason shouldBe null
         // The durable phase must advance too, or a restart re-projects failure.
-        verify { store.add(10L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD, null) }
+        verify {
+            store.add(
+                match<TranslationPendingRequestRecord> { record ->
+                    record.chapterId == 10L &&
+                        record.phase == TranslationRequestPhase.WAITING_FOR_DOWNLOAD &&
+                        record.reason == null
+                },
+            )
+        }
     }
 
     @Test
@@ -146,6 +154,10 @@ class TranslationManagerDownloadFailureRecoveryTest {
         mockkObject(TranslationForegroundService.Companion)
         every { TranslationForegroundService.start(any()) } just runs
         try {
+            // T911 slice 2: the completion callback is generation-fenced, so the
+            // recovery first re-attaches the request to the download (the same
+            // WAITING write the retry path performs).
+            manager.queueTranslationAfterDownload(manga, chapter)
             manager.startTranslationAfterDownloadIfRequested(manga, chapter)
 
             verify { translator.queueChapter(manga, chapter) }
@@ -157,6 +169,28 @@ class TranslationManagerDownloadFailureRecoveryTest {
             unmockkObject(TranslationForegroundService.Companion)
             scheduler.close()
         }
+    }
+
+    @Test
+    fun `a completion callback without an attached generation is dropped`() = runBlocking<Unit> {
+        val store = mockk<TranslationPendingRequestStore>(relaxed = true)
+        val translator = mockk<ChapterTranslator>(relaxed = true).also {
+            every { it.queueState } returns MutableStateFlow(emptyList())
+            every { it.isRunning } returns false
+        }
+        val manager = uninitializedManager(
+            store,
+            translator = translator,
+            seed = mapOf(10L to TranslationRequestState(10L, TranslationRequestPhase.WAITING_FOR_DOWNLOAD)),
+        )
+
+        manager.startTranslationAfterDownloadIfRequested(manga, chapter)
+
+        // The request was never attached to a download (no captured
+        // generation), so the late callback must not admit or mutate it.
+        verify(exactly = 0) { translator.queueChapter(any(), any()) }
+        manager.pendingTranslationRequests.value[10L]?.phase shouldBe
+            TranslationRequestPhase.WAITING_FOR_DOWNLOAD
     }
 
     /** Mirrors TranslationManagerAutoArbitrationTest's uninitialized fixture. */
@@ -189,6 +223,10 @@ class TranslationManagerDownloadFailureRecoveryTest {
         setField(manager, "pendingTranslationRequests", pendingState.asStateFlow())
         setField(manager, "pendingRequestWriteVersions", ConcurrentHashMap<Long, AtomicLong>())
         setField(manager, "pendingRequestMutationLock", Any())
+        // T911 slice 2: generation/attach/group state the coordinator resolves.
+        setField(manager, "pendingRequestGenerationCounters", ConcurrentHashMap<Long, AtomicLong>())
+        setField(manager, "downloadAttachGenerations", ConcurrentHashMap<Long, Long>())
+        setField(manager, "pendingGroupIdSequence", AtomicLong(0))
         return manager
     }
 

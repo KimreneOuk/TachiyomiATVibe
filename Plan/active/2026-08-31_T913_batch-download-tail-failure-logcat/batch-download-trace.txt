@@ -1,0 +1,37 @@
+--------- beginning of main
+08-31 17:25:31.621 14954 14954 I BatchDownloadTrace: schema=1 event=request_phase chapter_id=6465 generation=3 from=none to=starting failure_kind=none
+08-31 17:25:31.824 14954 14954 I BatchDownloadTrace: schema=1 event=request_phase chapter_id=6465 generation=3 from=starting to=preparing failure_kind=none
+08-31 17:25:31.829 14954 24931 I BatchDownloadTrace: schema=1 event=request_phase chapter_id=6465 generation=3 from=preparing to=preparing failure_kind=none
+08-31 17:25:31.838 14954 24931 I BatchDownloadTrace: schema=1 event=request_cleared chapter_id=6465 generation=3 from=preparing
+08-31 17:25:38.329 14954 14954 I BatchDownloadTrace: schema=1 event=request_phase chapter_id=6474 generation=1 from=none to=starting failure_kind=none
+08-31 17:25:38.499 14954 14954 I BatchDownloadTrace: schema=1 event=request_phase chapter_id=6474 generation=1 from=starting to=waiting_for_download failure_kind=none
+08-31 17:25:38.543 14954 14954 I BatchDownloadTrace: schema=1 event=queue_result chapter_id=6474 generation=1 result=enqueued queue_size=2 start_requested=true
+08-31 17:25:45.684 14954 24877 I BatchDownloadTrace: schema=1 event=chapter_start chapter_id=6474 generation=1 page_total=24 resumed_ready=0 save_as_cbz=true
+08-31 17:25:46.139 14954 24922 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=1 page_number=2 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:46.192 14954 24939 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=0 page_number=1 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:46.516 14954 24939 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=2 page_number=3 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:46.583 14954 24913 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=3 page_number=4 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:46.897 14954 24879 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=4 page_number=5 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:46.969 14954 24922 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=5 page_number=6 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:47.383 14954 24922 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=6 page_number=7 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:47.563 14954 24878 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=7 page_number=8 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:47.897 14954 24908 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=8 page_number=9 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:48.441 14954 24931 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=9 page_number=10 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:48.530 14954 24839 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=10 page_number=11 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:49.084 14954 24939 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=11 page_number=12 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:49.324 14954 24908 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=12 page_number=13 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:49.662 14954 24966 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=13 page_number=14 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:50.175 14954 24931 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=15 page_number=16 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:50.195 14954 24939 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=14 page_number=15 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:50.719 14954 24931 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=16 page_number=17 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:50.743 14954 24929 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=17 page_number=18 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:51.171 14954 24929 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=18 page_number=19 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:51.342 14954 24878 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=19 page_number=20 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:51.808 14954 24905 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=20 page_number=21 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:51.911 14954 24966 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=21 page_number=22 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:52.229 14954 24939 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=22 page_number=23 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:52.544 14954 24905 I BatchDownloadTrace: schema=1 event=page_attempt_failed chapter_id=6474 generation=1 page_index=23 page_number=24 attempt=1 stage=split cause=invalid_page error_class=IllegalStateException
+08-31 17:25:52.553 14954 24905 I BatchDownloadTrace: schema=1 event=validation chapter_id=6474 generation=1 expected=24 ready=24 on_disk=0 error_count=0 error_pages=none error_pages_truncated=false
+08-31 17:25:52.554 14954 24905 I BatchDownloadTrace: schema=1 event=download_terminal chapter_id=6474 generation=1 state=error cause=storage expected=24 ready=24 on_disk=0 error_class=none
+08-31 17:25:52.559 14954 24905 I BatchDownloadTrace: schema=1 event=request_phase chapter_id=6474 generation=1 from=waiting_for_download to=download_failed failure_kind=download_failed
+08-31 17:25:58.655 14954 14954 I BatchDownloadTrace: schema=1 event=request_cleared chapter_id=6474 generation=1 from=download_failed

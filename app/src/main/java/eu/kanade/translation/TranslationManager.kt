@@ -17,13 +17,16 @@ import eu.kanade.translation.model.PageView
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationRequestFailureKind
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.model.translationQueueAdmissionFailureKind
 import eu.kanade.translation.manager.BatchProgressProjector
 import eu.kanade.translation.manager.ChapterDataResetController
 import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableChapterStatusResolver
+import eu.kanade.translation.manager.isReconstructibleDurableState
 import eu.kanade.translation.manager.DurableStatus
 import eu.kanade.translation.manager.ReaderTeardownCoordinator
 import eu.kanade.translation.manager.TranslationRequestCoordinator
@@ -35,6 +38,7 @@ import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,6 +66,7 @@ import tachiyomi.domain.translation.TranslationPreferences
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 // T909 Phase 16: the orphan-sweep constants and the freshness predicate moved
@@ -83,6 +88,10 @@ class TranslationManager(
     private val provider: TranslationProvider = Injekt.get(),
     private val sourceManager: SourceManager = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
+    // T911 slice 2: file truth for the startup reconciler (pending + valid
+    // files -> admit once). DownloadProvider only resolves directories, so it
+    // cannot cycle back into the manager the way DownloadManager would.
+    private val downloadProvider: eu.kanade.tachiyomi.data.download.DownloadProvider = Injekt.get(),
 ) {
     private val pipeline = TranslationPipeline(context, provider)
     private val translator = ChapterTranslator(context, provider, pipeline = pipeline)
@@ -116,7 +125,26 @@ class TranslationManager(
     /** Serializes request versioning, state publication, and durable writes. */
     private val pendingRequestMutationLock = Any()
 
-    // T909 Phase 9: pending-request subsystem bodies moved to
+    // T911 slice 2: per-chapter request generations (bumped on every new
+    // request and on cancel) and the generation captured when a request was
+    // attached to a download. The pair fences late downloader callbacks and
+    // in-flight probe mutations (R7).
+    private val pendingRequestGenerationCounters = ConcurrentHashMap<Long, AtomicLong>()
+    private val downloadAttachGenerations = ConcurrentHashMap<Long, Long>()
+    private val pendingGroupIdSequence = AtomicLong(0)
+
+    // T911 slice 2 (R9): startup reconciliation readiness barrier. The pass
+    // runs once, after BOTH the downloader queue restore and the translation
+    // queue restore have completed.
+    @Volatile
+    private var downloadQueueRestoredChapterIds: Set<Long>? = null
+
+    @Volatile
+    private var translationQueueRestoreJob: Job? = null
+
+    private val startupReconciliationOnce = AtomicBoolean(false)
+
+    // T911 Phase 9: pending-request subsystem bodies moved to
     // manager/TranslationRequestCoordinator.kt. The state objects stay here —
     // the pending tests reflection-write these exact fields — so the
     // coordinator is built per access from the current field values.
@@ -130,7 +158,12 @@ class TranslationManager(
             queueStateProvider = { queueState },
             translatorProvider = { translator },
             getQueuedTranslationOrNull = { chapterId -> getQueuedTranslationOrNull(chapterId) },
-            translateChapter = { manga, chapter -> translateChapter(manga, chapter) },
+            translateChapter = { manga, chapter, expectedRequestGeneration ->
+                translateChapter(manga, chapter, expectedRequestGeneration)
+            },
+            pendingRequestGenerationCountersProvider = { pendingRequestGenerationCounters },
+            downloadAttachGenerationsProvider = { downloadAttachGenerations },
+            groupIdSequenceProvider = { pendingGroupIdSequence },
         )
 
     // T909 Phase 13: DurableChapterKey/DurableStatus/TranslationDocument and the
@@ -222,7 +255,13 @@ class TranslationManager(
                 }
             }
         }
-        applicationScope.launch { translator.restoreQueue() }
+        applicationScope.launch {
+            // T911 slice 2 (R9): once this restore completes AND the downloader
+            // reports its own restore, run the one-shot pending-request
+            // reconciler (idempotent, generation-fenced).
+            translator.restoreQueue()
+            runStartupReconciliationIfReady()
+        }.also { translationQueueRestoreJob = it }
     }
 
     /**
@@ -258,6 +297,13 @@ class TranslationManager(
         requestCoordinator.queueTranslationAfterDownload(manga, chapter)
     }
 
+    /** T911 slice 2 (R7): fenced WAITING write — dropped when the request was cancelled/re-requested. */
+    fun queueTranslationAfterDownloadIfCurrent(
+        manga: Manga,
+        chapter: Chapter,
+        expectedGeneration: Long,
+    ): Boolean = requestCoordinator.queueTranslationAfterDownloadIfCurrent(manga, chapter, expectedGeneration)
+
     fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
         requestCoordinator.acknowledgeTranslationRequests(chapters)
     }
@@ -266,8 +312,56 @@ class TranslationManager(
         requestCoordinator.markTranslationRequestPreparing(chapterId)
     }
 
-    fun markTranslationDownloadFailed(chapterId: Long, reason: String? = null) {
-        requestCoordinator.markTranslationDownloadFailed(chapterId, reason)
+    /** T911 slice 2 (R7): fenced PREPARING write — dropped when the request was cancelled/re-requested. */
+    fun markTranslationRequestPreparingIfCurrent(chapterId: Long, expectedGeneration: Long): Boolean =
+        requestCoordinator.markTranslationRequestPreparingIfCurrent(chapterId, expectedGeneration)
+
+    /** Current in-process request generation, or null when no request exists. */
+    fun pendingRequestGeneration(chapterId: Long): Long? =
+        pendingTranslationRequestsState.value[chapterId]?.generation
+
+    /** T911 slice 2 (R7): true when the live request still carries [generation]. */
+    fun isTranslationRequestCurrent(chapterId: Long, generation: Long): Boolean =
+        requestCoordinator.isTranslationRequestCurrent(chapterId, generation)
+
+    fun markTranslationDownloadFailed(
+        chapterId: Long,
+        reason: String? = null,
+        failureKind: TranslationRequestFailureKind = TranslationRequestFailureKind.DOWNLOAD_FAILED,
+    ) {
+        requestCoordinator.markTranslationDownloadFailed(chapterId, reason, failureKind)
+    }
+
+    /**
+     * T911 slice 3 (R8): the chapter's files finalized, but the translation
+     * start after the download failed (rekey/handoff/admission). The download
+     * keeps its `DOWNLOADED` status; the request gets the R10 admission-failure
+     * typing instead of a false download failure. No-op without a pending
+     * request, so ordinary downloads are unaffected.
+     */
+    fun markTranslationHandoffFailed(
+        chapterId: Long,
+        reason: String? = null,
+    ) {
+        requestCoordinator.markTranslationHandoffFailed(chapterId, reason)
+    }
+
+    // T911 slice 2 (R5): download-side lifecycle notifications. Every one is a
+    // no-op without a pending request, so ordinary downloads are unaffected.
+
+    /** The chapter's download was cancelled or removed from the download queue. */
+    fun onDownloadCancelledForTranslation(chapterId: Long) {
+        requestCoordinator.onDownloadCancelled(chapterId)
+    }
+
+    /** The whole download queue was cleared while the chapter's request waited. */
+    fun onDownloadQueueClearedForTranslation(chapterId: Long) {
+        requestCoordinator.onDownloadQueueCleared(chapterId)
+    }
+
+    /** The downloader stopped (offline / Wi-Fi policy / generic) with the chapter unfinished. */
+    fun onDownloadStoppedForTranslation(chapterId: Long, reason: String?) {
+        requestCoordinator.onDownloadStopped(chapterId, reason)
     }
 
     fun cancelTranslationRequest(chapterId: Long): Boolean =
@@ -289,8 +383,9 @@ class TranslationManager(
         chapterId: Long,
         phase: TranslationRequestPhase,
         reason: String? = null,
+        failureKind: TranslationRequestFailureKind = TranslationRequestFailureKind.NONE,
     ) {
-        requestCoordinator.setPendingTranslationRequest(chapterId, phase, reason)
+        requestCoordinator.setPendingTranslationRequest(chapterId, phase, reason, failureKind)
     }
 
     private fun clearPendingTranslationRequest(chapterId: Long) {
@@ -303,15 +398,159 @@ class TranslationManager(
 
     private fun loadPendingTranslationRequests(): Map<Long, TranslationRequestState> =
         pendingRequestStore.load().associateWith { chapterId ->
+            val record = pendingRequestStore.record(chapterId)
             TranslationRequestState(
                 chapterId = chapterId,
-                phase = pendingRequestStore.phase(chapterId) ?: TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                phase = record?.phase ?: TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
                 reason = pendingRequestStore.reason(chapterId),
+                generation = record?.generation ?: 0L,
+                failureKind = record?.failureKind ?: TranslationRequestFailureKind.NONE,
             )
         }
 
     suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) {
         requestCoordinator.startTranslationAfterDownloadIfRequested(manga, chapter)
+    }
+
+    // T911 slice 2 (R9): startup reconciliation ------------------------------
+
+    /**
+     * Called by the downloader once its asynchronous queue restore has
+     * completed (both sides of the readiness barrier). Idempotent.
+     */
+    fun onDownloadQueueRestored(queuedChapterIds: Set<Long>) {
+        downloadQueueRestoredChapterIds = queuedChapterIds
+        applicationScope.launch { runStartupReconciliationIfReady() }
+    }
+
+    /**
+     * Readiness barrier: runs once after BOTH queue restores completed. The
+     * once-guard is only consumed when the downloader snapshot is present, so
+     * a late downloader restore still triggers the pass.
+     */
+    private fun runStartupReconciliationIfReady() {
+        val downloadSnapshot = downloadQueueRestoredChapterIds ?: return
+        if (!startupReconciliationOnce.compareAndSet(false, true)) return
+        applicationScope.launch {
+            translationQueueRestoreJob?.join()
+            reconcilePendingRequestsForStartup(downloadQueueChapterIds = downloadSnapshot)
+        }
+    }
+
+    /**
+     * One idempotent, bounded pass over the durable pending requests:
+     * - pending + translation-queue member -> queue wins: clear pending;
+     * - pending + download-queue member -> normalize to WAITING;
+     * - pending + valid downloaded files (no owner) -> admit translation once;
+     * - pending + neither -> explicit FAILED (interrupted), never deleted;
+     * - chapter/source missing -> purge stale ownership.
+     *
+     * Race-safe against a concurrently completing download or cancel: the
+     * record (with its generation) is re-read at decision time and every
+     * durable mutation is fenced on that generation, so a stale decision
+     * cannot resurrect a cancelled request or double-admit.
+     *
+     * Admission intentionally does NOT auto-start OCR/LLM: the chapter lands
+     * in the translation queue as QUEUE and the user resumes explicitly,
+     * matching the restored-work policy.
+     */
+    internal suspend fun reconcilePendingRequestsForStartup(
+        downloadQueueChapterIds: Set<Long>,
+        resolveTranslation: suspend (Long) -> Translation? = { chapterId ->
+            Translation.fromChapterId(chapterId)
+        },
+        hasDownloadedFiles: (Translation) -> Boolean = { translation ->
+            downloadProvider.findChapterDir(
+                translation.chapter.name,
+                translation.chapter.scanlator,
+                translation.manga.title,
+                translation.source,
+            ) != null
+        },
+    ) {
+        val pendingIds = (pendingRequestStore.load() + pendingTranslationRequestsState.value.keys)
+            .distinct()
+        if (pendingIds.isEmpty()) return
+        val translationQueueIds = queueState.value.mapNotNull { it.chapter.id }.toSet()
+        pendingIds.forEach { chapterId ->
+            val current = pendingTranslationRequestsState.value[chapterId]
+                ?: pendingRequestStore.record(chapterId)?.let { record ->
+                    TranslationRequestState(
+                        chapterId = record.chapterId,
+                        phase = record.phase,
+                        reason = record.reason,
+                        generation = record.generation,
+                        failureKind = record.failureKind,
+                    )
+                }
+            if (current == null || current.isTerminal) return@forEach
+            val translation = resolveTranslation(chapterId)
+            when {
+                translation == null -> {
+                    logcat(LogPriority.INFO) {
+                        "T911 reconcile: purging stale pending request $chapterId (chapter/source missing)"
+                    }
+                    clearPendingTranslationRequest(chapterId)
+                }
+                chapterId in translationQueueIds -> {
+                    logcat(LogPriority.INFO) {
+                        "T911 reconcile: pending $chapterId is owned by the translation queue; clearing pending"
+                    }
+                    clearPendingTranslationRequest(chapterId)
+                }
+                chapterId in downloadQueueChapterIds -> {
+                    if (current.phase != TranslationRequestPhase.WAITING_FOR_DOWNLOAD) {
+                        setPendingTranslationRequest(
+                            chapterId,
+                            TranslationRequestPhase.WAITING_FOR_DOWNLOAD,
+                        )
+                    }
+                }
+                hasDownloadedFiles(translation) -> {
+                    logcat(LogPriority.INFO) {
+                        "T911 reconcile: pending $chapterId has downloaded files and no owner; admitting translation"
+                    }
+                    admitRestoredPendingTranslation(translation, current.generation)
+                }
+                else -> {
+                    logcat(LogPriority.INFO) {
+                        "T911 reconcile: pending $chapterId has no queue owner and no files; failing as interrupted"
+                    }
+                    markTranslationDownloadFailed(
+                        chapterId,
+                        "Interrupted before the chapter download or translation could run",
+                        TranslationRequestFailureKind.INTERRUPTED,
+                    )
+                }
+            }
+        }
+    }
+
+    /** Generation-fenced admission of a restored pending request (no auto-start). */
+    private fun admitRestoredPendingTranslation(translation: Translation, expectedGeneration: Long) {
+        val manga = translation.manga
+        val chapter = translation.chapter
+        val chapterId = chapter.id ?: return
+        synchronized(pendingRequestMutationLock) {
+            // The fence accepts the generation from either the live state or
+            // the durable record: after a restart the request may exist only
+            // durably. A moved generation (cancel/re-request during the pass)
+            // drops the admission.
+            val current = pendingTranslationRequestsState.value[chapterId]
+            val currentGeneration = current?.generation
+                ?: pendingRequestStore.record(chapterId)?.generation
+            if (currentGeneration != expectedGeneration) return
+            scheduler.shutdownAutoCoordinator(chapterId)
+            markTranslationRequestPreparing(chapterId)
+            translator.queueChapter(manga, chapter)
+            if (queueState.value.any { it.chapter.id == chapterId }) {
+                clearPendingTranslationRequest(chapterId)
+            } else {
+                markTranslationQueueFailureIfAcknowledged(manga, chapterId)
+            }
+        }
+        // Deliberately no startTranslation(): restored work never auto-resumes
+        // OCR/LLM; the admitted QUEUE entry is resumed by the user.
     }
 
     // T909 Phase 18: reader/page teardown bodies moved to
@@ -416,42 +655,115 @@ class TranslationManager(
                 )
     }
 
-    fun translateChapter(manga: Manga, chapters: Chapter) {
+    /**
+     * T911 slice 2 (R7): when [expectedRequestGeneration] is supplied, the
+     * whole admit sequence runs under the request mutation lock and is
+     * aborted when the live request's generation moved (user cancel between
+     * check and use). Existing callers keep the unfenced behavior.
+     */
+    fun translateChapter(
+        manga: Manga,
+        chapters: Chapter,
+        expectedRequestGeneration: Long? = null,
+    ) {
         val chapterId = chapters.id ?: return
-        scheduler.shutdownAutoCoordinator(chapterId)
-        evictStaleQueuedChapters(chapterId, manga.source)
-        markTranslationRequestPreparing(chapterId)
-        translator.queueChapter(manga, chapters)
-        if (queueState.value.any { it.chapter.id == chapterId }) {
-            clearPendingTranslationRequest(chapterId)
-        } else {
-            markTranslationQueueFailureIfAcknowledged(chapterId)
-        }
-        startTranslation()
-    }
-
-    fun translateChapters(manga: Manga, chapters: List<Chapter>) {
-        if (chapters.isEmpty()) return
-        chapters.forEach { chapter ->
-            val chapterId = chapter.id ?: return@forEach
+        synchronized(pendingRequestMutationLock) {
+            if (expectedRequestGeneration != null &&
+                pendingTranslationRequestsState.value[chapterId]?.let { it.generation } !=
+                expectedRequestGeneration
+            ) {
+                logcat(LogPriority.INFO) {
+                    "T911 dropped stale translate admission for chapter $chapterId " +
+                        "(expectedGeneration=$expectedRequestGeneration)"
+                }
+                return
+            }
             scheduler.shutdownAutoCoordinator(chapterId)
+            evictStaleQueuedChapters(chapterId, manga.source)
             markTranslationRequestPreparing(chapterId)
-            translator.queueChapter(manga, chapter)
+            translator.queueChapter(manga, chapters)
             if (queueState.value.any { it.chapter.id == chapterId }) {
                 clearPendingTranslationRequest(chapterId)
             } else {
-                markTranslationQueueFailureIfAcknowledged(chapterId)
+                markTranslationQueueFailureIfAcknowledged(manga, chapterId)
             }
         }
         startTranslation()
     }
 
-    private fun markTranslationQueueFailureIfAcknowledged(chapterId: Long) {
+    fun translateChapters(manga: Manga, chapters: List<Chapter>) {
+        translateChaptersInternal(manga, chapters, expectedGenerations = null)
+    }
+
+    /**
+     * T911 slice 2 (R7): list admission fenced per chapter by the request
+     * generation captured by the confirmation probe. Chapters whose request
+     * was cancelled or re-requested after the acknowledgement are dropped;
+     * the surviving set is admitted atomically against cancel.
+     */
+    fun translateChaptersIfCurrent(
+        manga: Manga,
+        chapters: List<Chapter>,
+        expectedGenerations: Map<Long, Long>,
+    ): Boolean {
+        if (chapters.isEmpty()) return false
+        return translateChaptersInternal(manga, chapters, expectedGenerations).isNotEmpty()
+    }
+
+    private fun translateChaptersInternal(
+        manga: Manga,
+        chapters: List<Chapter>,
+        expectedGenerations: Map<Long, Long>?,
+    ): List<Chapter> {
+        if (chapters.isEmpty()) return emptyList()
+        val admitted = mutableListOf<Chapter>()
+        synchronized(pendingRequestMutationLock) {
+            chapters.forEach { chapter ->
+                val chapterId = chapter.id ?: return@forEach
+                if (expectedGenerations != null) {
+                    val expected = expectedGenerations[chapterId] ?: return@forEach
+                    val current = pendingTranslationRequestsState.value[chapterId]
+                    if (current == null || current.generation != expected) {
+                        logcat(LogPriority.INFO) {
+                            "T911 dropped stale translate admission for chapter $chapterId " +
+                                "(expectedGeneration=$expected currentGeneration=${current?.generation})"
+                        }
+                        return@forEach
+                    }
+                }
+                scheduler.shutdownAutoCoordinator(chapterId)
+                markTranslationRequestPreparing(chapterId)
+                translator.queueChapter(manga, chapter)
+                if (queueState.value.any { it.chapter.id == chapterId }) {
+                    clearPendingTranslationRequest(chapterId)
+                    admitted += chapter
+                } else {
+                    markTranslationQueueFailureIfAcknowledged(manga, chapterId)
+                }
+            }
+        }
+        if (admitted.isNotEmpty()) {
+            startTranslation()
+        }
+        return admitted
+    }
+
+    /**
+     * T911 slice 2 (R10): a translation-queue admission rejection is never a
+     * download failure. The phase is [TranslationRequestPhase.ADMISSION_FAILED]
+     * with a typed kind (source unsupported / config invalid / admission).
+     */
+    private fun markTranslationQueueFailureIfAcknowledged(manga: Manga, chapterId: Long) {
         if (pendingTranslationRequestsState.value.containsKey(chapterId)) {
+            val failureKind = translationQueueAdmissionFailureKind(
+                sourceIsHttp = sourceManager.get(manga.source) is HttpSource,
+                configValid = translator.isQueueConfigValid(),
+            )
             setPendingTranslationRequest(
                 chapterId,
-                TranslationRequestPhase.DOWNLOAD_FAILED,
+                TranslationRequestPhase.ADMISSION_FAILED,
                 "Translation could not be queued",
+                failureKind,
             )
         }
     }
@@ -553,9 +865,15 @@ class TranslationManager(
                 )
             },
             observeActiveDisplayStore = { chapterId -> observeActiveDisplayStore(chapterId) },
+            reconstructDurableTerminalSnapshot = { chapterId ->
+                reconstructDurableTerminalSnapshot(chapterId)
+            },
         )
 
-    fun getChapterTranslationStatus(
+    // T912 ANR fix: suspend — delegates to the projector whose durable leg
+    // performs SAF/FUSE I/O. Callers (ReaderViewModel.loadChapter,
+    // MangaScreenModel chapter list) invoke this from IO coroutines.
+    suspend fun getChapterTranslationStatus(
         chapterId: Long,
         chapterName: String,
         scanlator: String?,
@@ -584,7 +902,10 @@ class TranslationManager(
     )
 
     /** True when persisted output is readable, including a retry/review-ready warning outcome. */
-    fun isChapterTranslated(
+    // T912 ANR fix: suspend for the same reason as [persistedChapterStatus]
+    // below (durable resolution performs I/O). Currently has no production
+    // callers; kept API-compatible.
+    suspend fun isChapterTranslated(
         chapterName: String,
         chapterScanlator: String?,
         mangaTitle: String,
@@ -606,7 +927,12 @@ class TranslationManager(
             durableStatusCacheProvider = { durableStatusCache },
         )
 
-    private fun persistedChapterStatus(
+    // T912 ANR fix: suspend — this used to be reached synchronously from the
+    // main thread (ReaderViewModel.loadChapter inside withUIContext,
+    // MangaScreenModel's chapter-list build) and parked Main in
+    // runBlocking(Dispatchers.IO) inside DurableChapterStatusResolver for
+    // 5-9s on a large translated chapter. The chain is now fully suspend.
+    private suspend fun persistedChapterStatus(
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
@@ -614,6 +940,49 @@ class TranslationManager(
         sourceId: Long,
     ): Translation.State? =
         durableStatusResolver.persistedChapterStatus(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
+
+    /**
+     * T911 slice 3 (contract item 4): read-through terminal reconstruction.
+     * When the bounded tracker registry misses (process death, 20-entry
+     * eviction) and no queue owner exists, the projection rebuilds a
+     * completed/failed chapter's terminal snapshot from the durable store and
+     * artifacts. Read-only by design: it never creates an active store and
+     * adds no new cache — the bounded probe registry and the existing
+     * durable-status cache are the only intermediaries.
+     *
+     * [resolveTranslation] is injectable so focused unit tests can drive the
+     * gate without the database.
+     */
+    internal suspend fun reconstructDurableTerminalSnapshot(
+        chapterId: Long,
+        resolveTranslation: suspend (Long) -> Translation? = { Translation.fromChapterId(it) },
+    ): TranslationProgressSnapshot? {
+        val translation = resolveTranslation(chapterId) ?: return null
+        val chapter = translation.chapter
+        val sourceId = translation.manga.source
+        val state = persistedChapterStatus(
+            chapterId,
+            chapter.name,
+            chapter.scanlator,
+            translation.manga.title,
+            sourceId,
+        ) ?: return null
+        if (!isReconstructibleDurableState(state)) return null
+        return durableStatusResolver.withDurableStore(
+            chapterId = chapterId,
+            chapterName = chapter.name,
+            chapterScanlator = chapter.scanlator,
+            mangaTitle = translation.manga.title,
+            sourceId = sourceId,
+        ) { store ->
+            TranslationProgressSnapshot.compute(
+                chapterId = chapterId,
+                state = state,
+                pageMap = store.state.value,
+                displayPageMap = store.display.value,
+            ).withDurablePause(store)
+        }
+    }
 
     private fun statusFromReadablePages(
         pages: Map<String, PageTranslation>,

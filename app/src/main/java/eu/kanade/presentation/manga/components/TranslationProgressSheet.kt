@@ -61,13 +61,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import eu.kanade.presentation.components.AdaptiveSheet
+import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.translation.pipeline.batch.BatchPhase
 import eu.kanade.translation.model.AiBatchProgress
 import eu.kanade.translation.model.AiPageProgressState
+import eu.kanade.translation.model.BatchHeroPhase
+import eu.kanade.translation.model.BatchHeroProjection
 import eu.kanade.translation.model.StageCount
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
+import eu.kanade.translation.model.TranslationRequestPhase
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -82,6 +86,12 @@ private val WarningAmber = Color(0xFFF59E0B)
 fun TranslationProgressSheet(
     chapterName: String,
     snapshot: TranslationProgressSnapshot,
+    // TachiyomiAT T911 slice 1: read-only download join so the drawer shows the
+    // download phase/progress while the batch waits for the chapter download.
+    downloadState: Download.State? = null,
+    downloadProgress: Int = 0,
+    downloadedPages: Int? = null,
+    totalDownloadPages: Int? = null,
     onDismissRequest: () -> Unit,
     onReadNow: () -> Unit,
     onCancel: () -> Unit,
@@ -100,6 +110,15 @@ fun TranslationProgressSheet(
         targetValue = snapshot.fraction.coerceIn(0f, 1f),
         animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
         label = "batch_progress",
+    )
+    // TachiyomiAT T911 slice 1: phase-aware hero. Unknown translation totals are
+    // never rendered as 0% / 0/0; the owning phase is shown instead.
+    val hero = BatchHeroProjection.of(
+        snapshot = snapshot,
+        downloadState = downloadState,
+        downloadProgress = downloadProgress,
+        downloadedPages = downloadedPages,
+        totalDownloadPages = totalDownloadPages,
     )
 
     AdaptiveSheet(onDismissRequest = onDismissRequest) {
@@ -173,22 +192,64 @@ fun TranslationProgressSheet(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.Bottom,
                     ) {
-                        Column {
-                            Text(
-                                text = "${(animatedFraction * 100).toInt()}%",
-                                style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Black,
-                                color = if (isTerminal) SuccessGreen else MaterialTheme.colorScheme.primary,
-                            )
-                            Text(
-                                text = stringResource(
-                                    ATMR.strings.manga_batch_page_progress,
-                                    snapshot.donePages.coerceAtMost(snapshot.totalPages),
-                                    snapshot.totalPages,
-                                ),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                        when (hero) {
+                            is BatchHeroProjection.Numeric -> {
+                                Column {
+                                    Text(
+                                        text = "${(animatedFraction * 100).toInt()}%",
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Black,
+                                        color = if (hero.isError || isTerminal) {
+                                            if (hero.isError) {
+                                                MaterialTheme.colorScheme.error
+                                            } else {
+                                                SuccessGreen
+                                            }
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                    )
+                                    Text(
+                                        text = stringResource(
+                                            ATMR.strings.manga_batch_page_progress,
+                                            hero.donePages.coerceAtMost(hero.totalPages),
+                                            hero.totalPages,
+                                        ),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                            is BatchHeroProjection.Phase -> {
+                                // TachiyomiAT T911 slice 1: unknown translation total —
+                                // show the owning phase, never a numeric 0% / 0/0.
+                                Column {
+                                    Text(
+                                        text = phaseHeroLabel(hero),
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Black,
+                                        color = if (hero.isError) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                    )
+                                    if (hero.phase == BatchHeroPhase.DOWNLOADING &&
+                                        hero.donePages != null &&
+                                        hero.totalPages != null
+                                    ) {
+                                        Text(
+                                            text = stringResource(
+                                                ATMR.strings.manga_batch_page_progress,
+                                                hero.donePages,
+                                                hero.totalPages,
+                                            ),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         if (snapshot.displayReadyPages > 0) {
@@ -221,15 +282,46 @@ fun TranslationProgressSheet(
                         }
                     }
 
-                    LinearProgressIndicator(
-                        progress = { animatedFraction },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(4.dp)),
-                        color = if (isTerminal) SuccessGreen else MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    )
+                    // TachiyomiAT T911 slice 1: determinate only when a real
+                    // fraction exists (translation totals or download percent);
+                    // indeterminate for unknown-total phases; nothing for errors.
+                    when (hero) {
+                        is BatchHeroProjection.Numeric -> LinearProgressIndicator(
+                            progress = { animatedFraction },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp)),
+                            color = if (hero.isError) {
+                                MaterialTheme.colorScheme.error
+                            } else if (isTerminal) {
+                                SuccessGreen
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        )
+                        is BatchHeroProjection.Phase -> when {
+                            hero.isError -> Unit
+                            hero.fraction != null -> LinearProgressIndicator(
+                                progress = { hero.fraction },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                            else -> LinearProgressIndicator(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(8.dp)
+                                    .clip(RoundedCornerShape(4.dp)),
+                                color = MaterialTheme.colorScheme.primary,
+                                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -416,6 +508,9 @@ private fun LiveStatusPill(
 ) {
     val isTerminal = snapshot.batchPhase == TranslationBatchPhase.FINISHED
     val isAborted = snapshot.aborted
+    // TachiyomiAT T911 slice 1: the pill must not say "Idle" while a batch
+    // request is accepted/waiting for the chapter download.
+    val requestPhase = snapshot.requestState?.phase
     val isTranslating = isResuming ||
         snapshot.batchPhase == TranslationBatchPhase.FIRST_PASS ||
         snapshot.batchPhase == TranslationBatchPhase.FINALIZING ||
@@ -436,6 +531,10 @@ private fun LiveStatusPill(
         isAborted -> MaterialTheme.colorScheme.error
         paused -> WarningAmber
         isTerminal -> SuccessGreen
+        requestPhase == TranslationRequestPhase.DOWNLOAD_FAILED ||
+            requestPhase == TranslationRequestPhase.CANCELLED ||
+            requestPhase == TranslationRequestPhase.ADMISSION_FAILED -> MaterialTheme.colorScheme.error
+        requestPhase != null -> MaterialTheme.colorScheme.tertiary
         isResuming || isTranslating -> MaterialTheme.colorScheme.primary
         snapshot.state == eu.kanade.translation.model.Translation.State.QUEUE -> WarningAmber
         else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -464,6 +563,20 @@ private fun LiveStatusPill(
                     isAborted -> "Aborted"
                     paused -> stringResource(ATMR.strings.manga_batch_status_paused)
                     isTerminal -> "Completed"
+                    requestPhase != null -> when (requestPhase) {
+                        TranslationRequestPhase.STARTING ->
+                            stringResource(ATMR.strings.manga_batch_phase_accepted)
+                        TranslationRequestPhase.WAITING_FOR_DOWNLOAD ->
+                            stringResource(ATMR.strings.manga_batch_phase_waiting_for_download)
+                        TranslationRequestPhase.PREPARING ->
+                            stringResource(ATMR.strings.manga_batch_phase_preparing)
+                        TranslationRequestPhase.DOWNLOAD_FAILED ->
+                            stringResource(ATMR.strings.manga_batch_phase_download_failed)
+                        TranslationRequestPhase.CANCELLED ->
+                            stringResource(ATMR.strings.manga_batch_phase_cancelled)
+                        TranslationRequestPhase.ADMISSION_FAILED ->
+                            stringResource(ATMR.strings.manga_batch_phase_admission_failed)
+                    }
                     isResuming -> "Resuming..."
                     isTranslating -> "In Progress"
                     snapshot.state == eu.kanade.translation.model.Translation.State.QUEUE -> stringResource(ATMR.strings.manga_batch_status_queued)
@@ -721,7 +834,64 @@ private fun FailureSummary(snapshot: TranslationProgressSnapshot) {
     }
 }
 
-private fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isResuming: Boolean = false): String {
+/** TachiyomiAT T911 slice 1 (post-review): subtitle copy for unknown-total phases. */
+private fun phaseSubtitleLine(hero: BatchHeroProjection.Phase): String {
+    val percent = hero.fraction?.let { " ${(it * 100).toInt()}%" }.orEmpty()
+    return when (hero.phase) {
+        BatchHeroPhase.ACCEPTED -> "Translation accepted — preparing batch..."
+        BatchHeroPhase.WAITING_FOR_DOWNLOAD -> "Waiting for chapter download before translation"
+        BatchHeroPhase.DOWNLOADING -> "Downloading chapter$percent..."
+        BatchHeroPhase.DOWNLOAD_FAILED -> "Download failed — retry to continue"
+        BatchHeroPhase.PREPARING -> "Preparing translation batch..."
+        BatchHeroPhase.QUEUED -> "Queued — ready to resume remaining pages"
+        BatchHeroPhase.PAUSED -> "Paused"
+        BatchHeroPhase.FINALIZING -> "Finalizing translated chapter..."
+        BatchHeroPhase.COMPLETED -> "All pages translated and ready to read"
+        BatchHeroPhase.FAILED_NO_PAGES -> "Translation failed — chapter has no readable pages"
+        BatchHeroPhase.CANCELLED -> "Translation cancelled — the chapter download was cancelled or removed"
+        BatchHeroPhase.ADMISSION_FAILED ->
+            "Translation could not be queued — check the source and translation settings"
+    }
+}
+
+/** T911 slice 2: truthful queue position, e.g. "Queued (2nd of 3) — ..." (never implies it can resume now). */
+internal fun queuePositionLabel(position: Int, total: Int): String =
+    "Queued (${ordinalSuffix(position)} of $total) — waiting for earlier batches"
+
+/** 1 -> "1st", 2 -> "2nd", 3 -> "3rd", 4 -> "4th", 11-13 -> "th". */
+internal fun ordinalSuffix(value: Int): String {
+    val mod100 = value % 100
+    val suffix = when {
+        mod100 in 11..13 -> "th"
+        else -> when (value % 10) {
+            1 -> "st"
+            2 -> "nd"
+            3 -> "rd"
+            else -> "th"
+        }
+    }
+    return "$value$suffix"
+}
+
+/** T911 slice 1: hero label for unknown-total phases (never 0/0). */
+@Composable
+private fun phaseHeroLabel(hero: BatchHeroProjection.Phase): String = when (hero.phase) {
+    BatchHeroPhase.ACCEPTED -> stringResource(ATMR.strings.manga_batch_phase_accepted)
+    BatchHeroPhase.WAITING_FOR_DOWNLOAD -> stringResource(ATMR.strings.manga_batch_phase_waiting_for_download)
+    BatchHeroPhase.DOWNLOADING ->
+        stringResource(ATMR.strings.manga_batch_phase_downloading, ((hero.fraction ?: 0f) * 100).toInt())
+    BatchHeroPhase.DOWNLOAD_FAILED -> stringResource(ATMR.strings.manga_batch_phase_download_failed)
+    BatchHeroPhase.PREPARING -> stringResource(ATMR.strings.manga_batch_phase_preparing)
+    BatchHeroPhase.QUEUED -> stringResource(ATMR.strings.manga_batch_phase_queued)
+    BatchHeroPhase.PAUSED -> stringResource(ATMR.strings.manga_batch_status_paused)
+    BatchHeroPhase.FINALIZING -> stringResource(ATMR.strings.manga_batch_phase_finalizing)
+    BatchHeroPhase.COMPLETED -> stringResource(ATMR.strings.manga_batch_phase_completed)
+    BatchHeroPhase.FAILED_NO_PAGES -> stringResource(ATMR.strings.manga_batch_phase_failed_no_pages)
+    BatchHeroPhase.CANCELLED -> stringResource(ATMR.strings.manga_batch_phase_cancelled)
+    BatchHeroPhase.ADMISSION_FAILED -> stringResource(ATMR.strings.manga_batch_phase_admission_failed)
+}
+
+internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isResuming: Boolean = false): String {
     if (isResuming) return "Scanning completed pages & resuming batch..."
     snapshot.requestState?.let { request ->
         return when (request.phase) {
@@ -733,6 +903,10 @@ private fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isR
                 "Waiting for chapter download before translation"
             eu.kanade.translation.model.TranslationRequestPhase.DOWNLOAD_FAILED ->
                 "Download failed — retry to continue"
+            eu.kanade.translation.model.TranslationRequestPhase.CANCELLED ->
+                "Translation cancelled — the chapter download was cancelled or removed"
+            eu.kanade.translation.model.TranslationRequestPhase.ADMISSION_FAILED ->
+                "Translation could not be queued — check the source and translation settings"
         } + request.reason.orEmpty().takeIf { it.isNotBlank() }?.let { " — $it" }.orEmpty()
     }
     if (snapshot.state == eu.kanade.translation.model.Translation.State.PAUSED ||
@@ -746,7 +920,12 @@ private fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isR
     }
     return when (snapshot.batchPhase) {
         TranslationBatchPhase.IDLE -> when (snapshot.state) {
-            eu.kanade.translation.model.Translation.State.QUEUE -> "Queued — ready to resume remaining pages"
+            eu.kanade.translation.model.Translation.State.QUEUE ->
+                // T911 slice 2: a queued chapter that is not first in line must
+                // say so instead of implying it can resume now.
+                snapshot.queuePosition?.takeIf { position -> snapshot.queueTotal != null && position > 1 }
+                    ?.let { position -> queuePositionLabel(position, snapshot.queueTotal ?: position) }
+                    ?: "Queued — ready to resume remaining pages"
             eu.kanade.translation.model.Translation.State.TRANSLATING -> "Building context & scanning completed pages..."
             else -> "No active batch in progress"
         }
@@ -764,7 +943,16 @@ private fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isR
             snapshot.activeStages.contains(TranslationProgressStage.OCR) -> "Reading and detecting page text..."
             snapshot.activeStages.contains(TranslationProgressStage.INPAINT) -> "Cleaning speech bubbles..."
             snapshot.activeStages.contains(TranslationProgressStage.RENDER) -> "Rendering English text overlays..."
-            else -> "Translating pages (${snapshot.donePages}/${snapshot.totalPages})"
+            else -> {
+                // TachiyomiAT T911 slice 1 (post-review): unknown totals must never
+                // render as "(0/0)" anywhere — route the fallback through the same
+                // phase-aware projection as the hero.
+                when (val hero = BatchHeroProjection.of(snapshot)) {
+                    is BatchHeroProjection.Numeric ->
+                        "Translating pages (${snapshot.donePages}/${snapshot.totalPages})"
+                    is BatchHeroProjection.Phase -> phaseSubtitleLine(hero)
+                }
+            }
         }
         TranslationBatchPhase.FINALIZING -> "Finalizing translated chapter..."
         TranslationBatchPhase.FINISHED -> "All pages translated and ready to read"

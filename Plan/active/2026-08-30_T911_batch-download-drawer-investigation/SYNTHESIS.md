@@ -220,3 +220,65 @@ catalog progress is the download ring or translation ring, API level, storage
 provider/URI type, save-as-CBZ setting, source, page count, and lifecycle event.
 No URLs, API keys, prompts, response bodies, or translated content are needed.
 
+
+---
+
+## Repair outcome (2026-08-30, post-implementation addendum)
+
+The Director authorized the full staged repair. All three slices were
+implemented on branch `t911/repair`, each gated by an independent review pass,
+and the full unit suite is green.
+
+### Delivered
+
+- **Slice 1 (`e5e8011`)** — confirming batch translation now opens the keyed
+  progress drawer in the same UI transaction as acknowledgement; the drawer
+  hero projects a phase-aware download join (Accepted / Waiting for download /
+  Downloading n% / Preparing / Queued) instead of fake `0/0`; keyed snapshots
+  live in screen-model state and survive list rebuilds and terminal collector
+  cancellation; every indicator state routes tap to DETAILS. Review: ACCEPT
+  (two LOW findings fixed in-slice: registry thread safety, residual
+  subtitle `0/0`).
+- **Slice 2 (`66fa2c9`)** — pending requests carry persisted per-chapter
+  generations, group IDs, timestamps, and typed failures (backward-compatible
+  migration); the downloader completion callback checks the generation and
+  writes PREPARING under one lock and admission re-validates it; screen-model
+  probe mutations re-check between compute and write; download
+  cancel/remove/clear/stop/offline now transition attached requests to
+  explicit terminal states; a one-shot idempotent startup reconciler resolves
+  pending vs queues/files after both restores; multi-select uses the list API
+  end-to-end with one confirmation for all N chapters; admission/config
+  failures get distinct kinds instead of `DOWNLOAD_FAILED`; queued chapters
+  expose queue position. Review: FIX-FIRST → ACCEPT (reviewer caught five
+  silently-skipped non-void tests and a check-to-write fence window; both
+  fixed with a deterministic cancel-vs-callback barrier test).
+- **Slice 3 (`18e9f24`)** — tracker totals derive from ordered work keys
+  immediately; pre-registration rejection is observable and produces a typed
+  error; zero-page, OOM, missing-files, and unexpected-exception exits all
+  terminate the tracker with typed reasons (zero-page stays a distinct
+  `FAILED_NO_PAGES`); a post-finalization failure in rekey/handoff no longer
+  flips a completed download to `DOWNLOAD_FAILED` — the translation intent
+  gets the typed failure; terminal details reconstruct read-through from the
+  durable store after registry eviction or process death. Review: ACCEPT
+  after fixing one test-only determinism flake it root-caused (production
+  provably correct in every interleaving).
+
+### Final gate
+
+Full `:app:testDevDebugUnitTest`: **157 suites, 1182 tests, 0 failures,
+0 errors, 0 skipped** (JUnit-XML-verified), including 60+ new tests across the
+three slices. No unrelated pre-existing failures.
+
+### Documented follow-ups (not in scope, not regressions)
+
+- R11: terminal row visibility still gated by cached download truth when the
+  cache is stale-false (durable reconstruction inside the drawer works).
+- Pipeline grid placeholder cards still render static `0 / 1` / `0%` examples
+  (cosmetic; hero and subtitle are phase-aware).
+- Generation tombstones grow with user-driven cancel/remove actions (bounded
+  by user action count; pruning path not built).
+- Runtime device capture (screen recording + chapter-ID trace) remains the
+  Director-side item to confirm the observed "catalog progress" wording; the
+  deterministic defects it would disambiguate are now fixed regardless.
+- Branch `t911/repair` has no upstream configured; merge/integration is a
+  Director decision.

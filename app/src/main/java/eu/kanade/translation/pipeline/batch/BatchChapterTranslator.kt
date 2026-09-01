@@ -14,6 +14,9 @@ import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
@@ -189,7 +192,17 @@ internal class BatchChapterTranslator(
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
     ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
-        if (orderedStreams.isEmpty()) return null
+        if (orderedStreams.isEmpty()) {
+            // T911 slice 3 (R4): a zero-page chapter must terminate its tracker.
+            // The empty ordered set keeps this a DISTINCT zero-page failure
+            // (0 total pages, aborted with a reason) — the sheet's hero renders
+            // it as FAILED_NO_PAGES, never as a numeric 0/0 or a generic error.
+            tracker?.abort(
+                remainingPageKeys = emptySet(),
+                reason = "Chapter has no readable pages to translate",
+            )
+            return null
+        }
         val resolvedNaturalPageIndexes = if (naturalPageIndexes.isNotEmpty()) {
             naturalPageIndexes
         } else {
@@ -226,6 +239,13 @@ internal class BatchChapterTranslator(
                     // Phase 3: no batch page lease outlives its run, whatever exit
                     // path the batch takes.
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
+                    // T911 slice 3: an engine-setup failure is an exceptional
+                    // exit — terminate the tracker with the typed reason instead
+                    // of leaving a live nonterminal tracker behind.
+                    tracker?.abort(
+                        remainingPageKeys = remainingAbortKeys(orderedStreams, store),
+                        reason = "Translation could not start: batch engine setup failed or timed out",
+                    )
                     return@withGeneration null
                 }
 
@@ -521,6 +541,13 @@ internal class BatchChapterTranslator(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
                     }
+                    // T911 slice 3: the OOM abort is a terminal exit — emit the
+                    // aborted snapshot with the still-untranslated pages instead
+                    // of leaving a live nonterminal tracker behind.
+                    tracker?.abort(
+                        remainingPageKeys = remainingAbortKeys(orderedStreams, store),
+                        reason = "Translation aborted: device memory pressure (OOM)",
+                    )
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                     store.flush()
                     return@withGeneration null
@@ -680,5 +707,24 @@ internal class BatchChapterTranslator(
             throw BatchPersistenceRejectedException(pageKey = pageKey, stage = stage)
         }
         return true
+    }
+
+    internal companion object {
+        /**
+         * T911 slice 3: pages that are NOT durably terminal when the batch
+         * aborts (OOM / engine-setup failure). Rendered, textless, and already
+         * failed pages carry their outcome in the store; everything else in the
+         * ordered work set is "remaining" and is reported by the aborted
+         * terminal snapshot. Pure and unit-testable.
+         */
+        internal fun remainingAbortKeys(
+            orderedStreams: List<Pair<String, () -> InputStream>>,
+            store: ChapterTranslationStore,
+        ): Set<String> {
+            val durablyTerminal = store.state.value.filterValues { page ->
+                page.hasRenderedResult || page.isTextlessTerminal || page.isStageFailed
+            }.keys
+            return orderedStreams.mapTo(mutableSetOf()) { it.first } - durablyTerminal
+        }
     }
 }

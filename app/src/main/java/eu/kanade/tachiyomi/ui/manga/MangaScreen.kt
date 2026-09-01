@@ -135,7 +135,14 @@ class MangaScreen(
             onChapterClicked = { openChapter(context, it) },
             onDownloadChapter = screenModel::runChapterDownloadActions.takeIf { !successState.source.isLocalOrStub() },
             // TachiyomiAT
-            onTranslationChapter = screenModel::runChapterTranslationActions,
+            onTranslationChapter = { item, action ->
+                screenModel.runChapterTranslationActions(item, action)
+            },
+            // T911 slice 2 (R6): multi-select bottom bar reaches the model's
+            // list API so ONE confirmation represents the whole selection.
+            onTranslationChapters = { items, action ->
+                screenModel.runChapterTranslationActions(items, action)
+            },
             onAddToLibraryClicked = {
                 screenModel.toggleFavorite()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -289,9 +296,17 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.TranslationProgress -> {
                 val item = successState.chapters.firstOrNull { it.id == dialog.chapterId }
+                // TachiyomiAT T911 slice 1: read-only download join from the same
+                // chapter-row download state; the downloader never owns
+                // translation state, the drawer only displays it.
+                val activeDownload = screenModel.activeDownloadFor(dialog.chapterId)
                 TranslationProgressSheet(
                     chapterName = item?.chapter?.name.orEmpty(),
                     snapshot = item?.translationProgress ?: TranslationProgressSnapshot.empty(dialog.chapterId),
+                    downloadState = item?.downloadState,
+                    downloadProgress = item?.downloadProgress ?: 0,
+                    downloadedPages = activeDownload?.downloadedImages?.takeIf { it > 0 },
+                    totalDownloadPages = activeDownload?.pages?.size?.takeIf { it > 0 },
                     onDismissRequest = onDismissRequest,
                     onResume = {
                         if (item != null) {
@@ -345,7 +360,9 @@ class MangaScreen(
 
             is MangaScreenModel.Dialog.ConfirmTranslation -> {
                 ConfirmTranslationDialog(
-                    chapterName = dialog.item.chapter.name,
+                    chapterNames = dialog.group
+                        .ifEmpty { listOf(dialog.item) }
+                        .map { it.chapter.name },
                     summary = dialog.summary,
                     showAgain = screenModel.translationConfirmPretranslate(),
                     onShowAgainChange = screenModel::setConfirmPretranslate,

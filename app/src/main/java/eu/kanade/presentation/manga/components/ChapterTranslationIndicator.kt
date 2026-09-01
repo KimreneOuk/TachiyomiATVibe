@@ -49,6 +49,29 @@ enum class ChapterTranslationAction {
     DELETE,
 }
 
+/**
+ * T911 slice 1: tap routing table for the chapter translation indicator.
+ * Every state with observable translation work (pending, queued, downloading,
+ * translating, paused, translated, warning, error) routes a tap to the
+ * progress drawer (DETAILS) so progress and diagnostics are always
+ * discoverable. Only a chapter with no work and no pending request starts a
+ * new batch from a tap.
+ */
+fun translationIndicatorTapAction(
+    state: Translation.State,
+    hasPendingRequest: Boolean,
+): ChapterTranslationAction = when (state) {
+    Translation.State.NOT_TRANSLATED ->
+        if (hasPendingRequest) ChapterTranslationAction.DETAILS else ChapterTranslationAction.START
+    Translation.State.QUEUE,
+    Translation.State.TRANSLATING,
+    Translation.State.PAUSED,
+    Translation.State.TRANSLATED,
+    Translation.State.READY_WITH_WARNINGS,
+    Translation.State.ERROR,
+    -> ChapterTranslationAction.DETAILS
+}
+
 @Composable
 fun ChapterTranslationIndicator(
     enabled: Boolean,
@@ -297,8 +320,18 @@ private fun TranslatedIndicator(
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
+                // T911 slice 1: tap routes to the progress drawer so completed
+                // progress/warning detail stays discoverable; the retranslate
+                // and delete actions remain on long-press.
                 onLongClick = { isMenuExpanded = true },
-                onClick = { isMenuExpanded = true },
+                onClick = {
+                    onClick(
+                        translationIndicatorTapAction(
+                            state = translationState,
+                            hasPendingRequest = false,
+                        )
+                    )
+                },
             ),
         contentAlignment = Alignment.Center,
     ) {
@@ -332,6 +365,7 @@ private fun ErrorIndicator(
     enabled: Boolean,
     modifier: Modifier = Modifier,
     onClick: (ChapterTranslationAction) -> Unit,
+    translationState: Translation.State = Translation.State.ERROR,
 ) {
     Box(
         modifier = modifier
@@ -339,8 +373,17 @@ private fun ErrorIndicator(
             .commonClickable(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
+                // T911 slice 1: tap opens the progress drawer with the failure
+                // detail; retry stays available on long-press.
                 onLongClick = { onClick(ChapterTranslationAction.START) },
-                onClick = { onClick(ChapterTranslationAction.START) },
+                onClick = {
+                    onClick(
+                        translationIndicatorTapAction(
+                            state = translationState,
+                            hasPendingRequest = false,
+                        )
+                    )
+                },
             ),
         contentAlignment = Alignment.Center,
     ) {

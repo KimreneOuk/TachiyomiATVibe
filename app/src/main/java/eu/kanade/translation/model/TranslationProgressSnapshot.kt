@@ -68,6 +68,14 @@ data class TranslationProgressSnapshot(
     val nextEligibleRetryAtEpochMs: Long? = null,
     /** Immediate pre-tracker acknowledgement, when a request is still preparing or downloading. */
     val requestState: TranslationRequestState? = null,
+    /**
+     * T911 slice 2: this chapter's 1-based position among the outstanding
+     * translation-queue entries (QUEUE/TRANSLATING) while it waits behind
+     * other work. Null when not queued.
+     */
+    val queuePosition: Int? = null,
+    /** Total outstanding queue entries when [queuePosition] is set. */
+    val queueTotal: Int? = null,
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages

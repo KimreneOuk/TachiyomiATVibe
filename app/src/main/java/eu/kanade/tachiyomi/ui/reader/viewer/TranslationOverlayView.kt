@@ -3,7 +3,7 @@ package eu.kanade.tachiyomi.ui.reader.viewer
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.RectF
+import android.graphics.Path
 import android.graphics.Typeface
 import android.util.AttributeSet
 import android.view.Choreographer
@@ -12,6 +12,8 @@ import androidx.core.content.res.ResourcesCompat
 import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.rendering.BlockLayout
+import eu.kanade.translation.rendering.ComponentClipCache
 import eu.kanade.translation.rendering.TextAlign
 import eu.kanade.translation.rendering.TextLayoutPlanner
 import eu.kanade.translation.rendering.TextMeasurer
@@ -55,7 +57,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     private var blocks: List<TranslationBlock> = emptyList()
     private var pageWidth = 0
     private var pageHeight = 0
-    private var layouts = emptyList<eu.kanade.translation.rendering.BlockLayout>()
+    private var preparedLayouts = emptyList<PreparedOverlayLayout>()
     private var framePending = false
     private val frameCallback = Choreographer.FrameCallback {
         framePending = false
@@ -67,8 +69,46 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         this.blocks = blocks
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
-        this.layouts = TextLayoutPlanner.plan(blocks, pageWidth.toFloat(), pageHeight.toFloat(), 1, false, measurer)
+        val layouts = TextLayoutPlanner.plan(blocks, pageWidth.toFloat(), pageHeight.toFloat(), 1, false, measurer)
+        prepareLayouts(layouts, pageWidth, pageHeight)
         invalidate()
+    }
+
+    /**
+     * Build bounded component paths at bind time. Missing/invalid component
+     * metadata degrades to the available cell/legacy clips and still draws,
+     * preserving the planner's never-drop contract.
+     */
+    private fun prepareLayouts(layouts: List<BlockLayout>, pageWidth: Int, pageHeight: Int) {
+        val clipCache = ComponentClipCache<Path>(MAX_CACHED_COMPONENTS, MAX_CACHED_SPANS) { component ->
+            Path().apply {
+                fillType = Path.FillType.WINDING
+                for (span in component.spans) {
+                    addRect(
+                        span.start.toFloat(),
+                        span.y.toFloat(),
+                        span.endExclusive.toFloat(),
+                        span.y + 1f,
+                        Path.Direction.CW,
+                    )
+                }
+            }
+        }
+        preparedLayouts = layouts.map { layout ->
+            val geometry = layout.maskGeometry
+            val componentPath = if (
+                geometry != null &&
+                geometry.width == pageWidth &&
+                geometry.height == pageHeight &&
+                layout.planGeometryId != null &&
+                layout.maskComponentId != null
+            ) {
+                clipCache.resolve(layout.planGeometryId, layout.maskComponentId, geometry)
+            } else {
+                null
+            }
+            PreparedOverlayLayout(layout, componentPath)
+        }
     }
 
     fun clear() = bind(null, emptyList(), 0, 0)
@@ -100,7 +140,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         canvas.save()
         canvas.translate(topLeft.x, topLeft.y)
         canvas.scale(scaleX, scaleY)
-        layouts.forEach { layout -> drawLayout(canvas, layout) }
+        for (prepared in preparedLayouts) drawLayout(canvas, prepared)
         canvas.restore()
     }
 
@@ -132,7 +172,8 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         }
     }
 
-    private fun drawLayout(canvas: Canvas, layout: eu.kanade.translation.rendering.BlockLayout) {
+    private fun drawLayout(canvas: Canvas, prepared: PreparedOverlayLayout) {
+        val layout = prepared.layout
         val textColor = layout.block.textColor.toInt()
         val luma =
             ((textColor shr 16 and 0xFF) * 299 + (textColor shr 8 and 0xFF) * 587 + (textColor and 0xFF) * 114) / 1000
@@ -141,11 +182,17 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         stroke.color = if (luma < 128) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
         stroke.strokeWidth = max(2f, layout.strokeWidth)
         stroke.textSize = layout.fontSizePx
-        val saved = layout.clipRect?.let { clip ->
-            canvas.save().also { canvas.clipRect(RectF(clip.left, clip.top, clip.right, clip.bottom)) }
-        }
+        // Every layout form consumes the same structural clip intersection:
+        // component path -> independent cell -> legacy collision clip.
+        val saved = canvas.save()
         try {
-            if (layout.isVertical) {
+            prepared.componentPath?.let(canvas::clipPath)
+            layout.cellRect?.let { cell -> canvas.clipRect(cell.left, cell.top, cell.right, cell.bottom) }
+            layout.clipRect?.let { clip -> canvas.clipRect(clip.left, clip.top, clip.right, clip.bottom) }
+            val positioned = layout.positionedLines
+            if (positioned != null) {
+                drawPositionedLayout(canvas, layout, positioned)
+            } else if (layout.isVertical) {
                 drawVerticalLayout(canvas, layout)
             } else {
                 val lines = layout.lines
@@ -165,11 +212,55 @@ internal class TranslationOverlayView @JvmOverloads constructor(
                 }
             }
         } finally {
-            if (saved != null) canvas.restoreToCount(saved)
+            canvas.restoreToCount(saved)
         }
     }
 
+    /**
+     * T912 quality repair: draws the planner's positioned lines with the same
+     * convention [PageTextRenderer]'s one-line StaticLayouts produce. Clips are
+     * applied by [drawLayout] once per layout, then each line is translated to
+     * its integer placement and drawn stroke-then-fill
+     * top-anchored at (leftPx, topPx), i.e. baseline = top - ascent, x = left,
+     * LEFT-aligned. Per-frame allocation stays limited to the draw calls
+     * themselves (no StaticLayout in the overlay).
+     */
+    private fun drawPositionedLayout(
+        canvas: Canvas,
+        layout: eu.kanade.translation.rendering.BlockLayout,
+        lines: List<eu.kanade.translation.rendering.PositionedLine>,
+    ) {
+        fill.textAlign = Paint.Align.LEFT
+        stroke.textAlign = Paint.Align.LEFT
+        val ascent = fill.fontMetrics.ascent
+        for (line in lines) {
+            if (line.text.isEmpty()) continue
+            val lineSave = canvas.save()
+            canvas.translate(line.leftPx.toFloat(), line.topPx.toFloat())
+            val baseline = -ascent
+            canvas.drawText(line.text, 0f, baseline, stroke)
+            canvas.drawText(line.text, 0f, baseline, fill)
+            canvas.restoreToCount(lineSave)
+        }
+    }
+
+    /** Android-test seam: bind already-planned layouts without an SSIV. */
+    internal fun bindLayoutsForTest(layouts: List<BlockLayout>, pageWidth: Int, pageHeight: Int) {
+        this.pageWidth = pageWidth
+        this.pageHeight = pageHeight
+        prepareLayouts(layouts, pageWidth, pageHeight)
+    }
+
+    /** Android-test seam: exercises the exact production prepared draw path. */
+    internal fun drawLayoutsForTest(canvas: Canvas) {
+        for (prepared in preparedLayouts) drawLayout(canvas, prepared)
+    }
+
+    private data class PreparedOverlayLayout(val layout: BlockLayout, val componentPath: Path?)
+
     private companion object {
+        private const val MAX_CACHED_COMPONENTS = 64
+        private const val MAX_CACHED_SPANS = 100_000
         private const val VERTICAL_CHAR_STEP = 1.05f
         private const val VERTICAL_COL_STEP = 1.25f
         private val VERTICAL_PUNCTUATION_MAP = mapOf(
