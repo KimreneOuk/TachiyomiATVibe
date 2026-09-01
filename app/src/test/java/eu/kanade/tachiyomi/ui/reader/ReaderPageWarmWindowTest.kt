@@ -29,4 +29,18 @@ class ReaderPageWarmWindowTest {
         ReaderPageWarmWindow.contains(pageIndex = 14, currentIndex = 16, lastIndex = 199) shouldBe true
         ReaderPageWarmWindow.contains(pageIndex = 18, currentIndex = 16, lastIndex = 199) shouldBe true
     }
+
+    @Test
+    fun `contains rejects all pages when currentIndex is negative`() {
+        ReaderPageWarmWindow.contains(pageIndex = 0, currentIndex = -1, lastIndex = 199) shouldBe false
+        ReaderPageWarmWindow.contains(pageIndex = 1, currentIndex = -1, lastIndex = 199) shouldBe false
+    }
+
+    @Test
+    fun `contains respects webtoon radius`() {
+        ReaderPageWarmWindow.contains(pageIndex = 10, currentIndex = 14, lastIndex = 50, radius = 4) shouldBe true
+        ReaderPageWarmWindow.contains(pageIndex = 9, currentIndex = 14, lastIndex = 50, radius = 4) shouldBe false
+        ReaderPageWarmWindow.contains(pageIndex = 18, currentIndex = 14, lastIndex = 50, radius = 4) shouldBe true
+        ReaderPageWarmWindow.contains(pageIndex = 19, currentIndex = 14, lastIndex = 50, radius = 4) shouldBe false
+    }
 }

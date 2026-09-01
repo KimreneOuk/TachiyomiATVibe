@@ -858,7 +858,7 @@ class ReaderViewModel @JvmOverloads constructor(
         val pages = page.chapter.pages?.filterIsInstance<ReaderPage>() ?: return false
         val pageIndex = pages.indexOfFirst { it === page }.takeIf { it >= 0 } ?: page.index
         val currentIndex = if (page.chapter === getCurrentChapter()) {
-            chapterPageIndex
+            if (chapterPageIndex >= 0) chapterPageIndex else page.chapter.requestedPage
         } else {
             page.chapter.requestedPage
         }
@@ -958,6 +958,11 @@ class ReaderViewModel @JvmOverloads constructor(
         }
 
         loader.loadChapter(chapter)
+
+        val landingIndex = chapter.requestedPage.coerceAtLeast(0)
+        if (chapterPageIndex < 0) {
+            chapterPageIndex = landingIndex
+        }
 
         val chapterPos = chapterList.indexOf(chapter)
         val newChapters = ViewerChapters(
@@ -2711,7 +2716,8 @@ class ReaderViewModel @JvmOverloads constructor(
                     readerPage.translation = resolvedDisplay
                 }
                 state.value.viewerChapters?.currChapter?.let { current ->
-                    updateTranslationWorkingSet(current, chapterPageIndex, dispatchRefresh = false)
+                    val targetIndex = if (chapterPageIndex >= 0) chapterPageIndex else current.requestedPage
+                    updateTranslationWorkingSet(current, targetIndex, dispatchRefresh = false)
                 }
                 // Derive the live state from what we just observed, then merge
                 // with the batch state. TRANSLATING wins; then ERROR; then

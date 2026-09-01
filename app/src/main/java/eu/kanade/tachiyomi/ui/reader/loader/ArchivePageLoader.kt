@@ -13,6 +13,7 @@ import tachiyomi.core.common.util.system.ImageUtil
 internal class ArchivePageLoader(
     private val reader: ArchiveReader,
     private val translations: Map<String, PageTranslation>,
+    private val resolveTranslatedStream: ((PageTranslation) -> (() -> java.io.InputStream)?)? = null,
 ) : PageLoader() {
     override var isLocal: Boolean = true
 
@@ -24,9 +25,15 @@ internal class ArchivePageLoader(
             .filter { it.isFile && ImageUtil.isImage(it.name) { reader.getInputStream(it.name)!! } }
             .sortedWith { f1, f2 -> f1.name.compareToCaseInsensitiveNaturalOrder(f2.name) }
             .mapIndexed { i, entry ->
+                val pageTranslation = translations[entry.name]
+                val stream = pageTranslation?.let { resolveTranslatedStream?.invoke(it) }
                 ReaderPage(i).apply {
                     sourceFileName = entry.name
-                    translation = translations[entry.name]
+                    translation = pageTranslation
+                    if (stream != null) {
+                        translatedStream = stream
+                        showTranslatedImage = true
+                    }
                     // TachiyomiAT: null-safe stream — if the entry vanished or
                     // the archive is corrupt, throw an explicit IOException
                     // instead of an NPE so the reader's error-handling can

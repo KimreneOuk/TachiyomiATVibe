@@ -72,9 +72,12 @@ internal class DownloadPageLoader(
         file: UniFile,
         translations: Map<String, PageTranslation>,
     ): List<ReaderPage> {
-        val loader = ArchivePageLoader(file.archiveReader(context), translations).also {
-            archivePageLoader =
-                it
+        val loader = ArchivePageLoader(
+            file.archiveReader(context),
+            translations,
+            ::resolveTranslatedStream,
+        ).also {
+            archivePageLoader = it
         }
         return loader.getPages()
     }
@@ -82,6 +85,8 @@ internal class DownloadPageLoader(
     private fun getPagesFromDirectory(translations: Map<String, PageTranslation>): List<ReaderPage> {
         val pages = downloadManager.buildPageList(source, manga, chapter.chapter.toDomainChapter()!!)
         return pages.map { (fileName, page) ->
+            val pageTranslation = translations[fileName]
+            val stream = pageTranslation?.let(::resolveTranslatedStream)
             ReaderPage(
                 page.index,
                 page.url,
@@ -99,7 +104,11 @@ internal class DownloadPageLoader(
                 },
             ).apply {
                 sourceFileName = fileName
-                translation = translations[fileName]
+                translation = pageTranslation
+                if (stream != null) {
+                    translatedStream = stream
+                    showTranslatedImage = true
+                }
                 status = Page.State.READY
             }
         }
