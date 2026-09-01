@@ -25,6 +25,13 @@ import org.junit.jupiter.api.Test
  * Fix 1 (the overlay consuming the positioned layout model) is an Android
  * View and has no JVM test surface; its compile gate plus the
  * PageTextRenderer-mirrored semantics are the automated proof.
+ *
+ * T912 containment-first ordering: the contained reflow rescue now runs for
+ * EVERY masked horizontal block BEFORE the Fix 2 band-acceptance guard, and
+ * sibling font harmony (Fix 3) caps whatever was adopted. The tests below
+ * reach the Fix 2 machinery via fixtures whose rescue declines (a degenerate
+ * OCR box below the rescue's 4px home minimum); the harmony fixture lets the
+ * rescue adopt so the cap demonstrably binds on an adopted layout.
  */
 class TextLayoutPlannerQualityRepairTest {
 
@@ -82,13 +89,18 @@ class TextLayoutPlannerQualityRepairTest {
 
     @Test
     fun `bands that merely match the rectangle fit are rejected for the legacy rectangle layout`() {
+        // Re-pinned fixture for T912 containment-first: the rescue must decline
+        // for the band-acceptance guard to be reached. The degenerate 3x3 OCR
+        // box (same cell center) is below the rescue's 4px home minimum, so the
+        // block falls to the band path exactly as before.
+        //
         // OCR ≈ the whole cell (the 300x120 slab): the band fit (font 43) does
         // NOT beat the rectangle fit of the cell's content bounds (font 44) by
         // BAND_ACCEPT_FACTOR, and the rectangle does not overflow at its
         // fitted font → the adaptive result is REJECTED and the block keeps
         // the EXISTING legacy rectangle form in the cell's fit region, still
         // cell'd with full metadata.
-        val input = block(5f, 5f, 290f, 110f, "Hello there friend").copy(segmentationMask = fullMask())
+        val input = block(148.5f, 58.5f, 3f, 3f, "Hello there friend").copy(segmentationMask = fullMask())
 
         val plan = TextLayoutPlanner.planPage(listOf(input), 300f, 120f, 1, false, m)
 
@@ -112,13 +124,18 @@ class TextLayoutPlannerQualityRepairTest {
 
     @Test
     fun `bands that clearly beat the rectangle on a thin slanted lobe are kept`() {
+        // Re-pinned fixture for T912 containment-first: the rescue must decline
+        // for the band-acceptance guard to be reached. The degenerate 3x3 OCR
+        // box (same cell center) is below the rescue's 4px home minimum, so the
+        // block falls to the band path exactly as before.
+        //
         // The lobe is a 120px-wide band slanting 100px over 400 rows. The
         // ALL-CAPS trial splits the atomic token, and the bands follow the
         // slant across the whole 400-row slab (three short lines at font 33)
         // while the rectangle fit of the cell's content bounds manages only
         // font 26 for the atomic token → bands beat the rectangle by far →
         // adaptive kept.
-        val input = block(50f, 180f, 120f, 40f, "SUPERLONGWORD").copy(segmentationMask = slantLobeMask())
+        val input = block(108.5f, 198.5f, 3f, 3f, "SUPERLONGWORD").copy(segmentationMask = slantLobeMask())
 
         val plan = TextLayoutPlanner.planPage(listOf(input), 300f, 400f, 1, false, m)
 
@@ -142,19 +159,21 @@ class TextLayoutPlannerQualityRepairTest {
     @Test
     fun `harmony caps a wild sibling to the median multiple and is deterministic`() {
         // Three members of one full-rectangle 1200x300 component, partitioned
-        // horizontally into three slabs (OCR centers x = 200 / 600 / 1000). A
-        // keeps its adaptive bands (font 72: the ALL-CAPS trial hyphenates the
-        // atomic token and the bands beat the font-39 rectangle fit of the
-        // cell content); B and C carry long texts whose band fits do not beat
-        // their font-13 rectangle fits, so they take the legacy rectangle form
-        // at font 13. Median = 13 → cap = 18.2 → A is capped DOWN: its band
-        // fit re-runs bounded at the cap and lands on the unhyphenated text at
-        // font 18; B and C are untouched.
+        // horizontally into three slabs (OCR centers x = 200 / 600 / 1000).
+        // Re-pinned for T912 containment-first: a's OCR box is large (300x300),
+        // so its contained rescue adopts the atomic token on one line at font
+        // 30 (the OCR box's own natural reflow fit) — far above its siblings.
+        // B and C carry long texts that get no contained fit at the render
+        // floor (rescue null) and whose band fits now land as positioned lines
+        // at the font floor 8. Median = 8 → cap = 11.2 → A is capped DOWN: the
+        // band refit bounded at the cap lands on the unhyphenated token at
+        // font 11; B and C are untouched. The cap demonstrably binds on an
+        // ADOPTED rescue layout and only ever shrinks.
         val longText = "ab ".repeat(300).trimEnd()
         val token = "A".repeat(16)
         val mask = fullMask(1200, 300)
         val inputs = listOf(
-            block(550f, 100f, 100f, 100f, token, score = 0.9f).copy(blockId = "a", segmentationMask = mask),
+            block(450f, 0f, 300f, 300f, token, score = 0.9f).copy(blockId = "a", segmentationMask = mask),
             block(150f, 100f, 100f, 100f, longText, score = 0.8f).copy(blockId = "b", segmentationMask = mask),
             block(950f, 100f, 100f, 100f, longText, score = 0.7f).copy(blockId = "c", segmentationMask = mask),
         )
@@ -168,21 +187,21 @@ class TextLayoutPlannerQualityRepairTest {
         val a = byId.getValue("a")
         val b = byId.getValue("b")
         val c = byId.getValue("c")
-        // Capped DOWN to the refit under the 18.2 cap (never inflated): the
+        // Capped DOWN to the refit under the 11.2 cap (never inflated): the
         // refit's own trial does not qualify under the bounded font, so the
-        // atomic text fits on one line at font 18.
+        // atomic text fits on one line at font 11.
         val aLines = a.positionedLines.shouldNotBeNull()
         aLines shouldHaveSize 1
         aLines.single().text shouldBe token
-        a.fontSizePx shouldBe 18f
+        a.fontSizePx shouldBe 11f
         a.cellRect shouldBe FloatRect(401f, 0f, 799f, 300f)
         a.planGeometryId shouldBe 0
         a.maskComponentId shouldBe 0
-        // Below-cap members are untouched.
-        b.positionedLines.shouldBeNull()
-        b.fontSizePx shouldBe 13f
-        c.positionedLines.shouldBeNull()
-        c.fontSizePx shouldBe 13f
+        // Below-cap members are untouched (positioned band fits at the floor).
+        b.positionedLines.shouldNotBeNull()
+        b.fontSizePx shouldBe 8f
+        c.positionedLines.shouldNotBeNull()
+        c.fontSizePx shouldBe 8f
         // Every member is within the cap multiple of the median font.
         val median = listOf(a.fontSizePx, b.fontSizePx, c.fontSizePx).sorted()[1]
         listOf(a, b, c).forEach { layout ->
@@ -215,7 +234,9 @@ class TextLayoutPlannerQualityRepairTest {
         val plan = TextLayoutPlanner.planPage(inputs, 1200f, 300f, 1, false, m)
         val byId = plan.resultsInInputOrder.associate { it.identity.blockId!! to draw(it) }
         val adaptiveA = byId.getValue("a")
-        adaptiveA.positionedLines.shouldNotBeNull() // capped by harmony to the refit at font 18
+        // T912 containment-first: member A is placed by the contained rescue
+        // (positioned lines) — the seam test only needs an adaptive-form input.
+        adaptiveA.positionedLines.shouldNotBeNull()
 
         val replacement = TextLayoutPlanner.harmonizedReplacement(
             layout = adaptiveA,

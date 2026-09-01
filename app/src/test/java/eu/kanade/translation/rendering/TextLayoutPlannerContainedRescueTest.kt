@@ -178,14 +178,59 @@ class TextLayoutPlannerContainedRescueTest {
     }
 
     @Test
-    fun `non-colliding masked block never pays for the rescue`() {
-        val mask = rectMask(400, 40, 40, 360, 280)
+    fun `non-colliding masked block is placed by containment-first at its OCR home`() {
+        // T912 containment-first: the rescue runs for EVERY horizontal masked
+        // block BEFORE any shift machinery — not only for colliding ones (the
+        // collision-tail wiring left the shipped planner a no-op on real
+        // pages). A solo masked block must come out positioned at home,
+        // contained, unclipped, and the plan must stay deterministic.
+        val mask = rectMask(400, 40, 40, 360, 300)
         val b = block(80f, 80f, 160f, 120f, "hello small world", 1f, mask, "b")
         val plan = TextLayoutPlanner.planPageInternal(listOf(b), 400f, 300f, 1, false, measurer)
         val layout = draw(plan.plan.resultsInInputOrder.single())
+
+        layout.positionedLines.shouldNotBeNull()
+        layout.clipRect.shouldBeNull()
         layout.maskUsable shouldBe true
+        layout.fontSizePx shouldBe
+            TextLayoutPlanner.planPageInternal(listOf(b), 400f, 300f, 1, false, measurer)
+                .let { draw(it.plan.resultsInInputOrder.single()) }.fontSizePx
+        // At home: the origin stays inside the OCR box.
+        (layout.originX >= b.x && layout.originX <= b.x + b.width) shouldBe true
+        (layout.originY >= b.y && layout.originY <= b.y + b.height) shouldBe true
+        TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, spansOf(mask), measurer, 1f) shouldBe true
         plan.finalPlacementAttempts shouldBe 0
-        val replay = TextLayoutPlanner.planPageInternal(listOf(b), 400f, 300f, 1, false, measurer)
-        draw(replay.plan.resultsInInputOrder.single()) shouldBe layout
+    }
+
+    @Test
+    fun `beyond-cap shared-mask members are contained too`() {
+        // The shipped regression: members past the shared-cell optimization
+        // cap kept legacy far-shifted layouts because their disjoint slabs
+        // made every pair collision-exempt. With the raw-mask/component
+        // ceiling, EVERY member — optimized or not — comes out positioned and
+        // contained inside the one component.
+        val mask = rectMask(400, 20, 20, 380, 300)
+        val blocks = (0 until 9).map { i ->
+            block(
+                x = 40f + (i % 3) * 110f,
+                y = 40f + (i / 3) * 90f,
+                width = 80f,
+                height = 60f,
+                text = "block number $i text",
+                score = 1f - i * 0.01f,
+                mask = mask,
+                blockId = "b$i",
+            )
+        }
+        val plan = TextLayoutPlanner.planPageInternal(blocks, 400f, 300f, 1, false, measurer)
+        val layouts = plan.plan.resultsInInputOrder.map { draw(it) }
+        layouts.forEachIndexed { i, layout ->
+            layout.positionedLines.shouldNotBeNull()
+            layout.maskUsable shouldBe true
+            TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, spansOf(mask), measurer, 1f) shouldBe true
+            val b = blocks[i]
+            (layout.originY >= b.y - 1f && layout.originY <= b.y + b.height + 1f) shouldBe true
+        }
+        plan.plan.resultsInInputOrder.map { it.outcome }.filterIsInstance<LayoutOutcome.Draw>() shouldHaveSize 9
     }
 }

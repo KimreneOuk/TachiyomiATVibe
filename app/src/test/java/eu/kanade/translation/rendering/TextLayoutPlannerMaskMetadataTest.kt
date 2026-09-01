@@ -3,7 +3,6 @@ package eu.kanade.translation.rendering
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.segmentation.BubbleMaskRle
 import io.kotest.matchers.collections.shouldHaveSize
-import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
@@ -104,14 +103,18 @@ class TextLayoutPlannerMaskMetadataTest {
             "right" to "I FORCED YOU INTO THAT RELATIONSHIP.",
         )
 
-        // T912 quality repair (Fix 2): these full-height rectangle cells give
-        // the adaptive bands no meaningful win over the conservative rectangle
-        // fit of the cell's content bounds, so every member takes the EXISTING
-        // legacy rectangle layout inside its own cell (still Draw, still
-        // cell'd); the metadata contract above is unchanged.
+        // T912 containment-first re-pin: each sibling is now placed by the
+        // contained reflow rescue inside its own slab — positioned lines at
+        // the OCR home, each envelope-contained in the shared mask — instead
+        // of the legacy rectangle form. The metadata contract above (shared
+        // geometry, disjoint slabs, wired ids) is unchanged, and the hard
+        // clip still mirrors the wired metadata 1:1.
         plan.forEach { layout ->
-            layout.positionedLines.shouldBeNull()
+            layout.positionedLines.shouldNotBeNull().isNotEmpty() shouldBe true
             layout.lines.isNotEmpty() shouldBe true
+            val spans = layout.maskGeometry.shouldNotBeNull()
+                .components[layout.maskComponentId.shouldNotBeNull()].spans
+            TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, spans, FakeMeasurer(), 1f) shouldBe true
             layout.hardClip shouldBe HardClip(layout.planGeometryId, layout.maskComponentId, layout.cellRect)
             layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(layout.fontSizePx, 1f)
         }

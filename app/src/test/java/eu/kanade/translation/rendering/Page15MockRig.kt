@@ -282,6 +282,21 @@ class Page15MockRig {
 
         val plan = TextLayoutPlanner.planPage(blocks, pageW, pageH, 1, false, measurer)
 
+        // Probe: replan with every masked block removed — isolates whether an
+        // unmasked block's font delta is caused by masked-block interference.
+        run {
+            val unmaskedOnly = blocks.filter { it.segmentationMask == null }
+            val probe = TextLayoutPlanner.planPage(unmaskedOnly, pageW, pageH, 1, false, measurer)
+            probe.resultsInInputOrder.forEachIndexed { index, result ->
+                val b = result.block
+                if (b.translation.startsWith("Sexual intercourse")) {
+                    val l = (result.outcome as? LayoutOutcome.Draw)?.layout
+                    println("== probe (masked removed) 'Sexual intercourse…' font=${l?.fontSizePx}")
+                }
+                index
+            }
+        }
+
         // Partition/conversion diagnostics per unique mask
         println()
         println("== mask conversion diagnostics")

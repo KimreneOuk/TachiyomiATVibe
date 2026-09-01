@@ -477,11 +477,14 @@ internal object TextLayoutTuning {
     /**
      * Hard page-wide cap on band-fit evaluations the contained-fit rescue may
      * spend (each tier trial + walk-down step is one call). When exhausted,
-     * remaining colliding masked blocks skip the rescue and fall through the
-     * standard ladder + fail-open tail. Bounds the worst case regardless of
-     * block density or JIT warmth.
+     * remaining masked blocks skip the rescue and fall through the standard
+     * ladder + fail-open tail. Bounds the worst case regardless of block
+     * density or JIT warmth. Sized for containment-FIRST participation —
+     * every horizontal masked block now runs the rescue once — so the cap
+     * covers a fully masked dense page (~13-20 blocks × 1-4 fits), not just
+     * the colliding subset.
      */
-    const val MAX_RESCUE_FIT_CALLS_PER_PAGE = 24
+    const val MAX_RESCUE_FIT_CALLS_PER_PAGE = 96
 
     // ---- T912 quality repair: band acceptance and sibling font harmony -----
 
@@ -640,6 +643,48 @@ object TextLayoutPlanner {
         var finalPlacementAttempts = 0
         // T912 contained-fit rescue: page-wide band-fit budget (entry-cost guard).
         val rescueBudget = RescueBudget()
+        val collisionGap = MaskTextRegionPlanner.collisionGapPx(min(pageWidth, pageHeight), scale)
+        val gapHalf = collisionGap / 2f
+        // Ceiling conversions for blocks without cell spans share one page
+        // budget so containment-first conversion work stays bounded too.
+        val rescueConversionBudgets = MaskConversionBudgets()
+        // One rescue attempt per masked block per page (null = attempted, no
+        // contained fit / no ceiling): the resolver reuses the cached result
+        // instead of recomputing and double-spending the band-fit budget.
+        val rescueCache = HashMap<Int, BlockLayout?>()
+        fun cachedContainmentRescue(
+            inputIndex: Int,
+            block: TranslationBlock,
+            text: String,
+            cellPlan: SharedCellPlan?,
+        ): BlockLayout? {
+            if (rescueCache.containsKey(inputIndex)) return rescueCache[inputIndex]
+            val ceiling = rescueCeilingSpans(
+                block,
+                cellPlan,
+                maskGrouping,
+                inputIndex,
+                pageWidth,
+                pageHeight,
+                rescueConversionBudgets,
+            )
+            val result = if (ceiling.isNullOrEmpty()) {
+                null
+            } else {
+                containedReflowRescue(
+                    block = block,
+                    text = text,
+                    cellPlan = cellPlan,
+                    ceilingSpans = ceiling,
+                    scale = scale,
+                    collisionGap = collisionGap,
+                    measurer = measurer,
+                    budget = rescueBudget,
+                )
+            }
+            rescueCache[inputIndex] = result
+            return result
+        }
         val componentAssignments = HashSet<Long>()
         var planningOrdinal = 0
         // Slice 5 page budgets, reserved deterministically in placement order:
@@ -647,8 +692,6 @@ object TextLayoutPlanner {
         // vertical = 0.
         var positionedLinesUsed = 0
         var staticLayoutsUsed = 0
-        val collisionGap = MaskTextRegionPlanner.collisionGapPx(min(pageWidth, pageHeight), scale)
-        val gapHalf = collisionGap / 2f
         for (indexed in ordered) {
             val inputIndex = indexed.index
             val block = indexed.value
@@ -718,9 +761,38 @@ object TextLayoutPlanner {
             // (unmasked, vertical, bounds-mode cells, groupless, beyond-8)
             // goes legacy exactly as before. On band failure or a page budget
             // overflow the EXISTING legacy single-layout form is retried.
+            // T912 containment-first: EVERY horizontal masked block is placed
+            // by contained reflow from its OCR home BEFORE the shift/reshape
+            // machinery — the Director-validated model (OCR box is the home,
+            // the mask is the ceiling). Legacy placement stays the fallback
+            // when the rescue returns null or overflows the page line budget.
+            // Vertical blocks keep the rescue cached for the collision
+            // resolver (its pre-existing masked tail) but never adopt it as
+            // their layout.
+            val rescueForBlock = if (block.segmentationMask != null) {
+                cachedContainmentRescue(inputIndex, block, text, cellPlan)
+            } else {
+                null
+            }
+            val containmentFirst = if (!isVertical) rescueForBlock else null
             var layout: BlockLayout? = null
             var adaptive: AdaptiveResult? = null
-            val adaptiveEligible = !isVertical &&
+            if (containmentFirst != null) {
+                val rescueLineCount = containmentFirst.positionedLines?.size ?: 0
+                // Positioned lines are drawn via drawText, never StaticLayout —
+                // they consume ONLY the positioned-line lane. Charging the
+                // StaticLayout lane here starves later UNMASKED blocks'
+                // placement budgets and breaks the byte-identical legacy
+                // contract (observed on real page-15 data).
+                if (positionedLinesUsed + rescueLineCount <= TextLayoutTuning.MAX_POSITIONED_LINES_PER_PAGE) {
+                    positionedLinesUsed += rescueLineCount
+                    layout = containmentFirst
+                }
+                // Budget overflow → containment layout discarded; the cached
+                // rescue still feeds the resolver's masked tail below.
+            }
+            val adaptiveEligible = layout == null &&
+                !isVertical &&
                 cellPlan != null &&
                 cellPlan.optimized &&
                 cellPlan.componentId != null &&
@@ -826,6 +898,7 @@ object TextLayoutPlanner {
                     sampleSize = sampleSize,
                     measurer = measurer,
                     rescueBudget = rescueBudget,
+                    precomputedRescue = rescueForBlock,
                 )
             } else {
                 null
@@ -1301,16 +1374,68 @@ object TextLayoutPlanner {
     private class RescueBudget(var remaining: Int = TextLayoutTuning.MAX_RESCUE_FIT_CALLS_PER_PAGE)
 
     /**
+     * T912 containment-first ceiling: the row spans a masked block's text must
+     * stay inside, resolvable for EVERY masked block — not only shared-cell
+     * members. Priority:
+     *  1. the block's own optimized cell spans (span-mode shared cell);
+     *  2. the block's deterministically assigned component in its group's
+     *     shared geometry (beyond-cap overflow members, group members whose
+     *     partition produced no spans);
+     *  3. the raw persisted mask converted under the page [budgets] (groupless
+     *     masks), taking the OCR-overlapping component when one exists.
+     * Null when no usable ceiling exists (dims mismatch page, conversion
+     * budget/fallback) — the caller keeps the legacy path for the block.
+     */
+    private fun rescueCeilingSpans(
+        block: TranslationBlock,
+        cellPlan: SharedCellPlan?,
+        grouping: MaskGrouping,
+        inputIndex: Int,
+        pageWidth: Float,
+        pageHeight: Float,
+        budgets: MaskConversionBudgets,
+    ): List<MaskGeometry.RowSpan>? {
+        cellPlan?.spans?.takeIf { it.isNotEmpty() }?.let { return it }
+        val mask = block.segmentationMask ?: return null
+        // Priority 2: the group's shared geometry — its spans are page-space
+        // only when the geometry was built at page dimensions.
+        val groupId = grouping.groupByIndex[inputIndex]
+        if (groupId != null) {
+            val geometry = grouping.session.geometryFor(groupId)
+            if (geometry != null &&
+                geometry.width == pageWidth.roundToInt() &&
+                geometry.height == pageHeight.roundToInt()
+            ) {
+                resolveComponentId(geometry, block)?.let { id -> return geometry.components[id].spans }
+                return geometry.spans
+            }
+        }
+        // Priority 3: the raw persisted mask — RLE offsets are page-space
+        // only when the mask itself is page-sized.
+        if (mask.width != pageWidth.roundToInt() || mask.height != pageHeight.roundToInt()) return null
+        return when (val result = MaskGeometry.fromOrderedRle(mask, budgets)) {
+            is OrderedMaskResult.Success -> {
+                resolveComponentId(result.geometry, block)?.let { id ->
+                    result.geometry.components[id].spans
+                } ?: result.geometry.spans
+            }
+            is OrderedMaskResult.Fallback -> null
+        }
+    }
+
+    /**
      * T912 contained-fit rescue (Director-validated iteration 9 model): the
      * OCR bounding box is the home position. The text column keeps the OCR
      * box's x-range while tiers grow it VERTICALLY only; the font never
-     * exceeds the box's natural reflow fit; the mask component is a pure
-     * ceiling validated per row with the exact painted-envelope predicate.
-     * A tier is accepted immediately when its contained font reaches
-     * [TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION] of the natural fit;
-     * otherwise the largest fully-contained font across tiers wins. Returns
-     * null when no tier contains the complete text at the render floor (or
-     * the [budget] is exhausted) — the mask-unusable signal.
+     * exceeds the box's natural reflow fit; [ceilingSpans] — the block's own
+     * cell spans, its assigned mask component, or the raw persisted mask — is
+     * a pure ceiling validated per row with the exact painted-envelope
+     * predicate. A tier is accepted immediately when its contained font
+     * reaches [TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION] of the natural
+     * fit; otherwise the largest fully-contained font across tiers wins.
+     * Returns null when there is no ceiling, no tier contains the complete
+     * text at the render floor, or the [budget] is exhausted — the
+     * mask-unusable signal.
      *
      * Bounded: every band-fit call charges the page-wide [budget]; no dense
      * allocation.
@@ -1318,14 +1443,14 @@ object TextLayoutPlanner {
     private fun containedReflowRescue(
         block: TranslationBlock,
         text: String,
-        cellPlan: SharedCellPlan,
+        cellPlan: SharedCellPlan?,
+        ceilingSpans: List<MaskGeometry.RowSpan>?,
         scale: Float,
         collisionGap: Int,
         measurer: TextMeasurer,
         budget: RescueBudget,
     ): BlockLayout? {
-        val spans = cellPlan.spans
-        if (spans.isEmpty()) return null
+        val spans = ceilingSpans?.takeIf { it.isNotEmpty() } ?: return null
         val ocrLeft = block.x
         val ocrTop = block.y
         val ocrRight = block.x + block.width
@@ -1340,19 +1465,26 @@ object TextLayoutPlanner {
         val maxFont = binarySearchFontSize(text, ocrW, ocrH, ocrW, false, scale, measurer)
         val fitMinFont = FIT_MIN_FONT_PX * scale
         val regions = ArrayList<FloatRect>(TextLayoutTuning.OCR_GROW_FACTORS.size + 1)
-        val slab = cellPlan.slab
+        // Containment-first (T912 repair): the tier region is clamped to the
+        // slab ONLY for a real assigned component cell. Overflow/bounds slabs
+        // can be degenerate (zero-width strips from the partition fallback)
+        // and would strangle every tier — for those members the mask ceiling
+        // alone governs, which is the Director-validated model.
+        val slab = cellPlan?.takeIf { it.componentId != null }?.slab
         for (factor in TextLayoutTuning.OCR_GROW_FACTORS) {
             val halfH = ocrH * factor / 2f
             var region = FloatRect(ocrLeft, centerY - halfH, ocrRight, centerY + halfH)
             // Keep every acceptable candidate inside the block's own disjoint
-            // cell: the hard-cell containment check and the cell-disjointness
-            // exemption both assume a block never paints outside its slab.
+            // cell when one exists: the hard-cell containment check and the
+            // cell-disjointness exemption both assume a block never paints
+            // outside its slab. Groupless masks have no slab — the mask itself
+            // is the only ceiling.
             if (slab != null) region = region.intersection(slab)
             regions += region
         }
         // The unbounded cell-content tier exists ONLY for a real assigned
         // component cell — the mask is a ceiling, never a region supplier.
-        if (cellPlan.componentId != null) cellPlan.fitRegion?.let { regions += it }
+        if (cellPlan?.componentId != null) cellPlan.fitRegion?.let { regions += it }
         var best: BlockLayout? = null
         var bestFont = -1f
         for (region in regions) {
@@ -1380,7 +1512,8 @@ object TextLayoutPlanner {
                     maxFontPx = ceiling,
                     blockCenterX = centerX,
                     blockCenterY = centerY,
-                ) ?: break
+                )
+                ?: break
                 val candidate = adaptiveBlockLayout(block, text, region, fit, scale)
                 if (paintEnvelopeContainedInSpans(candidate, spans, measurer, scale)) {
                     if (fit.fontPx >= TextLayoutTuning.MIN_RESCUE_ACCEPT_FRACTION * maxFont) {
@@ -1590,6 +1723,7 @@ object TextLayoutPlanner {
         sampleSize: Int,
         measurer: TextMeasurer,
         rescueBudget: RescueBudget,
+        precomputedRescue: BlockLayout?,
     ): FinalResolution {
         // Shift and free-rectangle constraint bounds: page ∩ hard cell slab when
         // one exists (component/cell containment is structural), else the page.
@@ -1609,17 +1743,15 @@ object TextLayoutPlanner {
         } else {
             Float.POSITIVE_INFINITY
         }
-        // T912 contained-fit rescue: computed once per resolver entry, BEFORE
-        // the ladder. Not a counted candidate — it replaces masked candidate 1
-        // and serves as the terminal contained-with-overlap result. Non-
-        // colliding masked blocks never reach the resolver and never pay for
-        // it; the page-wide budget bounds total entry cost no matter how many
-        // blocks collide.
-        val containedRescue = if (block.segmentationMask != null && cellPlan != null) {
-            containedReflowRescue(block, text, cellPlan, scale, collisionGap, measurer, rescueBudget)
-        } else {
-            null
-        }
+        // T912 contained-fit rescue: precomputed by the placement loop for
+        // EVERY masked block (containment-first — the rescue is attempted
+        // before any shift machinery, and its cached result is reused here so
+        // the band-fit budget is never double-spent). Not a counted candidate
+        // — it replaces masked candidate 1 and serves as the terminal
+        // contained-with-overlap result. Null means the rescue was attempted
+        // and found nothing usable (no ceiling / no contained fit / budget
+        // exhausted) — the ladder then runs and the fail-open tail applies.
+        val containedRescue = precomputedRescue
         val originalLines = layout.positionedLines?.size ?: 0
         val fitMinFont = FIT_MIN_FONT_PX * scale
 

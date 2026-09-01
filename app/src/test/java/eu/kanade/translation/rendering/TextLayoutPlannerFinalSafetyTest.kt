@@ -365,20 +365,26 @@ class TextLayoutPlannerFinalSafetyTest {
 
     @Test
     fun `adjacent adaptive slabs with overlapping occupancy boxes are exempt at zero attempts`() {
-        // Two members of one full-rectangle mask, OCR centers (100,30) and
-        // (140,90) on a 300x120 page: the Y spread wins so the partition is
+        // Two members of one full-rectangle mask, OCR centers (100,36) and
+        // (140,84) on a 300x120 page: the Y spread wins so the partition is
         // VERTICAL — cut 60 with the 2px dead zone gives slabs
-        // [0,300]x[0,59] and [0,300]x[61,120]. Both take adaptive layouts at
-        // large fonts whose per-line conservative occupancies (line rect plus
-        // stroke + AA + half-gap, ~7.9px per side) poke several px PAST their
-        // own slabs into the dead zone, so the union boxes overlap even though
-        // the painted ink cannot. The hard-cell exemption classifies the pair
-        // as structurally separated: zero evaluated attempts, outcomes
-        // unchanged.
+        // [0,300]x[0,59] and [0,300]x[61,120]. Both take adaptive band
+        // layouts (font 49) whose single lines sit flush against the cut, so
+        // the stroke/AA/half-gap inflation (~7.9px per side) pushes each
+        // occupancy box across the dead zone into its sibling's, even though
+        // the painted ink cannot leave its own slab. The hard-cell exemption
+        // classifies the pair as structurally separated: zero evaluated
+        // attempts, outcomes unchanged.
+        //
+        // Re-pinned fixture for T912 containment-first: the boxes hug the
+        // dead zone so non-vacuousness still holds now that adopted rescue
+        // layouts keep most masked blocks' envelopes near their OCR homes
+        // (the original 40px-tall OCR boxes produce contained rescue layouts
+        // whose occupancy boxes no longer overlap).
         val mask = BubbleMaskRle(300, 120, listOf(0, 0, 300, 120), listOf(0, 300 * 120), score = 1f)
-        val upper = block(60f, 10f, 80f, 40f, "HI", score = 0.9f)
+        val upper = block(60f, 13f, 80f, 46f, "HI", score = 0.9f)
             .copy(blockId = "upper", segmentationMask = mask)
-        val lower = block(100f, 70f, 80f, 40f, "YO", score = 0.8f)
+        val lower = block(100f, 61f, 80f, 46f, "YO", score = 0.8f)
             .copy(blockId = "lower", segmentationMask = mask)
 
         val resolution = TextLayoutPlanner.planPageInternal(listOf(upper, lower), 300f, 120f, 1, false, m)

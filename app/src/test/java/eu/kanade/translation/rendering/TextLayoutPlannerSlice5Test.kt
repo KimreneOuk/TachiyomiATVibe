@@ -14,6 +14,10 @@ import org.junit.jupiter.api.Test
  * StaticLayout/positioned-line reservation in placement order with the
  * legacy retry and explicit `STATIC_LAYOUT_BUDGET_EXHAUSTED`, the 24-line
  * block cap fallback, and the 65th-distinct-pair cap semantics.
+ *
+ * T912 containment-first re-pins: masked horizontal blocks are placed by the
+ * contained reflow rescue before the band/legacy machinery; the tests below
+ * exercise the band/legacy machinery via fixtures whose rescue declines.
  */
 class TextLayoutPlannerSlice5Test {
 
@@ -56,13 +60,13 @@ class TextLayoutPlannerSlice5Test {
     // ---- eligibility and positioned-line contract -------------------------
 
     @Test
-    fun `span mode horizontal block on a rectangle cell keeps the legacy rectangle layout`() {
-        // T912 quality repair (Fix 2): the cell's content bounds span the whole
-        // 300x120 rectangle, so the band fit (font 43) does NOT beat the
-        // conservative rectangle fit (font 44) of the same cell — bands must
-        // win by BAND_ACCEPT_FACTOR to be accepted. The adaptive result is
-        // REJECTED and the block keeps the EXISTING legacy rectangle form in
-        // the cell's fit region, with the identical metadata contract.
+    fun `span mode horizontal block on a rectangle cell takes the contained rescue from its ocr home`() {
+        // Re-pinned for T912 containment-first: the masked block is placed by
+        // the contained reflow rescue BEFORE any band/legacy machinery. The
+        // OCR box (60,40)-(180,80) is the home: the column keeps its x-range
+        // and the natural reflow fit (font 16 for the 18-char text in 120px)
+        // wraps to two positioned lines inside the mask ceiling. Still a Draw
+        // with the identical hard-cell metadata contract.
         val mask = fullMask(300, 120)
         val input = block(60f, 40f, 120f, 40f, "Hello there friend").copy(segmentationMask = mask)
 
@@ -70,19 +74,26 @@ class TextLayoutPlannerSlice5Test {
 
         val result = plan.resultsInInputOrder.single()
         val layout = (result.outcome as LayoutOutcome.Draw).layout
-        layout.positionedLines.shouldBeNull()
-        layout.lines.isNotEmpty() shouldBe true
+        val lines = layout.positionedLines.shouldNotBeNull()
+        lines.map { it.text } shouldBe listOf("Hello there", "friend")
+        lines.joinToString(" ") { it.text } shouldBe "Hello there friend"
         layout.text shouldBe "Hello there friend"
-        // Legacy rectangle placement inside the cell's fit region: centered on
-        // the region, region-minus-padding safe rect, region-fit font.
-        layout.safeW shouldBe 292f
-        layout.safeH shouldBe 112f
+        // Contained rescue placement: anchored at the OCR home, font bounded
+        // by the OCR box's own reflow fit, region = the OCR box.
+        layout.originX shouldBe 120f
+        layout.originY shouldBe 60f
+        layout.fontSizePx shouldBe 16f
+        layout.safeW shouldBe 120f
+        layout.safeH shouldBe 40f
+        layout.maskUsable shouldBe true
+        // Contained: every line's painted envelope lies inside the mask
+        // ceiling (the assigned component's row spans).
+        val spans = layout.maskGeometry.shouldNotBeNull()
+            .components[layout.maskComponentId.shouldNotBeNull()].spans
+        TextLayoutPlanner.paintEnvelopeContainedInSpans(layout, spans, m, 1f) shouldBe true
         layout.drawAlign shouldBe TextAlign.CENTER
         layout.clipRect.shouldBeNull()
-        layout.originX shouldBe 150f
-        layout.originY shouldBe 60f
-        layout.fontSizePx shouldBe 44f
-        layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(44f, 1f)
+        layout.strokeWidth shouldBe TextLayoutPlanner.computeStrokeWidth(16f, 1f)
         // Hard clip mirrors the span-mode metadata: ids + the slab.
         layout.hardClip shouldBe HardClip(0, 0, FloatRect(0f, 0f, 300f, 120f))
         layout.cellRect shouldBe FloatRect(0f, 0f, 300f, 120f)
@@ -92,9 +103,15 @@ class TextLayoutPlannerSlice5Test {
 
     @Test
     fun `all caps trial inserts hyphens into planned lines only`() {
+        // Re-pinned fixture for T912 containment-first: with the original
+        // 120x40 OCR box the contained reflow rescue places the atomic token
+        // whole at its natural fit, so the ALL-CAPS trial is never needed.
+        // The degenerate 3x3 OCR box (same cell center) is below the rescue's
+        // 4px home minimum, the rescue declines, and the block reaches the
+        // adaptive band ladder whose trial machinery is under test.
         val mask = fullMask(300, 120)
         val original = "A".repeat(16)
-        val input = block(60f, 40f, 120f, 40f, original).copy(segmentationMask = mask)
+        val input = block(118.5f, 58.5f, 3f, 3f, original).copy(segmentationMask = mask)
 
         val plan = TextLayoutPlanner.planPage(listOf(input), 300f, 120f, 1, false, m)
 
@@ -135,33 +152,32 @@ class TextLayoutPlannerSlice5Test {
     }
 
     @Test
-    fun `adaptive block reserves two static layouts per positioned line`() {
-        // One adaptive block with 2 positioned lines (4 StaticLayouts), then
-        // 255 legacy horizontal blocks: 4 + 2k <= 512 → k <= 254 draws, the
-        // 255th legacy block NonDraws. If the adaptive block reserved only 2,
-        // all 255 legacy blocks would draw — the count discriminates.
-        // T912 quality repair (Fix 2): the ALL-CAPS trial text is what lets
-        // the bands beat the rectangle fit of this tall cell (the 8-char
-        // token admits exactly one balanced break, so the hyphenated halves
-        // wrap to two lines at a far larger font than the atomic rectangle
-        // fit) and the adaptive result survives the acceptance guard.
+    fun `contained rescue positioned lines reserve zero static layouts`() {
+        // Re-pinned for T912 containment-first (was: the adaptive band path
+        // reserved 2 StaticLayouts per positioned line and the 255th legacy
+        // block NonDrawed). One contained-rescue block with 1 positioned line,
+        // then 256 legacy horizontal blocks: positioned lines draw via
+        // drawText and consume ONLY the positioned-line lane, so the 512
+        // StaticLayouts suffice for all 256 legacy blocks and EVERY block
+        // draws. The count discriminates: had the rescue charged its line to
+        // the StaticLayout lane (2), l255 would NonDraw.
         val mask = fullMask(300, 1200)
-        val adaptive = block(50f, 550f, 100f, 100f, "A".repeat(8), score = 1f)
-            .copy(blockId = "adaptive", segmentationMask = mask)
-        val legacy = (0 until 255).map { i ->
+        val rescue = block(50f, 550f, 100f, 100f, "A".repeat(8), score = 1f)
+            .copy(blockId = "rescue", segmentationMask = mask)
+        val legacy = (0 until 256).map { i ->
             block((i * 7 % 290).toFloat(), (i * 11 % 1150).toFloat(), 20f, 8f, "M", score = 0.5f)
                 .copy(blockId = "l$i")
         }
 
-        val plan = TextLayoutPlanner.planPage(listOf(adaptive) + legacy, 300f, 1200f, 1, false, m)
+        val plan = TextLayoutPlanner.planPage(listOf(rescue) + legacy, 300f, 1200f, 1, false, m)
 
-        plan.resultsInInputOrder shouldHaveSize 256
-        val adaptiveLayout = plan.drawableInRenderOrder.first()
-        adaptiveLayout.positionedLines.shouldNotBeNull() shouldHaveSize 2
-        plan.drawableInRenderOrder shouldHaveSize 255
-        val nonDraw = plan.resultsInInputOrder.last { it.outcome is LayoutOutcome.NonDraw }
-        nonDraw.identity.blockId shouldBe "l254"
-        nonDraw.outcome shouldBe LayoutOutcome.NonDraw(NonDrawReason.STATIC_LAYOUT_BUDGET_EXHAUSTED)
+        plan.resultsInInputOrder shouldHaveSize 257
+        val rescueLayout = plan.drawableInRenderOrder.first()
+        rescueLayout.positionedLines.shouldNotBeNull() shouldHaveSize 1
+        // The rescue layout drew, and every legacy block drew behind it: the
+        // StaticLayout lane was never charged for the positioned line.
+        plan.drawableInRenderOrder shouldHaveSize 257
+        plan.resultsInInputOrder.none { it.outcome is LayoutOutcome.NonDraw } shouldBe true
     }
 
     @Test
