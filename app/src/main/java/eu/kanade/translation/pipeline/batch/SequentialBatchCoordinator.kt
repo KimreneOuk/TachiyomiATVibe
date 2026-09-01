@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
@@ -30,6 +31,8 @@ class SequentialBatchCoordinator(
     private val translatorWorker: TranslatorLaneWorker,
     private val renderJoin: RenderJoinWorker,
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
+    private val awaitLeaseHandback: (suspend (String) -> Boolean)? = null,
+    private val deferredPages: MutableMap<String, PageWriteOrigin?>? = null,
 ) {
 
     suspend fun runPass1(
@@ -539,6 +542,45 @@ class SequentialBatchCoordinator(
                 }
             }
 
+            // T917 D3 defer-and-rescan: pages whose stage lease was DENIED
+            // mid-pass (another origin — e.g. a manual reader tap — owned the
+            // page) are re-run WITHIN the same pass once their lease is handed
+            // back, so a completed pass never strands a reader-owned page: the
+            // pass can only finish after every deferred page reached a terminal
+            // state. Runs ONLY on the COMPLETED path — a paused / failed /
+            // persistence-rejected pass is never extended. On re-run the
+            // worker's externally-completed gate routes the page into its
+            // SKIP_ALL branch (terminal state already on disk), so a rescan
+            // never repeats the provider call the other origin already paid.
+            // Never runs on stop paths, and resume-skip SKIP_ALL pages (null
+            // refs without a denial) are never recorded as deferrals.
+            if (stoppingOutcome == null && deferredPages?.isNotEmpty() == true) {
+                var rescanAttempt = 0
+                while (!deferredPages.isEmpty() &&
+                    stoppingOutcome == null &&
+                    rescanAttempt < RESCAN_MAX_ATTEMPTS
+                ) {
+                    rescanAttempt++
+                    currentCoroutineContext().ensureActive()
+                    for (pageKey in deferredPages.keys.toList()) {
+                        currentCoroutineContext().ensureActive()
+                        val pageIndex = orderedPages.firstOrNull { it.first == pageKey }?.second ?: 0
+                        val handedBack = awaitLeaseHandback?.invoke(pageKey) ?: true
+                        if (!handedBack) {
+                            // The lease never came back within the bound; the
+                            // reconciler reports the page honestly.
+                            continue
+                        }
+                        val entry = runOcr(pageKey to pageIndex)
+                        val rescanOutcome = processChunk(listOf(entry), finalChunk = true)
+                        completedPassPageKeys += rescanOutcome.completedPageKeysForPass()
+                        if (rescanOutcome !is ChunkCompletionOutcome.Completed) {
+                            stoppingOutcome = rescanOutcome
+                        }
+                    }
+                }
+            }
+
             val stopped = stoppingOutcome
             if (stopped != null) {
                 val paused = stopped as? ChunkCompletionOutcome.Paused
@@ -646,5 +688,11 @@ class SequentialBatchCoordinator(
     companion object {
         /** Native work remains bounded for non-contextual translators. */
         const val MAX_NATIVE_LOOKAHEAD_PAGES = 6
+
+        /**
+         * T917 D3: upper bound on same-pass rescan sweeps of deferred pages, so
+         * a page that keeps getting re-denied cannot loop the pass forever.
+         */
+        const val RESCAN_MAX_ATTEMPTS = 2
     }
 }

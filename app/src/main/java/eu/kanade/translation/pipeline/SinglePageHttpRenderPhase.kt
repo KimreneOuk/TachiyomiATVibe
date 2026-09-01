@@ -510,6 +510,31 @@ internal class SinglePageHttpRenderPhase(
             }
             pageTranslation.cleanedBitmap = null
             pageTranslation.updatedAt = System.currentTimeMillis()
+            // T917 D3: a batch that STARTED while this boundary was parked
+            // mid-flight (e.g. a reader tap held across the batch's engine
+            // setup) advances the store generation AND legitimately re-plans
+            // the chapter candidates (page identity + dependency fingerprints)
+            // without ever touching this page — the page's live lease still
+            // fences every other WRITER out. The run-level fences would then
+            // discard the owner's finished result as "late", stranding the
+            // page non-terminal even though nobody else wrote it. When this
+            // boundary STILL owns the page lease, re-derive the commit
+            // precondition from a fresh snapshot, keeping the writer fences
+            // (generation, pageVersion, lease token, block fingerprints) but
+            // dropping the batch-run plan identity (candidate generation /
+            // dependency fingerprint / artifact page version) — per D1 the
+            // lease holder is the page's exclusive writer, so plan-level
+            // identity re-planning must not invalidate its in-flight result.
+            if (store.pageLeaseOwner(pageKey) == origin) {
+                val fresh = store.snapshot(pageKey)
+                if (fresh.generation != commitPrecondition.generation) {
+                    commitPrecondition = fresh.toPrecondition().copy(
+                        candidateGenerationId = null,
+                        dependencyFingerprint = null,
+                        artifactPageVersion = null,
+                    )
+                }
+            }
             val commit = store.patchPage(
                 pageKey = pageKey,
                 expected = commitPrecondition,

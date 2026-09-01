@@ -18,6 +18,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
@@ -140,6 +141,8 @@ internal class BatchLaneWorkers(
         ChapterTranslationStore.PatchPrecondition?,
     ) -> ChapterTranslationStore.PageSnapshot?,
     private val abortBatchCandidateFn: suspend (String, String) -> Unit,
+    private val scheduleListener: BatchScheduleListener = BatchScheduleListener.NOOP,
+    private val deferredPages: MutableMap<String, PageWriteOrigin?>? = null,
 ) {
 
     val chunkCounter = AtomicLong(0L)
@@ -757,6 +760,11 @@ internal class BatchLaneWorkers(
                         "TachiyomiAT batch defers ${acquisition.owner}-owned page: " +
                             "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
                     }
+                    // T917 D3: record the deferral so the coordinator re-runs
+                    // the page within the same pass once the lease is free,
+                    // and emit the typed schedule event for observability.
+                    deferredPages?.putIfAbsent(pageKey, acquisition.owner)
+                    scheduleListener.ocrDeferred(pageKey, acquisition.owner)
                     return null
                 }
                 is LeaseAcquisition.Granted -> acquisition.lease
@@ -770,7 +778,21 @@ internal class BatchLaneWorkers(
                 artifactPageVersion = batchLease.artifactPageVersion,
             )
             val existing = store.state.value[pageKey]
-            val gate = resumeGate(existing)
+            // T917 D3: a page this pass deferred earlier (its lease was denied)
+            // that the OTHER origin has since driven to a terminal render must
+            // not be re-run: the resume plans were built before that work
+            // existed, so resumeGate would still plan RUN/WAIT_FOR_DEPENDENCY
+            // and the provider call would repeat. Force the SKIP_ALL route —
+            // the terminal state is already published, the render join keeps
+            // it, and the paid call is never repeated.
+            val externallyCompletedByOwner = existing != null &&
+                existing.hasRenderedResult &&
+                deferredPages?.remove(pageKey) != null
+            val gate = if (externallyCompletedByOwner) {
+                BatchResumeGate.SKIP_ALL
+            } else {
+                resumeGate(existing)
+            }
             if (gate == BatchResumeGate.SKIP_ALL) {
                 // Fully durable (OCR+inpaint done): no decode/slot; render reloads disk.
                 val p = existing!!
