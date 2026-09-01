@@ -158,6 +158,10 @@ The automatic translation system is the defining feature of this fork:
 > 📖 For the complete file map, the test-coverage table, and the deduplication/
 > god-file-split history of this module, see
 > [`docs/TRANSLATION_MODULE.md`](./TRANSLATION_MODULE.md).
+>
+> 📖 For the multi-modal concurrency model, storage tiers, native ML arbitration,
+> and lifecycle specifications, see
+> [`docs/architecture/translation-subsystem-coexistence.md`](./architecture/translation-subsystem-coexistence.md).
 
 ---
 
