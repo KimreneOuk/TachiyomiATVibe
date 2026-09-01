@@ -57,7 +57,7 @@ No force-push, no history rewrite on `main`, ever.
 - **D1** three-origin lease model: `PageStageLeaseTable` gains `MANUAL`/`AUTO`/`BATCH`; update all acquisition call sites; define per-resource priority in one table (stove, wallet, lease). Design note required.
 - **D2** wait-and-attach: `TranslationPipeline` single-page boundary attaches to batch-owned pages instead of returning false; `TranslationScheduler.translatePage` completes the manual intent with the batch result; `ReaderViewModel` surfaces "Translating · background job" chip state. No silent return path remains (audit C-01).
 - **D3** defer-and-rescan: `BatchLaneWorkers` records pending-handback instead of skip; `SequentialBatchCoordinator` rescans after lease release within the pass; reconciliation only after rescan; `BatchWriteGate` handback identity defined (audit C-02).
-- **D4** suppression guard: batch-active gate in `TranslationScheduler` re-arm path and `TranslationManager.openTranslationSession`; flip the Phase-1 test to green.
+- **D4** suppression guard: batch-active gate (queue entry in `QUEUE|TRANSLATING|PAUSED` retained state) on the manager's auto-entry methods — `updateAutoWindow`, `requestAutoWindow`, and the `reconcileAutoWindow` admission guard. (Correction per `engineering/phase2-design.md` §0: `openTranslationSession` only opens the reader's display store and must NOT be gated; mechanism differs from the original wording here, behavior contract unchanged.) Flip the Phase-1 test to green.
 - **Exit:** Phase-1 D2/D3/D4 tests green; paid-call-count assertions exact; no regression in existing suite. Tag: `checkpoint/t917-p2-done`. Reports: `engineering/phase2-origins.md`, `review/phase2-verification.md`.
 
 ### Phase 3 — Consistency & money (Implementer)
