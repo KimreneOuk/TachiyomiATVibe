@@ -70,6 +70,13 @@ class TranslationScheduler(
          * navigation stays responsive.
          */
         private const val JOIN_TIMEOUT_MS = 2_000L
+
+        /**
+         * T917 D2 §2.4: cap of the [manualOutcomes] map (evict-oldest). Bounds
+         * the memory a long reader session can pin to one entry per distinct
+         * manual single-page intent.
+         */
+        private const val MANUAL_OUTCOME_MAP_CAP = 32
     }
 
     // TachiyomiAT: the prior implementation launched jobs on GlobalScope and
@@ -82,6 +89,22 @@ class TranslationScheduler(
     // Sequential auto-prefetch is deduped separately via [queuedPageKeys]
     // (it uses no per-page coroutine).
     private val activePageJobs = ConcurrentHashMap<String, Job>()
+
+    /**
+     * T917 D2 §2.4: typed outcome of the last completed manual single-page
+     * intents, keyed like [activePageJobs]. Bounded (evict-oldest, cap 32) and
+     * cleared with the existing chapter-switch teardown. This is the Phase-5
+     * hook the ReaderViewModel will map to the "Translating · background job"
+     * chip — the reader already sees the owner's live stage states through the
+     * store flow, so no UI reads it yet.
+     */
+    private val manualOutcomes: MutableMap<String, SinglePageOutcome> =
+        java.util.Collections.synchronizedMap(
+            object : LinkedHashMap<String, SinglePageOutcome>(16, 0.75f, false) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, SinglePageOutcome>): Boolean =
+                    size > MANUAL_OUTCOME_MAP_CAP
+            },
+        )
 
     // Pages queued/executing inside an ordered auto-prefetch batch. Closes the
     // gap where overlapping selection windows enqueue the same page (e.g. page 6
@@ -591,8 +614,9 @@ class TranslationScheduler(
             logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
             val job = scope.launch {
                 var cancelledMidFlight = false
+                var outcome: SinglePageOutcome? = null
                 try {
-                    executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
+                    outcome = executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     // Cancelled (chapter switch / reader exit / Stop all) after the
                     // executor set ocrStatus=RUNNING but before a terminal state: the
@@ -606,6 +630,7 @@ class TranslationScheduler(
                             "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
                     }
                 } finally {
+                    outcome?.let { manualOutcomes[jobKey] = it }
                     synchronized(activePageJobs) {
                         activePageJobs.remove(jobKey)
                     }
@@ -614,7 +639,17 @@ class TranslationScheduler(
                     // rolling coordinator by [updateAutoWindow]'s manual
                     // arbitration becomes admissible again. Poke a reconcile.
                     reconcileAutoWindow()
-                    if (cancelledMidFlight) {
+                    // T917 D2 §2.3: an attach-family outcome means the job never
+                    // owned the page — it only observed the owner's terminal
+                    // commit. The stranded-RUNNING reset must be skipped for it:
+                    // a write here would flip the OWNER's (e.g. the batch's)
+                    // in-flight stages to CANCELLED. Gated on the observed
+                    // outcome, not on a new flag.
+                    val attachFamily = when (outcome) {
+                        is SinglePageOutcome.Attached, is SinglePageOutcome.AttachedUnresolved -> true
+                        else -> false
+                    }
+                    if (cancelledMidFlight && !attachFamily) {
                         // Reset stranded RUNNING on a NonCancellable child so the
                         // reset can't be torn down by the cancellation that triggered
                         // it. Guarded so a reset failure never masks the original CancellationException.
@@ -773,6 +808,9 @@ class TranslationScheduler(
             val prefix = "$chapterId:"
             queuedPageKeys.removeIf { it.startsWith(prefix) }
             queuedPageKeys.removeIf { it.startsWith("auto:$chapterId:") }
+            // T917 D2: the chapter-switch teardown also drops this chapter's
+            // recorded manual outcomes (bounded map, §2.4).
+            manualOutcomes.keys.removeAll { it.startsWith(prefix) }
             val toJoin = mutableListOf<Job>()
             val autoIterator = activeAutoJobs.entries.iterator()
             while (autoIterator.hasNext()) {
@@ -825,6 +863,7 @@ class TranslationScheduler(
             cancellation?.let(::performAutoCancellation)
             shutdownAutoCoordinator()
             queuedPageKeys.clear()
+            manualOutcomes.clear()
             val affectedChapterIds = mutableSetOf<Long>()
             val autoIterator = activeAutoJobs.entries.iterator()
             while (autoIterator.hasNext()) {
@@ -879,6 +918,7 @@ class TranslationScheduler(
                     coordinatorsToJoin += retiringAutoCoordinators
                 }
                 queuedPageKeys.clear()
+                manualOutcomes.clear()
                 val affectedChapterIds = mutableSetOf<Long>()
                 val autoIterator = activeAutoJobs.entries.iterator()
                 while (autoIterator.hasNext()) {

@@ -1399,7 +1399,7 @@ class RollingAutoCoordinatorTest {
             force: Boolean,
             stageListener: TranslationStageListener?,
             origin: PageWriteOrigin,
-        ) {}
+        ): SinglePageOutcome = SinglePageOutcome.Completed
 
         override suspend fun translateSinglePageFromStream(
             manga: tachiyomi.domain.manga.model.Manga,

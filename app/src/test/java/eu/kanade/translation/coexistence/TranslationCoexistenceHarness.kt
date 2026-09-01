@@ -367,9 +367,15 @@ internal class TranslationCoexistenceHarness private constructor(
                     nativeStageDone,
                 )
             }
-            val renderReload: suspend (Manga, Chapter, HttpSource, String) -> Bitmap? = { _, _, _, pageKey ->
+            val renderReload: suspend (Manga, Chapter, HttpSource, String) -> Bitmap? = { _, _, _, cleanedImageName ->
                 // First action of the real render path (BatchRenderJoin.kt:154).
-                barrier.arrive(CoexistenceBarrier.BarrierPoint.RENDER, pageKey)
+                // The production seam receives the CLEANED FILE NAME; the
+                // barrier is keyed by page key (publishCleanedThroughStore
+                // names the file "$pageKey.cleaned.jpg").
+                barrier.arrive(
+                    CoexistenceBarrier.BarrierPoint.RENDER,
+                    cleanedImageName.removeSuffix(".cleaned.jpg"),
+                )
                 FakeCoexistence.stubBitmap()
             }
 

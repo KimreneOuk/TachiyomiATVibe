@@ -15,6 +15,9 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
@@ -37,6 +40,7 @@ import eu.kanade.translation.pipeline.copyForResume
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.PreparedPage
+import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
@@ -115,6 +119,15 @@ class TranslationPipeline(
          * prefetch page's ONNX work can overlap this page's network call.
          */
         const val ONNX_PHASE_TIMEOUT_MS = 90_000L
+
+        /**
+         * T917 D2 §2.3: bound for the wait-and-attach observation on a denied
+         * page lease. Exactly the owner's own bounded phase chain (permit-held
+         * ONNX phase + HTTP/render phase), so the attach can never outwait the
+         * owner's own timers by construction; a pathological native hang still
+         * terminates the wait with a typed AttachedUnresolved outcome.
+         */
+        const val ATTACH_TIMEOUT_MS = ONNX_PHASE_TIMEOUT_MS + SINGLE_PAGE_TIMEOUT_MS
 
         // T909 Phase 20.1: HELD_BITMAP_MAX_COUNT / HELD_BITMAP_BYTE_CEILING moved to
         // pipeline/batch/HeldBitmapRegistry.kt with the held-bitmap registry.
@@ -320,9 +333,20 @@ class TranslationPipeline(
         force: Boolean,
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
-    ) {
-        withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
-            runSinglePageBoundary(
+    ): SinglePageOutcome {
+        val leaseStore = resolveActiveStore(manga, chapter, source)
+        // T917 D2 §2.3: lease admission holds the interactive reservation; the
+        // attach wait on a denied lease runs OUTSIDE it — a passive observer
+        // must hold no interactive wallet reservation (D6 formalizes later).
+        val acquisition = withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+            leaseStore?.let { acquireReaderPageLease(it, chapter, pageKey, origin) }
+        }
+        if (acquisition is LeaseAcquisition.Denied) {
+            return attachToOwnerTerminal(leaseStore, chapter, pageKey, acquisition)
+        }
+        return withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+            runGrantedSinglePageBoundary(
+                leaseStore = leaseStore,
                 manga = manga,
                 chapter = chapter,
                 source = source,
@@ -378,9 +402,40 @@ class TranslationPipeline(
         force: Boolean,
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
-    ) {
+    ): SinglePageOutcome {
         val leaseStore = resolveActiveStore(manga, chapter, source)
-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey, origin)) return
+        val acquisition = leaseStore?.let { acquireReaderPageLease(it, chapter, pageKey, origin) }
+        if (acquisition is LeaseAcquisition.Denied) {
+            return attachToOwnerTerminal(leaseStore, chapter, pageKey, acquisition)
+        }
+        return runGrantedSinglePageBoundary(
+            leaseStore = leaseStore,
+            manga = manga,
+            chapter = chapter,
+            source = source,
+            pageKey = pageKey,
+            streamFn = streamFn,
+            force = force,
+            stageListener = stageListener,
+            origin = origin,
+        )
+    }
+
+    /**
+     * The owned-work half of [runSinglePageBoundary]: the caller holds the page
+     * lease under [origin] for the whole body and releases it in `finally`.
+     */
+    private suspend fun runGrantedSinglePageBoundary(
+        leaseStore: ChapterTranslationStore?,
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        streamFn: (() -> InputStream)?,
+        force: Boolean,
+        stageListener: TranslationStageListener?,
+        origin: PageWriteOrigin,
+    ): SinglePageOutcome {
         try {
             val onnxResult = withNativeLane(
                 timeoutMs = ONNX_PHASE_TIMEOUT_MS,
@@ -411,9 +466,10 @@ class TranslationPipeline(
                 } finally {
                     inFlightPageKeys.remove(pageKey)
                 }
-            } ?: return
+            } ?: return SinglePageOutcome.Completed
 
-            val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult) ?: return
+            val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+                ?: return SinglePageOutcome.Completed
 
             try {
                 withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
@@ -436,33 +492,79 @@ class TranslationPipeline(
         } finally {
             releaseReaderPageLease(leaseStore, pageKey, origin)
         }
+        return SinglePageOutcome.Completed
+    }
+
+    /**
+     * T917 D2 wait-and-attach (design note §2.2-§2.3): the request did NOT
+     * acquire the page — [acquisition] carries the owning origin. The boundary
+     * does NOT open a competing writer and performs ZERO native/provider/render
+     * work; it observes the owner's terminal commit through the store's
+     * StateFlow. The owner commits its terminal stage BEFORE releasing the
+     * lease, so the stage observation carries the outcome; terminal states are
+     * last-write on a StateFlow, so conflation cannot lose the wakeup. The wait
+     * is bounded by [ATTACH_TIMEOUT_MS] — exactly the owner's own bounded phase
+     * chain — and cancellable at its single suspension point.
+     */
+    private suspend fun attachToOwnerTerminal(
+        store: ChapterTranslationStore?,
+        chapter: Chapter,
+        pageKey: String,
+        acquisition: LeaseAcquisition.Denied,
+    ): SinglePageOutcome {
+        val owner = acquisition.owner
+            ?: return SinglePageOutcome.Rejected(null, acquisition.reason)
+        if (store == null) {
+            return SinglePageOutcome.Rejected(owner, "store disappeared before attach")
+        }
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT reader single-page request attaches to $owner owner: " +
+                "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
+        }
+        val terminal = try {
+            withTimeoutOrNull(ATTACH_TIMEOUT_MS) {
+                store.state.first { snapshot ->
+                    val page = snapshot[pageKey]
+                    page != null && (page.hasRenderedResult || page.isTextlessTerminal || page.isStageFailed)
+                }
+            }
+        } catch (e: CancellationException) {
+            // §2.3: cancelled while observing (chapter switch / reader exit /
+            // Stop). Return the attach-cancelled outcome instead of propagating
+            // so the scheduler's finally sees the job never owned the page and
+            // skips markPageCancelled — a stranded-RUNNING reset here would
+            // flip the OWNER's in-flight stages to CANCELLED. No suspension
+            // happens after this catch, so swallowing cannot strand work.
+            return SinglePageOutcome.AttachedUnresolved(
+                owner,
+                "cancelled while waiting for the owner's terminal state",
+            )
+        }
+        return if (terminal != null) {
+            SinglePageOutcome.Attached(owner)
+        } else {
+            SinglePageOutcome.AttachedUnresolved(
+                owner,
+                "owner did not reach a terminal state within ${ATTACH_TIMEOUT_MS}ms",
+            )
+        }
     }
 
     /**
      * Phase 3 lease admission for reader-originated single-page work. Returns
-     * false when another origin owns the page under the T917 D1 priority
-     * matrix (a MANUAL request on a BATCH-owned page attaches to the owner's
-     * result through store emissions rather than opening a competing writer;
-     * a MANUAL request evicts an in-flight AUTO lease).
+     * the acquisition; only [LeaseAcquisition.Denied] blocks owned work under
+     * the T917 D1 priority matrix (a MANUAL request on a BATCH-owned page
+     * attaches to the owner's result through [attachToOwnerTerminal] rather
+     * than opening a competing writer; a MANUAL request evicts an in-flight
+     * AUTO lease).
      */
     private suspend fun acquireReaderPageLease(
-        store: ChapterTranslationStore?,
+        store: ChapterTranslationStore,
         chapter: Chapter,
         pageKey: String,
         origin: PageWriteOrigin,
-    ): Boolean {
-        if (store == null) return true
-        return when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, origin)) {
-            is LeaseAcquisition.Granted -> true
-            is LeaseAcquisition.Denied -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT reader single-page request attaches to ${acquisition.owner} owner: " +
-                        "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
-                }
-                false
-            }
-        }
-    }
+    ): LeaseAcquisition =
+        store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, origin)
 
     private suspend fun releaseReaderPageLease(
         store: ChapterTranslationStore?,
@@ -561,7 +663,12 @@ class TranslationPipeline(
         val leaseStore = resolveActiveStore(manga, chapter, source)
         // T917 D1: only the rolling auto coordinator calls the prepared
         // boundary — its leases are AUTO (never preemptive; MANUAL evicts it).
-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey, PageWriteOrigin.AUTO)) return null
+        // Denied is a "try again" for the coordinator (§1.3): no attach wait.
+        if (leaseStore != null &&
+            acquireReaderPageLease(leaseStore, chapter, pageKey, PageWriteOrigin.AUTO) is LeaseAcquisition.Denied
+        ) {
+            return null
+        }
         try {
             val onnxResult = withNativeLane(
                 timeoutMs = ONNX_PHASE_TIMEOUT_MS,
@@ -705,8 +812,11 @@ class TranslationPipeline(
         // handoff. Re-admit the translate/render half here (AUTO per T917 D1 —
         // only the rolling auto coordinator calls this boundary) so a batch
         // cannot acquire the page in the handoff gap and then race the
-        // prepared reference's writes.
-        if (!acquireReaderPageLease(store, chapter, prepared.pageKey, PageWriteOrigin.AUTO)) return null
+        // prepared reference's writes. Denied is a stale/race "try again" for
+        // the coordinator — no attach wait.
+        if (acquireReaderPageLease(store, chapter, prepared.pageKey, PageWriteOrigin.AUTO) is LeaseAcquisition.Denied) {
+            return null
+        }
         try {
             val snapshot = store.snapshot(prepared.pageKey)
             // Stale-reference rejection: generation, pageVersion, and the OCR block

@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * T917 Phase 1 deterministic interleaving barrier (design note §2).
@@ -47,11 +48,14 @@ class CoexistenceBarrier {
         const val WILDCARD_PAGE = "*"
     }
 
-    private data class Gate(
+    private class Gate(
         val point: BarrierPoint,
         val pageKey: String?,
         val deferred: CompletableDeferred<Unit>,
-    )
+    ) {
+        /** Claimed by the first arrival; a claimed gate stays listed so [release]/[disarm] can unpark it. */
+        val taken = AtomicBoolean(false)
+    }
 
     private val gates = CopyOnWriteArrayList<Gate>()
     private val _arrivals = MutableStateFlow<List<Pair<BarrierPoint, String>>>(emptyList())
@@ -67,7 +71,9 @@ class CoexistenceBarrier {
     /** Unparks one waiter matching (point[, pageKey]). Returns false when nothing was parked. */
     fun release(point: BarrierPoint, pageKey: String? = null): Boolean {
         val gate = gates.firstOrNull {
-            it.point == point && (pageKey == null || it.pageKey == null || it.pageKey == pageKey)
+            it.point == point &&
+                (pageKey == null || it.pageKey == null || it.pageKey == pageKey) &&
+                !it.deferred.isCompleted
         } ?: return false
         gates.remove(gate)
         gate.deferred.complete(Unit)
@@ -109,16 +115,18 @@ class CoexistenceBarrier {
 
     /**
      * Called by the fakes at their suspension points: records the arrival,
-     * then parks when a matching gate is armed (one-shot).
+     * then parks when a matching gate is armed (one-shot). The first arrival
+     * claims the gate; a second concurrent arrival passes through instead of
+     * queuing behind the same one-shot gate. A claimed gate remains listed
+     * (marked taken) so a later [release]/[disarm] can still find and unpark
+     * the parked producer.
      */
     suspend fun arrive(point: BarrierPoint, pageKey: String) {
         _arrivals.update { list -> list + (point to pageKey) }
         val gate = gates.firstOrNull {
             it.point == point && (it.pageKey == null || it.pageKey == pageKey)
         } ?: return
-        // Remove first so a second concurrent arrival passes through instead of
-        // queuing behind the same one-shot gate.
-        if (gates.remove(gate)) {
+        if (gate.taken.compareAndSet(false, true)) {
             gate.deferred.await()
         }
     }

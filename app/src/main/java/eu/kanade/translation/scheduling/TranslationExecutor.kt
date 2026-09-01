@@ -47,7 +47,7 @@ interface TranslationExecutor {
         force: Boolean = false,
         stageListener: TranslationStageListener? = null,
         origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
-    )
+    ): SinglePageOutcome
 
     suspend fun translateSinglePageFromStream(
         manga: Manga,
@@ -123,6 +123,29 @@ interface TranslationExecutor {
         prepared: PreparedPage,
         stageListener: TranslationStageListener? = null,
     ): ChunkCompletionOutcome?
+}
+
+/**
+ * T917 D2 (design note §2.4): typed outcome of one single-page intent. Replaces
+ * the previous silent `Unit` return so a denied lease can never again look like
+ * a completed intent (audit C-01): the scheduler records the outcome and its
+ * cancel path can tell "owned the page" from "only observed the owner".
+ */
+sealed interface SinglePageOutcome {
+    /** The executor ran the page itself (including resume-skip soft exits). */
+    data object Completed : SinglePageOutcome
+
+    /** The page was owned by [owner]; the executor attached to the owner's terminal commit. */
+    data class Attached(val owner: PageWriteOrigin) : SinglePageOutcome
+
+    /**
+     * The executor attached but never observed the owner's terminal commit
+     * (wait bound hit, or cancellation while observing). No page write happened.
+     */
+    data class AttachedUnresolved(val owner: PageWriteOrigin, val reason: String) : SinglePageOutcome
+
+    /** The intent could not run or attach (defunct store, unknown owner). */
+    data class Rejected(val owner: PageWriteOrigin?, val reason: String) : SinglePageOutcome
 }
 
 /**
