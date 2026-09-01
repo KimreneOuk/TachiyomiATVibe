@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
+import eu.kanade.translation.toArtifactOrigin
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
@@ -151,11 +152,14 @@ internal class SinglePageHttpRenderPhase(
         pageKey: String,
         ctx: OnnxPhaseResult,
         stageListener: TranslationStageListener? = null,
+        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     ): ChunkCompletionOutcome {
         val pageTranslation = ctx.pageTranslation
         // Reader-ad-hoc output is displayable; a later batch reuses it when
-        // its fingerprints still match.
-        pageTranslation.translationOrigin = PageWriteOrigin.READER_ADHOC.name
+        // its fingerprints still match. T917 D1 two-vocabulary rule: the lease
+        // origin (MANUAL/AUTO) maps back onto the stable durable vocabulary —
+        // never stamp the lease-layer string itself.
+        pageTranslation.translationOrigin = origin.toArtifactOrigin().name
         val store = ctx.store
         val fromLang = ctx.fromLang
         val syntheticTranslation = ctx.syntheticTranslation

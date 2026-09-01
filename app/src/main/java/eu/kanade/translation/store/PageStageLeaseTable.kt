@@ -63,7 +63,18 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     ): LeaseAcquisition = mutex.withLock {
         if (defunct) return@withLock LeaseAcquisition.Denied("store is defunct", null)
         val existing = pageLeases[pageKey]
-        if (existing != null && existing.origin != origin) {
+        // T917 D1 priority matrix: a MANUAL (reader tap) request is the one
+        // cross-origin preemption — it evicts an in-flight AUTO lease and takes
+        // a fresh record + token. It is safe by the existing fencing: the
+        // evicted AUTO holder's guarded writes fail closed on
+        // `expected.leaseToken != pageLeases[pageKey].token`, and the AUTO side
+        // already treats a lost/stale page as "try again". MANUAL-vs-BATCH is
+        // never a preemption (the caller attaches instead), and AUTO/BATCH
+        // requests never preempt anything.
+        val evictsAuto = existing != null &&
+            existing.origin == PageWriteOrigin.AUTO &&
+            origin == PageWriteOrigin.MANUAL
+        if (existing != null && existing.origin != origin && !evictsAuto) {
             return@withLock LeaseAcquisition.Denied(
                 "page owned by ${existing.origin} at stage ${existing.stage}",
                 existing.origin,

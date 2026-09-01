@@ -1,6 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -45,6 +46,7 @@ interface TranslationExecutor {
         pageKey: String,
         force: Boolean = false,
         stageListener: TranslationStageListener? = null,
+        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     )
 
     suspend fun translateSinglePageFromStream(

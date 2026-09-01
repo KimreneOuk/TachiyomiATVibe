@@ -1,19 +1,43 @@
 package eu.kanade.translation
 
+import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.TranslationBlock
 import java.security.MessageDigest
 
 /**
- * Provenance of a page write (Phase 3 reader-path interoperability, lifecycle
- * contract §12). Reader-originated work carries [READER_ADHOC]: it may be
- * committed and displayed, but it never advances ordered batch context and the
- * batch retranslates the page under the batch protocol when it reaches it.
+ * Lease-layer provenance of a page write (T917 D1 three-origin model, lifecycle
+ * contract §12). Priority on one page: MANUAL > AUTO > BATCH.
+ *
+ * - [MANUAL]: a reader tap / foreground single-page intent. Evicts an
+ *   in-flight [AUTO] lease at acquisition (fenced fail-closed for the evicted
+ *   holder) and waits-and-attaches on [BATCH] (never preempts it).
+ * - [AUTO]: reader-side automatic maintenance (rolling auto window, legacy
+ *   auto window, stranded-page sweep). Never preempts anything.
+ * - [BATCH]: an ordered chapter batch run.
+ *
+ * Two-vocabulary rule: this enum is the LEASE vocabulary only. Durable
+ * provenance keeps the stable two-value [ArtifactOrigin] vocabulary and the
+ * `pageTranslationOrigin` string stamp — map through [toArtifactOrigin] and
+ * never stamp `"MANUAL"`/`"AUTO"` strings (`PageWorkPlanner.stageEvidence`
+ * parses the stamp with `ArtifactOrigin.valueOf`; unmapped names would
+ * silently degrade provenance to UNKNOWN and shift reuse evidence).
  */
 enum class PageWriteOrigin {
+    MANUAL,
+    AUTO,
     BATCH,
-    READER_ADHOC,
+}
+
+/**
+ * Durable-provenance mapping for a lease origin (two-vocabulary rule above):
+ * MANUAL and AUTO both keep the stable reader-adhoc provenance so planner
+ * parsing and D5-adjacent reuse evidence stay unchanged.
+ */
+fun PageWriteOrigin?.toArtifactOrigin(): ArtifactOrigin = when (this) {
+    PageWriteOrigin.MANUAL, PageWriteOrigin.AUTO, null -> ArtifactOrigin.READER_ADHOC
+    PageWriteOrigin.BATCH -> ArtifactOrigin.BATCH
 }
 
 /** Small immutable reference queued after OCR has committed and native resources are released. */

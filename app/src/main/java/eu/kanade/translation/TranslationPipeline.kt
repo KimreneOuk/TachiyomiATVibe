@@ -319,6 +319,7 @@ class TranslationPipeline(
         pageKey: String,
         force: Boolean,
         stageListener: TranslationStageListener?,
+        origin: PageWriteOrigin,
     ) {
         withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
             runSinglePageBoundary(
@@ -329,6 +330,7 @@ class TranslationPipeline(
                 streamFn = null,
                 force = force,
                 stageListener = stageListener,
+                origin = origin,
             )
         }
     }
@@ -360,9 +362,12 @@ class TranslationPipeline(
      * page boundary methods below. [streamFn] is null for the reader-stream
      * peek path.
      *
-     * Phase 3: the whole boundary runs under a `READER_ADHOC` page lease. When
-     * a batch run owns the page, the request attaches to the batch result
-     * (observes store emissions) instead of opening a competing writer.
+     * T917 D1: the whole boundary runs under an origin-typed page lease
+     * ([PageWriteOrigin.MANUAL] for reader taps, [PageWriteOrigin.AUTO] for the
+     * legacy auto window's resume-render path). When a batch run owns the page,
+     * the request attaches to the batch result (observes store emissions)
+     * instead of opening a competing writer; a MANUAL request evicts an
+     * in-flight AUTO lease (fenced fail-closed for the evicted holder).
      */
     private suspend fun runSinglePageBoundary(
         manga: Manga,
@@ -372,9 +377,10 @@ class TranslationPipeline(
         streamFn: (() -> InputStream)?,
         force: Boolean,
         stageListener: TranslationStageListener?,
+        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     ) {
         val leaseStore = resolveActiveStore(manga, chapter, source)
-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey)) return
+        if (!acquireReaderPageLease(leaseStore, chapter, pageKey, origin)) return
         try {
             val onnxResult = withNativeLane(
                 timeoutMs = ONNX_PHASE_TIMEOUT_MS,
@@ -411,7 +417,7 @@ class TranslationPipeline(
 
             try {
                 withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
-                    translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener)
+                    translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener, origin)
                 } ?: run {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT HTTP+render phase timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
@@ -428,23 +434,25 @@ class TranslationPipeline(
                 throw t
             }
         } finally {
-            releaseReaderPageLease(leaseStore, pageKey)
+            releaseReaderPageLease(leaseStore, pageKey, origin)
         }
     }
 
     /**
      * Phase 3 lease admission for reader-originated single-page work. Returns
-     * false when another origin (a batch run) owns the page — the request then
-     * attaches to the owner's result through store emissions rather than
-     * opening a competing writer.
+     * false when another origin owns the page under the T917 D1 priority
+     * matrix (a MANUAL request on a BATCH-owned page attaches to the owner's
+     * result through store emissions rather than opening a competing writer;
+     * a MANUAL request evicts an in-flight AUTO lease).
      */
     private suspend fun acquireReaderPageLease(
         store: ChapterTranslationStore?,
         chapter: Chapter,
         pageKey: String,
+        origin: PageWriteOrigin,
     ): Boolean {
         if (store == null) return true
-        return when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.READER_ADHOC)) {
+        return when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, origin)) {
             is LeaseAcquisition.Granted -> true
             is LeaseAcquisition.Denied -> {
                 logcat(LogPriority.INFO) {
@@ -456,9 +464,13 @@ class TranslationPipeline(
         }
     }
 
-    private suspend fun releaseReaderPageLease(store: ChapterTranslationStore?, pageKey: String) {
+    private suspend fun releaseReaderPageLease(
+        store: ChapterTranslationStore?,
+        pageKey: String,
+        origin: PageWriteOrigin,
+    ) {
         if (store == null) return
-        store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC)
+        store.releasePageStageLease(pageKey, origin)
     }
 
     /** Releases the batch's page lease at an atomic stage boundary (terminal render/failure). */
@@ -547,7 +559,9 @@ class TranslationPipeline(
         stageListener: TranslationStageListener?,
     ): PreparedPage? {
         val leaseStore = resolveActiveStore(manga, chapter, source)
-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey)) return null
+        // T917 D1: only the rolling auto coordinator calls the prepared
+        // boundary — its leases are AUTO (never preemptive; MANUAL evicts it).
+        if (!acquireReaderPageLease(leaseStore, chapter, pageKey, PageWriteOrigin.AUTO)) return null
         try {
             val onnxResult = withNativeLane(
                 timeoutMs = ONNX_PHASE_TIMEOUT_MS,
@@ -618,7 +632,7 @@ class TranslationPipeline(
                 expectedLeaseToken = published.commitPrecondition?.leaseToken,
             )
         } finally {
-            releaseReaderPageLease(leaseStore, pageKey)
+            releaseReaderPageLease(leaseStore, pageKey, PageWriteOrigin.AUTO)
         }
     }
 
@@ -687,11 +701,12 @@ class TranslationPipeline(
             return ChunkCompletionOutcome.Completed()
         }
         val store = resolveActiveStore(manga, chapter, source) ?: return null
-        // prepareSinglePage owns the reader lease only through the native
-        // handoff. Re-admit the translate/render half here so a batch cannot
-        // acquire the page in the handoff gap and then race the prepared
-        // reference's writes.
-        if (!acquireReaderPageLease(store, chapter, prepared.pageKey)) return null
+        // prepareSinglePage owns the auto lease only through the native
+        // handoff. Re-admit the translate/render half here (AUTO per T917 D1 —
+        // only the rolling auto coordinator calls this boundary) so a batch
+        // cannot acquire the page in the handoff gap and then race the
+        // prepared reference's writes.
+        if (!acquireReaderPageLease(store, chapter, prepared.pageKey, PageWriteOrigin.AUTO)) return null
         try {
             val snapshot = store.snapshot(prepared.pageKey)
             // Stale-reference rejection: generation, pageVersion, and the OCR block
@@ -764,7 +779,7 @@ class TranslationPipeline(
             )
             return try {
                 val completed = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
-                    translateSinglePageHttpRender(manga, chapter, source, prepared.pageKey, ctx, stageListener)
+                    translateSinglePageHttpRender(manga, chapter, source, prepared.pageKey, ctx, stageListener, PageWriteOrigin.AUTO)
                 }
                 if (completed == null) {
                     logcat(LogPriority.WARN) {
@@ -791,7 +806,7 @@ class TranslationPipeline(
                 throw t
             }
         } finally {
-            releaseReaderPageLease(store, prepared.pageKey)
+            releaseReaderPageLease(store, prepared.pageKey, PageWriteOrigin.AUTO)
         }
     }
 
@@ -909,8 +924,9 @@ class TranslationPipeline(
         pageKey: String,
         ctx: OnnxPhaseResult,
         stageListener: TranslationStageListener? = null,
+        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     ): ChunkCompletionOutcome =
-        singlePageHttpRenderPhase.translateSinglePageHttpRender(manga, chapter, source, pageKey, ctx, stageListener)
+        singlePageHttpRenderPhase.translateSinglePageHttpRender(manga, chapter, source, pageKey, ctx, stageListener, origin)
 
     // T909 Phase 7: PageTranslation.copyForResume moved to pipeline/CleanedPublication.kt
     // (imported top-level extension — call sites below resolve through it).

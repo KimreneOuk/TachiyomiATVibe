@@ -2560,7 +2560,9 @@ class ReaderViewModel @JvmOverloads constructor(
                 "TachiyomiAT stranded-page sweep: healing $pageKey " +
                     "(ocr=${pt.ocrStatus} inpaint=${pt.inpaintStatus} age=${age / 1000}s)"
             }
-            val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.READER_ADHOC)
+            // T917 D1: the sweep is reader-side AUTOMATIC maintenance — its
+            // lease is AUTO (never preempts; a reader tap evicts it).
+            val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.AUTO)
             if (lease !is LeaseAcquisition.Granted) continue
             try {
                 store.updatePageFromCurrentSnapshot(pageKey, "reader stranded-page sweep") { existing ->
@@ -2591,7 +2593,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     }
                 }
             } finally {
-                store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC)
+                store.releasePageStageLease(pageKey, PageWriteOrigin.AUTO)
             }
         }
     }

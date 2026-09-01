@@ -1634,10 +1634,9 @@ class ChapterTranslationStore(
         return true
     }
 
-    private fun PageWriteOrigin?.toArtifactOrigin(): ArtifactOrigin = when (this) {
-        PageWriteOrigin.READER_ADHOC -> ArtifactOrigin.READER_ADHOC
-        PageWriteOrigin.BATCH, null -> ArtifactOrigin.BATCH
-    }
+    // T917 D1: the lease-origin -> durable-provenance mapping moved to the
+    // shared top-level `PageWriteOrigin?.toArtifactOrigin()` in
+    // TranslationStageContracts.kt (same two-value ArtifactOrigin result).
 
     private fun PageTranslation.sourceIdentity(pageKey: String): SourceIdentity? =
         sourceFingerprint?.let { fingerprint ->

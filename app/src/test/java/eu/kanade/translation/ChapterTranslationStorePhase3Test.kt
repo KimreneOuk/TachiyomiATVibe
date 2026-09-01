@@ -97,7 +97,7 @@ class ChapterTranslationStorePhase3Test {
         val concurrent = coroutineScope {
             listOf(
                 async { store.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.BATCH) },
-                async { store.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.READER_ADHOC) },
+                async { store.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.MANUAL) },
             ).awaitAll()
         }
         concurrent.count { it is LeaseAcquisition.Granted } shouldBe 1
@@ -167,7 +167,7 @@ class ChapterTranslationStorePhase3Test {
             PageWriteOrigin.BATCH,
         ).shouldBeInstanceOf<LeaseAcquisition.Granted>()
 
-        store.cancelPageStageWork("p1", PageWriteOrigin.READER_ADHOC) shouldBe false
+        store.cancelPageStageWork("p1", PageWriteOrigin.MANUAL) shouldBe false
         store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.BATCH
 
         store.cancelPageStageWork("p1", PageWriteOrigin.BATCH) shouldBe true

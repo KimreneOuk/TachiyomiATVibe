@@ -2,6 +2,7 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPageRequest
 import eu.kanade.translation.TranslationSession
 import eu.kanade.translation.model.PageLifecycle
@@ -338,12 +339,16 @@ class TranslationScheduler(
                         current.isCleanedImageReady
                     ) {
                         try {
+                            // T917 D1: the legacy auto window's work is AUTO at
+                            // the lease layer (never preempts, can be evicted
+                            // by a reader tap).
                             executor.translateSinglePage(
                                 session.manga,
                                 session.chapter,
                                 session.source,
                                 request.storageKey,
                                 force = false,
+                                origin = PageWriteOrigin.AUTO,
                             )
                         } catch (e: CancellationException) {
                             markPageCancelled(session.chapter, request.storageKey)

@@ -67,7 +67,7 @@ class D3ReaderOwnedPageAcrossBatchTest {
             }
 
             withClue("manual must own p1 while parked at PROVIDER_END") {
-                harness.store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.READER_ADHOC
+                harness.store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.MANUAL
             }
 
             // Full batch runs while the reader holds p1.

@@ -126,7 +126,7 @@ class D2ManualBatchInterleavingTest {
         try {
             // 1. The reader taps p1 (the page behind the batch's first page);
             //    the manual path parks at PROVIDER_END — native permit free,
-            //    READER_ADHOC lease held (deterministic).
+            //    MANUAL lease held (deterministic).
             harness.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p1")
             harness.tapManual("p1")
             val manualJob = harness.capturedManualJob("p1")
@@ -137,7 +137,7 @@ class D2ManualBatchInterleavingTest {
             )
 
             withClue("manual must own p1 while parked at PROVIDER_END") {
-                harness.store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.READER_ADHOC
+                harness.store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.MANUAL
             }
 
             // 2. Start the batch while the manual holds the page. The batch
