@@ -182,12 +182,12 @@ class ChapterTranslator(
             val translation = Translation.fromChapterId(id) ?: continue
             val durable = durableQueueState(translation)
             translation.status = when (durable?.status) {
-                Translation.State.PAUSED -> Translation.State.PAUSED
                 Translation.State.ERROR -> Translation.State.ERROR
-                else -> Translation.State.QUEUE
+                else -> Translation.State.PAUSED
             }
             restored += translation
         }
+        isPaused = true
         synchronized(queueMutationLock) {
             // Lookups above suspend. Re-read the durable membership and merge
             // any queue additions that landed during that window instead of

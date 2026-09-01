@@ -36,6 +36,7 @@ class DownloaderPagePublicationTest {
             every { name } returns "001.jpg"
             every { exists() } returns true
             every { isFile } returns true
+            every { length() } returns 1024L
         }
         val tmpDir = mockk<UniFile> {
             every { listFiles() } returns emptyArray()

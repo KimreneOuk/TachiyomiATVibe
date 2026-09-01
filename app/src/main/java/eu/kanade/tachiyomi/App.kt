@@ -100,6 +100,8 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         Injekt.importModule(AppModule(this))
         Injekt.importModule(DomainModule())
 
+        eu.kanade.tachiyomi.data.download.DownloadJob.stop(this)
+
         setupNotificationChannels()
 
         ProcessLifecycleOwner.get().lifecycle.addObserver(this)

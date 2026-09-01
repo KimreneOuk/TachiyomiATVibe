@@ -135,12 +135,13 @@ class Downloader(
      * Whether the downloader is paused
      */
     @Volatile
-    var isPaused: Boolean = false
+    var isPaused: Boolean = true
 
     init {
         launchNow {
             val chapters = async { store.restore() }
             addAllToQueue(chapters.await())
+            DownloadJob.stop(context)
             // T911 slice 2 (R9): downloader side of the startup reconciliation
             // readiness barrier. No-op for the downloader; the translation
             // manager runs its one-shot pending-request pass once both queues
@@ -689,6 +690,11 @@ class Downloader(
                     BatchDownloadStage.RENAME,
                     BatchDownloadResult.START,
                 )
+                mangaDir.findFile(chapterDirname)?.let { existing ->
+                    if (existing.uri != tmpDir.uri) {
+                        existing.delete()
+                    }
+                }
                 val renamed = tmpDir.renameTo(chapterDirname)
                 traceFinalization(
                     download.chapter.id,
@@ -699,14 +705,15 @@ class Downloader(
                 if (!renamed) {
                     throw IOException("Unable to publish chapter directory")
                 }
+                mangaDir.findFile(chapterDirname)?.let { publishedDir ->
+                    DiskUtil.createNoMediaFile(publishedDir, context)
+                }
             }
             finalizationStage = BatchDownloadStage.CACHE
             traceFinalization(download.chapter.id, traceContext, BatchDownloadStage.CACHE, BatchDownloadResult.START)
             cache.addChapter(chapterDirname, mangaDir, download.manga)
             traceFinalization(download.chapter.id, traceContext, BatchDownloadStage.CACHE, BatchDownloadResult.SUCCESS)
             finalizationStage = null
-
-            DiskUtil.createNoMediaFile(tmpDir, context)
 
             download.status = Download.State.DOWNLOADED
             traceContext.generation(BatchDownloadTraceBoundary.DOWNLOAD_TERMINAL)?.let { generation ->
@@ -1036,7 +1043,7 @@ class Downloader(
                     tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, error)
                     throw error
                 }
-                try {
+                val published = try {
                     stage = BatchDownloadStage.WRITE_TEMP
                     response.body.source().saveTo(file.openOutputStream())
                     stage = BatchDownloadStage.DETECT_TYPE
@@ -1050,13 +1057,14 @@ class Downloader(
                         tracePageTerminalFailure(chapterId, traceContext, page, stage, null)
                         throw error
                     }
-                    emit(file)
-                } catch (e: Exception) {
+                } catch (e: Throwable) {
+                    if (e is CancellationException) throw e
                     tracePageAttemptFailure(chapterId, traceContext, page, attempt, stage, e)
                     response.close()
                     file.delete()
                     throw e
                 }
+                emit(published)
             }
                 // Retry 3 times, waiting 2, 4 and 8 seconds between attempts.
                 .retryWhen { _, retry ->
@@ -1174,18 +1182,24 @@ class Downloader(
             return PublishedPageFiles(listOf(imageFile))
         }
 
+        val resolvedImageFile = findExistingPageFile(tmpDir, filename) ?: imageFile
+
         try {
             // If the original page was previously split, then skip
-            if (imageFile.name.orEmpty().startsWith("${filename}__")) {
+            if (resolvedImageFile.name.orEmpty().startsWith("${filename}__")) {
                 val splitFiles = findSplitFiles(tmpDir, filename)
-                return PublishedPageFiles(splitFiles.ifEmpty { listOf(imageFile) })
+                return PublishedPageFiles(splitFiles.ifEmpty { listOf(resolvedImageFile) })
             }
 
-            val splitSucceeded = ImageUtil.splitTallImage(tmpDir, imageFile, filename)
+            val splitSucceeded = runCatching {
+                ImageUtil.splitTallImage(tmpDir, resolvedImageFile, filename)
+            }.getOrDefault(false)
+
             if (!splitSucceeded) {
                 // ImageUtil preserves the original when splitting cannot be
                 // completed. It remains a valid published page in that case.
-                if (isPublishedFile(imageFile)) return PublishedPageFiles(listOf(imageFile))
+                val fallback = findExistingPageFile(tmpDir, filename) ?: resolvedImageFile
+                if (isPublishedFile(fallback)) return PublishedPageFiles(listOf(fallback))
                 error(context.stringResource(MR.strings.download_notifier_split_page_not_found, page.number))
             }
 
@@ -1194,7 +1208,8 @@ class Downloader(
 
             // A non-tall/animated image returns true without creating split
             // files, so retain the original handle when it is still present.
-            if (isPublishedFile(imageFile)) return PublishedPageFiles(listOf(imageFile))
+            val fallback = findExistingPageFile(tmpDir, filename) ?: resolvedImageFile
+            if (isPublishedFile(fallback)) return PublishedPageFiles(listOf(fallback))
             error(context.stringResource(MR.strings.download_notifier_split_page_not_found, page.number))
         } catch (e: Exception) {
             tracePageAttemptFailure(
@@ -1206,7 +1221,8 @@ class Downloader(
                 e,
             )
             logcat(LogPriority.ERROR, e) { "Failed to split downloaded image" }
-            if (isPublishedFile(imageFile)) return PublishedPageFiles(listOf(imageFile))
+            val fallback = findExistingPageFile(tmpDir, filename) ?: resolvedImageFile
+            if (isPublishedFile(fallback)) return PublishedPageFiles(listOf(fallback))
             throw e
         }
     }
@@ -1216,7 +1232,9 @@ class Downloader(
         for (index in 1..MAX_SPLIT_PARTS) {
             val splitName = "${filename}__${"%03d".format(Locale.ENGLISH, index)}.jpg"
             val splitFile = findFileWithRetry(tmpDir, splitName) ?: break
-            splitFiles += splitFile
+            if (isPublishedFile(splitFile)) {
+                splitFiles += splitFile
+            }
         }
         return splitFiles
     }
@@ -1224,18 +1242,15 @@ class Downloader(
     private suspend fun findExistingPageFile(tmpDir: UniFile, filename: String): UniFile? {
         val listedFiles = runCatching { tmpDir.listFiles() }.getOrNull()
         listedFiles?.firstOrNull { file ->
-            file.name.orEmpty().startsWith("$filename.") ||
-                file.name.orEmpty().startsWith("${filename}__001")
+            (file.name.orEmpty().startsWith("$filename.") || file.name.orEmpty().startsWith("${filename}__001")) &&
+                isPublishedFile(file)
         }?.let { return it }
 
-        // Only fall back to direct SAF lookups when enumeration is unavailable
-        // or empty. This avoids a repeated multi-extension probe on ordinary
-        // filesystem directories while still covering the observed provider.
-        if (!listedFiles.isNullOrEmpty()) return null
-        findFileWithRetry(tmpDir, "${filename}__001.jpg")?.let { return it }
+        findFileWithRetry(tmpDir, "${filename}__001.jpg")?.takeIf(::isPublishedFile)?.let { return it }
         IMAGE_EXTENSIONS.forEach { extension ->
             runCatching { tmpDir.findFile("$filename.$extension") }
                 .getOrNull()
+                ?.takeIf(::isPublishedFile)
                 ?.let { return it }
         }
         return null
@@ -1251,7 +1266,7 @@ class Downloader(
     }
 
     private fun isPublishedFile(file: UniFile): Boolean = runCatching {
-        file.exists() && file.isFile
+        file.exists() && file.isFile && file.length() > 0
     }.getOrDefault(false)
 
     internal data class ChapterFiles(
@@ -1522,6 +1537,11 @@ class Downloader(
                 writer.write(file)
             }
         }
+        mangaDir.findFile("$dirname.cbz")?.let { existing ->
+            if (existing.uri != zip.uri) {
+                existing.delete()
+            }
+        }
         val renamed = zip.renameTo("$dirname.cbz")
         if (renamed) tmpDir.delete()
         return ArchiveObservation(
@@ -1684,10 +1704,18 @@ class Downloader(
  * while validation can no longer find durable bytes.
  */
 internal fun publishDownloadedFile(file: UniFile, finalName: String): UniFile {
+    val parent = runCatching { file.parentFile }.getOrNull()
+    runCatching {
+        parent?.findFile(finalName)?.let { existing ->
+            if (existing.uri != file.uri) {
+                existing.delete()
+            }
+        }
+    }
     if (!file.renameTo(finalName)) {
         throw IOException("Unable to publish downloaded page")
     }
-    return file
+    return runCatching { parent?.findFile(finalName) }.getOrNull() ?: file
 }
 
 // Arbitrary minimum required space to start a download: 200 MB
