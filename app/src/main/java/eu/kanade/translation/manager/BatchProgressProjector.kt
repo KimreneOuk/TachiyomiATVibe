@@ -74,7 +74,9 @@ internal class BatchProgressProjector(
     private val pendingTranslationRequestsProvider: () -> StateFlow<Map<Long, TranslationRequestState>>,
     private val pipelineProvider: () -> TranslationPipeline,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
-    private val persistedChapterStatus: (
+    // T912 ANR fix: suspend — durable resolution performs SAF/FUSE I/O and
+    // must never be synchronously reachable from the main thread.
+    private val persistedChapterStatus: suspend (
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
@@ -115,7 +117,11 @@ internal class BatchProgressProjector(
     ): ChapterTranslationStore? =
         openOrCreateStoreSuspend(chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
 
-    fun getChapterTranslationStatus(
+    // T912 ANR fix: suspend. Priority order and returned states are unchanged
+    // (queued translation → active-store display → durable store →
+    // NOT_TRANSLATED); only the threading changed. In-memory steps (queue
+    // check, active-store shortcut) stay synchronous inside the suspend body.
+    suspend fun getChapterTranslationStatus(
         chapterId: Long,
         chapterName: String,
         scanlator: String?,

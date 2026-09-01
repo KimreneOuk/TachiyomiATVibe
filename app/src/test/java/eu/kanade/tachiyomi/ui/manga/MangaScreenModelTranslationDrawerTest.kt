@@ -190,7 +190,8 @@ class MangaScreenModelTranslationDrawerTest {
         every { translationManager.statusFlow() } returns translationStatusFlow
         every { translationManager.pendingTranslationRequests } returns pendingRequestsState
         every { translationManager.getQueuedTranslationOrNull(any()) } returns null
-        every {
+        // T912 ANR fix: getChapterTranslationStatus is now suspend.
+        coEvery {
             translationManager.getChapterTranslationStatus(any(), any(), any(), any(), any())
         } returns Translation.State.NOT_TRANSLATED
         every { translationManager.observeBatchProgress(any()) } returns batchProgressFlow
@@ -215,6 +216,16 @@ class MangaScreenModelTranslationDrawerTest {
         every { libraryPreferences.autoUpdateMangaRestrictions() } returns updateRestrictionsPref
         every { trackPreferences.autoUpdateTrackOnMarkRead() } returns autoTrackPref
         every { readerPreferences.skipFiltered() } returns skipFilteredPref
+
+        // T911 slice 2 test-infra note (same as MangaScreenModelMultiSelectBatchTest):
+        // voyager caches `screenModelScope` in a JVM-global ScreenModelStore under a
+        // shared key for unregistered models, so a scope cancelled by a fixture that
+        // ran earlier in this JVM (full-suite ordering) would silently kill this
+        // fixture's collectors and boot would stall in State.Loading. Evict the
+        // cached scope before boot so this fixture gets a live scope. This
+        // full-suite-only flake was confirmed reproducible at HEAD 45c8f03 with no
+        // local changes.
+        evictCachedScreenModelScope()
 
         model = MangaScreenModel(
             context = context,
@@ -256,6 +267,9 @@ class MangaScreenModelTranslationDrawerTest {
         if (::model.isInitialized) {
             model.screenModelScope.cancel()
         }
+        // Do not leave the cancelled scope in the shared cache for the next
+        // screen-model fixture in this JVM.
+        evictCachedScreenModelScope()
         ArchTaskExecutor.getInstance().setDelegate(null)
         Dispatchers.resetMain()
         mainThreadSurrogate.close()
@@ -371,8 +385,12 @@ class MangaScreenModelTranslationDrawerTest {
             ?: error("chapter item $id not present in screen state")
 
     /** Simulates a full base-list rebuild without any new canonical snapshot emission. */
-    private fun rebuildChapters(): List<ChapterList.Item> = with(model) {
-        listOf(chapter).toChapterListItems(this@MangaScreenModelTranslationDrawerTest.manga)
+    // T912 ANR fix: toChapterListItems is now suspend (it queries the durable
+    // translation status per downloaded chapter).
+    private fun rebuildChapters(): List<ChapterList.Item> = runBlocking {
+        with(model) {
+            listOf(chapter).toChapterListItems(this@MangaScreenModelTranslationDrawerTest.manga)
+        }
     }
 
     private fun awaitUntil(what: String, timeoutMs: Long = 5_000, condition: () -> Boolean) {
@@ -384,6 +402,23 @@ class MangaScreenModelTranslationDrawerTest {
                 )
             }
             Thread.sleep(10)
+        }
+    }
+
+    private fun evictCachedScreenModelScope() {
+        try {
+            // `dependencies` is Kotlin-internal in voyager; reach it reflectively.
+            // Standalone (non-screen) models share ONE cache key derived from
+            // "ScreenModelCoroutineScope", so a scope cancelled by a
+            // previously-run fixture in this JVM would silently kill this
+            // fixture's collectors.
+            val store = cafe.adriel.voyager.core.model.ScreenModelStore
+            val getDependencies = store.javaClass.methods.first { it.name == "getDependencies" }
+            val dependencies = getDependencies.invoke(store) as? MutableMap<Any?, Any?> ?: return
+            dependencies.keys.removeAll { key -> key is String && "ScreenModelCoroutineScope" in key }
+        } catch (_: Exception) {
+            // Best effort: only matters when another screen-model fixture ran
+            // earlier in this JVM.
         }
     }
 

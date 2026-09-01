@@ -9,6 +9,7 @@ import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.model.Translation
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import tachiyomi.domain.source.service.SourceManager
 import java.util.concurrent.ConcurrentHashMap
 
@@ -77,7 +78,16 @@ internal class DurableChapterStatusResolver(
         chapterName: String,
     ): Translation.State? = LegacyFlatFileDecoder.decodeLegacyChapterStatus(file, chapterName)
 
-    fun persistedChapterStatus(
+    // T912 ANR fix: suspend. This resolution reopens the durable artifact
+    // store over SAF/UniFile and reads page snapshots — O(pages) FUSE/binder
+    // round-trips (60-130 ms per page observed on a 68-page chapter). The
+    // previous `runBlocking(Dispatchers.IO)` here parked the calling thread
+    // for the full duration and produced 5s+ main-thread ANRs when reached
+    // from ReaderViewModel.loadChapter and MangaScreenModel's chapter list.
+    // The cache read stays first and synchronous; only the durable miss hops
+    // to IO. Semantics are unchanged: same cache writes (non-null only), same
+    // returned states.
+    suspend fun persistedChapterStatus(
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,
@@ -86,7 +96,7 @@ internal class DurableChapterStatusResolver(
     ): Translation.State? {
         val key = DurableChapterKey(chapterId, chapterName, chapterScanlator, mangaTitle, sourceId)
         durableStatusCache[key]?.let { return it.state }
-        val state = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+        val state = withContext(Dispatchers.IO) {
             resolveDurableChapterStatus(
                 chapterId,
                 chapterName,

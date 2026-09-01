@@ -870,7 +870,10 @@ class TranslationManager(
             },
         )
 
-    fun getChapterTranslationStatus(
+    // T912 ANR fix: suspend — delegates to the projector whose durable leg
+    // performs SAF/FUSE I/O. Callers (ReaderViewModel.loadChapter,
+    // MangaScreenModel chapter list) invoke this from IO coroutines.
+    suspend fun getChapterTranslationStatus(
         chapterId: Long,
         chapterName: String,
         scanlator: String?,
@@ -899,7 +902,10 @@ class TranslationManager(
     )
 
     /** True when persisted output is readable, including a retry/review-ready warning outcome. */
-    fun isChapterTranslated(
+    // T912 ANR fix: suspend for the same reason as [persistedChapterStatus]
+    // below (durable resolution performs I/O). Currently has no production
+    // callers; kept API-compatible.
+    suspend fun isChapterTranslated(
         chapterName: String,
         chapterScanlator: String?,
         mangaTitle: String,
@@ -921,7 +927,12 @@ class TranslationManager(
             durableStatusCacheProvider = { durableStatusCache },
         )
 
-    private fun persistedChapterStatus(
+    // T912 ANR fix: suspend — this used to be reached synchronously from the
+    // main thread (ReaderViewModel.loadChapter inside withUIContext,
+    // MangaScreenModel's chapter-list build) and parked Main in
+    // runBlocking(Dispatchers.IO) inside DurableChapterStatusResolver for
+    // 5-9s on a large translated chapter. The chain is now fully suspend.
+    private suspend fun persistedChapterStatus(
         chapterId: Long?,
         chapterName: String,
         chapterScanlator: String?,

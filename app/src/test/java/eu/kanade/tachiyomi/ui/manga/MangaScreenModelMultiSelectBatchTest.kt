@@ -183,7 +183,8 @@ class MangaScreenModelMultiSelectBatchTest {
         every { translationManager.statusFlow() } returns translationStatusFlow
         every { translationManager.pendingTranslationRequests } returns pendingRequestsState
         every { translationManager.getQueuedTranslationOrNull(any()) } returns null
-        every {
+        // T912 ANR fix: getChapterTranslationStatus is now suspend.
+        coEvery {
             translationManager.getChapterTranslationStatus(any(), any(), any(), any(), any())
         } returns Translation.State.NOT_TRANSLATED
         every { translationManager.observeBatchProgress(any()) } returns MutableStateFlow(

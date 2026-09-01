@@ -966,6 +966,24 @@ class ReaderViewModel @JvmOverloads constructor(
             chapterList.getOrNull(chapterPos + 1),
         )
 
+        // T912 ANR fix: resolve the chapter translation status BEFORE the
+        // withUIContext block. The query falls through to the durable store
+        // over SAF/UniFile (O(pages) FUSE/binder round-trips — 5-9s on a
+        // 68-page translated chapter) and must never execute on Main. All
+        // loadChapter call sites already run on IO (init: withIOContext,
+        // loadNewChapter: launchIO, loadAdjacent: withIOContext). Same value,
+        // same downstream assignment — only the thread changed.
+        val translationStatus = this@ReaderViewModel.manga?.let { m ->
+            val ch = newChapters.currChapter.chapter
+            translationManager.getChapterTranslationStatus(
+                ch.id!!,
+                ch.name,
+                ch.scanlator,
+                m.title,
+                m.source,
+            )
+        } ?: Translation.State.NOT_TRANSLATED
+
         withUIContext {
             mutableState.update {
                 // Add new references first to avoid unnecessary recycling
@@ -973,17 +991,6 @@ class ReaderViewModel @JvmOverloads constructor(
                 it.viewerChapters?.unref()
 
                 chapterToDownload = cancelQueuedDownloads(newChapters.currChapter)
-
-                val translationStatus = this@ReaderViewModel.manga?.let { m ->
-                    val ch = newChapters.currChapter.chapter
-                    translationManager.getChapterTranslationStatus(
-                        ch.id!!,
-                        ch.name,
-                        ch.scanlator,
-                        m.title,
-                        m.source,
-                    )
-                } ?: Translation.State.NOT_TRANSLATED
 
                 it.copy(
                     viewerChapters = newChapters,

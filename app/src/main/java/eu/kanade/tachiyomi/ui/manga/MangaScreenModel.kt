@@ -194,6 +194,11 @@ class MangaScreenModel(
                     updateSuccessState {
                         it.copy(
                             manga = manga,
+                            // T912 ANR fix: the per-downloaded-chapter
+                            // getChapterTranslationStatus query inside
+                            // toChapterListItems is now suspend and runs here
+                            // on the IO collector — it used to park Main via
+                            // runBlocking in the durable resolver.
                             chapters = chapters.toChapterListItems(manga),
                         )
                     }
@@ -660,7 +665,11 @@ class MangaScreenModel(
     }
 
     // T911 slice 1: internal for the snapshot-retention unit test.
-    internal fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
+    // T912 ANR fix: suspend — the per-downloaded-chapter
+    // getChapterTranslationStatus query reaches the durable store over
+    // SAF/UniFile (O(pages) FUSE reads) and must not run on Main. Both
+    // production callers are IO coroutines (launchIO/collectLatest).
+    internal suspend fun List<Chapter>.toChapterListItems(manga: Manga): List<ChapterList.Item> {
         val isLocal = manga.isLocal()
         return map { chapter ->
             val activeDownload = if (isLocal) {
