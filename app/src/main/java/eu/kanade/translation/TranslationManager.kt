@@ -1355,7 +1355,21 @@ class TranslationManager(
     fun requestAutoWindow(
         session: TranslationSession,
         requests: List<TranslationPageRequest>,
-    ) = scheduler.requestAutoWindow(session, requests)
+    ) {
+        // T917 D4: same-chapter auto is suppressed for the WHOLE chapter-batch
+        // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
+        // This legacy auto entry launches real page work, so it must not arm
+        // while the chapter's batch is queued; the reader's next window update
+        // after the queue drains re-arms normally.
+        val requestChapterId = session.chapter.id
+        if (requestChapterId != null && isBatchTranslationRetained(requestChapterId)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=$requestChapterId"
+            }
+            return
+        }
+        scheduler.requestAutoWindow(session, requests)
+    }
 
     fun cancelAutoTranslations(chapterId: Long? = null): Boolean =
         scheduler.cancelAutoTranslations(chapterId)
@@ -1378,6 +1392,18 @@ class TranslationManager(
         pageResolver: (Int) -> eu.kanade.translation.scheduling.RollingAutoCoordinator.PageWorkItem?,
         computeClass: eu.kanade.translation.translator.TranslatorComputeClass,
     ) {
+        // T917 D4: same-chapter auto is suppressed for the WHOLE chapter-batch
+        // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
+        // Reader-window updates must not re-arm the rolling coordinator while
+        // the chapter's batch is queued; the next update after the queue drains
+        // arms normally. `translateChapter`'s one-shot shutdownAutoCoordinator
+        // remains what retires an already-live window at admission.
+        if (isBatchTranslationRetained(identity.chapterId)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=${identity.chapterId}"
+            }
+            return
+        }
         scheduler.updateAutoWindow(
             identity,
             visiblePageIndex,
@@ -1393,7 +1419,10 @@ class TranslationManager(
 
     /** Reconciles the active rolling window after a reader lifecycle/memory signal. */
     fun reconcileAutoWindow() {
-        scheduler.reconcileAutoWindow()
+        // T917 D4: a stale window cannot be re-admitted mid-batch — the
+        // scheduler's admission hook rejects same-chapter reconcile while the
+        // chapter's batch queue entry is retained.
+        scheduler.reconcileAutoWindow(admissionGuard = { chapterId -> !isBatchTranslationRetained(chapterId) })
     }
 
     /** Reader-facing projection with the committed display pointer applied. */
