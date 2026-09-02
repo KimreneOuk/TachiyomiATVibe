@@ -4,6 +4,9 @@ import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.SinglePageOutcome
 
@@ -147,6 +150,132 @@ object TranslationUiTruth {
     // ------------------------------------------------------------------
     // Manual precedence internals
     // ------------------------------------------------------------------
+
+    /**
+     * T917 Phase 5 D12 (spec §3.2): timeout copy names the ACTUAL result timer
+     * that fired and omits unmeasured durations. The native lane and the
+     * HTTP+render lane run DIFFERENT timers; a generic "Translation timed out"
+     * tells the user nothing about which half of the pipeline stalled.
+     */
+    fun timeoutCopy(nativeTimer: Boolean): String =
+        if (nativeTimer) {
+            "ONNX/native result timer expired; translation failed."
+        } else {
+            "HTTP+render result timer expired; translation failed."
+        }
+
+    /**
+     * One chapter's partial-download admission facts (T917 D10/N2).
+     * [expectedSourceTotal] is null when the source page count is still
+     * unknown (download in progress).
+     */
+    data class PartialDecision(val downloaded: Int, val expectedSourceTotal: Int?)
+
+    /**
+     * T917 Phase 5 N2 (spec §2, §3.3): the finish-first/translate-subset
+     * decision body must describe EVERY chapter in the group — the phase-4
+     * dialog showed only the first chapter's counts.
+     */
+    fun partialDownloadBody(decisions: Array<PartialDecision>): String {
+        val choice = "Translate the pages that exist now, or finish the download first?"
+        return if (decisions.any { it.expectedSourceTotal == null }) {
+            "The download is still in progress and the page total is unknown. $choice"
+        } else {
+            val parts = decisions.map { (downloaded, expected) ->
+                "$downloaded of $expected pages are downloaded"
+            }
+            val statement = if (parts.size == 1) parts[0] else parts.joinToString(" and ")
+            "$statement. $choice"
+        }
+    }
+
+    /**
+     * Chapter-level indicator truth (spec §3.1): READY_WITH_WARNINGS must be
+     * conveyed by label, not by tint alone.
+     */
+    fun forChapterIndicator(
+        state: Translation.State,
+        snapshot: TranslationProgressSnapshot?,
+    ): PageUiTruth = when (state) {
+        Translation.State.TRANSLATED -> PageUiTruth(
+            label = TRANSLATED.label,
+            severity = UiSeverity.INFO,
+            retryMode = UiRetryMode.NONE,
+            retryAtEpochMs = null,
+            actions = setOf(UiAction.DETAILS),
+            terminalSuccess = true,
+            contentDescription = "Chapter translation ready",
+        )
+        Translation.State.READY_WITH_WARNINGS -> PageUiTruth(
+            label = "Translated with warnings.",
+            severity = UiSeverity.WARNING,
+            retryMode = UiRetryMode.EXPLICIT,
+            retryAtEpochMs = null,
+            actions = setOf(UiAction.RETRY, UiAction.DETAILS),
+            terminalSuccess = false,
+            contentDescription =
+                "Chapter translation ready with warnings; some pages need attention.",
+        )
+        Translation.State.PAUSED -> PageUiTruth(
+            label = "Paused.",
+            severity = UiSeverity.WARNING,
+            retryMode = UiRetryMode.AUTOMATIC,
+            retryAtEpochMs = snapshot?.nextEligibleRetryAtEpochMs,
+            actions = setOf(UiAction.DETAILS),
+            terminalSuccess = false,
+            contentDescription = snapshot?.pauseReason
+                ?.let { "Chapter translation paused: $it." }
+                ?: "Chapter translation paused.",
+        )
+        Translation.State.ERROR -> PageUiTruth(
+            label = "Translation failed — retry available.",
+            severity = UiSeverity.ERROR,
+            retryMode = UiRetryMode.EXPLICIT,
+            retryAtEpochMs = null,
+            actions = setOf(UiAction.RETRY, UiAction.DETAILS),
+            terminalSuccess = false,
+            contentDescription = "Chapter translation failed; retry is available.",
+        )
+        Translation.State.QUEUE, Translation.State.TRANSLATING -> PageUiTruth(
+            label = "Translating.",
+            severity = UiSeverity.PROGRESS,
+            retryMode = UiRetryMode.NONE,
+            retryAtEpochMs = null,
+            actions = setOf(UiAction.DETAILS, UiAction.CANCEL),
+            terminalSuccess = false,
+            contentDescription = if (snapshot != null && snapshot.expectedPageCountTrusted) {
+                "Chapter translation in progress; " +
+                    "${snapshot.donePages.coerceAtLeast(0)} of ${snapshot.totalPages} pages translated."
+            } else {
+                "Chapter translation in progress."
+            },
+        )
+        Translation.State.NOT_TRANSLATED -> PageUiTruth(
+            label = "Not translated.",
+            severity = UiSeverity.INFO,
+            retryMode = UiRetryMode.NONE,
+            retryAtEpochMs = null,
+            actions = setOf(UiAction.DETAILS),
+            terminalSuccess = false,
+            contentDescription = "Chapter is not translated.",
+        )
+    }
+
+    /**
+     * Drawer page-overview mini chip truth (spec §3.1): failed/partial/queued
+     * state is conveyed by a semantic label, never by icon or tint alone.
+     */
+    fun pageMiniChipLabel(page: TranslationProgressSnapshot.Page): String = when {
+        page.stage == TranslationProgressStage.DONE && page.partial -> PARTIAL.label
+        page.stage == TranslationProgressStage.DONE -> TRANSLATED.label
+        page.stage == TranslationProgressStage.FAILED -> failedRetryable(UiSeverity.ERROR).label
+        page.stage == TranslationProgressStage.QUEUED -> "Queued."
+        page.stage == TranslationProgressStage.OCR -> "Reading text."
+        page.stage == TranslationProgressStage.TRANSLATE -> "Translating text."
+        page.stage == TranslationProgressStage.INPAINT -> "Cleaning bubbles."
+        page.stage == TranslationProgressStage.RENDER -> "Finishing page."
+        else -> "Translation pending."
+    }
 
     private fun fromDurable(
         durable: PageDisplayProjection?,

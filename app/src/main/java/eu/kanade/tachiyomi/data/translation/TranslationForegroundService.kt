@@ -14,6 +14,8 @@ import eu.kanade.tachiyomi.util.system.notificationBuilder
 import eu.kanade.tachiyomi.util.system.notify
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.model.TranslationProgressSnapshot
+import eu.kanade.translation.ui.NotificationAction
+import eu.kanade.translation.ui.TranslationNotificationCopy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -141,30 +143,45 @@ class TranslationForegroundService : Service() {
             }
             publishProgress(
                 active.chapter.name,
+                active.chapter.id,
                 active.chapter.id?.let(manager::getTranslationProgress)?.first(),
             )
             delay(PROGRESS_UPDATE_INTERVAL_MS)
         }
     }
 
-    private fun publishProgress(chapterName: String, snapshot: TranslationProgressSnapshot?) {
-        val completed = snapshot?.processedPages ?: 0
+    /**
+     * T917 Phase 5: the notification body is the pure
+     * [TranslationNotificationCopy] projection; the service only renders it
+     * and attaches intents for actions it can actually deliver. Unknown
+     * source totals render an indeterminate bar — never a lying percentage.
+     */
+    private fun publishProgress(
+        chapterName: String,
+        chapterId: Long?,
+        snapshot: TranslationProgressSnapshot?,
+    ) {
+        val copy = TranslationNotificationCopy.of(chapterName, snapshot)
         val total = snapshot?.totalPages ?: 0
-        val content = if (total > 0) {
-            stringResource(ATMR.strings.reader_translation_queue_running, completed, total)
-        } else {
-            stringResource(ATMR.strings.manga_translation_no_progress)
-        }
-        val notification = notificationBuilder(Notifications.CHANNEL_TRANSLATION_PROGRESS) {
+        val done = snapshot?.let { (it.donePages - it.failedCount).coerceAtLeast(0) } ?: 0
+        val trusted = snapshot != null && snapshot.expectedPageCountTrusted && total > 0
+        val builder = notificationBuilder(Notifications.CHANNEL_TRANSLATION_PROGRESS) {
             setSmallIcon(R.drawable.ic_mihon)
-            setContentTitle(chapterName)
-            setContentText(content)
-            setOngoing(true)
+            setContentTitle(copy.title)
+            setContentText(copy.text)
+            setOngoing(copy.ongoing)
             setOnlyAlertOnce(true)
-            setProgress(total, completed, total == 0)
+            setProgress(if (trusted) total else 0, if (trusted) done else 0, !trusted)
             addAction(R.drawable.ic_close_24dp, stringResource(ATMR.strings.reader_translation_stop_all), stopIntent())
+            if (NotificationAction.RETRY in copy.actions) {
+                chapterId?.let { id ->
+                    retryIntent(this@TranslationForegroundService, id)?.let {
+                        addAction(R.drawable.ic_play_arrow_24dp, "Retry translation", it)
+                    }
+                }
+            }
         }.build()
-        this.notify(Notifications.ID_TRANSLATION_PROGRESS, notification)
+        this.notify(Notifications.ID_TRANSLATION_PROGRESS, builder)
     }
 
     private fun publishPaused(
@@ -190,30 +207,33 @@ class TranslationForegroundService : Service() {
             ContextCompat.startForegroundService(context, Intent(context, TranslationForegroundService::class.java))
         }
 
-        /** Posts a non-ongoing pause reminder without advertising active work. */
+        /**
+         * Posts a non-ongoing pause reminder without advertising active work.
+         * T917 Phase 5: text and actions come from the pure
+         * [TranslationNotificationCopy] projection; the service appends the
+         * locale-formatted retry time when the copy carries a retry epoch.
+         */
         fun showPaused(
             context: Context,
             chapterName: String,
             chapterId: Long?,
             snapshot: TranslationProgressSnapshot?,
         ) {
-            val reason = snapshot?.pauseReason?.takeIf { it.isNotBlank() }
-                ?: "Provider work is temporarily unavailable"
-            val retryAt = snapshot?.nextEligibleRetryAtEpochMs?.let {
-                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(it))
-            }
-            val content = if (retryAt == null) {
-                "Paused — $reason"
-            } else {
-                "Paused — $reason · retry after $retryAt"
-            }
+            val copy = TranslationNotificationCopy.of(chapterName, snapshot)
+            val content = copy.retryAtEpochMs
+                ?.let { epoch -> copy.text + " after " + DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(epoch)) }
+                ?: copy.text
             val builder = context.notificationBuilder(Notifications.CHANNEL_TRANSLATION_PROGRESS) {
                 setSmallIcon(R.drawable.ic_mihon)
-                setContentTitle(chapterName)
+                setContentTitle(copy.title)
                 setContentText(content)
-                setOngoing(false)
+                setOngoing(copy.ongoing)
                 setOnlyAlertOnce(true)
-                retryIntent(context, chapterId)?.let { addAction(R.drawable.ic_play_arrow_24dp, "Retry translation", it) }
+                if (NotificationAction.RETRY in copy.actions) {
+                    retryIntent(context, chapterId)?.let {
+                        addAction(R.drawable.ic_play_arrow_24dp, "Retry translation", it)
+                    }
+                }
             }
             context.notify(Notifications.ID_TRANSLATION_PROGRESS, builder.build())
         }

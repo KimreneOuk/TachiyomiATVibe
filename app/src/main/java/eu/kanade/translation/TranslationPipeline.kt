@@ -338,8 +338,11 @@ class TranslationPipeline(
         source: HttpSource,
         pageKey: String,
         timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
+        nativeTimer: Boolean = true,
     ) {
-        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey, timeoutMs)
+        // T917 Phase 5 D12: the store placeholder names the timer that actually
+        // fired — native (`withNativeLane`) vs HTTP+render (`withTimeoutOrNull`).
+        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey, timeoutMs, nativeTimer)
     }
 
     // T909 Phase 6: PageSnapshot.toPrecondition moved to pipeline/PageStoreWriter.kt
@@ -631,7 +634,7 @@ class TranslationPipeline(
                     if (timeoutPage != null && isPreparedPageTerminal(timeoutPage)) {
                         httpTimeoutLandedDurableResult = true
                     } else {
-                        markPageTimedOut(manga, chapter, source, pageKey, singlePageTimeoutMs)
+                        markPageTimedOut(manga, chapter, source, pageKey, singlePageTimeoutMs, nativeTimer = false)
                     }
                     null
                 }
@@ -1096,7 +1099,9 @@ class TranslationPipeline(
                         "TachiyomiAT translatePreparedPage timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
                             "pageKey=${prepared.pageKey} chapter=${chapter.name}"
                     }
-                    markPageTimedOut(manga, chapter, source, prepared.pageKey)
+                    // The prepared path runs the HTTP+render phase, so its
+                    // timeout placeholder names THAT timer (D12).
+                    markPageTimedOut(manga, chapter, source, prepared.pageKey, nativeTimer = false)
                     throw java.io.IOException("translatePreparedPage timed out for ${prepared.pageKey}")
                 } else {
                     completed

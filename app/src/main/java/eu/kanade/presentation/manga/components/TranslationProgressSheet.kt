@@ -72,6 +72,9 @@ import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.model.TranslationRequestPhase
+import eu.kanade.translation.ui.TranslationUiTruth
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.i18n.stringResource
@@ -787,6 +790,11 @@ private fun PageMiniChip(page: TranslationProgressSnapshot.Page) {
     Box(
         modifier = Modifier
             .size(32.dp)
+            // T917 Phase 5: the chip's state truth is a semantic label —
+            // failed/partial/queued state is never color-or-icon alone.
+            .semantics {
+                contentDescription = TranslationUiTruth.pageMiniChipLabel(page)
+            }
             .background(chipColor, RoundedCornerShape(8.dp)),
         contentAlignment = Alignment.Center,
     ) {

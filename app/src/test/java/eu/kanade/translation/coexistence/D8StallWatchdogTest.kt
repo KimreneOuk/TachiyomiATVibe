@@ -132,8 +132,8 @@ class D8StallWatchdogTest {
             h.store.state.first { it["p0"]?.ocrStatus == "FAILED" }
         }
         val page = h.store.state.value.getValue("p0")
-        withClue("T917 D8 §2.2: timeout writes a FAILED placeholder with the real timer") {
-            page.activeError?.contains("100") shouldBe true
+        withClue("T917 D8 §2.2 + Phase 5 D12: timeout writes a FAILED placeholder naming the ACTUAL timer (duration omitted)") {
+            page.activeError?.contains("ONNX/native result timer expired") shouldBe true
         }
 
         // A same-page request during the residual window is typed Rejected

@@ -36,6 +36,7 @@ import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationRequestPhase
 import eu.kanade.translation.model.TranslationRequestState
+import eu.kanade.translation.ui.TranslationUiTruth
 import tachiyomi.i18n.MR
 import tachiyomi.i18n.at.ATMR
 import tachiyomi.presentation.core.components.material.IconButtonTokens
@@ -337,7 +338,11 @@ private fun TranslatedIndicator(
     ) {
         Icon(
             painter = painterResource(R.drawable.ic_translate_circle_filled),
-            contentDescription = null,
+            // T917 Phase 5: READY_WITH_WARNINGS is conveyed by LABEL, not by
+            // tint alone (this icon previously had no description at all).
+            contentDescription = TranslationUiTruth
+                .forChapterIndicator(translationState, null)
+                .contentDescription,
             modifier = Modifier.size(IndicatorSize),
             tint = tint,
         )
@@ -389,7 +394,11 @@ private fun ErrorIndicator(
     ) {
         Icon(
             imageVector = Icons.Outlined.ErrorOutline,
-            contentDescription = stringResource(MR.strings.chapter_error),
+            // T917 Phase 5: the failure truth names the translation state and
+            // the available retry, instead of the generic chapter error copy.
+            contentDescription = TranslationUiTruth
+                .forChapterIndicator(translationState, null)
+                .contentDescription,
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.error,
         )

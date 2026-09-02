@@ -403,24 +403,30 @@ class MangaScreen(
             }
 
             is MangaScreenModel.Dialog.PartialDownloadTranslation -> {
-                // T917 Phase 4 (D10) functional slice: truthful literal text;
-                // final copy is Phase 5 (D13 — no unmeasured numbers in copy).
-                val primaryDecision = dialog.group.firstOrNull()?.chapter?.id?.let { dialog.decisions[it] }
+                // T917 Phase 5 N2: the decision body describes EVERY chapter in
+                // the group via the pure partialDownloadBody mapper (the
+                // phase-4 dialog showed only the first chapter's counts).
+                val body = eu.kanade.translation.ui.TranslationUiTruth.partialDownloadBody(
+                    dialog.group.map { chapterItem ->
+                        when (val decision = dialog.decisions[chapterItem.chapter.id]) {
+                            is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
+                                eu.kanade.translation.ui.TranslationUiTruth.PartialDecision(
+                                    downloaded = decision.downloadedPageCount,
+                                    expectedSourceTotal = decision.expectedSourcePageCount,
+                                )
+                            else ->
+                                eu.kanade.translation.ui.TranslationUiTruth.PartialDecision(
+                                    downloaded = 0,
+                                    expectedSourceTotal = null,
+                                )
+                        }
+                    }.toTypedArray(),
+                )
                 AlertDialog(
                     onDismissRequest = { screenModel.dismissDialog() },
                     title = { Text(text = "Chapter still downloading") },
                     text = {
-                        Text(
-                            text = when (primaryDecision) {
-                                is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
-                                    "${primaryDecision.downloadedPageCount} of " +
-                                        "${primaryDecision.expectedSourcePageCount} pages are downloaded. " +
-                                        "Translate the pages that exist now, or finish the download first?"
-                                else ->
-                                    "The download is still in progress and the page total is unknown. " +
-                                        "Translate the pages that exist now, or finish the download first?"
-                            },
-                        )
+                        Text(text = body)
                     },
                     confirmButton = {
                         TextButton(onClick = { screenModel.translatePartialDownloadNow(dialog) }) {
