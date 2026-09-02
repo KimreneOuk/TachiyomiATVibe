@@ -1123,37 +1123,87 @@ class MangaScreenModel(
                 translationManager.isTranslationRequestCurrent(chapterId, generation)
             }
             if (pendingDownloaded.isEmpty()) return@launch
-            if (pendingDownloaded.size > 1) {
-                // List API: one fenced admission for the whole batch, no
-                // same-source silent eviction (R6).
-                translationManager.translateChaptersIfCurrent(
-                    manga,
-                    pendingDownloaded.map { it.chapter },
-                    generations,
-                )
-                return@launch
-            }
-            val target = pendingDownloaded.single()
-            val targetGeneration = generations[target.chapter.id]
-            // Keep the row in PREPARING while the conflict preflight runs.
-            target.chapter.id?.let { chapterId ->
-                targetGeneration?.let { generation ->
-                    translationManager.markTranslationRequestPreparingIfCurrent(chapterId, generation)
+            // T917 Phase 4 (D10, phase4-design §3.2): a directory-exists hit can
+            // still be a MID-DOWNLOAD chapter (audit M-08 — the downloader owns
+            // a partial dir while the trigger reads it as "downloaded").
+            // Cross-check every candidate that still has a live queue entry;
+            // a settled download has none, so there is nothing to probe and
+            // the pre-D10 truth stands. Local-only: the probe reads the
+            // Download the UI already observes — no network.
+            val partialProbes: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionDecision> =
+                pendingDownloaded.mapNotNull { candidate ->
+                    val chapterId = candidate.chapter.id ?: return@mapNotNull null
+                    val queuedDownload = downloadManager.getQueuedDownloadOrNull(chapterId)
+                        ?: return@mapNotNull null
+                    val decision = eu.kanade.translation.pipeline.batch.BatchAdmissionProbe.evaluate(
+                        downloadedPageCount = queuedDownload.pages?.count {
+                            it.status == eu.kanade.tachiyomi.source.model.Page.State.READY
+                        } ?: 0,
+                        sourcePageList = queuedDownload.pages,
+                    )
+                    if (decision == eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Complete) {
+                        null
+                    } else {
+                        chapterId to decision
+                    }
+                }.toMap()
+            suspend fun admitDownloaded(candidates: List<ChapterList.Item>) {
+                if (candidates.isEmpty()) return
+                if (candidates.size > 1) {
+                    // List API: one fenced admission for the whole batch, no
+                    // same-source silent eviction (R6).
+                    translationManager.translateChaptersIfCurrent(
+                        manga,
+                        candidates.map { it.chapter },
+                        generations,
+                    )
+                    return
                 }
-            }
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT translate START: chapter=${target.chapter.name} manga=${manga.title} " +
-                    "lastPageRead=${target.chapter.lastPageRead}"
-            }
-            when (val preflight = translationManager.translateChapterPreflight(manga, target.chapter)) {
-                is ChapterQueuePreflight.NoConflict ->
-                    launchTranslateChapter(manga, target.chapter, targetGeneration)
-                is ChapterQueuePreflight.RunningConflict -> {
-                    updateSuccessState {
-                        it.copy(dialog = Dialog.RunningTranslationConflict(target, preflight))
+                val target = candidates.single()
+                val targetGeneration = generations[target.chapter.id]
+                // Keep the row in PREPARING while the conflict preflight runs.
+                target.chapter.id?.let { chapterId ->
+                    targetGeneration?.let { generation ->
+                        translationManager.markTranslationRequestPreparingIfCurrent(chapterId, generation)
+                    }
+                }
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT translate START: chapter=${target.chapter.name} manga=${manga.title} " +
+                        "lastPageRead=${target.chapter.lastPageRead}"
+                }
+                when (val preflight = translationManager.translateChapterPreflight(manga, target.chapter)) {
+                    is ChapterQueuePreflight.NoConflict ->
+                        launchTranslateChapter(manga, target.chapter, targetGeneration)
+                    is ChapterQueuePreflight.RunningConflict -> {
+                        updateSuccessState {
+                            it.copy(dialog = Dialog.RunningTranslationConflict(target, preflight))
+                        }
                     }
                 }
             }
+            if (partialProbes.isNotEmpty()) {
+                // Complete chapters of the group admit immediately (no
+                // group-wide gate); partials are NEVER silently admitted —
+                // the PLAN-mandated choice dialog routes each one.
+                admitDownloaded(
+                    pendingDownloaded.filter { candidate ->
+                        candidate.chapter.id == null || candidate.chapter.id !in partialProbes
+                    },
+                )
+                val partialItems = pendingDownloaded.filter { candidate ->
+                    candidate.chapter.id != null && candidate.chapter.id in partialProbes
+                }
+                updateSuccessState {
+                    it.copy(
+                        dialog = Dialog.PartialDownloadTranslation(
+                            group = partialItems,
+                            decisions = partialProbes,
+                        ),
+                    )
+                }
+                return@launch
+            }
+            admitDownloaded(pendingDownloaded)
         }
     }
 
@@ -1211,6 +1261,80 @@ class MangaScreenModel(
     ) {
         screenModelScope.launchNonCancellable {
             translationManager.translateChapter(manga, chapter, expectedRequestGeneration)
+        }
+    }
+
+    /**
+     * T917 Phase 4 (D10, phase4-design §3.2): the user chose FINISH first —
+     * route through the EXISTING fenced WAITING_FOR_DOWNLOAD path (the same
+     * one the awaiting partition uses); the downloader's post-finalization
+     * handoff admits the batch only after the download completes. Zero batch
+     * work starts now. Generations are captured at tap time so a user cancel
+     * landing between the dialog and this handler still fences the writes.
+     */
+    fun finishDownloadBeforeTranslation(dialog: Dialog.PartialDownloadTranslation) {
+        dismissDialog()
+        val manga = successState?.manga ?: return
+        screenModelScope.launchNonCancellable {
+            val admitted = dialog.group.mapNotNull { item ->
+                val chapterId = item.chapter.id ?: return@mapNotNull null
+                val generation = translationManager.pendingRequestGeneration(chapterId)
+                    ?: return@mapNotNull null
+                if (
+                    translationManager.queueTranslationAfterDownloadIfCurrent(
+                        manga,
+                        item.chapter,
+                        generation,
+                    )
+                ) {
+                    item.chapter
+                } else {
+                    null
+                }
+            }
+            if (admitted.isNotEmpty()) {
+                enqueueTranslationDownloads(downloadManager, manga, admitted)
+            }
+        }
+    }
+
+    /**
+     * T917 Phase 4 (D10, phase4-design §3.3): the user chose TRANSLATE WHAT
+     * EXISTS — subset admission carrying the probe's cross-check so the batch
+     * records its partial truth (manifest `PartialBatchInfo`, source-total or
+     * honestly-unknown expected count), never a fake 100%.
+     */
+    fun translatePartialDownloadNow(dialog: Dialog.PartialDownloadTranslation) {
+        dismissDialog()
+        val manga = successState?.manga ?: return
+        screenModelScope.launchNonCancellable {
+            val generations = mutableMapOf<Long, Long>()
+            val contexts = mutableMapOf<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext>()
+            val chapters = mutableListOf<Chapter>()
+            dialog.group.forEach { item ->
+                val chapterId = item.chapter.id ?: return@forEach
+                val generation = translationManager.pendingRequestGeneration(chapterId) ?: return@forEach
+                val decision = dialog.decisions[chapterId] ?: return@forEach
+                generations[chapterId] = generation
+                contexts[chapterId] = when (decision) {
+                    is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
+                        eu.kanade.translation.pipeline.batch.BatchAdmissionContext(
+                            probedSourcePageCount = decision.expectedSourcePageCount,
+                            sourceCountKnown = true,
+                        )
+                    eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.UnknownCount ->
+                        eu.kanade.translation.pipeline.batch.BatchAdmissionContext(
+                            probedSourcePageCount = null,
+                            sourceCountKnown = true,
+                        )
+                    eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Complete ->
+                        eu.kanade.translation.pipeline.batch.BatchAdmissionContext(null, false)
+                }
+                chapters += item.chapter
+            }
+            if (chapters.isNotEmpty()) {
+                translationManager.translateChaptersIfCurrent(manga, chapters, generations, contexts)
+            }
         }
     }
 
@@ -1635,6 +1759,17 @@ class MangaScreenModel(
         data class RunningTranslationConflict(
             val item: ChapterList.Item,
             val conflict: eu.kanade.translation.model.ChapterQueuePreflight.RunningConflict,
+        ) : Dialog
+
+        // T917 Phase 4 (D10, phase4-design §3.2): a probed "downloaded"
+        // candidate is actually MID-DOWNLOAD (audit M-08). The user picks per
+        // chapter: finish the download first (the existing fenced
+        // WAITING_FOR_DOWNLOAD path) or translate the found subset (honest
+        // partial accounting in the manifest). [decisions] is keyed by chapter
+        // id. Functional Phase-4 structure; final copy is Phase 5 (D13).
+        data class PartialDownloadTranslation(
+            val group: List<ChapterList.Item>,
+            val decisions: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionDecision>,
         ) : Dialog
     }
 

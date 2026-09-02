@@ -31,6 +31,19 @@ data class Translation(
             _statusFlow.value = status
         }
 
+    /**
+     * T917 Phase 4 (D10, phase4-design §3.2): the trigger's admission-probe
+     * cross-check, carried with the queued chapter so the batch's
+     * pre-registration can stamp honest totals. [probedSourcePageCount] is the
+     * SOURCE total when the downloader's fetched page list proved it, and null
+     * when the total is unknown; [sourceCountKnown] distinguishes "no
+     * cross-check ran" (legacy default) from "cross-check ran and found no
+     * trustworthy total" (true + null count). Set only by the trigger path;
+     * both defaults keep every other construction site byte-identical.
+     */
+    var probedSourcePageCount: Int? = null
+    var sourceCountKnown: Boolean = false
+
     enum class State(val value: Int) {
         NOT_TRANSLATED(0),
         QUEUE(1),

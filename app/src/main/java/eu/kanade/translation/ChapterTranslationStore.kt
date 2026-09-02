@@ -15,6 +15,8 @@ import eu.kanade.translation.artifact.ChapterArtifactManifestReader
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.PartialBatchDetermination
+import eu.kanade.translation.artifact.PartialBatchInfo
 import eu.kanade.translation.artifact.LegacyChapterMigrationSource
 import eu.kanade.translation.artifact.LegacyChapterSnapshot
 import eu.kanade.translation.artifact.ManifestAuthority
@@ -1353,8 +1355,26 @@ class ChapterTranslationStore(
      * returning Unit when the store refuses the registration (defunct store,
      * artifact-authority failure), so the caller can surface a typed terminal
      * error rather than a live zero tracker.
+     *
+     * T917 Phase 4 (D10, phase4-design §3.3): the trigger may attach its
+     * admission-probe cross-check. When [sourceCountKnown] is true the
+     * registered truth is honest about partiality:
+     *  - a known SOURCE total ([probedSourcePageCount] != null) makes the
+     *    trusted baseline the source total (progress shows 37/40, not 40/40)
+     *    and records the delta as [PartialBatchInfo.DOWNLOAD_CROSSCHECK] —
+     *    cleared again when a later cross-check derives missing == 0;
+     *  - an unknown total (null count) keeps the found count but DEMOTES the
+     *    trusted stamp and records `determinedFrom = UNKNOWN` — the durable
+     *    record stops claiming trust it does not have.
+     * Missing pages are never registered as page records; the manifest carries
+     * the absence. Without context (both defaults) the legacy self-derived
+     * stamp below is byte-identical to pre-D10 behavior.
      */
-    suspend fun preRegisterPages(pageKeys: List<String>): PagePreRegistration {
+    suspend fun preRegisterPages(
+        pageKeys: List<String>,
+        probedSourcePageCount: Int? = null,
+        sourceCountKnown: Boolean = false,
+    ): PagePreRegistration {
         if (pageKeys.isEmpty()) return PagePreRegistration.Accepted
         if (defunct) {
             logcat(LogPriority.WARN) {
@@ -1373,8 +1393,12 @@ class ChapterTranslationStore(
                     return PagePreRegistration.Rejected(admission.message)
                 }
             }
-            pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, pageKeys.distinct().size)
-            pendingExpectedPageCountTrusted = true
+            val foundCount = pageKeys.distinct().size
+            val crossCheckKnown = sourceCountKnown && probedSourcePageCount != null
+            val crossCheckUnknown = sourceCountKnown && probedSourcePageCount == null
+            val targetCount = if (crossCheckKnown) maxOf(foundCount, probedSourcePageCount!!) else foundCount
+            pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, targetCount)
+            pendingExpectedPageCountTrusted = !crossCheckUnknown
             var changed = false
             pageKeys.forEach { pageKey ->
                 if (!pages.containsKey(pageKey)) {
@@ -1392,16 +1416,45 @@ class ChapterTranslationStore(
             val store = artifactStore
             val manifest = artifactManifest
             val expected = pendingExpectedPageCount
-            val expectedTrusted = manifest?.expectedPageCountTrusted == true || pendingExpectedPageCountTrusted
+            val expectedTrusted = when {
+                crossCheckUnknown -> false
+                else -> manifest?.expectedPageCountTrusted == true || pendingExpectedPageCountTrusted
+            }
+            // The partial delta rides the same publish as the totals; a full
+            // cross-check (missing == 0) clears a previously recorded label.
+            val partialInfo = when {
+                crossCheckKnown -> {
+                    val missing = maxOf(0, probedSourcePageCount!! - foundCount)
+                    if (missing == 0) {
+                        null
+                    } else {
+                        PartialBatchInfo(
+                            expectedSourcePageCount = probedSourcePageCount,
+                            missingPageCount = missing,
+                            determinedFrom = PartialBatchDetermination.DOWNLOAD_CROSSCHECK,
+                            recordedAtEpochMs = System.currentTimeMillis(),
+                        )
+                    }
+                }
+                crossCheckUnknown -> PartialBatchInfo(
+                    expectedSourcePageCount = null,
+                    missingPageCount = 0,
+                    determinedFrom = PartialBatchDetermination.UNKNOWN,
+                    recordedAtEpochMs = System.currentTimeMillis(),
+                )
+                else -> manifest?.partialBatchInfo
+            }
             if (store != null && manifest != null && expected != null) {
                 val updated = manifest.copy(
                     expectedPageCount = maxOf(expected, manifest.expectedPageCount ?: 0),
                     expectedPageCountTrusted = expectedTrusted,
+                    partialBatchInfo = partialInfo,
                     updatedAtEpochMs = System.currentTimeMillis(),
                 )
                 if (
                     updated.expectedPageCount == manifest.expectedPageCount &&
-                    updated.expectedPageCountTrusted == manifest.expectedPageCountTrusted
+                    updated.expectedPageCountTrusted == manifest.expectedPageCountTrusted &&
+                    updated.partialBatchInfo == manifest.partialBatchInfo
                 ) {
                     pendingExpectedPageCount = null
                     pendingExpectedPageCountTrusted = false

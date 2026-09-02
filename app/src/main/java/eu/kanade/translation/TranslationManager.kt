@@ -730,6 +730,9 @@ class TranslationManager(
         manga: Manga,
         chapters: Chapter,
         expectedRequestGeneration: Long? = null,
+        // T917 Phase 4 (D10): the trigger's admission-probe cross-check; null
+        // keeps the legacy no-cross-check path byte-identical.
+        admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext? = null,
     ) {
         val chapterId = chapters.id ?: return
         synchronized(pendingRequestMutationLock) {
@@ -746,7 +749,12 @@ class TranslationManager(
             scheduler.shutdownAutoCoordinator(chapterId)
             evictStaleQueuedChapters(chapterId, manga.source)
             markTranslationRequestPreparing(chapterId)
-            translator.queueChapter(manga, chapters)
+            translator.queueChapter(
+                manga,
+                chapters,
+                admissionContext?.probedSourcePageCount,
+                admissionContext?.sourceCountKnown ?: false,
+            )
             if (queueState.value.any { it.chapter.id == chapterId }) {
                 clearPendingTranslationRequest(chapterId)
             } else {
@@ -765,20 +773,26 @@ class TranslationManager(
      * generation captured by the confirmation probe. Chapters whose request
      * was cancelled or re-requested after the acknowledgement are dropped;
      * the surviving set is admitted atomically against cancel.
+     *
+     * T917 Phase 4 (D10): [admissionContexts] carries the per-chapter
+     * download-probe cross-check for subset admissions; chapters without an
+     * entry keep the legacy no-cross-check behavior.
      */
     fun translateChaptersIfCurrent(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>,
+        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
     ): Boolean {
         if (chapters.isEmpty()) return false
-        return translateChaptersInternal(manga, chapters, expectedGenerations).isNotEmpty()
+        return translateChaptersInternal(manga, chapters, expectedGenerations, admissionContexts).isNotEmpty()
     }
 
     private fun translateChaptersInternal(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>?,
+        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
     ): List<Chapter> {
         if (chapters.isEmpty()) return emptyList()
         val admitted = mutableListOf<Chapter>()
@@ -796,9 +810,15 @@ class TranslationManager(
                         return@forEach
                     }
                 }
+                val admissionContext = admissionContexts[chapterId]
                 scheduler.shutdownAutoCoordinator(chapterId)
                 markTranslationRequestPreparing(chapterId)
-                translator.queueChapter(manga, chapter)
+                translator.queueChapter(
+                    manga,
+                    chapter,
+                    admissionContext?.probedSourcePageCount,
+                    admissionContext?.sourceCountKnown ?: false,
+                )
                 if (queueState.value.any { it.chapter.id == chapterId }) {
                     clearPendingTranslationRequest(chapterId)
                     admitted += chapter

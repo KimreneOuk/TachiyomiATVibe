@@ -22,6 +22,16 @@ data class ChapterArtifactManifest(
     val expectedPageCount: Int? = null,
     /** True only when the baseline is the complete ordered batch page set. */
     val expectedPageCountTrusted: Boolean = false,
+    /**
+     * T917 Phase 4 (D10, phase4-design §3.3): the documented delta of a subset
+     * admission over a partially-downloaded chapter. Missing pages are NEVER
+     * registered as page records — the durable record carries the absence
+     * here instead of faking stages, failures, or attempt entries. Null when
+     * the last admission's cross-check proved the chapter complete (or no
+     * partial admission ever ran). Additive nullable: tolerated in both
+     * directions by `ignoreUnknownKeys` (D5 precedent).
+     */
+    val partialBatchInfo: PartialBatchInfo? = null,
     val activeCandidateGenerationIds: Set<String> = emptySet(),
     val durableFailures: Map<String, DurableFailureMetadata> = emptyMap(),
     val glossary: GlossaryPointer? = null,
@@ -49,6 +59,28 @@ data class ChapterArtifactManifest(
         const val SCHEMA_VERSION = 2
     }
 }
+
+/**
+ * T917 Phase 4 (D10, phase4-design §3.3): how a subset admission's missing-page
+ * delta was determined. `DOWNLOAD_CROSSCHECK` — the downloader's fetched page
+ * list proved a known source total; `UNKNOWN` — no trustworthy source total
+ * existed, so the recorded count is only what was found.
+ */
+enum class PartialBatchDetermination { DOWNLOAD_CROSSCHECK, UNKNOWN }
+
+/**
+ * The durable partial-admission record for one chapter. [missingPageCount] is
+ * meaningful only under [PartialBatchDetermination.DOWNLOAD_CROSSCHECK]; under
+ * `UNKNOWN` the total is unknown, so no missing count is claimed.
+ */
+@Serializable
+data class PartialBatchInfo(
+    /** The known SOURCE total; null when [PartialBatchDetermination.UNKNOWN]. */
+    val expectedSourcePageCount: Int? = null,
+    val missingPageCount: Int = 0,
+    val determinedFrom: PartialBatchDetermination,
+    val recordedAtEpochMs: Long = 0L,
+)
 
 /**
  * Durable identity and preservation metadata for a one-way legacy rescue.

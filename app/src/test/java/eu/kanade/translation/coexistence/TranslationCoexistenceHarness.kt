@@ -165,6 +165,11 @@ internal class TranslationCoexistenceHarness private constructor(
             // requesting either value fails by a named assertion until GREEN.
             stallThresholdMs: Long? = null,
             nativeTimeoutMs: Long? = null,
+            // T917 Phase 4 (D10): cleaned-image file names the fake provider
+            // reports as physically present on disk (non-empty). Document IO is
+            // a sanctioned fake seam; the resume gate's physical-presence check
+            // consults it for pages persisted by an earlier batch run.
+            cleanedImagesOnDisk: Set<String> = emptySet(),
         ): TranslationCoexistenceHarness {
             val barrier = CoexistenceBarrier()
 
@@ -174,6 +179,15 @@ internal class TranslationCoexistenceHarness private constructor(
             }
             val preferences = harnessPreferences()
             val provider = mockk<eu.kanade.translation.data.TranslationProvider>(relaxed = true)
+            if (cleanedImagesOnDisk.isNotEmpty()) {
+                val onDisk = mockk<UniFile> {
+                    every { exists() } returns true
+                    every { length() } returns 128L
+                }
+                every {
+                    provider.findPageCleanedImage(any(), any(), any(), any(), any())
+                } answers { if (arg<String>(4) in cleanedImagesOnDisk) onDisk else null }
+            }
             val downloadProvider = mockk<DownloadProvider>(relaxed = true)
             val sourceManager = mockk<SourceManager>(relaxed = true)
             val streamRegistry = TranslationStreamRegistry()
@@ -843,8 +857,19 @@ internal class TranslationCoexistenceHarness private constructor(
      * translationJob per ChapterTranslatorTerminalExitsTest.kt:174-182) so the
      * full batch shell runs: pre-registration, tracker, translateBatch,
      * reconciliation, tracker finish.
+     *
+     * T917 Phase 4 (D10): [sourcePageCount]/[sourceCountKnown] carry the
+     * trigger's admission-probe cross-check on the batch's [Translation]
+     * (sourceCountKnown=true with a null count = the offline-unknown total).
+     * Tolerant at the RED checkpoint via reflection: absent fields are skipped
+     * silently so the test's manifest-truth assertions name the actual defect
+     * (the M-08 self-derived trusted-total lie), never a missing-seam crash.
      */
-    fun launchBatch(pageKeys: List<String>? = null): BatchRun {
+    fun launchBatch(
+        pageKeys: List<String>? = null,
+        sourcePageCount: Int? = null,
+        sourceCountKnown: Boolean = false,
+    ): BatchRun {
         // Per-page lane-serialization entries (see FakeTransportTranslator doc)
         // must exist BEFORE the batch's lanes run. On an empty-start store the
         // keys are not observable yet, so tests pass them explicitly.
@@ -853,6 +878,16 @@ internal class TranslationCoexistenceHarness private constructor(
             nativeStageDone.computeIfAbsent(pageKey) { CompletableDeferred() }
         }
         val translation = Translation(source, manga, chapterFor(CHAPTER_ID))
+        if (sourceCountKnown || sourcePageCount != null) {
+            try {
+                setField(translation, "probedSourcePageCount", sourcePageCount)
+                setField(translation, "sourceCountKnown", sourceCountKnown)
+            } catch (_: NoSuchFieldException) {
+                // RED checkpoint: the D10 context fields are the GREEN
+                // deliverable; the batch runs without them and the test's
+                // manifest assertions fail naming the defect they pin.
+            }
+        }
         val reconciliation = CompletableDeferred<ReconciliationResult?>()
         val activeJob = CoroutineScope(SupervisorJob() + Dispatchers.IO).launch { awaitCancellation() }
         batchJobStub = activeJob

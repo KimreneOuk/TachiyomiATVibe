@@ -402,6 +402,39 @@ class MangaScreen(
                 )
             }
 
+            is MangaScreenModel.Dialog.PartialDownloadTranslation -> {
+                // T917 Phase 4 (D10) functional slice: truthful literal text;
+                // final copy is Phase 5 (D13 — no unmeasured numbers in copy).
+                val primaryDecision = dialog.group.firstOrNull()?.chapter?.id?.let { dialog.decisions[it] }
+                AlertDialog(
+                    onDismissRequest = { screenModel.dismissDialog() },
+                    title = { Text(text = "Chapter still downloading") },
+                    text = {
+                        Text(
+                            text = when (primaryDecision) {
+                                is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
+                                    "${primaryDecision.downloadedPageCount} of " +
+                                        "${primaryDecision.expectedSourcePageCount} pages are downloaded. " +
+                                        "Translate the pages that exist now, or finish the download first?"
+                                else ->
+                                    "The download is still in progress and the page total is unknown. " +
+                                        "Translate the pages that exist now, or finish the download first?"
+                            },
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { screenModel.translatePartialDownloadNow(dialog) }) {
+                            Text(text = "Translate what exists")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { screenModel.finishDownloadBeforeTranslation(dialog) }) {
+                            Text(text = "Finish download first")
+                        }
+                    },
+                )
+            }
+
             is MangaScreenModel.Dialog.SetFetchInterval -> {
                 SetIntervalDialog(
                     interval = dialog.manga.fetchInterval,
