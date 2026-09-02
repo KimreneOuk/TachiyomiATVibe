@@ -1349,9 +1349,14 @@ class TranslationManager(
                 // Create a LAZY store: the artifact manifest materializes only on the first real
                 // write, so merely opening a chapter never leaves an empty compatibility document
                 // behind that could make isChapterTranslated report a false TRANSLATED state.
+                // A never-translated chapter has no on-disk document yet (artifactParent is
+                // null), so the creator performs the same create-the-manga-directory
+                // resolution the pipeline fallback uses; without it the first batch
+                // mutation is rejected with LEGACY_RESCUE_FAILED.
                 ChapterTranslationStore.lazy(
                     artifactParent = document?.parent,
                     artifactFileName = fileName,
+                    fileCreator = { provider.getMangaDir(mangaTitle, source) },
                 )
             }
         } ?: return null

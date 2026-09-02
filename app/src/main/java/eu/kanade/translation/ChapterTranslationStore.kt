@@ -1776,8 +1776,15 @@ class ChapterTranslationStore(
         artifactStore?.let { return artifactManifest != null }
         // Lazy production stores must provide an artifact parent/name. An
         // existing flat file is migrated by openInternal; this method never
-        // creates one as a mutation side effect.
-        val parent = artifactParent ?: translationFile?.parentFile ?: return false
+        // creates one as a mutation side effect. A store opened before its
+        // document existed (chapter never translated) resolves the parent
+        // through [fileCreator] here — the same create-the-directory step the
+        // pipeline fallback performs — so the first real write establishes
+        // authority instead of rejecting every mutation.
+        val parent = artifactParent
+            ?: translationFile?.parentFile
+            ?: fileCreator?.let { creator -> runCatching { creator() }.getOrNull() }
+            ?: return false
         val fileName = artifactFileName ?: translationFile?.name ?: return false
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
@@ -2216,8 +2223,9 @@ class ChapterTranslationStore(
 
         /**
          * Creates a store whose on-disk file is created lazily on the first
-         * artifact-backed [updatePage]/[replaceAll] write. The optional
-         * [fileCreator] remains source-compatible but is never invoked.
+         * artifact-backed [updatePage]/[replaceAll] write. When
+         * [artifactParent] is null (chapter never translated), the optional
+         * [fileCreator] resolves the parent directory on the first mutation.
          */
         fun lazy(
             artifactParent: UniFile? = null,
