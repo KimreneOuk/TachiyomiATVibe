@@ -26,8 +26,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.io.InputStream
@@ -68,6 +71,14 @@ class RollingAutoCoordinator(
     injectedScope: CoroutineScope? = null,
     private val predecessorCoordinators: List<RollingAutoCoordinator> = emptyList(),
     private val ownerVersion: Long = 0L,
+    /**
+     * T917 Phase 3 (D6 §2.3): bound for draining an in-flight paid call after
+     * the window is cancelled, instead of tearing it down mid-call. The
+     * translate+commit runs under NonCancellable inside this budget; expiry
+     * cancels the call cleanly (cancellation-class: the D9 attempt entry
+     * stays unresolved).
+     */
+    private val drainGraceMs: Long = PROVIDER_DRAIN_GRACE_MS,
 ) {
 
     private val ownsScope: Boolean = injectedScope == null
@@ -419,19 +430,31 @@ class RollingAutoCoordinator(
             publishSnapshot(work.generation)
             try {
                 if (!isWorkCurrent(work)) continue
-                val translated = if (computeGate != null) {
-                    computeGate.withPermit {
-                        if (!isWorkCurrent(work)) {
-                            null
+                // T917 Phase 3 (D6 §2.3): drain-not-cancel. The translate +
+                // commit runs under NonCancellable inside [drainGraceMs], so a
+                // cancelled window lets the in-flight call finish, commit and
+                // resolve its D9 attempt entry instead of stranding the page.
+                // The timeout is INNER: expiry cancels the call cleanly and is
+                // cancellation-class (the attempt entry stays unresolved). The
+                // outcome bookkeeping after the block stays generation-guarded,
+                // so a drained result commits even though the window is gone.
+                val translated = withContext(NonCancellable) {
+                    withTimeout(drainGraceMs) {
+                        if (computeGate != null) {
+                            computeGate.withPermit {
+                                if (!isWorkCurrent(work)) {
+                                    null
+                                } else {
+                                    recordAutoAttemptStart(work) ?: runAutoAttempt(work)
+                                }
+                            }
                         } else {
-                            recordAutoAttemptStart(work) ?: runAutoAttempt(work)
+                            if (!isWorkCurrent(work)) {
+                                null
+                            } else {
+                                recordAutoAttemptStart(work) ?: runAutoAttempt(work)
+                            }
                         }
-                    }
-                } else {
-                    if (!isWorkCurrent(work)) {
-                        null
-                    } else {
-                        recordAutoAttemptStart(work) ?: runAutoAttempt(work)
                     }
                 }
                 if (isWorkCurrent(work)) {
@@ -1045,9 +1068,16 @@ class RollingAutoCoordinator(
         val streamFn: (() -> InputStream)?,
     )
 
-    private companion object {
+    companion object {
+        /**
+         * T917 Phase 3 (D6 §2.3): production drain grace. Bounded so a hung
+         * provider call still cancels cleanly; long enough that an in-flight
+         * call normally finishes and commits even after the window is gone.
+         */
+        const val PROVIDER_DRAIN_GRACE_MS = 90_000L
+
         /** Sentinel for a pause that may be retried at the next reconcile. */
-        const val RETRY_AT_NEXT_RECONCILE = Long.MIN_VALUE
+        private const val RETRY_AT_NEXT_RECONCILE = Long.MIN_VALUE
 
         /**
          * Max re-prepare attempts after a stale translate handoff before the

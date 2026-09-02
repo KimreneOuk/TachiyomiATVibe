@@ -93,7 +93,14 @@ class ProviderRequestGovernorReservationTest {
             windowMs,
             fraction,
         )
-        return ctor.newInstance(*args) as ProviderQuotaPolicy
+        return try {
+            ctor.newInstance(*args) as ProviderQuotaPolicy
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            // A policy validation failure (e.g. the fraction range guard) must
+            // surface as its real exception so shouldThrow can observe it.
+            val target = e.targetException ?: e.cause ?: e
+            throw target
+        }
     }
 
     private fun metadata(

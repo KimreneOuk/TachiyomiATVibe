@@ -135,6 +135,14 @@ sealed interface SinglePageOutcome {
     /** The executor ran the page itself (including resume-skip soft exits). */
     data object Completed : SinglePageOutcome
 
+    /**
+     * T917 Phase 3 (D6 §2.2a): the paid call was typed-deferred by the provider
+     * request governor (window/foreground budget) instead of completing, so the
+     * intent neither failed nor finished. [nextEligibleRetryAtEpochMs] is the
+     * epoch ms after which a retry may be admitted, when the governor knows it.
+     */
+    data class Paused(val nextEligibleRetryAtEpochMs: Long? = null) : SinglePageOutcome
+
     /** The page was owned by [owner]; the executor attached to the owner's terminal commit. */
     data class Attached(val owner: PageWriteOrigin) : SinglePageOutcome
 

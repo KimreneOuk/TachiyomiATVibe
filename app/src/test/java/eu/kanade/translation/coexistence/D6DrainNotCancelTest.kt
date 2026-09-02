@@ -249,10 +249,14 @@ class D6DrainNotCancelTest {
         }
 
         withClue(
-            "T917 D6 §2.3 defect: the drained call must commit READY even though the window is " +
-                "gone — RED strands the page because cancel() tears the call down mid-flight",
+            "T917 D6 §2.3 defect: the drained call must commit its translation-terminal state " +
+                "even though the window is gone — RED strands the page because cancel() tears " +
+                "the call down mid-flight",
         ) {
-            store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
+            val page = store.state.value.getValue("p0")
+            page.translationStatus shouldBe StageStatus.READY
+            page.ocrStatus shouldBe StageStatus.READY
+            page.inpaintStatus shouldBe StageStatus.READY
         }
         withClue(
             "T917 D6 §2.3 defect: a drained COMPLETED call must consume its D9 attempt entry — " +
@@ -387,8 +391,8 @@ class D6DrainNotCancelTest {
                 cancelledSignal.complete(Unit)
                 throw e
             }
-            // The real pipeline's terminal commit (display-ready truth) — the
-            // same guarded write the manual publish shim performs: a
+            // The real pipeline's terminal commit (translation-terminal truth) —
+            // the same guarded write the manual publish shim performs: a
             // manifest-free precondition so the dependency-fingerprint clause
             // cannot reject the fake's page-derived snapshot fingerprint.
             val result = store.updatePageGuarded(
@@ -428,13 +432,19 @@ class D6DrainNotCancelTest {
 
         private fun displayReady(pageKey: String, current: PageTranslation?): PageTranslation =
             (current ?: PageTranslation(sourceFileName = pageKey)).apply {
-                renderStatus = StageStatus.READY
-                translationStatus = StageStatus.READY
+                // The paid call's terminal commit is the translate+persist
+                // stage, so the fake commits the same translation-terminal
+                // shape the harness's manual publish shim does (harness note
+                // §1.2.3): promoting renderStatus to READY additionally needs
+                // a decodable cleaned base file, which a JVM fixture cannot
+                // produce (documented fixture deviation, D9 harness notes).
                 ocrStatus = StageStatus.READY
+                translationStatus = StageStatus.READY
                 inpaintStatus = StageStatus.READY
                 cleanedImageName = "$pageKey.cleaned.png"
                 inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                 inpaintingModeUsed = "FAST"
+                errorMessage = null
                 blocks = mutableListOf(
                     TranslationBlock(
                         text = "源",

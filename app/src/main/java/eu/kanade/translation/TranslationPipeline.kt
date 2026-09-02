@@ -471,8 +471,12 @@ class TranslationPipeline(
             val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
                 ?: return SinglePageOutcome.Completed
 
+            // T917 Phase 3 (D6 §2.2a): capture the phase's typed completion so a
+            // governor deferral surfaces as a typed pause instead of a silent
+            // Completed.
+            var httpOutcome: ChunkCompletionOutcome? = null
             try {
-                withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
+                httpOutcome = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
                     translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener, origin)
                 } ?: run {
                     logcat(LogPriority.WARN) {
@@ -480,6 +484,7 @@ class TranslationPipeline(
                             "pageKey=$pageKey chapter=${chapter.name}"
                     }
                     markPageTimedOut(manga, chapter, source, pageKey)
+                    null
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -488,6 +493,15 @@ class TranslationPipeline(
                 }
                 markPageFailed(manga, chapter, source, pageKey, t)
                 throw t
+            }
+            // T917 Phase 3 (D6 §2.2a): a window-exhausted manual tap must land
+            // as a TYPED pause in scheduler manualOutcomes, not as Completed.
+            // The phase already typed the governor deferral (and other
+            // retryable provider pauses) as ChunkCompletionOutcome.Paused;
+            // map it 1:1, carrying the governor's retry epoch when known.
+            val pausedOutcome = httpOutcome as? ChunkCompletionOutcome.Paused
+            if (pausedOutcome != null) {
+                return SinglePageOutcome.Paused(pausedOutcome.nextEligibleRetryAtEpochMs)
             }
         } finally {
             releaseReaderPageLease(leaseStore, pageKey, origin)
