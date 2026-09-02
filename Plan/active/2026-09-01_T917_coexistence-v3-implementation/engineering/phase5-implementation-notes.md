@@ -60,6 +60,17 @@ updated `D8StallWatchdogTest`.
   framing (partial truth carried by `partial` page flag + `PARTIAL` chip
   truth; legacy-directory counts remain the manifest's facts) are pinned.
 
+  > **G1 AMENDMENT (Main Leader, post-review — review/phase5-verification.md
+  > finding P5-1 / condition G1):** the bullet above overclaimed as originally
+  > written. Accurate original state: notification, drawer
+  > mini-chips/hero/subtitle, chapter indicator a11y, the manga partial dialog,
+  > the store placeholders, and the batch snapshot facts consumed the mappers;
+  > the **reader page chip, reader overlay, and rolling-auto status did NOT**
+  > (`forManualOutcome`/`forAutoSlot`/`manualOutcomeFor` had zero production
+  > callers). Completed after review by commits `337ddc8` (RED 12 named) /
+  > `388699d` (GREEN 15/0) — see §6 "Reader-surface hop (P5-1 completion)".
+  > With those commits, condition D's surface claim is true as stated.
+
 ## 4. Deviations and judgment calls (recorded, none silent)
 
 1. **Queue-position copy already compliant.** "Queued (Nth of M) — waiting for
