@@ -160,6 +160,11 @@ internal class TranslationCoexistenceHarness private constructor(
             // with the seams missing IS the defect under test and fails by
             // named assertion (never a timeout).
             drainGraceMs: Long? = null,
+            // T917 Phase 4 (D8): optional test-only occupancy/timeout seams.
+            // Reflection keeps this harness compiling at the RED checkpoint;
+            // requesting either value fails by a named assertion until GREEN.
+            stallThresholdMs: Long? = null,
+            nativeTimeoutMs: Long? = null,
         ): TranslationCoexistenceHarness {
             val barrier = CoexistenceBarrier()
 
@@ -498,6 +503,13 @@ internal class TranslationCoexistenceHarness private constructor(
                     "onBatchClosed" to (null as (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)?),
                 ),
             )
+            // D8 RED: requested seams are installed only once production adds them.
+            // The graph tests use named reflection bridges for those fields/methods.
+            if (stallThresholdMs != null || nativeTimeoutMs != null) {
+                throw AssertionError(
+                    "T917 D8 RED defect: injectable stall/timeout pipeline seams are missing",
+                )
+            }
             // batchTrackerFactory — TranslationPipeline.kt:165 (nullable-tracker
             // return type; set separately so the lambda type is exact).
             val trackerRegistry = TranslationBatchTrackerRegistry()
