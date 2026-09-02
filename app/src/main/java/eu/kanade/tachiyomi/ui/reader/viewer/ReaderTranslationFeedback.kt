@@ -10,6 +10,10 @@ import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.toPageDisplayProjection
 import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
+import eu.kanade.translation.scheduling.SinglePageOutcome
+import eu.kanade.translation.translator.NativeStallState
+import eu.kanade.translation.ui.PageUiTruth
+import eu.kanade.translation.ui.TranslationUiTruth
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.at.ATMR
 
@@ -27,6 +31,14 @@ sealed interface ReaderPageFeedbackState {
     data object Translated : ReaderPageFeedbackState
     data class Deferred(val reason: AutoDeferralReason) : ReaderPageFeedbackState
     data class Failed(val retryable: Boolean) : ReaderPageFeedbackState
+
+    /**
+     * T917 P5 (spec §0.2.2, §6.2.8): a shared pure-truth projection from
+     * [TranslationUiTruth.forManualOutcome]. The record is produced by the
+     * mapper — the reader renders its label/content description verbatim and
+     * never reinterprets precedence or wording.
+     */
+    data class ManualTruth(val truth: PageUiTruth) : ReaderPageFeedbackState
 }
 
 /**
@@ -88,6 +100,35 @@ internal fun selectReaderPageFeedback(
     durableFeedback is ReaderPageFeedbackState.Failed -> durableFeedback
     else -> autoFeedback ?: durableFeedback
 }
+
+/**
+ * T917 P5 (spec §0.2.2, §6.2.8, §6.2.10): identity-fenced join between the
+ * scheduler's typed manual single-page outcome and THIS holder's chip truth.
+ *
+ * Identity fencing lives in the lookup: [lookup] must be the scheduler's
+ * read-only accessor keyed by the holder's own (chapterId, pageKey), so an
+ * outcome recorded for any other page or chapter is never visible here. The
+ * D8 stall flow ([nativeStall]) is fenced by the same pageKey comparison and
+ * only fills the stalled page when no scheduler outcome exists yet.
+ *
+ * All copy and precedence decisions stay in the pure
+ * [TranslationUiTruth.forManualOutcome] mapper: this function wraps the
+ * mapper's record verbatim. A `Completed` outcome keeps the existing durable
+ * rendered state (returns null — nothing manual to project), and a live
+ * durable attempt ([attemptActive]) always owns the chip.
+ *
+ * RED SEAM (T917 P5 reader-hop): returns null until the GREEN wiring commit;
+ * every join assertion in `ReaderManualOutcomeTruthTest` fails against this.
+ */
+@Suppress("UNUSED_PARAMETER", "unused")
+internal fun readerManualOutcomeFeedback(
+    chapterId: Long?,
+    pageKey: String?,
+    attemptActive: Boolean,
+    lookup: (chapterId: Long, pageKey: String) -> SinglePageOutcome?,
+    nativeStall: NativeStallState?,
+    durable: PageTranslation?,
+): ReaderPageFeedbackState? = null
 
 /** A delayed UI update; scheduling and image delivery remain immediate. */
 class ReaderTranslationFeedbackCoalescer(
@@ -202,6 +243,7 @@ private val ReaderPageFeedbackState.stageRank: Int
         ReaderPageFeedbackState.Translated,
         is ReaderPageFeedbackState.Deferred,
         is ReaderPageFeedbackState.Failed,
+        is ReaderPageFeedbackState.ManualTruth,
         -> -1
     }
 
@@ -239,6 +281,9 @@ fun ReaderPageFeedbackState.localizedLabel(context: Context): String = when (thi
     ReaderPageFeedbackState.Translated -> context.stringResource(ATMR.strings.reader_auto_stage_translated)
     is ReaderPageFeedbackState.Deferred -> context.stringResource(reason.localizedResource)
     is ReaderPageFeedbackState.Failed -> context.stringResource(ATMR.strings.reader_auto_stage_failed)
+    // T917 P5: the shared mapper owns the copy; render its English source
+    // label verbatim (the accepted pure-copy tradeoff, i18n debt carried).
+    is ReaderPageFeedbackState.ManualTruth -> truth.label
 }
 
 private val AutoDeferralReason.localizedResource
