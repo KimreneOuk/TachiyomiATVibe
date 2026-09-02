@@ -119,9 +119,11 @@ internal class TranslationCoexistenceHarness private constructor(
     val trackerScope: CoroutineScope,
     val managerScope: CoroutineScope,
     private val cleanedPublicationMock: CleanedPublication,
-    private val engineLane: EngineLane,
-    private val nativeStageDone: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
-    private val transportStarted: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
+    // T917 Phase 3 (D6): exposed so a test can swap in a governed transport
+    // (paid calls admitted through a real ProviderRequestGovernor).
+    internal val engineLane: EngineLane,
+    internal val nativeStageDone: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
+    internal val transportStarted: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
 ) {
 
     companion object {
@@ -146,6 +148,7 @@ internal class TranslationCoexistenceHarness private constructor(
             pageKeys: List<String> = listOf("p0", "p1"),
             preRegisterInStore: Boolean = true,
             storeOverride: ChapterTranslationStore? = null,
+            extraStores: Map<Long, ChapterTranslationStore> = emptyMap(),
         ): TranslationCoexistenceHarness {
             val barrier = CoexistenceBarrier()
 
@@ -251,7 +254,12 @@ internal class TranslationCoexistenceHarness private constructor(
                 ),
             )
 
-            val storeResolverHook: (Translation) -> ChapterTranslationStore? = { store }
+            // T917 Phase 3 (D6): extra chapter stores make the resolver
+            // chapter-keyed so a manual tap on ANOTHER chapter shares the same
+            // graph (and the same governed provider bucket) as the batch.
+            val storeResolverHook: (Translation) -> ChapterTranslationStore? = { translation ->
+                extraStores[translation.chapter.id] ?: store
+            }
 
             val pageStoreWriter = PageStoreWriter(
                 activeStoreResolver = { storeResolverHook },
@@ -479,8 +487,10 @@ internal class TranslationCoexistenceHarness private constructor(
             // ---- real scheduler over the real pipeline ----------------------
             val scheduler = TranslationScheduler(
                 executor = pipeline,
-                storeResolver = TranslationStoreResolver { store },
-                immediateStoreResolver = { store },
+                storeResolver = TranslationStoreResolver { chapterId ->
+                    extraStores[chapterId] ?: store
+                },
+                immediateStoreResolver = { extraStores[it] ?: store },
             )
             val schedulerJobMap = CapturingJobMap()
             setFields(
