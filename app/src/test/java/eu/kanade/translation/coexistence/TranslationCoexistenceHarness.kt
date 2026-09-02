@@ -169,6 +169,11 @@ internal class TranslationCoexistenceHarness private constructor(
             // requesting either value fails by a named assertion until GREEN.
             stallThresholdMs: Long? = null,
             nativeTimeoutMs: Long? = null,
+            // T917 Phase 5 (spec §4.1.5 / condition B): optional test-only
+            // HTTP+render result-timer seam. Reflection keeps this harness
+            // compiling at the RED checkpoint; requesting a value with the seam
+            // missing IS the defect under test and fails by a named assertion.
+            httpRenderTimeoutMs: Long? = null,
             // T917 Phase 4 (D10): cleaned-image file names the fake provider
             // reports as physically present on disk (non-empty). Document IO is
             // a sanctioned fake seam; the resume gate's physical-presence check
@@ -588,6 +593,23 @@ internal class TranslationCoexistenceHarness private constructor(
             ) { chapterId: Long, chapterStore: ChapterTranslationStore, orderedPageKeys: List<String> ->
                 trackerRegistry.createTracker(chapterId, chapterStore, orderedPageKeys, trackerScope)
             }
+            // T917 Phase 5 (condition B): tolerant HTTP+render result-timer
+            // injection — at the RED checkpoint the field does not exist yet, so
+            // REQUESTING it is the named RED defect; the default keeps today's
+            // timer contract.
+            if (httpRenderTimeoutMs != null) {
+                try {
+                    setField(pipeline, "singlePageTimeoutMs", httpRenderTimeoutMs)
+                } catch (_: NoSuchFieldException) {
+                    throw AssertionError(
+                        "T917 P5 RED defect (condition B / D8-1): TranslationPipeline has no " +
+                            "injectable HTTP+render result-timer seam (singlePageTimeoutMs) — the " +
+                            "withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) deadline cannot be exercised",
+                    )
+                }
+            } else {
+                runCatching { setField(pipeline, "singlePageTimeoutMs", TranslationPipeline.SINGLE_PAGE_TIMEOUT_MS) }
+            }
 
             // ---- real scheduler over the real pipeline ----------------------
             val scheduler = TranslationScheduler(
@@ -868,8 +890,8 @@ internal class TranslationCoexistenceHarness private constructor(
      * scheduler.translatePage — the manager has no injectable readerTeardown
      * field, so the harness drives that same production entry directly.
      */
-    fun tapManual(pageKey: String, chapterId: Long = CHAPTER_ID) {
-        scheduler.translatePage(manga, chapterFor(chapterId), source, pageKey)
+    fun tapManual(pageKey: String, chapterId: Long = CHAPTER_ID, force: Boolean = false) {
+        scheduler.translatePage(manga, chapterFor(chapterId), source, pageKey, force = force)
     }
 
     /** Awaits (event-driven) the manual job captured at scheduler registration. */
