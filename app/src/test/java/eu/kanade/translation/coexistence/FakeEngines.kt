@@ -13,7 +13,10 @@ import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecision
 import eu.kanade.translation.util.TranslationMemoryBudget.DecodeDecisionKind
 import io.mockk.every
 import io.mockk.mockk
+import kotlinx.coroutines.CompletableDeferred
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -120,6 +123,30 @@ internal class FakeRecognitionEngine(
 }
 
 /**
+ * T917 Phase 4 (D7) — cross-instance observation state shared by the primary
+ * fake transport and every translator the epoch retry's REBUILD produces.
+ * The §1.4.1a oracle "any second call landed on the REBUILT translator
+ * instance" is only observable if call/serving evidence survives across
+ * instances, and the §1.4.1b close-order oracle needs one merged event log.
+ */
+internal class SharedTransportState {
+    val instanceCounter = AtomicInteger(0)
+
+    /** Merged, real-time-ordered lifecycle events: call-start/call-end/close/abort per instance. */
+    val eventLog = CopyOnWriteArrayList<String>()
+
+    /** pageKey → instance ids, one entry per paid call in issue order. */
+    val servingOrder = ConcurrentHashMap<String, CopyOnWriteArrayList<Int>>()
+
+    /** Paid calls that ended by cancellation (never a close's business — drain-not-cancel). */
+    val cancelledCalls = AtomicInteger(0)
+
+    fun recordServing(pageKey: String, instanceId: Int) {
+        servingOrder.computeIfAbsent(pageKey) { CopyOnWriteArrayList() }.add(instanceId)
+    }
+}
+
+/**
  * Fake provider HTTP transport ([TextTranslator]) shared by the single-page
  * HTTP phase and the batch standard translation lane. Hosts the PROVIDER_START
  * / PROVIDER_END barriers and records the exactly-once paid-call oracle.
@@ -134,12 +161,26 @@ internal class FakeRecognitionEngine(
  * the production-typical order per page:
  *   identity check → [signalTransportStarted] → native inpaint → cleaned
  *   publication ([waitForNativeStage] returns) → paid call → commit → render.
+ *
+ * T917 Phase 4 (D7) additions (test-infra only, per phase4-design §1.4):
+ *  - [instanceId] — every instance exposes an id so the epoch retry can prove
+ *    the second paid call landed on the REBUILT translator;
+ *  - [closedFlag]/[closedSignal] — models the production close defect the
+ *    audit H-09 evidence names (providers close their executors/pools in
+ *    `close()`): a call that resumes from its PROVIDER_START park after the
+ *    fake was closed FAILS instead of silently completing, which is exactly
+ *    the mid-call failure closeEngines inflicts on a racing page today;
+ *  - [shared] — cross-instance evidence ([SharedTransportState]); null keeps
+ *    the phase-1 per-instance behavior byte-identical for existing suites.
  */
 internal class FakeTransportTranslator(
     private val barrier: CoexistenceBarrier,
     private val waitForNativeStage: suspend (String) -> Unit = {},
     private val signalTransportStarted: (String) -> Unit = {},
+    internal val shared: SharedTransportState? = null,
 ) : TextTranslator {
+
+    val instanceId: Int = shared?.instanceCounter?.incrementAndGet() ?: 0
 
     override val fromLang: TextRecognizerLanguage = TextRecognizerLanguage.JAPANESE
     override val toLang: TextTranslatorLanguage = TextTranslatorLanguage.ENGLISH
@@ -147,27 +188,47 @@ internal class FakeTransportTranslator(
     val callsByPage = ConcurrentHashMap<String, AtomicInteger>()
     val closeCalls = AtomicInteger(0)
 
+    val closedFlag = AtomicBoolean(false)
+    val closedSignal = CompletableDeferred<Unit>()
+
     fun callsFor(pageKey: String): Int = callsByPage[pageKey]?.get() ?: 0
 
     fun totalCalls(): Int = callsByPage.values.sumOf { it.get() }
 
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
-        pages.forEach { (pageKey, page) ->
-            println("DBG transport call pageKey=$pageKey")
-            // The batch identity check in BatchLaneWorkers.translate has passed
-            // by this point; only now may the native lane's cleaned publication
-            // for this page land.
-            signalTransportStarted(pageKey)
-            waitForNativeStage(pageKey)
-            // The paid call begins before the start gate parks the lane.
-            callsByPage.computeIfAbsent(pageKey) { AtomicInteger(0) }.incrementAndGet()
-            barrier.arrive(CoexistenceBarrier.BarrierPoint.PROVIDER_START, pageKey)
-            page.blocks.forEach { block -> block.translation = "tr-" + block.text }
-            barrier.arrive(CoexistenceBarrier.BarrierPoint.PROVIDER_END, pageKey)
+        try {
+            pages.forEach { (pageKey, page) ->
+                println("DBG transport call pageKey=$pageKey inst=$instanceId")
+                // The batch identity check in BatchLaneWorkers.translate has passed
+                // by this point; only now may the native lane's cleaned publication
+                // for this page land.
+                signalTransportStarted(pageKey)
+                waitForNativeStage(pageKey)
+                // The paid call begins before the start gate parks the lane.
+                callsByPage.computeIfAbsent(pageKey) { AtomicInteger(0) }.incrementAndGet()
+                shared?.recordServing(pageKey, instanceId)
+                shared?.eventLog?.add("call-start:$pageKey:inst$instanceId")
+                barrier.arrive(CoexistenceBarrier.BarrierPoint.PROVIDER_START, pageKey)
+                if (closedFlag.get()) {
+                    shared?.eventLog?.add("call-aborted-closed:$pageKey:inst$instanceId")
+                    throw IllegalStateException(
+                        "fake transport closed mid-call (inst$instanceId pageKey=$pageKey)",
+                    )
+                }
+                page.blocks.forEach { block -> block.translation = "tr-" + block.text }
+                barrier.arrive(CoexistenceBarrier.BarrierPoint.PROVIDER_END, pageKey)
+                shared?.eventLog?.add("call-end:$pageKey:inst$instanceId")
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            shared?.cancelledCalls?.incrementAndGet()
+            throw e
         }
     }
 
     override fun close() {
         closeCalls.incrementAndGet()
+        closedFlag.set(true)
+        shared?.eventLog?.add("close:inst$instanceId")
+        closedSignal.complete(Unit)
     }
 }

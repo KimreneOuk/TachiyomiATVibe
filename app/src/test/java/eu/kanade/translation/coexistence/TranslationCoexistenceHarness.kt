@@ -81,6 +81,7 @@ import java.io.ByteArrayInputStream
 import java.io.InputStream
 import java.lang.reflect.Field
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -124,6 +125,11 @@ internal class TranslationCoexistenceHarness private constructor(
     internal val engineLane: EngineLane,
     internal val nativeStageDone: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
     internal val transportStarted: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
+    // T917 Phase 4 (D7): cross-instance transport evidence + the engine-drain
+    // scope. transportInstances includes the primary fakeTransport (instance 1).
+    internal val transportShared: SharedTransportState,
+    internal val transportInstances: List<FakeTransportTranslator>,
+    private val engineDrainScope: CoroutineScope,
 ) {
 
     companion object {
@@ -149,6 +155,11 @@ internal class TranslationCoexistenceHarness private constructor(
             preRegisterInStore: Boolean = true,
             storeOverride: ChapterTranslationStore? = null,
             extraStores: Map<Long, ChapterTranslationStore> = emptyMap(),
+            // T917 Phase 4 (D7): engine-drain grace for the EngineLane seams.
+            // Null keeps today's behavior at the RED commit; a non-null value
+            // with the seams missing IS the defect under test and fails by
+            // named assertion (never a timeout).
+            drainGraceMs: Long? = null,
         ): TranslationCoexistenceHarness {
             val barrier = CoexistenceBarrier()
 
@@ -189,17 +200,30 @@ internal class TranslationCoexistenceHarness private constructor(
             // Per-page lane serialization (see FakeTransportTranslator doc).
             val transportStarted = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
             val nativeStageDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
-            val fakeTransport = FakeTransportTranslator(
-                barrier,
-                waitForNativeStage = { pageKey -> nativeStageDone[pageKey]?.await() },
-                signalTransportStarted = { pageKey ->
-                    println("DBG signalStart $pageKey")
-                    transportStarted.computeIfAbsent(pageKey) { CompletableDeferred() }.complete(Unit)
-                },
-            )
+            // T917 Phase 4 (D7): cross-instance evidence + the rebuilt-instance
+            // factory the EngineLane epoch retry uses. The primary fake shares
+            // the state, so call/serving/close-order evidence is observable
+            // across every translator instance the graph produces.
+            val transportShared = SharedTransportState()
+            val transportInstances = CopyOnWriteArrayList<FakeTransportTranslator>()
+            fun newTransport(): FakeTransportTranslator =
+                FakeTransportTranslator(
+                    barrier,
+                    waitForNativeStage = { pageKey -> nativeStageDone[pageKey]?.await() },
+                    signalTransportStarted = { pageKey ->
+                        println("DBG signalStart $pageKey")
+                        transportStarted.computeIfAbsent(pageKey) { CompletableDeferred() }.complete(Unit)
+                    },
+                    shared = transportShared,
+                ).also { transportInstances += it }
+            val fakeTransport = newTransport()
 
             val nativeRunScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val nativeRunQuarantine = NativeRunQuarantine(nativeRunScope)
+            // T917 Phase 4 (D7): the engine-drain scope injected into EngineLane
+            // (production wires nativeRunScope; the harness owns its own so
+            // close() can cancel leftover one-shot drains deterministically).
+            val engineDrainScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
             val inFlightPageKeys: MutableSet<String> = ConcurrentHashMap.newKeySet()
             val engineRebuildMutex = Mutex()
 
@@ -253,6 +277,7 @@ internal class TranslationCoexistenceHarness private constructor(
                     "enginesClosed" to false,
                 ),
             )
+            installEngineDrainSeams(engineLane, drainGraceMs, engineDrainScope, ::newTransport)
 
             // T917 Phase 3 (D6): extra chapter stores make the resolver
             // chapter-keyed so a manual tap on ANOTHER chapter shares the same
@@ -565,6 +590,9 @@ internal class TranslationCoexistenceHarness private constructor(
                 engineLane = engineLane,
                 nativeStageDone = nativeStageDone,
                 transportStarted = transportStarted,
+                transportShared = transportShared,
+                transportInstances = transportInstances,
+                engineDrainScope = engineDrainScope,
             )
             harness.installManualPublishShim()
             return harness
@@ -600,6 +628,47 @@ internal class TranslationCoexistenceHarness private constructor(
         /** ALL reflection wiring for one target in one (name, value) list. */
         internal fun setFields(target: Any, values: List<Pair<String, Any?>>) {
             values.forEach { (name, value) -> setField(target, name, value) }
+        }
+
+        /**
+         * T917 Phase 4 (D7): injects the engine-epoch + borrow-drain seams into
+         * the Unsafe-allocated [EngineLane]. Tolerant at the RED commit: the
+         * fields do not exist yet and today's immediate-close behavior runs,
+         * so a missing field is skipped silently — EXCEPT an explicitly
+         * requested [drainGraceMs], whose absence IS the defect under test
+         * (phase4-design §1.4: RED fails by named assertion, never timeout).
+         * At the GREEN commit every field exists and is required.
+         */
+        private fun installEngineDrainSeams(
+            engineLane: EngineLane,
+            drainGraceMs: Long?,
+            drainScope: CoroutineScope,
+            transportFactory: () -> FakeTransportTranslator,
+        ) {
+            fun setIfPresent(name: String, value: Any?): Boolean = try {
+                setField(engineLane, name, value)
+                true
+            } catch (_: NoSuchFieldException) {
+                false
+            }
+
+            setIfPresent("engineEpoch", java.util.concurrent.atomic.AtomicLong(0))
+            setIfPresent("translatorUseCount", java.util.concurrent.atomic.AtomicInteger(0))
+            setIfPresent("drainScope", drainScope)
+            setIfPresent(
+                "translatorFactory",
+                { _: TextRecognizerLanguage, _: TextTranslatorLanguage -> transportFactory() },
+            )
+            if (drainGraceMs != null) {
+                if (!setIfPresent("drainGraceMs", drainGraceMs)) {
+                    throw AssertionError(
+                        "T917 D7 RED defect: drainGraceMs is not configurable — the §1.2 " +
+                            "engine-drain seam is missing from EngineLane",
+                    )
+                }
+            } else {
+                setIfPresent("drainGraceMs", 5_000L)
+            }
         }
 
         /** Real TranslationPreferences over an in-memory PreferenceStore (STANDARD lane, note §1.2.2). */
@@ -818,11 +887,21 @@ internal class TranslationCoexistenceHarness private constructor(
         } answers { callOriginal() }
         mockkObject(RenderColorEstimator)
         every { RenderColorEstimator.recomputeFor(any(), any()) } returns Unit
+        // T917 Phase 4 (D7) addendum (documented, phase4-implementation-log §1):
+        // the AUTO prepared-page translate half (translatePreparedPage) builds a
+        // 1x1 dummy DecodedPage via Bitmap.createBitmap, which the unit-test
+        // android.jar throws on. Disk/render IO shim only — no coexistence
+        // collaborator is faked.
+        mockkStatic(android.graphics.Bitmap::class)
+        every {
+            android.graphics.Bitmap.createBitmap(any(), any(), any())
+        } answers { FakeCoexistence.stubBitmap() }
     }
 
     fun removeGraphicsShims() {
         unmockkObject(PageDecode)
         unmockkObject(RenderColorEstimator)
+        unmockkStatic(android.graphics.Bitmap::class)
     }
 
     /**
@@ -877,10 +956,18 @@ internal class TranslationCoexistenceHarness private constructor(
         runCatching { scheduler.close() }
         runCatching { pipeline.close() }
         runCatching { batchJobStub?.cancel() }
+        runCatching { engineDrainScope.cancel() }
         runCatching { trackerScope.cancel() }
         runCatching { managerScope.cancel() }
         runCatching { BitmapPool.releaseAll() }
     }
+
+    /**
+     * T917 Phase 4 (D7): paid-call count for [pageKey] across EVERY transport
+     * instance (the primary fake plus any translator the epoch retry rebuilt).
+     */
+    fun transportCallsFor(pageKey: String): Int =
+        transportInstances.sumOf { it.callsFor(pageKey) }
 }
 
 /**
