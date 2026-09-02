@@ -180,12 +180,18 @@ class TranslationPipeline(
     // T909 Phase 10: engine cache + native lane moved to pipeline/EngineLane.kt
     // (defensive init semantics preserved: EngineLane's init builds the engines
     // defensively at construction). Same-signature stubs keep call sites.
+    // T917 Phase 4 (D7 §1.2): the drain grace is the SHORT engine grace (its
+    // expiry is recovered by the epoch retry — see EngineLane.ENGINE_DRAIN_GRACE_MS)
+    // and the drain runs on nativeRunScope so the stop path (main thread) never
+    // blocks on it.
     internal val engines = EngineLane(
         context = context,
         translationPreferences = translationPreferences,
         nativeRunQuarantine = nativeRunQuarantine,
         inFlightPageKeys = inFlightPageKeys,
         onPageStuck = { onPageStuck },
+        drainGraceMs = EngineLane.ENGINE_DRAIN_GRACE_MS,
+        drainScope = nativeRunScope,
     )
 
     private suspend fun <T> withNativeLane(

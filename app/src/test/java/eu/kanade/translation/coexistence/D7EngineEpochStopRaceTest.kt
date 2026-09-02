@@ -6,9 +6,11 @@ import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.FakeChapterDocumentIo
 import eu.kanade.translation.artifact.LegacyChapterSnapshot
 import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.ProbedImage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
@@ -23,6 +25,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.TimeoutCancellationException
@@ -104,9 +107,21 @@ class D7EngineEpochStopRaceTest {
 
     /** Production fresh-chapter recipe over the shared IO (D9/D6 precedent), empty-start. */
     private fun freshStore(): ChapterTranslationStore {
+        // The AUTO prepared page names "$pageKey.cleaned.jpg" but the harness's
+        // publish shim (note §1.2.3) performs the guarded store write WITHOUT
+        // Bitmap.compress, so the companion image file has no bytes on the fake
+        // IO. Seed the one display-base file the promotion validates and give
+        // the directly-constructed artifact store the bounded decode probe stub
+        // (JVM has no BitmapFactory; the fixture builds the ChapterArtifactStore
+        // itself, so the companion-object seam does not apply) answering the
+        // decoded page's 100x100 — TranslationManagerArtifactReadTest precedent.
+        val layout = ChapterArtifactLayout(CHAPTER_DIR)
+        io.files[layout.legacyCompanionImageFile("p0.cleaned.jpg")] = byteArrayOf(1)
+        val imageProbe = CleanedImageProbe { ProbedImage(100, 100) }
         val artifactStore = ChapterArtifactStore(
             AtomicChapterDocuments(io),
-            ChapterArtifactLayout(CHAPTER_DIR),
+            layout,
+            imageProbe,
         )
         var manifest = artifactStore
             .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
@@ -484,13 +499,29 @@ class D7EngineEpochStopRaceTest {
             h.manager.clearQueue()
             h.barrier.arm(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
             h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
-            awaitProviderStart(auto, "p0")
+            // The arrivals log is append-only, so the FIRST call's arrival would
+            // satisfy awaitArrival — await the SECOND PROVIDER_START arrival
+            // (the rebuilt translator's park) event-driven instead. The second
+            // arrival is logged after ensureTranslatorRebuiltForEpochRetry
+            // published the fresh instance, so close #2 below snapshots IT.
+            withTimeout(AWAIT_TIMEOUT_MS) {
+                h.barrier.arrivals.first { list ->
+                    list.count { (p, k) ->
+                        p == CoexistenceBarrier.BarrierPoint.PROVIDER_START && k == "p0"
+                    } >= 2
+                }
+            }
 
             // Close #2 mid-retry: the epoch moves AGAIN.
             h.manager.clearQueue()
             h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
 
-            val outcome = withTimeout(AWAIT_TIMEOUT_MS) { auto.outcome.await() }
+            // The honest failure surfaces in TWO shapes: a typed non-Completed
+            // outcome, or the boundary's rethrow (markPageFailed + throw — the
+            // launchAutoPage wrapper completes the deferred exceptionally).
+            val outcome = runCatching {
+                withTimeout(AWAIT_TIMEOUT_MS) { auto.outcome.await() }
+            }.getOrNull()
             withClue(
                 "T917 D7 §1.4.1c defect: a SECOND epoch mismatch must fail the page honestly (typed " +
                     "failure) — never complete it and never loop",
