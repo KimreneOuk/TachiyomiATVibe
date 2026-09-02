@@ -113,3 +113,75 @@ are page/state counters (trusted-total fractions, terminal counts), as
 specified. Phase-6 measurement items carry forward from the phase-4 log
 (permit-held-time cost of drain/placeholder writes, D11 write-behind, D7-1,
 D8-2).
+
+## 6. Reader-surface hop (P5-1 completion)
+
+Closes review finding P5-1 and gate condition G2's reader-hop item (spec
+§0.2.2, §6.2.8, §6.2.10). Commits `337ddc8` (RED) and `388699d` (GREEN) on
+`t917/coexistence-v3`.
+
+What was wired (all copy/precedence stays in the pure mappers; the reader only
+projects):
+
+- **Identity-fenced join** — `ReaderTranslationFeedback
+  .readerManualOutcomeFeedback(chapterId, pageKey, attemptActive, lookup,
+  nativeStall, durable)`: looks the typed outcome up with the holder's OWN
+  (chapterId, pageKey) via `ReaderViewModel.manualSinglePageOutcome` →
+  `TranslationScheduler.manualOutcomeFor`, so an outcome for a foreign page or
+  chapter can never be returned; the D8 `TranslationPipeline.nativeStall` flow
+  is fenced by the same pageKey comparison and only fills the stalled page
+  when no scheduler outcome exists. The join wraps
+  `TranslationUiTruth.forManualOutcome` verbatim into the new
+  `ReaderPageFeedbackState.ManualTruth` carrier. `Completed` returns null
+  (existing rendered state stands); a live durable attempt always owns the
+  chip (Ticket-04 precedence kept; a previous intent's truth cannot paint over
+  live stages). The D9 `exhausted` fact rides with the page's
+  `hasExhaustedRetries`.
+- **Page holders (pager + webtoon)** — `syncTranslationFeedback` feeds the
+  manual truth into the existing `selectReaderPageFeedback` as the
+  durable-position candidate: a newer terminal auto slot still outranks a
+  typed truth (spec §1.2 rule 6). The native stall flow re-syncs the chip
+  (pager: holder collector; webtoon: bind-fenced `stallJob`), so a stall is
+  visible without a durable store emission. One bounded nullable field per
+  holder; no new maps.
+- **Coalescer** — `ManualTruth` bypasses stage ranking; a non-progress truth
+  closes the attempt against stale stage callbacks, while a newer typed
+  outcome supersedes a displayed terminal truth (the map only holds the latest
+  outcome per identity). Rendering: mapper label verbatim; only
+  progress-severity truth (attached) shows the running scrim; terminal truths
+  use a polite live region; the auto ready-ahead suffix never rides a truth
+  pill. Terminal truths persist (like Failed), satisfying the discoverability
+  requirement when the transient pill would otherwise expire.
+- **Rolling-auto status** — `ReaderAutoTranslationSlot.truth` is filled ONLY
+  by `TranslationUiTruth.forAutoSlot` inside `projectReaderAutoTranslationUiState`;
+  `AutoTranslationStatus` slot labels render the mapper copy, keeping
+  "Auto failed — will retry when available." and "Auto failed — action
+  required." distinct. The aggregate summary keeps its localized
+  counts/reason precedence per spec §0.2.4/§2.1.
+
+RED/GREEN evidence (`:app:testStandardDebugUnitTest` XML only, no
+sleeps/polling/Robolectric):
+
+- RED `337ddc8`: `ReaderManualOutcomeTruthTest` —
+  `TEST-...ReaderManualOutcomeTruthTest.xml` tests=15 failures=12 errors=0
+  (12 defect-named joins fail against the null-returning seam / sentinel slot
+  truth; 3 boundary tests already truthful).
+- GREEN `388699d`: same suite tests=15 failures=0 errors=0.
+- Required sweep: 48 suites / 338 tests / 0 failures / 0 errors
+  (coexistence, translator, scheduling, ui, presentation).
+- Extra reader sweep: 7 suites / 59 tests / 0 failures / 0 errors
+  (`eu.kanade.tachiyomi.ui.reader.*`).
+
+Deviations:
+
+1. **Slot-truth default sentinel.** `ReaderAutoTranslationSlot.truth` keeps a
+   `forAutoSlot(Queued)` default so direct constructions (existing tests) stay
+   valid; the production projection always supplies the mapped truth.
+2. **Outcome-refresh latency.** The scheduler offers no completion event, so
+   the chip refreshes on existing triggers (store flow, auto snapshot flow,
+   stall flow, holder rebind/seed). Quiet paths (e.g. a governor pause with no
+   further emissions) render on the next trigger; scope left unchanged to
+   avoid touching scheduler semantics.
+3. **`partial` flag not supplied.** `PageTranslation` carries no partial fact,
+   so the join passes the mapper's `partial=false` default; durable-partial
+   chip wording remains the mapper's `fromDurable` path when applicable.
