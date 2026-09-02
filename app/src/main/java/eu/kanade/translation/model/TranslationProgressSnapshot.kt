@@ -76,6 +76,17 @@ data class TranslationProgressSnapshot(
     val queuePosition: Int? = null,
     /** Total outstanding queue entries when [queuePosition] is set. */
     val queueTotal: Int? = null,
+    /**
+     * T917 Phase 5 (spec §4.1): a guarded artifact publication was rejected
+     * (`BatchPass1Status.PERSISTENCE_REJECTED` / `ReconciliationResult
+     * .nonDurableFailure`). The affected page produced in-memory work but NO
+     * durable result: it must never count as terminal success and every
+     * surface must suppress completion copy in favor of
+     * "Translation not saved — retry required". Bounded value field, no enum.
+     */
+    val nonDurableFailure: Boolean = false,
+    /** Safe rejection reason carried alongside [nonDurableFailure]. */
+    val nonDurableFailureReason: String? = null,
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages

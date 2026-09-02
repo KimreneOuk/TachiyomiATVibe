@@ -134,6 +134,12 @@ class TranslationBatchProgressTracker(
                 result.failedCount,
                 result.partialCount,
                 orderedPageKeys.size,
+                // T917 Phase 5 (spec §4.1): the reconciler's non-durable
+                // rejection fact must survive into the terminal snapshot.
+                nonDurableFailure = result.nonDurableFailure,
+                nonDurableFailureReason = result.nonDurableFailure.takeIf { it }?.let {
+                    result.pauseReason ?: "Translation not saved — retry required"
+                },
             ),
         )
     }
@@ -149,6 +155,10 @@ class TranslationBatchProgressTracker(
                 reason = outcome.reason ?: "Translation paused; retryable provider work remains",
                 nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
                 retryablePageKeys = outcome.retryablePageKeys,
+                // T917 Phase 5 (spec §4.1): PERSISTENCE_REJECTED is not a
+                // durable pause — the snapshot must carry the not-saved warning.
+                nonDurableFailure = outcome.isPersistenceRejected,
+                nonDurableFailureReason = outcome.reason.takeIf { outcome.isPersistenceRejected },
             ),
         )
     }
@@ -207,6 +217,9 @@ class TranslationBatchProgressTracker(
             pauseAnchorPageKey = state.pauseAnchorPageKey,
             pauseReason = state.pauseReason,
             nextEligibleRetryAtEpochMs = state.nextEligibleRetryAtEpochMs,
+            // T917 Phase 5 (spec §4.1): bounded non-durable publication warning.
+            nonDurableFailure = state.nonDurableFailure,
+            nonDurableFailureReason = state.nonDurableFailureReason,
         )
     }
 
@@ -220,6 +233,8 @@ class TranslationBatchProgressTracker(
         val pauseAnchorPageKey: String? = null,
         val pauseReason: String? = null,
         val nextEligibleRetryAtEpochMs: Long? = null,
+        val nonDurableFailure: Boolean = false,
+        val nonDurableFailureReason: String? = null,
     )
 
     companion object {
@@ -240,6 +255,8 @@ class TranslationBatchProgressTracker(
             is TranslationBatchEvent.BatchFinished -> previous.copy(
                 chapterState = event.state,
                 batchPhase = TranslationBatchPhase.FINISHED,
+                nonDurableFailure = event.nonDurableFailure,
+                nonDurableFailureReason = event.nonDurableFailureReason,
             )
             is TranslationBatchEvent.BatchPaused -> previous.copy(
                 chapterState = Translation.State.PAUSED,
@@ -247,6 +264,8 @@ class TranslationBatchProgressTracker(
                 pauseAnchorPageKey = event.anchorPageKey,
                 pauseReason = event.reason,
                 nextEligibleRetryAtEpochMs = event.nextEligibleRetryAtEpochMs,
+                nonDurableFailure = event.nonDurableFailure,
+                nonDurableFailureReason = event.nonDurableFailureReason,
             )
             is TranslationBatchEvent.BatchAborted -> previous.copy(
                 chapterState = Translation.State.ERROR,

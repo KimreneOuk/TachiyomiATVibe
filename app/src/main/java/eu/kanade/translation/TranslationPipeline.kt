@@ -90,6 +90,12 @@ class TranslationPipeline(
     /** D8 test seam; production defaults preserve the result timer contract. */
     private val stallThresholdMs: Long = NATIVE_STALL_THRESHOLD_MS,
     private val nativeTimeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
+    /**
+     * T917 Phase 5 (condition B test seam): the HTTP+render result timer.
+     * Production defaults preserve the [SINGLE_PAGE_TIMEOUT_MS] contract; tests
+     * inject a short value to exercise the typed timeout path deterministically.
+     */
+    internal val singlePageTimeoutMs: Long = SINGLE_PAGE_TIMEOUT_MS,
 ) : TranslationExecutor, java.io.Closeable {
 
     override fun close() {
@@ -144,6 +150,21 @@ class TranslationPipeline(
         // pipeline/batch/HeldBitmapRegistry.kt with the held-bitmap registry.
 
         const val UNKNOWN_SOURCE_FINGERPRINT = "source-fingerprint-unavailable"
+
+        /**
+         * T917 Phase 5 (condition C, spec §4.1.3): stable reason for the typed
+         * non-success outcome of a page whose translation could not be saved.
+         * The pure UI mapper selects the "Translation not saved — retry
+         * required" copy from this exact value, so it must not drift.
+         */
+        const val REASON_TRANSLATION_NOT_SAVED = "Translation could not be saved; retry required"
+
+        /**
+         * T917 Phase 5 (condition B / D8-1, D12 §3.2): truthful name for the
+         * HTTP+render result timer. Timeout copy must name the timer that
+         * fired, never an unrelated duration.
+         */
+        const val REASON_HTTP_RENDER_TIMER_EXPIRED = "HTTP+render result timer expired; translation failed"
     }
 
     // T909 Phase 20.3: BatchResumeGate enum + resume planning moved to
@@ -477,6 +498,15 @@ class TranslationPipeline(
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
     ): SinglePageOutcome {
+        // Typed HTTP+render phase completion and its timeout/terminality
+        // resolution; declared at boundary scope so the post-finally mapping
+        // can see them while the `finally` still owns the lease release.
+        var httpOutcome: ChunkCompletionOutcome? = null
+        // T917 Phase 5 (condition B): set when the HTTP+render timer fired
+        // while the phase had ALREADY committed a durable terminal result —
+        // store truth outranks the timer there, and no timeout placeholder
+        // may overwrite terminal truth.
+        var httpTimeoutLandedDurableResult = false
         try {
             // T917 D8: a same-page request whose predecessor still owns the
             // stove (e.g. a timed-out-but-parked native call) is rejected
@@ -564,7 +594,23 @@ class TranslationPipeline(
                 markPageFailed(manga, chapter, source, pageKey, t)
                 throw t
             }
-            onnxResult ?: return SinglePageOutcome.Failed(pageKey, "native phase timed out")
+            // T917 Phase 5 (condition A, phase4 review §5 Deviation #7): the
+            // resume paths of [translateSinglePageOnnx] return null on SUCCESS
+            // (render-only resume, inpaint+render resume, resume-skip). D8's
+            // honest-timeout flip mapped that null to Failed — a NEW
+            // wrong-outcome case introduced by the flip, not a pre-existing
+            // one. The deferred storage tails were drained above, so durable
+            // terminality is the arbiter (the same store-inspection discipline
+            // [buildTerminalPreparedPage] uses for the AUTO boundary): a
+            // terminal durable page here IS the successful resume.
+            if (onnxResult == null) {
+                val store = resolveActiveStore(manga, chapter, source)
+                val page = store?.state?.value?.get(pageKey)
+                if (page != null && isPreparedPageTerminal(page)) {
+                    return SinglePageOutcome.Completed
+                }
+                return SinglePageOutcome.Failed(pageKey, "native phase timed out")
+            }
 
             val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
                 ?: return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
@@ -572,16 +618,21 @@ class TranslationPipeline(
             // T917 Phase 3 (D6 §2.2a): capture the phase's typed completion so a
             // governor deferral surfaces as a typed pause instead of a silent
             // Completed.
-            var httpOutcome: ChunkCompletionOutcome? = null
             try {
-                httpOutcome = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
+                httpOutcome = withTimeoutOrNull(singlePageTimeoutMs) {
                     translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener, origin)
                 } ?: run {
                     logcat(LogPriority.WARN) {
-                        "TachiyomiAT HTTP+render phase timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
+                        "TachiyomiAT HTTP+render phase timed out after ${singlePageTimeoutMs}ms: " +
                             "pageKey=$pageKey chapter=${chapter.name}"
                     }
-                    markPageTimedOut(manga, chapter, source, pageKey, SINGLE_PAGE_TIMEOUT_MS)
+                    val timeoutStore = resolveActiveStore(manga, chapter, source)
+                    val timeoutPage = timeoutStore?.state?.value?.get(pageKey)
+                    if (timeoutPage != null && isPreparedPageTerminal(timeoutPage)) {
+                        httpTimeoutLandedDurableResult = true
+                    } else {
+                        markPageTimedOut(manga, chapter, source, pageKey, singlePageTimeoutMs)
+                    }
                     null
                 }
             } catch (t: Throwable) {
@@ -592,19 +643,27 @@ class TranslationPipeline(
                 markPageFailed(manga, chapter, source, pageKey, t)
                 throw t
             }
-            // T917 Phase 3 (D6 §2.2a): a window-exhausted manual tap must land
-            // as a TYPED pause in scheduler manualOutcomes, not as Completed.
-            // The phase already typed the governor deferral (and other
-            // retryable provider pauses) as ChunkCompletionOutcome.Paused;
-            // map it 1:1, carrying the governor's retry epoch when known.
-            val pausedOutcome = httpOutcome as? ChunkCompletionOutcome.Paused
-            if (pausedOutcome != null) {
-                return SinglePageOutcome.Paused(pausedOutcome.nextEligibleRetryAtEpochMs)
-            }
         } finally {
             releaseReaderPageLease(leaseStore, pageKey, origin)
         }
-        return SinglePageOutcome.Completed
+        // T917 Phase 5 (conditions B + C, spec §4.1): exhaustive typed-value
+        // mapping. Only a genuinely completed durable commit may type
+        // Completed; a timeout, a guarded-commit rejection, or a typed value
+        // failure is a visible non-success — never a fall-through Completed.
+        return when (val outcome = httpOutcome) {
+            null ->
+                if (httpTimeoutLandedDurableResult) {
+                    SinglePageOutcome.Completed
+                } else {
+                    SinglePageOutcome.Failed(pageKey, REASON_HTTP_RENDER_TIMER_EXPIRED)
+                }
+            is ChunkCompletionOutcome.Paused -> SinglePageOutcome.Paused(outcome.nextEligibleRetryAtEpochMs)
+            is ChunkCompletionOutcome.PersistenceRejected ->
+                SinglePageOutcome.Rejected(null, REASON_TRANSLATION_NOT_SAVED)
+            is ChunkCompletionOutcome.Failed -> SinglePageOutcome.Failed(pageKey, outcome.reason)
+            is ChunkCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, outcome.reason)
+            is ChunkCompletionOutcome.Completed -> SinglePageOutcome.Completed
+        }
     }
 
     /**

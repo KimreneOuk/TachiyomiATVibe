@@ -266,11 +266,51 @@ class P5HonestOutcomeTypingTest {
         // state and commits successfully (store truth is the oracle; the retry
         // job's outcome replaces the bounded manualOutcomes entry asynchronously,
         // so it is deliberately not asserted here).
+        val preRetry = h.store.snapshot("p0").page
+        val preRetryLease = runCatching { h.store.pageLeaseOwner("p0") }.getOrNull()
+        // The HTTP phase's finally clears the reader-stream registration even
+        // when its commit was rejected (SinglePageHttpRenderPhase finally →
+        // streamRegistry.clearPage). A real reader retry re-supplies the page
+        // stream; the harness must too, or the retry soft-skips before decode.
+        h.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
         h.tapManual("p0", force = true)
-        withClue("P5 condition C: a retry after a publication rejection must recover") {
+        val retryJob = h.capturedManualJob("p0")
+        // NB: kotest's withClue converts foreign Throwables (including
+        // TimeoutCancellationException) into AssertionErrors, so the bounded
+        // wait is wrapped OUTSIDE any clue block and the negative outcome is
+        // converted into a named diagnostic assertion (never a raw timeout).
+        val retryCause = kotlinx.coroutines.CompletableDeferred<Throwable?>()
+        retryJob.invokeOnCompletion { cause -> retryCause.complete(cause) }
+        val recovered = try {
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
                 h.store.state.first { it["p0"]?.hasRenderedResult() == true }
             }
+            true
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            false
+        }
+        if (!recovered) {
+            val page = h.store.snapshot("p0").page
+            val cause = runCatching { withTimeout(1_000L) { retryCause.await() } }
+                .getOrNull() // do not let diagnostics mask the named failure
+            val retryOutcome = readManualOutcome(h, "10:p0")
+            throw AssertionError(
+                "T917 P5 (condition C): the forced retry after a publication rejection never " +
+                    "committed — retryJobActive=${retryJob.isActive} " +
+                    "retryCause=$cause " +
+                    "retryOutcome=$retryOutcome " +
+                    "leaseOwnerAfter=${runCatching { h.store.pageLeaseOwner("p0") }.getOrNull()} " +
+                    "store page after retry: ocr=${page?.ocrStatus} " +
+                    "tr=${page?.translationStatus} inp=${page?.inpaintStatus} " +
+                    "render=${page?.renderStatus} err=${page?.errorMessage} " +
+                    "attemptCount=${page?.attemptCount} " +
+                    "leaseOwnerBeforeRetry=$preRetryLease " +
+                    "ocrBeforeRetry=${preRetry?.ocrStatus} trBeforeRetry=${preRetry?.translationStatus} " +
+                    "inpBeforeRetry=${preRetry?.inpaintStatus} renderBeforeRetry=${preRetry?.renderStatus} " +
+                    "cleanedName=${page?.cleanedImageName} " +
+                    "nativeArrivals=${h.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")} " +
+                    "providerStartArrivals=${h.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")}",
+            )
         }
     }
 
