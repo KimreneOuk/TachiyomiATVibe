@@ -89,21 +89,21 @@ class P5OutcomeProjectionTest {
     private fun projectAuto(slot: AutoSlotState, retryAtEpochMs: Long? = null): Any? =
         mapper("forAutoSlot", 2).apply { isAccessible = true }.invoke(truth(), slot, retryAtEpochMs)
 
-    private fun Any?.str(prop: String): String =
-        javaClass.getMethod("get${prop.replaceFirstChar { it.uppercase() }}").invoke(this) as String
+    private fun prop(value: Any?, name: String): Any? {
+        val getter = "get" + name.replaceFirstChar { it.uppercase() }
+        return value?.javaClass?.getMethod(getter)?.invoke(value)
+    }
 
-    private fun Any?.epoch(prop: String = "retryAtEpochMs"): Long? =
-        javaClass.getMethod("get${prop.replaceFirstChar { it.uppercase() }}").invoke(this) as Long?
+    private fun str(value: Any?, prop: String): String = prop(value, prop) as String
 
-    private fun Any?.flag(prop: String): Boolean =
-        javaClass.getMethod("get${prop.replaceFirstChar { it.uppercase() }}").invoke(this) as Boolean
+    private fun epoch(value: Any?): Long? = prop(value, "retryAtEpochMs") as Long?
 
-    private fun Any?.names(prop: String): Set<String> =
-        (javaClass.getMethod("get${prop.replaceFirstChar { it.uppercase() }}").invoke(this) as Set<*>)
-            .map { it.toString() }.toSet()
+    private fun flag(value: Any?, prop: String): Boolean = prop(value, prop) as Boolean
 
-    private fun Any?.word(prop: String): String =
-        javaClass.getMethod("get${prop.replaceFirstChar { it.uppercase() }}").invoke(this).toString()
+    private fun names(value: Any?, prop: String): Set<String> =
+        (prop(value, prop) as Set<*>).map { it.toString() }.toSet()
+
+    private fun word(value: Any?, prop: String): String = prop(value, prop).toString()
 
     // ------------------------------------------------------------------
     // Manual outcomes (page chip / reader overlay column)
@@ -116,13 +116,13 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.DISPLAY_READY, displayReady = true, processed = true),
         )
         withClue("committed Completed must project the translated truth") {
-            truth.str("label") shouldBe "Translated."
-            truth.word("severity") shouldBe "INFO"
-            truth.word("retryMode") shouldBe "NONE"
-            truth.epoch().shouldBeNull()
-            truth.names("actions") shouldBe setOf("DETAILS")
-            truth.flag("terminalSuccess") shouldBe true
-            truth.str("contentDescription") shouldBe "Page translated and ready to read."
+            str(truth, "label") shouldBe "Translated."
+            word(truth, "severity") shouldBe "INFO"
+            word(truth, "retryMode") shouldBe "NONE"
+            epoch(truth).shouldBeNull()
+            names(truth, "actions") shouldBe setOf("DETAILS")
+            flag(truth, "terminalSuccess") shouldBe true
+            str(truth, "contentDescription") shouldBe "Page translated and ready to read."
         }
     }
 
@@ -136,11 +136,11 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.ORIGINAL_ONLY, displayReady = false, processed = false),
         )
         withClue("unconfirmable success must be a visible non-success") {
-            truth.str("label") shouldBe "Translation not saved — retry required."
-            truth.word("severity") shouldBe "WARNING"
-            truth.word("retryMode") shouldBe "EXPLICIT"
-            truth.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
+            str(truth, "label") shouldBe "Translation not saved — retry required."
+            word(truth, "severity") shouldBe "WARNING"
+            word(truth, "retryMode") shouldBe "EXPLICIT"
+            names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
         }
     }
 
@@ -151,12 +151,12 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.FAILED_NO_RESULT, displayReady = false, processed = true),
         )
         withClue("durable failure wins over the late success callback") {
-            truth.str("label") shouldBe "Translation failed — retry available."
-            truth.word("severity") shouldBe "ERROR"
-            truth.word("retryMode") shouldBe "EXPLICIT"
-            truth.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
-            truth.str("contentDescription") shouldBe "Page translation failed; retry is available."
+            str(truth, "label") shouldBe "Translation failed — retry available."
+            word(truth, "severity") shouldBe "ERROR"
+            word(truth, "retryMode") shouldBe "EXPLICIT"
+            names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
+            str(truth, "contentDescription") shouldBe "Page translation failed; retry is available."
         }
     }
 
@@ -164,12 +164,12 @@ class P5OutcomeProjectionTest {
     fun `paused manual outcome keeps its epoch and explicit retry mode`() {
         val truth = projectManual(SinglePageOutcome.Paused(nextEligibleRetryAtEpochMs = 5_000L), null)
         withClue("a governor pause is explicit-retry copy with its epoch retained") {
-            truth.str("label") shouldBe "Paused; explicit retry available."
-            truth.word("severity") shouldBe "WARNING"
-            truth.word("retryMode") shouldBe "EXPLICIT"
-            truth.epoch() shouldBe 5_000L
-            truth.names("actions") shouldBe setOf("RETRY", "CANCEL", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
+            str(truth, "label") shouldBe "Paused; explicit retry available."
+            word(truth, "severity") shouldBe "WARNING"
+            word(truth, "retryMode") shouldBe "EXPLICIT"
+            epoch(truth) shouldBe 5_000L
+            names(truth, "actions") shouldBe setOf("RETRY", "CANCEL", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
         }
     }
 
@@ -180,12 +180,12 @@ class P5OutcomeProjectionTest {
             null,
         )
         withClue("the D8 stall must be visible with safe recovery affordances") {
-            truth.str("label") shouldBe "Translation stalled."
-            truth.word("severity") shouldBe "ERROR"
-            truth.word("retryMode") shouldBe "EXPLICIT"
-            truth.names("actions") shouldBe setOf("CANCEL", "RETRY", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
-            truth.str("contentDescription") shouldBe
+            str(truth, "label") shouldBe "Translation stalled."
+            word(truth, "severity") shouldBe "ERROR"
+            word(truth, "retryMode") shouldBe "EXPLICIT"
+            names(truth, "actions") shouldBe setOf("CANCEL", "RETRY", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
+            str(truth, "contentDescription") shouldBe
                 "Translation stalled; the ONNX/native result timer expired while work remains occupied."
         }
     }
@@ -198,11 +198,11 @@ class P5OutcomeProjectionTest {
             exhausted = false,
         )
         withClue("retryable failure keeps explicit retry copy") {
-            retryable.str("label") shouldBe "Translation failed — retry available."
-            retryable.word("severity") shouldBe "ERROR"
-            retryable.word("retryMode") shouldBe "EXPLICIT"
-            retryable.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            retryable.flag("terminalSuccess") shouldBe false
+            str(retryable, "label") shouldBe "Translation failed — retry available."
+            word(retryable, "severity") shouldBe "ERROR"
+            word(retryable, "retryMode") shouldBe "EXPLICIT"
+            names(retryable, "actions") shouldBe setOf("RETRY", "DETAILS")
+            flag(retryable, "terminalSuccess") shouldBe false
         }
         val d9 = projectManual(
             SinglePageOutcome.Failed(pageKey = "p0", reason = "interrupted"),
@@ -210,13 +210,13 @@ class P5OutcomeProjectionTest {
             exhausted = true,
         )
         withClue("the D9 cap is manual-retry-required copy, never automatic") {
-            d9.str("label") shouldBe
+            str(d9, "label") shouldBe
                 "Paused — repeated interruption before completion; manual retry required."
-            d9.word("severity") shouldBe "WARNING"
-            d9.word("retryMode") shouldBe "MANUAL_REQUIRED"
-            d9.epoch().shouldBeNull()
-            d9.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            d9.str("contentDescription") shouldBe
+            word(d9, "severity") shouldBe "WARNING"
+            word(d9, "retryMode") shouldBe "MANUAL_REQUIRED"
+            epoch(d9).shouldBeNull()
+            names(d9, "actions") shouldBe setOf("RETRY", "DETAILS")
+            str(d9, "contentDescription") shouldBe
                 "Translation paused after repeated interruption; manual retry required."
         }
     }
@@ -225,12 +225,12 @@ class P5OutcomeProjectionTest {
     fun `attached outcome names the owner and starts no duplicate paid work`() {
         val truth = projectManual(SinglePageOutcome.Attached(PageWriteOrigin.BATCH), null)
         withClue("attach must be visible as owner work, never a manual success") {
-            truth.str("label") shouldBe "Translating · batch job."
-            truth.word("severity") shouldBe "PROGRESS"
-            truth.word("retryMode") shouldBe "NONE"
-            truth.names("actions") shouldBe setOf("DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
-            truth.str("contentDescription") shouldBe
+            str(truth, "label") shouldBe "Translating · batch job."
+            word(truth, "severity") shouldBe "PROGRESS"
+            word(truth, "retryMode") shouldBe "NONE"
+            names(truth, "actions") shouldBe setOf("DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
+            str(truth, "contentDescription") shouldBe
                 "Waiting for the batch translation job; no duplicate request started."
         }
     }
@@ -242,12 +242,12 @@ class P5OutcomeProjectionTest {
             null,
         )
         withClue("attach-unresolved must be a visible non-success") {
-            truth.str("label") shouldBe "Background translation did not finish yet."
-            truth.word("severity") shouldBe "WARNING"
-            truth.word("retryMode") shouldBe "EXPLICIT"
-            truth.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
-            truth.str("contentDescription") shouldBe
+            str(truth, "label") shouldBe "Background translation did not finish yet."
+            word(truth, "severity") shouldBe "WARNING"
+            word(truth, "retryMode") shouldBe "EXPLICIT"
+            names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
+            str(truth, "contentDescription") shouldBe
                 "Background translation did not finish within the wait; retry is available after the owner releases the page."
         }
     }
@@ -261,12 +261,12 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.DISPLAY_READY, displayReady = true, processed = true),
         )
         withClue("PERSISTENCE_REJECTED must stay a typed non-success (spec §4.1.3)") {
-            truth.str("label") shouldBe "Translation not saved — retry required."
-            truth.word("severity") shouldBe "WARNING"
-            truth.word("retryMode") shouldBe "EXPLICIT"
-            truth.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
-            truth.str("contentDescription") shouldBe
+            str(truth, "label") shouldBe "Translation not saved — retry required."
+            word(truth, "severity") shouldBe "WARNING"
+            word(truth, "retryMode") shouldBe "EXPLICIT"
+            names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
+            str(truth, "contentDescription") shouldBe
                 "Translation was produced but could not be saved; no durable result is available. Retry is required."
         }
     }
@@ -278,11 +278,11 @@ class P5OutcomeProjectionTest {
             null,
         )
         withClue("an admission rejection names its reason without retry actions") {
-            truth.str("label") shouldBe "Translation not started — page already translating."
-            truth.word("severity") shouldBe "INFO"
-            truth.word("retryMode") shouldBe "NONE"
-            truth.names("actions") shouldBe setOf("DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
+            str(truth, "label") shouldBe "Translation not started — page already translating."
+            word(truth, "severity") shouldBe "INFO"
+            word(truth, "retryMode") shouldBe "NONE"
+            names(truth, "actions") shouldBe setOf("DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
         }
     }
 
@@ -294,11 +294,11 @@ class P5OutcomeProjectionTest {
             partial = true,
         )
         withClue("partial committed work keeps the readable result but warns") {
-            truth.str("label") shouldBe "Partial translation — retry available."
-            truth.word("severity") shouldBe "WARNING"
-            truth.word("retryMode") shouldBe "EXPLICIT"
-            truth.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
+            str(truth, "label") shouldBe "Partial translation — retry available."
+            word(truth, "severity") shouldBe "WARNING"
+            word(truth, "retryMode") shouldBe "EXPLICIT"
+            names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
         }
     }
 
@@ -309,11 +309,11 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.TEXTLESS_COMPLETE, displayReady = false, processed = true),
         )
         withClue("textless is a terminal no-op, not a translated page") {
-            truth.str("label") shouldBe "No translatable text."
-            truth.word("severity") shouldBe "INFO"
-            truth.word("retryMode") shouldBe "NONE"
-            truth.flag("terminalSuccess") shouldBe true
-            truth.str("contentDescription") shouldBe "Page processed; no translatable text."
+            str(truth, "label") shouldBe "No translatable text."
+            word(truth, "severity") shouldBe "INFO"
+            word(truth, "retryMode") shouldBe "NONE"
+            flag(truth, "terminalSuccess") shouldBe true
+            str(truth, "contentDescription") shouldBe "Page processed; no translatable text."
         }
     }
 
@@ -321,12 +321,12 @@ class P5OutcomeProjectionTest {
     fun `cancelled manual work is acknowledged with an explicit retry`() {
         val truth = projectManual(null, null, cancelled = true)
         withClue("explicit cancellation of paid work must stay visible") {
-            truth.str("label") shouldBe "Translation cancelled."
-            truth.word("severity") shouldBe "INFO"
-            truth.word("retryMode") shouldBe "NONE"
-            truth.names("actions") shouldBe setOf("RETRY", "DETAILS")
-            truth.flag("terminalSuccess") shouldBe false
-            truth.str("contentDescription") shouldBe
+            str(truth, "label") shouldBe "Translation cancelled."
+            word(truth, "severity") shouldBe "INFO"
+            word(truth, "retryMode") shouldBe "NONE"
+            names(truth, "actions") shouldBe setOf("RETRY", "DETAILS")
+            flag(truth, "terminalSuccess") shouldBe false
+            str(truth, "contentDescription") shouldBe
                 "Translation cancelled; saved translated pages were kept."
         }
     }
@@ -343,8 +343,8 @@ class P5OutcomeProjectionTest {
             PageDisplayProjection(PageDisplayState.DISPLAY_READY, displayReady = true, processed = true),
         )
         withClue("§1.2.4: current durable display is authority on its own") {
-            truth.str("label") shouldBe "Translated."
-            truth.flag("terminalSuccess") shouldBe true
+            str(truth, "label") shouldBe "Translated."
+            flag(truth, "terminalSuccess") shouldBe true
         }
     }
 
@@ -359,58 +359,58 @@ class P5OutcomeProjectionTest {
             retryAtEpochMs = 4_500L,
         )
         withClue("the coordinator's retry epoch must survive into the projection") {
-            deferred.str("label") shouldBe "Auto paused; retries automatically when available."
-            deferred.word("severity") shouldBe "WARNING"
-            deferred.word("retryMode") shouldBe "AUTOMATIC"
-            deferred.epoch() shouldBe 4_500L
-            deferred.flag("terminalSuccess") shouldBe false
-            deferred.str("contentDescription") shouldBe
+            str(deferred, "label") shouldBe "Auto paused; retries automatically when available."
+            word(deferred, "severity") shouldBe "WARNING"
+            word(deferred, "retryMode") shouldBe "AUTOMATIC"
+            epoch(deferred) shouldBe 4_500L
+            flag(deferred, "terminalSuccess") shouldBe false
+            str(deferred, "contentDescription") shouldBe
                 "Auto translation paused; automatic retry when available."
         }
         val waiting = projectAuto(AutoSlotState.Deferred(AutoDeferralReason.Network))
         withClue("an unknown epoch stays null and automatic") {
-            waiting.word("retryMode") shouldBe "AUTOMATIC"
-            waiting.epoch().shouldBeNull()
-            waiting.flag("terminalSuccess") shouldBe false
+            word(waiting, "retryMode") shouldBe "AUTOMATIC"
+            epoch(waiting).shouldBeNull()
+            flag(waiting, "terminalSuccess") shouldBe false
         }
     }
 
     @Test
     fun `auto failed slots separate will retry from action required`() {
         val retryable = projectAuto(AutoSlotState.Failed(retryable = true))
-        retryable.str("label") shouldBe "Auto failed — will retry when available."
-        retryable.word("retryMode") shouldBe "AUTOMATIC"
-        retryable.flag("terminalSuccess") shouldBe false
+        str(retryable, "label") shouldBe "Auto failed — will retry when available."
+        word(retryable, "retryMode") shouldBe "AUTOMATIC"
+        flag(retryable, "terminalSuccess") shouldBe false
 
         val terminal = projectAuto(AutoSlotState.Failed(retryable = false))
-        terminal.str("label") shouldBe "Auto failed — action required."
-        terminal.word("severity") shouldBe "ERROR"
-        terminal.word("retryMode") shouldBe "NONE"
-        terminal.names("actions") shouldBe setOf("REVIEW", "DETAILS")
-        terminal.flag("terminalSuccess") shouldBe false
-        terminal.str("contentDescription") shouldBe "Auto translation failed and needs attention."
+        str(terminal, "label") shouldBe "Auto failed — action required."
+        word(terminal, "severity") shouldBe "ERROR"
+        word(terminal, "retryMode") shouldBe "NONE"
+        names(terminal, "actions") shouldBe setOf("REVIEW", "DETAILS")
+        flag(terminal, "terminalSuccess") shouldBe false
+        str(terminal, "contentDescription") shouldBe "Auto translation failed and needs attention."
     }
 
     @Test
     fun `auto queued and stage slots never count as ready`() {
         projectAuto(AutoSlotState.Queued).let { queued ->
-            queued.str("label") shouldBe "Queued."
-            queued.word("severity") shouldBe "PROGRESS"
-            queued.flag("terminalSuccess") shouldBe false
-            queued.str("contentDescription") shouldBe "Translation queued; work has not started."
+            str(queued, "label") shouldBe "Queued."
+            word(queued, "severity") shouldBe "PROGRESS"
+            flag(queued, "terminalSuccess") shouldBe false
+            str(queued, "contentDescription") shouldBe "Translation queued; work has not started."
         }
         projectAuto(AutoSlotState.ReadingText).let { stage ->
-            stage.str("label") shouldBe "Reading text."
-            stage.flag("terminalSuccess") shouldBe false
-            stage.str("contentDescription") shouldBe "Translation stage: reading text."
+            str(stage, "label") shouldBe "Reading text."
+            flag(stage, "terminalSuccess") shouldBe false
+            str(stage, "contentDescription") shouldBe "Translation stage: reading text."
         }
-        projectAuto(AutoSlotState.Cleaning).str("label") shouldBe "Cleaning bubbles."
-        projectAuto(AutoSlotState.Translating).str("label") shouldBe "Translating text."
-        projectAuto(AutoSlotState.Rendering).str("label") shouldBe "Finishing page."
+        str(projectAuto(AutoSlotState.Cleaning), "label") shouldBe "Cleaning bubbles."
+        str(projectAuto(AutoSlotState.Translating), "label") shouldBe "Translating text."
+        str(projectAuto(AutoSlotState.Rendering), "label") shouldBe "Finishing page."
 
         val ready = projectAuto(AutoSlotState.Ready)
-        ready.str("label") shouldBe "Translated."
-        ready.flag("terminalSuccess") shouldBe true
+        str(ready, "label") shouldBe "Translated."
+        flag(ready, "terminalSuccess") shouldBe true
     }
 
     // ------------------------------------------------------------------
@@ -463,9 +463,12 @@ class P5OutcomeProjectionTest {
             accessor.invoke(h.scheduler, 11L, "p0").shouldBeNull()
             accessor.invoke(h.scheduler, TranslationCoexistenceHarness.CHAPTER_ID, "p0").shouldBeNull()
 
-            h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
+            // Join BEFORE releasing: the injected 150ms result timer must fire
+            // while the transport is parked, deterministically typing the
+            // non-success (a release-first race could complete the phase).
             val job = h.capturedManualJob("p0")
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { job.join() }
+            h.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_START, "p0")
 
             val outcome = accessor.invoke(h.scheduler, TranslationCoexistenceHarness.CHAPTER_ID, "p0")
             withClue("the last typed outcome must be readable through the public accessor") {

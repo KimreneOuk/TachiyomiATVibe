@@ -106,6 +106,16 @@ class TranslationScheduler(
             },
         )
 
+    /**
+     * T917 Phase 5 (spec §5.2.2): read-only projection of the last completed
+     * manual single-page intent for this identity. Presence in the map is not
+     * success — the caller must treat the typed value through the pure
+     * TranslationUiTruth mapper. Unknown or foreign (chapter, page) identities
+     * observe nothing, and the bounded map is never mutated by this accessor.
+     */
+    fun manualOutcomeFor(chapterId: Long, pageKey: String): SinglePageOutcome? =
+        synchronized(manualOutcomes) { manualOutcomes["$chapterId:$pageKey"] }
+
     // Pages queued/executing inside an ordered auto-prefetch batch. Closes the
     // gap where overlapping selection windows enqueue the same page (e.g. page 6
     // in [4,5,6], [5,6,7], and again [4,5,6]); without this, a page could run 2-4
