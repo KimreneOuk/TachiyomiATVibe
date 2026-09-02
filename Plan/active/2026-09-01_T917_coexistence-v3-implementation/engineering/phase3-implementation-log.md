@@ -139,3 +139,193 @@ d1df615 t917(p2): review record + phase log — ACCEPT-WITH-NOTES; lease-over-pl
 ```
 
 After this log commit: `git status --short` → clean (verified post-commit).
+---
+
+# T917 Phase 3 — Implementation Log, part B (D9 + D6)
+
+Branch: `t917/coexistence-v3`. Scope: §3 D9 (durable attempt ledger + cap +
+startup reconcile) and §2 D6 (foreground fairness reserve + typed pause +
+drain-not-cancel), per `engineering/phase3-design.md` §2, §3, §5, §6 steps
+4–9 (authoritative spec). Five commits, each compiling, fixed RED→GREEN order.
+
+## 1. Files changed per commit
+
+### Commit `be3c4d5` — `t917(p3): d9 tests` (RED)
+
+| File | Change |
+|---|---|
+| `app/src/test/java/eu/kanade/translation/coexistence/D9AttemptLedgerTest.kt` | NEW (462 lines) — design §5 D9 suite over the real store + artifact authority (fresh-chapter recipe): (1) paid batch call writes a ledger entry BEFORE the provider call and startup reconcile consumes it (resolved entry → `entries` empty, no false crash-count); (2) three interrupted death cycles → chapter pauses (`retryCount` = 3 consecutive-unresolved), subsequent AUTO entries REFUSED (typed pause, zero provider billing) while explicit force still runs; (3) attach-waiting manual writes ZERO ledger entries (attach family never bills). All commit-2 seams invoked through an `invokeSuspending` reflection bridge whose missing-member path throws a named AssertionError — RED fails by assertion, never by timeout |
+| `app/src/test/java/eu/kanade/translation/coexistence/TranslationCoexistenceHarness.kt` | `Harness.create(storeOverride: ChapterTranslationStore? = null)` (:148) — lets the D9 test install an artifact-authority store (durable sidecars observable) without touching every other suite's default |
+
+### Commit `0eaf7e1` — `t917(p3): d9 ledger+cap+reconcile` (GREEN)
+
+Production (design §3; additive, fail-open writes, fail-closed cap):
+
+| File | Change |
+|---|---|
+| `app/src/main/java/eu/kanade/translation/store/ChapterAttemptLedger.kt` | NEW (162 lines) — bounded durable ledger document (`attempts/ledger.json`): entry = pageKey + providerKeyHash + origin + generation + startedAt; `consecutiveUnresolved` counter; serialization + bounded merge |
+| `app/src/main/java/eu/kanade/translation/ChapterTranslationStore.kt` | `recordAttemptStart` (:364, returns admitted=false only when the AUTO consecutive cap refuses — then the caller must NOT bill), `resolveAttempt` (:378), `applyAttemptCapPause` (:397, durable PAUSE failure + `retryCount = consecutiveUnresolved`, description "D9 attempt cap reached…") |
+| `app/src/main/java/eu/kanade/translation/TranslationManager.kt` | `reconcileAttemptLedgersForStartup` (:549, wired from the startup path :441) — bounded to the opened chapter set, never a library scan; resolves committed pages, counts consecutive-unresolved, applies the cap pause |
+| `app/src/main/java/eu/kanade/translation/artifact/ChapterArtifactManifest.kt` | `AttemptOrigin { MANUAL, AUTO, BATCH }` (:275) + ledger carry fields |
+| `app/src/main/java/eu/kanade/translation/artifact/ChapterArtifactLayout.kt` | attempts directory (:56) + `attemptLedgerFileName = "$attemptsDirectoryName/ledger.json"` (:98) |
+| `app/src/main/java/eu/kanade/translation/artifact/ChapterArtifactStore.kt` | ledger read/write/merge transactions (+16 lines) |
+| `app/src/main/java/eu/kanade/translation/artifact/ArtifactContracts.kt` / `ArtifactRetention.kt` | contract surface; ledger sidecar exempt from artifact retention pruning |
+| `app/src/main/java/eu/kanade/translation/pipeline/batch/BatchLaneWorkers.kt` | standard per-page path: durable entry BEFORE the paid call (:1318, fail-open), `resolveAttempt` on any completed call (success or typed failure :1339/:1342); CancellationException rethrows WITHOUT resolving (process-death analogue) |
+| `app/src/main/java/eu/kanade/translation/pipeline/SinglePageHttpRenderPhase.kt` | `runLedgerWrapped` (:232–:253) wraps the manual paid call: record → resolve-on-completion, CE-safe |
+| `app/src/main/java/eu/kanade/translation/pipeline/SinglePageOnnxPhase.kt` | MANUAL attempt entry around the native+HTTP chain (+21 lines) |
+| `app/src/main/java/eu/kanade/translation/scheduling/RollingAutoCoordinator.kt` | AUTO entry lifecycle: `recordAutoAttemptStart` (:361–:387, returns typed Paused when the cap refuses — no provider call billed), `runAutoAttempt`/`resolveAutoAttempt` (:394–:414; resolve on any completed call, unresolved ONLY on cancellation) |
+| `app/src/test/java/eu/kanade/translation/artifact/ChapterArtifactLayoutTest.kt` | +2: attempts dir / ledger file name |
+| `app/src/test/java/eu/kanade/translation/coexistence/D9AttemptLedgerTest.kt` | 3/3 GREEN (RED suite intent unchanged; bridge targets now exist) |
+
+### Commit `8dd55e4` — `t917(p3): d6 tests` (RED)
+
+| File | Change |
+|---|---|
+| `app/src/test/java/eu/kanade/translation/translator/ProviderRequestGovernorReservationTest.kt` | NEW (286 lines) — pure unit suite over the real `ProviderRequestGovernor` + `ProviderQuotaPolicy` with a virtual clock (delay advances `now`, no real waiting): test 1 THE reserve (interactive waiter parked → BACKGROUND effective limits shrink to `requests-1` / `tokens*(1-fraction)`; the window-deferred background call gets `nextEligibleRetryAtEpochMs = window start + windowMs` exactly; the second INTERACTIVE call still admits at the full window); tests 2–4 non-regression guards (interactive pair shares the full window; no revocation of already-billed background calls; single oversized request still admitted); test 5 fraction range guard `0.0 < f ≤ 1.0` via a reflection ctor bridge that names the missing seam at RED |
+| `app/src/test/java/eu/kanade/translation/coexistence/D6ForegroundFairnessTest.kt` | NEW (267 lines) — full-graph harness: real scheduler + pipeline + `GovernedTransport` (test `TextTranslator` routing `executeValue` through the real governor with per-page costs); choreography: batch page p0 admitted under BACKGROUND → manual tap q0 admitted under INTERACTIVE while p0 holds the window → tap q1 exhausts the window → scheduler `manualOutcomes["20:q1"]` must be the typed Paused variant carrying the governor retry epoch ∈ [p0 admission wall time, +62 s]; batch joins cleanly; zero retries of the paid call |
+| `app/src/test/java/eu/kanade/translation/coexistence/D6DrainNotCancelTest.kt` | NEW (453 lines) — real `RollingAutoCoordinator` + real artifact store: (1) cancel the window mid-call → release the gate → the call must DRAIN: finish, commit translation-terminal state, consume its D9 entry, `cancelledCalls == 0`, exactly one paid call; (2) drain grace companion bound = 90 000 ms; (3) grace expiry (300 ms, gate never released) cancels the parked call cleanly (cancellation-class) leaving the D9 entry unresolved ×1, no re-issue. 7-param ctor bridge names the missing `drainGraceMs` seam at RED |
+| `app/src/test/java/eu/kanade/translation/coexistence/TranslationCoexistenceHarness.kt` | `nativeStageDone` / `transportStarted` lane-serialization maps made `internal` so tests can signal fake engine lane handoffs |
+
+### Commit `dd3364e` — `t917(p3): d6 reservation+typing+drain` (GREEN)
+
+Production (design §2):
+
+| File | Change |
+|---|---|
+| `app/src/main/java/eu/kanade/translation/translator/ProviderRequestGovernor.kt` | §2.1: `ProviderQuotaPolicy.interactiveTokenReserveFraction: Double = 0.2` (:85) with range guard (:97–:98); `evaluate` (:452–:462): while the bucket holds at least one INTERACTIVE waiter, a BACKGROUND caller sees `effectiveRequestsPerMinute = requests-1` and `effectiveTokensPerMinute = floor(tokens*(1-fraction)) >= 0`; `tokenLimit = maxOf(effectiveTokensPerMinute, tokenCost)` so a single oversized request is still admittable; INTERACTIVE always evaluates against the full window; `nextEligibleAt` token-limit parameter widened to Long; no revocation of already-billed reservations anywhere |
+| `app/src/main/java/eu/kanade/translation/scheduling/RollingAutoCoordinator.kt` | §2.3: `drainGraceMs: Long = PROVIDER_DRAIN_GRACE_MS` ctor param LAST (:81); public companion const `PROVIDER_DRAIN_GRACE_MS = 90_000L` (:1077); `consumeTranslations` wraps translate+commit in `withContext(NonCancellable) { withTimeout(drainGraceMs) { ... } }` (:441–:459) — timeout INNER so expiry is cancellation-class (D9 entry stays unresolved), completion path still generation-guarded so a drained result commits even though the window is gone; §2.2b verified pre-existing: the `ChunkCompletionOutcome.Paused` branch already feeds `deferTranslationRetry`/`pausedTranslations` (:477–:488) |
+| `app/src/main/java/eu/kanade/translation/scheduling/TranslationExecutor.kt` | §2.2a: `SinglePageOutcome.Paused(nextEligibleRetryAtEpochMs: Long?)` (:144) — a typed deferral is neither failure nor completion |
+| `app/src/main/java/eu/kanade/translation/TranslationPipeline.kt` | §2.2a: `translateSinglePage` captures the HTTP+render phase's typed `ChunkCompletionOutcome` (:477) and maps `Paused` to `SinglePageOutcome.Paused(phaseOutcome.nextEligibleRetryAtEpochMs)` (:497–:505); the phase already typed governor deferrals (`ProviderRequestPausedException` is a retryable `ProviderFailureException`) as `Paused`, but the old code discarded the phase result and returned `Completed` — the swallow the fairness test exposed. `TranslationScheduler.translatePage`'s `manualOutcomes[jobKey] = outcome` (:633) then lands the typed pause with no scheduler change (its `when` is else-guarded) |
+| `app/src/test/java/eu/kanade/translation/coexistence/D6DrainNotCancelTest.kt` | Fixture correction (see deviations #2): drained-call commit shape = translation-terminal (ocr/translation/inpaint READY + cleaned metadata), mirroring the harness manual publish shim; oracle `renderStatus READY` → translation-terminal statuses |
+| `app/src/test/java/eu/kanade/translation/translator/ProviderRequestGovernorReservationTest.kt` | Ctor bridge unwraps `InvocationTargetException` so the fraction range guard surfaces as the real `IllegalArgumentException` for `shouldThrow` |
+
+Tests: no behavioral test changes (commit-3 RED suites turn GREEN; only the
+two fixture corrections above).
+
+## 2. Exact commands (Git Bash, `JAVA_HOME` = Android Studio JBR)
+
+```
+# STEP 4 — D9 RED
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.D9AttemptLedgerTest" --rerun
+# STEP 5 — D9 GREEN + artifact neighbors
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.D9AttemptLedgerTest" --tests "eu.kanade.translation.artifact.*" --rerun
+# STEP 6 — D6 RED (three suites)
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.translator.ProviderRequestGovernorReservationTest" --tests "eu.kanade.translation.coexistence.D6ForegroundFairnessTest" --tests "eu.kanade.translation.coexistence.D6DrainNotCancelTest" --rerun
+# STEP 7 — D6 GREEN + governor/scheduler neighbors (existing expectations untouched)
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.translator.ProviderRequestGovernorReservationTest" --tests "eu.kanade.translation.translator.ProviderRequestGovernorTest" --tests "eu.kanade.translation.coexistence.D6ForegroundFairnessTest" --tests "eu.kanade.translation.coexistence.D6DrainNotCancelTest" --tests "eu.kanade.translation.scheduling.RollingAutoCoordinatorTest" --tests "eu.kanade.translation.scheduling.ChapterTranslatorTerminalExitsTest" --tests "eu.kanade.translation.scheduling.SequentialBatchCoordinatorTest" --tests "eu.kanade.translation.scheduling.TranslationManagerAutoArbitrationTest" --tests "eu.kanade.translation.coexistence.NormalMangaIsolationTest" --rerun
+# STEP 8 — full sweep
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.*" --rerun
+# STEP 9 — determinism: 5 consecutive forced --rerun rounds
+./gradlew :app:testStandardDebugUnitTest --tests "eu.kanade.translation.coexistence.*" --tests "eu.kanade.translation.translator.ProviderRequestGovernorReservationTest" --rerun  # x5
+```
+
+## 3. RED to green evidence excerpts
+
+D9 STEP 4 RED (commit `be3c4d5`, before any production change): every failure
+was the bridge's named assertion — the ledger/cap/reconcile seams did not
+exist, which IS the §3 defect. Zero timeouts:
+
+```
+T917 D9 RED defect: recordAttemptStart is not implemented — the durable attempt ledger seam is missing
+T917 D9 RED defect: applyAttemptCapPause is not implemented — the durable attempt ledger seam is missing
+T917 D9 RED defect: reconcileAttemptLedgersForStartup is not implemented — the durable attempt ledger seam is missing
+```
+
+(The third test, attach-waiting manual writes zero entries, is a green guard:
+the attach family never reaches a record call in the pre-D9 code either.)
+
+D6 STEP 6 RED (commit `8dd55e4`, before any §2 change): 9 tests, 6 failed —
+each failure naming its defect; the 3 non-regression guards green by design.
+Literal messages:
+
+```
+ProviderRequestGovernorReservationTest
+  T917 D6 RED defect: interactiveTokenReserveFraction is not configurable — the §2.1 policy reserve seam is missing
+  (x2: the reserve test + the range-guard test)
+  guards: interactive full window / no revocation / single oversized cost -> PASS (pre-reserve shapes pinned)
+
+D6ForegroundFairnessTest
+  T917 D6 §2.2a defect: the manual outcome must be the typed Paused variant — expected:<Paused> but was:<Completed>
+  (reveals the real §2.2a defect: the pipeline SWALLOWS the typed deferral and reports Completed into manualOutcomes)
+
+D6DrainNotCancelTest
+  T917 D6 RED defect: drainGraceMs is not configurable — the §2.3 bounded drain-not-cancel seam is missing from RollingAutoCoordinator
+  T917 D6 RED defect: PROVIDER_DRAIN_GRACE_MS is missing — the §2.3 drain bound companion constant does not exist
+  T917 D6 §2.3 defect: the drained call must commit READY even though the window is gone — RED strands the page because cancel() tears the call down mid-flight (expected:<READY> but was:<PENDING>)
+```
+
+STEP 7 GREEN (commit `dd3364e`): all three D6 suites GREEN; neighbors GREEN
+(`ProviderRequestGovernorTest`, `RollingAutoCoordinatorTest`,
+`ChapterTranslatorTerminalExitsTest`, `SequentialBatchCoordinatorTest`,
+`TranslationManagerAutoArbitrationTest`, `NormalMangaIsolationTest`) with zero
+changes to existing test expectations — the §2.1 reserve is purely additive to
+the admission predicate, so no existing governor behavior test conflicted
+(no STOP condition triggered).
+
+STEP 8 FULL SWEEP: `eu.kanade.translation.*` → **1250 tests, 0 failures,
+0 errors, 0 skipped** (= part A's 1238 + 3 D9 + 9 D6);
+`NormalMangaIsolationTest` GREEN and UNTOUCHED.
+
+STEP 9 DETERMINISM: 5 consecutive forced `--rerun` rounds of
+`coexistence.* + ProviderRequestGovernorReservationTest` → identical each run:
+**21 tests, 0 failed** (JUnit XML aggregates compared across runs), BUILD
+SUCCESSFUL 42 s–1 m 43 s per run. No sleeps/polling anywhere; all waits are
+barrier/deferred/event-driven, and the D6 unit choreography runs on a virtual
+clock.
+
+## 4. Deviations (all documented; none change design semantics)
+
+1. **D6 fairness fixture is single-page-batch + empty-start manual store.**
+   The full-graph harness has a latent lane-serialization deadlock if a second
+   batch page's inpaint parks on `transportStarted[p0]` while p0's translate
+   turn queues behind the native lane (only the ~45 s ONNX phase timeout would
+   break it). The choreography therefore uses ONE batch page and an
+   empty-start manual store (pre-registered PENDING pages make the manual path
+   resume-skip). Manual pages also can never reach `renderStatus READY` on
+   this fixture (fake cleaned image has no decodable bytes), so the fairness
+   oracle is the paid-call completion + typed outcome, not display promotion —
+   the same documented fixture deviation family as part A note §1.2.
+2. **Drain-test commit shape is translation-terminal, not `renderStatus
+   READY`.** Promotion to render READY validates the cleaned base file through
+   `BitmapFactoryCleanedImageProbe` (`ChapterArtifactStore.displayBaseIsValid`,
+   :889–:900), which cannot decode on the JVM. The DrainExecutor commits the
+   exact shape the harness manual publish shim commits (ocr/translation/
+   inpaint READY + cleaned metadata; no render promotion). The §2.3 oracle
+   set — drained call finishes with `cancelledCalls == 0`, D9 entry consumed,
+   exactly one paid call, PENDING untouched on grace expiry — is unchanged in
+   strength. Diagnostic-run evidence: the drain shield worked on the first
+   GREEN build; the only failure was the fixture's own
+   `ARTIFACT_PUBLICATION_FAILED` rejection, not a cancellation.
+3. **`companion object` on `RollingAutoCoordinator` made public** to expose
+   `PROVIDER_DRAIN_GRACE_MS` (the test reads it via `getField`); the two
+   pre-existing constants inside it became explicitly `private const`.
+   `drainGraceMs` is the LAST constructor parameter with a production default,
+   so every existing call site (including the scheduler's named-arg call)
+   compiles unchanged.
+4. **Two committed RED test files received fixture-only corrections in commit
+   `dd3364e`** (deviations #2 + the bridge unwrap). RED was demonstrated and
+   captured against the committed RED versions; no assertion semantics
+   changed — the drain oracle's status assertions and the fraction-guard
+   exception surfacing were aligned with what the production seam actually
+   guarantees on a JVM fixture.
+5. **§2.2b is verification-only.** `pausedTranslations` +
+   `deferTranslationRetry` (design §2.2b) already existed in
+   `RollingAutoCoordinator.consumeTranslations`; the D6 GREEN commit adds a
+   pointer comment, no behavioral change.
+
+## 5. Repository state
+
+`git log --oneline -5` (captured before this log commit):
+
+```
+dd3364e t917(p3): d6 reservation+typing+drain
+8dd55e4 t917(p3): d6 tests
+0eaf7e1 t917(p3): d9 ledger+cap+reconcile
+be3c4d5 t917(p3): d9 tests
+58360c8 t917(p3): patchPage grace + regression test
+```
+
+Exit criteria: per-commit RED-before-its-GREEN verified; final sweep 1250/0;
+`NormalMangaIsolationTest` green + untouched; neighbors green with unchanged
+expectations; determinism 5/5 identical; no sleeps/polling; JUnit 5 +
+kotest-assertions + mockk only (no Robolectric).
