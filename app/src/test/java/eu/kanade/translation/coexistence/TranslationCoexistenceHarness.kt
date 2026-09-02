@@ -145,6 +145,7 @@ internal class TranslationCoexistenceHarness private constructor(
         fun create(
             pageKeys: List<String> = listOf("p0", "p1"),
             preRegisterInStore: Boolean = true,
+            storeOverride: ChapterTranslationStore? = null,
         ): TranslationCoexistenceHarness {
             val barrier = CoexistenceBarrier()
 
@@ -166,7 +167,11 @@ internal class TranslationCoexistenceHarness private constructor(
             // make the single-page planner project WAIT_FOR_DEPENDENCY for
             // every stage (DETECTION plans RUN and blocks them), and the
             // manual path would silently resume-skip before any barrier.
-            val store = ChapterTranslationStore(
+            // T917 Phase 3 (D9): an artifact-authority store built by the test
+            // (FakeChapterDocumentIo + production fresh-chapter recipe) replaces
+            // the memory-only default so durable sidecars (attempt ledger,
+            // manifest) are observable across a simulated process death.
+            val store = storeOverride ?: ChapterTranslationStore(
                 translationFile = null,
                 fileCreator = null,
                 initialPages = if (preRegisterInStore) {
