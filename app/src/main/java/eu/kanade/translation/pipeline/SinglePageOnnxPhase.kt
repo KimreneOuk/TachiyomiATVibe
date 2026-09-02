@@ -199,10 +199,15 @@ internal class SinglePageOnnxPhase(
      *
      * Returns null for resume/completed/error paths where the page is already
      * handled (no further work needed). The caller releases the permit after this
-     * returns regardless of the result, so long-running resume paths
-     * ([renderResumedPage], [resumeInpaintAndRender]) also run under the permit
-     * — they are edge cases and the ONNX overlap benefit applies only to the
-     * fresh translate path.
+     * returns regardless of the result.
+     *
+     * T917 D11 (phase4-design §4.4): when the caller supplies
+     * [deferredPublications], the resume paths' storage publication
+     * ([resumeInpaintAndRender]'s cleaned-image persist + render tail, the
+     * [renderResumedPage]-only resume, and the `finally` store flush + stream
+     * clear) is ENQUEUED there instead of running under the permit — the
+     * boundary drains it after the permit is released. Null (legacy callers)
+     * keeps the pre-D11 inline behavior.
      */
     suspend fun translateSinglePageOnnx(
         manga: Manga,
@@ -212,6 +217,7 @@ internal class SinglePageOnnxPhase(
         readerStreamFn: (() -> InputStream)? = null,
         force: Boolean = true,
         stageListener: TranslationStageListener? = null,
+        deferredPublications: DeferredPagePublications? = null,
     ): OnnxPhaseResult? {
         val streamFromReader = readerStreamFn ?: peekReaderPageStream(manga, chapter, source, pageKey)
         val fromLang = TextRecognizerLanguage.fromPref(translationPreferences.translateFromLanguage())
@@ -264,17 +270,28 @@ internal class SinglePageOnnxPhase(
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT single-page resume: render from cleaned image pageKey=$pageKey cleaned=${adjustedResume.cleanedImageName}"
                         }
-                        renderResumedPage(
-                            manga,
-                            chapter,
-                            source,
-                            pageKey,
-                            store,
-                            adjustedResume,
-                            cleanedBitmap,
-                            " (resume cleaned)",
-                            stageListener,
-                        )
+                        // T917 D11 (§4.4): the render tail persists the page —
+                        // defer it OUTSIDE the native permit when the boundary
+                        // supplied a deferral queue (the cleaned bitmap already
+                        // crosses the permit boundary by design).
+                        val renderTail: suspend () -> Unit = {
+                            renderResumedPage(
+                                manga,
+                                chapter,
+                                source,
+                                pageKey,
+                                store,
+                                adjustedResume,
+                                cleanedBitmap,
+                                " (resume cleaned)",
+                                stageListener,
+                            )
+                        }
+                        if (deferredPublications != null) {
+                            deferredPublications.enqueue(renderTail)
+                        } else {
+                            renderTail()
+                        }
                         return null
                     } else {
                         logcat(LogPriority.INFO) {
@@ -424,6 +441,7 @@ internal class SinglePageOnnxPhase(
                             bitmap,
                             adjustedResume,
                             stageListener,
+                            deferredPublications,
                         )
                         return null
                     } else {
@@ -502,9 +520,21 @@ internal class SinglePageOnnxPhase(
             )
         } finally {
             if (!needsHttpRender) {
-                store.flush()
-                chapter.id?.let { chapterId ->
-                    streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
+                // T917 D11 (§4.4): the store flush + stream-registry clear are
+                // storage publication — defer them OUTSIDE the native permit
+                // (enqueued AFTER the resume tails, so publication order is
+                // identical to the inline sequence). The engine-pool reclaim
+                // stays inline: it is memory work, not storage publication.
+                val flushTail: suspend () -> Unit = {
+                    store.flush()
+                    chapter.id?.let { chapterId ->
+                        streamRegistry.clearPage(source.id, manga.id, chapterId, pageKey)
+                    }
+                }
+                if (deferredPublications != null) {
+                    deferredPublications.enqueue(flushTail)
+                } else {
+                    flushTail()
                 }
                 try {
                     recognitionEngine.reclaimPooledMemory()
@@ -569,6 +599,7 @@ internal class SinglePageOnnxPhase(
         bitmap: Bitmap,
         pageTranslation: PageTranslation,
         stageListener: TranslationStageListener? = null,
+        deferredPublications: DeferredPagePublications? = null,
     ) {
         pageTranslation.sourceFileName = pageKey
         pageTranslation.ocrStatus = StageStatus.READY
@@ -616,7 +647,13 @@ internal class SinglePageOnnxPhase(
             chapter.name,
             chapter.scanlator,
         )
-        if (persistCleanedBitmap(
+        // T917 D11 (§4.4): cleaned-image persistence and the render tail are
+        // storage publication — defer them OUTSIDE the native permit when the
+        // boundary supplied a deferral queue. The tail stays fail-closed: a
+        // persist failure still recycles the bitmap, marks render FAILED and
+        // persists that state; it fails the page, never silently.
+        val persistAndRenderTail: suspend () -> Unit = {
+            val persisted = persistCleanedBitmap(
                 pageTranslation,
                 cleaned,
                 companionDir,
@@ -626,26 +663,32 @@ internal class SinglePageOnnxPhase(
                 source.id,
                 manga.id,
                 chapter.id,
-            ) == null
-        ) {
-            try {
-                cleaned.recycle()
-            } catch (_: Exception) {}
-            pageTranslation.renderStatus = StageStatus.FAILED
-            persistPageWithOomRecovery(store, pageKey, pageTranslation)
-            return
+            )
+            if (persisted == null) {
+                try {
+                    cleaned.recycle()
+                } catch (_: Exception) {}
+                pageTranslation.renderStatus = StageStatus.FAILED
+                persistPageWithOomRecovery(store, pageKey, pageTranslation)
+            } else {
+                renderResumedPage(
+                    manga,
+                    chapter,
+                    source,
+                    pageKey,
+                    store,
+                    pageTranslation,
+                    cleaned,
+                    successMessageSuffix = " (resume inpaint)",
+                    stageListener = stageListener,
+                )
+            }
         }
-        renderResumedPage(
-            manga,
-            chapter,
-            source,
-            pageKey,
-            store,
-            pageTranslation,
-            cleaned,
-            successMessageSuffix = " (resume inpaint)",
-            stageListener = stageListener,
-        )
+        if (deferredPublications != null) {
+            deferredPublications.enqueue(persistAndRenderTail)
+        } else {
+            persistAndRenderTail()
+        }
     }
 
     /**

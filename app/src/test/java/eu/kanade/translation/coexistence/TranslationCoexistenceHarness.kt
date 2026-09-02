@@ -119,7 +119,11 @@ internal class TranslationCoexistenceHarness private constructor(
     val activeStores: ActiveChapterStoreRegistry,
     val trackerScope: CoroutineScope,
     val managerScope: CoroutineScope,
-    private val cleanedPublicationMock: CleanedPublication,
+    // T917 Phase 4 (D11): exposed so a test can park the cleaned-image
+    // publication at a COMMIT barrier mid-commit (the permit-free-commit
+    // choreography). The real instance stays wired into the phases for their
+    // internal reads.
+    internal val cleanedPublicationMock: CleanedPublication,
     // T917 Phase 3 (D6): exposed so a test can swap in a governed transport
     // (paid calls admitted through a real ProviderRequestGovernor).
     internal val engineLane: EngineLane,
@@ -350,11 +354,47 @@ internal class TranslationCoexistenceHarness private constructor(
                 currentInpaintingMode = { engineLane.currentInpaintingMode },
             )
 
-            // Mock only as a replacement HOOK for the pipeline field; the manual
-            // publish answer delegates to the real store commit (see
-            // persistManualCleanedResult). The real instance above stays wired
-            // into the single-page phases for their internal reads.
+            // Mock only as a DELEGATING replacement HOOK: every method forwards
+            // to the real instance unless a test overrides that one method (the
+            // manual publish shim overrides persistOnnxCleanedImage; the D11
+            // test overrides persistCleanedBitmap to park it at the COMMIT
+            // barrier). Wiring the SAME instance into the pipeline AND the
+            // single-page phases means a test seam covers both the boundary's
+            // persistOnnxCleanedImage and the resume tail's persistCleanedBitmap.
             val cleanedPublicationMock = mockk<CleanedPublication>(relaxed = true)
+            coEvery {
+                cleanedPublicationMock.persistCleanedBitmap(
+                    any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
+                )
+            } coAnswers {
+                realCleanedPublication.persistCleanedBitmap(
+                    arg(0),
+                    arg(1),
+                    arg(2),
+                    arg(3),
+                    arg(4),
+                    arg(5),
+                    arg(6),
+                    arg(7),
+                    arg(8),
+                    arg(9),
+                )
+            }
+            coEvery {
+                cleanedPublicationMock.persistOnnxCleanedImage(any(), any(), any(), any(), any())
+            } coAnswers {
+                realCleanedPublication.persistOnnxCleanedImage(arg(0), arg(1), arg(2), arg(3), arg(4))
+            }
+            coEvery {
+                cleanedPublicationMock.loadPersistedCleanedBitmap(any(), any(), any(), any())
+            } coAnswers {
+                realCleanedPublication.loadPersistedCleanedBitmap(arg(0), arg(1), arg(2), arg(3))
+            }
+            coEvery {
+                cleanedPublicationMock.deleteRetiredCleanedFile(any(), any(), any(), any(), any())
+            } coAnswers {
+                realCleanedPublication.deleteRetiredCleanedFile(arg(0), arg(1), arg(2), arg(3), arg(4))
+            }
 
             val onnxPhase = SinglePageOnnxPhase(
                 context = context,
@@ -363,7 +403,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 downloadProvider = downloadProvider,
                 streamRegistry = streamRegistry,
                 engines = engineLane,
-                cleanedPublication = realCleanedPublication,
+                cleanedPublication = cleanedPublicationMock,
                 pageStoreWriter = pageStoreWriter,
                 activeStoreResolverProvider = { storeResolverHook },
                 engineRebuildMutex = engineRebuildMutex,
@@ -374,7 +414,7 @@ internal class TranslationCoexistenceHarness private constructor(
                 provider = provider,
                 streamRegistry = streamRegistry,
                 engines = engineLane,
-                cleanedPublication = realCleanedPublication,
+                cleanedPublication = cleanedPublicationMock,
                 expectedBatchFingerprints = expectedFingerprints,
                 retryInpaintDownscaledFn = { manga, chapter, source, pageKey, streams, decoded, pageTranslation ->
                     onnxPhase.retryInpaintDownscaled(manga, chapter, source, pageKey, streams, decoded, pageTranslation)

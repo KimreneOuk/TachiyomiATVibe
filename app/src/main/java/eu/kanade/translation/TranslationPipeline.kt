@@ -22,6 +22,7 @@ import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
+import eu.kanade.translation.pipeline.DeferredPagePublications
 import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.BatchResumeGate
@@ -491,40 +492,79 @@ class TranslationPipeline(
                 }
                 return SinglePageOutcome.Rejected(null, "page already translating")
             }
+            // T917 D11 (phase4-design §4.4): storage-tail deferral holder. The
+            // ONNX phase enqueues its resume-path cleaned-image persistence,
+            // render tails, and the store flush here instead of running them
+            // under the native permit; this boundary drains the queue AFTER
+            // withNativeLane returns, so the permit is released before storage
+            // publication and the next page's native admission is never blocked
+            // behind this page's disk commit. On native timeout the boundary
+            // orphans the queue FIRST: any residual block invocation runs its
+            // tails inline (quarantine exit is awaited before withNativeLane
+            // returns), so publication is never silently dropped.
+            val deferredPublications = DeferredPagePublications()
             val onnxResult = try {
-                withNativeLane(
-                    timeoutMs = nativeTimeoutMs,
-                    chapterId = chapter.id,
-                    chapterName = chapter.name,
-                    pageKey = pageKey,
-                    onTimeout = { markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs) },
-                ) {
-                    if (!inFlightPageKeys.add(pageKey)) {
-                        logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
-                        throw NativePageAlreadyInFlightException()
-                    }
-                    try {
-                        val store = resolveActiveStore(manga, chapter, source)
-                        val generation = store?.snapshot(pageKey)?.generation
-                        if (store != null && generation != null) {
-                            store.withGeneration(generation) {
-                                translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
-                            }
-                        } else {
-                            translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
+                try {
+                    withNativeLane(
+                        timeoutMs = nativeTimeoutMs,
+                        chapterId = chapter.id,
+                        chapterName = chapter.name,
+                        pageKey = pageKey,
+                        onTimeout = {
+                            deferredPublications.orphaned = true
+                            markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
+                        },
+                    ) {
+                        if (!inFlightPageKeys.add(pageKey)) {
+                            logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
+                            throw NativePageAlreadyInFlightException()
                         }
-                    } catch (t: Throwable) {
-                        if (t is CancellationException || t is NativePageAlreadyInFlightException) throw t
-                        logcat(LogPriority.ERROR, t) { "TachiyomiAT ONNX phase failed: pageKey=$pageKey" }
-                        markPageFailed(manga, chapter, source, pageKey, t)
-                        throw t
-                    } finally {
-                        inFlightPageKeys.remove(pageKey)
+                        try {
+                            val store = resolveActiveStore(manga, chapter, source)
+                            val generation = store?.snapshot(pageKey)?.generation
+                            if (store != null && generation != null) {
+                                store.withGeneration(generation) {
+                                    translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                                }
+                            } else {
+                                translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                            }
+                        } catch (t: Throwable) {
+                            if (t is CancellationException || t is NativePageAlreadyInFlightException) throw t
+                            logcat(LogPriority.ERROR, t) { "TachiyomiAT ONNX phase failed: pageKey=$pageKey" }
+                            markPageFailed(manga, chapter, source, pageKey, t)
+                            throw t
+                        } finally {
+                            inFlightPageKeys.remove(pageKey)
+                        }
                     }
+                } catch (_: NativePageAlreadyInFlightException) {
+                    return SinglePageOutcome.Rejected(null, "page already translating")
                 }
-            } catch (_: NativePageAlreadyInFlightException) {
-                return SinglePageOutcome.Rejected(null, "page already translating")
-            } ?: return SinglePageOutcome.Failed(pageKey, "native phase timed out")
+            } catch (t: Throwable) {
+                // Exception path: the boundary does not continue, so run any
+                // deferred storage tails inline (best effort — the block has
+                // already failed the page) and rethrow the original failure.
+                runCatching { deferredPublications.drainAll() }
+                    .onFailure { drainError ->
+                        logcat(LogPriority.ERROR, drainError) {
+                            "TachiyomiAT deferred storage publication failed: pageKey=$pageKey"
+                        }
+                    }
+                throw t
+            }
+            // Normal path: drain OUTSIDE the permit. Fail-closed: a deferred
+            // publication that throws fails the page — it must never be
+            // silently dropped.
+            try {
+                deferredPublications.drainAll()
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                logcat(LogPriority.ERROR, t) { "TachiyomiAT deferred storage publication failed: pageKey=$pageKey" }
+                markPageFailed(manga, chapter, source, pageKey, t)
+                throw t
+            }
+            onnxResult ?: return SinglePageOutcome.Failed(pageKey, "native phase timed out")
 
             val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
                 ?: return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
@@ -742,35 +782,64 @@ class TranslationPipeline(
             return null
         }
         try {
-            val onnxResult = withNativeLane(
-                timeoutMs = nativeTimeoutMs,
-                chapterId = chapter.id,
-                chapterName = chapter.name,
-                pageKey = pageKey,
-                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs) },
-            ) {
-                if (!inFlightPageKeys.add(pageKey)) {
-                    logcat(LogPriority.WARN) { "TachiyomiAT prepare admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
-                    throw NativePageAlreadyInFlightException()
-                }
-                try {
-                    val store = resolveActiveStore(manga, chapter, source)
-                    val generation = store?.snapshot(pageKey)?.generation
-                    if (store != null && generation != null) {
-                        store.withGeneration(generation) {
-                            translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
-                        }
-                    } else {
-                        translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
+            // T917 D11 (phase4-design §4.4): same storage-tail deferral as
+            // [runGrantedSinglePageBoundary] — the permit is released before
+            // the resume paths' storage publication runs; orphaned tails run
+            // inline; the normal-path drain is fail-closed.
+            val deferredPublications = DeferredPagePublications()
+            val onnxResult = try {
+                withNativeLane(
+                    timeoutMs = nativeTimeoutMs,
+                    chapterId = chapter.id,
+                    chapterName = chapter.name,
+                    pageKey = pageKey,
+                    onTimeout = {
+                        deferredPublications.orphaned = true
+                        markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
+                    },
+                ) {
+                    if (!inFlightPageKeys.add(pageKey)) {
+                        logcat(LogPriority.WARN) { "TachiyomiAT prepare admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
+                        throw NativePageAlreadyInFlightException()
                     }
-                } catch (t: Throwable) {
-                    if (t is CancellationException) throw t
-                    logcat(LogPriority.ERROR, t) { "TachiyomiAT prepare ONNX phase failed: pageKey=$pageKey" }
-                    markPageFailed(manga, chapter, source, pageKey, t)
-                    throw t
-                } finally {
-                    inFlightPageKeys.remove(pageKey)
+                    try {
+                        val store = resolveActiveStore(manga, chapter, source)
+                        val generation = store?.snapshot(pageKey)?.generation
+                        if (store != null && generation != null) {
+                            store.withGeneration(generation) {
+                                translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                            }
+                        } else {
+                            translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                        }
+                    } catch (t: Throwable) {
+                        if (t is CancellationException) throw t
+                        logcat(LogPriority.ERROR, t) { "TachiyomiAT prepare ONNX phase failed: pageKey=$pageKey" }
+                        markPageFailed(manga, chapter, source, pageKey, t)
+                        throw t
+                    } finally {
+                        inFlightPageKeys.remove(pageKey)
+                    }
                 }
+            } catch (t: Throwable) {
+                // Exception path: best-effort inline drain of deferred storage
+                // tails (the block has already failed the page), then rethrow.
+                runCatching { deferredPublications.drainAll() }
+                    .onFailure { drainError ->
+                        logcat(LogPriority.ERROR, drainError) {
+                            "TachiyomiAT deferred storage publication failed: pageKey=$pageKey"
+                        }
+                    }
+                throw t
+            }
+            // Normal path: drain OUTSIDE the permit. Fail-closed.
+            try {
+                deferredPublications.drainAll()
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                logcat(LogPriority.ERROR, t) { "TachiyomiAT deferred storage publication failed: pageKey=$pageKey" }
+                markPageFailed(manga, chapter, source, pageKey, t)
+                throw t
             }
 
             // Failure before handoff: a null native result with no terminal store
@@ -1092,8 +1161,18 @@ class TranslationPipeline(
         readerStreamFn: (() -> InputStream)? = null,
         force: Boolean = true,
         stageListener: TranslationStageListener? = null,
+        deferredPublications: DeferredPagePublications? = null,
     ): OnnxPhaseResult? =
-        singlePageOnnxPhase.translateSinglePageOnnx(manga, chapter, source, pageKey, readerStreamFn, force, stageListener)
+        singlePageOnnxPhase.translateSinglePageOnnx(
+            manga,
+            chapter,
+            source,
+            pageKey,
+            readerStreamFn,
+            force,
+            stageListener,
+            deferredPublications,
+        )
 
     // T909 Phase 12: single-page HTTP+render phase body moved to
     // translation/pipeline/SinglePageHttpRenderPhase.kt (outcome typing stays
