@@ -69,10 +69,15 @@ Neither pure option (a)/(b) as posed:
   Blanket stale-once via hash-embedding (option a implemented as PLAN §3 originally worded) would
   additionally re-bill glossary-less and standard-lane chapters once for no repair benefit.
 - **Convergence (cost bound):** after a repair pass, re-translated pages re-fold the same pairs;
-  `updateGlossary`'s equality gate (ChapterGlossaryStore.kt:49) means the version does NOT bump →
-  the following run REUSEs everything. Worst case per glossary maturation = one extra full-chapter
-  pass, strictly converging. This is the "bounded by resume planning" clause: repairs are
-  per-page-stale, not chapter-wide-forced.
+  `updateGlossary`'s equality gate (ChapterGlossaryStore.kt:49) means an identical refold does NOT
+  bump the version → the following run REUSEs. CORRECTED (original wording under-counted;
+  phase3-verification finding 2): chunk folds run AFTER page stamps (BatchLaneWorkers.kt:545-555),
+  so a repair that itself adds/flips a glossary entry (builder qualifies at ≥3 recurrences / ≥80%
+  recall) bumps the version once more → **up to two paid passes per glossary maturation** plus a
+  chunk-prefix partial cascade bounded by chunk count. Strictly converging: the map tracks only
+  high-consistency terms, and perpetual re-billing would require persistent majority-rendering
+  flip-flops the recall threshold makes implausible. Repairs remain per-page-stale, not
+  chapter-wide-forced.
 
 ### 1.3 Stamp points (where the version is recorded)
 Uniform rule: **stamp the live store glossary version at commit-provenance time** (after the page's
