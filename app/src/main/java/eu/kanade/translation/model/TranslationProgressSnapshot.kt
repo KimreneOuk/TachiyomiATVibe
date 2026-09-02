@@ -87,6 +87,19 @@ data class TranslationProgressSnapshot(
     val nonDurableFailure: Boolean = false,
     /** Safe rejection reason carried alongside [nonDurableFailure]. */
     val nonDurableFailureReason: String? = null,
+    /**
+     * T917 Phase 5 (spec §2.1 CANCELLED): pages the batch contract settled as
+     * cancelled (aborted) terminal work. Never fake failures, never success.
+     */
+    val cancelledPages: Int = 0,
+    /**
+     * T917 Phase 5 (spec §2.1/D10): whether [totalPages] is the trusted source
+     * total. A partially downloaded chapter's available page set is NOT its
+     * trusted total — unknown totals must never render a percentage or a
+     * fabricated complete chapter. Only a registered batch work set or a
+     * trusted manifest earns `true`.
+     */
+    val expectedPageCountTrusted: Boolean = false,
 ) {
     /** Failures are processed, so a terminal failed stage reaches 100%. */
     val fraction: Float get() = if (totalStages == 0) 0f else doneStages.toFloat() / totalStages
@@ -109,6 +122,23 @@ data class TranslationProgressSnapshot(
             it.stage == TranslationProgressStage.FAILED
     }
 
+    /**
+     * T917 Phase 5 (spec §2.1): pages in exactly one current-pass terminal
+     * category — translated/reused-valid, textless, failed, partial, or
+     * cancelled. Queued, running, buffered, uncommitted, and missing-source
+     * pages are never terminal.
+     */
+    val terminalPages: Int get() = processedPages + cancelledPages
+
+    /**
+     * T917 Phase 5 (spec §2.1): the readable-success subset of terminal work —
+     * committed display-ready pages excluding partial results, plus textless
+     * terminals. Failures, partials, and cancellations stay OUT of this count
+     * so no surface can render them as done.
+     */
+    val terminalSuccessPages: Int get() =
+        pages.count { it.stage == TranslationProgressStage.DONE && !it.partial }
+
     /** Read Now/Open Translated actions are valid only when a result exists. */
     val canReadTranslated: Boolean get() = displayReadyPages > 0
 
@@ -126,6 +156,11 @@ data class TranslationProgressSnapshot(
         val displayReady: Boolean = false,
         val processed: Boolean = false,
         val aiState: AiPageProgressState = AiPageProgressState.PENDING,
+        /**
+         * T917 Phase 5: the current pass produced a PARTIAL translation for
+         * this page. Partial work is terminal-retryable, never clean success.
+         */
+        val partial: Boolean = false,
     )
 
     companion object {
@@ -152,6 +187,8 @@ data class TranslationProgressSnapshot(
             } else {
                 TranslationBatchPhase.IDLE
             },
+            /** T917 Phase 5 (D10): trusted source-total fact from the manifest. */
+            expectedPageCountTrusted: Boolean = false,
         ): TranslationProgressSnapshot = eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker.computeSnapshot(
             pageMap.orEmpty(),
             state,
@@ -161,6 +198,7 @@ data class TranslationProgressSnapshot(
             displayPageMap = displayPageMap,
             batchPhase = batchPhase,
             chapterId = chapterId,
+            expectedPageCountTrusted = expectedPageCountTrusted,
         )
     }
 }

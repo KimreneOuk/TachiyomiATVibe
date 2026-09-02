@@ -1065,6 +1065,10 @@ class TranslationManager(
                 state = state,
                 pageMap = store.state.value,
                 displayPageMap = store.display.value,
+                // T917 Phase 5 (D10): trusted totals come from the manifest;
+                // a partial download's available pages are never "all pages".
+                expectedPageCountTrusted =
+                    store.artifactManifest?.expectedPageCountTrusted == true,
             ).withDurablePause(store)
         }
     }

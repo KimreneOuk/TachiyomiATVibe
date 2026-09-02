@@ -851,6 +851,11 @@ private fun phaseSubtitleLine(hero: BatchHeroProjection.Phase): String {
         BatchHeroPhase.CANCELLED -> "Translation cancelled — the chapter download was cancelled or removed"
         BatchHeroPhase.ADMISSION_FAILED ->
             "Translation could not be queued — check the source and translation settings"
+        // T917 Phase 5 (D10): a partial download's available pages are real
+        // work, but the source total is unknown — never a percentage.
+        BatchHeroPhase.UNKNOWN_TOTAL ->
+            hero.donePages?.let { "$it pages available · source total unknown" }
+                ?: "Source page total unknown"
     }
 }
 
@@ -889,6 +894,7 @@ private fun phaseHeroLabel(hero: BatchHeroProjection.Phase): String = when (hero
     BatchHeroPhase.FAILED_NO_PAGES -> stringResource(ATMR.strings.manga_batch_phase_failed_no_pages)
     BatchHeroPhase.CANCELLED -> stringResource(ATMR.strings.manga_batch_phase_cancelled)
     BatchHeroPhase.ADMISSION_FAILED -> stringResource(ATMR.strings.manga_batch_phase_admission_failed)
+    BatchHeroPhase.UNKNOWN_TOTAL -> stringResource(ATMR.strings.manga_batch_phase_unknown_total)
 }
 
 internal fun batchStatusHeaderSubtitle(snapshot: TranslationProgressSnapshot, isResuming: Boolean = false): String {

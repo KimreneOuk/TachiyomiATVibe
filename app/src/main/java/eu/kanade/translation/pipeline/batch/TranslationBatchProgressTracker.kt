@@ -211,6 +211,10 @@ class TranslationBatchProgressTracker(
             batchPhase = state.batchPhase,
             chapterId = chapterId,
             aiPageStates = state.aiPageStates,
+            // T917 Phase 5 (spec §2.1): the batch's registered work set IS its
+            // trusted total; its aborted remainder is cancelled terminal work.
+            cancelledPageKeys = state.cancelledPageKeys,
+            expectedPageCountTrusted = true,
         ).copy(
             aborted = state.aborted,
             abortedReason = state.abortReason,
@@ -235,6 +239,8 @@ class TranslationBatchProgressTracker(
         val nextEligibleRetryAtEpochMs: Long? = null,
         val nonDurableFailure: Boolean = false,
         val nonDurableFailureReason: String? = null,
+        /** T917 Phase 5: keys settled as cancelled by a batch abort. */
+        val cancelledPageKeys: Set<String> = emptySet(),
     )
 
     companion object {
@@ -272,6 +278,11 @@ class TranslationBatchProgressTracker(
                 batchPhase = TranslationBatchPhase.FINISHED,
                 aborted = true,
                 abortReason = event.reason,
+                // T917 Phase 5 (spec §2.1 CANCELLED): the unfinished keys are
+                // settled as cancelled terminal work, never fake failures.
+                // Historical event field name: the keys the batch could NOT settle are
+                // exactly the aborted remainder this projection settles as cancelled.
+                cancelledPageKeys = event.failedPageKeys,
             )
             else -> previous
         }
@@ -304,6 +315,18 @@ class TranslationBatchProgressTracker(
             chapterId: Long = 0,
             /** Reader-facing committed pages; defaults to the live map for pure callers. */
             displayPageMap: Map<String, PageTranslation>? = null,
+            /**
+             * T917 Phase 5 (spec §2.1 CANCELLED): keys the batch settled as
+             * cancelled — counted as cancelled terminal work unless the page
+             * already reached a real terminal stage.
+             */
+            cancelledPageKeys: Set<String> = emptySet(),
+            /**
+             * T917 Phase 5 (spec §2.1/D10): whether [TranslationProgressSnapshot.totalPages]
+             * is the trusted source total. Defaults to false — trust must be
+             * earned from a registered batch work set or a trusted manifest.
+             */
+            expectedPageCountTrusted: Boolean = false,
         ): TranslationProgressSnapshot {
             val committedPages = displayPageMap ?: pageMap
             val rows = pageMap.entries.mapIndexed { order, (key, page) ->
@@ -332,6 +355,7 @@ class TranslationBatchProgressTracker(
                     displayReady = display.displayReady,
                     processed = display.processed,
                     aiState = aiState,
+                    partial = page.translationStatus == StageStatus.PARTIAL,
                 )
             }.sortedWith(compareBy<TranslationProgressSnapshot.Page> { it.index }.thenBy { it.pageKey })
             val stageCounts = BatchPhase.entries.associateWith { phase ->
@@ -364,6 +388,14 @@ class TranslationBatchProgressTracker(
                 failed = rows.count { it.aiState == AiPageProgressState.FAILED },
                 paused = rows.count { it.aiState == AiPageProgressState.PAUSED },
             )
+            // T917 Phase 5 (spec §2.1 CANCELLED): only unfinished pages count as
+            // cancelled — a page that already reached DONE/FAILED keeps its own
+            // terminal category and is never double-counted.
+            val cancelled = rows.count {
+                it.pageKey in cancelledPageKeys &&
+                    it.stage != TranslationProgressStage.DONE &&
+                    it.stage != TranslationProgressStage.FAILED
+            }
             return TranslationProgressSnapshot(
                 chapterId, chapterState, done + failed, rows.size, active?.index ?: 0, active?.pageKey, activeStages,
                 rows.count {
@@ -391,6 +423,8 @@ class TranslationBatchProgressTracker(
                 System.currentTimeMillis(),
                 batchPhase = batchPhase,
                 aiProgress = aiProgress,
+                cancelledPages = cancelled,
+                expectedPageCountTrusted = expectedPageCountTrusted,
             )
         }
 
