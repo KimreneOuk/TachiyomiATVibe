@@ -47,6 +47,8 @@ import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
 import eu.kanade.translation.translator.AdmissionPriority
+import eu.kanade.translation.translator.NativeStallState
+import eu.kanade.translation.translator.NativeStallWatchdog
 import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslatorLanguage
@@ -82,6 +84,9 @@ class TranslationPipeline(
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
+    /** D8 test seam; production defaults preserve the result timer contract. */
+    private val stallThresholdMs: Long = NATIVE_STALL_THRESHOLD_MS,
+    private val nativeTimeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
 ) : TranslationExecutor, java.io.Closeable {
 
     override fun close() {
@@ -120,6 +125,9 @@ class TranslationPipeline(
          */
         const val ONNX_PHASE_TIMEOUT_MS = 90_000L
 
+        /** D8 occupancy threshold; aligned with the native result timer. */
+        const val NATIVE_STALL_THRESHOLD_MS = ONNX_PHASE_TIMEOUT_MS
+
         /**
          * T917 D2 §2.3: bound for the wait-and-attach observation on a denied
          * page lease. Exactly the owner's own bounded phase chain (permit-held
@@ -157,7 +165,25 @@ class TranslationPipeline(
     // Native work runs in an independent scope so caller cancellation cannot
     // falsely signal native exit. The quarantine owns admission until real exit.
     private val nativeRunScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val nativeRunQuarantine = NativeRunQuarantine(nativeRunScope)
+    private val nativeStallWatchdog = NativeStallWatchdog(
+        scope = nativeRunScope,
+        thresholdMs = stallThresholdMs,
+    )
+    private val nativeRunQuarantine = NativeRunQuarantine(
+        scope = nativeRunScope,
+        occupancyObserver = object : NativeRunQuarantine.OccupancyObserver {
+            override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
+                nativeStallWatchdog.onLaneOccupied(token, pageKey, startedAtEpochMs)
+            }
+
+            override fun onLaneReleased(token: Long) {
+                nativeStallWatchdog.onLaneReleased(token)
+            }
+        },
+    )
+
+    /** Reader-visible native occupancy state; null means no stall is active. */
+    val nativeStall: kotlinx.coroutines.flow.StateFlow<NativeStallState?> = nativeStallWatchdog.state
 
     /**
      * Listener notified by [withNativeLane] when a page overruns its deadline,
@@ -287,8 +313,9 @@ class TranslationPipeline(
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
+        timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
     ) {
-        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey)
+        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey, timeoutMs)
     }
 
     // T909 Phase 6: PageSnapshot.toPrecondition moved to pipeline/PageStoreWriter.kt
@@ -340,6 +367,11 @@ class TranslationPipeline(
         stageListener: TranslationStageListener?,
         origin: PageWriteOrigin,
     ): SinglePageOutcome {
+        // D8 refuses a new promise while the native lane is visibly stalled.
+        // Check before lease admission so this tap performs no writer/native work.
+        nativeStall.value?.let { stalled ->
+            return SinglePageOutcome.Stalled(stalled.pageKey, stalled.stalledAtEpochMs)
+        }
         val leaseStore = resolveActiveStore(manga, chapter, source)
         // T917 D2 §2.3: lease admission holds the interactive reservation; the
         // attach wait on a denied lease runs OUTSIDE it — a passive observer
@@ -444,7 +476,7 @@ class TranslationPipeline(
     ): SinglePageOutcome {
         try {
             val onnxResult = withNativeLane(
-                timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+                timeoutMs = nativeTimeoutMs,
                 chapterId = chapter.id,
                 chapterName = chapter.name,
                 pageKey = pageKey,
@@ -472,10 +504,10 @@ class TranslationPipeline(
                 } finally {
                     inFlightPageKeys.remove(pageKey)
                 }
-            } ?: return SinglePageOutcome.Completed
+            } ?: return SinglePageOutcome.Failed(pageKey, "native phase timed out")
 
             val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
-                ?: return SinglePageOutcome.Completed
+                ?: return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
 
             // T917 Phase 3 (D6 §2.2a): capture the phase's typed completion so a
             // governor deferral surfaces as a typed pause instead of a silent
@@ -691,7 +723,7 @@ class TranslationPipeline(
         }
         try {
             val onnxResult = withNativeLane(
-                timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+                timeoutMs = nativeTimeoutMs,
                 chapterId = chapter.id,
                 chapterName = chapter.name,
                 pageKey = pageKey,

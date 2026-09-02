@@ -224,7 +224,22 @@ internal class TranslationCoexistenceHarness private constructor(
             val fakeTransport = newTransport()
 
             val nativeRunScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-            val nativeRunQuarantine = NativeRunQuarantine(nativeRunScope)
+            val nativeStallWatchdog = eu.kanade.translation.translator.NativeStallWatchdog(
+                scope = nativeRunScope,
+                thresholdMs = stallThresholdMs ?: TranslationPipeline.NATIVE_STALL_THRESHOLD_MS,
+            )
+            val nativeRunQuarantine = NativeRunQuarantine(
+                scope = nativeRunScope,
+                occupancyObserver = object : NativeRunQuarantine.OccupancyObserver {
+                    override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
+                        nativeStallWatchdog.onLaneOccupied(token, pageKey, startedAtEpochMs)
+                    }
+
+                    override fun onLaneReleased(token: Long) {
+                        nativeStallWatchdog.onLaneReleased(token)
+                    }
+                },
+            )
             // T917 Phase 4 (D7): the engine-drain scope injected into EngineLane
             // (production wires nativeRunScope; the harness owns its own so
             // close() can cancel leftover one-shot drains deterministically).
@@ -490,6 +505,8 @@ internal class TranslationCoexistenceHarness private constructor(
                     "inFlightPageKeys" to inFlightPageKeys,
                     "nativeRunScope" to nativeRunScope,
                     "nativeRunQuarantine" to nativeRunQuarantine,
+                    "nativeStallWatchdog" to nativeStallWatchdog,
+                    "nativeStall" to nativeStallWatchdog.state,
                     "engines" to engineLane,
                     // phase/collaborator fields — :223, :472, :481, :497, :803
                     "pageStoreWriter" to pageStoreWriter,
@@ -503,13 +520,6 @@ internal class TranslationCoexistenceHarness private constructor(
                     "onBatchClosed" to (null as (suspend (Manga, Chapter, HttpSource, ChapterTranslationStore) -> Unit)?),
                 ),
             )
-            // D8 RED: requested seams are installed only once production adds them.
-            // The graph tests use named reflection bridges for those fields/methods.
-            if (stallThresholdMs != null || nativeTimeoutMs != null) {
-                throw AssertionError(
-                    "T917 D8 RED defect: injectable stall/timeout pipeline seams are missing",
-                )
-            }
             // batchTrackerFactory — TranslationPipeline.kt:165 (nullable-tracker
             // return type; set separately so the lambda type is exact).
             val trackerRegistry = TranslationBatchTrackerRegistry()

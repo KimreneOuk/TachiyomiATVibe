@@ -124,6 +124,10 @@ class TranslationManager(
     val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
         pendingTranslationRequestsState.asStateFlow()
 
+    /** D8 reader-visible native lane stall projection. */
+    val nativeStall: StateFlow<eu.kanade.translation.translator.NativeStallState?>
+        get() = pipeline.nativeStall
+
     /** Serializes request versioning, state publication, and durable writes. */
     private val pendingRequestMutationLock = Any()
 

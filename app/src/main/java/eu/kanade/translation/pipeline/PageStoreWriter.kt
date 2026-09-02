@@ -3,7 +3,7 @@ package eu.kanade.translation.pipeline
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
+import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -102,6 +102,7 @@ internal class PageStoreWriter(
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
+        timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
     ) {
         // Use SAFE language fallbacks, not the throwing fromPref: this runs in an
         // error/timeout path, so re-throwing here would mask the original failure.
@@ -123,7 +124,7 @@ internal class PageStoreWriter(
             } else {
                 createFailedPagePlaceholder(
                     pageKey,
-                    "Translation timed out after ${SINGLE_PAGE_TIMEOUT_MS / 1000}s",
+                    "Translation timed out after ${timeoutMs / 1000}s",
                     imgWidth = existing?.imgWidth ?: 0f,
                     imgHeight = existing?.imgHeight ?: 0f,
                     originalImgWidth = existing?.originalImgWidth ?: 0f,

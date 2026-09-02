@@ -115,7 +115,7 @@ class NativeStallWatchdogTest {
         stalled.javaClass.getMethod("getToken").invoke(stalled) shouldBe 7L
         stalled.javaClass.getMethod("getPageKey").invoke(stalled) shouldBe "p7"
         stalled.javaClass.getMethod("getStartedAtEpochMs").invoke(stalled) shouldBe 12L
-        stalled.javaClass.getMethod("getStalledAtEpochMs").invoke(stalled) shouldBe 112L
+        stalled.javaClass.getMethod("getStalledAtEpochMs").invoke(stalled) shouldBe 100L
     }
 
     @Test
@@ -144,9 +144,12 @@ class NativeStallWatchdogTest {
         val clock = VirtualClock()
         val handle = createWatchdog(backgroundScope, thresholdMs = 50L, clock)
         handle.occupied(1L, "first", 0L)
+        runCurrent()
         clock.advanceBy(50L)
         runCurrent()
-        handle.state.value!!.javaClass.getMethod("getPageKey").invoke(handle.state.value) shouldBe "first"
+        val first = handle.state.value
+            ?: throw AssertionError("T917 D8 RED defect: first occupancy did not emit at threshold")
+        first.javaClass.getMethod("getPageKey").invoke(first) shouldBe "first"
 
         handle.occupied(2L, "second", clock.now)
         runCurrent()

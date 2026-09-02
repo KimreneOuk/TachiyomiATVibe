@@ -143,6 +143,12 @@ sealed interface SinglePageOutcome {
      */
     data class Paused(val nextEligibleRetryAtEpochMs: Long? = null) : SinglePageOutcome
 
+    /** The native lane remained occupied beyond its result timer. */
+    data class Stalled(val pageKey: String, val stalledSinceEpochMs: Long) : SinglePageOutcome
+
+    /** The page attempt reached a typed terminal failure. */
+    data class Failed(val pageKey: String, val reason: String) : SinglePageOutcome
+
     /** The page was owned by [owner]; the executor attached to the owner's terminal commit. */
     data class Attached(val owner: PageWriteOrigin) : SinglePageOutcome
 
