@@ -26,6 +26,20 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
     fun glossarySnapshot(): Map<String, String> = glossary.toMap()
 
     /**
+     * TachiyomiAT T917 D5: the live glossary version for the reuse gate and
+     * provenance stamps (phase3-design §1.2/§1.3). `null` means the gate is
+     * OFF — a legacy-authority manifest, or no glossary ever published — which
+     * keeps glossary-less chapters and the standard engine lane at REUSE with
+     * zero extra paid calls. Pure in-memory read (`artifactManifest` is
+     * volatile); safe to call with the store mutex already held, which is how
+     * the batch provenance stamp consumes it.
+     */
+    internal fun currentGlossaryVersion(): Int? {
+        val manifest = store.artifactManifest
+        return if (manifest?.authority == ManifestAuthority.ARTIFACTS) manifest.glossary?.version else null
+    }
+
+    /**
      * All translated (source => target) pairs in the chapter so far — used to
      * (re)build the glossary. Reads the in-memory pages map (no I/O).
      */

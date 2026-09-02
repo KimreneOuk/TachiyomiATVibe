@@ -334,6 +334,15 @@ internal class SinglePageHttpRenderPhase(
                         pageTranslation.blocks.forEach { b -> stats.add(b.text, b.translation) }
                         store.updateGlossary(stats.build())
                     }
+                    // T917 D5 (phase3-design §1.3): stamp the live glossary version AFTER
+                    // this page's own pairs folded, before the durable write — a pre-fold
+                    // stamp would record the version BELOW the one this page's own fold
+                    // creates, guaranteeing one wasted batch repair per manually translated
+                    // page after every session. A concurrent mode's fold between request
+                    // build and commit is claimed but unseen: rare, converging, accepted.
+                    // Absence of a pointer stamps 0 (gate-off semantics: `0 > recorded` can
+                    // only repair chapters where a glossary exists and matured).
+                    pageTranslation.translationGlossaryVersion = store.currentGlossaryVersion() ?: 0
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT translate step DONE: pageHash=${ShortHash.hash(pageKey)} " +

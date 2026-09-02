@@ -1895,6 +1895,15 @@ class ChapterTranslationStore(
         glossaryStore.updateGlossary(updated)
     }
 
+    /**
+     * TachiyomiAT T917 D5: live glossary version for the reuse gate and
+     * provenance stamps; `null` = gate off (legacy authority / no glossary
+     * ever published). Delegates to [ChapterGlossaryStore]; a pure in-memory
+     * read, safe under the store mutex (the batch provenance stamp consumes it
+     * inside the guarded patch lambda).
+     */
+    internal fun currentGlossaryVersion(): Int? = glossaryStore.currentGlossaryVersion()
+
     internal fun loadGlossary() {
         glossaryStore.loadGlossary()
     }

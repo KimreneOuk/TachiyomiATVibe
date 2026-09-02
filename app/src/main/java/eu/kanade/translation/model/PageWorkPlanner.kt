@@ -86,6 +86,8 @@ object PageWorkPlanner {
                 textless = textless,
                 nowEpochMs = input.nowEpochMs,
                 forceRetry = input.forceRetry,
+                currentGlossaryVersion = input.currentGlossaryVersion,
+                recordedGlossaryVersion = page?.translationGlossaryVersion,
             )
             decisions[stage] = decision
         }
@@ -197,6 +199,8 @@ object PageWorkPlanner {
         textless: Boolean,
         nowEpochMs: Long,
         forceRetry: Boolean,
+        currentGlossaryVersion: Int? = null,
+        recordedGlossaryVersion: Int? = null,
     ): StageWorkDecision {
         val durableFailureFingerprintMismatch = evidence.durableFailure?.let { failure ->
             failure.failureFingerprint != null &&
@@ -237,7 +241,7 @@ object PageWorkPlanner {
             )
         }
 
-        val raw = when {
+        var raw = when {
             evidence.status == StageStatus.FAILED ->
                 StageWorkDecision(stage, StageDecision.FAILED, StageReasonCode.FAILED_STAGE)
 
@@ -281,6 +285,27 @@ object PageWorkPlanner {
                 StageWorkDecision(stage, StageDecision.TERMINAL_COMPLETE, skipReason(stage, evidence))
 
             else -> StageWorkDecision(stage, StageDecision.REUSE, StageReasonCode.VALID_ARTIFACT)
+        }
+
+        // TachiyomiAT T917 D5 glossary-aware reuse gate (phase3-design §1.2):
+        // when the chapter's current glossary version is greater than the
+        // version recorded on the persisted translation (absence = 0), a
+        // translation-stage REUSE downgrades to RUN — a targeted, one-time
+        // terminology repair. The gate is armed only when [currentGlossaryVersion]
+        // is non-null: the AI lane with an ARTIFACTS-authority manifest and a
+        // published glossary pointer. TERMINAL_COMPLETE (textless/skip) never
+        // reaches this branch, and repair converges: the re-run re-folds the
+        // same pairs, the version does not bump, the next plan REUSEs.
+        if (stage == BatchStage.TRANSLATION &&
+            raw.decision == StageDecision.REUSE &&
+            currentGlossaryVersion != null &&
+            currentGlossaryVersion > (recordedGlossaryVersion ?: 0)
+        ) {
+            raw = StageWorkDecision(
+                stage = stage,
+                decision = StageDecision.RUN,
+                reason = StageReasonCode.GLOSSARY_MATURED,
+            )
         }
 
         if (raw.decision in setOf(
