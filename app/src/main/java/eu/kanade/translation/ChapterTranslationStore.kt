@@ -458,7 +458,20 @@ class ChapterTranslationStore(
                 expected.candidateGenerationId != null &&
                     expected.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
                     "candidate generation changed"
+                // T917 Phase 3 backlog fold-in (phase3-design §4): same
+                // `candidate != null` grace persistArtifactMutationLocked
+                // applies — a dependency fingerprint expected against a
+                // candidate-LESS record (candidate never opened, cleared by an
+                // abort, or the candidate-less registration a batch start
+                // performs for a held page) has nothing real to compare
+                // against, so the mismatch must not reject. Snapshot captures
+                // arm this clause from the page-snapshot fallback even with no
+                // candidate, which made every such manual commit a false
+                // reject. Fail direction preserved: generation, pageVersion,
+                // candidate generation, block fingerprints, and the lease
+                // token fences stay fully armed.
                 expected.dependencyFingerprint != null &&
+                    artifactManifest?.pages?.get(pageKey)?.candidate != null &&
                     expected.dependencyFingerprint != artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
                     "candidate dependency fingerprint changed"
                 expected.blockFingerprints != null &&
