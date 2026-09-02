@@ -101,10 +101,12 @@ fun AutoTranslationStatus(
     for (index in state.orderedSlots.indices) {
         val slot = state.orderedSlots[index]
         if (index > 0) slotLabelsBuilder.append(", ")
+        // T917 P5: the shared forAutoSlot mapper owns the slot copy — the
+        // status surface projects the truth record verbatim (spec §6.2.8).
         slotLabelsBuilder
             .append(slot.pageIndex + 1)
             .append(": ")
-            .append(slot.state.localizedLabel)
+            .append(slot.truth.label)
     }
     val slotLabels = slotLabelsBuilder.toString()
     Surface(
@@ -154,18 +156,6 @@ private fun SlotRail(
         }
     }
 }
-
-private val ReaderAutoTranslationSlotState.localizedLabel: String
-    @Composable get() = when (this) {
-        ReaderAutoTranslationSlotState.Queued -> stringResource(ATMR.strings.reader_auto_stage_queued)
-        ReaderAutoTranslationSlotState.ReadingText -> stringResource(ATMR.strings.reader_auto_stage_reading)
-        ReaderAutoTranslationSlotState.Cleaning -> stringResource(ATMR.strings.reader_auto_stage_cleaning)
-        ReaderAutoTranslationSlotState.Translating -> stringResource(ATMR.strings.reader_auto_stage_translating)
-        ReaderAutoTranslationSlotState.Rendering -> stringResource(ATMR.strings.reader_auto_stage_finishing)
-        ReaderAutoTranslationSlotState.Ready -> stringResource(ATMR.strings.reader_auto_stage_translated)
-        is ReaderAutoTranslationSlotState.Deferred -> reason.localizedLabel
-        is ReaderAutoTranslationSlotState.Failed -> stringResource(ATMR.strings.reader_auto_stage_failed)
-    }
 
 private val AutoDeferralReason.localizedLabel: String
     @Composable get() = when (this) {

@@ -664,8 +664,15 @@ open class ReaderPageImageView @JvmOverloads constructor(
             return
         }
 
-        val isRunningState = state !is ReaderPageFeedbackState.Translated &&
-            state !is ReaderPageFeedbackState.Failed
+        // T917 P5: only progress-severity truth (attached-to-owner) is a
+        // running state; paused/stalled/failed/rejected truths are terminal
+        // outcomes and must not re-dim the page.
+        val isRunningState = when (state) {
+            is ReaderPageFeedbackState.Translated, is ReaderPageFeedbackState.Failed -> false
+            is ReaderPageFeedbackState.ManualTruth ->
+                state.truth.severity == eu.kanade.translation.ui.UiSeverity.PROGRESS
+            else -> true
+        }
 
         if (isRunningState) {
             ensureDimScrim()
@@ -686,6 +693,9 @@ open class ReaderPageImageView @JvmOverloads constructor(
             accessibilityLiveRegion = when (state) {
                 ReaderPageFeedbackState.Translated,
                 is ReaderPageFeedbackState.Failed,
+                // T917 P5: a typed non-progress outcome (pause/stall/failure/
+                // rejection) is a user-relevant terminal truth worth announcing.
+                is ReaderPageFeedbackState.ManualTruth,
                 -> ACCESSIBILITY_LIVE_REGION_POLITE
                 else -> ACCESSIBILITY_LIVE_REGION_NONE
             }
@@ -710,7 +720,10 @@ open class ReaderPageImageView @JvmOverloads constructor(
         val suffix = feedbackContextSuffix?.takeIf {
             state !is ReaderPageFeedbackState.Failed &&
                 state !is ReaderPageFeedbackState.Translated &&
-                state !is ReaderPageFeedbackState.Deferred
+                state !is ReaderPageFeedbackState.Deferred &&
+                // T917 P5: the ready-ahead suffix is rolling-auto context and
+                // must not ride on a typed manual outcome pill.
+                state !is ReaderPageFeedbackState.ManualTruth
         } ?: return label
         return android.text.SpannableStringBuilder().apply {
             append(label)

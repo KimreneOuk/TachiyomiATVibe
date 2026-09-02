@@ -14,6 +14,7 @@ import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.translator.NativeStallState
 import eu.kanade.translation.ui.PageUiTruth
 import eu.kanade.translation.ui.TranslationUiTruth
+import eu.kanade.translation.ui.UiSeverity
 import tachiyomi.core.common.i18n.stringResource
 import tachiyomi.i18n.at.ATMR
 
@@ -116,11 +117,7 @@ internal fun selectReaderPageFeedback(
  * mapper's record verbatim. A `Completed` outcome keeps the existing durable
  * rendered state (returns null — nothing manual to project), and a live
  * durable attempt ([attemptActive]) always owns the chip.
- *
- * RED SEAM (T917 P5 reader-hop): returns null until the GREEN wiring commit;
- * every join assertion in `ReaderManualOutcomeTruthTest` fails against this.
  */
-@Suppress("UNUSED_PARAMETER", "unused")
 internal fun readerManualOutcomeFeedback(
     chapterId: Long?,
     pageKey: String?,
@@ -128,7 +125,30 @@ internal fun readerManualOutcomeFeedback(
     lookup: (chapterId: Long, pageKey: String) -> SinglePageOutcome?,
     nativeStall: NativeStallState?,
     durable: PageTranslation?,
-): ReaderPageFeedbackState? = null
+): ReaderPageFeedbackState? {
+    if (chapterId == null || pageKey == null) return null
+    // A live durable attempt always owns the chip: the scheduler outcome being
+    // projected belongs to a PREVIOUS intent, never to the stages on screen.
+    if (attemptActive) return null
+    // Identity fence: the accessor is keyed by THIS page's own identity, so a
+    // late outcome for a foreign page/chapter is never visible here.
+    val outcome = lookup(chapterId, pageKey) ?: run {
+        // D8 stall consumption: the stall flow reflects the stalled pageKey;
+        // fenced by the same key comparison it can only fill THIS page, and
+        // only while no scheduler outcome exists yet.
+        val stalled = nativeStall?.takeIf { it.pageKey == pageKey } ?: return null
+        SinglePageOutcome.Stalled(stalled.pageKey, stalled.stalledAtEpochMs)
+    }
+    // Completed is already rendered truthfully from the durable display.
+    if (outcome is SinglePageOutcome.Completed) return null
+    val truth = TranslationUiTruth.forManualOutcome(
+        outcome = outcome,
+        durable = durable?.toPageDisplayProjection(),
+        // The D9 repeated-interruption fact rides with the durable page.
+        exhausted = durable?.hasExhaustedRetries == true,
+    ) ?: return null
+    return ReaderPageFeedbackState.ManualTruth(truth)
+}
 
 /** A delayed UI update; scheduling and image delivery remain immediate. */
 class ReaderTranslationFeedbackCoalescer(
@@ -150,6 +170,19 @@ class ReaderTranslationFeedbackCoalescer(
         if (next == null) {
             reset()
             return null
+        }
+
+        // T917 P5: a typed manual outcome is a scheduler fact, not a stage —
+        // it never participates in stage ranking and it supersedes an earlier
+        // displayed truth (the map only ever holds the LATEST outcome for the
+        // identity). A non-progress truth closes the attempt against stale
+        // stage callbacks, exactly like a terminal failure.
+        if (next is ReaderPageFeedbackState.ManualTruth) {
+            if (next == displayed && pending == null) return null
+            pending = null
+            displayed = next
+            if (next.truth.severity != UiSeverity.PROGRESS) terminalDisplayed = true
+            return next
         }
 
         // Once a translated result or a terminal failure has been shown, a

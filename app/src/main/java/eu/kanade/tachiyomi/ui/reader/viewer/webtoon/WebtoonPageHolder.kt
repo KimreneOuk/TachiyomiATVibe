@@ -13,9 +13,11 @@ import com.davemorrissey.labs.subscaleview.SubsamplingScaleImageView
 import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.resolveReaderPageTranslationKey
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageFeedbackState
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.readerManualOutcomeFeedback
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderPageFeedback
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
 import eu.kanade.tachiyomi.ui.reader.viewer.toReaderPageFeedback
@@ -24,6 +26,7 @@ import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.translator.NativeStallState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -96,6 +99,11 @@ class WebtoonPageHolder(
     private var autoFeedbackState: ReaderPageFeedbackState? = null
     private var feedbackAttemptActive = false
 
+    // TachiyomiAT T917 P5: the pipeline's single bounded native stall state,
+    // re-synced into the chip join under the bind fence (never across a page
+    // rebind — the join itself is identity-fenced by chapter+pageKey).
+    private var nativeStallState: NativeStallState? = null
+
     // TachiyomiAT: the holder's coroutine scope. Unlike PagerPageHolder (which
     // cancels its scope once in onDetachedFromWindow, the end of the view's
     // life), a WebtoonPageHolder is REUSED after recycle() — RecyclerView
@@ -108,6 +116,7 @@ class WebtoonPageHolder(
     private var loadJob: Job? = null
     private var autoTranslationJob: Job? = null
     private var pageViewJob: Job? = null
+    private var stallJob: Job? = null
 
     /**
      * TachiyomiAT: the rendered/cleaned image FILE NAME currently displayed by
@@ -168,7 +177,6 @@ class WebtoonPageHolder(
     /** Lightweight status-only sync; never re-decodes or re-sets the image. */
     fun syncTranslationFeedback() {
         val currentPage = page ?: return
-        val durableFeedback = currentPage.translation?.toReaderPageFeedback()
         val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated && !feedbackAttemptActive) {
             frame.beginTranslationFeedbackAttempt()
@@ -176,6 +184,20 @@ class WebtoonPageHolder(
         } else if (!isBeingTranslated) {
             feedbackAttemptActive = false
         }
+        // TachiyomiAT T917 P5: the scheduler's typed outcome for THIS page
+        // identity, wrapped verbatim by the pure TranslationUiTruth mapper.
+        // The join is identity-fenced by chapter+pageKey, so a late outcome
+        // from a prior page/chapter is dropped; a Completed outcome returns
+        // null and the existing rendered state stands.
+        val manualFeedback = readerManualOutcomeFeedback(
+            chapterId = currentPage.chapter.chapter.id,
+            pageKey = resolveReaderPageTranslationKey(currentPage),
+            attemptActive = isBeingTranslated,
+            lookup = viewer.activity.viewModel::manualSinglePageOutcome,
+            nativeStall = nativeStallState,
+            durable = currentPage.translation,
+        )
+        val durableFeedback = manualFeedback ?: currentPage.translation?.toReaderPageFeedback()
         val feedback = selectReaderPageFeedback(
             durableFeedback = durableFeedback,
             autoFeedback = autoFeedbackState,
@@ -200,6 +222,8 @@ class WebtoonPageHolder(
         autoTranslationJob = null
         pageViewJob?.cancel()
         pageViewJob = null
+        stallJob?.cancel()
+        stallJob = null
         loadJob?.cancel()
         loadJob = null
         // A bind can happen without recycle() when RecyclerView reuses an
@@ -231,6 +255,7 @@ class WebtoonPageHolder(
         // stage here makes it consistent independent of event or decode timing.
         autoFeedbackState = null
         feedbackAttemptActive = false
+        nativeStallState = null
         syncTranslationFeedback()
         val bindFence = ReaderHolderBindFence(generation, boundPage)
         autoTranslationJob = viewer.activity.viewModel.autoTranslationUiState
@@ -240,6 +265,17 @@ class WebtoonPageHolder(
                         .firstOrNull { it.pageIndex == boundPage.index }
                         ?.state
                         ?.toReaderPageFeedback()
+                    syncTranslationFeedback()
+                }
+            }
+            .launchIn(holderScope)
+        // TachiyomiAT T917 P5: the D8 stall flow re-syncs the chip so the
+        // stalled page's truth appears without waiting for a store emission.
+        // Fenced by the bind fence so a stale stall cannot cross a rebind.
+        stallJob = viewer.activity.viewModel.nativeStallState
+            .onEach { stall ->
+                bindFence.dispatchIfCurrent(bindGeneration, this.page) {
+                    nativeStallState = stall
                     syncTranslationFeedback()
                 }
             }
@@ -287,6 +323,7 @@ class WebtoonPageHolder(
         page = null
         autoFeedbackState = null
         feedbackAttemptActive = false
+        nativeStallState = null
         lastShownImageName = null
         bindGeneration++
 
