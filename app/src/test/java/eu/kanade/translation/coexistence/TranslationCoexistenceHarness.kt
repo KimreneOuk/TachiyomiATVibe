@@ -507,6 +507,10 @@ internal class TranslationCoexistenceHarness private constructor(
                     "nativeRunQuarantine" to nativeRunQuarantine,
                     "nativeStallWatchdog" to nativeStallWatchdog,
                     "nativeStall" to nativeStallWatchdog.state,
+                    // T917 Phase 4 (D8): Unsafe allocation skips the ctor
+                    // defaults, so the native timeout must be injected
+                    // explicitly or every native call races a 0 ms deadline.
+                    "nativeTimeoutMs" to (nativeTimeoutMs ?: TranslationPipeline.ONNX_PHASE_TIMEOUT_MS),
                     "engines" to engineLane,
                     // phase/collaborator fields — :223, :472, :481, :497, :803
                     "pageStoreWriter" to pageStoreWriter,

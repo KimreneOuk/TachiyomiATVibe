@@ -75,6 +75,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 class LayoutFailureException(val blockIds: List<String>, message: String) : Exception(message)
 
+private class NativePageAlreadyInFlightException : Exception()
+
 // T909 Phase 20.2: ProviderFailure.toFailureCategory moved to
 // pipeline/batch/BatchWriteGate.kt (its only caller, persistAiFailure).
 
@@ -475,35 +477,53 @@ class TranslationPipeline(
         origin: PageWriteOrigin,
     ): SinglePageOutcome {
         try {
-            val onnxResult = withNativeLane(
-                timeoutMs = nativeTimeoutMs,
-                chapterId = chapter.id,
-                chapterName = chapter.name,
-                pageKey = pageKey,
-                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
-            ) {
-                if (!inFlightPageKeys.add(pageKey)) {
-                    logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
-                    return@withNativeLane null
+            // T917 D8: a same-page request whose predecessor still owns the
+            // stove (e.g. a timed-out-but-parked native call) is rejected
+            // BEFORE queueing behind the quarantine. Membership here is the
+            // honest occupancy truth: the entry is cleared only when the
+            // residual invocation really exits, because the remover runs
+            // inside the parked block. The in-block add-check below remains
+            // the concurrent-race backstop.
+            if (inFlightPageKeys.contains(pageKey)) {
+                logcat(LogPriority.DEBUG) {
+                    "TachiyomiAT native admission rejected: chapter=${chapter.name} " +
+                        "pageKey=$pageKey reason=already in flight (residual)"
                 }
-                try {
-                    val store = resolveActiveStore(manga, chapter, source)
-                    val generation = store?.snapshot(pageKey)?.generation
-                    if (store != null && generation != null) {
-                        store.withGeneration(generation) {
+                return SinglePageOutcome.Rejected(null, "page already translating")
+            }
+            val onnxResult = try {
+                withNativeLane(
+                    timeoutMs = nativeTimeoutMs,
+                    chapterId = chapter.id,
+                    chapterName = chapter.name,
+                    pageKey = pageKey,
+                    onTimeout = { markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs) },
+                ) {
+                    if (!inFlightPageKeys.add(pageKey)) {
+                        logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
+                        throw NativePageAlreadyInFlightException()
+                    }
+                    try {
+                        val store = resolveActiveStore(manga, chapter, source)
+                        val generation = store?.snapshot(pageKey)?.generation
+                        if (store != null && generation != null) {
+                            store.withGeneration(generation) {
+                                translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
+                            }
+                        } else {
                             translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
                         }
-                    } else {
-                        translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
+                    } catch (t: Throwable) {
+                        if (t is CancellationException || t is NativePageAlreadyInFlightException) throw t
+                        logcat(LogPriority.ERROR, t) { "TachiyomiAT ONNX phase failed: pageKey=$pageKey" }
+                        markPageFailed(manga, chapter, source, pageKey, t)
+                        throw t
+                    } finally {
+                        inFlightPageKeys.remove(pageKey)
                     }
-                } catch (t: Throwable) {
-                    if (t is CancellationException) throw t
-                    logcat(LogPriority.ERROR, t) { "TachiyomiAT ONNX phase failed: pageKey=$pageKey" }
-                    markPageFailed(manga, chapter, source, pageKey, t)
-                    throw t
-                } finally {
-                    inFlightPageKeys.remove(pageKey)
                 }
+            } catch (_: NativePageAlreadyInFlightException) {
+                return SinglePageOutcome.Rejected(null, "page already translating")
             } ?: return SinglePageOutcome.Failed(pageKey, "native phase timed out")
 
             val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
@@ -521,7 +541,7 @@ class TranslationPipeline(
                         "TachiyomiAT HTTP+render phase timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
                             "pageKey=$pageKey chapter=${chapter.name}"
                     }
-                    markPageTimedOut(manga, chapter, source, pageKey)
+                    markPageTimedOut(manga, chapter, source, pageKey, SINGLE_PAGE_TIMEOUT_MS)
                     null
                 }
             } catch (t: Throwable) {
@@ -727,11 +747,11 @@ class TranslationPipeline(
                 chapterId = chapter.id,
                 chapterName = chapter.name,
                 pageKey = pageKey,
-                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
+                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs) },
             ) {
                 if (!inFlightPageKeys.add(pageKey)) {
                     logcat(LogPriority.WARN) { "TachiyomiAT prepare admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
-                    return@withNativeLane null
+                    throw NativePageAlreadyInFlightException()
                 }
                 try {
                     val store = resolveActiveStore(manga, chapter, source)

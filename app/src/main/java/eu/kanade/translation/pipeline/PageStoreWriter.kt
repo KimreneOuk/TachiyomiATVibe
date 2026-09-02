@@ -124,7 +124,11 @@ internal class PageStoreWriter(
             } else {
                 createFailedPagePlaceholder(
                     pageKey,
-                    "Translation timed out after ${timeoutMs / 1000}s",
+                    // T917 D8 §2.2: the timer must be truthful — sub-second
+                    // native timeouts rendered as "after 0s" under the seconds
+                    // division. Whole seconds stay human-readable.
+                    "Translation timed out after " +
+                        if (timeoutMs > 0 && timeoutMs % 1000L == 0L) "${timeoutMs / 1000L}s" else "${timeoutMs}ms",
                     imgWidth = existing?.imgWidth ?: 0f,
                     imgHeight = existing?.imgHeight ?: 0f,
                     originalImgWidth = existing?.originalImgWidth ?: 0f,

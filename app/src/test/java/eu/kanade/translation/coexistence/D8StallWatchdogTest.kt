@@ -1,8 +1,13 @@
 package eu.kanade.translation.coexistence
 
+import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.model.StageStatus
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -28,10 +33,14 @@ class D8StallWatchdogTest {
     }
 
     @Test
-    fun `parked native lane emits stall, rejects new tap, then clears and admits next tap`() = runBlocking {
+    fun `parked native lane emits stall, rejects new tap, then clears and admits next tap`(): Unit = runBlocking {
         val h = TranslationCoexistenceHarness.create(
             pageKeys = listOf("p0", "p1"),
             stallThresholdMs = 100L,
+            // Empty-start store (harness note): a pre-registered PENDING page
+            // resume-skips the native phase before the decode seam and the
+            // manual tap would never reach the parked stove.
+            preRegisterInStore = false,
         )
         harness = h
         h.installGraphicsShims()
@@ -75,8 +84,18 @@ class D8StallWatchdogTest {
 
             // Once the real invocation exits, the next tap proceeds normally.
             h.tapManual("p1")
-            val retry = h.capturedManualJob("p1")
-            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { retry.join() }
+            // Event-driven oracle: the decode seam logs the arrival when the
+            // retry's native phase really reaches the stove (capturedManualJob
+            // would return the stale first-tap registration here), then the
+            // store reaches the rendered terminal state.
+            h.barrier.awaitArrivalWithin(
+                CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE,
+                "p1",
+                TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
+            )
+            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                h.store.state.first { it["p1"]?.renderStatus == StageStatus.READY }
+            }
             h.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p1") shouldBe 1
         } catch (e: NoSuchFieldException) {
             throw AssertionError(
@@ -87,10 +106,11 @@ class D8StallWatchdogTest {
     }
 
     @Test
-    fun `native timeout reports typed failure and truthful timer while residual call rejects re tap`() = runBlocking {
+    fun `native timeout reports typed failure and truthful timer while residual call rejects re tap`(): Unit = runBlocking {
         val h = TranslationCoexistenceHarness.create(
             pageKeys = listOf("p0"),
             nativeTimeoutMs = 100L,
+            preRegisterInStore = false,
         )
         harness = h
         h.installGraphicsShims()
@@ -103,37 +123,56 @@ class D8StallWatchdogTest {
             "p0",
             TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
         )
+
+        // The quarantine timeout writes the honest FAILED placeholder with the
+        // truthful timer WHILE the residual native invocation is still parked
+        // inside the stove: the onTimeout callback runs before the quarantine's
+        // late-exit wait, so this store observation pins the residual window.
+        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+            h.store.state.first { it["p0"]?.ocrStatus == "FAILED" }
+        }
+        val page = h.store.state.value.getValue("p0")
+        withClue("T917 D8 §2.2: timeout writes a FAILED placeholder with the real timer") {
+            page.activeError?.contains("100") shouldBe true
+        }
+
+        // A same-page request during the residual window is typed Rejected
+        // BEFORE queueing behind the parked stove. Driven through the real
+        // pipeline boundary directly: the scheduler's anti-blink dedup would
+        // silently swallow a second translatePage for an already-active job,
+        // and the D8 typed-rejection contract lives at pipeline admission.
+        val rejected = withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+            CoroutineScope(Dispatchers.IO).async {
+                h.pipeline.translateSinglePage(
+                    h.manga,
+                    h.chapterFor(TranslationCoexistenceHarness.CHAPTER_ID),
+                    h.source,
+                    "p0",
+                    force = false,
+                    stageListener = null,
+                    origin = PageWriteOrigin.MANUAL,
+                )
+            }.await()
+        }
+        withClue("T917 D8 §2.2: residual same-page request is typed Rejected") {
+            rejected.javaClass.simpleName shouldBe "Rejected"
+            rejected.javaClass.getMethod("getReason").invoke(rejected) shouldBe "page already translating"
+        }
+
+        // Native work is never killed: only the real exit (barrier release)
+        // unwinds the quarantined job, and its terminal outcome is the typed
+        // failure — never a silent Completed.
+        h.barrier.release(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
         withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { first.join() }
 
         val outcome = readManualOutcome(h, "${TranslationCoexistenceHarness.CHAPTER_ID}:p0")
         withClue("T917 D8 §2.2: native timeout cannot be reported as Completed") {
-            if (outcome?.javaClass?.simpleName == "Completed" || outcome == null) {
+            if (outcome?.javaClass?.simpleName != "Failed") {
                 throw AssertionError(
-                    "T917 D8 RED defect: native timeout produced $outcome instead of a typed failure",
+                    "T917 D8 RED defect: native timeout produced $outcome instead of SinglePageOutcome.Failed",
                 )
             }
         }
-        val page = h.store.state.value.getValue("p0")
-        withClue("T917 D8 §2.2: timeout writes a FAILED placeholder") {
-            page.ocrStatus shouldBe "FAILED"
-            page.activeError?.contains("100") shouldBe true
-        }
-
-        // NativeRunQuarantine retains the admission lock until the fake native
-        // call really exits. A re-tap must therefore be an honest rejection,
-        // not another silent Completed.
-        h.tapManual("p0")
-        val retry = h.capturedManualJob("p0")
-        withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { retry.join() }
-        val retryOutcome = readManualOutcome(h, "${TranslationCoexistenceHarness.CHAPTER_ID}:p0")
-        withClue("T917 D8 §2.2: residual native occupancy rejects a re-tap") {
-            if (retryOutcome?.javaClass?.simpleName != "Rejected") {
-                throw AssertionError("T917 D8 RED defect: residual re-tap produced $retryOutcome")
-            }
-            val reason = retryOutcome.javaClass.getMethod("getReason").invoke(retryOutcome)
-            reason shouldBe "page already translating"
-        }
-        h.barrier.release(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0")
     }
 
     @Test
