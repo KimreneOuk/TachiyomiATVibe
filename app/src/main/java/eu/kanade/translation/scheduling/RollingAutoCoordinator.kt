@@ -1,5 +1,6 @@
 package eu.kanade.translation.scheduling
 
+import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.TranslationSession
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
@@ -1073,8 +1074,15 @@ class RollingAutoCoordinator(
          * T917 Phase 3 (D6 §2.3): production drain grace. Bounded so a hung
          * provider call still cancels cleanly; long enough that an in-flight
          * call normally finishes and commits even after the window is gone.
+         *
+         * T917 Phase 4 (D7 §1.6): aligned to
+         * [eu.kanade.translation.TranslationPipeline.ATTACH_TIMEOUT_MS] so the
+         * grace can never be SHORTER than the drained call's own legitimate
+         * budget (ONNX <= 90 s + HTTP/render <= 120 s, sequential): a shorter
+         * grace would cut a healthy long call cancellation-class mid-chain and
+         * strand its D9 attempt entry unresolved (phase3-verification finding 4).
          */
-        const val PROVIDER_DRAIN_GRACE_MS = 90_000L
+        const val PROVIDER_DRAIN_GRACE_MS = TranslationPipeline.ATTACH_TIMEOUT_MS
 
         /** Sentinel for a pause that may be retried at the next reconcile. */
         private const val RETRY_AT_NEXT_RECONCILE = Long.MIN_VALUE

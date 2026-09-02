@@ -196,9 +196,16 @@ class D6DrainNotCancelTest {
         ) as RollingAutoCoordinator
     }
 
-    /** Pins the §2.3 production grace bound. */
+    /**
+     * Pins the production grace bound. T917 Phase 4 (D7 §1.6) CONTRACT CHANGE
+     * (recorded in the phase-4 implementation log): the bound moved from the
+     * pinned 90 s to exactly the drained call chain's own legitimate budget —
+     * [eu.kanade.translation.TranslationPipeline.ATTACH_TIMEOUT_MS] (ONNX 90 s +
+     * HTTP/render 120 s, sequential = 210 s) — so a healthy long call is never
+     * cut cancellation-class mid-chain (phase3-verification finding 4).
+     */
     @Test
-    fun `drain grace companion bound is ninety seconds`() {
+    fun `drain grace companion bound matches the attach chain budget`() {
         val field = runCatching {
             RollingAutoCoordinator::class.java.getField("PROVIDER_DRAIN_GRACE_MS")
         }.getOrNull()
@@ -208,7 +215,7 @@ class D6DrainNotCancelTest {
                     "companion constant does not exist",
             )
         }
-        (field.get(null) as Long) shouldBe 90_000L
+        (field.get(null) as Long) shouldBe eu.kanade.translation.TranslationPipeline.ATTACH_TIMEOUT_MS
     }
 
     // ------------------------------------------------------------------
