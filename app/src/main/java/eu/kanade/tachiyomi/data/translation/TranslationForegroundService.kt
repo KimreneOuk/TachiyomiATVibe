@@ -15,7 +15,9 @@ import eu.kanade.tachiyomi.util.system.notify
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.ui.NotificationAction
+import eu.kanade.translation.ui.SurfaceVisibility
 import eu.kanade.translation.ui.TranslationNotificationCopy
+import eu.kanade.translation.ui.TranslationUiTruth
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -134,6 +136,14 @@ class TranslationForegroundService : Service() {
                 return
             }
             if (!BatchTranslationForegroundPolicy.shouldKeepServiceRunning(queued.map { it.status })) {
+                // T917 Phase 5 (spec §3.1): a stop here often means the batch
+                // reached a terminal state. A cancellation of paid work or a
+                // publication rejection must stay VISIBLE — the default stop
+                // path removes the notification, which would silence exactly
+                // the transitions the visibility budget forbids silencing.
+                active?.chapter?.id?.let { chapterId ->
+                    acknowledgeTerminalOutcome(chapterId, active.chapter.name)
+                }
                 stopSelf()
                 return
             }
@@ -150,11 +160,16 @@ class TranslationForegroundService : Service() {
         }
     }
 
+    /** Last posted (chapterId, text, ongoing) — bounded, single entry. */
+    private var lastPublished: Triple<Long?, String, Boolean>? = null
+
     /**
-     * T917 Phase 5: the notification body is the pure
+     * T917 Phase 5 (spec §3.1): the notification body is the pure
      * [TranslationNotificationCopy] projection; the service only renders it
-     * and attaches intents for actions it can actually deliver. Unknown
-     * source totals render an indeterminate bar — never a lying percentage.
+     * and attaches intents for actions it can actually deliver. Identical
+     * consecutive bodies are coalesced (ordinary progress is not re-posted),
+     * and unknown source totals render an indeterminate bar — never a lying
+     * percentage.
      */
     private fun publishProgress(
         chapterName: String,
@@ -162,6 +177,14 @@ class TranslationForegroundService : Service() {
         snapshot: TranslationProgressSnapshot?,
     ) {
         val copy = TranslationNotificationCopy.of(chapterName, snapshot)
+        val published = lastPublished
+        if (published != null &&
+            published.first == chapterId &&
+            published.second == copy.text &&
+            published.third == copy.ongoing
+        ) {
+            return
+        }
         val total = snapshot?.totalPages ?: 0
         val done = snapshot?.let { (it.donePages - it.failedCount).coerceAtLeast(0) } ?: 0
         val trusted = snapshot != null && snapshot.expectedPageCountTrusted && total > 0
@@ -181,7 +204,23 @@ class TranslationForegroundService : Service() {
                 }
             }
         }.build()
+        lastPublished = Triple(chapterId, copy.text, copy.ongoing)
         this.notify(Notifications.ID_TRANSLATION_PROGRESS, builder)
+    }
+
+    /**
+     * T917 Phase 5 (spec §3.1): before the service stops, surface a cancelled
+     * batch or a publication rejection as a retained, non-ongoing
+     * notification. The pure [TranslationUiTruth.chapterSurfaceDecision] gate
+     * decides visibility; the copy comes from [TranslationNotificationCopy].
+     */
+    private suspend fun acknowledgeTerminalOutcome(chapterId: Long, chapterName: String) {
+        val snapshot = manager.getTranslationProgress(chapterId).first()
+        val decision = TranslationUiTruth.chapterSurfaceDecision(null, snapshot)
+        val terminalVisible = snapshot?.aborted == true || snapshot?.nonDurableFailure == true
+        if (decision.visibility != SurfaceVisibility.SURFACE || !terminalVisible) return
+        retainNotification = true
+        showPaused(this, chapterName, chapterId, snapshot)
     }
 
     private fun publishPaused(

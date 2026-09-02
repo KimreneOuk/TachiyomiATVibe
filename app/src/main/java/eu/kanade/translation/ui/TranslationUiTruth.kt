@@ -43,6 +43,25 @@ enum class UiRetryMode {
 enum class UiAction { RETRY, CANCEL, DETAILS, REVIEW }
 
 /**
+ * Whether a state transition may be announced on an attention surface
+ * (spec §3.1 visibility budget): SILENCE is reserved for self-healing
+ * scheduler maintenance and ordinary coalescing — never for a user
+ * decision, pause, stall, durable failure, partial result, or the
+ * cancellation of paid work.
+ */
+enum class SurfaceVisibility { SURFACE, SILENCE }
+
+/**
+ * The visibility verdict for a chapter-level transition, carrying the truth
+ * every surface must agree on when [visibility] is [SurfaceVisibility.SURFACE].
+ */
+data class ChapterSurfaceDecision(
+    val visibility: SurfaceVisibility,
+    val reason: String,
+    val truth: PageUiTruth?,
+)
+
+/**
  * One page's truthful presentation state. [label] values are the English
  * source wording from the state→surface matrix; surfaces localize them.
  */
@@ -276,6 +295,102 @@ object TranslationUiTruth {
         page.stage == TranslationProgressStage.RENDER -> "Finishing page."
         else -> "Translation pending."
     }
+
+    /**
+     * T917 Phase 5 (spec §1.2 rule 6, §3.1): the single chapter-level
+     * visibility gate. [previous] is the last surfaced snapshot for the same
+     * chapter (may be null); [current] is the fresher durable state. The
+     * CURRENT state is always the truth source — [previous] is used only to
+     * detect deltas (new failure, new partial) and repeated identical
+     * emissions (coalescing). A newer durable terminal state supersedes an
+     * older failure snapshot; an old callback can never replace it.
+     */
+    fun chapterSurfaceDecision(
+        previous: TranslationProgressSnapshot?,
+        current: TranslationProgressSnapshot?,
+    ): ChapterSurfaceDecision {
+        if (current == null) {
+            return ChapterSurfaceDecision(
+                visibility = SurfaceVisibility.SILENCE,
+                reason = "no current durable truth",
+                truth = null,
+            )
+        }
+        return when {
+            current.aborted -> surface(
+                "explicit cancellation of paid work must be acknowledged",
+                PageUiTruth(
+                    label = "Translation cancelled.",
+                    severity = UiSeverity.INFO,
+                    retryMode = UiRetryMode.EXPLICIT,
+                    retryAtEpochMs = null,
+                    actions = setOf(UiAction.RETRY, UiAction.DETAILS),
+                    terminalSuccess = false,
+                    contentDescription = "Batch translation cancelled; saved pages were kept.",
+                ),
+            )
+
+            current.nonDurableFailure -> surface(
+                "publication rejection suppresses all success copy",
+                NOT_SAVED,
+            )
+
+            current.state == Translation.State.PAUSED || current.nextEligibleRetryAtEpochMs != null ->
+                surface(
+                    "persistent pause with reason",
+                    forChapterIndicator(Translation.State.PAUSED, current),
+                )
+
+            current.state == Translation.State.TRANSLATED ||
+                current.state == Translation.State.READY_WITH_WARNINGS -> surface(
+                "newer durable terminal state supersedes any stale callback",
+                forChapterIndicator(current.state, current),
+            )
+
+            current.failedCount > (previous?.failedCount ?: 0) ||
+                (
+                    current.state == Translation.State.ERROR &&
+                        previous?.state != Translation.State.ERROR
+                    ) -> {
+                val failureTruth = forChapterIndicator(Translation.State.ERROR, current)
+                val truth = if (current.displayReadyPages > 0) {
+                    // Committed readable display + failed candidate refresh:
+                    // "ready with warnings", never a red error over the
+                    // readable image (spec §3.1, PageTranslation
+                    // .shouldSurfaceError discipline).
+                    failureTruth.copy(
+                        severity = UiSeverity.WARNING,
+                        label = "Translated with warnings.",
+                        contentDescription =
+                            "Chapter translation ready with warnings; a page failed but readable results remain.",
+                    )
+                } else {
+                    failureTruth
+                }
+                surface("durable failure", truth)
+            }
+
+            partialPageCount(current) > partialPageCount(previous) -> surface(
+                "partial result is visible, never silently counted as complete",
+                PARTIAL,
+            )
+
+            else -> ChapterSurfaceDecision(
+                visibility = SurfaceVisibility.SILENCE,
+                reason = "self-healing scheduler transition or ordinary coalescing",
+                truth = null,
+            )
+        }
+    }
+
+    private fun surface(reason: String, truth: PageUiTruth) = ChapterSurfaceDecision(
+        visibility = SurfaceVisibility.SURFACE,
+        reason = reason,
+        truth = truth,
+    )
+
+    private fun partialPageCount(snapshot: TranslationProgressSnapshot?): Int =
+        snapshot?.pages?.count { it.stage == TranslationProgressStage.DONE && it.partial } ?: 0
 
     private fun fromDurable(
         durable: PageDisplayProjection?,
