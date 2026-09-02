@@ -105,6 +105,10 @@ internal class ArtifactRetention(
             add(layout.generationFile(generationId))
         }
         manifest.glossary?.fileName?.let(::add)
+        // T917 Phase 3 (D9): the attempt-ledger sidecar is always reachable —
+        // it is not manifest-pointed, so without this rule the retention sweep
+        // would delete the crash-loop evidence it exists to preserve.
+        add(layout.attemptLedgerFileName)
     }
 }
 

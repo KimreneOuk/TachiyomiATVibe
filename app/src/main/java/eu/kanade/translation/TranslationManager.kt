@@ -5,12 +5,14 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterDocumentIo
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
+import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -434,6 +436,13 @@ class TranslationManager(
         applicationScope.launch {
             translationQueueRestoreJob?.join()
             reconcilePendingRequestsForStartup(downloadQueueChapterIds = downloadSnapshot)
+            // T917 Phase 3 (D9): consume interrupted-attempt ledger entries for
+            // exactly the bounded chapter set (never a library scan).
+            reconcileAttemptLedgersForStartup(
+                chapterIds = translator.persistedQueueChapterIds() +
+                    pendingTranslationRequestsState.value.keys +
+                    pendingRequestStore.load(),
+            )
         }
     }
 
@@ -523,6 +532,58 @@ class TranslationManager(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * T917 Phase 3 (D9, phase3-design §3.2): startup reconciliation for the
+     * durable attempt ledger. Bounded to the caller-supplied chapter set
+     * (persisted translation-queue members ∪ pending request ids ∪ active
+     * stores) — NEVER a library scan. Every unresolved entry is a paid call a
+     * process death interrupted; each consumes one consecutive attempt for its
+     * page. A page reaching the cap records an INTERRUPTED-class durable
+     * failure (never auto-retryable) and flips the page PARTIAL, and the
+     * chapter's queue entry moves to the existing PAUSED state so the user
+     * sees it needs attention.
+     */
+    internal suspend fun reconcileAttemptLedgersForStartup(
+        chapterIds: Set<Long>,
+        resolveStore: TranslationStoreResolver = TranslationStoreResolver { chapterId ->
+            activeStores.get(chapterId)
+        },
+    ) {
+        if (chapterIds.isEmpty()) return
+        chapterIds.forEach { chapterId ->
+            val store = resolveStore.resolve(chapterId) ?: return@forEach
+            val counters = runCatching { store.consumeUnresolvedAttemptsAtStartup() }
+                .onFailure {
+                    logcat(LogPriority.WARN) {
+                        "T917 D9: startup attempt-ledger consume failed (fail-open): chapterId=$chapterId"
+                    }
+                }
+                .getOrNull() ?: return@forEach
+            val cappedPages = counters
+                .filterValues { count -> count >= ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED }
+            if (cappedPages.isEmpty()) return@forEach
+            cappedPages.forEach { (pageKey, count) ->
+                runCatching { store.applyAttemptCapPause(pageKey, count) }
+                    .onFailure {
+                        logcat(LogPriority.WARN) {
+                            "T917 D9: attempt-cap pause failed (fail-open): " +
+                                "chapterId=$chapterId pageKey=$pageKey"
+                        }
+                    }
+            }
+            translator.queueState.value
+                .firstOrNull { entry ->
+                    entry.chapter.id == chapterId && entry.status == Translation.State.QUEUE
+                }
+                ?.let { entry ->
+                    entry.status = Translation.State.PAUSED
+                    logcat(LogPriority.INFO) {
+                        "T917 D9: chapter paused after repeated interrupted attempts: chapterId=$chapterId"
+                    }
+                }
         }
     }
 

@@ -303,6 +303,7 @@ internal class SinglePageOnnxPhase(
                         )
 
                         adjustedResume.cleanedBitmap = cleanedBitmap
+                        if (force) clearAttemptCapForManualRetry(store, pageKey)
                         if (force) adjustedResume.prepareForcedRetry()
                         adjustedResume.resetAttemptCharge()
                         adjustedResume.translationStatus = StageStatus.PENDING
@@ -409,6 +410,7 @@ internal class SinglePageOnnxPhase(
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT single-page resume: inpaint + render from translated blocks pageKey=$pageKey"
                         }
+                        if (force) clearAttemptCapForManualRetry(store, pageKey)
                         if (force) adjustedResume!!.prepareForcedRetry()
                         adjustedResume!!.resetAttemptCharge()
                         stageListener?.onStageEntered(pageKey, TranslationStageEvent.CLEANING)
@@ -428,6 +430,7 @@ internal class SinglePageOnnxPhase(
                         logcat(LogPriority.INFO) {
                             "TachiyomiAT single-page resume: inpaint + translate + render pageKey=$pageKey"
                         }
+                        if (force) clearAttemptCapForManualRetry(store, pageKey)
                         if (force) adjustedResume!!.prepareForcedRetry()
                         adjustedResume!!.resetAttemptCharge()
                         adjustedResume.inpaintStatus = StageStatus.RUNNING
@@ -454,6 +457,7 @@ internal class SinglePageOnnxPhase(
                 }
             }
 
+            if (force) clearAttemptCapForManualRetry(store, pageKey)
             updatePageFromCurrentSnapshot(store, pageKey, "single-page OCR start") {
                 (it ?: PageTranslation()).apply {
                     sourceFileName = pageKey
@@ -1063,6 +1067,23 @@ internal class SinglePageOnnxPhase(
         coroutineContext.ensureActive()
 
         return pageTranslation
+    }
+
+    /**
+     * T917 Phase 3 (D9, design §3.2): an explicit user force clears the
+     * crash-loop cap bookkeeping (consecutive counter + INTERRUPTED durable
+     * failure) so the user's retry is admitted — the cap binds auto-retry
+     * loops, never the user. Fail-open: a failed clear never blocks the retry.
+     */
+    private suspend fun clearAttemptCapForManualRetry(
+        store: ChapterTranslationStore,
+        pageKey: String,
+    ) {
+        runCatching { store.clearAttemptCapForManualRetry(pageKey) }.onFailure {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT D9: attempt-cap clear failed (fail-open): pageKey=$pageKey"
+            }
+        }
     }
 }
 

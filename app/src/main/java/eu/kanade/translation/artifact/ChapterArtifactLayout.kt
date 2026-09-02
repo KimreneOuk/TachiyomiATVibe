@@ -53,6 +53,10 @@ class ChapterArtifactLayout(chapterBaseName: String) {
     private val generationDirectoryName = "$artifactRootDirectoryName/generations"
     private val glossaryDirectoryName = "$artifactRootDirectoryName/glossary"
 
+    // T917 Phase 3 (D9): durable attempt-ledger sidecar directory. One bounded
+    // document per chapter — not versioned sidecars — so a single fixed name.
+    private val attemptsDirectoryName = "$artifactRootDirectoryName/attempts"
+
     fun stageArtifactFile(pageKey: String, stage: ArtifactStage, fingerprint: String): String =
         listOf(
             artifactDirectoryName,
@@ -90,6 +94,9 @@ class ChapterArtifactLayout(chapterBaseName: String) {
 
     fun glossaryFile(version: Int): String = "$glossaryDirectoryName/chapter.glossary.$version.json"
 
+    /** T917 Phase 3 (D9): the chapter's single durable attempt-ledger document. */
+    val attemptLedgerFileName: String get() = "$attemptsDirectoryName/ledger.json"
+
     /** Root-relative managed directories the retention reconciler may sweep. */
     val managedDirectories: List<String> = listOf(
         artifactDirectoryName,
@@ -98,6 +105,7 @@ class ChapterArtifactLayout(chapterBaseName: String) {
         contextDirectoryName,
         generationDirectoryName,
         glossaryDirectoryName,
+        attemptsDirectoryName,
     )
 
     /** True when [path] is equal to or contained inside a managed directory. */

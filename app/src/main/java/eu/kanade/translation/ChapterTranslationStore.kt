@@ -4,6 +4,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.ArtifactManifestProbe
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.AttemptOrigin
+import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
@@ -29,6 +32,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.store.ChapterAttemptLedger
 import eu.kanade.translation.store.ChapterGlossaryStore
 import eu.kanade.translation.store.PageStageLeaseTable
 import eu.kanade.translation.store.StorePersistenceScheduler
@@ -211,6 +215,9 @@ class ChapterTranslationStore(
     // T909 Phase 17b: internal so the moved StorePersistenceScheduler's
     // flushDirtyLocked can reach the glossary dirty flag through it.
     internal val glossaryStore = ChapterGlossaryStore(this)
+    // T917 Phase 3 (D9): durable attempt ledger collaborator (delegates under
+    // the store mutex; fail-open persistence; memory-only no-op writes).
+    private val attemptLedger = ChapterAttemptLedger(this)
     // T909 Phase 17b: the flush/close/debounce/retention machinery moved to
     // store/StorePersistenceScheduler.kt; the scheduler owns persistScope and
     // is constructed eagerly (its ctor resolves no store state). `dirty` and
@@ -342,6 +349,109 @@ class ChapterTranslationStore(
     /** Immutable view used by queue restoration and planner admission. */
     fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
         statusProjector.durableFailuresSnapshot()
+
+    // ------------------------------------------------------------------
+    // T917 Phase 3 (D9): durable attempt ledger (phase3-design §3).
+    // All methods delegate to store/ChapterAttemptLedger.kt under the store
+    // mutex. Ledger writes are fail-open; only AUTO origins can be refused
+    // (the crash-loop cap binds auto-retry loops, never the user).
+    // ------------------------------------------------------------------
+
+    /**
+     * Records a started paid attempt BEFORE the provider call. Returns false
+     * only when [AttemptOrigin.AUTO] is refused by the consecutive-attempt cap.
+     */
+    suspend fun recordAttemptStart(
+        pageKey: String,
+        providerKeyHash: String,
+        origin: AttemptOrigin,
+        generation: Long = currentGeneration,
+    ): Boolean = mutex.withLock {
+        attemptLedger.recordStartLocked(pageKey, providerKeyHash, origin, generation)
+    }
+
+    /**
+     * A completed call for [pageKey] — commit success OR typed provider
+     * failure. Resolves the page's pending entries and resets its consecutive
+     * counter; only a process death leaves an entry behind.
+     */
+    suspend fun resolveAttempt(pageKey: String) {
+        mutex.withLock { attemptLedger.resolveLocked(pageKey) }
+    }
+
+    /**
+     * Startup reconciliation: consume every pending entry as one counted
+     * interrupted attempt per page and persist the counters. Returns the
+     * post-consume consecutive counters; the caller (TranslationManager)
+     * applies the cap for pages at/over the bound.
+     */
+    suspend fun consumeUnresolvedAttemptsAtStartup(): Map<String, Int> = mutex.withLock {
+        attemptLedger.consumeAtStartupLocked()
+    }
+
+    /**
+     * Applies the crash-loop cap to one page: records an INTERRUPTED-class
+     * durable failure (never auto-retryable) and marks the page PARTIAL.
+     * Returns true when the cap state is durably recorded.
+     */
+    suspend fun applyAttemptCapPause(pageKey: String, consecutiveUnresolved: Int): Boolean {
+        val failure = DurableFailureMetadata(
+            pageKey = pageKey,
+            stage = ArtifactStage.TRANSLATION,
+            status = ArtifactStageStatus.FAILED_RETRYABLE,
+            category = FailureCategory.INTERRUPTED,
+            retryCount = consecutiveUnresolved,
+            lastFailureMessage = "repeatedly interrupted before completing; manual retry required",
+            lastFailedAtEpochMs = System.currentTimeMillis(),
+            nextEligibleRetryAtEpochMs = null,
+        )
+        val expected = snapshot(pageKey).toPrecondition()
+        val result = persistDurableStageFailure(
+            pageKey = pageKey,
+            expected = expected,
+            failure = failure,
+            description = "D9 attempt cap reached ($consecutiveUnresolved consecutive interrupted attempts)",
+        ) { current ->
+            (current ?: PageTranslation(sourceFileName = pageKey)).apply {
+                translationStatus = StageStatus.PARTIAL
+            }
+        }
+        return result is PatchResult.Accepted
+    }
+
+    /**
+     * Explicit user force: clear the page's consecutive counter and remove the
+     * INTERRUPTED-class cap failure from the manifest, so the user's retry is
+     * admitted and the cap restarts from zero.
+     */
+    suspend fun clearAttemptCapForManualRetry(pageKey: String): Boolean = mutex.withLock {
+        val counterCleared = attemptLedger.clearCapLocked(pageKey)
+        removeInterruptedCapFailureLocked(pageKey)
+        counterCleared
+    }
+
+    /** Caller holds the store mutex. */
+    private fun removeInterruptedCapFailureLocked(pageKey: String) {
+        val artifact = artifactStore ?: return
+        val manifest = artifactManifest ?: return
+        if (manifest.authority != ManifestAuthority.ARTIFACTS) return
+        val key = "$pageKey:${ArtifactStage.TRANSLATION.name}"
+        val existing = manifest.durableFailures[key] ?: return
+        if (existing.category != FailureCategory.INTERRUPTED) return
+        val updated = manifest.copy(
+            durableFailures = manifest.durableFailures - key,
+            updatedAtEpochMs = System.currentTimeMillis(),
+        )
+        if (artifact.publishManifest(updated)) {
+            artifactManifest = updated
+            _state.value = snapshotPages()
+            _display.value = displaySnapshotLocked()
+        } else {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT D9: cap-failure clear publish failed (fail-open): pageKey=$pageKey"
+            }
+        }
+    }
 
     /** Establishes artifact authority before a caller installs a new page state. */
     suspend fun ensureArtifactAuthorityForMutation(): MutationAdmission = mutex.withLock {

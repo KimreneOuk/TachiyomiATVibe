@@ -8,6 +8,7 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
+import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.toArtifactOrigin
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
@@ -223,6 +224,35 @@ internal class SinglePageHttpRenderPhase(
             TranslationContextChunkPlanner.Profile.DEFAULT
         }
 
+        // T917 Phase 3 (D9, design §3.2): the manual paid call is wrapped by
+        // the durable attempt ledger — entry written BEFORE the call, resolved
+        // on any completed call (success or typed provider failure); only
+        // cancellation (process death / scope kill) leaves the entry for the
+        // startup reconcile. Write failures are fail-open.
+        suspend fun runLedgerWrapped(call: suspend () -> Unit) {
+            runCatching {
+                store.recordAttemptStart(
+                    pageKey = pageKey,
+                    providerKeyHash = ShortHash.hash(activeTranslator.javaClass.name),
+                    origin = AttemptOrigin.valueOf(origin.name),
+                    generation = store.currentGeneration,
+                )
+            }.onFailure {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT D9: manual attempt-ledger record failed (fail-open): pageKey=$pageKey"
+                }
+            }
+            try {
+                call()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                runCatching { store.resolveAttempt(pageKey) }
+                throw t
+            }
+            runCatching { store.resolveAttempt(pageKey) }
+        }
+
         suspend fun runTranslate(targetPage: PageTranslation) {
             val ct = activeTranslator as? ContextualTextTranslator
             if (ct != null) {
@@ -253,9 +283,9 @@ internal class SinglePageHttpRenderPhase(
                     profile = singlePageProfile,
                     glossary = glossaryText,
                 )
-                ct.translateContextual(chunk)
+                runLedgerWrapped { ct.translateContextual(chunk) }
             } else {
-                activeTranslator.translatePage(pageKey, targetPage)
+                runLedgerWrapped { activeTranslator.translatePage(pageKey, targetPage) }
             }
         }
 

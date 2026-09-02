@@ -10,6 +10,7 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
@@ -39,6 +40,7 @@ import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanne
 import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.retry.applyAiChunkOutcomeToPages
 import eu.kanade.translation.translator.retry.classifyProviderFailure
+import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -1309,10 +1311,35 @@ internal class BatchLaneWorkers(
                 // Standard (per-page) path: translate, validate, persist, render.
                 var succeeded = false
                 var failedOutcome: ChunkCompletionOutcome? = null
+                // T917 Phase 3 (D9, design §3.2): durable attempt entry BEFORE
+                // the paid call; resolved on any completed call (success or
+                // typed provider failure). Write failure is fail-open.
+                runCatching {
+                    store.recordAttemptStart(
+                        pageKey = pageKey,
+                        providerKeyHash = ShortHash.hash(textTranslator.javaClass.name),
+                        origin = AttemptOrigin.BATCH,
+                        generation = store.currentGeneration,
+                    )
+                }.onFailure {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT D9: batch attempt-ledger record failed (fail-open): pageKey=$pageKey"
+                    }
+                }
                 try {
                     tracker?.markAiRunning(pageKey)
                     tracker?.markTranslateRunning(pageKey)
-                    textTranslator.translatePage(pageKey, p)
+                    try {
+                        textTranslator.translatePage(pageKey, p)
+                    } catch (e: CancellationException) {
+                        // Process death / scope kill: the entry stays unresolved
+                        // for startup reconciliation.
+                        throw e
+                    } catch (t: Throwable) {
+                        runCatching { store.resolveAttempt(pageKey) }
+                        throw t
+                    }
+                    runCatching { store.resolveAttempt(pageKey) }
                     TranslationBlockValidation.applyTo(p)
                     val s = p.translationStatus
                     when (s) {

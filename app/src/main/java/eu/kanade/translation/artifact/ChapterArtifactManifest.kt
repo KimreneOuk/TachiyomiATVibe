@@ -269,6 +269,52 @@ data class ChapterGlossary(
 }
 
 /**
+ * T917 Phase 3 (D9, phase3-design §3): which lane started a paid provider
+ * attempt. The crash-loop cap binds auto-retry loops only — never the user.
+ */
+enum class AttemptOrigin { MANUAL, AUTO, BATCH }
+
+/**
+ * One durable started provider attempt (`attempts/ledger.json`). Written
+ * BEFORE the paid call so a process death mid-call leaves a trace; consumed by
+ * startup reconciliation as a counted interrupted attempt.
+ */
+@Serializable
+data class AttemptLedgerEntry(
+    val pageKey: String,
+    val providerKeyHash: String,
+    val origin: AttemptOrigin,
+    val generation: Long,
+    val startedAtEpochMs: Long,
+)
+
+/**
+ * The chapter's single durable attempt-ledger document: bounded started-attempt
+ * entries (oldest evicted) plus the per-page count of CONSECUTIVE unresolved
+ * attempts that drives the crash-loop cap. A completed call (commit success OR
+ * typed provider failure) resolves the page's entries and resets its counter;
+ * only a process death leaves an entry behind.
+ */
+@Serializable
+data class ChapterAttemptLedgerDocument(
+    val schemaVersion: Int = SCHEMA_VERSION,
+    val kind: String = KIND_ATTEMPT_LEDGER,
+    val entries: List<AttemptLedgerEntry> = emptyList(),
+    val consecutiveUnresolved: Map<String, Int> = emptyMap(),
+) {
+    companion object {
+        const val SCHEMA_VERSION = 1
+        const val KIND_ATTEMPT_LEDGER = "ATTEMPT_LEDGER"
+
+        /** Oldest entries are evicted past this bound (bounded memory/disk). */
+        const val MAX_ENTRIES = 64
+
+        /** Consecutive unresolved attempts after which the page is capped. */
+        const val MAX_CONSECUTIVE_UNRESOLVED = 3
+    }
+}
+
+/**
  * Run ownership and lifecycle state of one generation
  * (`generations/<generationId>.json`, lifecycle contract §15).
  */

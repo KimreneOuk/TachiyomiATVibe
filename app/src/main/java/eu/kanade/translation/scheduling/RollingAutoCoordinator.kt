@@ -1,11 +1,15 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
+import eu.kanade.translation.translator.ProviderFailure
+import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.util.ShortHash
 import eu.kanade.translation.util.TranslationMemoryBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -335,6 +339,71 @@ class RollingAutoCoordinator(
         }
     }
 
+    /**
+     * T917 Phase 3 (D9, design §3.2): durable attempt entry BEFORE the auto
+     * paid call. Returns a typed Paused outcome when the crash-loop cap
+     * refuses the AUTO entry — no provider call is billed in that case, so
+     * the ledger and the bill stay consistent. Returns null when the entry
+     * was written and the caller must run the call via [runAutoAttempt].
+     * Write failures are fail-open (entry skipped, call proceeds).
+     */
+    private suspend fun recordAutoAttemptStart(work: PreparedWork): ChunkCompletionOutcome? {
+        val admitted = runCatching {
+            work.session.store.recordAttemptStart(
+                pageKey = work.prepared.pageKey,
+                providerKeyHash = ShortHash.hash(work.session.key),
+                origin = AttemptOrigin.AUTO,
+                generation = work.session.store.currentGeneration,
+            )
+        }.onFailure {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT D9: auto attempt-ledger record failed (fail-open): " +
+                    "pageKey=${work.prepared.pageKey}"
+            }
+        }.getOrDefault(true)
+        if (admitted) return null
+        val failure = ProviderFailure(
+            kind = ProviderFailureKind.REFUSAL,
+            retryability = ProviderFailureRetryability.PAUSE,
+            safeSummary = "repeatedly interrupted before completing; manual retry required",
+        )
+        return ChunkCompletionOutcome.Paused(
+            anchorPageKey = work.prepared.pageKey,
+            retryablePageKeys = setOf(work.prepared.pageKey),
+            failure = failure,
+            reason = failure.safeSummary,
+        )
+    }
+
+    /**
+     * The paid call itself: the ledger entry resolves on any COMPLETED call
+     * (any returned outcome, or a typed provider failure) and stays
+     * unresolved ONLY on cancellation (process death / scope kill).
+     */
+    private suspend fun runAutoAttempt(work: PreparedWork): ChunkCompletionOutcome? {
+        val outcome: ChunkCompletionOutcome? = try {
+            executor.translatePreparedPage(
+                work.session.manga,
+                work.session.chapter,
+                work.session.source,
+                work.prepared,
+                stageListenerFor(work.pageIndex, work.generation),
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            resolveAutoAttempt(work)
+            throw t
+        }
+        resolveAutoAttempt(work)
+        return outcome
+    }
+
+    /** A completed auto call (success or typed provider failure): resolve. */
+    private suspend fun resolveAutoAttempt(work: PreparedWork) {
+        runCatching { work.session.store.resolveAttempt(work.prepared.pageKey) }
+    }
+
     private suspend fun consumeTranslations(
         preparedChannel: Channel<PreparedWork>,
         computeGate: Semaphore?,
@@ -355,26 +424,14 @@ class RollingAutoCoordinator(
                         if (!isWorkCurrent(work)) {
                             null
                         } else {
-                            executor.translatePreparedPage(
-                                work.session.manga,
-                                work.session.chapter,
-                                work.session.source,
-                                work.prepared,
-                                stageListenerFor(work.pageIndex, work.generation),
-                            )
+                            recordAutoAttemptStart(work) ?: runAutoAttempt(work)
                         }
                     }
                 } else {
                     if (!isWorkCurrent(work)) {
                         null
                     } else {
-                        executor.translatePreparedPage(
-                            work.session.manga,
-                            work.session.chapter,
-                            work.session.source,
-                            work.prepared,
-                            stageListenerFor(work.pageIndex, work.generation),
-                        )
+                        recordAutoAttemptStart(work) ?: runAutoAttempt(work)
                     }
                 }
                 if (isWorkCurrent(work)) {
