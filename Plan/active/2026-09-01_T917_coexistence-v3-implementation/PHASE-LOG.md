@@ -166,6 +166,23 @@ full findings: `engineering/phase6-ondevice-verification-notes.md`.
   decision (F7).
 - D13 honored: all numbers above are evidence timings/counts, not UI-measured
   targets; no `[TARGET]` promoted.
-- Pending close: promote `translation-subsystem-coexistence-v3-draft.md` →
-  canonical; Reviewer acceptance (§6.2.11) → Director sign-off → merge
+- **§8.3 measurement protocol status (Reviewer gate P6-G1, Director-visible):**
+  NOT executed in Phase 6. The executed phase was on-device E2E verification on
+  a single emulator tier; the protocol's device-tier matrix / fixed corpus /
+  warm-cold / p50-p95-p99 run did not happen, so D6's 210 s drain-bound
+  re-validation and the D11 write-behind decision have no measurement basis yet
+  and remain carried. Per draft §8.3 all numbers stay `[TARGET]`. Resolution
+  path requires an explicit Director decision: descope (single-device evidence
+  timings stand as the only recorded numbers) or execute the protocol before
+  `checkpoint/t917-release`.
+- **Reviewer acceptance: ACCEPT-WITH-NOTES** (`review/phase6-verification.md`).
+  No CRITICAL/HIGH. Both fixes survived all assigned attacks; sweep/logcat/
+  screenshot evidence verified at primary-evidence level. New carry items from
+  review: F6-1 (`naturalOrderPredecessorTerminal` conflates index 0 with
+  not-found — fail-open, unreachable today, one-line guard), F6-3 (silent-
+  Completed on genuine skips — already carried), F1-1 (`runCatching` around
+  `fileCreator` vs CancellationException — no exposure today), P6-2
+  (unreferenced session PNG housekeeping).
+- Pending close (Director decision outstanding): §8.3 descope-or-execute →
+  promote `translation-subsystem-coexistence-v3-draft.md` → canonical → merge
   `t917/coexistence-v3` → `main` → tag `checkpoint/t917-release`.
