@@ -164,7 +164,7 @@ translation/
 │  └─ VerticalLineOcr.kt          ★ PURE vertical-line OCR helpers
 │
 ├─ rendering/
-│  ├─ PageTextRenderer.kt         Draws translated text onto cleaned pages (no source-text fallback)
+│  ├─ ComponentClipCache.kt       Bounded per-page component clip cache for the reader overlay
 │  ├─ RenderColorEstimator.kt     ★ PURE colorPolicy/snapGray + Bitmap-bound estimate()
 │  └─ TextLayoutPlanner.kt        ★ PURE neighbour-aware text layout solver (TextLayoutPlannerTest)
 │
@@ -556,7 +556,7 @@ NIO buffer equality is defined over mutable state, which makes it unsuitable
 as a map key across mutations. Use identity collections (`IdentityHashMap`)
 or wrap the buffer in a stable identity holder.
 
-### 14. Inpaint mask is durable + adapters never fall back to source text (`PageInpaintingPlanner`, `TranslationBlockValidation`, `PageTextRenderer`)
+### 14. Inpaint mask is durable + the reader never falls back to source text (`PageInpaintingPlanner`, `TranslationBlockValidation`, `TranslationOverlayView`)
 Two coupled invariants fix the "mixed source + translated text on one page" and
 "translated text rendered on top of un-erased source" symptoms reported together.
 
@@ -603,10 +603,9 @@ missing translations while still counting as READY. Now:
     AND source-equal translations by default.
   - The render gates in `TranslationPipeline` admit `READY` and `PARTIAL` alike,
     so a single bad block no longer skips the whole page.
-  - `PageTextRenderer.render` draws ONLY `block.translation` by default
-    (`renderSourceText` defaults to `false`); a blank translation renders as
-    nothing. The translate path never passes `renderSourceText = true`, so
-    drawing source text on a translated page is now impossible by construction.
+  - `TranslationOverlayView` draws only `block.translation`; a blank translation
+    renders as nothing. Drawing source text on a translated page is impossible
+    by construction.
 
 **(c) Chapter status reflects per-page failures.**
 `ChapterTranslator.translateChapterInternal` now inspects the store after the
@@ -621,7 +620,7 @@ batch that somehow lost its mask is visible. `TranslationBlockValidation` writes
 a `"Translation incomplete: X/Y blocks translated"` reason on FAILED pages and a
 `"Translation partial: X/Y blocks translated"` reason on PARTIAL pages.
 
-### 15. Strict no-fallback policy (AI output validation, `PageTextRenderer`, config resolvers, `MLKitTranslator`, `PageInpaintingEngine`, reader UI)
+### 15. Strict no-fallback policy (AI output validation, reader overlay, config resolvers, `MLKitTranslator`, `PageInpaintingEngine`, reader UI)
 "No fallback" means nothing is ever silently substituted: not source text for a
 blank translation (contract #14b), not positional guesses for malformed model
 output, not vertical layout for a stray CJK glyph, not a default language/engine/
@@ -636,7 +635,7 @@ post-translation validator leaves missing or blank blocks partial/failed.
 `NumberedLineResponseParser` still has a strict standalone `[index] text`
 contract and tests, but it is not the active provider protocol.
 
-**(b) Vertical layout is majority-CJK only.** `PageTextRenderer` renders a block
+**(b) Vertical layout is majority-CJK only.** `TextLayoutPlanner` selects vertical layout for a block
 vertical only when CJK characters are the MAJORITY (>50%) of its non-whitespace
 text (`shouldRenderVertical` / `cjkRatio`). The old `text.any(::isCJK)` rule
 flipped the whole block vertical on a single CJK glyph, so an English line with
@@ -1168,7 +1167,7 @@ tracker disposal/LRU, memory-pressure forwarding, and glossary flush behavior.
 | `model/PageTranslationHelperTest` | overlapping-block merge, orientation guard, transitive merge |
 | `model/PageTranslationHelperDedupeTest` | geometric dedupe: overlapping different-text/identical/cross-label/nested/touching-bubbles; preserves reading order; no mutation; degenerate-box kept |
 | `rendering/RenderColorEstimatorTest` | dark/light colorPolicy, gray-snap (saturated preserved) |
-| `rendering/PageTextRendererDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
+| `rendering/TextLayoutPlannerDirectionTest` | vertical-vs-horizontal majority-CJK rule: pure CJK vertical, pure Latin horizontal, `(笑)` (1/3) horizontal, `あいうえお day` (5/8) vertical, 50/50 → horizontal, whitespace ignored, blank → horizontal |
 | `inpainting/bubble/SmartBubbleTextCleanerTest` | local-background fill (gray-rectangle regression guard); tightDifferenceMask per-pixel (no solid rectangle); applyFeatheredFill ring-blend + ramp; buildLocalBackground bgSourceMask (color-bleed guard) |
 | `inpainting/bubble/BubbleMaskBuilderTest` | andMasks/maskCoverage + dilateMaskDisk circle/rounding + removeEdgeTouchingComponents 2px margin + featherAlpha + buildRectMask (paddle_boxes: solid padded rect, clamp, union, empty, skip zero-area, disk-dilate growth) + `FastMarchingMethod.inpaintTelea` (Telea FMM: no-hole, gradient-fill, Dirichlet boundary) |
 | `inpainting/PageInpaintingPlannerTest` | computeMask captures bubble+text+detector-only; build prefers persisted mask (PERSISTED) over lost allTextDetections on resume; build recomputes (RECOMPUTED) when no persisted mask; detector-only dedup vs OCR boxes |
@@ -1230,7 +1229,7 @@ verify translation output is byte-identical before/after if you touch those.
 ### 4. Untested Android-bound logic (by design, LOW priority)
 
 `RenderColorEstimator.estimate`, `MlKitOcrPreprocessor.preprocessRoi`,
-`AOTInpainting`, the ONNX engines, and `PageTextRenderer` touch
+`AOTInpainting` and the ONNX engines touch
 `android.graphics.Bitmap`/ONNX/ML Kit and are correctly excluded from unit
 tests. The project deliberately avoids Robolectric. Prefer the pattern already
 established (`colorPolicy`, `snapGray`, `BoxGeometry`, `BubbleMaskBuilder`):

@@ -603,6 +603,7 @@ class MangaScreenModel(
         // state before it reaches the item, so a later full list rebuild reads
         // it back through the registry.
         translationSnapshots.remember(chapterId, progress)
+        reconcileAbortedBatch(chapterId, progress)
         updateSuccessState { successState ->
             val idx = successState.chapters.indexOfFirst { it.id == chapterId }
             if (idx < 0) return@updateSuccessState successState
@@ -610,6 +611,32 @@ class MangaScreenModel(
             if (item.translationProgress == progress) return@updateSuccessState successState
             val newChapters = successState.chapters.toMutableList().apply {
                 set(idx, item.copy(translationProgress = progress))
+            }
+            successState.copy(chapters = newChapters)
+        }
+    }
+
+    // TachiyomiAT T918: a batch cancelled mid-run removes its queue entry, and
+    // the removed entry's statusFlow simply stops (no terminal emission), so
+    // the projected chapter state stays stranded at QUEUE/TRANSLATING/PAUSED
+    // forever — the indicator routes every tap into the progress drawer and
+    // offers no restart. When the observed snapshot is terminal-aborted and
+    // the queue holds no entry for the chapter anymore, reconcile the stale
+    // projection to its restartable state. Reconciliation happens ONLY for a
+    // stranded state: a terminal/idle projection is already honest and a
+    // newly queued batch (guard below) must never be clobbered by the stale
+    // abort.
+    private fun reconcileAbortedBatch(chapterId: Long, progress: TranslationProgressSnapshot?) {
+        if (progress?.aborted != true) return
+        if (translationManager.getQueuedTranslationOrNull(chapterId) != null) return
+        updateSuccessState { successState ->
+            val idx = successState.chapters.indexOfFirst { it.id == chapterId }
+            if (idx < 0) return@updateSuccessState successState
+            val item = successState.chapters[idx]
+            val reconciled = TranslationUiProjection.reconcileAbortedBatchState(item.translationState)
+                ?: return@updateSuccessState successState
+            val newChapters = successState.chapters.toMutableList().apply {
+                set(idx, item.copy(translationState = reconciled))
             }
             successState.copy(chapters = newChapters)
         }
@@ -966,6 +993,20 @@ class MangaScreenModel(
 
             ChapterTranslationAction.DELETE -> showChapterResetDialog(item)
         }
+    }
+
+    /**
+     * TachiyomiAT T918: the progress sheet's Retry control for a batch that
+     * was cancelled mid-run (terminal-aborted snapshot) or failed terminally.
+     * Same re-queue as the cancel snackbar's Undo: [TranslationManager
+     * .translateChapter]'s artifact scan (BatchResumeGateDecider) reuses READY
+     * work, so completed pages are not re-OCR'd and only the remainder re-runs
+     * (contract pinned by T918CancelledBatchRestartTest).
+     */
+    fun retryBatchTranslation(chapterId: Long) {
+        val manga = successState?.manga ?: return
+        val item = successState?.chapters?.firstOrNull { it.id == chapterId } ?: return
+        translationManager.translateChapter(manga, item.chapter)
     }
 
     fun showChapterResetDialog(item: ChapterList.Item) {

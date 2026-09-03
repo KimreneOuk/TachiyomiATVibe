@@ -28,4 +28,26 @@ object TranslationUiProjection {
         queuedState == Translation.State.QUEUE ||
         queuedState == Translation.State.TRANSLATING ||
         queuedState == Translation.State.PAUSED
+
+    /**
+     * T918 stranded-state reconciliation. A batch cancelled mid-run removes its
+     * queue entry; `statusFlow()` then drops the entry WITHOUT a terminal
+     * emission, so the chapter's projected [Translation.State] stays at its
+     * last in-flight value (QUEUE/TRANSLATING/PAUSED) forever — the indicator
+     * routes every tap into the progress drawer and offers no restart.
+     *
+     * Returns the restartable replacement state when the observed snapshot is
+     * a terminal-aborted batch AND the chapter holds no queue entry anymore
+     * (the caller guards queue membership before calling); null when the
+     * current state is already honest (terminal or idle) and must not be
+     * touched. Pure: no store, no scheduler state.
+     */
+    fun reconcileAbortedBatchState(current: Translation.State): Translation.State? =
+        when (current) {
+            Translation.State.QUEUE,
+            Translation.State.TRANSLATING,
+            Translation.State.PAUSED,
+            -> Translation.State.NOT_TRANSLATED
+            else -> null
+        }
 }

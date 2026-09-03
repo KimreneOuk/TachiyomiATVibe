@@ -234,8 +234,8 @@ TranslationManager (request)
     │   │      └── SmartBubbleTextCleaner refines masks
     │   │
     └── Stage 5: RENDERING
-        │  PageTextRenderer
-        │  └── Renders translated text onto cleaned image
+        │  TranslationOverlayView
+        │  └── Renders translated text above the cleaned image
         │      └── RenderColorEstimator picks text color
         │
         ▼

@@ -153,7 +153,7 @@ The automatic translation system is the defining feature of this fork:
 - `eu.kanade.translation.translator.*` — text translators (Gemini, DeepSeek, DeepL, Google, OpenRouter, LM Studio, ML Kit) + shared pure helpers (`TranslationPrompts`, `OcrArtifactSanitizer`, `AiModelFetcher`)
 - `eu.kanade.translation.inpainting.AOTInpainting` — AOT-based bubble cleaning; mask/morphology math in `BubbleMaskBuilder`
 - `eu.kanade.translation.recognition.BoxGeometry` — shared bbox IoU / geometric-dedupe used by both the detector and OCR stages
-- `eu.kanade.translation.rendering.PageTextRenderer` — renders translated text; color policy in `RenderColorEstimator`
+- `eu.kanade.tachiyomi.ui.reader.viewer.TranslationOverlayView` — renders translated text; color policy in `RenderColorEstimator`
 
 > 📖 For the complete file map, the test-coverage table, and the deduplication/
 > god-file-split history of this module, see

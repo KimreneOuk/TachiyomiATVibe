@@ -218,7 +218,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
 
     /**
      * T912 quality repair: draws the planner's positioned lines with the same
-     * convention [PageTextRenderer]'s one-line StaticLayouts produce. Clips are
+     * direct-draw convention: each planned line is placed independently. Clips are
      * applied by [drawLayout] once per layout, then each line is translated to
      * its integer placement and drawn stroke-then-fill
      * top-anchored at (leftPx, topPx), i.e. baseline = top - ascent, x = left,

@@ -33,9 +33,9 @@ with a deterministic fake measurement; the renderer holds the platform
   sparse mask. It takes immutable `MaskedTextInput` snapshots plus a
   `TextMeasurer` and returns `MaskedTextLayoutResult.Placed` or
   `MaskedTextLayoutResult.Failed` per input.
-- `PageTextRenderer` (`rendering/PageTextRenderer.kt`) is the Android-side
-  drawer. It binds resolved `BlockLayout`s, builds the exact clip paths, and
-  draws horizontal (`StaticLayout`) and vertical (grapheme-iterated) text with
+- `TranslationOverlayView` (`ui/reader/viewer/TranslationOverlayView.kt`) is the
+  Android-side drawer. It binds resolved `BlockLayout`s, builds the exact clip
+  paths, and draws horizontal, vertical, and positioned text with
   stroke-then-fill. It performs no layout decisions.
 - `MaskGeometry` (`segmentation/MaskGeometry.kt`) is the immutable sparse
   geometry shared by both sides: spans, 4-connected components, exact
@@ -252,9 +252,9 @@ Pure planner, solver, and geometry behavior is covered by JVM unit tests
 math, the Unicode grapheme/wrapping helpers, candidate budgets, determinism,
 shared/distinct-mask coordination, and the failure policy.
 
-The exact-pixel clip invariant, `StaticLayout` shaping, `Paint` measurement,
+The exact-pixel clip invariant, direct `Canvas` drawing, `Paint` measurement,
 and the Bitmap+Canvas end-to-end path are Android-bound and live in
-`app/src/androidTest/java/eu/kanade/translation/rendering/PageTextRendererInstrumentedTest.kt`.
+`app/src/androidTest/java/eu/kanade/tachiyomi/ui/reader/viewer/TranslationOverlayViewInstrumentedTest.kt`.
 These compile against the instrumentation source set
 (`:app:assembleStandardDebugAndroidTest`) but require a connected device or
 AVD to execute.
@@ -264,10 +264,10 @@ AVD to execute.
 The following are compiled but not executed in this environment because no ADB
 device or AVD is connected (`android_preflight` reports 0 devices and 0 AVDs):
 
-- `PageTextRendererInstrumentedTest` end-to-end cases: concave mask hole and
-  thick stroke zero-alpha outside the assigned component; disconnected mask
-  clipping to the assigned component only; invalid dimensions failing closed;
-  fractional canvas transform preserving zero source pixels outside the mask;
+- `TranslationOverlayViewInstrumentedTest` end-to-end cases: concave mask hole
+  and thick stroke zero-alpha outside the assigned component; disconnected mask
+  clipping to the assigned component only; metadata fallback; fractional canvas
+  transform preserving zero source pixels outside the mask;
   rapid rebind/clear; mixed-script horizontal shaping payload; vertical
   graphemes; unmasked drawing; and the moved-footprint cleaned-pixel sampling
   case.

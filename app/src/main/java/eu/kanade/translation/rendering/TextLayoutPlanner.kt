@@ -515,7 +515,7 @@ internal object TextLayoutTuning {
 /**
  * TachiyomiAT: pure, neighbour-aware text-layout solver for the render stage.
  *
- * **Why this exists.** [PageTextRenderer] used to lay each block out independently
+ * **Why this exists.** The previous per-block renderer laid each block out independently
  * with no global view, causing three defects: (1) collision — close boxes' extents
  * overlapped; (2) forced horizontal-long — a tall parentless box was widened up to
  * 3.5× and symmetrically re-centred, ignoring text length and neighbours; (3) too
