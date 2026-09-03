@@ -7,8 +7,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.rendering.BlockLayout
+import eu.kanade.translation.rendering.FloatRect
 import eu.kanade.translation.rendering.TextAlign
+import eu.kanade.translation.segmentation.MaskGeometry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -29,12 +32,50 @@ class TranslationOverlayViewLifecycleInstrumentedTest {
         assertEmpty(view)
     }
 
+    @Test
+    fun repeatedDrawOfOnePreparedClippedLayoutIsStableWithoutRebinding() {
+        val geometry = MaskGeometry.fromSpans(64, 64, (10 until 54).map { MaskGeometry.RowSpan(it, 10, 54) })
+        val prepared = layout("REPEAT").copy(
+            maskGeometry = geometry,
+            planGeometryId = 0,
+            maskComponentId = 0,
+            cellRect = FloatRect(10f, 10f, 54f, 54f),
+        )
+        val view = TranslationOverlayView(InstrumentationRegistry.getInstrumentation().targetContext)
+        view.bindLayoutsForTest(listOf(prepared), 64, 64)
+        val baseline = draw(view)
+
+        assertTrue("prepared draw must produce ink", baseline.nonTransparentPixels() > 0)
+        assertOnlySquareHasInk(baseline)
+        repeat(16) {
+            val repeated = draw(view)
+            assertTrue("repeated draw $it changed prepared output", baseline.sameAs(repeated))
+            assertOnlySquareHasInk(repeated)
+        }
+    }
+
     private fun assertEmpty(view: TranslationOverlayView) {
-        val bitmap = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888)
-        view.drawLayoutsForTest(Canvas(bitmap))
-        var alpha = 0
-        for (y in 0 until bitmap.height) for (x in 0 until bitmap.width) alpha += Color.alpha(bitmap.getPixel(x, y))
-        assertEquals(0, alpha)
+        assertEquals(0, draw(view).nonTransparentPixels())
+    }
+
+    private fun draw(view: TranslationOverlayView) = Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).also {
+        view.drawLayoutsForTest(Canvas(it))
+    }
+
+    private fun assertOnlySquareHasInk(bitmap: Bitmap) {
+        for (y in 0 until bitmap.height) {
+            for (x in 0 until bitmap.width) {
+                if (x !in 10 until 54 || y !in 10 until 54) {
+                    assertEquals("ink outside prepared hard clip at $x,$y", 0, Color.alpha(bitmap.getPixel(x, y)))
+                }
+            }
+        }
+    }
+
+    private fun Bitmap.nonTransparentPixels(): Int {
+        var count = 0
+        for (y in 0 until height) for (x in 0 until width) if (Color.alpha(getPixel(x, y)) != 0) count++
+        return count
     }
 
     private fun layout(text: String) = BlockLayout(

@@ -107,6 +107,13 @@ class TranslationOverlayViewInstrumentedTest {
         val disconnectedGeometry = MaskGeometry.fromSpans(64, 64, disconnected)
         val bitmap = render(simpleLayout(disconnectedGeometry, 0, "MMMMMMMM", 24f, 8f))
 
+        var assignedInk = 0
+        for (y in 4 until 60) {
+            for (x in 4 until 30) {
+                if (Color.alpha(bitmap.getPixel(x, y)) != 0) assignedInk++
+            }
+        }
+        assertTrue("assigned component must retain visible ink", assignedInk > 0)
         for (y in 0 until 64) {
             for (x in 34 until 60) {
                 assertEquals("disconnected component alpha at $x,$y", 0, Color.alpha(bitmap.getPixel(x, y)))
