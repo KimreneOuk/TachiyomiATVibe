@@ -43,4 +43,35 @@ class ReaderPageWarmWindowTest {
         ReaderPageWarmWindow.contains(pageIndex = 18, currentIndex = 14, lastIndex = 50, radius = 4) shouldBe true
         ReaderPageWarmWindow.contains(pageIndex = 19, currentIndex = 14, lastIndex = 50, radius = 4) shouldBe false
     }
+
+    @Test
+    fun `hysteresis radii are correctly configured for Webtoon and Pager`() {
+        ReaderPageWarmWindow.attachRadiusFor(eu.kanade.tachiyomi.ui.reader.setting.ReadingMode.WEBTOON) shouldBe 4
+        ReaderPageWarmWindow.evictionRadiusFor(eu.kanade.tachiyomi.ui.reader.setting.ReadingMode.WEBTOON) shouldBe 10
+
+        ReaderPageWarmWindow.attachRadiusFor(eu.kanade.tachiyomi.ui.reader.setting.ReadingMode.RIGHT_TO_LEFT) shouldBe 2
+        ReaderPageWarmWindow.evictionRadiusFor(eu.kanade.tachiyomi.ui.reader.setting.ReadingMode.RIGHT_TO_LEFT) shouldBe 5
+    }
+
+    @Test
+    fun `hysteresis deadband keeps items without attaching or evicting`() {
+        val currentIndex = 20
+        val lastIndex = 100
+        val attachRadius = ReaderPageWarmWindow.attachRadiusFor(eu.kanade.tachiyomi.ui.reader.setting.ReadingMode.WEBTOON)
+        val evictionRadius = ReaderPageWarmWindow.evictionRadiusFor(eu.kanade.tachiyomi.ui.reader.setting.ReadingMode.WEBTOON)
+
+        // Page within attach radius (16..24)
+        ReaderPageWarmWindow.contains(16, currentIndex, lastIndex, attachRadius) shouldBe true
+        ReaderPageWarmWindow.contains(24, currentIndex, lastIndex, attachRadius) shouldBe true
+
+        // Page in deadband (10..15 and 25..30)
+        ReaderPageWarmWindow.contains(12, currentIndex, lastIndex, attachRadius) shouldBe false
+        ReaderPageWarmWindow.contains(12, currentIndex, lastIndex, evictionRadius) shouldBe true
+        ReaderPageWarmWindow.contains(28, currentIndex, lastIndex, attachRadius) shouldBe false
+        ReaderPageWarmWindow.contains(28, currentIndex, lastIndex, evictionRadius) shouldBe true
+
+        // Page outside eviction radius (<10 or >30)
+        ReaderPageWarmWindow.contains(9, currentIndex, lastIndex, evictionRadius) shouldBe false
+        ReaderPageWarmWindow.contains(31, currentIndex, lastIndex, evictionRadius) shouldBe false
+    }
 }

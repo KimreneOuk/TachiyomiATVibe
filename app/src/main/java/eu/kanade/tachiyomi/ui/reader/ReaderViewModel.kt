@@ -772,22 +772,30 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val keepPageKeys = HashSet<String>()
         val changedPages = linkedSetOf<ReaderPage>()
-        val warmRadius = ReaderPageWarmWindow.radiusFor(ReadingMode.fromPreference(getMangaReadingMode()))
+        val readingMode = ReadingMode.fromPreference(getMangaReadingMode())
+        val attachRadius = ReaderPageWarmWindow.attachRadiusFor(readingMode)
+        val evictionRadius = ReaderPageWarmWindow.evictionRadiusFor(readingMode)
         for ((listIndex, page) in pages.withIndex()) {
-            val warm = ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex, radius = warmRadius)
-            if (warm) {
+            val shouldAttach = ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex, radius = attachRadius)
+            val shouldEvict = !ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex, radius = evictionRadius)
+            if (shouldAttach) {
                 keepPageKeys += resolvePageKey(page)
                 val hadStream = page.translatedStream != null
                 attachTranslatedStreamIfWarm(page, manga, chapter, source)
                 if (dispatchRefresh && hadStream != (page.translatedStream != null)) {
                     changedPages += page
                 }
-            } else {
+            } else if (shouldEvict) {
                 if (page.translatedStream != null || page.showTranslatedImage) {
                     changedPages += page
                 }
                 page.translatedStream = null
                 page.showTranslatedImage = false
+            } else {
+                // Hysteresis deadband: retain already-attached streams without thrashing
+                if (page.translatedStream != null) {
+                    keepPageKeys += resolvePageKey(page)
+                }
             }
         }
 
@@ -1216,13 +1224,17 @@ class ReaderViewModel @JvmOverloads constructor(
         eventChannel.trySend(Event.PageChanged)
     }
 
+    private var autoTranslationScrollJob: kotlinx.coroutines.Job? = null
+
     /**
      * Updates the sole reader Auto scheduler entry point. The configured value
      * is an ahead count, so the visible page is submitted separately and the
      * coordinator derives exactly N ordered pages after it.
      */
     private fun handleAutoTranslation(currentPage: ReaderPage) {
-        viewModelScope.launchIO {
+        autoTranslationScrollJob?.cancel()
+        autoTranslationScrollJob = viewModelScope.launchIO {
+            kotlinx.coroutines.delay(150L)
             if (state.value.viewerChapters?.currChapter !== currentPage.chapter) return@launchIO
             handleAutoTranslationOnIo(currentPage)
         }

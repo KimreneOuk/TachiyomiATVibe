@@ -65,10 +65,18 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     }
 
     fun bind(imageView: SubsamplingScaleImageView?, blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) {
+        if (this.imageView === imageView && this.blocks == blocks && this.pageWidth == pageWidth && this.pageHeight == pageHeight) {
+            return
+        }
         this.imageView = imageView
         this.blocks = blocks
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
+        if (blocks.isEmpty() || pageWidth <= 0 || pageHeight <= 0) {
+            preparedLayouts = emptyList()
+            invalidate()
+            return
+        }
         val layouts = TextLayoutPlanner.plan(blocks, pageWidth.toFloat(), pageHeight.toFloat(), 1, false, measurer)
         prepareLayouts(layouts, pageWidth, pageHeight)
         invalidate()

@@ -93,7 +93,8 @@ class WebtoonPageHolder(
     private var errorLayout: ReaderErrorBinding? = null
 
     private val parentHeight
-        get() = viewer.recycler.height
+        get() = viewer.recycler.height.takeIf { it > 0 }
+            ?: itemView.resources.displayMetrics.heightPixels
 
     private var page: ReaderPage? = null
     private var autoFeedbackState: ReaderPageFeedbackState? = null
