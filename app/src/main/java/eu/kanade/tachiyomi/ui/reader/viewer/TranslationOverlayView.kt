@@ -5,6 +5,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.Typeface
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
 import android.view.Choreographer
 import android.view.View
@@ -14,9 +16,14 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.rendering.BlockLayout
 import eu.kanade.translation.rendering.ComponentClipCache
+import eu.kanade.translation.rendering.ReaderTextLayoutCache
 import eu.kanade.translation.rendering.TextAlign
+import eu.kanade.translation.rendering.TextLayoutBindResult
+import eu.kanade.translation.rendering.TextLayoutCoordinator
 import eu.kanade.translation.rendering.TextLayoutPlanner
 import eu.kanade.translation.rendering.TextMeasurer
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 import kotlin.math.max
 
 /**
@@ -41,16 +48,44 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
         strokeCap = Paint.Cap.ROUND
     }
-    private val measurer = object : TextMeasurer {
+
+    // T920 3.1: measurement state for the BACKGROUND planner. Uses its own Paint
+    // (a copy of [fill], so font and flags — and therefore every measurement —
+    // are identical to the inline path) because `fill` is mutated by the Main
+    // draw path and must never race with planning. Confined to
+    // [Companion.planningExecutor], which is single-threaded for exactly this
+    // reason: `Paint.textSize` mutation is not safe for concurrent use.
+    private val planningMeasurer = object : TextMeasurer {
+        private val planningPaint = Paint(fill)
         override fun measureTextWidth(text: String, fontSizePx: Float): Float {
-            fill.textSize = fontSizePx
-            return fill.measureText(text)
+            planningPaint.textSize = fontSizePx
+            return planningPaint.measureText(text)
         }
         override fun lineHeight(fontSizePx: Float): Float {
-            fill.textSize = fontSizePx
-            val metrics = fill.fontMetrics
+            planningPaint.textSize = fontSizePx
+            val metrics = planningPaint.fontMetrics
             return metrics.descent - metrics.ascent
         }
+    }
+
+    // T920 3.1: bind identity + background planning. bind() never runs the
+    // planner synchronously on the calling thread; identical rebinds stay the
+    // cheap early-return and cache hits apply synchronously with zero planner
+    // work (see [TextLayoutCoordinator]).
+    private val layoutCoordinator = TextLayoutCoordinator(
+        cache = sharedLayoutCache,
+        backgroundExecutor = planningExecutor,
+        mainExecutor = mainExecutor,
+        plan = { blocks, width, height ->
+            val layouts = TextLayoutPlanner.plan(blocks, width.toFloat(), height.toFloat(), 1, false, planningMeasurer)
+            buildPreparedLayouts(layouts, width, height)
+        },
+        onPrepared = ::applyPreparedLayouts,
+    )
+
+    private fun applyPreparedLayouts(prepared: List<PreparedOverlayLayout>) {
+        preparedLayouts = prepared
+        invalidate()
     }
 
     private var imageView: SubsamplingScaleImageView? = null
@@ -64,30 +99,50 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * T920 3.1: never runs the layout planner on the calling (Main) thread.
+     * Identical rebinds are the same cheap early-return as before; a bounded
+     * cache hit applies prepared layouts synchronously; a miss schedules
+     * planning on a background thread and applies the result on Main when it
+     * arrives (dropped if this view was re-bound/recycled/detached meanwhile).
+     * Until then the view draws the safe empty case, exactly as it does for
+     * pages without translations — stale layouts for DIFFERENT content are
+     * always dropped immediately so foreign text can never appear over a page
+     * while its own layout is in flight.
+     */
     fun bind(imageView: SubsamplingScaleImageView?, blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) {
-        if (this.imageView === imageView && this.blocks == blocks && this.pageWidth == pageWidth && this.pageHeight == pageHeight) {
-            return
-        }
+        val imageViewChanged = this.imageView !== imageView
         this.imageView = imageView
         this.blocks = blocks
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
-        if (blocks.isEmpty() || pageWidth <= 0 || pageHeight <= 0) {
-            preparedLayouts = emptyList()
-            invalidate()
-            return
+        when (val result = layoutCoordinator.bind(blocks, pageWidth, pageHeight)) {
+            is TextLayoutBindResult.Ready -> {
+                preparedLayouts = result.prepared
+                invalidate()
+            }
+            TextLayoutBindResult.Cleared, TextLayoutBindResult.Planning -> {
+                preparedLayouts = emptyList()
+                invalidate()
+            }
+            TextLayoutBindResult.Unchanged -> {
+                // Same content and dimensions as the current binding: layouts
+                // shown are already correct (cheap no-op, as before). Only a
+                // new transform source needs a redraw.
+                if (imageViewChanged) invalidate()
+            }
         }
-        val layouts = TextLayoutPlanner.plan(blocks, pageWidth.toFloat(), pageHeight.toFloat(), 1, false, measurer)
-        prepareLayouts(layouts, pageWidth, pageHeight)
-        invalidate()
     }
 
     /**
      * Build bounded component paths at bind time. Missing/invalid component
      * metadata degrades to the available cell/legacy clips and still draws,
-     * preserving the planner's never-drop contract.
+     * preserving the planner's never-drop contract. Runs on the background
+     * planning thread during async binds — `Path` construction is not
+     * looper-bound, and the returned paths are only READ by the Main-thread
+     * draw path.
      */
-    private fun prepareLayouts(layouts: List<BlockLayout>, pageWidth: Int, pageHeight: Int) {
+    private fun buildPreparedLayouts(layouts: List<BlockLayout>, pageWidth: Int, pageHeight: Int): List<PreparedOverlayLayout> {
         val clipCache = ComponentClipCache<Path>(MAX_CACHED_COMPONENTS, MAX_CACHED_SPANS) { component ->
             Path().apply {
                 fillType = Path.FillType.WINDING
@@ -102,7 +157,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
                 }
             }
         }
-        preparedLayouts = layouts.map { layout ->
+        return layouts.map { layout ->
             val geometry = layout.maskGeometry
             val componentPath = if (
                 geometry != null &&
@@ -132,6 +187,9 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     override fun onDetachedFromWindow() {
         Choreographer.getInstance().removeFrameCallback(frameCallback)
         framePending = false
+        // T920 3.1: a detached view must never receive a background planning
+        // result; bumping the generation drops any in-flight delivery.
+        layoutCoordinator.cancelPending()
         super.onDetachedFromWindow()
     }
 
@@ -256,7 +314,7 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     internal fun bindLayoutsForTest(layouts: List<BlockLayout>, pageWidth: Int, pageHeight: Int) {
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
-        prepareLayouts(layouts, pageWidth, pageHeight)
+        preparedLayouts = buildPreparedLayouts(layouts, pageWidth, pageHeight)
     }
 
     /** Android-test seam: exercises the exact production prepared draw path. */
@@ -271,6 +329,42 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         private const val MAX_CACHED_SPANS = 100_000
         private const val VERTICAL_CHAR_STEP = 1.05f
         private const val VERTICAL_COL_STEP = 1.25f
+
+        /**
+         * T920 3.1: strict global bound on cached prepared page layouts. Covers
+         * the reader's warm window (attach 2 / evict 5 pager, attach 4 / evict
+         * 10 webtoon) plus a little scroll-back, shared across all overlay
+         * instances so total memory stays bounded regardless of holder count.
+         * Entries hold immutable layouts + paths (~tens of KB per page), so the
+         * ceiling is well under a megabyte.
+         */
+        private const val MAX_CACHED_PAGE_LAYOUTS = 12
+
+        /**
+         * Prepared layouts are only read on Main and only stored from the
+         * Main-thread delivery callback, so the shared cache needs no locks.
+         */
+        private val sharedLayoutCache = ReaderTextLayoutCache<List<PreparedOverlayLayout>>(MAX_CACHED_PAGE_LAYOUTS)
+
+        /**
+         * Single-threaded ON PURPOSE: [planningMeasurer]-style measurement uses
+         * one `Paint` whose `textSize` is mutated per call, which is not safe
+         * for concurrent use. Confining all planning to this thread keeps the
+         * planner (itself stateless and reentrant) deterministic. Below-normal
+         * priority so planning never competes with input/rendering threads.
+         */
+        private val planningExecutor: Executor by lazy {
+            Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "TranslationOverlayLayoutPlanner").apply {
+                    isDaemon = true
+                    priority = (Thread.NORM_PRIORITY + Thread.MIN_PRIORITY) / 2
+                }
+            }
+        }
+
+        private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+        private val mainExecutor = Executor { runnable -> mainHandler.post(runnable) }
+
         private val VERTICAL_PUNCTUATION_MAP = mapOf(
             'ー' to '︱', '―' to '︱', '─' to '︱', '-' to '︱',
             '「' to '﹁', '」' to '﹂', '『' to '﹃', '』' to '﹄',

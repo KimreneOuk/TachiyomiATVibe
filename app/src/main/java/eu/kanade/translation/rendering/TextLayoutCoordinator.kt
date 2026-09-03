@@ -1,7 +1,8 @@
 package eu.kanade.translation.rendering
 
 import eu.kanade.translation.model.TranslationBlock
-import timber.log.Timber
+import logcat.LogPriority
+import logcat.logcat
 import java.util.concurrent.Executor
 import java.util.concurrent.RejectedExecutionException
 
@@ -90,7 +91,7 @@ internal class TextLayoutCoordinator<T : Any>(
                 val prepared = try {
                     plan(blocks, pageWidth, pageHeight)
                 } catch (t: Throwable) {
-                    Timber.w(t, "Overlay text layout planning failed")
+                    logcat(LogPriority.WARN) { "Overlay text layout planning failed: $t" }
                     return@execute
                 }
                 mainExecutor.execute {
@@ -100,7 +101,7 @@ internal class TextLayoutCoordinator<T : Any>(
                 }
             }
         } catch (e: RejectedExecutionException) {
-            Timber.w(e, "Overlay text layout planning rejected")
+            logcat(LogPriority.WARN) { "Overlay text layout planning rejected: $e" }
         }
         return TextLayoutBindResult.Planning
     }
