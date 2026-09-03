@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.ui.reader.viewer.webtoon
 
 import android.graphics.PointF
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -23,6 +24,7 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
+import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -257,16 +259,48 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      * Tells this viewer to set the given [chapters] as active.
      */
     override fun setChapters(chapters: ViewerChapters) {
-        val forceTransition = config.alwaysShowChapterTransition || currentPage is ChapterTransition
-        adapter.setChapters(chapters, forceTransition)
+        val startedAt = SystemClock.elapsedRealtimeNanos()
+        val pageCount = chapters.currChapter.pages?.size ?: 0
+        val requestedPage = chapters.currChapter.requestedPage
+        val oldAdapterCount = adapter.items.size
+        val firstLayout = recycler.isGone
+        var adapterNanos = 0L
+        var moveToPageNanos = 0L
+        var visibilityNanos = 0L
+        var errorClass = "none"
 
-        if (recycler.isGone) {
-            logcat { "Recycler first layout" }
-            val pages = chapters.currChapter.pages ?: return
-            moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
-            recycler.isVisible = true
+        try {
+            val forceTransition = config.alwaysShowChapterTransition || currentPage is ChapterTransition
+            val adapterStartedAt = SystemClock.elapsedRealtimeNanos()
+            adapter.setChapters(chapters, forceTransition)
+            adapterNanos = SystemClock.elapsedRealtimeNanos() - adapterStartedAt
+
+            if (recycler.isGone) {
+                logcat { "Recycler first layout" }
+                val pages = chapters.currChapter.pages ?: return
+                val moveToPageStartedAt = SystemClock.elapsedRealtimeNanos()
+                moveToPage(pages[min(chapters.currChapter.requestedPage, pages.lastIndex)])
+                moveToPageNanos = SystemClock.elapsedRealtimeNanos() - moveToPageStartedAt
+                val visibilityStartedAt = SystemClock.elapsedRealtimeNanos()
+                recycler.isVisible = true
+                visibilityNanos = SystemClock.elapsedRealtimeNanos() - visibilityStartedAt
+            }
+        } catch (error: Throwable) {
+            errorClass = error.javaClass.simpleName
+            throw error
+        } finally {
+            logcat(LogPriority.INFO) {
+                "[reader_entry] WebtoonViewer.setChapters " +
+                    "pageCount=$pageCount requestedPage=$requestedPage oldAdapterCount=$oldAdapterCount " +
+                    "newAdapterCount=${adapter.items.size} adapterMs=${adapterNanos.toMillis()} " +
+                    "moveMs=${moveToPageNanos.toMillis()} visibilityMs=${visibilityNanos.toMillis()} " +
+                    "totalMs=${(SystemClock.elapsedRealtimeNanos() - startedAt).toMillis()} " +
+                    "firstLayout=$firstLayout error=$errorClass"
+            }
         }
     }
+
+    private fun Long.toMillis(): Double = this / 1_000_000.0
 
     /**
      * Tells this viewer to move to the given [page].

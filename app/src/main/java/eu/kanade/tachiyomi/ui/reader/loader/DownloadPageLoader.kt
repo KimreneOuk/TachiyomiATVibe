@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.reader.loader
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
@@ -14,7 +15,9 @@ import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.displayImageName
+import logcat.LogPriority
 import mihon.core.archive.archiveReader
+import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.manga.model.Manga
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -40,26 +43,73 @@ internal class DownloadPageLoader(
     override var isLocal: Boolean = true
 
     override suspend fun getPages(): List<ReaderPage> {
+        val startedAt = SystemClock.elapsedRealtimeNanos()
         val dbChapter = chapter.chapter
-        val chapterPath = downloadProvider.findChapterDir(dbChapter.name, dbChapter.scanlator, manga.title, source)
-        val translations = dbChapter.id?.let {
-            translationManager.getChapterTranslationForReader(
-                it,
-                chapter.chapter.name,
-                chapter.chapter.scanlator,
-                manga.title,
-                source,
-            )
-        } ?: translationManager.getChapterTranslation(
-            chapter.chapter.name,
-            chapter.chapter.scanlator,
-            manga.title,
-            source,
-        )
-        return if (chapterPath?.isFile == true) {
-            getPagesFromArchive(chapterPath, translations)
-        } else {
-            getPagesFromDirectory(translations)
+        var findChapterDirNanos = 0L
+        var translationNanos = 0L
+        var buildPageListNanos = 0L
+        var mappingNanos = 0L
+        var chapterPathFound = false
+        var translationCount = 0
+        var branch = "unresolved"
+        var resultCount = 0
+        var errorClass = "none"
+
+        try {
+            val findChapterDirStartedAt = SystemClock.elapsedRealtimeNanos()
+            val chapterPath = try {
+                downloadProvider.findChapterDir(dbChapter.name, dbChapter.scanlator, manga.title, source)
+                    .also { chapterPathFound = it != null }
+            } finally {
+                findChapterDirNanos = SystemClock.elapsedRealtimeNanos() - findChapterDirStartedAt
+            }
+
+            val translationStartedAt = SystemClock.elapsedRealtimeNanos()
+            val translations = try {
+                dbChapter.id?.let {
+                    translationManager.getChapterTranslationForReader(
+                        it,
+                        chapter.chapter.name,
+                        chapter.chapter.scanlator,
+                        manga.title,
+                        source,
+                    )
+                } ?: translationManager.getChapterTranslation(
+                    chapter.chapter.name,
+                    chapter.chapter.scanlator,
+                    manga.title,
+                    source,
+                )
+            } finally {
+                translationNanos = SystemClock.elapsedRealtimeNanos() - translationStartedAt
+            }
+            translationCount = translations.size
+
+            val pages = if (chapterPath?.isFile == true) {
+                branch = "archive"
+                getPagesFromArchive(chapterPath, translations)
+            } else {
+                branch = "directory"
+                val result = getPagesFromDirectory(translations)
+                buildPageListNanos = result.buildPageListNanos
+                mappingNanos = result.mappingNanos
+                result.pages
+            }
+            resultCount = pages.size
+            return pages
+        } catch (error: Throwable) {
+            errorClass = error.javaClass.simpleName
+            throw error
+        } finally {
+            logcat(LogPriority.INFO) {
+                "[reader_entry] DownloadPageLoader.getPages " +
+                    "chapterId=${dbChapter.id ?: -1L} requestedPage=${chapter.requestedPage} " +
+                    "findDirMs=${findChapterDirNanos.toMillis()} handleFound=$chapterPathFound " +
+                    "translationMs=${translationNanos.toMillis()} translationCount=$translationCount " +
+                    "branch=$branch buildListMs=${buildPageListNanos.toMillis()} " +
+                    "mappingMs=${mappingNanos.toMillis()} totalMs=${(SystemClock.elapsedRealtimeNanos() - startedAt).toMillis()} " +
+                    "resultCount=$resultCount error=$errorClass"
+            }
         }
     }
 
@@ -82,9 +132,12 @@ internal class DownloadPageLoader(
         return loader.getPages()
     }
 
-    private fun getPagesFromDirectory(translations: Map<String, PageTranslation>): List<ReaderPage> {
+    private fun getPagesFromDirectory(translations: Map<String, PageTranslation>): DirectoryPagesResult {
+        val buildPageListStartedAt = SystemClock.elapsedRealtimeNanos()
         val pages = downloadManager.buildPageList(source, manga, chapter.chapter.toDomainChapter()!!)
-        return pages.map { (fileName, page) ->
+        val buildPageListNanos = SystemClock.elapsedRealtimeNanos() - buildPageListStartedAt
+        val mappingStartedAt = SystemClock.elapsedRealtimeNanos()
+        val readerPages = pages.map { (fileName, page) ->
             val pageTranslation = translations[fileName]
             val stream = pageTranslation?.let(::resolveTranslatedStream)
             ReaderPage(
@@ -112,7 +165,18 @@ internal class DownloadPageLoader(
                 status = Page.State.READY
             }
         }
+        return DirectoryPagesResult(
+            pages = readerPages,
+            buildPageListNanos = buildPageListNanos,
+            mappingNanos = SystemClock.elapsedRealtimeNanos() - mappingStartedAt,
+        )
     }
+
+    private data class DirectoryPagesResult(
+        val pages: List<ReaderPage>,
+        val buildPageListNanos: Long,
+        val mappingNanos: Long,
+    )
 
     fun resolveTranslatedStream(pageTranslation: PageTranslation): (() -> java.io.InputStream)? {
         val displayImageName = pageTranslation.displayImageName
@@ -134,4 +198,6 @@ internal class DownloadPageLoader(
     override suspend fun loadPage(page: ReaderPage) {
         archivePageLoader?.loadPage(page)
     }
+
+    private fun Long.toMillis(): Double = this / 1_000_000.0
 }

@@ -1,6 +1,7 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
+import android.os.SystemClock
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
@@ -159,49 +160,136 @@ class DownloadManager(
      * @return the list of pages from the chapter.
      */
     fun buildPageList(source: Source, manga: Manga, chapter: Chapter): List<Pair<String, Page>> {
-        val chapterDir = provider.findChapterDir(chapter.name, chapter.scanlator, manga.title, source)
-            ?: throw Exception(context.stringResource(MR.strings.page_list_empty_error))
-        // TachiyomiAT: harden against stale/revoked SAF paths. listFiles() can
-        // return null on a revoked tree URI or a moved folder; previously the
-        // `!!` chain and the per-file openInputStream() probe (used to sniff the
-        // real image type when the extension is unknown) could throw here, which
-        // surfaced as an unhandled reader crash instead of the clean "no pages"
-        // error. Resolve the directory first, then resolve each file defensively
-        // so a single unreadable entry can't take down the whole chapter.
-        val rawFiles = try {
-            chapterDir.listFiles().orEmpty()
-        } catch (e: Exception) {
-            logcat(LogPriority.WARN, e) {
-                "buildPageList: listFiles() threw for ${chapterDir.filePath}; treating as empty"
+        val startedAt = SystemClock.elapsedRealtimeNanos()
+        var findChapterDirNanos = 0L
+        var listFilesNanos = 0L
+        var filterNanos = 0L
+        var isFileNanos = 0L
+        var nameReadNanos = 0L
+        var sniffNanos = 0L
+        var sortAndMapNanos = 0L
+        var rawCount = 0
+        var isFileCalls = 0
+        var nameReadCalls = 0
+        var sniffCalls = 0
+        var acceptedCount = 0
+        var skippedCount = 0
+        var errorCount = 0
+        var resultCount = 0
+        var errorClass = "none"
+
+        try {
+            val findChapterDirStartedAt = SystemClock.elapsedRealtimeNanos()
+            val chapterDir = try {
+                provider.findChapterDir(chapter.name, chapter.scanlator, manga.title, source)
+            } finally {
+                findChapterDirNanos = SystemClock.elapsedRealtimeNanos() - findChapterDirStartedAt
             }
-            emptyArray()
-        }
-        val files = rawFiles.mapNotNull { file ->
-            try {
-                if (!file.isFile) return@mapNotNull null
-                // entry name is nullable on some SAF providers; skip nameless
-                // entries instead of NPE'ing on name!! later.
-                val name = file.name ?: return@mapNotNull null
-                if (!ImageUtil.isImage(name) { file.openInputStream() }) return@mapNotNull null
-                file
+                ?: throw Exception(context.stringResource(MR.strings.page_list_empty_error))
+            // TachiyomiAT: harden against stale/revoked SAF paths. listFiles() can
+            // return null on a revoked tree URI or a moved folder; previously the
+            // `!!` chain and the per-file openInputStream() probe (used to sniff the
+            // real image type when the extension is unknown) could throw here, which
+            // surfaced as an unhandled reader crash instead of the clean "no pages"
+            // error. Resolve the directory first, then resolve each file defensively
+            // so a single unreadable entry can't take down the whole chapter.
+            val listFilesStartedAt = SystemClock.elapsedRealtimeNanos()
+            val rawFiles = try {
+                chapterDir.listFiles().orEmpty()
             } catch (e: Exception) {
-                // A single inaccessible file (revoked/stale URI) must not abort
-                // discovery of the whole chapter: skip it and keep going so the
-                // reader can still show the pages that ARE readable.
-                logcat(LogPriority.WARN, e) { "buildPageList: skipping unreadable page entry" }
-                null
+                errorCount++
+                logcat(LogPriority.WARN, e) {
+                    "buildPageList: listFiles() threw for ${chapterDir.filePath}; treating as empty"
+                }
+                emptyArray()
+            }
+            listFilesNanos = SystemClock.elapsedRealtimeNanos() - listFilesStartedAt
+            rawCount = rawFiles.size
+
+            val filterStartedAt = SystemClock.elapsedRealtimeNanos()
+            val files = rawFiles.mapNotNull { file ->
+                try {
+                    val isFileStartedAt = SystemClock.elapsedRealtimeNanos()
+                    isFileCalls++
+                    val isFile = try {
+                        file.isFile
+                    } finally {
+                        isFileNanos += SystemClock.elapsedRealtimeNanos() - isFileStartedAt
+                    }
+                    if (!isFile) {
+                        skippedCount++
+                        return@mapNotNull null
+                    }
+                    // entry name is nullable on some SAF providers; skip nameless
+                    // entries instead of NPE'ing on name!! later.
+                    val nameReadStartedAt = SystemClock.elapsedRealtimeNanos()
+                    nameReadCalls++
+                    val name = try {
+                        file.name
+                    } finally {
+                        nameReadNanos += SystemClock.elapsedRealtimeNanos() - nameReadStartedAt
+                    }
+                    if (name == null) {
+                        skippedCount++
+                        return@mapNotNull null
+                    }
+                    if (!ImageUtil.isImage(name) {
+                            val sniffStartedAt = SystemClock.elapsedRealtimeNanos()
+                            sniffCalls++
+                            try {
+                                file.openInputStream()
+                            } finally {
+                                sniffNanos += SystemClock.elapsedRealtimeNanos() - sniffStartedAt
+                            }
+                        }
+                    ) {
+                        skippedCount++
+                        return@mapNotNull null
+                    }
+                    acceptedCount++
+                    file
+                } catch (e: Exception) {
+                    errorCount++
+                    skippedCount++
+                    // A single inaccessible file (revoked/stale URI) must not abort
+                    // discovery of the whole chapter: skip it and keep going so the
+                    // reader can still show the pages that ARE readable.
+                    logcat(LogPriority.WARN, e) { "buildPageList: skipping unreadable page entry" }
+                    null
+                }
+            }
+            filterNanos = SystemClock.elapsedRealtimeNanos() - filterStartedAt
+
+            if (files.isEmpty()) {
+                throw Exception(context.stringResource(MR.strings.page_list_empty_error))
+            }
+
+            val sortAndMapStartedAt = SystemClock.elapsedRealtimeNanos()
+            val pages = files.sortedBy { it.name }
+                .mapIndexed { i, file ->
+                    Pair(file.name!!, Page(i, uri = file.uri).apply { status = Page.State.READY })
+                }
+            sortAndMapNanos = SystemClock.elapsedRealtimeNanos() - sortAndMapStartedAt
+            resultCount = pages.size
+            return pages
+        } catch (error: Throwable) {
+            errorClass = error.javaClass.simpleName
+            throw error
+        } finally {
+            logcat(LogPriority.INFO) {
+                "[reader_entry] DownloadManager.buildPageList " +
+                    "findDirMs=${findChapterDirNanos.toMillis()} listFilesMs=${listFilesNanos.toMillis()} rawCount=$rawCount " +
+                    "isFileMs=${isFileNanos.toMillis()} isFileCalls=$isFileCalls " +
+                    "nameReadMs=${nameReadNanos.toMillis()} nameReadCalls=$nameReadCalls " +
+                    "sniffMs=${sniffNanos.toMillis()} sniffCalls=$sniffCalls " +
+                    "filterMs=${filterNanos.toMillis()} accepted=$acceptedCount skipped=$skippedCount errors=$errorCount " +
+                    "sortMapMs=${sortAndMapNanos.toMillis()} totalMs=${(SystemClock.elapsedRealtimeNanos() - startedAt).toMillis()} " +
+                    "resultCount=$resultCount error=$errorClass"
             }
         }
-
-        if (files.isEmpty()) {
-            throw Exception(context.stringResource(MR.strings.page_list_empty_error))
-        }
-
-        return files.sortedBy { it.name }
-            .mapIndexed { i, file ->
-                Pair(file.name!!, Page(i, uri = file.uri).apply { status = Page.State.READY })
-            }
     }
+
+    private fun Long.toMillis(): Double = this / 1_000_000.0
 
     /**
      * Returns true if the chapter is downloaded.
