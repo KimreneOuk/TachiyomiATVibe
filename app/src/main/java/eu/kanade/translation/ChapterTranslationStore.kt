@@ -31,7 +31,9 @@ import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.model.blockFingerprints
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.cancelInFlightStages
 import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
 import eu.kanade.translation.store.ChapterAttemptLedger
@@ -724,6 +726,42 @@ class ChapterTranslationStore(
         description: String,
         update: (PageTranslation?) -> PageTranslation,
     ): PatchResult = updatePageGuarded(pageKey, snapshot(pageKey).toPrecondition(), description, update)
+
+    /**
+     * TachiyomiAT: fast non-blocking cancellation of in-flight stages in memory.
+     * Synchronously flips pages with [isStageRunning] to CANCELLED in [_state] and [_display]
+     * without acquiring [mutex] or performing disk I/O. This allows the reader UI (e.g.
+     * auto-translation drawer toggle) to clear spinners and dim overlays instantly on the current
+     * frame (<16ms) without blocking the Main thread. Durable persistence can follow
+     * asynchronously.
+     */
+    fun fastCancelInFlightStagesInMemory(): Int {
+        var flipped = 0
+        val current = _state.value
+        val hasRunning = current.values.any { it?.isStageRunning == true }
+        if (!hasRunning) return 0
+        val updatedPages = buildMap {
+            current.forEach { (pageKey, page) ->
+                if (page != null && page.isStageRunning && !page.hasRenderedResult && !page.isStageFailed) {
+                    flipped++
+                    put(
+                        pageKey,
+                        page.detachedCopy().apply {
+                            cancelInFlightStages()
+                            ocrError = "Translation cancelled"
+                            updatedAt = System.currentTimeMillis()
+                        },
+                    )
+                } else if (page != null) {
+                    put(pageKey, page)
+                }
+            }
+        }
+        pages = updatedPages.toPersistentMap()
+        _state.value = snapshotPages()
+        _display.value = displaySnapshotLocked()
+        return flipped
+    }
 
     suspend fun patchBlock(
         pageKey: String,
