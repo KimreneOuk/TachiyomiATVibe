@@ -100,6 +100,10 @@ fun TranslationProgressSheet(
     onCancel: () -> Unit,
     onResume: (() -> Unit)? = null,
     onPauseResume: ((paused: Boolean) -> Unit)? = null,
+    // TachiyomiAT T918: restart affordance for a cancelled (terminal-aborted)
+    // or terminal-failed batch. Null keeps the banner-only shape for callers
+    // that cannot restart the batch.
+    onRetry: (() -> Unit)? = null,
 ) {
     var paused by remember(snapshot.chapterId) { mutableStateOf(false) }
     var isResuming by remember(snapshot.chapterId) { mutableStateOf(false) }
@@ -178,6 +182,31 @@ fun TranslationProgressSheet(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
+                }
+            }
+
+            // TachiyomiAT T918: a terminal-aborted (cancelled) or terminal-failed
+            // batch must not dead-end in the banner — offer the restart the truth
+            // projection allows, only when the caller wired a restart callback.
+            // The P5 truth owns label/wording so no surface contradicts another.
+            val sheetRetryTruth = TranslationUiTruth.forSheetRetryAction(snapshot, onRetry != null)
+            if (sheetRetryTruth != null && onRetry != null) {
+                Button(
+                    onClick = onRetry,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .semantics { contentDescription = sheetRetryTruth.contentDescription },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(ATMR.strings.manga_batch_retry),
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
 

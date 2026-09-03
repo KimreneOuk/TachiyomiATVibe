@@ -5,6 +5,7 @@ import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.PageDisplayProjection
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationProgressSnapshot
 import eu.kanade.translation.model.TranslationProgressStage
 import eu.kanade.translation.scheduling.AutoSlotState
@@ -277,6 +278,38 @@ object TranslationUiTruth {
             actions = setOf(UiAction.DETAILS),
             terminalSuccess = false,
             contentDescription = "Chapter is not translated.",
+        )
+    }
+
+    /**
+     * T918: the progress sheet's Retry affordance truth (the field defect: a
+     * cancelled batch dead-ended in the sheet's aborted banner with no way
+     * back). Offered ONLY when a restart is actually possible AND the caller
+     * wired the restart callback: a terminal-aborted batch (explicit
+     * cancellation of paid work) or a terminal ERROR batch (FINISHED phase +
+     * ERROR state) with a wired callback. A successfully FINISHED batch is
+     * completion, not a failure state — never a Retry. Call sites without a
+     * callback keep today's banner-only shape.
+     */
+    fun forSheetRetryAction(
+        snapshot: TranslationProgressSnapshot,
+        restartWired: Boolean,
+    ): PageUiTruth? {
+        if (!restartWired) return null
+        val restartableTerminal = snapshot.aborted ||
+            (
+                snapshot.state == Translation.State.ERROR &&
+                    snapshot.batchPhase == TranslationBatchPhase.FINISHED
+                )
+        if (!restartableTerminal) return null
+        return PageUiTruth(
+            label = "Retry translation",
+            severity = if (snapshot.aborted) UiSeverity.INFO else UiSeverity.ERROR,
+            retryMode = UiRetryMode.EXPLICIT,
+            retryAtEpochMs = null,
+            actions = setOf(UiAction.RETRY, UiAction.DETAILS),
+            terminalSuccess = false,
+            contentDescription = "Retry translation",
         )
     }
 

@@ -42,4 +42,20 @@ class TranslationUiProjectionTest {
             hasPendingRequest = false,
         ) shouldBe false
     }
+
+    /** T918: stranded in-flight states reconcile to the restartable state. */
+    @Test
+    fun `aborted batch reconciles only stranded in-flight states`() {
+        TranslationUiProjection.reconcileAbortedBatchState(Translation.State.QUEUE) shouldBe
+            Translation.State.NOT_TRANSLATED
+        TranslationUiProjection.reconcileAbortedBatchState(Translation.State.TRANSLATING) shouldBe
+            Translation.State.NOT_TRANSLATED
+        TranslationUiProjection.reconcileAbortedBatchState(Translation.State.PAUSED) shouldBe
+            Translation.State.NOT_TRANSLATED
+        // Already-honest states are never touched.
+        TranslationUiProjection.reconcileAbortedBatchState(Translation.State.NOT_TRANSLATED) shouldBe null
+        TranslationUiProjection.reconcileAbortedBatchState(Translation.State.TRANSLATED) shouldBe null
+        TranslationUiProjection.reconcileAbortedBatchState(Translation.State.ERROR) shouldBe null
+        TranslationUiProjection.reconcileAbortedBatchState(Translation.State.READY_WITH_WARNINGS) shouldBe null
+    }
 }

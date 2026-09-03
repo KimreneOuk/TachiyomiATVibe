@@ -332,6 +332,12 @@ class MangaScreen(
                         screenModel.dismissDialog()
                     },
                     onPauseResume = screenModel::setTranslationQueuePaused,
+                    // TachiyomiAT T918: a cancelled/terminal-failed batch gets a
+                    // working restart from the sheet (the aborted banner alone
+                    // dead-ended; the indicator routed every tap here).
+                    onRetry = {
+                        screenModel.retryBatchTranslation(dialog.chapterId)
+                    },
                 )
             }
 
