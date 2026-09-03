@@ -4,8 +4,10 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
+import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasCommittedDisplay
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -219,14 +221,18 @@ internal object LegacyChapterMigrationSource {
             val committed = record.committed ?: return@mapNotNull null
             val snapshot = artifactStore.readPageSnapshot(committed.pageSnapshotFileName)
                 ?: legacyPages[pageKey]?.takeIf { manifest.authority == ManifestAuthority.LEGACY }
-            snapshot?.let { pageKey to it }
+                ?: record.toSynthesizedPageTranslation()
+            snapshot.let { pageKey to it }
         }.toMap()
         val livePages = when (manifest.authority) {
             ManifestAuthority.LEGACY -> legacyPages
             ManifestAuthority.ARTIFACTS -> manifest.pages.mapNotNull { (pageKey, record) ->
-                val candidateSnapshot = artifactStore.readPageSnapshot(record.candidate?.pageSnapshotFileName)
+                val candidateSnapshot = record.candidate?.pageSnapshotFileName?.let {
+                    artifactStore.readPageSnapshot(it)
+                }
                 val committedSnapshot = committedPages[pageKey]
-                (candidateSnapshot ?: committedSnapshot)?.let { pageKey to it }
+                val snapshot = candidateSnapshot ?: committedSnapshot ?: record.toSynthesizedPageTranslation()
+                pageKey to snapshot
             }.toMap()
         }
         val retiredCleanedImages = manifest.pages.mapNotNull { (pageKey, record) ->
@@ -297,5 +303,46 @@ internal object LegacyChapterMigrationSource {
     internal fun artifactMigrationLock(parent: UniFile?, fileName: String): Any {
         val parentKey = parent?.filePath ?: parent?.uri?.toString() ?: "<unknown>"
         return ARTIFACT_MIGRATION_LOCKS.computeIfAbsent("$parentKey:$fileName") { Any() }
+    }
+
+    private fun PageArtifactRecord.toSynthesizedPageTranslation(): PageTranslation {
+        val committed = this.committed
+        val isReady = this.displayState == PageDisplayState.DISPLAY_READY ||
+            this.displayState == PageDisplayState.TEXTLESS_COMPLETE ||
+            this.displayState == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT ||
+            this.displayState == PageDisplayState.FAILED_WITH_COMMITTED_RESULT
+        val isRunning = this.displayState == PageDisplayState.CANDIDATE_RUNNING
+        val isFailed = this.displayState == PageDisplayState.FAILED_NO_RESULT
+
+        return PageTranslation(
+            sourceFileName = pageKey,
+            cleanedImageName = committed?.displayBase?.fileName ?: legacyVisible?.fileName,
+            ocrStatus = when {
+                isReady -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            translationStatus = when {
+                isReady -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            inpaintStatus = when {
+                isReady && (committed?.displayBase?.fileName != null || legacyVisible?.fileName != null) -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            renderStatus = when {
+                isReady && (committed?.displayBase?.fileName != null || legacyVisible?.fileName != null) -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            pageVersion = pageVersion,
+            updatedAt = committed?.promotedAtEpochMs ?: 0L,
+        )
     }
 }

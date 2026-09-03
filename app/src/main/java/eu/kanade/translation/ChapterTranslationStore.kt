@@ -1940,6 +1940,42 @@ class ChapterTranslationStore(
     fun resolveDisplayPage(pageKey: String): PageTranslation? =
         committedDisplay[pageKey]?.page?.detachedCopy() ?: pages[pageKey]?.detachedCopy()
 
+    /**
+     * Lazily loads full page snapshot (including text blocks) from durable storage
+     * if the page is currently backed by a synthesized or empty placeholder.
+     */
+    fun getOrLoadPageSnapshot(pageKey: String): PageTranslation? {
+        val current = pages[pageKey]
+        if (current != null && current.blocks.isNotEmpty()) {
+            return current
+        }
+        val record = artifactManifest?.pages?.get(pageKey)
+        val snapshotFileName = record?.candidate?.pageSnapshotFileName
+            ?: record?.committed?.pageSnapshotFileName
+        val store = artifactStore
+        if (snapshotFileName != null && store != null) {
+            val loaded = store.readPageSnapshot(snapshotFileName)
+            if (loaded != null) {
+                pages = pages.put(pageKey, loaded)
+                _state.value = snapshotPages()
+                if (record?.committed != null) {
+                    committedDisplay = committedDisplay.put(
+                        pageKey,
+                        CommittedPageDisplay(
+                            page = loaded.detachedCopy(),
+                            pageVersion = loaded.pageVersion,
+                            displayFingerprint = displayFingerprintOf(loaded),
+                            promotedAtEpochMs = loaded.updatedAt,
+                        ),
+                    )
+                    _display.value = displaySnapshotLocked()
+                }
+                return loaded
+            }
+        }
+        return current
+    }
+
     /** The frozen committed display bundle for [pageKey], if one exists. */
     fun committedDisplayPage(pageKey: String): PageTranslation? =
         committedDisplay[pageKey]?.page?.detachedCopy()
