@@ -166,6 +166,22 @@ internal class BatchLaneWorkers(
     private fun plannedTranslationNeedsWork(pageKey: String): Boolean =
         resumePlanner.plannedTranslationNeedsWork(pageKey)
 
+    /**
+     * Whether the natural-order predecessor of [pageKey] has reached a terminal
+     * translation outcome in the store at call time (READY, or SKIPPED for a
+     * textless page). The first page has no predecessor and counts as
+     * unblocked. A missing or still-pending/failed predecessor keeps the
+     * historical ordered-context skip — a failed predecessor must continue to
+     * strand its successors rather than let them translate with a context gap.
+     */
+    private fun naturalOrderPredecessorTerminal(pageKey: String): Boolean {
+        val index = orderedStreams.indexOfFirst { it.first == pageKey }
+        if (index <= 0) return true
+        val predecessorKey = orderedStreams[index - 1].first
+        val predecessor = store.state.value[predecessorKey] ?: return false
+        return predecessor.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
+    }
+
     private fun translationFailureFence(pageKey: String): Boolean =
         resumePlanner.translationFailureFence(pageKey)
 
@@ -1186,8 +1202,15 @@ internal class BatchLaneWorkers(
             }
             val dependencyReadyAfterNative = p.ocrStatus == StageStatus.READY ||
                 p.ocrStatus == StageStatus.TEXTLESS
+            // T917 Phase 6: the plan's PRIOR_PAGE_INCOMPLETE marker is a
+            // batch-start snapshot; whether the predecessor is STILL incomplete
+            // is a live question. On the ordered standard lane a predecessor
+            // that has already reached a terminal translation outcome must not
+            // keep blocking this page — the static block stranded every page
+            // after the first on multi-page chapters.
             val priorPageBlocksStandardTranslation = !isAi &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE
+                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                !naturalOrderPredecessorTerminal(pageKey)
             val completedAiPageAfterPriorGap = isAi &&
                 plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
                 plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
@@ -1196,6 +1219,19 @@ internal class BatchLaneWorkers(
                     expectedBatchFingerprints.translation == null ||
                         p.translationFingerprint == expectedBatchFingerprints.translation
                     )
+            // T917 Phase 6: standard-lane twin of the AI gap check. The plan
+            // snapshot cannot see commits that happen while the pass runs —
+            // the batch's own unblocked pages, or a manual tap that finished
+            // mid-pass (D1: manual output is authoritative and must never be
+            // re-paid) — so this check reads the LIVE store rather than the
+            // possibly-stale registry snapshot, and is deliberately
+            // origin/fingerprint-blind: plan-time REUSE evidence still governs
+            // re-translation of pre-pass state.
+            val livePage = store.state.value[pageKey]
+            val completedStandardPageAfterPriorGap = !isAi &&
+                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                livePage?.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
             val retryableTranslation = plannedTranslation?.decision ==
                 eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE
             val shouldSkipTranslation = plannedTranslation?.decision ==
@@ -1206,6 +1242,7 @@ internal class BatchLaneWorkers(
                 retryableTranslation &&
                 plannedTranslation?.retryEligible != true ||
                 completedAiPageAfterPriorGap ||
+                completedStandardPageAfterPriorGap ||
                 plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
                 (
                     priorPageBlocksStandardTranslation ||
