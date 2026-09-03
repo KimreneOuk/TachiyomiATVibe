@@ -1032,6 +1032,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // loadChapter call sites already run on IO (init: withIOContext,
         // loadNewChapter: launchIO, loadAdjacent: withIOContext). Same value,
         // same downstream assignment — only the thread changed.
+        val statusStage = ReaderEntryTrace.begin("vm.translationStatus", chapter.chapter.id)
         val translationStatus = this@ReaderViewModel.manga?.let { m ->
             val ch = newChapters.currChapter.chapter
             translationManager.getChapterTranslationStatus(
@@ -1042,7 +1043,9 @@ class ReaderViewModel @JvmOverloads constructor(
                 m.source,
             )
         } ?: Translation.State.NOT_TRANSLATED
+        statusStage.end()
 
+        val stateStage = ReaderEntryTrace.begin("vm.stateUpdate", chapter.chapter.id)
         withUIContext {
             mutableState.update {
                 // Add new references first to avoid unnecessary recycling
@@ -1058,6 +1061,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 )
             }
         }
+        stateStage.end()
         observeLiveTranslationStore()
         if (manga != null) observeTranslationState()
 
@@ -2689,6 +2693,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // TachiyomiAT (ANR fix): suspend variant — a first open runs legacy
         // artifact migration with SAF I/O and must not runBlocking a
         // dispatcher thread while holding readers waiting on the same store.
+        val storeStage = ReaderEntryTrace.begin("vm.openActiveStore", chapterId)
         val store = translationManager.openOrCreateActiveChapterTranslationStoreSuspend(
             chapterId,
             chapter.name,
@@ -2696,7 +2701,9 @@ class ReaderViewModel @JvmOverloads constructor(
             manga.title,
             source,
             manga.id,
-        ) ?: return
+        )
+        storeStage.end()
+        if (store == null) return
         currentTranslationStore = store
         val storeState = store.state
         translationStoreJob = viewModelScope.launchIO {

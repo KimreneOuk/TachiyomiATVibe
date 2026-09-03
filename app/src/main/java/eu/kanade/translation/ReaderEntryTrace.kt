@@ -1,5 +1,7 @@
 package eu.kanade.translation
 
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import logcat.LogPriority
 import logcat.logcat
@@ -26,10 +28,14 @@ object ReaderEntryTrace {
 
     private const val WATCHDOG_PERIOD_MS = 15_000L
     private const val MAX_WATCHDOG_TICKS = 20
+    private const val MAIN_HEARTBEAT_PERIOD_MS = 500L
+    private const val MAIN_HEARTBEAT_WARN_MS = 1_000L
 
     private val watchdogExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "ReaderEntryTrace-Watchdog").apply { isDaemon = true }
     }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     fun begin(stage: String, chapterId: Long?): TracedStage {
         val startedAtMs = SystemClock.elapsedRealtime()
@@ -63,12 +69,45 @@ object ReaderEntryTrace {
     ) {
         private val completed = AtomicBoolean(false)
 
+        // Main-thread wedge probe: a runnable re-posted to the main looper for
+        // the duration of the stage. The gap between consecutive runs is how
+        // long main went without processing — the direct signal for a wedged
+        // main thread (black screen with zero frames) versus a background
+        // park. Only late runs and the max delay are logged, so a healthy
+        // main is silent. Written from main, read from any — volatile.
+        @Volatile
+        private var heartbeatMarkMs = 0L
+
+        @Volatile
+        private var maxMainDelayMs = 0L
+
+        init {
+            heartbeatMarkMs = SystemClock.elapsedRealtime()
+            val runnable = object : Runnable {
+                override fun run() {
+                    if (completed.get()) return
+                    val now = SystemClock.elapsedRealtime()
+                    val delay = now - heartbeatMarkMs
+                    heartbeatMarkMs = now
+                    if (delay > maxMainDelayMs) maxMainDelayMs = delay
+                    if (delay > MAIN_HEARTBEAT_WARN_MS) {
+                        logcat(LogPriority.INFO) {
+                            "[reader_entry] main-heartbeat stage=$stage chapterId=$chapterId delayMs=$delay"
+                        }
+                    }
+                    mainHandler.postDelayed(this, MAIN_HEARTBEAT_PERIOD_MS)
+                }
+            }
+            mainHandler.postDelayed(runnable, MAIN_HEARTBEAT_PERIOD_MS)
+        }
+
         fun end() {
             if (!completed.compareAndSet(false, true)) return
             watchdogFuture.cancel(false)
             logcat(LogPriority.INFO) {
                 "[reader_entry] end stage=$stage chapterId=$chapterId " +
-                    "elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs}"
+                    "elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs} " +
+                    "maxMainDelayMs=$maxMainDelayMs"
             }
         }
     }

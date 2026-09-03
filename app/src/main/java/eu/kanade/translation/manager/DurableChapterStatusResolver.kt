@@ -196,11 +196,18 @@ internal class DurableChapterStatusResolver(
         // A probe can perform the one-way rescue and rename intent recovery
         // while it opens. Any status cached before that transition is stale.
         durableStatusCache.clear()
+        val probeStage = ReaderEntryTrace.begin("probe.status", chapterId)
         return try {
             block(result.store)
         } finally {
+            probeStage.end()
             if (result.owned && activeStores.releaseProbe(document.registryKey, result.store)) {
-                result.store.closeAndFlush()
+                val flushStage = ReaderEntryTrace.begin("probe.closeAndFlush", chapterId)
+                try {
+                    result.store.closeAndFlush()
+                } finally {
+                    flushStage.end()
+                }
             }
         }
     }
