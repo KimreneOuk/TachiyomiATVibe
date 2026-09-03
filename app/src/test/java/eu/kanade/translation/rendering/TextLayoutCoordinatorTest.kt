@@ -154,7 +154,7 @@ class TextLayoutCoordinatorTest {
     }
 
     @Test
-    fun `cancelPending drops an in-flight result without changing bound state`() {
+    fun `cancelPending drops an in-flight result`() {
         val harness = Harness()
         harness.coordinator.bind(blocks("A"), 800, 1200)
         harness.coordinator.cancelPending()
@@ -162,6 +162,58 @@ class TextLayoutCoordinatorTest {
         harness.drain()
 
         harness.applied.size shouldBe 0
+    }
+
+    @Test
+    fun `delivery arriving after cancelPending is discarded on the main thread`() {
+        val harness = Harness()
+        harness.coordinator.bind(blocks("A"), 800, 1200)
+        // Planning completes on the background thread and queues its delivery.
+        harness.background.runAll()
+        // Only THEN does the view cancel (e.g. detach). The stale-apply
+        // re-check inside the Main delivery is the last line of defense and
+        // must drop the queued result.
+        harness.coordinator.cancelPending()
+        harness.main.runAll()
+
+        harness.applied.size shouldBe 0
+        // A dropped delivery must not populate the cache either.
+        harness.cache.get(TextLayoutCacheKey(blocks("A"), 800, 1200)) shouldBe null
+    }
+
+    @Test
+    fun `identical rebind after cancelPending re-plans instead of staying blank`() {
+        val harness = Harness()
+        harness.coordinator.bind(blocks("A"), 800, 1200)
+        harness.background.runAll() // plan done, delivery queued
+        harness.coordinator.cancelPending() // detach cancels it
+        harness.main.runAll() // delivery discarded; cache NOT populated
+
+        // Same view re-attaches and rebinds IDENTICAL content: it must not be
+        // short-circuited as Unchanged — the only plan that would have served
+        // it was just discarded, so Unchanged here means a blank overlay.
+        val result = harness.coordinator.bind(blocks("A"), 800, 1200)
+
+        result.shouldBeInstanceOf<TextLayoutBindResult.Planning>()
+        harness.drain()
+        harness.planCalls shouldBe 2
+        harness.applied.single() shouldBe "A"
+    }
+
+    @Test
+    fun `cancelPending after a successful apply still rebinds identically via the cache`() {
+        val harness = Harness()
+        harness.coordinator.bind(blocks("A"), 800, 1200)
+        harness.drain() // applied and cached
+        harness.coordinator.cancelPending()
+
+        val result = harness.coordinator.bind(blocks("A"), 800, 1200)
+
+        // Bound identity was dropped, but the delivered result is cached: the
+        // rebind is a synchronous hit, not a wasted re-plan and not a no-op.
+        result.shouldBeInstanceOf<TextLayoutBindResult.Ready<String>>()
+        result.prepared shouldBe "A"
+        harness.planCalls shouldBe 1
     }
 
     @Test
