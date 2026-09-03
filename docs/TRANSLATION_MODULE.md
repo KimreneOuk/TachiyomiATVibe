@@ -6,9 +6,9 @@
 > extracted `pipeline/`, `manager/`, `store/`, `artifact/` and merged batch
 > state + workers into `pipeline/batch/`; root-level files are the facade hubs.
 >
-> 📖 See [`docs/architecture/translation-subsystem-coexistence-v3-draft.md`](./architecture/translation-subsystem-coexistence-v3-draft.md)
+> 📖 See [`docs/architecture/translation-subsystem-coexistence.md`](./architecture/translation-subsystem-coexistence.md)
 > for the multi-modal coexistence and concurrency specification (v2.1 was rejected by the
-> T916 audit and is superseded; v3.0 is the governing draft).
+> T916 audit and is superseded; v3.0 is canonical as of 2026-09-03).
 
 ---
 

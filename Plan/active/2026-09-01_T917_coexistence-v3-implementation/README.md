@@ -3,7 +3,9 @@
 ## Objective
 
 Implement the coexistence contract defined in
-`docs/architecture/translation-subsystem-coexistence-v3-draft.md`.
+`docs/architecture/translation-subsystem-coexistence.md` (v3.0; the draft file
+`translation-subsystem-coexistence-v3-draft.md` was promoted to canonical at
+`docs/architecture/translation-subsystem-coexistence.md` on 2026-09-03).
 All decision points D1–D13 are **resolved as of 2026-09-01**: the Director adopted every
 Recommendation (§6 of the draft). The goal is to replace silent-failure and contradictory
 coexistence behavior with visible, ownership-clean, tested contracts — without regressing
@@ -13,7 +15,7 @@ reader performance or normal (translation-disabled) manga.
 
 1. Your role file (`docs/roles/<role>.md`).
 2. This README and `PLAN.md` (same folder).
-3. `docs/architecture/translation-subsystem-coexistence-v3-draft.md` — the normative spec
+3. `docs/architecture/translation-subsystem-coexistence.md` — the normative spec
    (§4 verified baseline, §6 decisions, §7 outcome contract, §8 verification plan, §9 rollout).
 4. The evidence base for any finding you touch:
    `Plan/active/2026-09-01_T916_translation-coexistence-strict-audit/STRICT_AUDIT_REPORT.md`

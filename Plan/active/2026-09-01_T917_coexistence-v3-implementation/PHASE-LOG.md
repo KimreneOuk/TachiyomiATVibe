@@ -186,3 +186,12 @@ full findings: `engineering/phase6-ondevice-verification-notes.md`.
 - Pending close (Director decision outstanding): §8.3 descope-or-execute →
   promote `translation-subsystem-coexistence-v3-draft.md` → canonical → merge
   `t917/coexistence-v3` → `main` → tag `checkpoint/t917-release`.
+
+### Gate — Phase 6 / Director sign-off (2026-09-03)
+- **Director decision: §8.3 DESCOPED for this release** (explicit, recorded
+  2026-09-03). Single-device evidence timings stand as the only recorded
+  numbers; every performance figure remains `[TARGET]` per draft §8.3/D13;
+  D6 210 s drain re-validation and the D11 write-behind decision stay on the
+  carry list pending a future protocol run. Release proceeds: v3.0 promoted
+  to canonical, `t917/coexistence-v3` merged to `main`, tagged
+  `checkpoint/t917-release`.
