@@ -8,6 +8,9 @@ import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasCommittedDisplay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -144,6 +147,7 @@ internal object LegacyChapterMigrationSource {
             emptyMap(),
             legacyPages,
         )
+        val startMs = System.currentTimeMillis()
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val artifactStore = ChapterArtifactStore(documents, layout, artifactImageProbe)
@@ -210,11 +214,27 @@ internal object LegacyChapterMigrationSource {
                     eu.kanade.translation.artifact.LegacyPreservationState.PRESERVED,
                 )
             if (needsHealthVerification) {
-                manifest = artifactStore.verifyLegacyArtifactHealth(
-                    manifest = manifest,
-                    currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
-                    hasActiveLease = false,
-                ).manifest
+                if (manifest.pages.size <= 8) {
+                    manifest = artifactStore.verifyLegacyArtifactHealth(
+                        manifest = manifest,
+                        currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                        hasActiveLease = false,
+                    ).manifest
+                } else {
+                    // For large chapters (>8 pages), offload health verification and
+                    // preserved source cleanup to background so chapter entry is instant.
+                    val currentManifest = manifest
+                    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            artifactStore.verifyLegacyArtifactHealth(
+                                manifest = currentManifest,
+                                currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                                hasActiveLease = false,
+                            )
+                        }
+                    }
+                }
             }
         }
         val maxEagerSnapshots = if (manifest.pages.size <= 8) manifest.pages.size else 4
@@ -250,6 +270,11 @@ internal object LegacyChapterMigrationSource {
                 ?: return@mapNotNull null
             pageKey to setOf(name)
         }.toMap()
+        val elapsed = System.currentTimeMillis() - startMs
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT chapter open completed in ${elapsed}ms: pages=${manifest.pages.size} " +
+                "eagerSnapshots=$eagerCommittedLoaded authority=${manifest.authority}"
+        }
         return ArtifactLoad(artifactStore, manifest, committedPages, livePages, retiredCleanedImages)
     }
 

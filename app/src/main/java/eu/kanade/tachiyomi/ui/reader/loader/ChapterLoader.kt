@@ -44,8 +44,12 @@ class ChapterLoader(
                 val loader = getPageLoader(chapter)
                 chapter.pageLoader = loader
 
+                val pagesStart = System.currentTimeMillis()
                 val pages = loader.getPages()
                     .onEach { it.chapter = chapter }
+                logcat(logcat.LogPriority.INFO) {
+                    "TachiyomiAT ChapterLoader.getPages() completed in ${System.currentTimeMillis() - pagesStart}ms for ${pages.size} pages"
+                }
 
                 if (pages.isEmpty()) {
                     throw Exception(context.stringResource(MR.strings.page_list_empty_error))
