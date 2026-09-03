@@ -101,9 +101,17 @@ internal class StorePersistenceScheduler(private val store: ChapterTranslationSt
     }
 
     suspend fun closeAndFlush() {
+        // T921 hotfix: no retention sweep here either. closeAndFlush runs on
+        // the caller's coroutine — for probe stores that is the reader-entry
+        // path itself (DurableChapterStatusResolver.withProbeStore's finally),
+        // so the multi-second recursive SAF crawl stalled every first open of
+        // a chapter (measured ~15s on a 68-page chapter, proportional to the
+        // 57s crawl on a 260-page chapter). Same rationale as the loadOrMigrate
+        // removal: deferred cleanup is owned by the event-driven retention
+        // follow-up. Explicit reconcileArtifactRetention() remains available
+        // for callers that truly want it at a boundary.
         mutex.withLock {
             flushDirtyLocked()
-            reconcileArtifactRetentionLocked()
         }
         persistScope.cancel()
     }
