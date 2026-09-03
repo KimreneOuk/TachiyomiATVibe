@@ -54,15 +54,13 @@ internal class TextLayoutCoordinator<T : Any>(
     private val plan: (blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) -> T,
     private val onPrepared: (T) -> Unit,
 ) {
+    // Read from the planner thread as a fast-path superseded check; the
+    // authoritative check runs on Main. @Volatile formalizes that cross-thread
+    // read: without it a stale read only wastes a plan (dropped on Main), but
+    // the volatile guarantees the skip is seen promptly.
+    @Volatile
     private var generation = 0L
     private var boundKey: TextLayoutCacheKey? = null
-
-    /**
-     * True while the coordinator's bound state is the clear/empty state (never
-     * bound, or last bind was clear-shaped). Lets repeated `clear()` calls stay
-     * the cheap no-op they were before the offload.
-     */
-    val isCleared: Boolean get() = boundKey == null
 
     fun bind(
         blocks: List<TranslationBlock>,
@@ -107,10 +105,16 @@ internal class TextLayoutCoordinator<T : Any>(
     }
 
     /**
-     * Invalidates in-flight deliveries without changing bound visuals (used on
-     * view detach so a detached view can never receive an apply).
+     * Invalidates in-flight deliveries and drops the bound identity (used on
+     * view detach). Both halves matter: the generation bump makes a detached
+     * view drop any late delivery on Main, and clearing [boundKey] guarantees
+     * that a subsequent IDENTICAL rebind re-plans (or re-hits the cache)
+     * instead of being short-circuited as [TextLayoutBindResult.Unchanged]
+     * while the only plan that would have served it was just discarded — that
+     * short-circuit would leave the overlay blank indefinitely.
      */
     fun cancelPending() {
         generation++
+        boundKey = null
     }
 }
