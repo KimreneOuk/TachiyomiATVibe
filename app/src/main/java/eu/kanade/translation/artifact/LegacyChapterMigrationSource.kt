@@ -217,12 +217,20 @@ internal object LegacyChapterMigrationSource {
                 ).manifest
             }
         }
+        val maxEagerSnapshots = if (manifest.pages.size <= 8) manifest.pages.size else 4
+        var eagerCommittedLoaded = 0
         val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
             val committed = record.committed ?: return@mapNotNull null
-            val snapshot = artifactStore.readPageSnapshot(committed.pageSnapshotFileName)
+            val snapshot = if (eagerCommittedLoaded < maxEagerSnapshots) {
+                val loaded = artifactStore.readPageSnapshot(committed.pageSnapshotFileName)
+                if (loaded != null) eagerCommittedLoaded++
+                loaded
+            } else {
+                null
+            }
                 ?: legacyPages[pageKey]?.takeIf { manifest.authority == ManifestAuthority.LEGACY }
                 ?: record.toSynthesizedPageTranslation()
-            snapshot.let { pageKey to it }
+            pageKey to snapshot
         }.toMap()
         val livePages = when (manifest.authority) {
             ManifestAuthority.LEGACY -> legacyPages

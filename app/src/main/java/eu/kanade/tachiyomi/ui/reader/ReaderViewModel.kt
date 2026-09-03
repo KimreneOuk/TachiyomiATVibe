@@ -368,6 +368,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private var translationBatchProgressJob: kotlinx.coroutines.Job? = null
     private var translationStateJob: kotlinx.coroutines.Job? = null
     private var autoSnapshotJob: kotlinx.coroutines.Job? = null
+    private var currentTranslationStore: eu.kanade.translation.ChapterTranslationStore? = null
 
     /** Resolver indirection is invalidated before any chapter/page resources are recycled. */
     private val autoPageResolver = ReaderAutoTranslationPageResolver(chapterCache)
@@ -830,6 +831,17 @@ class ReaderViewModel @JvmOverloads constructor(
             page.showTranslatedImage = false
             return
         }
+        val store = currentTranslationStore
+        if (store != null) {
+            val translation = page.translation
+            if (translation != null && translation.blocks.isEmpty()) {
+                val pageKey = resolvePageKey(page)
+                val hydrated = store.getOrLoadPageSnapshot(pageKey)
+                if (hydrated != null) {
+                    page.translation = hydrated
+                }
+            }
+        }
         val translation = page.translation
         page.translatedStream = when {
             translation?.displayImageName != null -> translationManager.getCleanedImageStream(
@@ -910,6 +922,7 @@ class ReaderViewModel @JvmOverloads constructor(
         translationStoreJob?.cancel()
         translationBatchProgressJob?.cancel()
         translationStateJob?.cancel()
+        currentTranslationStore = null
         val readerStop = translationManager.requestReaderStop("reader closed")
         registerReaderCleanupAfterStop(readerStop) {
             // The joined manager boundary guarantees no in-flight work can open a retained page
@@ -2673,6 +2686,7 @@ class ReaderViewModel @JvmOverloads constructor(
             source,
             manga.id,
         ) ?: return
+        currentTranslationStore = store
         val storeState = store.state
         translationStoreJob = viewModelScope.launchIO {
             // TachiyomiAT: heal stranded RUNNING/PENDING pages left behind by a
