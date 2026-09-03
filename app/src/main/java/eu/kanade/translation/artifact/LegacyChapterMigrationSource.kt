@@ -41,8 +41,18 @@ internal object LegacyChapterMigrationSource {
         parent: UniFile?,
         fileName: String,
     ): ChapterTranslationStore {
+        val artifactLayout = ChapterArtifactLayout.fromTranslationFileName(fileName)
+        val artifactManifestFileExists = parent?.findFile(artifactLayout.manifestFileName)?.exists() == true
+        val manifestProbe = if (artifactManifestFileExists && parent != null) {
+            ChapterArtifactManifestReader.probeArtifactManifest(parent, fileName)
+        } else {
+            null
+        }
+        val isArtifactAuthoritative = manifestProbe?.exists == true &&
+            manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS
+
         var legacyCorrupt = false
-        val legacyBytes = if (translationFile?.exists() == true) {
+        val legacyBytes = if (!isArtifactAuthoritative && translationFile?.exists() == true) {
             runCatching { translationFile.openInputStream().use { it.readBytes() } }
                 .onFailure { legacyCorrupt = true }
                 .getOrNull()
@@ -81,8 +91,6 @@ internal object LegacyChapterMigrationSource {
         } else {
             emptyMap()
         }
-        val artifactLayout = ChapterArtifactLayout.fromTranslationFileName(fileName)
-        val artifactManifestFileExists = parent?.findFile(artifactLayout.manifestFileName)?.exists() == true
         val artifactLoad = if (translationFile?.exists() == true || artifactManifestFileExists) {
             val migrationLock = artifactMigrationLock(parent, fileName)
             synchronized(migrationLock) {

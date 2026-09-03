@@ -1149,9 +1149,13 @@ class TranslationManager(
         val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source) ?: return null
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         if (document.file?.exists() != true && !manifestProbe.exists) return null
+        val isArtifactAuthoritative = manifestProbe.exists &&
+            manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS
         val store = if (chapterId != null) {
             activeStores.getOrCreate(chapterId, document.registryKey) {
-                if (document.file?.exists() == true) {
+                if (isArtifactAuthoritative) {
+                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                } else if (document.file?.exists() == true) {
                     ChapterTranslationStore.open(document.file)
                 } else {
                     ChapterTranslationStore.openArtifact(document.parent, document.fileName)
@@ -1159,7 +1163,9 @@ class TranslationManager(
             }
         } else {
             activeStores.getOrCreateFile(document.registryKey) {
-                if (document.file?.exists() == true) {
+                if (isArtifactAuthoritative) {
+                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                } else if (document.file?.exists() == true) {
                     ChapterTranslationStore.open(document.file)
                 } else {
                     ChapterTranslationStore.openArtifact(document.parent, document.fileName)

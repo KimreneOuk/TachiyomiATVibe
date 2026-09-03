@@ -7,6 +7,9 @@ import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
@@ -113,7 +116,14 @@ class ChapterArtifactStore(
             // stream, remove only unreachable managed artifacts. Legacy
             // companion images remain outside the managed tree and are owned
             // by the reader stream registry.
-            reconcileRetention(existing)
+            if (existing.pages.size <= 8) {
+                reconcileRetention(existing)
+            } else {
+                @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { reconcileRetention(existing) }
+                }
+            }
             if (existing.authority == ManifestAuthority.ARTIFACTS) {
                 // Phase 3 cutover: transactional writes own this manifest.
                 // Legacy bytes (still written by the live pipeline) must never
