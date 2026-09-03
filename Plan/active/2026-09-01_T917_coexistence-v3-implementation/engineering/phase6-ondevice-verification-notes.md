@@ -74,24 +74,73 @@ makes no billed calls), companion cleaned images for all 4 pages, .nomedia at
 every level — the directory chain was created by the `fileCreator` fix.
 Logcat evidence: `phase6-e2e-logcat.log` (2199 lines).
 
-### F6 — NEW DEFECT (T917-relevant, under investigation): multi-page batch translates only the first work-needing page per pass
+### F6 — FIXED + ON-DEVICE VERIFIED (T917 defect): multi-page standard batch stranded every page after the first work-needing page
 
-In the same run, pages 002-004 skipped translation AND render stages
-(`stage_timing ... stage=translation durationMs=0 success=true items=N`,
-render 0ms) with NO `stage_decision` events for the translation stage, then
-were stranded by the reconciler ("Translation incomplete — expected page has
-no readable terminal output") → `batch complete outcome=ERROR`. Sheet showed
-honest totals (1 of 4 pages ready, AI Translation 1/4, 3 pending) with honest
-red error bar on reopen, and the reader showed page 2 untranslated with a
-"Failed" chip (`p6-r-reader-p2b.png`) — Phase-5 truth layer worked as designed;
-the defect is upstream (planner/lane). Static analysis so far: `planChapter`
+**Defect (found live in the first full run):** pages 002-004 skipped
+translation AND render stages (`stage_timing ... stage=translation
+durationMs=0 success=true items=N`, render 0ms) with NO `stage_decision`
+events for the translation stage, then were stranded by the reconciler
+("Translation incomplete — expected page has no readable terminal output") →
+`batch complete outcome=ERROR`. The sheet showed honest totals (1 of 4 pages
+ready, 3 pending) with an honest red error bar, and the reader showed page 2
+untranslated with a "Failed" chip (`p6-r-reader-p2b.png`) — the Phase-5 truth
+layer worked as designed; the defect was upstream (planner/lane).
+
+**Root cause** (`phase6-multipage-strand-investigation.md`): `planChapter`
 overwrites every page after the first ordered-work page with
-`WAIT_FOR_DEPENDENCY/PRIOR_PAGE_INCOMPLETE`; `BatchResumePlanner.batchPagePlans`
-is built once and immutable; the standard-lane skip
-(`priorPageBlocksStandardTranslation`) keyed on that immutable plan reason
-never unblocks within a pass. Specialist investigation dispatched →
-`phase6-multipage-strand-investigation.md`. Pages 002-004 artifacts show
-candidate-only commits, matching the strand reason.
+`WAIT_FOR_DEPENDENCY/PRIOR_PAGE_INCOMPLETE` in the immutable batch-start plan
+(`BatchResumePlanner.batchPagePlans`). The standard-lane skip
+(`priorPageBlocksStandardTranslation`) keyed on that static reason never
+re-checked whether the predecessor had *since* reached a terminal outcome, so
+every pass translated exactly one more page and re-stranded the rest.
+`translateOutcome`'s silent default (`ChunkCompletionOutcome.Completed`)
+laundered the skips into "success", hiding the strand from the pass loop; only
+the stranded-page reconciler caught it honestly. AI lane was immune (its
+multi-page envelopes + `!isAi` guard). JVM tests missed it because their
+"batch completes" fixtures were one-page.
+
+**Fix (commit `d289ff0`, `BatchLaneWorkers.kt`):**
+- Live predecessor-terminality check: a planned
+  `PRIOR_PAGE_INCOMPLETE` block only holds while the natural-order
+  predecessor is STILL non-terminal in the live store
+  (`naturalOrderPredecessorTerminal` via `orderedStreams` + `store.state`
+  translationStatus READY/SKIPPED).
+- Live-store completed-page skip twin (`completedStandardPageAfterPriorGap`):
+  a WAIT_FOR_DEPENDENCY/PRIOR_PAGE_INCOMPLETE page whose live store status is
+  already READY/SKIPPED skips re-translation — deliberately origin- and
+  fingerprint-blind, reading `store.state.value[pageKey]` instead of the stale
+  `translationRegistry` snapshot (D1: manual output is authoritative and is
+  never re-paid; the manual path does not stamp `translationFingerprint`, so a
+  fingerprint fence cannot be used).
+
+**Tests** (`StandardLaneMultiPageCompletionTest`, harness-based):
+- Positive: 3-page fresh standard batch → each page translates exactly once
+  (`transportCallsFor == 1`), reconciliation TRANSLATED, no stranded pages,
+  all renderStatus READY. RED first via a named negative probe (the multi-page
+  batch "never translates p1: static PRIOR_PAGE_INCOMPLETE skip is permanent
+  within a pass").
+- Negative control: FAILED predecessor keeps successors honestly stranded
+  (transport stays silent, page stays PENDING).
+- Full sweep after fix caught the D2 manual→batch double-pay regression the
+  first fix attempt introduced (fingerprint-fenced skip missed it): batch
+  re-translated a manually-owned page (paid calls 1→2). The live-store
+  origin-blind skip resolved it. Final sweep: **198 suites / 1446 tests /
+  0 failures / 0 errors / 0 skipped** (XML-verified).
+
+**On-device verification after fix (real retry run, same chapter):**
+- All 4 pages ran real stages with non-zero timings — translation
+  16634 / 8817 / 10474 / 8977 ms (ML Kit NMT), OCR/inpaint/render all
+  `success=true`; logcat evidence `phase6-f6-fix-logcat.log`:
+  `batch complete chapter=紙単行本告知 pages=4 outcome=TRANSLATED`.
+- Progress sheet reached 100% — "4 of 4 pages ready to read", all four
+  pipeline stages 4/4 ✓ (`p6-f6-complete.png`).
+- Reader overlays verified on every page: 2/4
+  ("I'M LOOKING FORWARD TO THE QUIET TIME AT FUKU'S BOOKSTORE.", "THANK YOU
+  FOR CALM", "BABY.", "FUKU KUN"), 3/4 ("THANK YOU VERY MUCH", "BUY IT ~",
+  "CULTURE 3 RELEASE!", "TALENT"), 4/4 color cover ("M MISCELLANEOUS TYPE
+  CORPORATION", "STEEL CHILD IS STILL", "START STARTED STARTING AT EACH
+  BOOKSTORE!") — `p6-f6-reader-p4.png`, `p6-f6-reader-p3.png`,
+  `p6-f6-reader-p4-final.png`.
 
 ### F2 — Pre-existing (NOT T917): Local-source chapters cannot be translated
 
@@ -134,6 +183,18 @@ version → same JNI surface; release builds and arm devices unaffected). After
 rebuild/reinstall the full ONNX pipeline ran on the emulator
 (`route=CPU_XNNPACK`). Note for the Director: production emulator-coverage of
 ONNX remains arm-only unless a mixed-ABI packaging strategy is adopted.
+
+### F8 — UX gap (carry list): terminal/error progress sheet has no Retry affordance
+
+After the F6 error completion, the sheet sat in its Idle/terminal state with a
+red error bar and a row-level ❗ icon whose content description says "retry is
+available" — but the sheet itself offered NO Retry/Resume button in that state
+(long-press did nothing either). The retry only fired after closing the sheet
+and tapping the chapter row's ❗ icon again in the chapter list. Retry works,
+but it is undiscoverable from the sheet where the failure is explained.
+Overlaps the F5 catch-all-copy item: the sheet's terminal-state action surface
+needs a pass (honest subtitle + a Retry action when any page is
+retryable-failed). Recorded, not fixed in P6.
 
 ## Emulator automation notes (for reproducibility)
 

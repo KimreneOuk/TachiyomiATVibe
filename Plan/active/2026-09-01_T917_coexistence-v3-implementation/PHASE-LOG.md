@@ -106,3 +106,66 @@ Format per PLAN.md §2: each gate records what landed, the checkpoint tag, and t
 ### Gate — Phase 5
 - Tag: `checkpoint/t917-p5-done`
 - Exit criteria met: conditions A/B/C/D implemented per spec + named RED conditions ✔ · reader hop completed post-review (P5-1 closed) ✔ · reviewer ACCEPT-WITH-NOTES with G1/G2 executed ✔ · clean sweep BUILD SUCCESSFUL ✔ · soak 100/100 ✔ · isolation untouched-green ✔ · no native kill ✔ · D13: no measured numbers in UI ✔
+
+## Phase 6 — On-device end-to-end verification — execution complete, gate in progress
+
+Environment: AVD `T917_Verify` (`emulator-5554`), Android 14 API 34 no-GMS, x86_64,
+6 GB config; app `app.kanade.tachiyomi.at.debug` (standard flavor). Evidence +
+full findings: `engineering/phase6-ondevice-verification-notes.md`.
+
+- **Verified working on device:** install + SAF onboarding; Local source browse/read;
+  D10 honest `unsupported_source` sheet on Local batch (no hang, no fake progress);
+  extension repo + install flow; CyComi online browse → 102-chapter list → reader;
+  translation settings (JP → MangaOCR auto-switch); bundled ML Kit + MangaOCR models
+  present in APK. **Full pipeline E2E real run:** OCR (ONNX `route=CPU_XNNPACK`,
+  12 blocks, 9.3 s) → ML Kit NMT translation → AOTInpainting FAST → render →
+  English overlays in the reader on **all 4 pages** of a real chapter; durable layer
+  verified on disk (`_artifacts/` manifest, generation snapshots, committed pages,
+  D9 `attempts/ledger.json` schema-correct — entries empty, correct for on-device
+  ML Kit: no billed calls); Phase-5 truth layer honest throughout (honest totals,
+  red bars, row ❗, reader "Failed" chips during defect states).
+- **F1 (T917 defect) FIXED** `1812cf9`: lazy store's first mutation on a
+  never-translated manga rejected with `LEGACY_RESCUE_FAILED` (artifactParent null,
+  `findMangaDir` find-only). Fix: `fileCreator` seam revived as last-resort parent
+  resolution (`getMangaDir` create path), lazy intent preserved. TDD 2 named tests;
+  sweep **197/1444/0** XML-verified. E2E-verified on device (the directory chain +
+  committed artifacts above were created by this fix).
+- **F7 (packaging)**: `onnxruntime-android-qnn:1.27.0` is arm64-only → x86_64
+  emulator had no ONNX (`UnsatisfiedLinkError`). Debug-only jniLibs override
+  (`app/src/debug/jniLibs/x86_64/`, standard AAR same version, `.so` gitignored per
+  QNN precedent). Release/arm builds unaffected. Director note: emulator ONNX
+  coverage stays arm-only in production packaging.
+- **F6 (T917 defect) FIXED** `d289ff0`: multi-page standard batch translated only
+  the first work-needing page per pass — `planChapter`'s immutable
+  `PRIOR_PAGE_INCOMPLETE` marker was treated as permanently blocking
+  (`priorPageBlocksStandardTranslation` never re-checked the live predecessor), and
+  `translateOutcome`'s silent `Completed` default laundered the skips; the
+  reconciler stranded pages 2+ honestly (`outcome=ERROR`). Fix: live
+  predecessor-terminality check + origin/fingerprint-blind live-store skip twin
+  (D1 manual-authoritative, never re-paid — caught by the D2 exactly-once oracle
+  after the first fingerprint-fenced attempt). Tests:
+  `StandardLaneMultiPageCompletionTest` (exactly-once 3-page positive with named
+  negative probe + FAILED-predecessor honesty control); sweep **198/1446/0**
+  XML-verified. On-device: retry batch ran all 4 pages with real timings
+  (translation 16634/8817/10474/8977 ms), `batch complete pages=4
+  outcome=TRANSLATED`, sheet 100% "4 of 4 pages ready", reader overlays verified
+  pages 2/4–4/4 (`phase6-f6-fix-logcat.log`, `p6-f6-*.png`).
+- **Pre-existing / carry (recorded, not changed):** F2 Local-source reader gate
+  (non-HttpSource bail, pre-existing); F3 Rawkuma extension `IgnoreGzipInterceptor`
+  quirk (extension-side); F4 CManhua dead site (404); F5 sheet catch-all subtitle
+  fires on non-TRANSLATED terminal states (confirmed live twice — matches the
+  existing carry item); **F8** terminal sheet lacks any Retry affordance despite
+  row ❗ "retry is available" a11y desc (retry only via re-tapping the row icon) —
+  new carry item alongside the Phase-5 carry list.
+- **Carry list (Phase-5 forward + Phase-6):** markPageTimedOut SKIPPED guard;
+  notification/sheet catch-all gating on TRANSLATED (F5); sheet Retry affordance
+  (F8); chapter-level D9 a11y retry mode; partial+failed copy; ACTION_STOP
+  cancelled-acknowledgement; indicator a11y counts; i18n of pure copy; D7-1/D8-2/
+  D11-1; Deviation-2 label; D6 210 s re-validation; D11 write-behind decision;
+  translateOutcome silent-Completed secondary hardening; mixed-ABI ONNX packaging
+  decision (F7).
+- D13 honored: all numbers above are evidence timings/counts, not UI-measured
+  targets; no `[TARGET]` promoted.
+- Pending close: promote `translation-subsystem-coexistence-v3-draft.md` →
+  canonical; Reviewer acceptance (§6.2.11) → Director sign-off → merge
+  `t917/coexistence-v3` → `main` → tag `checkpoint/t917-release`.
