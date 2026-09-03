@@ -4,6 +4,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.translation.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
@@ -145,10 +146,15 @@ internal class DurableChapterStatusResolver(
         mangaTitle: String,
         source: Source,
     ): TranslationDocument? {
-        val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
-        val parent = file?.parentFile ?: provider.findMangaDir(mangaTitle, source) ?: return null
-        val fileName = file?.name ?: provider.getTranslationFileName(chapterName, scanlator)
-        return TranslationDocument(parent, fileName, file ?: parent.findFile(fileName))
+        val entryStage = ReaderEntryTrace.begin("translation.findDocument", null)
+        return try {
+            val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
+            val parent = file?.parentFile ?: provider.findMangaDir(mangaTitle, source) ?: return null
+            val fileName = file?.name ?: provider.getTranslationFileName(chapterName, scanlator)
+            TranslationDocument(parent, fileName, file ?: parent.findFile(fileName))
+        } finally {
+            entryStage.end()
+        }
     }
 
     /**

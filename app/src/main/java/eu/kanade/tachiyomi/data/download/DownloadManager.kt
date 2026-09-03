@@ -7,6 +7,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
+import eu.kanade.translation.ReaderEntryTrace
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asFlow
 import kotlinx.coroutines.flow.drop
@@ -220,6 +221,7 @@ class DownloadManager(
      */
     fun buildPageList(chapterDir: UniFile?): List<Pair<String, Page>> {
         val startedAt = SystemClock.elapsedRealtimeNanos()
+        val entryStage = ReaderEntryTrace.begin("download.buildPageList", null)
         var findChapterDirNanos = 0L
         var listFilesNanos = 0L
         var filterNanos = 0L
@@ -278,6 +280,7 @@ class DownloadManager(
             errorClass = error.javaClass.simpleName
             throw error
         } finally {
+            entryStage.end()
             logcat(LogPriority.INFO) {
                 "[reader_entry] DownloadManager.buildPageList " +
                     "findDirMs=${findChapterDirNanos.toMillis()} listFilesMs=${listFilesNanos.toMillis()} rawCount=$rawCount " +

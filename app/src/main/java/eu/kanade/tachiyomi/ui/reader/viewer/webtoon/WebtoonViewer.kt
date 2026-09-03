@@ -17,6 +17,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderActivity
 import eu.kanade.tachiyomi.ui.reader.model.ChapterTransition
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
 import eu.kanade.tachiyomi.ui.reader.model.ViewerChapters
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.Viewer
 import eu.kanade.tachiyomi.ui.reader.viewer.ViewerNavigation.NavigationRegion
@@ -260,6 +261,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
      */
     override fun setChapters(chapters: ViewerChapters) {
         val startedAt = SystemClock.elapsedRealtimeNanos()
+        val entryStage = ReaderEntryTrace.begin("viewer.setChapters", chapters.currChapter.chapter.id)
         val pageCount = chapters.currChapter.pages?.size ?: 0
         val requestedPage = chapters.currChapter.requestedPage
         val oldAdapterCount = adapter.items.size
@@ -289,6 +291,7 @@ class WebtoonViewer(val activity: ReaderActivity, val isContinuous: Boolean = tr
             errorClass = error.javaClass.simpleName
             throw error
         } finally {
+            entryStage.end()
             logcat(LogPriority.INFO) {
                 "[reader_entry] WebtoonViewer.setChapters " +
                     "pageCount=$pageCount requestedPage=$requestedPage oldAdapterCount=$oldAdapterCount " +

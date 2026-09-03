@@ -3,6 +3,7 @@ package eu.kanade.translation.artifact
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
@@ -41,13 +42,16 @@ internal object LegacyChapterMigrationSource {
         parent: UniFile?,
         fileName: String,
     ): ChapterTranslationStore {
+        val openStoreStage = ReaderEntryTrace.begin("translation.openStore", null)
         val artifactLayout = ChapterArtifactLayout.fromTranslationFileName(fileName)
+        val probeManifestStage = ReaderEntryTrace.begin("openStore.probeManifest", null)
         val artifactManifestFileExists = parent?.findFile(artifactLayout.manifestFileName)?.exists() == true
         val manifestProbe = if (artifactManifestFileExists && parent != null) {
             ChapterArtifactManifestReader.probeArtifactManifest(parent, fileName)
         } else {
             null
         }
+        probeManifestStage.end()
         val isArtifactAuthoritative = manifestProbe?.exists == true &&
             manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS
 
@@ -93,6 +97,7 @@ internal object LegacyChapterMigrationSource {
         }
         val artifactLoad = if (translationFile?.exists() == true || artifactManifestFileExists) {
             val migrationLock = artifactMigrationLock(parent, fileName)
+            val migrateStage = ReaderEntryTrace.begin("openStore.migrate", null)
             synchronized(migrationLock) {
                 runCatching {
                     migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt)
@@ -101,10 +106,11 @@ internal object LegacyChapterMigrationSource {
                         "TachiyomiAT artifact manifest migration skipped: reason=open failure"
                     }
                 }.getOrNull()
-            }
+            }.also { migrateStage.end() }
         } else {
             null
         }
+        openStoreStage.end()
         return ChapterTranslationStore(
             translationFile = translationFile,
             fileCreator = null,
@@ -116,7 +122,9 @@ internal object LegacyChapterMigrationSource {
             artifactParent = parent,
             artifactFileName = fileName,
         ).also {
+            val loadGlossaryStage = ReaderEntryTrace.begin("openStore.loadGlossary", null)
             it.loadGlossary()
+            loadGlossaryStage.end()
         }
     }
 
@@ -187,6 +195,7 @@ internal object LegacyChapterMigrationSource {
             emptyMap()
         }
         val migratedAtEpochMs = System.currentTimeMillis()
+        val loadOrMigrateStage = ReaderEntryTrace.begin("migrate.loadOrMigrate", null)
         val loaded = artifactStore.loadOrMigrate(
             LegacyChapterSnapshot(
                 pages = facts,
@@ -203,7 +212,7 @@ internal object LegacyChapterMigrationSource {
                 migratedByVersionCode = BuildConfig.VERSION_CODE.toLong(),
                 migratedAtEpochMs = migratedAtEpochMs,
             ),
-        )
+        ).also { loadOrMigrateStage.end() }
         var manifest = loaded.manifest
         if (manifest.authority == ManifestAuthority.ARTIFACTS) {
             manifest = artifactStore.reconcileLegacyPreservation(manifest)
@@ -234,6 +243,7 @@ internal object LegacyChapterMigrationSource {
                     val currentManifest = manifest
                     @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
                     kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val verifyHealthStage = ReaderEntryTrace.begin("store.verifyHealthBackground", null)
                         runCatching {
                             artifactStore.verifyLegacyArtifactHealth(
                                 manifest = currentManifest,
@@ -241,10 +251,12 @@ internal object LegacyChapterMigrationSource {
                                 hasActiveLease = false,
                             )
                         }
+                        verifyHealthStage.end()
                     }
                 }
             }
         }
+        val eagerSnapshotsStage = ReaderEntryTrace.begin("migrate.eagerSnapshots", null)
         val maxEagerSnapshots = if (manifest.pages.size <= 8) manifest.pages.size else 4
         var eagerCommittedLoaded = 0
         val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
@@ -271,6 +283,7 @@ internal object LegacyChapterMigrationSource {
                 pageKey to snapshot
             }.toMap()
         }
+        eagerSnapshotsStage.end()
         val retiredCleanedImages = manifest.pages.mapNotNull { (pageKey, record) ->
             val previous = record.previousCommitted ?: return@mapNotNull null
             val name = previous.displayBase.fileName

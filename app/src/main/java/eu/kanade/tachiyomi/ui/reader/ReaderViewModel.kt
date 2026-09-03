@@ -49,6 +49,7 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
 import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.PageIndexResolver
@@ -954,30 +955,40 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     suspend fun init(mangaId: Long, initialChapterId: Long): Result<Boolean> {
         if (!needsInit()) return Result.success(true)
-        return withIOContext {
-            try {
-                val manga = getManga.await(mangaId)
-                if (manga != null) {
-                    sourceManager.isInitialized.first { it }
-                    mutableState.update { it.copy(manga = manga) }
-                    if (chapterId == -1L) chapterId = initialChapterId
+        val entryStage = ReaderEntryTrace.begin("vm.init", initialChapterId)
+        return try {
+            withIOContext {
+                try {
+                    val manga = getManga.await(mangaId)
+                    if (manga != null) {
+                        sourceManager.isInitialized.first { it }
+                        mutableState.update { it.copy(manga = manga) }
+                        if (chapterId == -1L) chapterId = initialChapterId
 
-                    val context = Injekt.get<Application>()
-                    val source = sourceManager.getOrStub(manga.source)
-                    loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
+                        val context = Injekt.get<Application>()
+                        val source = sourceManager.getOrStub(manga.source)
+                        loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
 
-                    loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
-                    Result.success(true)
-                } else {
-                    // Unlikely but okay
-                    Result.success(false)
+                        val loadStage = ReaderEntryTrace.begin("vm.loadChapter", chapterId)
+                        try {
+                            loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
+                        } finally {
+                            loadStage.end()
+                        }
+                        Result.success(true)
+                    } else {
+                        // Unlikely but okay
+                        Result.success(false)
+                    }
+                } catch (e: Throwable) {
+                    if (e is CancellationException) {
+                        throw e
+                    }
+                    Result.failure(e)
                 }
-            } catch (e: Throwable) {
-                if (e is CancellationException) {
-                    throw e
-                }
-                Result.failure(e)
             }
+        } finally {
+            entryStage.end()
         }
     }
 

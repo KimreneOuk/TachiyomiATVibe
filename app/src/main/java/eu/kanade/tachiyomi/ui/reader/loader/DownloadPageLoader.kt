@@ -10,6 +10,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
@@ -43,6 +44,7 @@ internal class DownloadPageLoader(
 
     override suspend fun getPages(): List<ReaderPage> {
         val startedAt = SystemClock.elapsedRealtimeNanos()
+        val entryStage = ReaderEntryTrace.begin("download.getPages", chapter.chapter.id)
         val dbChapter = chapter.chapter
         var findChapterDirNanos = 0L
         var translationNanos = 0L
@@ -100,6 +102,7 @@ internal class DownloadPageLoader(
             errorClass = error.javaClass.simpleName
             throw error
         } finally {
+            entryStage.end()
             logcat(LogPriority.INFO) {
                 "[reader_entry] DownloadPageLoader.getPages " +
                     "chapterId=${dbChapter.id ?: -1L} requestedPage=${chapter.requestedPage} " +

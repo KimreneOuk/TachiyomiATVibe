@@ -1105,21 +1105,29 @@ class TranslationManager(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
-    ): Map<String, PageTranslation> = withContext(Dispatchers.IO) {
-        activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
-        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
-            ?: return@withContext emptyMap()
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-        if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
-            return@withContext openExistingChapterTranslationStore(
-                chapterId,
-                chapterName,
-                scanlator,
-                mangaTitle,
-                source,
-            )?.state?.value.orEmpty()
+    ): Map<String, PageTranslation> {
+        val entryStage = ReaderEntryTrace.begin("translation.getForReader", chapterId)
+        return try {
+            withContext(Dispatchers.IO) {
+                activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+                val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
+                    ?: return@withContext emptyMap()
+                val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
+                if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
+                    return@withContext openExistingChapterTranslationStore(
+                        chapterId,
+                        chapterName,
+                        scanlator,
+                        mangaTitle,
+                        source,
+                    )?.state?.value.orEmpty()
+                }
+                return@withContext document.file
+                    ?.let { decodeLegacyChapterTranslation(it, quarantineOnFailure = true) }.orEmpty()
+            }
+        } finally {
+            entryStage.end()
         }
-        return@withContext document.file?.let { decodeLegacyChapterTranslation(it, quarantineOnFailure = true) }.orEmpty()
     }
 
     fun getChapterTranslation(
