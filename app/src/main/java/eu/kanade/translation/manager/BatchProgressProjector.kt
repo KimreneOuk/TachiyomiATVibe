@@ -314,6 +314,10 @@ internal class BatchProgressProjector(
         pageMap = pages,
         displayPageMap = display,
         permitHolderPageKey = pipeline.permitHolderPageKeySnapshot(),
+        // T917 Phase 5 (D10): the store page set is the trusted source total
+        // only when the manifest says so — a partial download's available
+        // pages must project the unknown-total phase, never a percentage.
+        expectedPageCountTrusted = store.artifactManifest?.expectedPageCountTrusted == true,
     ).withDurablePause(store)
 
     private fun TranslationProgressSnapshot.withDurablePause(

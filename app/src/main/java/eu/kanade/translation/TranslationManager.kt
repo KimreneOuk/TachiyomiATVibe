@@ -5,12 +5,14 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterDocumentIo
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
+import eu.kanade.translation.scheduling.TranslationStoreResolver
 import eu.kanade.translation.model.ChapterQueuePreflight
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.PageView
@@ -121,6 +123,10 @@ class TranslationManager(
     /** Immediate, lifecycle-independent acknowledgement for pre-translation requests. */
     val pendingTranslationRequests: StateFlow<Map<Long, TranslationRequestState>> =
         pendingTranslationRequestsState.asStateFlow()
+
+    /** D8 reader-visible native lane stall projection. */
+    val nativeStall: StateFlow<eu.kanade.translation.translator.NativeStallState?>
+        get() = pipeline.nativeStall
 
     /** Serializes request versioning, state publication, and durable writes. */
     private val pendingRequestMutationLock = Any()
@@ -434,6 +440,13 @@ class TranslationManager(
         applicationScope.launch {
             translationQueueRestoreJob?.join()
             reconcilePendingRequestsForStartup(downloadQueueChapterIds = downloadSnapshot)
+            // T917 Phase 3 (D9): consume interrupted-attempt ledger entries for
+            // exactly the bounded chapter set (never a library scan).
+            reconcileAttemptLedgersForStartup(
+                chapterIds = translator.persistedQueueChapterIds() +
+                    pendingTranslationRequestsState.value.keys +
+                    pendingRequestStore.load(),
+            )
         }
     }
 
@@ -523,6 +536,58 @@ class TranslationManager(
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * T917 Phase 3 (D9, phase3-design §3.2): startup reconciliation for the
+     * durable attempt ledger. Bounded to the caller-supplied chapter set
+     * (persisted translation-queue members ∪ pending request ids ∪ active
+     * stores) — NEVER a library scan. Every unresolved entry is a paid call a
+     * process death interrupted; each consumes one consecutive attempt for its
+     * page. A page reaching the cap records an INTERRUPTED-class durable
+     * failure (never auto-retryable) and flips the page PARTIAL, and the
+     * chapter's queue entry moves to the existing PAUSED state so the user
+     * sees it needs attention.
+     */
+    internal suspend fun reconcileAttemptLedgersForStartup(
+        chapterIds: Set<Long>,
+        resolveStore: TranslationStoreResolver = TranslationStoreResolver { chapterId ->
+            activeStores.get(chapterId)
+        },
+    ) {
+        if (chapterIds.isEmpty()) return
+        chapterIds.forEach { chapterId ->
+            val store = resolveStore.resolve(chapterId) ?: return@forEach
+            val counters = runCatching { store.consumeUnresolvedAttemptsAtStartup() }
+                .onFailure {
+                    logcat(LogPriority.WARN) {
+                        "T917 D9: startup attempt-ledger consume failed (fail-open): chapterId=$chapterId"
+                    }
+                }
+                .getOrNull() ?: return@forEach
+            val cappedPages = counters
+                .filterValues { count -> count >= ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED }
+            if (cappedPages.isEmpty()) return@forEach
+            cappedPages.forEach { (pageKey, count) ->
+                runCatching { store.applyAttemptCapPause(pageKey, count) }
+                    .onFailure {
+                        logcat(LogPriority.WARN) {
+                            "T917 D9: attempt-cap pause failed (fail-open): " +
+                                "chapterId=$chapterId pageKey=$pageKey"
+                        }
+                    }
+            }
+            translator.queueState.value
+                .firstOrNull { entry ->
+                    entry.chapter.id == chapterId && entry.status == Translation.State.QUEUE
+                }
+                ?.let { entry ->
+                    entry.status = Translation.State.PAUSED
+                    logcat(LogPriority.INFO) {
+                        "T917 D9: chapter paused after repeated interrupted attempts: chapterId=$chapterId"
+                    }
+                }
         }
     }
 
@@ -665,6 +730,9 @@ class TranslationManager(
         manga: Manga,
         chapters: Chapter,
         expectedRequestGeneration: Long? = null,
+        // T917 Phase 4 (D10): the trigger's admission-probe cross-check; null
+        // keeps the legacy no-cross-check path byte-identical.
+        admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext? = null,
     ) {
         val chapterId = chapters.id ?: return
         synchronized(pendingRequestMutationLock) {
@@ -681,7 +749,12 @@ class TranslationManager(
             scheduler.shutdownAutoCoordinator(chapterId)
             evictStaleQueuedChapters(chapterId, manga.source)
             markTranslationRequestPreparing(chapterId)
-            translator.queueChapter(manga, chapters)
+            translator.queueChapter(
+                manga,
+                chapters,
+                admissionContext?.probedSourcePageCount,
+                admissionContext?.sourceCountKnown ?: false,
+            )
             if (queueState.value.any { it.chapter.id == chapterId }) {
                 clearPendingTranslationRequest(chapterId)
             } else {
@@ -700,20 +773,26 @@ class TranslationManager(
      * generation captured by the confirmation probe. Chapters whose request
      * was cancelled or re-requested after the acknowledgement are dropped;
      * the surviving set is admitted atomically against cancel.
+     *
+     * T917 Phase 4 (D10): [admissionContexts] carries the per-chapter
+     * download-probe cross-check for subset admissions; chapters without an
+     * entry keep the legacy no-cross-check behavior.
      */
     fun translateChaptersIfCurrent(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>,
+        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
     ): Boolean {
         if (chapters.isEmpty()) return false
-        return translateChaptersInternal(manga, chapters, expectedGenerations).isNotEmpty()
+        return translateChaptersInternal(manga, chapters, expectedGenerations, admissionContexts).isNotEmpty()
     }
 
     private fun translateChaptersInternal(
         manga: Manga,
         chapters: List<Chapter>,
         expectedGenerations: Map<Long, Long>?,
+        admissionContexts: Map<Long, eu.kanade.translation.pipeline.batch.BatchAdmissionContext> = emptyMap(),
     ): List<Chapter> {
         if (chapters.isEmpty()) return emptyList()
         val admitted = mutableListOf<Chapter>()
@@ -731,9 +810,15 @@ class TranslationManager(
                         return@forEach
                     }
                 }
+                val admissionContext = admissionContexts[chapterId]
                 scheduler.shutdownAutoCoordinator(chapterId)
                 markTranslationRequestPreparing(chapterId)
-                translator.queueChapter(manga, chapter)
+                translator.queueChapter(
+                    manga,
+                    chapter,
+                    admissionContext?.probedSourcePageCount,
+                    admissionContext?.sourceCountKnown ?: false,
+                )
                 if (queueState.value.any { it.chapter.id == chapterId }) {
                     clearPendingTranslationRequest(chapterId)
                     admitted += chapter
@@ -980,6 +1065,10 @@ class TranslationManager(
                 state = state,
                 pageMap = store.state.value,
                 displayPageMap = store.display.value,
+                // T917 Phase 5 (D10): trusted totals come from the manifest;
+                // a partial download's available pages are never "all pages".
+                expectedPageCountTrusted =
+                    store.artifactManifest?.expectedPageCountTrusted == true,
             ).withDurablePause(store)
         }
     }
@@ -1260,9 +1349,14 @@ class TranslationManager(
                 // Create a LAZY store: the artifact manifest materializes only on the first real
                 // write, so merely opening a chapter never leaves an empty compatibility document
                 // behind that could make isChapterTranslated report a false TRANSLATED state.
+                // A never-translated chapter has no on-disk document yet (artifactParent is
+                // null), so the creator performs the same create-the-manga-directory
+                // resolution the pipeline fallback uses; without it the first batch
+                // mutation is rejected with LEGACY_RESCUE_FAILED.
                 ChapterTranslationStore.lazy(
                     artifactParent = document?.parent,
                     artifactFileName = fileName,
+                    fileCreator = { provider.getMangaDir(mangaTitle, source) },
                 )
             }
         } ?: return null
@@ -1355,7 +1449,21 @@ class TranslationManager(
     fun requestAutoWindow(
         session: TranslationSession,
         requests: List<TranslationPageRequest>,
-    ) = scheduler.requestAutoWindow(session, requests)
+    ) {
+        // T917 D4: same-chapter auto is suppressed for the WHOLE chapter-batch
+        // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
+        // This legacy auto entry launches real page work, so it must not arm
+        // while the chapter's batch is queued; the reader's next window update
+        // after the queue drains re-arms normally.
+        val requestChapterId = session.chapter.id
+        if (requestChapterId != null && isBatchTranslationRetained(requestChapterId)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=$requestChapterId"
+            }
+            return
+        }
+        scheduler.requestAutoWindow(session, requests)
+    }
 
     fun cancelAutoTranslations(chapterId: Long? = null): Boolean =
         scheduler.cancelAutoTranslations(chapterId)
@@ -1378,6 +1486,18 @@ class TranslationManager(
         pageResolver: (Int) -> eu.kanade.translation.scheduling.RollingAutoCoordinator.PageWorkItem?,
         computeClass: eu.kanade.translation.translator.TranslatorComputeClass,
     ) {
+        // T917 D4: same-chapter auto is suppressed for the WHOLE chapter-batch
+        // lifetime (queue entry in QUEUE|TRANSLATING|PAUSED retained state).
+        // Reader-window updates must not re-arm the rolling coordinator while
+        // the chapter's batch is queued; the next update after the queue drains
+        // arms normally. `translateChapter`'s one-shot shutdownAutoCoordinator
+        // remains what retires an already-live window at admission.
+        if (isBatchTranslationRetained(identity.chapterId)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT auto window suppressed while the chapter batch is queued: chapterId=${identity.chapterId}"
+            }
+            return
+        }
         scheduler.updateAutoWindow(
             identity,
             visiblePageIndex,
@@ -1393,7 +1513,10 @@ class TranslationManager(
 
     /** Reconciles the active rolling window after a reader lifecycle/memory signal. */
     fun reconcileAutoWindow() {
-        scheduler.reconcileAutoWindow()
+        // T917 D4: a stale window cannot be re-admitted mid-batch — the
+        // scheduler's admission hook rejects same-chapter reconcile while the
+        // chapter's batch queue entry is retained.
+        scheduler.reconcileAutoWindow(admissionGuard = { chapterId -> !isBatchTranslationRetained(chapterId) })
     }
 
     /** Reader-facing projection with the committed display pointer applied. */

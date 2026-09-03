@@ -7,6 +7,8 @@ import eu.kanade.translation.scheduling.AutoDeferralReason
 import eu.kanade.translation.scheduling.AutoSlotState
 import eu.kanade.translation.scheduling.AutoTranslationSnapshot
 import eu.kanade.translation.scheduling.AutoWindowSlot
+import eu.kanade.translation.ui.PageUiTruth
+import eu.kanade.translation.ui.TranslationUiTruth
 
 /**
  * Reader-facing state for one rolling auto-translation window.
@@ -66,6 +68,14 @@ data class ReaderAutoTranslationUiState(
 data class ReaderAutoTranslationSlot(
     val pageIndex: Int,
     val state: ReaderAutoTranslationSlotState,
+    /**
+     * T917 P5 (spec §0.2.2, §6.2.8): the slot's shared truth from the pure
+     * [TranslationUiTruth.forAutoSlot] mapper, produced by [toReaderSlot] —
+     * the status surface renders this record instead of reinterpreting the
+     * slot state. The default only covers direct constructions (tests); the
+     * projection always supplies the mapped truth.
+     */
+    val truth: PageUiTruth = TranslationUiTruth.forAutoSlot(AutoSlotState.Queued),
 )
 
 /**
@@ -162,6 +172,10 @@ private fun AutoWindowSlot.toReaderSlot(): ReaderAutoTranslationSlot =
     ReaderAutoTranslationSlot(
         pageIndex = pageIndex,
         state = state.toReaderState(),
+        // T917 P5 (spec §6.2.8): the shared rolling-auto slot truth, produced
+        // ONLY by the pure forAutoSlot mapper — the status surface projects
+        // this record instead of reinterpreting the slot state.
+        truth = TranslationUiTruth.forAutoSlot(state),
     )
 
 private fun AutoSlotState.toReaderState(): ReaderAutoTranslationSlotState = when (this) {

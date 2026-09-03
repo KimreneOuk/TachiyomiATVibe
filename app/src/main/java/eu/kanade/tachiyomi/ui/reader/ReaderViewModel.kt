@@ -66,8 +66,10 @@ import eu.kanade.translation.model.toPageView
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.AutoChapterIdentity
+import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
+import eu.kanade.translation.translator.NativeStallState
 import eu.kanade.translation.translator.providers.AiModelFetcher
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.collections.immutable.ImmutableList
@@ -173,6 +175,26 @@ class ReaderViewModel @JvmOverloads constructor(
                 kotlinx.coroutines.flow.SharingStarted.WhileSubscribed(5_000),
                 ReaderAutoTranslationUiState.empty(),
             )
+
+    /**
+     * T917 P5 (spec §0.2.2, D8): the pipeline's native stall state. Consumed
+     * by the page holders so the chip can reflect the stalled pageKey through
+     * the shared truth mapper. Pass-through of the manager's single bounded
+     * [NativeStallState] StateFlow — no new buffering, no polling.
+     */
+    val nativeStallState: kotlinx.coroutines.flow.StateFlow<NativeStallState?>
+        get() = translationManager.nativeStall
+
+    /**
+     * T917 P5 (spec §0.2.2, §6.2.8): read-only typed outcome of the last
+     * completed manual single-page intent. The (chapterId, pageKey) pair IS
+     * the identity fence: an outcome recorded for any other page or chapter is
+     * never returned, so the page-holder chip join cannot bleed results across
+     * pages. Callers must treat the value through the pure
+     * TranslationUiTruth.forManualOutcome mapper.
+     */
+    fun manualSinglePageOutcome(chapterId: Long, pageKey: String): SinglePageOutcome? =
+        translationScheduler.manualOutcomeFor(chapterId, pageKey)
 
     /** The queue is selected by the current chapter ID; no other chapter may replace it. */
     val translationQueueState: kotlinx.coroutines.flow.StateFlow<ImmutableList<QueuedPageInfo>> =
@@ -2560,7 +2582,9 @@ class ReaderViewModel @JvmOverloads constructor(
                 "TachiyomiAT stranded-page sweep: healing $pageKey " +
                     "(ocr=${pt.ocrStatus} inpaint=${pt.inpaintStatus} age=${age / 1000}s)"
             }
-            val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.READER_ADHOC)
+            // T917 D1: the sweep is reader-side AUTOMATIC maintenance — its
+            // lease is AUTO (never preempts; a reader tap evicts it).
+            val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.AUTO)
             if (lease !is LeaseAcquisition.Granted) continue
             try {
                 store.updatePageFromCurrentSnapshot(pageKey, "reader stranded-page sweep") { existing ->
@@ -2591,7 +2615,7 @@ class ReaderViewModel @JvmOverloads constructor(
                     }
                 }
             } finally {
-                store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC)
+                store.releasePageStageLease(pageKey, PageWriteOrigin.AUTO)
             }
         }
     }

@@ -31,6 +31,9 @@ class TranslationProgressSheetSubtitleTest {
                 totalPages = totalPages,
                 totalStages = totalStages,
                 batchPhase = batchPhase,
+                // T917 Phase 5: numeric subtitles require a trusted page set;
+                // these fixtures model registered batch totals.
+                expectedPageCountTrusted = true,
             )
         return if (requestPhase == null) {
             base

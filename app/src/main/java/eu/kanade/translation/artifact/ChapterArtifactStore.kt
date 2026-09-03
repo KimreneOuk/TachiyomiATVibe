@@ -195,6 +195,22 @@ class ChapterArtifactStore(
         }
 
     /**
+     * T917 Phase 3 (D9): reads the chapter's durable attempt-ledger document.
+     * A future-schema document is returned read-only and never overwritten —
+     * the same preservation rule as the manifest.
+     */
+    fun readAttemptLedger(): ChapterAttemptLedgerDocument? =
+        documents.readValidated<ChapterAttemptLedgerDocument>(layout.attemptLedgerFileName) { ledger ->
+            ledger.schemaVersion <= ChapterAttemptLedgerDocument.SCHEMA_VERSION &&
+                ledger.kind == ChapterAttemptLedgerDocument.KIND_ATTEMPT_LEDGER
+        }
+
+    /** Crash-safe attempt-ledger publication: temp, validate, rename. */
+    @Synchronized
+    fun publishAttemptLedger(document: ChapterAttemptLedgerDocument): Boolean =
+        documents.publishJson(layout.attemptLedgerFileName, document)
+
+    /**
      * Records durable terminal failure/retry metadata (lifecycle contract
      * §13) and persists it crash-safely. [RecordOutcome.NotStored] means the
      * write failed and the prior manifest stays authoritative — the caller

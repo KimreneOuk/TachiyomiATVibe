@@ -41,6 +41,10 @@ sealed class TranslationBatchEvent {
         val reason: String,
         val nextEligibleRetryAtEpochMs: Long? = null,
         val retryablePageKeys: Set<String> = emptySet(),
+        // T917 Phase 5 (spec §4.1): the pause is a guarded-publication
+        // rejection — no durable result exists for the affected page.
+        val nonDurableFailure: Boolean = false,
+        val nonDurableFailureReason: String? = null,
     ) : TranslationBatchEvent()
     data class BatchFinished(
         val state: Translation.State,
@@ -48,5 +52,9 @@ sealed class TranslationBatchEvent {
         val failedPages: Int,
         val partialPages: Int,
         val totalPages: Int,
+        // T917 Phase 5 (spec §4.1): carried from ReconciliationResult so a
+        // finished chapter keeps its non-durable warning visible.
+        val nonDurableFailure: Boolean = false,
+        val nonDurableFailureReason: String? = null,
     ) : TranslationBatchEvent()
 }

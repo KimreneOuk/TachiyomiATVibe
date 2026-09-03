@@ -227,4 +227,7 @@
          R10 admission-failure state that must never read as a download failure. -->
     <string name="manga_batch_phase_cancelled">Translation cancelled</string>
     <string name="manga_batch_phase_admission_failed">Translation could not be queued</string>
+    <!-- T917 Phase 5 (D10): partial download — available pages are real, the
+         source total is unknown, and the drawer must never show a percentage. -->
+    <string name="manga_batch_phase_unknown_total">Pages available; source total unknown</string>
 </resources>

@@ -15,10 +15,14 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.detachedCopy
+import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isStageFailed
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.CleanedPublication
 import eu.kanade.translation.pipeline.DecodedPage
+import eu.kanade.translation.pipeline.DeferredPagePublications
 import eu.kanade.translation.pipeline.EngineLane
 import eu.kanade.translation.pipeline.batch.BatchChapterTranslator
 import eu.kanade.translation.pipeline.batch.BatchResumeGate
@@ -37,12 +41,15 @@ import eu.kanade.translation.pipeline.copyForResume
 import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.scheduling.NativeRunQuarantine
 import eu.kanade.translation.scheduling.PreparedPage
+import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationStageListener
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.scheduling.isPreparedPageTerminal
 import eu.kanade.translation.scheduling.publishPreparedPageFromOcr
 import eu.kanade.translation.translator.AdmissionPriority
+import eu.kanade.translation.translator.NativeStallState
+import eu.kanade.translation.translator.NativeStallWatchdog
 import eu.kanade.translation.translator.retry.AiTranslationRetryPlanner
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslatorLanguage
@@ -69,6 +76,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 class LayoutFailureException(val blockIds: List<String>, message: String) : Exception(message)
 
+private class NativePageAlreadyInFlightException : Exception()
+
 // T909 Phase 20.2: ProviderFailure.toFailureCategory moved to
 // pipeline/batch/BatchWriteGate.kt (its only caller, persistAiFailure).
 
@@ -78,6 +87,15 @@ class TranslationPipeline(
     private val downloadProvider: DownloadProvider = Injekt.get(),
     private val translationPreferences: TranslationPreferences = Injekt.get(),
     private val streamRegistry: TranslationStreamRegistry = Injekt.get(),
+    /** D8 test seam; production defaults preserve the result timer contract. */
+    private val stallThresholdMs: Long = NATIVE_STALL_THRESHOLD_MS,
+    private val nativeTimeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
+    /**
+     * T917 Phase 5 (condition B test seam): the HTTP+render result timer.
+     * Production defaults preserve the [SINGLE_PAGE_TIMEOUT_MS] contract; tests
+     * inject a short value to exercise the typed timeout path deterministically.
+     */
+    internal val singlePageTimeoutMs: Long = SINGLE_PAGE_TIMEOUT_MS,
 ) : TranslationExecutor, java.io.Closeable {
 
     override fun close() {
@@ -116,10 +134,37 @@ class TranslationPipeline(
          */
         const val ONNX_PHASE_TIMEOUT_MS = 90_000L
 
+        /** D8 occupancy threshold; aligned with the native result timer. */
+        const val NATIVE_STALL_THRESHOLD_MS = ONNX_PHASE_TIMEOUT_MS
+
+        /**
+         * T917 D2 §2.3: bound for the wait-and-attach observation on a denied
+         * page lease. Exactly the owner's own bounded phase chain (permit-held
+         * ONNX phase + HTTP/render phase), so the attach can never outwait the
+         * owner's own timers by construction; a pathological native hang still
+         * terminates the wait with a typed AttachedUnresolved outcome.
+         */
+        const val ATTACH_TIMEOUT_MS = ONNX_PHASE_TIMEOUT_MS + SINGLE_PAGE_TIMEOUT_MS
+
         // T909 Phase 20.1: HELD_BITMAP_MAX_COUNT / HELD_BITMAP_BYTE_CEILING moved to
         // pipeline/batch/HeldBitmapRegistry.kt with the held-bitmap registry.
 
         const val UNKNOWN_SOURCE_FINGERPRINT = "source-fingerprint-unavailable"
+
+        /**
+         * T917 Phase 5 (condition C, spec §4.1.3): stable reason for the typed
+         * non-success outcome of a page whose translation could not be saved.
+         * The pure UI mapper selects the "Translation not saved — retry
+         * required" copy from this exact value, so it must not drift.
+         */
+        const val REASON_TRANSLATION_NOT_SAVED = "Translation could not be saved; retry required"
+
+        /**
+         * T917 Phase 5 (condition B / D8-1, D12 §3.2): truthful name for the
+         * HTTP+render result timer. Timeout copy must name the timer that
+         * fired, never an unrelated duration.
+         */
+        const val REASON_HTTP_RENDER_TIMER_EXPIRED = "HTTP+render result timer expired; translation failed"
     }
 
     // T909 Phase 20.3: BatchResumeGate enum + resume planning moved to
@@ -144,7 +189,25 @@ class TranslationPipeline(
     // Native work runs in an independent scope so caller cancellation cannot
     // falsely signal native exit. The quarantine owns admission until real exit.
     private val nativeRunScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val nativeRunQuarantine = NativeRunQuarantine(nativeRunScope)
+    private val nativeStallWatchdog = NativeStallWatchdog(
+        scope = nativeRunScope,
+        thresholdMs = stallThresholdMs,
+    )
+    private val nativeRunQuarantine = NativeRunQuarantine(
+        scope = nativeRunScope,
+        occupancyObserver = object : NativeRunQuarantine.OccupancyObserver {
+            override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
+                nativeStallWatchdog.onLaneOccupied(token, pageKey, startedAtEpochMs)
+            }
+
+            override fun onLaneReleased(token: Long) {
+                nativeStallWatchdog.onLaneReleased(token)
+            }
+        },
+    )
+
+    /** Reader-visible native occupancy state; null means no stall is active. */
+    val nativeStall: kotlinx.coroutines.flow.StateFlow<NativeStallState?> = nativeStallWatchdog.state
 
     /**
      * Listener notified by [withNativeLane] when a page overruns its deadline,
@@ -167,12 +230,18 @@ class TranslationPipeline(
     // T909 Phase 10: engine cache + native lane moved to pipeline/EngineLane.kt
     // (defensive init semantics preserved: EngineLane's init builds the engines
     // defensively at construction). Same-signature stubs keep call sites.
+    // T917 Phase 4 (D7 §1.2): the drain grace is the SHORT engine grace (its
+    // expiry is recovered by the epoch retry — see EngineLane.ENGINE_DRAIN_GRACE_MS)
+    // and the drain runs on nativeRunScope so the stop path (main thread) never
+    // blocks on it.
     internal val engines = EngineLane(
         context = context,
         translationPreferences = translationPreferences,
         nativeRunQuarantine = nativeRunQuarantine,
         inFlightPageKeys = inFlightPageKeys,
         onPageStuck = { onPageStuck },
+        drainGraceMs = EngineLane.ENGINE_DRAIN_GRACE_MS,
+        drainScope = nativeRunScope,
     )
 
     private suspend fun <T> withNativeLane(
@@ -268,8 +337,12 @@ class TranslationPipeline(
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
+        timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
+        nativeTimer: Boolean = true,
     ) {
-        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey)
+        // T917 Phase 5 D12: the store placeholder names the timer that actually
+        // fired — native (`withNativeLane`) vs HTTP+render (`withTimeoutOrNull`).
+        pageStoreWriter.markPageTimedOut(manga, chapter, source, pageKey, timeoutMs, nativeTimer)
     }
 
     // T909 Phase 6: PageSnapshot.toPrecondition moved to pipeline/PageStoreWriter.kt
@@ -319,9 +392,26 @@ class TranslationPipeline(
         pageKey: String,
         force: Boolean,
         stageListener: TranslationStageListener?,
-    ) {
-        withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
-            runSinglePageBoundary(
+        origin: PageWriteOrigin,
+    ): SinglePageOutcome {
+        // D8 refuses a new promise while the native lane is visibly stalled.
+        // Check before lease admission so this tap performs no writer/native work.
+        nativeStall.value?.let { stalled ->
+            return SinglePageOutcome.Stalled(stalled.pageKey, stalled.stalledAtEpochMs)
+        }
+        val leaseStore = resolveActiveStore(manga, chapter, source)
+        // T917 D2 §2.3: lease admission holds the interactive reservation; the
+        // attach wait on a denied lease runs OUTSIDE it — a passive observer
+        // must hold no interactive wallet reservation (D6 formalizes later).
+        val acquisition = withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+            leaseStore?.let { acquireReaderPageLease(it, chapter, pageKey, origin) }
+        }
+        if (acquisition is LeaseAcquisition.Denied) {
+            return attachToOwnerTerminal(leaseStore, chapter, pageKey, acquisition)
+        }
+        return withProviderRequestPriority(AdmissionPriority.INTERACTIVE) {
+            runGrantedSinglePageBoundary(
+                leaseStore = leaseStore,
                 manga = manga,
                 chapter = chapter,
                 source = source,
@@ -329,6 +419,7 @@ class TranslationPipeline(
                 streamFn = null,
                 force = force,
                 stageListener = stageListener,
+                origin = origin,
             )
         }
     }
@@ -360,9 +451,12 @@ class TranslationPipeline(
      * page boundary methods below. [streamFn] is null for the reader-stream
      * peek path.
      *
-     * Phase 3: the whole boundary runs under a `READER_ADHOC` page lease. When
-     * a batch run owns the page, the request attaches to the batch result
-     * (observes store emissions) instead of opening a competing writer.
+     * T917 D1: the whole boundary runs under an origin-typed page lease
+     * ([PageWriteOrigin.MANUAL] for reader taps, [PageWriteOrigin.AUTO] for the
+     * legacy auto window's resume-render path). When a batch run owns the page,
+     * the request attaches to the batch result (observes store emissions)
+     * instead of opening a competing writer; a MANUAL request evicts an
+     * in-flight AUTO lease (fenced fail-closed for the evicted holder).
      */
     private suspend fun runSinglePageBoundary(
         manga: Manga,
@@ -372,52 +466,177 @@ class TranslationPipeline(
         streamFn: (() -> InputStream)?,
         force: Boolean,
         stageListener: TranslationStageListener?,
-    ) {
+        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
+    ): SinglePageOutcome {
         val leaseStore = resolveActiveStore(manga, chapter, source)
-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey)) return
+        val acquisition = leaseStore?.let { acquireReaderPageLease(it, chapter, pageKey, origin) }
+        if (acquisition is LeaseAcquisition.Denied) {
+            return attachToOwnerTerminal(leaseStore, chapter, pageKey, acquisition)
+        }
+        return runGrantedSinglePageBoundary(
+            leaseStore = leaseStore,
+            manga = manga,
+            chapter = chapter,
+            source = source,
+            pageKey = pageKey,
+            streamFn = streamFn,
+            force = force,
+            stageListener = stageListener,
+            origin = origin,
+        )
+    }
+
+    /**
+     * The owned-work half of [runSinglePageBoundary]: the caller holds the page
+     * lease under [origin] for the whole body and releases it in `finally`.
+     */
+    private suspend fun runGrantedSinglePageBoundary(
+        leaseStore: ChapterTranslationStore?,
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        pageKey: String,
+        streamFn: (() -> InputStream)?,
+        force: Boolean,
+        stageListener: TranslationStageListener?,
+        origin: PageWriteOrigin,
+    ): SinglePageOutcome {
+        // Typed HTTP+render phase completion and its timeout/terminality
+        // resolution; declared at boundary scope so the post-finally mapping
+        // can see them while the `finally` still owns the lease release.
+        var httpOutcome: ChunkCompletionOutcome? = null
+        // T917 Phase 5 (condition B): set when the HTTP+render timer fired
+        // while the phase had ALREADY committed a durable terminal result —
+        // store truth outranks the timer there, and no timeout placeholder
+        // may overwrite terminal truth.
+        var httpTimeoutLandedDurableResult = false
         try {
-            val onnxResult = withNativeLane(
-                timeoutMs = ONNX_PHASE_TIMEOUT_MS,
-                chapterId = chapter.id,
-                chapterName = chapter.name,
-                pageKey = pageKey,
-                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
-            ) {
-                if (!inFlightPageKeys.add(pageKey)) {
-                    logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
-                    return@withNativeLane null
+            // T917 D8: a same-page request whose predecessor still owns the
+            // stove (e.g. a timed-out-but-parked native call) is rejected
+            // BEFORE queueing behind the quarantine. Membership here is the
+            // honest occupancy truth: the entry is cleared only when the
+            // residual invocation really exits, because the remover runs
+            // inside the parked block. The in-block add-check below remains
+            // the concurrent-race backstop.
+            if (inFlightPageKeys.contains(pageKey)) {
+                logcat(LogPriority.DEBUG) {
+                    "TachiyomiAT native admission rejected: chapter=${chapter.name} " +
+                        "pageKey=$pageKey reason=already in flight (residual)"
                 }
+                return SinglePageOutcome.Rejected(null, "page already translating")
+            }
+            // T917 D11 (phase4-design §4.4): storage-tail deferral holder. The
+            // ONNX phase enqueues its resume-path cleaned-image persistence,
+            // render tails, and the store flush here instead of running them
+            // under the native permit; this boundary drains the queue AFTER
+            // withNativeLane returns, so the permit is released before storage
+            // publication and the next page's native admission is never blocked
+            // behind this page's disk commit. On native timeout the boundary
+            // orphans the queue FIRST: any residual block invocation runs its
+            // tails inline (quarantine exit is awaited before withNativeLane
+            // returns), so publication is never silently dropped.
+            val deferredPublications = DeferredPagePublications()
+            val onnxResult = try {
                 try {
-                    val store = resolveActiveStore(manga, chapter, source)
-                    val generation = store?.snapshot(pageKey)?.generation
-                    if (store != null && generation != null) {
-                        store.withGeneration(generation) {
-                            translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
+                    withNativeLane(
+                        timeoutMs = nativeTimeoutMs,
+                        chapterId = chapter.id,
+                        chapterName = chapter.name,
+                        pageKey = pageKey,
+                        onTimeout = {
+                            deferredPublications.orphaned = true
+                            markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
+                        },
+                    ) {
+                        if (!inFlightPageKeys.add(pageKey)) {
+                            logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
+                            throw NativePageAlreadyInFlightException()
                         }
-                    } else {
-                        translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
+                        try {
+                            val store = resolveActiveStore(manga, chapter, source)
+                            val generation = store?.snapshot(pageKey)?.generation
+                            if (store != null && generation != null) {
+                                store.withGeneration(generation) {
+                                    translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                                }
+                            } else {
+                                translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                            }
+                        } catch (t: Throwable) {
+                            if (t is CancellationException || t is NativePageAlreadyInFlightException) throw t
+                            logcat(LogPriority.ERROR, t) { "TachiyomiAT ONNX phase failed: pageKey=$pageKey" }
+                            markPageFailed(manga, chapter, source, pageKey, t)
+                            throw t
+                        } finally {
+                            inFlightPageKeys.remove(pageKey)
+                        }
                     }
-                } catch (t: Throwable) {
-                    if (t is CancellationException) throw t
-                    logcat(LogPriority.ERROR, t) { "TachiyomiAT ONNX phase failed: pageKey=$pageKey" }
-                    markPageFailed(manga, chapter, source, pageKey, t)
-                    throw t
-                } finally {
-                    inFlightPageKeys.remove(pageKey)
+                } catch (_: NativePageAlreadyInFlightException) {
+                    return SinglePageOutcome.Rejected(null, "page already translating")
                 }
-            } ?: return
-
-            val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult) ?: return
-
+            } catch (t: Throwable) {
+                // Exception path: the boundary does not continue, so run any
+                // deferred storage tails inline (best effort — the block has
+                // already failed the page) and rethrow the original failure.
+                runCatching { deferredPublications.drainAll() }
+                    .onFailure { drainError ->
+                        logcat(LogPriority.ERROR, drainError) {
+                            "TachiyomiAT deferred storage publication failed: pageKey=$pageKey"
+                        }
+                    }
+                throw t
+            }
+            // Normal path: drain OUTSIDE the permit. Fail-closed: a deferred
+            // publication that throws fails the page — it must never be
+            // silently dropped.
             try {
-                withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
-                    translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener)
+                deferredPublications.drainAll()
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                logcat(LogPriority.ERROR, t) { "TachiyomiAT deferred storage publication failed: pageKey=$pageKey" }
+                markPageFailed(manga, chapter, source, pageKey, t)
+                throw t
+            }
+            // T917 Phase 5 (condition A, phase4 review §5 Deviation #7): the
+            // resume paths of [translateSinglePageOnnx] return null on SUCCESS
+            // (render-only resume, inpaint+render resume, resume-skip). D8's
+            // honest-timeout flip mapped that null to Failed — a NEW
+            // wrong-outcome case introduced by the flip, not a pre-existing
+            // one. The deferred storage tails were drained above, so durable
+            // terminality is the arbiter (the same store-inspection discipline
+            // [buildTerminalPreparedPage] uses for the AUTO boundary): a
+            // terminal durable page here IS the successful resume.
+            if (onnxResult == null) {
+                val store = resolveActiveStore(manga, chapter, source)
+                val page = store?.state?.value?.get(pageKey)
+                if (page != null && isPreparedPageTerminal(page)) {
+                    return SinglePageOutcome.Completed
+                }
+                return SinglePageOutcome.Failed(pageKey, "native phase timed out")
+            }
+
+            val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+                ?: return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
+
+            // T917 Phase 3 (D6 §2.2a): capture the phase's typed completion so a
+            // governor deferral surfaces as a typed pause instead of a silent
+            // Completed.
+            try {
+                httpOutcome = withTimeoutOrNull(singlePageTimeoutMs) {
+                    translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener, origin)
                 } ?: run {
                     logcat(LogPriority.WARN) {
-                        "TachiyomiAT HTTP+render phase timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
+                        "TachiyomiAT HTTP+render phase timed out after ${singlePageTimeoutMs}ms: " +
                             "pageKey=$pageKey chapter=${chapter.name}"
                     }
-                    markPageTimedOut(manga, chapter, source, pageKey)
+                    val timeoutStore = resolveActiveStore(manga, chapter, source)
+                    val timeoutPage = timeoutStore?.state?.value?.get(pageKey)
+                    if (timeoutPage != null && isPreparedPageTerminal(timeoutPage)) {
+                        httpTimeoutLandedDurableResult = true
+                    } else {
+                        markPageTimedOut(manga, chapter, source, pageKey, singlePageTimeoutMs, nativeTimer = false)
+                    }
+                    null
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -428,37 +647,106 @@ class TranslationPipeline(
                 throw t
             }
         } finally {
-            releaseReaderPageLease(leaseStore, pageKey)
+            releaseReaderPageLease(leaseStore, pageKey, origin)
+        }
+        // T917 Phase 5 (conditions B + C, spec §4.1): exhaustive typed-value
+        // mapping. Only a genuinely completed durable commit may type
+        // Completed; a timeout, a guarded-commit rejection, or a typed value
+        // failure is a visible non-success — never a fall-through Completed.
+        return when (val outcome = httpOutcome) {
+            null ->
+                if (httpTimeoutLandedDurableResult) {
+                    SinglePageOutcome.Completed
+                } else {
+                    SinglePageOutcome.Failed(pageKey, REASON_HTTP_RENDER_TIMER_EXPIRED)
+                }
+            is ChunkCompletionOutcome.Paused -> SinglePageOutcome.Paused(outcome.nextEligibleRetryAtEpochMs)
+            is ChunkCompletionOutcome.PersistenceRejected ->
+                SinglePageOutcome.Rejected(null, REASON_TRANSLATION_NOT_SAVED)
+            is ChunkCompletionOutcome.Failed -> SinglePageOutcome.Failed(pageKey, outcome.reason)
+            is ChunkCompletionOutcome.Unexpected -> SinglePageOutcome.Failed(pageKey, outcome.reason)
+            is ChunkCompletionOutcome.Completed -> SinglePageOutcome.Completed
+        }
+    }
+
+    /**
+     * T917 D2 wait-and-attach (design note §2.2-§2.3): the request did NOT
+     * acquire the page — [acquisition] carries the owning origin. The boundary
+     * does NOT open a competing writer and performs ZERO native/provider/render
+     * work; it observes the owner's terminal commit through the store's
+     * StateFlow. The owner commits its terminal stage BEFORE releasing the
+     * lease, so the stage observation carries the outcome; terminal states are
+     * last-write on a StateFlow, so conflation cannot lose the wakeup. The wait
+     * is bounded by [ATTACH_TIMEOUT_MS] — exactly the owner's own bounded phase
+     * chain — and cancellable at its single suspension point.
+     */
+    private suspend fun attachToOwnerTerminal(
+        store: ChapterTranslationStore?,
+        chapter: Chapter,
+        pageKey: String,
+        acquisition: LeaseAcquisition.Denied,
+    ): SinglePageOutcome {
+        val owner = acquisition.owner
+            ?: return SinglePageOutcome.Rejected(null, acquisition.reason)
+        if (store == null) {
+            return SinglePageOutcome.Rejected(owner, "store disappeared before attach")
+        }
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT reader single-page request attaches to $owner owner: " +
+                "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
+        }
+        val terminal = try {
+            withTimeoutOrNull(ATTACH_TIMEOUT_MS) {
+                store.state.first { snapshot ->
+                    val page = snapshot[pageKey]
+                    page != null && (page.hasRenderedResult || page.isTextlessTerminal || page.isStageFailed)
+                }
+            }
+        } catch (e: CancellationException) {
+            // §2.3: cancelled while observing (chapter switch / reader exit /
+            // Stop). Return the attach-cancelled outcome instead of propagating
+            // so the scheduler's finally sees the job never owned the page and
+            // skips markPageCancelled — a stranded-RUNNING reset here would
+            // flip the OWNER's in-flight stages to CANCELLED. No suspension
+            // happens after this catch, so swallowing cannot strand work.
+            return SinglePageOutcome.AttachedUnresolved(
+                owner,
+                "cancelled while waiting for the owner's terminal state",
+            )
+        }
+        return if (terminal != null) {
+            SinglePageOutcome.Attached(owner)
+        } else {
+            SinglePageOutcome.AttachedUnresolved(
+                owner,
+                "owner did not reach a terminal state within ${ATTACH_TIMEOUT_MS}ms",
+            )
         }
     }
 
     /**
      * Phase 3 lease admission for reader-originated single-page work. Returns
-     * false when another origin (a batch run) owns the page — the request then
-     * attaches to the owner's result through store emissions rather than
-     * opening a competing writer.
+     * the acquisition; only [LeaseAcquisition.Denied] blocks owned work under
+     * the T917 D1 priority matrix (a MANUAL request on a BATCH-owned page
+     * attaches to the owner's result through [attachToOwnerTerminal] rather
+     * than opening a competing writer; a MANUAL request evicts an in-flight
+     * AUTO lease).
      */
     private suspend fun acquireReaderPageLease(
-        store: ChapterTranslationStore?,
+        store: ChapterTranslationStore,
         chapter: Chapter,
         pageKey: String,
-    ): Boolean {
-        if (store == null) return true
-        return when (val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.READER_ADHOC)) {
-            is LeaseAcquisition.Granted -> true
-            is LeaseAcquisition.Denied -> {
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT reader single-page request attaches to ${acquisition.owner} owner: " +
-                        "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
-                }
-                false
-            }
-        }
-    }
+        origin: PageWriteOrigin,
+    ): LeaseAcquisition =
+        store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, origin)
 
-    private suspend fun releaseReaderPageLease(store: ChapterTranslationStore?, pageKey: String) {
+    private suspend fun releaseReaderPageLease(
+        store: ChapterTranslationStore?,
+        pageKey: String,
+        origin: PageWriteOrigin,
+    ) {
         if (store == null) return
-        store.releasePageStageLease(pageKey, PageWriteOrigin.READER_ADHOC)
+        store.releasePageStageLease(pageKey, origin)
     }
 
     /** Releases the batch's page lease at an atomic stage boundary (terminal render/failure). */
@@ -547,37 +835,73 @@ class TranslationPipeline(
         stageListener: TranslationStageListener?,
     ): PreparedPage? {
         val leaseStore = resolveActiveStore(manga, chapter, source)
-        if (!acquireReaderPageLease(leaseStore, chapter, pageKey)) return null
+        // T917 D1: only the rolling auto coordinator calls the prepared
+        // boundary — its leases are AUTO (never preemptive; MANUAL evicts it).
+        // Denied is a "try again" for the coordinator (§1.3): no attach wait.
+        if (leaseStore != null &&
+            acquireReaderPageLease(leaseStore, chapter, pageKey, PageWriteOrigin.AUTO) is LeaseAcquisition.Denied
+        ) {
+            return null
+        }
         try {
-            val onnxResult = withNativeLane(
-                timeoutMs = ONNX_PHASE_TIMEOUT_MS,
-                chapterId = chapter.id,
-                chapterName = chapter.name,
-                pageKey = pageKey,
-                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
-            ) {
-                if (!inFlightPageKeys.add(pageKey)) {
-                    logcat(LogPriority.WARN) { "TachiyomiAT prepare admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
-                    return@withNativeLane null
-                }
-                try {
-                    val store = resolveActiveStore(manga, chapter, source)
-                    val generation = store?.snapshot(pageKey)?.generation
-                    if (store != null && generation != null) {
-                        store.withGeneration(generation) {
-                            translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
-                        }
-                    } else {
-                        translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener)
+            // T917 D11 (phase4-design §4.4): same storage-tail deferral as
+            // [runGrantedSinglePageBoundary] — the permit is released before
+            // the resume paths' storage publication runs; orphaned tails run
+            // inline; the normal-path drain is fail-closed.
+            val deferredPublications = DeferredPagePublications()
+            val onnxResult = try {
+                withNativeLane(
+                    timeoutMs = nativeTimeoutMs,
+                    chapterId = chapter.id,
+                    chapterName = chapter.name,
+                    pageKey = pageKey,
+                    onTimeout = {
+                        deferredPublications.orphaned = true
+                        markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
+                    },
+                ) {
+                    if (!inFlightPageKeys.add(pageKey)) {
+                        logcat(LogPriority.WARN) { "TachiyomiAT prepare admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
+                        throw NativePageAlreadyInFlightException()
                     }
-                } catch (t: Throwable) {
-                    if (t is CancellationException) throw t
-                    logcat(LogPriority.ERROR, t) { "TachiyomiAT prepare ONNX phase failed: pageKey=$pageKey" }
-                    markPageFailed(manga, chapter, source, pageKey, t)
-                    throw t
-                } finally {
-                    inFlightPageKeys.remove(pageKey)
+                    try {
+                        val store = resolveActiveStore(manga, chapter, source)
+                        val generation = store?.snapshot(pageKey)?.generation
+                        if (store != null && generation != null) {
+                            store.withGeneration(generation) {
+                                translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                            }
+                        } else {
+                            translateSinglePageOnnx(manga, chapter, source, pageKey, streamFn, force, stageListener, deferredPublications)
+                        }
+                    } catch (t: Throwable) {
+                        if (t is CancellationException) throw t
+                        logcat(LogPriority.ERROR, t) { "TachiyomiAT prepare ONNX phase failed: pageKey=$pageKey" }
+                        markPageFailed(manga, chapter, source, pageKey, t)
+                        throw t
+                    } finally {
+                        inFlightPageKeys.remove(pageKey)
+                    }
                 }
+            } catch (t: Throwable) {
+                // Exception path: best-effort inline drain of deferred storage
+                // tails (the block has already failed the page), then rethrow.
+                runCatching { deferredPublications.drainAll() }
+                    .onFailure { drainError ->
+                        logcat(LogPriority.ERROR, drainError) {
+                            "TachiyomiAT deferred storage publication failed: pageKey=$pageKey"
+                        }
+                    }
+                throw t
+            }
+            // Normal path: drain OUTSIDE the permit. Fail-closed.
+            try {
+                deferredPublications.drainAll()
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                logcat(LogPriority.ERROR, t) { "TachiyomiAT deferred storage publication failed: pageKey=$pageKey" }
+                markPageFailed(manga, chapter, source, pageKey, t)
+                throw t
             }
 
             // Failure before handoff: a null native result with no terminal store
@@ -618,7 +942,7 @@ class TranslationPipeline(
                 expectedLeaseToken = published.commitPrecondition?.leaseToken,
             )
         } finally {
-            releaseReaderPageLease(leaseStore, pageKey)
+            releaseReaderPageLease(leaseStore, pageKey, PageWriteOrigin.AUTO)
         }
     }
 
@@ -687,11 +1011,15 @@ class TranslationPipeline(
             return ChunkCompletionOutcome.Completed()
         }
         val store = resolveActiveStore(manga, chapter, source) ?: return null
-        // prepareSinglePage owns the reader lease only through the native
-        // handoff. Re-admit the translate/render half here so a batch cannot
-        // acquire the page in the handoff gap and then race the prepared
-        // reference's writes.
-        if (!acquireReaderPageLease(store, chapter, prepared.pageKey)) return null
+        // prepareSinglePage owns the auto lease only through the native
+        // handoff. Re-admit the translate/render half here (AUTO per T917 D1 —
+        // only the rolling auto coordinator calls this boundary) so a batch
+        // cannot acquire the page in the handoff gap and then race the
+        // prepared reference's writes. Denied is a stale/race "try again" for
+        // the coordinator — no attach wait.
+        if (acquireReaderPageLease(store, chapter, prepared.pageKey, PageWriteOrigin.AUTO) is LeaseAcquisition.Denied) {
+            return null
+        }
         try {
             val snapshot = store.snapshot(prepared.pageKey)
             // Stale-reference rejection: generation, pageVersion, and the OCR block
@@ -764,14 +1092,16 @@ class TranslationPipeline(
             )
             return try {
                 val completed = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
-                    translateSinglePageHttpRender(manga, chapter, source, prepared.pageKey, ctx, stageListener)
+                    translateSinglePageHttpRender(manga, chapter, source, prepared.pageKey, ctx, stageListener, PageWriteOrigin.AUTO)
                 }
                 if (completed == null) {
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT translatePreparedPage timed out after ${SINGLE_PAGE_TIMEOUT_MS}ms: " +
                             "pageKey=${prepared.pageKey} chapter=${chapter.name}"
                     }
-                    markPageTimedOut(manga, chapter, source, prepared.pageKey)
+                    // The prepared path runs the HTTP+render phase, so its
+                    // timeout placeholder names THAT timer (D12).
+                    markPageTimedOut(manga, chapter, source, prepared.pageKey, nativeTimer = false)
                     throw java.io.IOException("translatePreparedPage timed out for ${prepared.pageKey}")
                 } else {
                     completed
@@ -791,7 +1121,7 @@ class TranslationPipeline(
                 throw t
             }
         } finally {
-            releaseReaderPageLease(store, prepared.pageKey)
+            releaseReaderPageLease(store, prepared.pageKey, PageWriteOrigin.AUTO)
         }
     }
 
@@ -895,8 +1225,18 @@ class TranslationPipeline(
         readerStreamFn: (() -> InputStream)? = null,
         force: Boolean = true,
         stageListener: TranslationStageListener? = null,
+        deferredPublications: DeferredPagePublications? = null,
     ): OnnxPhaseResult? =
-        singlePageOnnxPhase.translateSinglePageOnnx(manga, chapter, source, pageKey, readerStreamFn, force, stageListener)
+        singlePageOnnxPhase.translateSinglePageOnnx(
+            manga,
+            chapter,
+            source,
+            pageKey,
+            readerStreamFn,
+            force,
+            stageListener,
+            deferredPublications,
+        )
 
     // T909 Phase 12: single-page HTTP+render phase body moved to
     // translation/pipeline/SinglePageHttpRenderPhase.kt (outcome typing stays
@@ -909,8 +1249,9 @@ class TranslationPipeline(
         pageKey: String,
         ctx: OnnxPhaseResult,
         stageListener: TranslationStageListener? = null,
+        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     ): ChunkCompletionOutcome =
-        singlePageHttpRenderPhase.translateSinglePageHttpRender(manga, chapter, source, pageKey, ctx, stageListener)
+        singlePageHttpRenderPhase.translateSinglePageHttpRender(manga, chapter, source, pageKey, ctx, stageListener, origin)
 
     // T909 Phase 7: PageTranslation.copyForResume moved to pipeline/CleanedPublication.kt
     // (imported top-level extension — call sites below resolve through it).

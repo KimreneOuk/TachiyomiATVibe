@@ -3,12 +3,13 @@ package eu.kanade.translation.pipeline
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
+import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.scheduling.TranslationStreamRegistry
 import eu.kanade.translation.translator.TextTranslatorLanguage
+import eu.kanade.translation.ui.TranslationUiTruth
 import eu.kanade.translation.util.TranslationMemoryBudget
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
@@ -102,6 +103,8 @@ internal class PageStoreWriter(
         chapter: Chapter,
         source: HttpSource,
         pageKey: String,
+        @Suppress("UNUSED_PARAMETER") timeoutMs: Long = ONNX_PHASE_TIMEOUT_MS,
+        nativeTimer: Boolean = true,
     ) {
         // Use SAFE language fallbacks, not the throwing fromPref: this runs in an
         // error/timeout path, so re-throwing here would mask the original failure.
@@ -117,21 +120,51 @@ internal class PageStoreWriter(
         store.invalidateGeneration("timeout chapter=${chapter.name} pageKey=$pageKey")
         val snapshot = store.snapshot(pageKey)
         store.patchPage(pageKey, snapshot.toPrecondition(), "mark page timed out") { existing ->
-            // Don't overwrite a page that already produced a durable result.
-            if (existing?.cleanedImageName != null) {
-                existing
-            } else {
-                createFailedPagePlaceholder(
-                    pageKey,
-                    "Translation timed out after ${SINGLE_PAGE_TIMEOUT_MS / 1000}s",
-                    imgWidth = existing?.imgWidth ?: 0f,
-                    imgHeight = existing?.imgHeight ?: 0f,
-                    originalImgWidth = existing?.originalImgWidth ?: 0f,
-                    originalImgHeight = existing?.originalImgHeight ?: 0f,
-                    decodeSampleSize = existing?.decodeSampleSize ?: 1,
-                    retryCount = (existing?.retryCount ?: 0) + 1,
-                    attemptCount = (existing?.attemptCount ?: 0) + 1,
-                )
+            val timeoutMessage = TranslationUiTruth.timeoutCopy(nativeTimer)
+            when {
+                // Don't overwrite a page with no intermediate progress.
+                existing == null || existing.cleanedImageName == null -> {
+                    createFailedPagePlaceholder(
+                        pageKey,
+                        // T917 Phase 5 D12 (spec §3.2): the placeholder names the
+                        // ACTUAL result timer that fired — the native lane and the
+                        // HTTP+render lane run DIFFERENT timers — and omits
+                        // unmeasured durations entirely (supersedes the old
+                        // "after 0s" second-division rendering).
+                        timeoutMessage,
+                        imgWidth = existing?.imgWidth ?: 0f,
+                        imgHeight = existing?.imgHeight ?: 0f,
+                        originalImgWidth = existing?.originalImgWidth ?: 0f,
+                        originalImgHeight = existing?.originalImgHeight ?: 0f,
+                        decodeSampleSize = existing?.decodeSampleSize ?: 1,
+                        retryCount = (existing?.retryCount ?: 0) + 1,
+                        attemptCount = (existing?.attemptCount ?: 0) + 1,
+                    )
+                }
+                // T917 Phase 5 D12: the page holds INTERMEDIATE durable
+                // artifacts (a cleaned image from the FAST-inpaint lane) but no
+                // rendered result — it is mid-pipeline. Keeping it silently
+                // RUNNING strands the reader in TRANSLATING forever; preserve
+                // the artifacts and mark every still-open stage failed with
+                // the timer-named truth.
+                else -> existing.apply {
+                    if (ocrStatus != StageStatus.READY) {
+                        ocrStatus = StageStatus.FAILED
+                        ocrError = timeoutMessage
+                    }
+                    if (translationStatus != StageStatus.READY &&
+                        translationStatus != StageStatus.PARTIAL
+                    ) {
+                        translationStatus = StageStatus.FAILED
+                        translationError = timeoutMessage
+                    }
+                    if (renderStatus != StageStatus.READY) {
+                        renderStatus = StageStatus.FAILED
+                        renderError = timeoutMessage
+                    }
+                    retryCount += 1
+                    attemptCount += 1
+                }
             }
         }
     }

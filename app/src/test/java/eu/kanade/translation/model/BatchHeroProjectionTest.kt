@@ -34,6 +34,10 @@ class BatchHeroProjectionTest {
                 batchPhase = batchPhase,
                 failedCount = failedCount,
                 aborted = aborted,
+                // T917 Phase 5: these fixtures model REGISTERED batch totals —
+                // a trusted page set. Untrusted (partial-download) totals have
+                // their own unknown-total phase now.
+                expectedPageCountTrusted = true,
             )
         return if (requestPhase == null) {
             base

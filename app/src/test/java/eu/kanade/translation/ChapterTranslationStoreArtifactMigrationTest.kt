@@ -726,4 +726,40 @@ class ChapterTranslationStoreArtifactMigrationTest {
         readManifest("Chapter 2").pages.getValue("page.jpg").committed shouldNotBe null
         flatFile.exists() shouldBe false
     }
+
+    @Test
+    fun `lazy store without parent resolves artifact authority through fileCreator`() = runTest {
+        installPngHeaderProbe()
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        var creatorCalls = 0
+        val store = ChapterTranslationStore.lazy(
+            artifactParent = null,
+            artifactFileName = "Chapter 8.json",
+            fileCreator = { creatorCalls++; root },
+        )
+
+        store.preRegisterPages(listOf("p1.jpg", "p2.jpg"))
+        store.updatePage("p1.jpg") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        store.flush()
+
+        creatorCalls shouldNotBe 0
+        readManifest("Chapter 8").authority shouldBe eu.kanade.translation.artifact.ManifestAuthority.ARTIFACTS
+        readManifest("Chapter 8").expectedPageCount shouldBe 2
+        readManifest("Chapter 8").expectedPageCountTrusted shouldBe true
+        store.state.value.getValue("p1.jpg").ocrStatus shouldBe StageStatus.RUNNING
+        // The creator resolves the directory only; no compatibility flat file
+        // may appear as a write side effect.
+        File(mangaDir, "Chapter 8.json").exists() shouldBe false
+    }
+
+    @Test
+    fun `lazy store without parent rejects mutation when fileCreator fails`() = runTest {
+        val store = ChapterTranslationStore.lazy(
+            artifactFileName = "Chapter 8.json",
+            fileCreator = { error("translation directory unavailable") },
+        )
+
+        val registration = store.preRegisterPages(listOf("p1.jpg"))
+        registration.shouldBeInstanceOf<ChapterTranslationStore.PagePreRegistration.Rejected>()
+    }
 }

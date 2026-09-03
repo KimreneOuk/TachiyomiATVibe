@@ -19,7 +19,27 @@ import java.util.concurrent.atomic.AtomicLong
 /** A timed-out native call keeps exclusive ownership until its real exit. */
 class NativeRunQuarantine(
     private val scope: CoroutineScope,
+    private val occupancyObserver: OccupancyObserver? = null,
 ) {
+    interface OccupancyObserver {
+        fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long)
+        fun onLaneReleased(token: Long)
+    }
+
+    /** Test/production bridge for observer implementations without adding locks. */
+    constructor(
+        scope: CoroutineScope,
+        onLaneOccupied: ((token: Long, pageKey: String, startedAtEpochMs: Long) -> Unit)?,
+        onLaneReleased: ((token: Long) -> Unit)?,
+    ) : this(scope, object : OccupancyObserver {
+        override fun onLaneOccupied(token: Long, pageKey: String, startedAtEpochMs: Long) {
+            onLaneOccupied?.invoke(token, pageKey, startedAtEpochMs)
+        }
+
+        override fun onLaneReleased(token: Long) {
+            onLaneReleased?.invoke(token)
+        }
+    })
     private val admission = Mutex()
     private val generation = AtomicLong(0L)
 
@@ -55,6 +75,11 @@ class NativeRunQuarantine(
                 exited.complete(Unit)
             }
         }
+        occupancyObserver?.onLaneOccupied(
+            token = runGeneration,
+            pageKey = pageKey,
+            startedAtEpochMs = System.currentTimeMillis(),
+        )
         try {
             val outcome = select<Outcome<T>> {
                 invocation.onAwait { value -> Outcome.Accepted(value, runGeneration) }
@@ -76,6 +101,8 @@ class NativeRunQuarantine(
             generation.incrementAndGet()
             awaitExitAndLogLate(invocation, exited, chapter, pageKey, runGeneration, "cancellation")
             throw cancelled
+        } finally {
+            occupancyObserver?.onLaneReleased(runGeneration)
         }
     }
 

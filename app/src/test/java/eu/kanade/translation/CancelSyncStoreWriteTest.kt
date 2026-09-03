@@ -2,6 +2,8 @@ package eu.kanade.translation
 
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.scheduling.SinglePageOutcome
 import eu.kanade.translation.scheduling.TranslationExecutor
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStageListener
@@ -48,7 +50,8 @@ class CancelSyncStoreWriteTest {
                 pageKey: String,
                 force: Boolean,
                 stageListener: TranslationStageListener?,
-            ) {}
+                origin: PageWriteOrigin,
+            ): SinglePageOutcome = SinglePageOutcome.Completed
             override suspend fun translateSinglePageFromStream(
                 manga: Manga,
                 chapter: Chapter,

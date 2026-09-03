@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
+import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.inpainting.InpaintingMode
@@ -455,6 +456,18 @@ internal class BatchChapterTranslator(
                 // pipeline/batch/BatchLaneWorkers.kt (nativeWorker, translatorWorker,
                 // translateChunkAi, completeChunklessPage). The closure web became class
                 // state; the SAME registry/identity/frontier instances are injected.
+                // T917 D3 defer-and-rescan: shared per-batch deferral record +
+                // typed schedule listener. The native worker records denials
+                // (and routes externally-completed rescans via the same map);
+                // the coordinator re-runs recorded pages within the pass once
+                // their lease is handed back.
+                val deferredPages = LinkedHashMap<String, PageWriteOrigin?>()
+                val batchScheduleListener = object : BatchScheduleListener() {
+                    override fun ocrDeferred(pageKey: String, owner: PageWriteOrigin?) {
+                        deferredPages.putIfAbsent(pageKey, owner)
+                    }
+                }
+
                 val batchLaneWorkers = BatchLaneWorkers(
                     store = store,
                     manga = manga,
@@ -501,6 +514,8 @@ internal class BatchChapterTranslator(
                     retryInpaintDownscaledFn = retryInpaintDownscaled,
                     persistCleanedBitmapFn = persistCleanedBitmap,
                     abortBatchCandidateFn = ::abortBatchCandidate,
+                    scheduleListener = batchScheduleListener,
+                    deferredPages = deferredPages,
                 )
 
 
@@ -508,6 +523,17 @@ internal class BatchChapterTranslator(
                     nativeWorker = batchLaneWorkers.nativeWorker,
                     translatorWorker = batchLaneWorkers.translatorWorker,
                     renderJoin = renderJoin,
+                    listener = batchScheduleListener,
+                    awaitLeaseHandback = { pageKey ->
+                        // T917 D3 (design §3.2): the deferring owner commits its
+                        // terminal stage BEFORE releasing its lease (the manual
+                        // boundary's finally), so observing the release is
+                        // sufficient — the terminal state is already published
+                        // when the rescan re-offers the page and the worker's
+                        // externally-completed gate routes it to SKIP_ALL.
+                        store.awaitPageLeaseRelease(pageKey, LEASE_HANDBACK_WAIT_MS)
+                    },
+                    deferredPages = deferredPages,
                 )
 
                 var pass1Outcome: BatchPass1Outcome? = null
@@ -710,6 +736,15 @@ internal class BatchChapterTranslator(
     }
 
     internal companion object {
+        /**
+         * T917 D3 defer-and-rescan: bound on how long a deferred page's lease
+         * handback wait may suspend before the pass gives up on that page and
+         * lets the reconciler report it. Matches the single-page pipeline's
+         * own stage budget, so a reader-owned page that finishes its work in
+         * reasonable time is always rejoined in-pass.
+         */
+        internal val LEASE_HANDBACK_WAIT_MS: Long = SINGLE_PAGE_TIMEOUT_MS
+
         /**
          * T911 slice 3: pages that are NOT durably terminal when the batch
          * aborts (OOM / engine-setup failure). Rendered, textless, and already

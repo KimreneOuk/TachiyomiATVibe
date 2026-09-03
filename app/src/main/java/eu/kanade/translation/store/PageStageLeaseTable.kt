@@ -5,10 +5,13 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageStageLease
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.model.PageStage
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 
 // T909 Phase 17a: the page-stage lease table moved from
 // `ChapterTranslationStore` (record + backing map + the five lease members).
@@ -41,6 +44,19 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     val pageLeases = ConcurrentHashMap<String, PageLeaseRecord>()
     private var nextLeaseToken = 0L
 
+    /**
+     * T917 D3: per-page waiters parked until the page's lease is released.
+     * Registration happens under `synchronized(pageLeases)` and every release
+     * path removes its lease AND completes this page's waiters inside the same
+     * `synchronized(pageLeases)` critical section (nested in the store mutex),
+     * so a release racing a registration can never strand a waiter: either the
+     * waiter observes the empty lease first, or the releasing path finds and
+     * completes it in the same monitor. Entries are removed on completion and
+     * in the waiter's `finally`, so the registry never grows unbounded.
+     */
+    private val leaseReleaseWaiters =
+        ConcurrentHashMap<String, CopyOnWriteArrayList<CompletableDeferred<Unit>>>()
+
     internal data class PageLeaseRecord(
         val token: Long,
         val origin: PageWriteOrigin,
@@ -63,7 +79,18 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     ): LeaseAcquisition = mutex.withLock {
         if (defunct) return@withLock LeaseAcquisition.Denied("store is defunct", null)
         val existing = pageLeases[pageKey]
-        if (existing != null && existing.origin != origin) {
+        // T917 D1 priority matrix: a MANUAL (reader tap) request is the one
+        // cross-origin preemption — it evicts an in-flight AUTO lease and takes
+        // a fresh record + token. It is safe by the existing fencing: the
+        // evicted AUTO holder's guarded writes fail closed on
+        // `expected.leaseToken != pageLeases[pageKey].token`, and the AUTO side
+        // already treats a lost/stale page as "try again". MANUAL-vs-BATCH is
+        // never a preemption (the caller attaches instead), and AUTO/BATCH
+        // requests never preempt anything.
+        val evictsAuto = existing != null &&
+            existing.origin == PageWriteOrigin.AUTO &&
+            origin == PageWriteOrigin.MANUAL
+        if (existing != null && existing.origin != origin && !evictsAuto) {
             return@withLock LeaseAcquisition.Denied(
                 "page owned by ${existing.origin} at stage ${existing.stage}",
                 existing.origin,
@@ -112,8 +139,11 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     suspend fun releasePageStageLease(pageKey: String, origin: PageWriteOrigin) {
         withContext(NonCancellable) {
             mutex.withLock {
-                if (pageLeases[pageKey]?.origin == origin) {
-                    pageLeases.remove(pageKey)
+                synchronized(pageLeases) {
+                    if (pageLeases[pageKey]?.origin == origin) {
+                        pageLeases.remove(pageKey)
+                    }
+                    completeLeaseReleaseWaitersLocked(pageKey)
                 }
             }
         }
@@ -123,13 +153,19 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     suspend fun cancelPageStageWork(pageKey: String, origin: PageWriteOrigin): Boolean =
         withContext(NonCancellable) {
             mutex.withLock {
-                val lease = pageLeases[pageKey]
-                if (lease?.origin != origin) return@withLock false
-                val cancelled = cancelArtifactCandidateLocked(pageKey)
-                if (cancelled && pageLeases[pageKey]?.origin == origin) {
-                    pageLeases.remove(pageKey)
+                synchronized(pageLeases) {
+                    val lease = pageLeases[pageKey]
+                    if (lease?.origin == origin) {
+                        val cancelled = cancelArtifactCandidateLocked(pageKey)
+                        if (cancelled && pageLeases[pageKey]?.origin == origin) {
+                            pageLeases.remove(pageKey)
+                        }
+                        completeLeaseReleaseWaitersLocked(pageKey)
+                        cancelled
+                    } else {
+                        false
+                    }
                 }
-                cancelled
             }
         }
 
@@ -137,12 +173,50 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     suspend fun releaseAllPageLeases(origin: PageWriteOrigin) {
         withContext(NonCancellable) {
             mutex.withLock {
-                pageLeases.values.removeAll { it.origin == origin }
+                synchronized(pageLeases) {
+                    val releasedKeys = pageLeases.entries
+                        .filter { it.value.origin == origin }
+                        .map { it.key }
+                    releasedKeys.forEach { pageLeases.remove(it) }
+                    releasedKeys.forEach { completeLeaseReleaseWaitersLocked(it) }
+                }
             }
         }
     }
 
     fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = synchronized(pageLeases) {
         pageLeases[pageKey]?.origin
+    }
+
+    /**
+     * T917 D3 defer-and-rescan: suspends until the page is lease-free, bounded
+     * by [timeoutMs]. Returns true when the page has no lease at resume time,
+     * false on timeout or if a newer lease was taken between the release and
+     * the wake-up (the caller then simply re-defers the page). Completing the
+     * waiter and removing the lease happen in the same monitor, so a wake-up
+     * always corresponds to a real release.
+     */
+    suspend fun awaitPageLeaseRelease(pageKey: String, timeoutMs: Long): Boolean {
+        val waiter = CompletableDeferred<Unit>()
+        val free = synchronized(pageLeases) {
+            val isFree = pageLeases[pageKey] == null
+            if (!isFree) {
+                leaseReleaseWaiters.computeIfAbsent(pageKey) { CopyOnWriteArrayList() }.add(waiter)
+            }
+            isFree
+        }
+        if (free) return true
+        try {
+            withTimeoutOrNull(timeoutMs) { waiter.await() } ?: return false
+        } finally {
+            leaseReleaseWaiters[pageKey]?.remove(waiter)
+        }
+        return synchronized(pageLeases) { pageLeases[pageKey] == null }
+    }
+
+    /** Caller MUST hold `synchronized(pageLeases)` and the page's lease must already be removed. */
+    private fun completeLeaseReleaseWaitersLocked(pageKey: String) {
+        if (pageLeases[pageKey] != null) return
+        leaseReleaseWaiters.remove(pageKey)?.forEach { it.complete(Unit) }
     }
 }

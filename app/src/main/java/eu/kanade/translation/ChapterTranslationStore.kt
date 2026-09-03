@@ -4,6 +4,9 @@ import com.hippo.unifile.UniFile
 import eu.kanade.translation.artifact.ArtifactManifestProbe
 import eu.kanade.translation.artifact.ArtifactOrigin
 import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.AttemptOrigin
+import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
 import eu.kanade.translation.artifact.ChapterArtifactLayout
@@ -12,6 +15,8 @@ import eu.kanade.translation.artifact.ChapterArtifactManifestReader
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.CleanedImageProbe
 import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.PartialBatchDetermination
+import eu.kanade.translation.artifact.PartialBatchInfo
 import eu.kanade.translation.artifact.LegacyChapterMigrationSource
 import eu.kanade.translation.artifact.LegacyChapterSnapshot
 import eu.kanade.translation.artifact.ManifestAuthority
@@ -29,6 +34,7 @@ import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.store.ChapterAttemptLedger
 import eu.kanade.translation.store.ChapterGlossaryStore
 import eu.kanade.translation.store.PageStageLeaseTable
 import eu.kanade.translation.store.StorePersistenceScheduler
@@ -211,6 +217,9 @@ class ChapterTranslationStore(
     // T909 Phase 17b: internal so the moved StorePersistenceScheduler's
     // flushDirtyLocked can reach the glossary dirty flag through it.
     internal val glossaryStore = ChapterGlossaryStore(this)
+    // T917 Phase 3 (D9): durable attempt ledger collaborator (delegates under
+    // the store mutex; fail-open persistence; memory-only no-op writes).
+    private val attemptLedger = ChapterAttemptLedger(this)
     // T909 Phase 17b: the flush/close/debounce/retention machinery moved to
     // store/StorePersistenceScheduler.kt; the scheduler owns persistScope and
     // is constructed eagerly (its ctor resolves no store state). `dirty` and
@@ -343,6 +352,109 @@ class ChapterTranslationStore(
     fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
         statusProjector.durableFailuresSnapshot()
 
+    // ------------------------------------------------------------------
+    // T917 Phase 3 (D9): durable attempt ledger (phase3-design §3).
+    // All methods delegate to store/ChapterAttemptLedger.kt under the store
+    // mutex. Ledger writes are fail-open; only AUTO origins can be refused
+    // (the crash-loop cap binds auto-retry loops, never the user).
+    // ------------------------------------------------------------------
+
+    /**
+     * Records a started paid attempt BEFORE the provider call. Returns false
+     * only when [AttemptOrigin.AUTO] is refused by the consecutive-attempt cap.
+     */
+    suspend fun recordAttemptStart(
+        pageKey: String,
+        providerKeyHash: String,
+        origin: AttemptOrigin,
+        generation: Long = currentGeneration,
+    ): Boolean = mutex.withLock {
+        attemptLedger.recordStartLocked(pageKey, providerKeyHash, origin, generation)
+    }
+
+    /**
+     * A completed call for [pageKey] — commit success OR typed provider
+     * failure. Resolves the page's pending entries and resets its consecutive
+     * counter; only a process death leaves an entry behind.
+     */
+    suspend fun resolveAttempt(pageKey: String) {
+        mutex.withLock { attemptLedger.resolveLocked(pageKey) }
+    }
+
+    /**
+     * Startup reconciliation: consume every pending entry as one counted
+     * interrupted attempt per page and persist the counters. Returns the
+     * post-consume consecutive counters; the caller (TranslationManager)
+     * applies the cap for pages at/over the bound.
+     */
+    suspend fun consumeUnresolvedAttemptsAtStartup(): Map<String, Int> = mutex.withLock {
+        attemptLedger.consumeAtStartupLocked()
+    }
+
+    /**
+     * Applies the crash-loop cap to one page: records an INTERRUPTED-class
+     * durable failure (never auto-retryable) and marks the page PARTIAL.
+     * Returns true when the cap state is durably recorded.
+     */
+    suspend fun applyAttemptCapPause(pageKey: String, consecutiveUnresolved: Int): Boolean {
+        val failure = DurableFailureMetadata(
+            pageKey = pageKey,
+            stage = ArtifactStage.TRANSLATION,
+            status = ArtifactStageStatus.FAILED_RETRYABLE,
+            category = FailureCategory.INTERRUPTED,
+            retryCount = consecutiveUnresolved,
+            lastFailureMessage = "repeatedly interrupted before completing; manual retry required",
+            lastFailedAtEpochMs = System.currentTimeMillis(),
+            nextEligibleRetryAtEpochMs = null,
+        )
+        val expected = snapshot(pageKey).toPrecondition()
+        val result = persistDurableStageFailure(
+            pageKey = pageKey,
+            expected = expected,
+            failure = failure,
+            description = "D9 attempt cap reached ($consecutiveUnresolved consecutive interrupted attempts)",
+        ) { current ->
+            (current ?: PageTranslation(sourceFileName = pageKey)).apply {
+                translationStatus = StageStatus.PARTIAL
+            }
+        }
+        return result is PatchResult.Accepted
+    }
+
+    /**
+     * Explicit user force: clear the page's consecutive counter and remove the
+     * INTERRUPTED-class cap failure from the manifest, so the user's retry is
+     * admitted and the cap restarts from zero.
+     */
+    suspend fun clearAttemptCapForManualRetry(pageKey: String): Boolean = mutex.withLock {
+        val counterCleared = attemptLedger.clearCapLocked(pageKey)
+        removeInterruptedCapFailureLocked(pageKey)
+        counterCleared
+    }
+
+    /** Caller holds the store mutex. */
+    private fun removeInterruptedCapFailureLocked(pageKey: String) {
+        val artifact = artifactStore ?: return
+        val manifest = artifactManifest ?: return
+        if (manifest.authority != ManifestAuthority.ARTIFACTS) return
+        val key = "$pageKey:${ArtifactStage.TRANSLATION.name}"
+        val existing = manifest.durableFailures[key] ?: return
+        if (existing.category != FailureCategory.INTERRUPTED) return
+        val updated = manifest.copy(
+            durableFailures = manifest.durableFailures - key,
+            updatedAtEpochMs = System.currentTimeMillis(),
+        )
+        if (artifact.publishManifest(updated)) {
+            artifactManifest = updated
+            _state.value = snapshotPages()
+            _display.value = displaySnapshotLocked()
+        } else {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT D9: cap-failure clear publish failed (fail-open): pageKey=$pageKey"
+            }
+        }
+    }
+
     /** Establishes artifact authority before a caller installs a new page state. */
     suspend fun ensureArtifactAuthorityForMutation(): MutationAdmission = mutex.withLock {
         admitMutationLocked()
@@ -418,6 +530,14 @@ class ChapterTranslationStore(
 
     fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = pageStageLeaseTable.pageLeaseOwner(pageKey)
 
+    /**
+     * T917 D3 defer-and-rescan: suspends until the page is lease-free, bounded
+     * by [timeoutMs] (true = lease-free at resume, false = timed out or a newer
+     * lease appeared). See [PageStageLeaseTable.awaitPageLeaseRelease].
+     */
+    suspend fun awaitPageLeaseRelease(pageKey: String, timeoutMs: Long): Boolean =
+        pageStageLeaseTable.awaitPageLeaseRelease(pageKey, timeoutMs)
+
     suspend fun invalidateGeneration(reason: String): Long = beginGeneration(reason)
 
     suspend fun <T> withGeneration(generation: Long, block: suspend () -> T): T =
@@ -450,7 +570,20 @@ class ChapterTranslationStore(
                 expected.candidateGenerationId != null &&
                     expected.candidateGenerationId != artifactManifest?.pages?.get(pageKey)?.candidate?.generationId ->
                     "candidate generation changed"
+                // T917 Phase 3 backlog fold-in (phase3-design §4): same
+                // `candidate != null` grace persistArtifactMutationLocked
+                // applies — a dependency fingerprint expected against a
+                // candidate-LESS record (candidate never opened, cleared by an
+                // abort, or the candidate-less registration a batch start
+                // performs for a held page) has nothing real to compare
+                // against, so the mismatch must not reject. Snapshot captures
+                // arm this clause from the page-snapshot fallback even with no
+                // candidate, which made every such manual commit a false
+                // reject. Fail direction preserved: generation, pageVersion,
+                // candidate generation, block fingerprints, and the lease
+                // token fences stay fully armed.
                 expected.dependencyFingerprint != null &&
+                    artifactManifest?.pages?.get(pageKey)?.candidate != null &&
                     expected.dependencyFingerprint != artifactManifest?.pages?.get(pageKey)?.candidate?.dependencyFingerprint ->
                     "candidate dependency fingerprint changed"
                 expected.blockFingerprints != null &&
@@ -1222,8 +1355,26 @@ class ChapterTranslationStore(
      * returning Unit when the store refuses the registration (defunct store,
      * artifact-authority failure), so the caller can surface a typed terminal
      * error rather than a live zero tracker.
+     *
+     * T917 Phase 4 (D10, phase4-design §3.3): the trigger may attach its
+     * admission-probe cross-check. When [sourceCountKnown] is true the
+     * registered truth is honest about partiality:
+     *  - a known SOURCE total ([probedSourcePageCount] != null) makes the
+     *    trusted baseline the source total (progress shows 37/40, not 40/40)
+     *    and records the delta as [PartialBatchInfo.DOWNLOAD_CROSSCHECK] —
+     *    cleared again when a later cross-check derives missing == 0;
+     *  - an unknown total (null count) keeps the found count but DEMOTES the
+     *    trusted stamp and records `determinedFrom = UNKNOWN` — the durable
+     *    record stops claiming trust it does not have.
+     * Missing pages are never registered as page records; the manifest carries
+     * the absence. Without context (both defaults) the legacy self-derived
+     * stamp below is byte-identical to pre-D10 behavior.
      */
-    suspend fun preRegisterPages(pageKeys: List<String>): PagePreRegistration {
+    suspend fun preRegisterPages(
+        pageKeys: List<String>,
+        probedSourcePageCount: Int? = null,
+        sourceCountKnown: Boolean = false,
+    ): PagePreRegistration {
         if (pageKeys.isEmpty()) return PagePreRegistration.Accepted
         if (defunct) {
             logcat(LogPriority.WARN) {
@@ -1242,8 +1393,12 @@ class ChapterTranslationStore(
                     return PagePreRegistration.Rejected(admission.message)
                 }
             }
-            pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, pageKeys.distinct().size)
-            pendingExpectedPageCountTrusted = true
+            val foundCount = pageKeys.distinct().size
+            val crossCheckKnown = sourceCountKnown && probedSourcePageCount != null
+            val crossCheckUnknown = sourceCountKnown && probedSourcePageCount == null
+            val targetCount = if (crossCheckKnown) maxOf(foundCount, probedSourcePageCount!!) else foundCount
+            pendingExpectedPageCount = maxOf(pendingExpectedPageCount ?: 0, targetCount)
+            pendingExpectedPageCountTrusted = !crossCheckUnknown
             var changed = false
             pageKeys.forEach { pageKey ->
                 if (!pages.containsKey(pageKey)) {
@@ -1261,16 +1416,45 @@ class ChapterTranslationStore(
             val store = artifactStore
             val manifest = artifactManifest
             val expected = pendingExpectedPageCount
-            val expectedTrusted = manifest?.expectedPageCountTrusted == true || pendingExpectedPageCountTrusted
+            val expectedTrusted = when {
+                crossCheckUnknown -> false
+                else -> manifest?.expectedPageCountTrusted == true || pendingExpectedPageCountTrusted
+            }
+            // The partial delta rides the same publish as the totals; a full
+            // cross-check (missing == 0) clears a previously recorded label.
+            val partialInfo = when {
+                crossCheckKnown -> {
+                    val missing = maxOf(0, probedSourcePageCount!! - foundCount)
+                    if (missing == 0) {
+                        null
+                    } else {
+                        PartialBatchInfo(
+                            expectedSourcePageCount = probedSourcePageCount,
+                            missingPageCount = missing,
+                            determinedFrom = PartialBatchDetermination.DOWNLOAD_CROSSCHECK,
+                            recordedAtEpochMs = System.currentTimeMillis(),
+                        )
+                    }
+                }
+                crossCheckUnknown -> PartialBatchInfo(
+                    expectedSourcePageCount = null,
+                    missingPageCount = 0,
+                    determinedFrom = PartialBatchDetermination.UNKNOWN,
+                    recordedAtEpochMs = System.currentTimeMillis(),
+                )
+                else -> manifest?.partialBatchInfo
+            }
             if (store != null && manifest != null && expected != null) {
                 val updated = manifest.copy(
                     expectedPageCount = maxOf(expected, manifest.expectedPageCount ?: 0),
                     expectedPageCountTrusted = expectedTrusted,
+                    partialBatchInfo = partialInfo,
                     updatedAtEpochMs = System.currentTimeMillis(),
                 )
                 if (
                     updated.expectedPageCount == manifest.expectedPageCount &&
-                    updated.expectedPageCountTrusted == manifest.expectedPageCountTrusted
+                    updated.expectedPageCountTrusted == manifest.expectedPageCountTrusted &&
+                    updated.partialBatchInfo == manifest.partialBatchInfo
                 ) {
                     pendingExpectedPageCount = null
                     pendingExpectedPageCountTrusted = false
@@ -1592,8 +1776,15 @@ class ChapterTranslationStore(
         artifactStore?.let { return artifactManifest != null }
         // Lazy production stores must provide an artifact parent/name. An
         // existing flat file is migrated by openInternal; this method never
-        // creates one as a mutation side effect.
-        val parent = artifactParent ?: translationFile?.parentFile ?: return false
+        // creates one as a mutation side effect. A store opened before its
+        // document existed (chapter never translated) resolves the parent
+        // through [fileCreator] here — the same create-the-directory step the
+        // pipeline fallback performs — so the first real write establishes
+        // authority instead of rejecting every mutation.
+        val parent = artifactParent
+            ?: translationFile?.parentFile
+            ?: fileCreator?.let { creator -> runCatching { creator() }.getOrNull() }
+            ?: return false
         val fileName = artifactFileName ?: translationFile?.name ?: return false
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
@@ -1634,10 +1825,9 @@ class ChapterTranslationStore(
         return true
     }
 
-    private fun PageWriteOrigin?.toArtifactOrigin(): ArtifactOrigin = when (this) {
-        PageWriteOrigin.READER_ADHOC -> ArtifactOrigin.READER_ADHOC
-        PageWriteOrigin.BATCH, null -> ArtifactOrigin.BATCH
-    }
+    // T917 D1: the lease-origin -> durable-provenance mapping moved to the
+    // shared top-level `PageWriteOrigin?.toArtifactOrigin()` in
+    // TranslationStageContracts.kt (same two-value ArtifactOrigin result).
 
     private fun PageTranslation.sourceIdentity(pageKey: String): SourceIdentity? =
         sourceFingerprint?.let { fingerprint ->
@@ -1888,6 +2078,15 @@ class ChapterTranslationStore(
         glossaryStore.updateGlossary(updated)
     }
 
+    /**
+     * TachiyomiAT T917 D5: live glossary version for the reuse gate and
+     * provenance stamps; `null` = gate off (legacy authority / no glossary
+     * ever published). Delegates to [ChapterGlossaryStore]; a pure in-memory
+     * read, safe under the store mutex (the batch provenance stamp consumes it
+     * inside the guarded patch lambda).
+     */
+    internal fun currentGlossaryVersion(): Int? = glossaryStore.currentGlossaryVersion()
+
     internal fun loadGlossary() {
         glossaryStore.loadGlossary()
     }
@@ -2024,8 +2223,9 @@ class ChapterTranslationStore(
 
         /**
          * Creates a store whose on-disk file is created lazily on the first
-         * artifact-backed [updatePage]/[replaceAll] write. The optional
-         * [fileCreator] remains source-compatible but is never invoked.
+         * artifact-backed [updatePage]/[replaceAll] write. When
+         * [artifactParent] is null (chapter never translated), the optional
+         * [fileCreator] resolves the parent directory on the first mutation.
          */
         fun lazy(
             artifactParent: UniFile? = null,

@@ -12,12 +12,19 @@ import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationEngineBuilder
 import eu.kanade.translation.util.ShortHash
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.OcrModel
 import tachiyomi.domain.translation.TranslationPreferences
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Native lane + engine cache moved from `TranslationPipeline` (T909 Phase 10).
@@ -26,6 +33,14 @@ import tachiyomi.domain.translation.TranslationPreferences
  * (invalid config at construction must not crash the eagerly built pipeline).
  * The native run scope/quarantine, the in-flight page-key set, and the
  * [onPageStuck] callback stay pipeline-owned and are injected here.
+ *
+ * T917 Phase 4 (D7, phase4-design §1.2): the lane also owns the engine EPOCH
+ * (bumped only by [closeEngines]) and the translator BORROW registry
+ * ([beginTranslatorUse]/[endTranslatorUse]) that make in-flight reader work
+ * observable to the stop path, plus the bounded NON-BLOCKING borrow drain:
+ * [closeEngines] snapshots the exact engine references and closes THOSE under
+ * the permit — after a bounded grace, or immediately when the lane is idle.
+ * A rebuild must never observe the drain close its NEW engines.
  */
 internal class EngineLane(
     private val context: Context,
@@ -33,12 +48,69 @@ internal class EngineLane(
     private val nativeRunQuarantine: NativeRunQuarantine,
     private val inFlightPageKeys: MutableSet<String>,
     private val onPageStuck: () -> ((chapterId: Long?, pageKey: String) -> Unit)?,
+    // T917 Phase 4 (D7): the borrow drain bounds. Defaults keep every existing
+    // construction site compiling; production wires drainScope = nativeRunScope.
+    private val drainGraceMs: Long = ENGINE_DRAIN_GRACE_MS,
+    private val drainScope: CoroutineScope? = null,
+    private val translatorFactory: (TextRecognizerLanguage, TextTranslatorLanguage) -> TextTranslator =
+        { fromLang, toLang -> TranslationEngineBuilder.build(translationPreferences, fromLang, toLang) },
 ) {
+
+    internal companion object {
+        /**
+         * T917 Phase 4 (D7 §1.6): the ENGINE drain grace stays deliberately SHORT —
+         * its expiry neither fails nor bills anything; the epoch guard transparently
+         * retries the racing page against the rebuilt translator exactly once. Holding
+         * engines open for the full chain budget after an explicit Stop would delay
+         * native-memory release (recognition engine teardown) — bounded memory
+         * outranks the rare extra paid call. This asymmetry with the PROVIDER drain
+         * grace (RollingAutoCoordinator.PROVIDER_DRAIN_GRACE_MS, aligned to
+         * ATTACH_TIMEOUT_MS) is a decision, not an oversight. `[TARGET]` per D13.
+         */
+        const val ENGINE_DRAIN_GRACE_MS = 5_000L
+    }
 
     private data class PermitHolder(val pageKey: String)
 
     @Volatile
     private var permitHolder: PermitHolder? = null
+
+    // ------------------------------------------------------------------
+    // T917 Phase 4 (D7 §1.2): engine epoch + translator borrow registry.
+    // ------------------------------------------------------------------
+
+    /**
+     * Bumped ONLY by [closeEngines] — the moment the cached instances are (or may
+     * soon be) torn down. Rebuilds do NOT bump it: they are permit-ordered under
+     * the rebuild mutex and produce a coherent new pair. Distinct from the
+     * quarantine's `generation` and the scheduler's `chapterCancellationEpochs`.
+     */
+    private val engineEpoch = AtomicLong(0L)
+
+    /** Current engine epoch; captured next to `textTranslator` at the borrow site. */
+    internal fun currentEngineEpoch(): Long = engineEpoch.get()
+
+    /**
+     * Number of in-flight translator borrows (the single page boundary
+     * [eu.kanade.translation.pipeline.SinglePageHttpRenderPhase]
+     * `translateSinglePageHttpRender`). This is what makes "in-flight reader
+     * work" observable to the stop path; bounded to one int.
+     */
+    private val translatorUseCount = AtomicInteger(0)
+
+    /** Signalled (event-driven, no polling) whenever the count drops back to zero. */
+    @Volatile
+    private var translatorUseDrained: CompletableDeferred<Unit>? = null
+
+    internal fun beginTranslatorUse() {
+        translatorUseCount.incrementAndGet()
+    }
+
+    internal fun endTranslatorUse() {
+        if (translatorUseCount.decrementAndGet() == 0) {
+            translatorUseDrained?.complete(Unit)
+        }
+    }
 
     internal fun permitHolderPageKeySnapshot(): String? = permitHolder?.pageKey
 
@@ -232,18 +304,92 @@ internal class EngineLane(
         // occupied, the next admitted call rebuilds after the real native exit.
         inFlightPageKeys.clear()
         enginesClosed = true
+        engineEpoch.incrementAndGet()
+        // T917 Phase 4 (D7 §1.5 row 1) HIGH-RISK GUARD: snapshot the EXACT engine
+        // references at close time and close THOSE objects — a one-shot drain that
+        // fires after a rebuild must never kill the NEW engines. The [enginesClosed]
+        // flag stays the rebuild authority.
+        val recognitionToClose = recognitionEngine
+        val translatorToClose = textTranslator
+        if (translatorUseCount.get() == 0 || drainGraceMs <= 0L) {
+            // Fast path (idle lane, today's behavior) or a zero/expired-by-config
+            // grace: close synchronously. A grace of 0 is a test-only configuration;
+            // production's 5 s always takes the drain path below when busy.
+            closeEnginesNow(recognitionToClose, translatorToClose)
+            return
+        }
+        val scope = drainScope
+        if (scope == null) {
+            closeEnginesNow(recognitionToClose, translatorToClose)
+            return
+        }
+        // Bounded NON-BLOCKING borrow drain (stop callers are on the main thread;
+        // nothing joins): await the borrow release event, then close the SNAPSHOTTED
+        // engines. Grace expiry closes anyway.
+        val drained = CompletableDeferred<Unit>()
+        translatorUseDrained = drained
+        scope.launch {
+            var drainedInTime = true
+            try {
+                withTimeout(drainGraceMs) { drained.await() }
+            } catch (_: TimeoutCancellationException) {
+                drainedInTime = false
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT engine drain grace expired: graceMs=$drainGraceMs — closing the " +
+                        "engines under the in-flight borrow (the epoch guard retries the racing page)"
+                }
+            }
+            if (drainedInTime) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT engine close drained: borrow ended, closing the snapshotted engines"
+                }
+            }
+            closeEnginesNow(recognitionToClose, translatorToClose)
+        }
+    }
+
+    /** Closes the given engine references when the native lane is momentarily idle. */
+    private fun closeEnginesNow(recognitionToClose: PageRecognitionEngine, translatorToClose: TextTranslator) {
         val closedNow = nativeRunQuarantine.tryRunExclusive {
             try {
-                recognitionEngine.close()
+                recognitionToClose.close()
             } catch (_: Exception) {}
             try {
-                textTranslator.close()
+                translatorToClose.close()
             } catch (_: Exception) {}
         }
         if (!closedNow) {
             logcat(LogPriority.WARN) {
                 "TachiyomiAT engine close deferred: reason=native invocation still alive"
             }
+        }
+    }
+
+    /**
+     * T917 Phase 4 (D7 §1.2): targeted TRANSLATOR-ONLY rebuild for the epoch
+     * guard's exactly-one retry. The HTTP translate phase runs OUTSIDE the permit
+     * and has no native needs of its own, so it repairs only the closed translator
+     * (the rebuild gate's full recognition+translator rebuild stays the authority
+     * for the next admitted invocation — [enginesClosed] is intentionally NOT
+     * reset here). The replacement comes from [translatorFactory] (production:
+     * the same `TranslationEngineBuilder` the rebuild gate uses), so the retry
+     * never re-uses the closed instance.
+     */
+    internal suspend fun ensureTranslatorRebuiltForEpochRetry(
+        fromLang: TextRecognizerLanguage,
+        toLang: TextTranslatorLanguage,
+    ) {
+        if (!enginesClosed) return
+        val retired = textTranslator
+        withContext(Dispatchers.IO) {
+            try {
+                retired.close()
+            } catch (_: Exception) {}
+        }
+        textTranslator = translatorFactory(fromLang, toLang)
+        currentTranslatorSignature = computeTranslatorSignature(fromLang, toLang)
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT D7 epoch retry: rebuilt the closed translator for the in-flight HTTP phase"
         }
     }
 

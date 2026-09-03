@@ -71,6 +71,13 @@ internal class BatchResumePlanner(
             BatchStage.TRANSLATION -> {
                 translationFingerprint = expectedBatchFingerprints.translation
                 translationOrigin = PageWriteOrigin.BATCH.name
+                // T917 D5 (phase3-design §1.3): stamp the live store glossary
+                // version at commit-provenance time, alongside the translation
+                // fingerprint. The planner's reuse gate compares this recorded
+                // value against the chapter's current version (`absence = 0`)
+                // to schedule the one-time repair of pages translated before
+                // the glossary matured.
+                translationGlossaryVersion = store.currentGlossaryVersion() ?: 0
             }
             BatchStage.LAYOUT -> layoutFingerprint = expectedBatchFingerprints.layout
             else -> {}
@@ -89,6 +96,13 @@ internal class BatchResumePlanner(
                 expectedFingerprints = expectedBatchFingerprints,
                 sourceFingerprint = sourceFingerprints[pageKey],
                 durableFailure = store.durableFailure(pageKey),
+                // T917 D5 (phase3-design §1.2): AI lane only — the standard
+                // engine lane passes null so its decisions are byte-identical
+                // to pre-D5. The accessor itself returns null (gate off) for a
+                // legacy authority or a chapter with no glossary pointer, which
+                // keeps glossary-less chapters cost-flat. Read ONCE at plan
+                // time, exactly like the fingerprints.
+                currentGlossaryVersion = if (isAi) store.currentGlossaryVersion() else null,
             )
         },
     ).pages.associateBy { it.pageKey }

@@ -50,6 +50,13 @@ enum class BatchHeroPhase {
 
     /** T911 slice 2 (R10): the translation queue refused admission (not a download failure). */
     ADMISSION_FAILED,
+
+    /**
+     * T917 Phase 5 (spec §2.1/D10): real committed pages exist, but the page
+     * set is not the trusted source total (partial download). The available
+     * count must never render as a percentage or a complete chapter.
+     */
+    UNKNOWN_TOTAL,
 }
 
 sealed interface BatchHeroProjection {
@@ -102,8 +109,17 @@ sealed interface BatchHeroProjection {
                 return Phase(phase = BatchHeroPhase.FAILED_NO_PAGES, isError = true)
             }
 
-            // Real translation totals stay numeric (terminal outcome included).
+            // Real translation totals stay numeric (terminal outcome included)
+            // — but only when the page set is the trusted source total. A
+            // partially downloaded chapter's available pages are documented
+            // absence, never a fabricated complete chapter (D10).
             if (hasRealTotals) {
+                if (!snapshot.expectedPageCountTrusted) {
+                    return Phase(
+                        phase = BatchHeroPhase.UNKNOWN_TOTAL,
+                        donePages = snapshot.terminalPages,
+                    )
+                }
                 return Numeric(
                     fraction = snapshot.fraction.coerceIn(0f, 1f),
                     donePages = snapshot.donePages,

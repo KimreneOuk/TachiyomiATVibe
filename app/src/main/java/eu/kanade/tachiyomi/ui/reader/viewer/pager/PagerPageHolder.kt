@@ -9,10 +9,12 @@ import eu.kanade.tachiyomi.databinding.ReaderErrorBinding
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.ui.reader.model.InsertPage
 import eu.kanade.tachiyomi.ui.reader.model.ReaderPage
+import eu.kanade.tachiyomi.ui.reader.resolveReaderPageTranslationKey
 import eu.kanade.tachiyomi.ui.reader.setting.ReaderPreferences
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageFeedbackState
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderPageImageView
 import eu.kanade.tachiyomi.ui.reader.viewer.ReaderProgressIndicator
+import eu.kanade.tachiyomi.ui.reader.viewer.readerManualOutcomeFeedback
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderPageFeedback
 import eu.kanade.tachiyomi.ui.reader.viewer.selectReaderTranslationOverlayBinding
 import eu.kanade.tachiyomi.ui.reader.viewer.toReaderPageFeedback
@@ -21,6 +23,7 @@ import eu.kanade.tachiyomi.widget.ViewPagerAdapter
 import eu.kanade.translation.model.displayImageName
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.shouldShowTranslationOverlay
+import eu.kanade.translation.translator.NativeStallState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,6 +65,11 @@ class PagerPageHolder(
 
     private var autoFeedbackState: ReaderPageFeedbackState? = null
     private var feedbackAttemptActive = false
+
+    // TachiyomiAT T917 P5: the pipeline's single bounded native stall state.
+    // Consumed by the chip join so the stalled pageKey renders stall truth
+    // even when no durable store emission accompanies the stall.
+    private var nativeStallState: NativeStallState? = null
 
     // TachiyomiAT: muted chapter-context suffix for the unified bottom-center
     // pill. Only the paged holder contributes it; vertical holders leave the
@@ -207,6 +215,14 @@ class PagerPageHolder(
                 syncTranslationFeedback()
             }
             .launchIn(holderScope)
+        // TachiyomiAT T917 P5: the D8 stall flow re-syncs the chip so the
+        // stalled page's truth appears without waiting for a store emission.
+        viewer.activity.viewModel.nativeStallState
+            .onEach { stall ->
+                nativeStallState = stall
+                syncTranslationFeedback()
+            }
+            .launchIn(holderScope)
         viewer.activity.viewModel.observePageView(page)
             ?.onEach { refreshTranslation() }
             ?.launchIn(holderScope)
@@ -228,7 +244,6 @@ class PagerPageHolder(
      * button; it never re-decodes or re-sets the image.
      */
     fun syncTranslationFeedback() {
-        val durableFeedback = page.translation?.toReaderPageFeedback()
         val isBeingTranslated = isPageBeingTranslated()
         if (isBeingTranslated && !feedbackAttemptActive) {
             beginTranslationFeedbackAttempt()
@@ -236,6 +251,20 @@ class PagerPageHolder(
         } else if (!isBeingTranslated) {
             feedbackAttemptActive = false
         }
+        // TachiyomiAT T917 P5: the scheduler's typed outcome for THIS page
+        // identity, wrapped verbatim by the pure TranslationUiTruth mapper.
+        // The join is identity-fenced by chapter+pageKey, so a late outcome
+        // from a prior page/chapter is dropped; a Completed outcome returns
+        // null and the existing rendered state stands.
+        val manualFeedback = readerManualOutcomeFeedback(
+            chapterId = page.chapter.chapter.id,
+            pageKey = resolveReaderPageTranslationKey(page),
+            attemptActive = isBeingTranslated,
+            lookup = viewer.activity.viewModel::manualSinglePageOutcome,
+            nativeStall = nativeStallState,
+            durable = page.translation,
+        )
+        val durableFeedback = manualFeedback ?: page.translation?.toReaderPageFeedback()
         val feedback = selectReaderPageFeedback(
             durableFeedback = durableFeedback,
             autoFeedback = autoFeedbackState,
@@ -260,6 +289,7 @@ class PagerPageHolder(
         loadJob = null
         autoFeedbackState = null
         feedbackAttemptActive = false
+        nativeStallState = null
         readyAheadSuffix = null
         clearTranslationFeedback()
         holderScope.cancel()

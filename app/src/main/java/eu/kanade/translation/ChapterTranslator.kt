@@ -492,7 +492,14 @@ class ChapterTranslator(
         true
     }.getOrDefault(false)
 
-    fun queueChapter(manga: Manga, chapter: Chapter) {        val source = sourceManager.get(manga.source) as? HttpSource ?: return
+    fun queueChapter(
+        manga: Manga,
+        chapter: Chapter,
+        // T917 Phase 4 (D10): the trigger's admission-probe cross-check; the
+        // defaults keep every legacy caller byte-identical.
+        probedSourcePageCount: Int? = null,
+        sourceCountKnown: Boolean = false,
+    ) {        val source = sourceManager.get(manga.source) as? HttpSource ?: return
         if (queueState.value.any { it.chapter.id == chapter.id }) return
         // TachiyomiAT: STRICT no-fallback. fromPref now throws on invalid config
         // (corrupted/migrated pref). This runs on a UI action, so a thrown
@@ -519,6 +526,10 @@ class ChapterTranslator(
             return
         }
         val translation = Translation(source, manga, chapter, fromLang, toLang)
+        if (sourceCountKnown) {
+            translation.probedSourcePageCount = probedSourcePageCount
+            translation.sourceCountKnown = true
+        }
         addToQueue(translation)
     }
 
@@ -634,7 +645,14 @@ class ChapterTranslator(
                 // pipeline error. Fail the chapter with a typed terminal tracker
                 // snapshot instead of running a live tracker whose totals would
                 // silently stay zero.
-                val preRegistration = store.preRegisterPages(batchOrderedPageKeys)
+                // T917 Phase 4 (D10): the queued cross-check rides the
+                // pre-registration so the manifest's trusted total is the
+                // SOURCE total (or honestly unknown), never the found count.
+                val preRegistration = store.preRegisterPages(
+                    batchOrderedPageKeys,
+                    translation.probedSourcePageCount,
+                    translation.sourceCountKnown,
+                )
                 if (preRegistration is ChapterTranslationStore.PagePreRegistration.Rejected) {
                     failBeforePipeline(
                         translation,

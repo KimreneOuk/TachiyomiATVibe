@@ -402,6 +402,45 @@ class MangaScreen(
                 )
             }
 
+            is MangaScreenModel.Dialog.PartialDownloadTranslation -> {
+                // T917 Phase 5 N2: the decision body describes EVERY chapter in
+                // the group via the pure partialDownloadBody mapper (the
+                // phase-4 dialog showed only the first chapter's counts).
+                val body = eu.kanade.translation.ui.TranslationUiTruth.partialDownloadBody(
+                    dialog.group.map { chapterItem ->
+                        when (val decision = dialog.decisions[chapterItem.chapter.id]) {
+                            is eu.kanade.translation.pipeline.batch.BatchAdmissionDecision.Partial ->
+                                eu.kanade.translation.ui.TranslationUiTruth.PartialDecision(
+                                    downloaded = decision.downloadedPageCount,
+                                    expectedSourceTotal = decision.expectedSourcePageCount,
+                                )
+                            else ->
+                                eu.kanade.translation.ui.TranslationUiTruth.PartialDecision(
+                                    downloaded = 0,
+                                    expectedSourceTotal = null,
+                                )
+                        }
+                    }.toTypedArray(),
+                )
+                AlertDialog(
+                    onDismissRequest = { screenModel.dismissDialog() },
+                    title = { Text(text = "Chapter still downloading") },
+                    text = {
+                        Text(text = body)
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { screenModel.translatePartialDownloadNow(dialog) }) {
+                            Text(text = "Translate what exists")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { screenModel.finishDownloadBeforeTranslation(dialog) }) {
+                            Text(text = "Finish download first")
+                        }
+                    },
+                )
+            }
+
             is MangaScreenModel.Dialog.SetFetchInterval -> {
                 SetIntervalDialog(
                     interval = dialog.manga.fetchInterval,

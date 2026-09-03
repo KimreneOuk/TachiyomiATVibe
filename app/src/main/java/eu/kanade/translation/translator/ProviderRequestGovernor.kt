@@ -73,6 +73,16 @@ data class ProviderQuotaPolicy(
     val pollIntervalMs: Long = 50L,
     val quotaCooldownMs: Long = 60_000L,
     val windowMs: Long = 60_000L,
+    /**
+     * T917 Phase 3 (D6 §2.1): fraction of the token window held back for
+     * INTERACTIVE (reader) requests while one waits. While the bucket holds a
+     * waiting INTERACTIVE request, a BACKGROUND request's effective token
+     * limit shrinks to `tokensPerMinute * (1 - fraction)` and its request
+     * limit to `requestsPerMinute - 1`, so a draining batch cannot consume
+     * the reader's headroom. Interactive requests always see the full window;
+     * an admitted reservation is never revoked.
+     */
+    val interactiveTokenReserveFraction: Double = 0.2,
 ) {
     init {
         require(requestsPerMinute > 0) { "requestsPerMinute must be > 0" }
@@ -84,6 +94,9 @@ data class ProviderQuotaPolicy(
         require(pollIntervalMs > 0) { "pollIntervalMs must be > 0" }
         require(quotaCooldownMs >= 0) { "quotaCooldownMs must be >= 0" }
         require(windowMs > 0) { "windowMs must be > 0" }
+        require(interactiveTokenReserveFraction > 0.0 && interactiveTokenReserveFraction <= 1.0) {
+            "interactiveTokenReserveFraction must be in (0.0, 1.0]"
+        }
     }
 }
 
@@ -427,10 +440,28 @@ class ProviderRequestGovernor(
         }
 
         val tokenCost = waiter.metadata.estimatedTokens
-        val tokenLimit = maxOf(quota.tokensPerMinute, tokenCost)
-        val requestsReady = bucket.reservations.size < quota.requestsPerMinute
+        // T917 Phase 3 (D6 §2.1): while the bucket holds at least one waiting
+        // INTERACTIVE request, a BACKGROUND request sees reduced limits so a
+        // draining batch cannot consume the reader's headroom. Interactive
+        // requests always ride the full window, and the reduced token limit
+        // never falls below this request's own cost (a single oversized
+        // envelope stays admissible). Admitted reservations are never revoked.
+        val interactiveWaiterWaiting = bucket.waiters.any {
+            it.metadata.priority == AdmissionPriority.INTERACTIVE
+        }
+        val backgroundReserveApplies =
+            waiter.metadata.priority == AdmissionPriority.BACKGROUND && interactiveWaiterWaiting
+        val effectiveRequestsPerMinute =
+            if (backgroundReserveApplies) quota.requestsPerMinute - 1 else quota.requestsPerMinute
+        val effectiveTokensPerMinute = if (backgroundReserveApplies) {
+            (quota.tokensPerMinute * (1.0 - quota.interactiveTokenReserveFraction)).toLong().coerceAtLeast(0L)
+        } else {
+            quota.tokensPerMinute.toLong()
+        }
+        val tokenLimit = maxOf(effectiveTokensPerMinute, tokenCost.toLong())
+        val requestsReady = bucket.reservations.size < effectiveRequestsPerMinute
         val tokensReady = bucket.reservations.sumOf { (it.actualTokens ?: it.estimatedTokens).toLong() } +
-            tokenCost.toLong() <= tokenLimit.toLong()
+            tokenCost.toLong() <= tokenLimit
         val inFlightReady = bucket.inFlight < quota.maxInFlight
         val cooldownReady = now >= bucket.cooldownUntilEpochMs
         val spacingReady = bucket.lastAdmissionAtEpochMs == null ||
@@ -476,7 +507,7 @@ class ProviderRequestGovernor(
         quota: ProviderQuotaPolicy,
         now: Long,
         tokenCost: Int,
-        tokenLimit: Int,
+        tokenLimit: Long,
     ): Long {
         var next = now + quota.pollIntervalMs
         next = maxOf(next, bucket.cooldownUntilEpochMs)

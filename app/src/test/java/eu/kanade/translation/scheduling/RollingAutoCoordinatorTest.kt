@@ -1,6 +1,7 @@
 package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationSession
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
@@ -1397,7 +1398,8 @@ class RollingAutoCoordinatorTest {
             pageKey: String,
             force: Boolean,
             stageListener: TranslationStageListener?,
-        ) {}
+            origin: PageWriteOrigin,
+        ): SinglePageOutcome = SinglePageOutcome.Completed
 
         override suspend fun translateSinglePageFromStream(
             manga: tachiyomi.domain.manga.model.Manga,

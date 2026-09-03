@@ -9,6 +9,7 @@ import eu.kanade.translation.scheduling.AutoChapterIdentity
 import eu.kanade.translation.scheduling.RollingAutoCoordinator
 import eu.kanade.translation.scheduling.TranslationScheduler
 import eu.kanade.translation.scheduling.TranslationStoreResolver
+import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.just
@@ -19,6 +20,7 @@ import io.mockk.unmockkObject
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 import tachiyomi.domain.chapter.model.Chapter
@@ -71,8 +73,17 @@ class TranslationManagerAutoArbitrationTest {
         }
     }
 
+    /**
+     * D4 contract (v3.0 draft §6, adopted 2026-09-01): same-chapter auto is
+     * suppressed for the WHOLE chapter-batch lifetime, not just at the
+     * translateChapter shutdown instant. While the queue entry is active,
+     * reader-window updates must NOT re-arm the coordinator, and
+     * reconcileAutoWindow must not resurrect it. Re-arm succeeds again only
+     * after the queue drains. T917 Phase 1: RED — the re-arm path still has no
+     * batch-active gate (audit M-06).
+     */
     @Test
-    fun `manager keeps auto window active while the chapter batch is queued`() = runBlocking<Unit> {
+    fun `manager suppresses same-chapter auto while the chapter batch is queued`() = runBlocking<Unit> {
         val store = ChapterTranslationStore(
             translationFile = null,
             fileCreator = null,
@@ -108,6 +119,14 @@ class TranslationManagerAutoArbitrationTest {
         mockkObject(TranslationForegroundService.Companion)
         every { TranslationForegroundService.start(any()) } just runs
 
+        /** Negative oracle: does the auto window come back within the probe window? */
+        suspend fun autoWindowReArmed(): Boolean = try {
+            withTimeout(NULL_STATE_PROBE_MS) { scheduler.autoSnapshot.first { it != null } }
+            true
+        } catch (_: TimeoutCancellationException) {
+            false
+        }
+
         try {
             manager.updateAutoWindow(
                 identity = identity,
@@ -120,11 +139,14 @@ class TranslationManagerAutoArbitrationTest {
             )
             withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
 
-            // Queueing a batch retires the old coordinator, but subsequent
-            // reader-window updates must re-arm it while the batch is active.
+            // Queueing a batch retires the old coordinator...
             manager.translateChapter(manga, chapter)
             manager.reconcileAutoWindow()
             withTimeout(5_000) { scheduler.autoSnapshot.first { it == null } }
+
+            // ...and the D4 contract keeps it retired for the batch lifetime:
+            // same-chapter reader-window updates must NOT re-arm while the
+            // queue entry is active.
             manager.updateAutoWindow(
                 identity,
                 0,
@@ -134,40 +156,24 @@ class TranslationManagerAutoArbitrationTest {
                 { RollingAutoCoordinator.PageWorkItem("p0", null) },
                 eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
             )
-            withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
+            val reArmedWhileQueued = autoWindowReArmed()
+            withClue(
+                "D4: same-chapter auto re-armed while the chapter batch was still queued " +
+                    "(batch-lifetime suppression guard missing from the re-arm path)",
+            ) {
+                reArmedWhileQueued shouldBe false
+            }
 
+            // A reconcile signal must not resurrect the window either.
             manager.reconcileAutoWindow()
-            scheduler.autoSnapshot.value?.identity shouldBe identity
+            val resurrectedByReconcile = autoWindowReArmed()
+            withClue("D4: reconcileAutoWindow resurrected same-chapter auto while the batch was queued") {
+                resurrectedByReconcile shouldBe false
+            }
 
+            // The gate is a batch-LIFETIME gate: once the queue drains, the
+            // reader window arms again.
             queue.value = emptyList()
-            manager.updateAutoWindow(
-                identity,
-                0,
-                0,
-                1,
-                session,
-                { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
-            )
-            withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
-
-            // Repeated window updates keep the coordinator armed; an explicit
-            // reader close retires it, and a later window update re-arms it
-            // once the batch has drained.
-            manager.updateAutoWindow(
-                identity,
-                0,
-                0,
-                1,
-                session,
-                { RollingAutoCoordinator.PageWorkItem("p0", null) },
-                eu.kanade.translation.translator.TranslatorComputeClass.REMOTE_IO,
-            )
-            withTimeout(5_000) { scheduler.autoSnapshot.first { it?.identity == identity } }
-
-            manager.shutdownAutoCoordinator()
-            withTimeout(5_000) { scheduler.autoSnapshot.first { it == null } }
-
             manager.updateAutoWindow(
                 identity,
                 0,
@@ -224,5 +230,14 @@ class TranslationManagerAutoArbitrationTest {
             }
         }
         throw NoSuchFieldException("Field $fieldName not found on ${target.javaClass}")
+    }
+
+    private companion object {
+        /**
+         * Bound for the negative D4 oracle ("auto window must stay null"). The
+         * probe returns early the instant a forbidden re-arm lands, so a failing
+         * (RED) run adds no latency.
+         */
+        const val NULL_STATE_PROBE_MS = 2_000L
     }
 }

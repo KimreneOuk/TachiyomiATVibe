@@ -10,6 +10,7 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
@@ -18,6 +19,7 @@ import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.hasCurrentInpaintResult
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
@@ -38,6 +40,7 @@ import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanne
 import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.retry.applyAiChunkOutcomeToPages
 import eu.kanade.translation.translator.retry.classifyProviderFailure
+import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
@@ -140,6 +143,8 @@ internal class BatchLaneWorkers(
         ChapterTranslationStore.PatchPrecondition?,
     ) -> ChapterTranslationStore.PageSnapshot?,
     private val abortBatchCandidateFn: suspend (String, String) -> Unit,
+    private val scheduleListener: BatchScheduleListener = BatchScheduleListener.NOOP,
+    private val deferredPages: MutableMap<String, PageWriteOrigin?>? = null,
 ) {
 
     val chunkCounter = AtomicLong(0L)
@@ -160,6 +165,22 @@ internal class BatchLaneWorkers(
 
     private fun plannedTranslationNeedsWork(pageKey: String): Boolean =
         resumePlanner.plannedTranslationNeedsWork(pageKey)
+
+    /**
+     * Whether the natural-order predecessor of [pageKey] has reached a terminal
+     * translation outcome in the store at call time (READY, or SKIPPED for a
+     * textless page). The first page has no predecessor and counts as
+     * unblocked. A missing or still-pending/failed predecessor keeps the
+     * historical ordered-context skip — a failed predecessor must continue to
+     * strand its successors rather than let them translate with a context gap.
+     */
+    private fun naturalOrderPredecessorTerminal(pageKey: String): Boolean {
+        val index = orderedStreams.indexOfFirst { it.first == pageKey }
+        if (index <= 0) return true
+        val predecessorKey = orderedStreams[index - 1].first
+        val predecessor = store.state.value[predecessorKey] ?: return false
+        return predecessor.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
+    }
 
     private fun translationFailureFence(pageKey: String): Boolean =
         resumePlanner.translationFailureFence(pageKey)
@@ -757,6 +778,11 @@ internal class BatchLaneWorkers(
                         "TachiyomiAT batch defers ${acquisition.owner}-owned page: " +
                             "chapter=${chapter.name} pageKey=$pageKey reason=${acquisition.reason}"
                     }
+                    // T917 D3: record the deferral so the coordinator re-runs
+                    // the page within the same pass once the lease is free,
+                    // and emit the typed schedule event for observability.
+                    deferredPages?.putIfAbsent(pageKey, acquisition.owner)
+                    scheduleListener.ocrDeferred(pageKey, acquisition.owner)
                     return null
                 }
                 is LeaseAcquisition.Granted -> acquisition.lease
@@ -770,7 +796,21 @@ internal class BatchLaneWorkers(
                 artifactPageVersion = batchLease.artifactPageVersion,
             )
             val existing = store.state.value[pageKey]
-            val gate = resumeGate(existing)
+            // T917 D3: a page this pass deferred earlier (its lease was denied)
+            // that the OTHER origin has since driven to a terminal render must
+            // not be re-run: the resume plans were built before that work
+            // existed, so resumeGate would still plan RUN/WAIT_FOR_DEPENDENCY
+            // and the provider call would repeat. Force the SKIP_ALL route —
+            // the terminal state is already published, the render join keeps
+            // it, and the paid call is never repeated.
+            val externallyCompletedByOwner = existing != null &&
+                existing.hasRenderedResult &&
+                deferredPages?.remove(pageKey) != null
+            val gate = if (externallyCompletedByOwner) {
+                BatchResumeGate.SKIP_ALL
+            } else {
+                resumeGate(existing)
+            }
             if (gate == BatchResumeGate.SKIP_ALL) {
                 // Fully durable (OCR+inpaint done): no decode/slot; render reloads disk.
                 val p = existing!!
@@ -1162,8 +1202,15 @@ internal class BatchLaneWorkers(
             }
             val dependencyReadyAfterNative = p.ocrStatus == StageStatus.READY ||
                 p.ocrStatus == StageStatus.TEXTLESS
+            // T917 Phase 6: the plan's PRIOR_PAGE_INCOMPLETE marker is a
+            // batch-start snapshot; whether the predecessor is STILL incomplete
+            // is a live question. On the ordered standard lane a predecessor
+            // that has already reached a terminal translation outcome must not
+            // keep blocking this page — the static block stranded every page
+            // after the first on multi-page chapters.
             val priorPageBlocksStandardTranslation = !isAi &&
-                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE
+                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                !naturalOrderPredecessorTerminal(pageKey)
             val completedAiPageAfterPriorGap = isAi &&
                 plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
                 plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
@@ -1172,6 +1219,19 @@ internal class BatchLaneWorkers(
                     expectedBatchFingerprints.translation == null ||
                         p.translationFingerprint == expectedBatchFingerprints.translation
                     )
+            // T917 Phase 6: standard-lane twin of the AI gap check. The plan
+            // snapshot cannot see commits that happen while the pass runs —
+            // the batch's own unblocked pages, or a manual tap that finished
+            // mid-pass (D1: manual output is authoritative and must never be
+            // re-paid) — so this check reads the LIVE store rather than the
+            // possibly-stale registry snapshot, and is deliberately
+            // origin/fingerprint-blind: plan-time REUSE evidence still governs
+            // re-translation of pre-pass state.
+            val livePage = store.state.value[pageKey]
+            val completedStandardPageAfterPriorGap = !isAi &&
+                plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
+                plannedTranslation?.reason == eu.kanade.translation.model.StageReasonCode.PRIOR_PAGE_INCOMPLETE &&
+                livePage?.translationStatus in setOf(StageStatus.READY, StageStatus.SKIPPED)
             val retryableTranslation = plannedTranslation?.decision ==
                 eu.kanade.translation.model.StageDecision.FAILED_RETRYABLE
             val shouldSkipTranslation = plannedTranslation?.decision ==
@@ -1182,6 +1242,7 @@ internal class BatchLaneWorkers(
                 retryableTranslation &&
                 plannedTranslation?.retryEligible != true ||
                 completedAiPageAfterPriorGap ||
+                completedStandardPageAfterPriorGap ||
                 plannedTranslation?.decision == eu.kanade.translation.model.StageDecision.WAIT_FOR_DEPENDENCY &&
                 (
                     priorPageBlocksStandardTranslation ||
@@ -1287,10 +1348,35 @@ internal class BatchLaneWorkers(
                 // Standard (per-page) path: translate, validate, persist, render.
                 var succeeded = false
                 var failedOutcome: ChunkCompletionOutcome? = null
+                // T917 Phase 3 (D9, design §3.2): durable attempt entry BEFORE
+                // the paid call; resolved on any completed call (success or
+                // typed provider failure). Write failure is fail-open.
+                runCatching {
+                    store.recordAttemptStart(
+                        pageKey = pageKey,
+                        providerKeyHash = ShortHash.hash(textTranslator.javaClass.name),
+                        origin = AttemptOrigin.BATCH,
+                        generation = store.currentGeneration,
+                    )
+                }.onFailure {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT D9: batch attempt-ledger record failed (fail-open): pageKey=$pageKey"
+                    }
+                }
                 try {
                     tracker?.markAiRunning(pageKey)
                     tracker?.markTranslateRunning(pageKey)
-                    textTranslator.translatePage(pageKey, p)
+                    try {
+                        textTranslator.translatePage(pageKey, p)
+                    } catch (e: CancellationException) {
+                        // Process death / scope kill: the entry stays unresolved
+                        // for startup reconciliation.
+                        throw e
+                    } catch (t: Throwable) {
+                        runCatching { store.resolveAttempt(pageKey) }
+                        throw t
+                    }
+                    runCatching { store.resolveAttempt(pageKey) }
                     TranslationBlockValidation.applyTo(p)
                     val s = p.translationStatus
                     when (s) {

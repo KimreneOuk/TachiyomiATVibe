@@ -57,12 +57,12 @@ No force-push, no history rewrite on `main`, ever.
 - **D1** three-origin lease model: `PageStageLeaseTable` gains `MANUAL`/`AUTO`/`BATCH`; update all acquisition call sites; define per-resource priority in one table (stove, wallet, lease). Design note required.
 - **D2** wait-and-attach: `TranslationPipeline` single-page boundary attaches to batch-owned pages instead of returning false; `TranslationScheduler.translatePage` completes the manual intent with the batch result; `ReaderViewModel` surfaces "Translating · background job" chip state. No silent return path remains (audit C-01).
 - **D3** defer-and-rescan: `BatchLaneWorkers` records pending-handback instead of skip; `SequentialBatchCoordinator` rescans after lease release within the pass; reconciliation only after rescan; `BatchWriteGate` handback identity defined (audit C-02).
-- **D4** suppression guard: batch-active gate in `TranslationScheduler` re-arm path and `TranslationManager.openTranslationSession`; flip the Phase-1 test to green.
+- **D4** suppression guard: batch-active gate (queue entry in `QUEUE|TRANSLATING|PAUSED` retained state) on the manager's auto-entry methods — `updateAutoWindow`, `requestAutoWindow`, and the `reconcileAutoWindow` admission guard. (Correction per `engineering/phase2-design.md` §0: `openTranslationSession` only opens the reader's display store and must NOT be gated; mechanism differs from the original wording here, behavior contract unchanged.) Flip the Phase-1 test to green.
 - **Exit:** Phase-1 D2/D3/D4 tests green; paid-call-count assertions exact; no regression in existing suite. Tag: `checkpoint/t917-p2-done`. Reports: `engineering/phase2-origins.md`, `review/phase2-verification.md`.
 
 ### Phase 3 — Consistency & money (Implementer)
-- **D5** glossary-aware reuse: translation fingerprint input adds `glossaryVersion` (+ chunk-context identity) in `PageDecode.batchExpectedFingerprints`; `PageWorkPlanner` REUSE comparison reads it; resume planning bounds the extra calls.
-- **D6** wallet fairness: interactive reservation share in `ProviderRequestGovernor`; reader-stream manual path wired to interactive priority (currently BACKGROUND); pause reasons surfaced; `shutdownAutoCoordinator` drains in-flight provider calls instead of cancelling mid-request.
+- **D5** glossary-aware reuse: comparable `translationGlossaryVersion` stamp (absence = 0) on pages; AI-lane REUSE downgrades to RUN iff `current > recorded` — targeted repair for glossary-bearing chapters only, cost-flat for glossary-less/standard-lane chapters; converges via the glossary equality gate (no oscillation). Chunk-context identity declined (cascade cost, accepted drift). (Refinement per `engineering/phase3-design.md` §0.2 — hash-embedding into the fingerprint builder would blanket-stale glossary-less chapters for no repair benefit.)
+- **D6** wallet fairness: 20% interactive token reserve in the governor (background waiters shape down while an interactive waiter waits; admitted reservations never revoked; cold window unchanged); visible typed pause through existing outcomes; drain-not-cancel — `shutdownAutoCoordinator`/`cancel` let the ONE in-flight provider call finish and commit under a bounded NonCancellable grace (90 s), everything not started cancels. (Correction per phase3-design §0.1: the audit's "reader-stream manual path" was a mislabel — `translateSinglePageFromStream` is the AUTO prefetch loop and stays BACKGROUND; wiring it interactive would invert MANUAL>AUTO>BATCH.)
 - **D9** attempt ledger: durable "attempt started" record before each paid call; startup reconcile counts unresolved attempts; N-strike cap pauses chapter as "needs attention"; v2.1's fictional startup sweep stays deleted.
 - **Exit:** D5 test (manual-early + batch-later → chosen repair policy), D6 cross-chapter starvation test, D9 simulated-death test — all green. Tag: `checkpoint/t917-p3-done`.
 
@@ -107,6 +107,7 @@ No force-push, no history rewrite on `main`, ever.
 | Paid-provider tests must not call real providers | Harness barrier stubs the transport; governor tests use fake windows |
 | Gradle/toolchain drift | Phase 0 records toolchain state; phase gates re-run module tests |
 | Scope creep into downloader/reader fixes | README scope 'Out' list is binding |
+| P2 carry-over (Reviewer, non-blocking): `patchPage` vs `publishLocked` candidate-grace asymmetry | Align in Phase 3/4 with regression test (batch registration between manual capture and commit, lease held → accepted) |
 
 ## 6. Definition of done (T917)
 

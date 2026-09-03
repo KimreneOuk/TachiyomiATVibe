@@ -74,6 +74,13 @@ enum class FailureCategory {
     CONFIGURATION,
     SOURCE,
     PROTOCOL,
+
+    /**
+     * T917 Phase 3 (D9): the provider call never completed because the process
+     * died mid-call — repeatedly, per the attempt-ledger cap. NOT a provider
+     * fault and never auto-retryable: the user must explicitly force a retry.
+     */
+    INTERRUPTED,
     LEGACY_UNKNOWN,
 }
 

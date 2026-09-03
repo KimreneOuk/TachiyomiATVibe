@@ -8,6 +8,8 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
+import eu.kanade.translation.artifact.AttemptOrigin
+import eu.kanade.translation.toArtifactOrigin
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
@@ -138,11 +140,17 @@ internal class SinglePageHttpRenderPhase(
      * alive on [PageTranslation]), translates text blocks via HTTP, renders
      * translated text onto the cleaned bitmap via Canvas, and persists the result.
      *
-     * Captures a local [activeTranslator] reference at entry so a concurrent
-     * [closeEngines] from a language/config change does not race the in-flight
-     * HTTP call. The old translator may be closed mid-flight, causing this page
-     * to fail and retry with the new instance — an accepted trade-off without
-     * the complexity of drain logic.
+     * T917 Phase 4 (D7, phase4-design §1.2) — epoch/drain contract: this is the
+     * SINGLE translator borrow site. The phase registers the borrow on
+     * [engines] (`beginTranslatorUse`, released in `finally`) so a concurrent
+     * [EngineLane.closeEngines] (stop / toggle-off / queue emptied) can DRAIN it
+     * inside a bounded grace instead of closing the translator mid-call. The
+     * borrow is paired with an epoch capture: if the HTTP call fails and the
+     * engine epoch has moved, the close DID race this call — the phase rebuilds
+     * the closed translator once (`ensureTranslatorRebuiltForEpochRetry`), re-reads
+     * the chapter glossary, and retries INSIDE the same ledger-wrapped call (one
+     * D9 entry). A second epoch mismatch fails the page honestly; there is no
+     * retry loop, and the close path itself never touches the ledger.
      */
     suspend fun translateSinglePageHttpRender(
         manga: Manga,
@@ -151,11 +159,14 @@ internal class SinglePageHttpRenderPhase(
         pageKey: String,
         ctx: OnnxPhaseResult,
         stageListener: TranslationStageListener? = null,
+        origin: PageWriteOrigin = PageWriteOrigin.MANUAL,
     ): ChunkCompletionOutcome {
         val pageTranslation = ctx.pageTranslation
         // Reader-ad-hoc output is displayable; a later batch reuses it when
-        // its fingerprints still match.
-        pageTranslation.translationOrigin = PageWriteOrigin.READER_ADHOC.name
+        // its fingerprints still match. T917 D1 two-vocabulary rule: the lease
+        // origin (MANUAL/AUTO) maps back onto the stable durable vocabulary —
+        // never stamp the lease-layer string itself.
+        pageTranslation.translationOrigin = origin.toArtifactOrigin().name
         val store = ctx.store
         val fromLang = ctx.fromLang
         val syntheticTranslation = ctx.syntheticTranslation
@@ -183,7 +194,12 @@ internal class SinglePageHttpRenderPhase(
         pageTranslation.translationFingerprint = batchFingerprints.translation
         pageTranslation.layoutFingerprint = batchFingerprints.layout
 
-        val activeTranslator = textTranslator
+        // T917 Phase 4 (D7 §1.2): the borrow + epoch capture. `activeTranslator`
+        // is the page's working reference; the epoch-guard retry re-captures it
+        // from the lane after a targeted rebuild.
+        var activeTranslator = textTranslator
+        val epochAtCapture = engines.currentEngineEpoch()
+        engines.beginTranslatorUse()
         // The reader path is outside the batch coordinator, so it owns one
         // envelope budget explicitly. This budget is inherited by provider
         // transport retries and is shared by the contextual call plus any
@@ -213,13 +229,47 @@ internal class SinglePageHttpRenderPhase(
         // batch path gets). Standard translators keep plain translatePage.
         val requestedOutputTokens = translationPreferences.translationAiOutputTokens().get().toIntOrNull()
             ?: TranslationContextChunkPlanner.MAX_CONTEXT_TOKENS
-        val singlePageProfile = if (activeTranslator is LmStudioTranslator) {
-            TranslationContextChunkPlanner.Profile.LM_STUDIO
-        } else {
-            TranslationContextChunkPlanner.Profile.DEFAULT
+        fun singlePageProfile(translator: Any): TranslationContextChunkPlanner.Profile =
+            if (translator is LmStudioTranslator) {
+                TranslationContextChunkPlanner.Profile.LM_STUDIO
+            } else {
+                TranslationContextChunkPlanner.Profile.DEFAULT
+            }
+
+        // T917 Phase 3 (D9, design §3.2): the manual paid call is wrapped by
+        // the durable attempt ledger — entry written BEFORE the call, resolved
+        // on any completed call (success or typed provider failure); only
+        // cancellation (process death / scope kill) leaves the entry for the
+        // startup reconcile. Write failures are fail-open.
+        suspend fun runLedgerWrapped(call: suspend () -> Unit) {
+            runCatching {
+                store.recordAttemptStart(
+                    pageKey = pageKey,
+                    providerKeyHash = ShortHash.hash(activeTranslator.javaClass.name),
+                    origin = AttemptOrigin.valueOf(origin.name),
+                    generation = store.currentGeneration,
+                )
+            }.onFailure {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT D9: manual attempt-ledger record failed (fail-open): pageKey=$pageKey"
+                }
+            }
+            try {
+                call()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (t: Throwable) {
+                runCatching { store.resolveAttempt(pageKey) }
+                throw t
+            }
+            runCatching { store.resolveAttempt(pageKey) }
         }
 
-        suspend fun runTranslate(targetPage: PageTranslation) {
+        // One translate round against the CURRENT [activeTranslator]: builds the
+        // contextual chunk (glossary snapshot + rolling pairs are re-read per
+        // round, so an epoch retry naturally picks up a fresh glossary) or makes
+        // the plain translatePage call.
+        suspend fun translateOnce(targetPage: PageTranslation) {
             val ct = activeTranslator as? ContextualTextTranslator
             if (ct != null) {
                 val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
@@ -246,12 +296,44 @@ internal class SinglePageHttpRenderPhase(
                     chunk = baseChunk,
                     rollingContext = recentPairs,
                     requestedOutputTokens = requestedOutputTokens,
-                    profile = singlePageProfile,
+                    profile = singlePageProfile(activeTranslator),
                     glossary = glossaryText,
                 )
                 ct.translateContextual(chunk)
             } else {
                 activeTranslator.translatePage(pageKey, targetPage)
+            }
+        }
+
+        // T917 Phase 4 (D7 §1.2/§1.3): ONE ledger wrap covers the original call
+        // AND the epoch retry (a close that raced the call is not a second
+        // attempt; `resolveAttempt` fires once on the final outcome). The retry
+        // is gated on the engine epoch moving + at-most-once; a second mismatch
+        // rethrows into the caller's typed-failure handling — no loop.
+        var epochRetryUsed = false
+        suspend fun runTranslate(targetPage: PageTranslation) {
+            runLedgerWrapped {
+                try {
+                    translateOnce(targetPage)
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    if (!epochRetryUsed && engines.currentEngineEpoch() != epochAtCapture) {
+                        epochRetryUsed = true
+                        logcat(LogPriority.WARN) {
+                            "T917 D7: engine close raced the in-flight HTTP call (epoch " +
+                                "$epochAtCapture -> ${engines.currentEngineEpoch()}); rebuilding the " +
+                                "translator and retrying once: pageKey=$pageKey"
+                        }
+                        engines.ensureTranslatorRebuiltForEpochRetry(
+                            fromLang,
+                            TextTranslatorLanguage.fromPref(translationPreferences.translateToLanguage()),
+                        )
+                        activeTranslator = textTranslator
+                        translateOnce(targetPage)
+                    } else {
+                        throw e
+                    }
+                }
             }
         }
 
@@ -330,6 +412,15 @@ internal class SinglePageHttpRenderPhase(
                         pageTranslation.blocks.forEach { b -> stats.add(b.text, b.translation) }
                         store.updateGlossary(stats.build())
                     }
+                    // T917 D5 (phase3-design §1.3): stamp the live glossary version AFTER
+                    // this page's own pairs folded, before the durable write — a pre-fold
+                    // stamp would record the version BELOW the one this page's own fold
+                    // creates, guaranteeing one wasted batch repair per manually translated
+                    // page after every session. A concurrent mode's fold between request
+                    // build and commit is claimed but unseen: rare, converging, accepted.
+                    // Absence of a pointer stamps 0 (gate-off semantics: `0 > recorded` can
+                    // only repair chapters where a glossary exists and matured).
+                    pageTranslation.translationGlossaryVersion = store.currentGlossaryVersion() ?: 0
                     val translatedCount = pageTranslation.blocks.count { !it.translation.isNullOrBlank() }
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT translate step DONE: pageHash=${ShortHash.hash(pageKey)} " +
@@ -506,6 +597,31 @@ internal class SinglePageHttpRenderPhase(
             }
             pageTranslation.cleanedBitmap = null
             pageTranslation.updatedAt = System.currentTimeMillis()
+            // T917 D3: a batch that STARTED while this boundary was parked
+            // mid-flight (e.g. a reader tap held across the batch's engine
+            // setup) advances the store generation AND legitimately re-plans
+            // the chapter candidates (page identity + dependency fingerprints)
+            // without ever touching this page — the page's live lease still
+            // fences every other WRITER out. The run-level fences would then
+            // discard the owner's finished result as "late", stranding the
+            // page non-terminal even though nobody else wrote it. When this
+            // boundary STILL owns the page lease, re-derive the commit
+            // precondition from a fresh snapshot, keeping the writer fences
+            // (generation, pageVersion, lease token, block fingerprints) but
+            // dropping the batch-run plan identity (candidate generation /
+            // dependency fingerprint / artifact page version) — per D1 the
+            // lease holder is the page's exclusive writer, so plan-level
+            // identity re-planning must not invalidate its in-flight result.
+            if (store.pageLeaseOwner(pageKey) == origin) {
+                val fresh = store.snapshot(pageKey)
+                if (fresh.generation != commitPrecondition.generation) {
+                    commitPrecondition = fresh.toPrecondition().copy(
+                        candidateGenerationId = null,
+                        dependencyFingerprint = null,
+                        artifactPageVersion = null,
+                    )
+                }
+            }
             val commit = store.patchPage(
                 pageKey = pageKey,
                 expected = commitPrecondition,
@@ -542,6 +658,10 @@ internal class SinglePageHttpRenderPhase(
             try {
                 recognitionEngine.reclaimPooledMemory()
             } catch (_: Exception) {}
+            // T917 Phase 4 (D7 §1.2): the borrow ends here — this release is the
+            // event a pending engine close DRAINS on before tearing the (snapshot
+            // of the) engines down.
+            engines.endTranslatorUse()
         }
         return translationOutcome
     }

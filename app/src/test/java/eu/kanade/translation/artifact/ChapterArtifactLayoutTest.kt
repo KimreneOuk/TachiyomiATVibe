@@ -102,6 +102,8 @@ class ChapterArtifactLayoutTest {
             "c_artifacts/context",
             "c_artifacts/generations",
             "c_artifacts/glossary",
+            // T917 Phase 3 (D9): the attempt-ledger sidecar directory.
+            "c_artifacts/attempts",
         )
     }
 }
