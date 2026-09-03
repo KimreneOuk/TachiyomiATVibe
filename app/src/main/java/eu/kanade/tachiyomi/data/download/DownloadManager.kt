@@ -1,7 +1,9 @@
 package eu.kanade.tachiyomi.data.download
 
 import android.content.Context
+import android.net.Uri
 import android.os.SystemClock
+import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.download.model.Download
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.model.Page
@@ -28,6 +30,65 @@ import tachiyomi.domain.source.service.SourceManager
 import tachiyomi.i18n.MR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
+
+internal data class DownloadedPageEntry(
+    val name: String,
+    val uri: Uri,
+)
+
+internal data class DownloadedPageEntriesResult(
+    val entries: List<DownloadedPageEntry>,
+    val nameReadNanos: Long,
+    val nameReadCalls: Int,
+    val skippedCount: Int,
+    val errorCount: Int,
+)
+
+internal fun collectDownloadedPageEntries(
+    rawFiles: Array<out UniFile>,
+    elapsedRealtimeNanos: () -> Long = SystemClock::elapsedRealtimeNanos,
+    isImageName: (String) -> Boolean = { ImageUtil.isImage(it) },
+): DownloadedPageEntriesResult {
+    var nameReadNanos = 0L
+    var nameReadCalls = 0
+    var skippedCount = 0
+    var errorCount = 0
+    val entries = rawFiles.mapNotNull { file ->
+        try {
+            val nameReadStartedAt = elapsedRealtimeNanos()
+            nameReadCalls++
+            val name = try {
+                file.name
+            } finally {
+                nameReadNanos += elapsedRealtimeNanos() - nameReadStartedAt
+            }
+            if (name == null || !isImageName(name)) {
+                skippedCount++
+                return@mapNotNull null
+            }
+            DownloadedPageEntry(name, file.uri)
+        } catch (e: Exception) {
+            errorCount++
+            skippedCount++
+            file.logcat(LogPriority.WARN, e) { "buildPageList: skipping unreadable page entry" }
+            null
+        }
+    }
+    return DownloadedPageEntriesResult(
+        entries = entries,
+        nameReadNanos = nameReadNanos,
+        nameReadCalls = nameReadCalls,
+        skippedCount = skippedCount,
+        errorCount = errorCount,
+    )
+}
+
+internal fun createDownloadedPageList(entries: List<DownloadedPageEntry>): List<Pair<String, Page>> {
+    return entries.sortedBy { it.name }
+        .mapIndexed { index, entry ->
+            Pair(entry.name, Page(index, uri = entry.uri).apply { status = Page.State.READY })
+        }
+}
 
 /**
  * This class is used to manage chapter downloads in the application. It must be instantiated once
@@ -154,12 +215,10 @@ class DownloadManager(
     /**
      * Builds the page list of a downloaded chapter.
      *
-     * @param source the source of the chapter.
-     * @param manga the manga of the chapter.
-     * @param chapter the downloaded chapter.
+     * @param chapterDir the already resolved downloaded chapter directory.
      * @return the list of pages from the chapter.
      */
-    fun buildPageList(source: Source, manga: Manga, chapter: Chapter): List<Pair<String, Page>> {
+    fun buildPageList(chapterDir: UniFile?): List<Pair<String, Page>> {
         val startedAt = SystemClock.elapsedRealtimeNanos()
         var findChapterDirNanos = 0L
         var listFilesNanos = 0L
@@ -179,20 +238,11 @@ class DownloadManager(
         var errorClass = "none"
 
         try {
-            val findChapterDirStartedAt = SystemClock.elapsedRealtimeNanos()
-            val chapterDir = try {
-                provider.findChapterDir(chapter.name, chapter.scanlator, manga.title, source)
-            } finally {
-                findChapterDirNanos = SystemClock.elapsedRealtimeNanos() - findChapterDirStartedAt
-            }
-                ?: throw Exception(context.stringResource(MR.strings.page_list_empty_error))
+            chapterDir ?: throw Exception(context.stringResource(MR.strings.page_list_empty_error))
             // TachiyomiAT: harden against stale/revoked SAF paths. listFiles() can
             // return null on a revoked tree URI or a moved folder; previously the
-            // `!!` chain and the per-file openInputStream() probe (used to sniff the
-            // real image type when the extension is unknown) could throw here, which
-            // surfaced as an unhandled reader crash instead of the clean "no pages"
-            // error. Resolve the directory first, then resolve each file defensively
-            // so a single unreadable entry can't take down the whole chapter.
+            // `!!` chain could throw here, which surfaced as an unhandled reader
+            // crash instead of the clean "no pages" error.
             val listFilesStartedAt = SystemClock.elapsedRealtimeNanos()
             val rawFiles = try {
                 chapterDir.listFiles().orEmpty()
@@ -207,68 +257,20 @@ class DownloadManager(
             rawCount = rawFiles.size
 
             val filterStartedAt = SystemClock.elapsedRealtimeNanos()
-            val files = rawFiles.mapNotNull { file ->
-                try {
-                    val isFileStartedAt = SystemClock.elapsedRealtimeNanos()
-                    isFileCalls++
-                    val isFile = try {
-                        file.isFile
-                    } finally {
-                        isFileNanos += SystemClock.elapsedRealtimeNanos() - isFileStartedAt
-                    }
-                    if (!isFile) {
-                        skippedCount++
-                        return@mapNotNull null
-                    }
-                    // entry name is nullable on some SAF providers; skip nameless
-                    // entries instead of NPE'ing on name!! later.
-                    val nameReadStartedAt = SystemClock.elapsedRealtimeNanos()
-                    nameReadCalls++
-                    val name = try {
-                        file.name
-                    } finally {
-                        nameReadNanos += SystemClock.elapsedRealtimeNanos() - nameReadStartedAt
-                    }
-                    if (name == null) {
-                        skippedCount++
-                        return@mapNotNull null
-                    }
-                    if (!ImageUtil.isImage(name) {
-                            val sniffStartedAt = SystemClock.elapsedRealtimeNanos()
-                            sniffCalls++
-                            try {
-                                file.openInputStream()
-                            } finally {
-                                sniffNanos += SystemClock.elapsedRealtimeNanos() - sniffStartedAt
-                            }
-                        }
-                    ) {
-                        skippedCount++
-                        return@mapNotNull null
-                    }
-                    acceptedCount++
-                    file
-                } catch (e: Exception) {
-                    errorCount++
-                    skippedCount++
-                    // A single inaccessible file (revoked/stale URI) must not abort
-                    // discovery of the whole chapter: skip it and keep going so the
-                    // reader can still show the pages that ARE readable.
-                    logcat(LogPriority.WARN, e) { "buildPageList: skipping unreadable page entry" }
-                    null
-                }
-            }
+            val entryResult = collectDownloadedPageEntries(rawFiles)
             filterNanos = SystemClock.elapsedRealtimeNanos() - filterStartedAt
+            nameReadNanos = entryResult.nameReadNanos
+            nameReadCalls = entryResult.nameReadCalls
+            skippedCount += entryResult.skippedCount
+            errorCount += entryResult.errorCount
+            acceptedCount = entryResult.entries.size
 
-            if (files.isEmpty()) {
+            if (entryResult.entries.isEmpty()) {
                 throw Exception(context.stringResource(MR.strings.page_list_empty_error))
             }
 
             val sortAndMapStartedAt = SystemClock.elapsedRealtimeNanos()
-            val pages = files.sortedBy { it.name }
-                .mapIndexed { i, file ->
-                    Pair(file.name!!, Page(i, uri = file.uri).apply { status = Page.State.READY })
-                }
+            val pages = createDownloadedPageList(entryResult.entries)
             sortAndMapNanos = SystemClock.elapsedRealtimeNanos() - sortAndMapStartedAt
             resultCount = pages.size
             return pages

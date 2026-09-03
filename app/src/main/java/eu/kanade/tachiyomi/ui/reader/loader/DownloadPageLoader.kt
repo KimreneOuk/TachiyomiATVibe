@@ -4,7 +4,6 @@ import android.app.Application
 import android.net.Uri
 import android.os.SystemClock
 import com.hippo.unifile.UniFile
-import eu.kanade.tachiyomi.data.database.models.toDomainChapter
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
 import eu.kanade.tachiyomi.source.Source
@@ -90,7 +89,7 @@ internal class DownloadPageLoader(
                 getPagesFromArchive(chapterPath, translations)
             } else {
                 branch = "directory"
-                val result = getPagesFromDirectory(translations)
+                val result = getPagesFromDirectory(chapterPath, translations)
                 buildPageListNanos = result.buildPageListNanos
                 mappingNanos = result.mappingNanos
                 result.pages
@@ -132,9 +131,12 @@ internal class DownloadPageLoader(
         return loader.getPages()
     }
 
-    private fun getPagesFromDirectory(translations: Map<String, PageTranslation>): DirectoryPagesResult {
+    private fun getPagesFromDirectory(
+        chapterDir: UniFile?,
+        translations: Map<String, PageTranslation>,
+    ): DirectoryPagesResult {
         val buildPageListStartedAt = SystemClock.elapsedRealtimeNanos()
-        val pages = downloadManager.buildPageList(source, manga, chapter.chapter.toDomainChapter()!!)
+        val pages = downloadManager.buildPageList(chapterDir)
         val buildPageListNanos = SystemClock.elapsedRealtimeNanos() - buildPageListStartedAt
         val mappingStartedAt = SystemClock.elapsedRealtimeNanos()
         val readerPages = pages.map { (fileName, page) ->
