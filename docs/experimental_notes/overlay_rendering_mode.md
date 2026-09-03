@@ -31,12 +31,12 @@ Replace the current **flatten translated text into a baked `.rendered.png`** arc
 
 ```
 detect/OCR → inpaint (erase src text) → cleaned.png (PNG q=100)
-  → translate HTTP → TextLayoutPlanner.plan() (PURE) → PageTextRenderer.render() draws text via Canvas → rendered.png (PNG q=100)
+  → translate HTTP → TextLayoutPlanner.plan() (PURE) → TranslationOverlayView draws text via Canvas above cleaned.png
 ```
 
-- **Two full-page PNGs/page** stored: `.cleaned.png` + `.rendered.png` (both q=100).
+- **One cleaned full-page PNG/page** is stored; translated text is drawn by the reader overlay.
 - **`TextLayoutPlanner.plan()` is PURE** (no Android deps, JVM-testable), neighbour-aware, returns `List<BlockLayout>` (originX/Y, safeW/H, fontSizePx, strokeWidth, drawAlign, clipRect, isVertical). It already accepts an injected `TextMeasurer`.
-- **`PageTextRenderer.render()`** = `plan()` then draw each block (stroke=luma-inverse + fill), structural `clipRect` no-overlap guarantee.
+- **`TranslationOverlayView`** draws each planned block with stroke-then-fill and the structural `clipRect` no-overlap guarantee.
 - **Reader:** `ReaderPageImageView` is a `FrameLayout` wrapping `SubsamplingScaleImageView` (SSIV). The fork **already** positions a per-page translate button via `SSIV.sourceToViewCoord()` + repositions on `onScaleChanged`/`onCenterChanged`. `computeImageRect()` and `restoreOverlayOrder()` exist. The hard alignment problem is already solved.
 - **Webtoon:** `WebtoonSubsamplingImageView`, fixed scale (`SCALE_TYPE_FIT_WIDTH`), scrolled by `RecyclerView`. **No user zoom.**
 - **Animated pages (GIF/WebP):** `PhotoView`/`AppCompatImageView` — **no `sourceToViewCoord`**, uses `displayRect`/`imageMatrix`.
@@ -139,7 +139,7 @@ In `tryRender` / `translateSinglePageHttpRender` / `renderResumedPage`, when ove
 - Run `RenderColorEstimator.recomputeFor(cleanedBitmap, page.blocks)` (unchanged) so `textColor` is correct.
 - Set `page.overlayPageWidth` / `page.overlayPageHeight` from the cleaned bitmap.
 - Set `renderStatus = READY`.
-- **Skip** `PageTextRenderer.render()` + `persistRenderedBitmap()`. `.cleaned.png` still written as today.
+- **Skip** baked text rendering. `.cleaned.png` is still written as today and the reader overlay draws translated text.
 - **No fallback:** if planning is attempted and throws (only if a future refactor runs plan here), set `renderStatus = FAILED` + log (do not silently bake a PNG).
 - Webtoon/animated pages always take the existing bake path regardless of the setting.
 
@@ -151,7 +151,7 @@ In `tryRender` / `translateSinglePageHttpRender` / `renderResumedPage`, when ove
 1. Builds **one** `Paint` (the drawing Paint, animeace bold) in its own `Context`.
 2. Wraps it as the injected `TextMeasurer`.
 3. Runs `TextLayoutPlanner.plan(blocks, pageW, pageH, measurer)` on a **background thread** (cached in memory keyed by `(blocksHash, pageDims, paintHash)`).
-4. Draws returned `BlockLayout`s with stroke(luma-inverse) + fill, reusing `PageTextRenderer`'s stroke + clip logic.
+4. Draws returned `BlockLayout`s with stroke(luma-inverse) + fill, using the overlay's direct draw and clip logic.
 5. Applies a **single transform `Matrix`** (from SSIV scale+center+orientation) for both positions and sizes.
 6. **Bucketed redraw** during gesture (snap `effectiveScale` to 1.25× steps); full re-rasterize on lift + on `isReady()`.
 7. **Exception handling:** `try/catch` around draw → `logcat(LogPriority.ERROR)` → no text drawn (cleaned shows). Compliant with the project's no-silent-failure rule.

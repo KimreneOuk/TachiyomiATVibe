@@ -30,7 +30,7 @@ import kotlin.math.pow
  * backgrounds, so gray and saturated source ink cannot leak into the overlay.
  *
  * NOTE: this object owns only the text FILL color. The stroke color is owned
- * by [PageTextRenderer] (luma-inverse of the text) and the stroke width by
+ * by the overlay renderer (luma-inverse of the text) and the stroke width by
  * [TextLayoutPlanner] (a fraction of font size). The Triple returned from
  * [estimate] still carries stroke/width for caller compatibility, but those
  * fields are vestigial and overridden downstream.
@@ -51,7 +51,7 @@ object RenderColorEstimator {
      * always pure black or pure white according to the background luma.
      *
      * Returns the text ARGB. Stroke color and width are NOT decided here — they
-     * are owned by [PageTextRenderer] and [TextLayoutPlanner] respectively.
+     * are owned by the overlay renderer and [TextLayoutPlanner] respectively.
      */
     internal fun colorPolicy(bgColor: FloatArray, fgColor: FloatArray): Long {
         val bgLuma = 0.299f * bgColor[0] + 0.587f * bgColor[1] + 0.114f * bgColor[2]
@@ -97,7 +97,7 @@ object RenderColorEstimator {
      *
      * Only the text color is genuinely decided here; the returned stroke color
      * and width are vestigial (synthesized for caller compatibility) and are
-     * overridden by [PageTextRenderer] / [TextLayoutPlanner].
+     * overridden by the overlay renderer / [TextLayoutPlanner].
      */
     fun estimate(
         bitmap: Bitmap,

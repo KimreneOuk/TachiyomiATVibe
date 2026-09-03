@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test
 
 /**
  * Pins [TextLayoutPlanner] — the pure, neighbour-aware render-layout solver that
- * replaced [PageTextRenderer]'s old independent per-block placement.
+ * replaced the old independent per-block placement.
  *
  * All cases use a deterministic [FakeMeasurer] (no `android.graphics.Paint`), so
  * the layout math is unit-tested exactly the way the project tests its other pure

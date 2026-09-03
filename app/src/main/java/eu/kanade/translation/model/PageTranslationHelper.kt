@@ -109,7 +109,7 @@ class PageTranslationHelper {
          *  - `MlKitFullPageRecognitionEngine` does no dedupe at all.
          *
          * The consequence is two overlapping blocks reaching the renderer,
-         * where each is drawn centred in its own rect ([PageTextRenderer]) —
+         * where each is drawn centred in its own rect —
          * the reported "translated text rendered on top of itself" artifact.
          *
          * "Same region" is decided purely geometrically via

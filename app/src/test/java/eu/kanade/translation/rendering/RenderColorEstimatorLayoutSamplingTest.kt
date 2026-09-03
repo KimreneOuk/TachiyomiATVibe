@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test
  *
  * The full function reads pixels out of an `android.graphics.Bitmap` under each
  * block's persisted OCR rectangle, so it is Android-bound and covered by
- * `PageTextRendererInstrumentedTest.colorRecomputeSamplesTheCurrentBlockRectangle`.
+ * `RenderColorEstimatorInstrumentedTest.recomputeForSamplesTheCurrentBlockOcrRectangle`.
  * What CAN be pinned at the pure-JVM tier is the mechanism that makes a moved
  * footprint produce a different fill than the OCR origin, and that unmasked
  * blocks are left on the legacy OCR-rectangle decision:

@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test
  *
  * Fix 1 (the overlay consuming the positioned layout model) is an Android
  * View and has no JVM test surface; its compile gate plus the
- * PageTextRenderer-mirrored semantics are the automated proof.
+ * Renderer-compatible semantics are the automated proof.
  *
  * T912 containment-first ordering: the contained reflow rescue now runs for
  * EVERY masked horizontal block BEFORE the Fix 2 band-acceptance guard, and

@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test
  * [TextLayoutPlanner.shouldRenderVertical] directly; no
  * Android/Bitmap/Canvas is instantiated.
  */
-class PageTextRendererDirectionTest {
+class TextLayoutPlannerDirectionTest {
 
     @Test
     fun `pure CJK text is vertical`() {

@@ -228,7 +228,7 @@ to oriented only if on-device A/B shows axis-aligned is losing glyph edges.
 - Stage-1 detection (`OnnxPageTextDetector`, `detector-v4-s`).
 - The `Detection` data class and its label semantics (0/1/2).
 - `PageInpaintingPlanner`, `PageInpaintingEngine`, all inpaint masking.
-- `RenderColorEstimator`, `PageTextRenderer`.
+- `RenderColorEstimator`, `TranslationOverlayView`.
 - Horizontal-text OCR path and native-vertical engines (ML Kit, MangaOcr).
 - The rec engine itself (`PaddleOcrV6SmallEngine`) — unchanged.
 - Memory reclamation contracts (`reclaimPooledMemory`, `forceReleaseNativeBuffers`).

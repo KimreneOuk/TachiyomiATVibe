@@ -27,7 +27,10 @@ This investigation is the design groundwork for bringing that **overlay (not bak
 
 Three gaps between the lab's design docs and the actual Android code shape the whole design space:
 
-1. **The current Android reader is fully baked-PNG.** `PageTextRenderer.render()` draws text onto a `Bitmap` via `Canvas.drawText()` → `TranslationPipeline` compresses it to `.rendered.png` → the reader decodes it as an ordinary image (same path as the original page). There is **no `TranslationOverlayView`** (0 hits in `app/src/main/java/eu/kanade`). The `text_overlay_rendering.md` / `overlay_rendering_mode.md` files are design drafts, not built code.
+1. **The current Android reader uses an overlay.** `TranslationOverlayView` draws
+   planned translated text above the cleaned page in source-image coordinates,
+   so it follows reader pan and zoom. Earlier baked-PNG assumptions in this note
+   are historical and no longer describe the implementation.
 2. **"Text locked to canvas" cannot be the baked-PNG path.** Baked text *is* the image, so it tracks zoom/pan perfectly by definition. That symptom describes a DOM/Canvas overlay whose coordinates are in screen space — exactly the failure the image-space Matrix fix addresses. It is observed in the lab prototype, not in the Android bake path.
 3. **Most of positioning + collision is already solved** in `TextLayoutPlanner.plan()` (`rendering/TextLayoutPlanner.kt`): it is **pure** (no `android.graphics`), **JVM-testable**, **single-pass**, **neighbour-aware** (score-ordered, no relaxation loop). It anchors on the child-box centre, grows into the parent bubble box, and hard-clips neighbours via a structural `clipRect`. `trimParentBbox` (`recognition/RoiPageRecognitionEngine.kt:1308`) already trims a parent against sibling bubbles overlapping ≥45%. The genuine open problems are narrower: the **merged-bubble** edge case and the **zoom-tracking mechanism**.
 
