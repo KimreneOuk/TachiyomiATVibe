@@ -1,6 +1,8 @@
 package eu.kanade.translation
 
 import eu.kanade.tachiyomi.source.online.HttpSource
+import eu.kanade.translation.manager.DurableChapterKey
+import eu.kanade.translation.manager.DurableStatus
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
 import eu.kanade.translation.data.TranslationProvider
 import eu.kanade.translation.model.PageTranslation
@@ -171,10 +173,18 @@ class TranslationManagerDeleteResetOrderingTest {
             store = storeWithPage("p1"),
             queue = MutableStateFlow(listOf(queuedTranslation(chapter, manga, source))),
         )
+        // The delete wipe must also drop the memoized translation document —
+        // the two caches share one invalidation call, and nothing else pins
+        // that coupling (review F5.3).
+        val documentMemo = ConcurrentHashMap<Any, Any>()
+        documentMemo[DurableChapterKey(42L, "Chapter 1", null, "Manga", 77L)] =
+            DurableStatus(Translation.State.NOT_TRANSLATED)
+        setField(manager, "durableDocumentCache", documentMemo)
         events.clear()
 
         manager.deleteTranslation(chapter, manga, source)
 
+        assertTrue(documentMemo.isEmpty(), "deleteTranslation must drop the document memo with the status cache")
         assertTrue(
             events == listOf(
                 // Preamble: capture the durable truth before any teardown (SAF reads).

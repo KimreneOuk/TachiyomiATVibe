@@ -133,7 +133,11 @@ class ActiveChapterStoreRegistryTest {
 
         registry.releaseProbe(fileKey, probe.store) shouldBe true
         registry.getByFile(fileKey) shouldBe null
-        registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!.store shouldNotBe probe.store
+        // Per-creation, not per-store: after release the next probe pass is a
+        // real creation again and must re-arm the invalidating wipe (F5.2).
+        val recreated = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        recreated.store shouldNotBe probe.store
+        recreated.created shouldBe true
 
         val adopted = registry.getOrCreateProbe("adopted-file") { ChapterTranslationStore(null, null) }!!
         registry.getOrCreate(909, "adopted-file") { error("probe should be promoted") } shouldBe adopted.store
