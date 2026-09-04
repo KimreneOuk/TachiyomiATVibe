@@ -28,6 +28,7 @@ import eu.kanade.translation.manager.ChapterDataResetController
 import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableChapterStatusResolver
+import eu.kanade.translation.manager.DurableDocumentKey
 import eu.kanade.translation.manager.isReconstructibleDurableState
 import eu.kanade.translation.manager.DurableStatus
 import eu.kanade.translation.manager.ReaderTeardownCoordinator
@@ -178,6 +179,11 @@ class TranslationManager(
     // field — and the resolver is built per access from the current field values.
 
     private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
+
+    // Memoized translation-document locations, invalidated by the same
+    // clearDurableStatusCache protocol. One reader entry used to walk the
+    // SAF tree for the same document 5-7 times.
+    private val durableDocumentCache = ConcurrentHashMap<DurableDocumentKey, TranslationDocument>()
 
     /**
      * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
@@ -1021,6 +1027,7 @@ class TranslationManager(
             sourceManagerProvider = { sourceManager },
             activeStoresProvider = { activeStores },
             durableStatusCacheProvider = { durableStatusCache },
+            durableDocumentCacheProvider = { durableDocumentCache },
         )
 
     // T912 ANR fix: suspend — this used to be reached synchronously from the

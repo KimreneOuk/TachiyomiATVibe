@@ -29,6 +29,20 @@ internal data class DurableChapterKey(
     val sourceId: Long,
 )
 
+/**
+ * Identity of a translation document location. The document path cannot
+ * legitimately move mid-session, so resolved documents are memoized per key
+ * and invalidated by the same [clearDurableStatusCache] protocol as statuses
+ * — every durable mutation routes through it. Negative results are NOT
+ * memoized: a document may appear when a translation is first created.
+ */
+internal data class DurableDocumentKey(
+    val chapterName: String,
+    val chapterScanlator: String?,
+    val mangaTitle: String,
+    val sourceId: Long,
+)
+
 internal data class DurableStatus(val state: Translation.State)
 
 internal data class TranslationDocument(
@@ -44,6 +58,7 @@ internal class DurableChapterStatusResolver(
     private val sourceManagerProvider: () -> SourceManager,
     private val activeStoresProvider: () -> ActiveChapterStoreRegistry,
     private val durableStatusCacheProvider: () -> ConcurrentHashMap<DurableChapterKey, DurableStatus>,
+    private val durableDocumentCacheProvider: () -> ConcurrentHashMap<DurableDocumentKey, TranslationDocument> = { ConcurrentHashMap() },
 ) {
 
     // Same-name dependency reads the moved bodies use; resolved through the
@@ -60,15 +75,18 @@ internal class DurableChapterStatusResolver(
 
     private val durableStatusCache get() = durableStatusCacheProvider()
 
+    private val durableDocumentCache get() = durableDocumentCacheProvider()
+
     /**
-     * Invalidates every cached durable status. This is protocol, not detail:
-     * opens, rescues, and deletes change durable truth, and a missed clear
-     * resurrects stale TRANSLATED states. All manager-side invalidations
-     * route through this method (see the durableStatusCache audit in the
-     * T909 Phase 13 delivery report).
+     * Invalidates every cached durable status and memoized document. This is
+     * protocol, not detail: opens, rescues, and deletes change durable truth,
+     * and a missed clear resurrects stale TRANSLATED states. All manager-side
+     * invalidations route through this method (see the durableStatusCache
+     * audit in the T909 Phase 13 delivery report).
      */
     fun clearDurableStatusCache() {
         durableStatusCache.clear()
+        durableDocumentCache.clear()
     }
 
     // T909 Phase 3a: legacy decode/quarantine bodies live in
@@ -146,8 +164,14 @@ internal class DurableChapterStatusResolver(
         mangaTitle: String,
         source: Source,
     ): TranslationDocument? {
+        // The document location cannot legitimately move mid-session, and
+        // one reader entry used to walk the SAF tree for it 5-7 times
+        // (60-210ms each on device). Memoize positive results; callers
+        // already re-check document.file existence before opening.
+        val memoKey = DurableDocumentKey(chapterName, scanlator, mangaTitle, source.id)
+        durableDocumentCache[memoKey]?.let { return it }
         val entryStage = ReaderEntryTrace.begin("translation.findDocument", null)
-        return try {
+        val document = try {
             val file = provider.findTranslationFile(chapterName, scanlator, mangaTitle, source)
             val parent = file?.parentFile ?: provider.findMangaDir(mangaTitle, source) ?: return null
             val fileName = file?.name ?: provider.getTranslationFileName(chapterName, scanlator)
@@ -155,6 +179,8 @@ internal class DurableChapterStatusResolver(
         } finally {
             entryStage.end()
         }
+        durableDocumentCache[memoKey] = document
+        return document
     }
 
     /**
