@@ -37,3 +37,35 @@ Make a 260-page translated chapter enter the reader without perceptible blocking
 - `ReaderViewModel.kt`
 - `WebtoonViewer.kt`
 
+## Status (2026-09-03 evening)
+
+- **Root causes 1+2 fixed**: the recursive retention sweep ran inside store
+  opens at two more sites — `loadOrMigrate` (commit `722e955`, later narrowed
+  to ≤8-page chapters in `57d2447` after it stranded the orphan-temp cleanup
+  contract) and `closeAndFlush` reached from the probe `finally` on the
+  reader-entry coroutine (`221f01e`). This was the "first open per process
+  stalls ~15s, re-click is instant" signature on the 260-page chapter.
+- **Entry-path slice landed** (`a9d916b`…`520e0f0`): skip no-op manifest
+  re-read + legacy glossary read on authoritative opens; narrow over-eager
+  durable-cache wipes (probe creation-gated, fresh-open gated); memoize
+  positive translation-document lookups; registry fast-path + document/probe
+  pass-through removing repeated SAF walks per open.
+- **Review**: ACCEPT-WITH-NOTES
+  (`review/entry-path-slice-review.md`). F1 fixed by reverting the
+  queue-membership gate to wipe-per-emission (`368129d`) after verifying
+  queueState never emits on progress ticks. F2/F3/F4/F6/F7 accepted
+  limitations (documented in the report disposition).
+- **Full unit suite green** (1,489 tests; the 9 failures were a test-harness
+  gap for the new memo field + the 722e955 over-removal, fixed in
+  `a8eacc7`/`57d2447`).
+- **F5 pin tests landed** (`3f69e20`): created-probe wipe vs held-probe and
+  active-store short-circuit (real on-disk artifact chapter),
+  re-creation-after-release re-arms the wipe, deleteTranslation drops the
+  document memo with the status cache.
+- **Pending**: device validation on 192.168.100.223:34075 (wireless
+  debugging dropped overnight — needs the Director to re-enable it and
+  share the new port). Criteria: warm vm.init <700ms on the 260-page
+  chapter, ~1 SAF document resolve per entry, no store-open churn from the
+  chapter list; first-open ~1s confirming the closeAndFlush fix.
+
+
