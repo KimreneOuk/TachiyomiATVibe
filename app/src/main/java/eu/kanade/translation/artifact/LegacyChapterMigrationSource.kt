@@ -100,7 +100,7 @@ internal object LegacyChapterMigrationSource {
             val migrateStage = ReaderEntryTrace.begin("openStore.migrate", null)
             synchronized(migrationLock) {
                 runCatching {
-                    migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt)
+                    migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt, isArtifactAuthoritative)
                 }.onFailure { error ->
                     logcat(LogPriority.WARN, error) {
                         "TachiyomiAT artifact manifest migration skipped: reason=open failure"
@@ -153,6 +153,7 @@ internal object LegacyChapterMigrationSource {
         legacyBytes: ByteArray?,
         legacyPages: Map<String, PageTranslation>,
         legacyCorrupt: Boolean,
+        isArtifactAuthoritative: Boolean,
     ): ArtifactLoad {
         val parent = parent ?: return ArtifactLoad(
             ChapterArtifactStore(
@@ -178,19 +179,32 @@ internal object LegacyChapterMigrationSource {
             )
         }
         val glossaryFileName = legacyGlossaryName(fileName)
-        val glossaryFile = parent.findFile(glossaryFileName)
-        val glossaryFilePresent = glossaryFile?.exists() == true
-        val glossaryBytes = runCatching {
-            glossaryFile?.takeIf { it.exists() }?.openInputStream()?.use { input -> input.readBytes() }
-        }.getOrNull()
-        val glossaryLastModified = runCatching { glossaryFile?.lastModified() ?: 0L }.getOrDefault(0L)
+        // An artifact-authoritative manifest never consults the legacy
+        // snapshot: loadOrMigrate returns from its ARTIFACTS fast path before
+        // reading legacy at all. Skip the glossary find+read+parse that used
+        // to run under the migration lock on every open of a migrated
+        // chapter; the not-present branch below produces the exact same
+        // empty-glossary snapshot fields.
+        var glossaryBytes: ByteArray? = null
+        var glossaryLastModified = 0L
         var glossaryFileCorrupt = false
-        val glossary = if (glossaryFilePresent) {
-            runCatching {
-                legacyPageJson.decodeFromStream<Map<String, String>>(
-                    glossaryBytes?.inputStream() ?: error("glossary bytes unavailable"),
-                )
-            }.onFailure { glossaryFileCorrupt = true }.getOrDefault(emptyMap())
+        val glossary: Map<String, String> = if (!isArtifactAuthoritative) {
+            val glossaryFile = parent.findFile(glossaryFileName)
+            val glossaryFilePresent = glossaryFile?.exists() == true
+            val bytes = runCatching {
+                glossaryFile?.takeIf { it.exists() }?.openInputStream()?.use { input -> input.readBytes() }
+            }.getOrNull()
+            glossaryBytes = bytes
+            glossaryLastModified = runCatching { glossaryFile?.lastModified() ?: 0L }.getOrDefault(0L)
+            if (glossaryFilePresent) {
+                runCatching {
+                    legacyPageJson.decodeFromStream<Map<String, String>>(
+                        bytes?.inputStream() ?: error("glossary bytes unavailable"),
+                    )
+                }.onFailure { glossaryFileCorrupt = true }.getOrDefault(emptyMap())
+            } else {
+                emptyMap()
+            }
         } else {
             emptyMap()
         }

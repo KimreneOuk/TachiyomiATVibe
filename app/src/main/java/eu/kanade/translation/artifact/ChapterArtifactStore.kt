@@ -110,7 +110,11 @@ class ChapterArtifactStore(
             // recoverable copy read-only until a valid primary is durable;
             // retention and recovery publications must not delete or replace
             // the only known-good manifest.
-            if (readManifestDocument(layout.manifestFileName) == null) {
+            // T921: the guard only matters when the primary was missing and
+            // `existing` came from the backup — when the primary parsed, a
+            // re-read would just re-parse the same document over SAF on
+            // every open.
+            if (primary == null && readManifestDocument(layout.manifestFileName) == null) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT artifact manifest primary recovery incomplete; backup preserved: " +
                         "chapter=${layout.chapterKey}"
