@@ -193,9 +193,15 @@ internal class DurableChapterStatusResolver(
                 ChapterTranslationStore.openArtifact(document.parent, document.fileName)
             }
         } ?: return null
-        // A probe can perform the one-way rescue and rename intent recovery
-        // while it opens. Any status cached before that transition is stale.
-        durableStatusCache.clear()
+        // A newly created probe can perform the one-way rescue and rename
+        // intent recovery while it opens; statuses cached before that
+        // transition are stale. Reused probes already had their wipe when
+        // they were created — wiping the whole cache again on every probe
+        // pass reduced the cache to a single surviving entry whenever the
+        // chapter list resolved statuses sequentially.
+        if (result.created) {
+            durableStatusCache.clear()
+        }
         val probeStage = ReaderEntryTrace.begin("probe.status", chapterId)
         return try {
             block(result.store)

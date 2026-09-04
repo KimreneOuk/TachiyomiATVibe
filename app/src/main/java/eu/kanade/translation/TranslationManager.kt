@@ -240,7 +240,18 @@ class TranslationManager(
         // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
         // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
         applicationScope.launch {
-            translator.queueState.collect { durableStatusResolver.clearDurableStatusCache() }
+            // Statuses of queued chapters are answered from the queue itself
+            // (getQueuedTranslationOrNull precedes the durable lookup), so
+            // queue progress ticks need no durable-cache invalidation — only
+            // a membership change can change which chapters resolve durably.
+            var lastQueueMembership: Set<Long?>? = null
+            translator.queueState.collect { queue ->
+                val membership = queue.mapTo(mutableSetOf()) { it.chapter.id }
+                if (membership != lastQueueMembership) {
+                    lastQueueMembership = membership
+                    durableStatusResolver.clearDurableStatusCache()
+                }
+            }
         }
         applicationScope.launch {
             // A paused chapter is not an active foreground job, but its durable
@@ -1157,6 +1168,14 @@ class TranslationManager(
         val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source) ?: return null
         val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         if (document.file?.exists() != true && !manifestProbe.exists) return null
+        // Only an actual open can complete a LEGACY rescue and advance
+        // durable truth. A registry hit performed no open — wiping here would
+        // defeat the reader's own status lookup immediately afterwards.
+        val hadActive = if (chapterId != null) {
+            activeStores.get(chapterId) != null
+        } else {
+            activeStores.getByFile(document.registryKey) != null
+        }
         val isArtifactAuthoritative = manifestProbe.exists &&
             manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS
         val store = if (chapterId != null) {
@@ -1180,7 +1199,11 @@ class TranslationManager(
                 }
             }
         }
-        durableStatusResolver.clearDurableStatusCache()
+        if (!hadActive) {
+            // See the hadActive comment above: only a fresh open can have
+            // advanced durable truth (rescue / preservation marker).
+            durableStatusResolver.clearDurableStatusCache()
+        }
         return store
     }
 

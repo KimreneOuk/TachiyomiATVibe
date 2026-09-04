@@ -142,6 +142,31 @@ class ActiveChapterStoreRegistryTest {
     }
 
     @Test
+    fun `probe created flag is true only for a freshly created probe`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        val fileKey = "created-flag"
+
+        val first = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        first.owned shouldBe true
+        first.created shouldBe true
+
+        // Still-registered probe handed out again: owned, but created only
+        // once — the invalidating wipe belongs to the creation pass alone.
+        val reused = registry.getOrCreateProbe(fileKey) { error("must not create") }!!
+        (reused.store === first.store) shouldBe true
+        reused.owned shouldBe true
+        reused.created shouldBe false
+
+        // After promotion to an active file store the probe path hands out
+        // the live store unowned and uncreated.
+        registry.getOrCreateFile(fileKey) { error("should adopt the probe") } shouldBe first.store
+        val active = registry.getOrCreateProbe(fileKey) { error("must not create") }!!
+        (active.store === first.store) shouldBe true
+        active.owned shouldBe false
+        active.created shouldBe false
+    }
+
+    @Test
     fun `file-keyed open adopts durable probe before it can be evicted`() = runTest {
         val registry = ActiveChapterStoreRegistry()
         val fileKey = "file-probe"
