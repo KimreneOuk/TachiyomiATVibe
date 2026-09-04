@@ -247,17 +247,15 @@ class TranslationManager(
         // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
         // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
         applicationScope.launch {
-            // Statuses of queued chapters are answered from the queue itself
-            // (getQueuedTranslationOrNull precedes the durable lookup), so
-            // queue progress ticks need no durable-cache invalidation — only
-            // a membership change can change which chapters resolve durably.
-            var lastQueueMembership: Set<Long?>? = null
-            translator.queueState.collect { queue ->
-                val membership = queue.mapTo(mutableSetOf()) { it.chapter.id }
-                if (membership != lastQueueMembership) {
-                    lastQueueMembership = membership
-                    durableStatusResolver.clearDurableStatusCache()
-                }
+            // Any queue emission can follow a durable transition (completion,
+            // failure, cancel). Membership-set comparison is not enough: a
+            // conflated remove→re-add of the same chapter reproduces the same
+            // membership set while durable truth changed in between, and the
+            // arm-after-pause path re-emits the same list verbatim. Wipe on
+            // every emission — the clear is two map clears, and emissions only
+            // fire on queue mutations, never on batch progress ticks.
+            translator.queueState.collect {
+                durableStatusResolver.clearDurableStatusCache()
             }
         }
         applicationScope.launch {
