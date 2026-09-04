@@ -261,6 +261,9 @@ class TranslationManagerReaderTeardownTest {
         setField(manager, "applicationScope", applicationScope)
         setField(manager, "readerTeardownMutex", Mutex())
         setField(manager, "durableStatusCache", ConcurrentHashMap<Any, Any>())
+        // Unsafe.allocateInstance skips field initializers; the resolver's
+        // document-memo provider captures this field and NPEs when unset.
+        setField(manager, "durableDocumentCache", ConcurrentHashMap<Any, Any>())
         return manager
     }
 

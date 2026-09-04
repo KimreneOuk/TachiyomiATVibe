@@ -153,6 +153,9 @@ class TranslationManagerDeleteResetOrderingTest {
         setField(manager, "applicationScope", CoroutineScope(SupervisorJob() + Dispatchers.IO))
         setField(manager, "readerTeardownMutex", Mutex())
         setField(manager, "durableStatusCache", observableCache())
+        // Unsafe.allocateInstance skips field initializers; the resolver's
+        // document-memo provider captures this field and NPEs when unset.
+        setField(manager, "durableDocumentCache", ConcurrentHashMap<Any, Any>())
         setField(manager, "streamRegistry", streamRegistry)
         setField(manager, "batchTrackerRegistry", batchTrackerRegistry)
         return manager
