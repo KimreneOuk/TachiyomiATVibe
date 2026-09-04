@@ -135,7 +135,7 @@ internal class ActiveChapterStoreRegistry {
             }
             val created = create() ?: return@withLock null
             probeStores[fileKey] = created
-            ProbeResult(created, owned = true)
+            ProbeResult(created, owned = true, created = true)
         }
     }
 
@@ -185,6 +185,13 @@ internal class ActiveChapterStoreRegistry {
     data class ProbeResult(
         val store: ChapterTranslationStore,
         val owned: Boolean,
+        /**
+         * True only when this call ran [create] — a freshly opened probe may
+         * have performed a one-way rescue and advanced durable truth, so
+         * observers must drop statuses cached before it. A reused probe
+         * already had that wipe when it was first created.
+         */
+        val created: Boolean = false,
     )
 
     @Synchronized

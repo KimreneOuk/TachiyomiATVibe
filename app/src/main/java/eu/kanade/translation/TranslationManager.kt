@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterDocumentIo
+import eu.kanade.translation.artifact.ArtifactManifestProbe
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
@@ -28,6 +29,7 @@ import eu.kanade.translation.manager.ChapterDataResetController
 import eu.kanade.translation.manager.CleanedImageLifecycleController
 import eu.kanade.translation.manager.DurableChapterKey
 import eu.kanade.translation.manager.DurableChapterStatusResolver
+import eu.kanade.translation.manager.DurableDocumentKey
 import eu.kanade.translation.manager.isReconstructibleDurableState
 import eu.kanade.translation.manager.DurableStatus
 import eu.kanade.translation.manager.ReaderTeardownCoordinator
@@ -179,6 +181,11 @@ class TranslationManager(
 
     private val durableStatusCache = ConcurrentHashMap<DurableChapterKey, DurableStatus>()
 
+    // Memoized translation-document locations, invalidated by the same
+    // clearDurableStatusCache protocol. One reader entry used to walk the
+    // SAF tree for the same document 5-7 times.
+    private val durableDocumentCache = ConcurrentHashMap<DurableDocumentKey, TranslationDocument>()
+
     /**
      * Owns single-page + auto-prefetch job scheduling, dedup, and cancellation. This manager
      * keeps the store lifecycle (open/evict/observe), chapter queue, and translation-file I/O.
@@ -240,7 +247,16 @@ class TranslationManager(
         // Rehydrate persisted batch queue on IO so a crash mid-batch no longer loses it.
         // Entries get status QUEUE; user taps Start to resume — never auto-starts OCR/LLM on launch.
         applicationScope.launch {
-            translator.queueState.collect { durableStatusResolver.clearDurableStatusCache() }
+            // Any queue emission can follow a durable transition (completion,
+            // failure, cancel). Membership-set comparison is not enough: a
+            // conflated remove→re-add of the same chapter reproduces the same
+            // membership set while durable truth changed in between, and the
+            // arm-after-pause path re-emits the same list verbatim. Wipe on
+            // every emission — the clear is two map clears, and emissions only
+            // fire on queue mutations, never on batch progress ticks.
+            translator.queueState.collect {
+                durableStatusResolver.clearDurableStatusCache()
+            }
         }
         applicationScope.launch {
             // A paused chapter is not an active foreground job, but its durable
@@ -1010,6 +1026,7 @@ class TranslationManager(
             sourceManagerProvider = { sourceManager },
             activeStoresProvider = { activeStores },
             durableStatusCacheProvider = { durableStatusCache },
+            durableDocumentCacheProvider = { durableDocumentCache },
         )
 
     // T912 ANR fix: suspend — this used to be reached synchronously from the
@@ -1105,21 +1122,31 @@ class TranslationManager(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
-    ): Map<String, PageTranslation> = withContext(Dispatchers.IO) {
-        activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
-        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
-            ?: return@withContext emptyMap()
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
-        if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
-            return@withContext openExistingChapterTranslationStore(
-                chapterId,
-                chapterName,
-                scanlator,
-                mangaTitle,
-                source,
-            )?.state?.value.orEmpty()
+    ): Map<String, PageTranslation> {
+        val entryStage = ReaderEntryTrace.begin("translation.getForReader", chapterId)
+        return try {
+            withContext(Dispatchers.IO) {
+                activeStores.get(chapterId)?.state?.value?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+                val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
+                    ?: return@withContext emptyMap()
+                val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
+                if (manifestProbe.exists && manifestProbe.manifest?.authority != ManifestAuthority.LEGACY) {
+                    return@withContext openExistingChapterTranslationStore(
+                        chapterId,
+                        chapterName,
+                        scanlator,
+                        mangaTitle,
+                        source,
+                        prefoundDocument = document,
+                        preflightManifestProbe = manifestProbe,
+                    )?.state?.value.orEmpty()
+                }
+                return@withContext document.file
+                    ?.let { decodeLegacyChapterTranslation(it, quarantineOnFailure = true) }.orEmpty()
+            }
+        } finally {
+            entryStage.end()
         }
-        return@withContext document.file?.let { decodeLegacyChapterTranslation(it, quarantineOnFailure = true) }.orEmpty()
     }
 
     fun getChapterTranslation(
@@ -1145,13 +1172,32 @@ class TranslationManager(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
+        prefoundDocument: TranslationDocument? = null,
+        preflightManifestProbe: ArtifactManifestProbe? = null,
     ): ChapterTranslationStore? {
-        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source) ?: return null
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
+        // Callers that already resolved the document and probed the manifest
+        // (getChapterTranslationForReader) hand them through — re-running the
+        // SAF walks here doubled the cost on every artifact-chapter open.
+        val document = prefoundDocument ?: findTranslationDocument(chapterName, scanlator, mangaTitle, source)
+            ?: return null
+        val manifestProbe = preflightManifestProbe
+            ?: ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         if (document.file?.exists() != true && !manifestProbe.exists) return null
+        // Only an actual open can complete a LEGACY rescue and advance
+        // durable truth. A registry hit performed no open — wiping here would
+        // defeat the reader's own status lookup immediately afterwards.
+        val hadActive = if (chapterId != null) {
+            activeStores.get(chapterId) != null
+        } else {
+            activeStores.getByFile(document.registryKey) != null
+        }
+        val isArtifactAuthoritative = manifestProbe.exists &&
+            manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS
         val store = if (chapterId != null) {
             activeStores.getOrCreate(chapterId, document.registryKey) {
-                if (document.file?.exists() == true) {
+                if (isArtifactAuthoritative) {
+                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                } else if (document.file?.exists() == true) {
                     ChapterTranslationStore.open(document.file)
                 } else {
                     ChapterTranslationStore.openArtifact(document.parent, document.fileName)
@@ -1159,14 +1205,20 @@ class TranslationManager(
             }
         } else {
             activeStores.getOrCreateFile(document.registryKey) {
-                if (document.file?.exists() == true) {
+                if (isArtifactAuthoritative) {
+                    ChapterTranslationStore.openArtifact(document.parent, document.fileName)
+                } else if (document.file?.exists() == true) {
                     ChapterTranslationStore.open(document.file)
                 } else {
                     ChapterTranslationStore.openArtifact(document.parent, document.fileName)
                 }
             }
         }
-        durableStatusResolver.clearDurableStatusCache()
+        if (!hadActive) {
+            // See the hadActive comment above: only a fresh open can have
+            // advanced durable truth (rescue / preservation marker).
+            durableStatusResolver.clearDurableStatusCache()
+        }
         return store
     }
 
@@ -1331,6 +1383,13 @@ class TranslationManager(
         source: Source,
         mangaId: Long?,
     ): ChapterTranslationStore? {
+        // Registry fast path: the live store for this chapter needs no
+        // document walk or manifest probe — both ran when it was opened and
+        // their result is already baked into the registry entry.
+        activeStores.get(chapterId)?.let { registered ->
+            scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
+            return registered
+        }
         val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
         val fileName = document?.fileName ?: provider.getTranslationFileName(chapterName, scanlator)
         val manifestProbe = document?.let {

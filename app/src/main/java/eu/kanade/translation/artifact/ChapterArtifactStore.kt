@@ -1,5 +1,6 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
 import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
@@ -7,6 +8,9 @@ import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
@@ -73,8 +77,10 @@ class ChapterArtifactStore(
      */
     @Synchronized
     fun loadOrMigrate(legacy: LegacyChapterSnapshot): LoadResult {
+        val readManifestStage = ReaderEntryTrace.begin("store.readManifest", null)
         val primary = readManifestDocument(layout.manifestFileName)
         val backup = readManifestDocument(backupName())
+        readManifestStage.end()
 
         if (primary?.schemaVersion != null && primary.schemaVersion > ChapterArtifactManifest.SCHEMA_VERSION) {
             return legacyRescue.refuseFutureDocument("primary", primary)
@@ -94,26 +100,40 @@ class ChapterArtifactStore(
             }
         }
 
+        val recoverBackupStage = ReaderEntryTrace.begin("store.recoverBackup", null)
         val existing = primary
             ?: recoverPrimaryFromBackupOrNull(backup)
+        recoverBackupStage.end()
         if (existing != null) {
             // A backup can be parsed successfully even when the SAF rename
             // that promotes it to the primary document fails. Keep that
             // recoverable copy read-only until a valid primary is durable;
             // retention and recovery publications must not delete or replace
             // the only known-good manifest.
-            if (readManifestDocument(layout.manifestFileName) == null) {
+            // T921: the guard only matters when the primary was missing and
+            // `existing` came from the backup — when the primary parsed, a
+            // re-read would just re-parse the same document over SAF on
+            // every open.
+            if (primary == null && readManifestDocument(layout.manifestFileName) == null) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT artifact manifest primary recovery incomplete; backup preserved: " +
                         "chapter=${layout.chapterKey}"
                 }
                 return LoadResult(existing, migratedFromLegacy = false, resyncedFromLegacy = false)
             }
-            // Load is a reconciliation boundary: after a crash or cancelled
-            // stream, remove only unreachable managed artifacts. Legacy
-            // companion images remain outside the managed tree and are owned
-            // by the reader stream registry.
-            reconcileRetention(existing)
+            // T921: the recursive sweep must not run for large chapters — it
+            // holds this store's monitor and serialized reader entry behind
+            // the lock for its full crawl duration (measured 56.7s of a 57.1s
+            // open). Large-chapter cleanup is owned by the deferred
+            // maintenance path (follow-up: event-driven retention per T920
+            // Recommendation 1). Small chapters keep the synchronous sweep:
+            // their managed tree is a handful of SAF listings, and
+            // crash/cancel garbage must not accumulate between passes.
+            if (existing.pages.size <= 8) {
+                val retentionStage = ReaderEntryTrace.begin("store.retention", null)
+                reconcileRetention(existing)
+                retentionStage.end()
+            }
             if (existing.authority == ManifestAuthority.ARTIFACTS) {
                 // Phase 3 cutover: transactional writes own this manifest.
                 // Legacy bytes (still written by the live pipeline) must never
@@ -121,7 +141,9 @@ class ChapterArtifactStore(
                 val hadInterruptedStage = existing.pages.values.any { page ->
                     ArtifactStage.entries.any { stage -> page.stage(stage)?.status == ArtifactStageStatus.RUNNING }
                 }
+                val recoverInterruptedStage = ReaderEntryTrace.begin("store.recoverInterrupted", null)
                 val recovered = recoverInterruptedStages(existing)
+                recoverInterruptedStage.end()
                 // If recovery publication failed, the backup is the last
                 // crash-safe copy and must remain available for the next load.
                 // A successful recovery (or a load with no RUNNING stage) can
@@ -135,7 +157,8 @@ class ChapterArtifactStore(
             // identity-resync loop alive: map the currently readable source
             // once, materialize its complete graph, and switch authority only
             // after every referenced document validates.
-            return legacyRescue.rescueLegacy(existing, legacy)
+            val rescueStage = ReaderEntryTrace.begin("store.rescue", null)
+            return legacyRescue.rescueLegacy(existing, legacy).also { rescueStage.end() }
         }
 
         val migrated = stampChapterKey(LegacyArtifactMigration.migrateChapter(legacy)).copy(glossary = null)
@@ -151,9 +174,11 @@ class ChapterArtifactStore(
                     "chapter=${layout.chapterKey}"
             }
         }
-        reconcileRetention(migrated)
+        // T921 hotfix: no retention sweep on the open path (see the matching
+        // comment above) — the crawl holds the store monitor and froze entry.
         if (!published) return LoadResult(migrated, migratedFromLegacy = false, resyncedFromLegacy = false)
-        return legacyRescue.rescueLegacy(migrated, legacy)
+        val rescueStage = ReaderEntryTrace.begin("store.rescue", null)
+        return legacyRescue.rescueLegacy(migrated, legacy).also { rescueStage.end() }
     }
 
     fun readManifest(): ChapterArtifactManifest? {

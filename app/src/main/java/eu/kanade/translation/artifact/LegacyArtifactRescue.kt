@@ -4,6 +4,9 @@ import eu.kanade.translation.artifact.ChapterArtifactStore.LoadResult
 import eu.kanade.translation.artifact.ChapterArtifactStore.TransactionOutcome
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import java.security.MessageDigest
@@ -123,7 +126,14 @@ internal class LegacyArtifactRescue(
             return LoadResult(materialized, migratedFromLegacy = false, resyncedFromLegacy = false)
         }
         val preserved = reconcileLegacyPreservation(cutover)
-        reconcileRetention(preserved)
+        if (preserved.pages.size <= 8) {
+            reconcileRetention(preserved)
+        } else {
+            @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+            kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                runCatching { reconcileRetention(preserved) }
+            }
+        }
         return LoadResult(preserved, migratedFromLegacy = true, resyncedFromLegacy = false)
     }
 

@@ -5,8 +5,20 @@ import eu.kanade.tachiyomi.ui.reader.setting.ReadingMode
 object ReaderPageWarmWindow {
     const val DEFAULT_RADIUS = 2
 
+    const val DEFAULT_ATTACH_RADIUS = 2
+    const val DEFAULT_EVICTION_RADIUS = 5
+
+    const val WEBTOON_ATTACH_RADIUS = 4
+    const val WEBTOON_EVICTION_RADIUS = 10
+
     fun radiusFor(mode: ReadingMode): Int =
-        if (mode.type is ReadingMode.ViewerType.Webtoon) 4 else DEFAULT_RADIUS
+        if (mode.type is ReadingMode.ViewerType.Webtoon) WEBTOON_ATTACH_RADIUS else DEFAULT_ATTACH_RADIUS
+
+    fun attachRadiusFor(mode: ReadingMode): Int =
+        if (mode.type is ReadingMode.ViewerType.Webtoon) WEBTOON_ATTACH_RADIUS else DEFAULT_ATTACH_RADIUS
+
+    fun evictionRadiusFor(mode: ReadingMode): Int =
+        if (mode.type is ReadingMode.ViewerType.Webtoon) WEBTOON_EVICTION_RADIUS else DEFAULT_EVICTION_RADIUS
 
     fun contains(
         pageIndex: Int,

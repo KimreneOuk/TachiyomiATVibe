@@ -49,6 +49,7 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.MemoryPressureClass
 import eu.kanade.translation.MemoryPressurePolicy
 import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.TranslationManager
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.PageIndexResolver
@@ -368,6 +369,7 @@ class ReaderViewModel @JvmOverloads constructor(
     private var translationBatchProgressJob: kotlinx.coroutines.Job? = null
     private var translationStateJob: kotlinx.coroutines.Job? = null
     private var autoSnapshotJob: kotlinx.coroutines.Job? = null
+    private var currentTranslationStore: eu.kanade.translation.ChapterTranslationStore? = null
 
     /** Resolver indirection is invalidated before any chapter/page resources are recycled. */
     private val autoPageResolver = ReaderAutoTranslationPageResolver(chapterCache)
@@ -772,22 +774,30 @@ class ReaderViewModel @JvmOverloads constructor(
 
         val keepPageKeys = HashSet<String>()
         val changedPages = linkedSetOf<ReaderPage>()
-        val warmRadius = ReaderPageWarmWindow.radiusFor(ReadingMode.fromPreference(getMangaReadingMode()))
+        val readingMode = ReadingMode.fromPreference(getMangaReadingMode())
+        val attachRadius = ReaderPageWarmWindow.attachRadiusFor(readingMode)
+        val evictionRadius = ReaderPageWarmWindow.evictionRadiusFor(readingMode)
         for ((listIndex, page) in pages.withIndex()) {
-            val warm = ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex, radius = warmRadius)
-            if (warm) {
+            val shouldAttach = ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex, radius = attachRadius)
+            val shouldEvict = !ReaderPageWarmWindow.contains(listIndex, currentIndex, pages.lastIndex, radius = evictionRadius)
+            if (shouldAttach) {
                 keepPageKeys += resolvePageKey(page)
                 val hadStream = page.translatedStream != null
                 attachTranslatedStreamIfWarm(page, manga, chapter, source)
                 if (dispatchRefresh && hadStream != (page.translatedStream != null)) {
                     changedPages += page
                 }
-            } else {
+            } else if (shouldEvict) {
                 if (page.translatedStream != null || page.showTranslatedImage) {
                     changedPages += page
                 }
                 page.translatedStream = null
                 page.showTranslatedImage = false
+            } else {
+                // Hysteresis deadband: retain already-attached streams without thrashing
+                if (page.translatedStream != null) {
+                    keepPageKeys += resolvePageKey(page)
+                }
             }
         }
 
@@ -821,6 +831,17 @@ class ReaderViewModel @JvmOverloads constructor(
             page.translatedStream = null
             page.showTranslatedImage = false
             return
+        }
+        val store = currentTranslationStore
+        if (store != null) {
+            val translation = page.translation
+            if (translation != null && translation.blocks.isEmpty()) {
+                val pageKey = resolvePageKey(page)
+                val hydrated = store.getOrLoadPageSnapshot(pageKey)
+                if (hydrated != null) {
+                    page.translation = hydrated
+                }
+            }
         }
         val translation = page.translation
         page.translatedStream = when {
@@ -902,6 +923,7 @@ class ReaderViewModel @JvmOverloads constructor(
         translationStoreJob?.cancel()
         translationBatchProgressJob?.cancel()
         translationStateJob?.cancel()
+        currentTranslationStore = null
         val readerStop = translationManager.requestReaderStop("reader closed")
         registerReaderCleanupAfterStop(readerStop) {
             // The joined manager boundary guarantees no in-flight work can open a retained page
@@ -933,30 +955,40 @@ class ReaderViewModel @JvmOverloads constructor(
      */
     suspend fun init(mangaId: Long, initialChapterId: Long): Result<Boolean> {
         if (!needsInit()) return Result.success(true)
-        return withIOContext {
-            try {
-                val manga = getManga.await(mangaId)
-                if (manga != null) {
-                    sourceManager.isInitialized.first { it }
-                    mutableState.update { it.copy(manga = manga) }
-                    if (chapterId == -1L) chapterId = initialChapterId
+        val entryStage = ReaderEntryTrace.begin("vm.init", initialChapterId)
+        return try {
+            withIOContext {
+                try {
+                    val manga = getManga.await(mangaId)
+                    if (manga != null) {
+                        sourceManager.isInitialized.first { it }
+                        mutableState.update { it.copy(manga = manga) }
+                        if (chapterId == -1L) chapterId = initialChapterId
 
-                    val context = Injekt.get<Application>()
-                    val source = sourceManager.getOrStub(manga.source)
-                    loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
+                        val context = Injekt.get<Application>()
+                        val source = sourceManager.getOrStub(manga.source)
+                        loader = ChapterLoader(context, downloadManager, downloadProvider, manga, source)
 
-                    loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
-                    Result.success(true)
-                } else {
-                    // Unlikely but okay
-                    Result.success(false)
+                        val loadStage = ReaderEntryTrace.begin("vm.loadChapter", chapterId)
+                        try {
+                            loadChapter(loader!!, chapterList.first { chapterId == it.chapter.id })
+                        } finally {
+                            loadStage.end()
+                        }
+                        Result.success(true)
+                    } else {
+                        // Unlikely but okay
+                        Result.success(false)
+                    }
+                } catch (e: Throwable) {
+                    if (e is CancellationException) {
+                        throw e
+                    }
+                    Result.failure(e)
                 }
-            } catch (e: Throwable) {
-                if (e is CancellationException) {
-                    throw e
-                }
-                Result.failure(e)
             }
+        } finally {
+            entryStage.end()
         }
     }
 
@@ -1000,6 +1032,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // loadChapter call sites already run on IO (init: withIOContext,
         // loadNewChapter: launchIO, loadAdjacent: withIOContext). Same value,
         // same downstream assignment — only the thread changed.
+        val statusStage = ReaderEntryTrace.begin("vm.translationStatus", chapter.chapter.id)
         val translationStatus = this@ReaderViewModel.manga?.let { m ->
             val ch = newChapters.currChapter.chapter
             translationManager.getChapterTranslationStatus(
@@ -1010,7 +1043,9 @@ class ReaderViewModel @JvmOverloads constructor(
                 m.source,
             )
         } ?: Translation.State.NOT_TRANSLATED
+        statusStage.end()
 
+        val stateStage = ReaderEntryTrace.begin("vm.stateUpdate", chapter.chapter.id)
         withUIContext {
             mutableState.update {
                 // Add new references first to avoid unnecessary recycling
@@ -1026,6 +1061,7 @@ class ReaderViewModel @JvmOverloads constructor(
                 )
             }
         }
+        stateStage.end()
         observeLiveTranslationStore()
         if (manga != null) observeTranslationState()
 
@@ -1216,13 +1252,17 @@ class ReaderViewModel @JvmOverloads constructor(
         eventChannel.trySend(Event.PageChanged)
     }
 
+    private var autoTranslationScrollJob: kotlinx.coroutines.Job? = null
+
     /**
      * Updates the sole reader Auto scheduler entry point. The configured value
      * is an ahead count, so the visible page is submitted separately and the
      * coordinator derives exactly N ordered pages after it.
      */
     private fun handleAutoTranslation(currentPage: ReaderPage) {
-        viewModelScope.launchIO {
+        autoTranslationScrollJob?.cancel()
+        autoTranslationScrollJob = viewModelScope.launchIO {
+            kotlinx.coroutines.delay(150L)
             if (state.value.viewerChapters?.currChapter !== currentPage.chapter) return@launchIO
             handleAutoTranslationOnIo(currentPage)
         }
@@ -2653,6 +2693,7 @@ class ReaderViewModel @JvmOverloads constructor(
         // TachiyomiAT (ANR fix): suspend variant — a first open runs legacy
         // artifact migration with SAF I/O and must not runBlocking a
         // dispatcher thread while holding readers waiting on the same store.
+        val storeStage = ReaderEntryTrace.begin("vm.openActiveStore", chapterId)
         val store = translationManager.openOrCreateActiveChapterTranslationStoreSuspend(
             chapterId,
             chapter.name,
@@ -2660,7 +2701,10 @@ class ReaderViewModel @JvmOverloads constructor(
             manga.title,
             source,
             manga.id,
-        ) ?: return
+        )
+        storeStage.end()
+        if (store == null) return
+        currentTranslationStore = store
         val storeState = store.state
         translationStoreJob = viewModelScope.launchIO {
             // TachiyomiAT: heal stranded RUNNING/PENDING pages left behind by a

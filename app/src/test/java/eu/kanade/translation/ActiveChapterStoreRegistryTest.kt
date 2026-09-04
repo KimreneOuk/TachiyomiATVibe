@@ -133,12 +133,41 @@ class ActiveChapterStoreRegistryTest {
 
         registry.releaseProbe(fileKey, probe.store) shouldBe true
         registry.getByFile(fileKey) shouldBe null
-        registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!.store shouldNotBe probe.store
+        // Per-creation, not per-store: after release the next probe pass is a
+        // real creation again and must re-arm the invalidating wipe (F5.2).
+        val recreated = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        recreated.store shouldNotBe probe.store
+        recreated.created shouldBe true
 
         val adopted = registry.getOrCreateProbe("adopted-file") { ChapterTranslationStore(null, null) }!!
         registry.getOrCreate(909, "adopted-file") { error("probe should be promoted") } shouldBe adopted.store
         registry.releaseProbe("adopted-file", adopted.store) shouldBe false
         registry.get(909) shouldBe adopted.store
+    }
+
+    @Test
+    fun `probe created flag is true only for a freshly created probe`() = runTest {
+        val registry = ActiveChapterStoreRegistry()
+        val fileKey = "created-flag"
+
+        val first = registry.getOrCreateProbe(fileKey) { ChapterTranslationStore(null, null) }!!
+        first.owned shouldBe true
+        first.created shouldBe true
+
+        // Still-registered probe handed out again: owned, but created only
+        // once — the invalidating wipe belongs to the creation pass alone.
+        val reused = registry.getOrCreateProbe(fileKey) { error("must not create") }!!
+        (reused.store === first.store) shouldBe true
+        reused.owned shouldBe true
+        reused.created shouldBe false
+
+        // After promotion to an active file store the probe path hands out
+        // the live store unowned and uncreated.
+        registry.getOrCreateFile(fileKey) { error("should adopt the probe") } shouldBe first.store
+        val active = registry.getOrCreateProbe(fileKey) { error("must not create") }!!
+        (active.store === first.store) shouldBe true
+        active.owned shouldBe false
+        active.created shouldBe false
     }
 
     @Test

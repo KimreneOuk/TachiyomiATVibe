@@ -128,4 +128,41 @@ class CancelSyncStoreWriteTest {
         s.markChapterCancelledSync(chapterId = 1L) shouldBe 0
         store.state.value["p0"]?.ocrStatus shouldBe StageStatus.READY
     }
+
+    @Test
+    fun `fastCancelInFlightStagesInMemory flips RUNNING pages to CANCELLED in memory immediately`() = runTest {
+        val store = newStore()
+        store.updatePage("p0") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        store.updatePage("p1") {
+            PageTranslation(
+                ocrStatus = StageStatus.READY,
+                translationStatus = StageStatus.RUNNING,
+            )
+        }
+        store.updatePage("p2") {
+            PageTranslation(
+                cleanedImageName = "p2.cleaned.png",
+                ocrStatus = StageStatus.READY,
+            )
+        }
+
+        val flipped = store.fastCancelInFlightStagesInMemory()
+
+        flipped shouldBe 2
+        store.state.value["p0"]?.ocrStatus shouldBe StageStatus.CANCELLED
+        store.state.value["p1"]?.translationStatus shouldBe StageStatus.CANCELLED
+        store.state.value["p2"]?.ocrStatus shouldBe StageStatus.READY
+    }
+
+    @Test
+    fun `cancelAutoTranslations flips in-memory stages immediately`() = runTest {
+        val store = newStore()
+        store.updatePage("p0") { PageTranslation(ocrStatus = StageStatus.RUNNING) }
+        val s = scheduler(store)
+
+        s.cancelAutoTranslations(chapterId = 1L)
+
+        // Store state must be flipped to CANCELLED in memory immediately without waiting for disk I/O
+        store.state.value["p0"]?.ocrStatus shouldBe StageStatus.CANCELLED
+    }
 }

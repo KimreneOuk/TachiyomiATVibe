@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -505,19 +506,48 @@ class TranslationScheduler(
                 queuedPageKeys.removeIf { it.startsWith(queuePrefix) }
             }
 
-            // TachiyomiAT bug 4 fix: synchronously flip the chapter's in-flight pages
-            // to CANCELLED so the reader overlay/dim clears immediately. Without this,
-            // isPageBeingTranslated() keeps returning true until each cancelled job's
-            // finally block runs — which may never happen if the worker is past its
-            // suspension point in uncancellable native code.
-            if (cancelled && chapterId != null) {
-                markChapterCancelledSync(chapterId)
-            } else if (cancelled && chapterId == null) {
+            // TachiyomiAT: fast non-blocking in-memory flip on the store first so the
+            // reader overlay/dim clears immediately on the current frame. Durable persistence
+            // is dispatched asynchronously to IO without blocking the caller.
+            if (chapterId != null) {
+                val inMemoryFlipped = immediateStoreResolver?.invoke(chapterId)?.fastCancelInFlightStagesInMemory() ?: 0
+                if (inMemoryFlipped > 0) {
+                    cancelled = true
+                }
+                if (cancelled) {
+                    scope.launch {
+                        try {
+                            markChapterCancelledAsync(chapterId)
+                        } catch (e: Throwable) {
+                            logcat(LogPriority.WARN, e) { "Failed to drain cancellation for $chapterId" }
+                        }
+                    }
+                }
+            } else {
                 // Global auto cancel: flip every active store's in-flight pages.
-                activeAutoJobs.keys.asSequence()
+                val affectedChapterIds = activeAutoJobs.keys.asSequence()
                     .mapNotNull { it.substringAfter("auto:").substringBefore(':').toLongOrNull() }
                     .distinct()
-                    .forEach { markChapterCancelledSync(it) }
+                    .toList()
+                var anyFlipped = false
+                affectedChapterIds.forEach { id ->
+                    val flipped = immediateStoreResolver?.invoke(id)?.fastCancelInFlightStagesInMemory() ?: 0
+                    if (flipped > 0) anyFlipped = true
+                }
+                if (anyFlipped) {
+                    cancelled = true
+                }
+                if (cancelled) {
+                    scope.launch {
+                        affectedChapterIds.forEach { id ->
+                            try {
+                                markChapterCancelledAsync(id)
+                            } catch (e: Throwable) {
+                                logcat(LogPriority.WARN, e) { "Failed to drain cancellation for $id" }
+                            }
+                        }
+                    }
+                }
             }
 
             return cancelled
@@ -726,9 +756,27 @@ class TranslationScheduler(
      * scope and the store's own mutex is the only inner lock (no nested UI-thread
      * concerns). Pages that already reached a rendered or failed terminal state are
      * left untouched so accepted artifacts survive.
-     *
-     * Returns the number of pages that were flipped to CANCELLED.
      */
+    suspend fun markChapterCancelledAsync(chapterId: Long): Int = withContext(Dispatchers.IO) {
+        val store = immediateStoreResolver?.invoke(chapterId) ?: return@withContext 0
+        val runningKeys = store.state.value.entries
+            .asSequence()
+            .filter { (_, page) -> page != null && (page!!.isStageRunning || page.ocrError == "Translation cancelled") }
+            .map { it.key }
+            .toList()
+        if (runningKeys.isEmpty()) return@withContext 0
+        var flipped = 0
+        runningKeys.forEach { key ->
+            try {
+                markPageCancelled(store, key)
+                flipped++
+            } catch (e: Throwable) {
+                logcat(LogPriority.WARN, e) { "Failed to mark page cancelled: $key" }
+            }
+        }
+        flipped
+    }
+
     fun markChapterCancelledSync(chapterId: Long): Int {
         val store = immediateStoreResolver?.invoke(chapterId) ?: return 0
         val runningKeys = store.state.value.entries
@@ -737,11 +785,16 @@ class TranslationScheduler(
             .map { it.key }
             .toList()
         if (runningKeys.isEmpty()) return 0
+        store.fastCancelInFlightStagesInMemory()
         var flipped = 0
         runBlocking {
             runningKeys.forEach { key ->
-                markPageCancelled(store, key)
-                flipped++
+                try {
+                    markPageCancelled(store, key)
+                    flipped++
+                } catch (e: Throwable) {
+                    logcat(LogPriority.WARN, e) { "Failed to mark page cancelled: $key" }
+                }
             }
         }
         return flipped

@@ -762,4 +762,55 @@ class ChapterTranslationStoreArtifactMigrationTest {
         val registration = store.preRegisterPages(listOf("p1.jpg"))
         registration.shouldBeInstanceOf<ChapterTranslationStore.PagePreRegistration.Rejected>()
     }
+
+    @Test
+    fun `openArtifact falls back to synthesized page and getOrLoadPageSnapshot lazily hydrates`() = runTest {
+        installPngHeaderProbe()
+        val root = com.hippo.unifile.FakeUniFile(parent = null, backing = mangaDir)
+        val layout = ChapterArtifactLayout("Chapter 9")
+        val snapshotFile = layout.committedPageSnapshotFile("page1.jpg", "gen-1")
+        val manifest = ChapterArtifactManifest(
+            schemaVersion = ChapterArtifactManifest.SCHEMA_VERSION,
+            chapterKey = layout.chapterKey,
+            authority = ManifestAuthority.ARTIFACTS,
+            pages = mapOf(
+                "page1.jpg" to PageArtifactRecord(
+                    pageKey = "page1.jpg",
+                    pageVersion = 1L,
+                    displayState = PageDisplayState.DISPLAY_READY,
+                    committed = CommittedBundleMetadata(
+                        generationId = "gen-1",
+                        displayBase = DisplayBaseReference(
+                            kind = DisplayBaseKind.CLEANED_IMAGE,
+                            fileName = "page1.cleaned.png",
+                        ),
+                        pageSnapshotFileName = snapshotFile,
+                        promotedAtEpochMs = 123456L,
+                    ),
+                ),
+            ),
+        )
+        File(mangaDir, layout.manifestFileName).writeText(Json.encodeToString(manifest))
+
+        // Open artifact without creating snapshotFile on disk -> should synthesize page cleanly
+        val store = ChapterTranslationStore.openArtifact(root, "Chapter 9.json")
+        store.state.value["page1.jpg"]?.cleanedImageName shouldBe "page1.cleaned.png"
+        store.display.value["page1.jpg"]?.cleanedImageName shouldBe "page1.cleaned.png"
+        store.state.value["page1.jpg"]?.ocrStatus shouldBe StageStatus.READY
+
+        // Now write the snapshot file with text blocks and lazily hydrate
+        val pageWithBlocks = displayablePage().copy(
+            cleanedImageName = "page1.cleaned.png",
+            blocks = mutableListOf(block("translated")),
+        )
+        File(mangaDir, snapshotFile).apply {
+            parentFile?.mkdirs()
+            writeText(Json.encodeToString(pageWithBlocks))
+        }
+
+        val hydrated = store.getOrLoadPageSnapshot("page1.jpg")
+        hydrated?.blocks?.single()?.translation shouldBe "translated"
+        store.state.value["page1.jpg"]?.blocks?.single()?.translation shouldBe "translated"
+    }
 }
+

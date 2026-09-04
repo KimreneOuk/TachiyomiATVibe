@@ -3,9 +3,15 @@ package eu.kanade.translation.artifact
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.ReaderEntryTrace
 import eu.kanade.translation.artifact.LegacyFlatFileDecoder
+import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasCommittedDisplay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -36,8 +42,21 @@ internal object LegacyChapterMigrationSource {
         parent: UniFile?,
         fileName: String,
     ): ChapterTranslationStore {
+        val openStoreStage = ReaderEntryTrace.begin("translation.openStore", null)
+        val artifactLayout = ChapterArtifactLayout.fromTranslationFileName(fileName)
+        val probeManifestStage = ReaderEntryTrace.begin("openStore.probeManifest", null)
+        val artifactManifestFileExists = parent?.findFile(artifactLayout.manifestFileName)?.exists() == true
+        val manifestProbe = if (artifactManifestFileExists && parent != null) {
+            ChapterArtifactManifestReader.probeArtifactManifest(parent, fileName)
+        } else {
+            null
+        }
+        probeManifestStage.end()
+        val isArtifactAuthoritative = manifestProbe?.exists == true &&
+            manifestProbe.manifest?.authority == ManifestAuthority.ARTIFACTS
+
         var legacyCorrupt = false
-        val legacyBytes = if (translationFile?.exists() == true) {
+        val legacyBytes = if (!isArtifactAuthoritative && translationFile?.exists() == true) {
             runCatching { translationFile.openInputStream().use { it.readBytes() } }
                 .onFailure { legacyCorrupt = true }
                 .getOrNull()
@@ -76,22 +95,22 @@ internal object LegacyChapterMigrationSource {
         } else {
             emptyMap()
         }
-        val artifactLayout = ChapterArtifactLayout.fromTranslationFileName(fileName)
-        val artifactManifestFileExists = parent?.findFile(artifactLayout.manifestFileName)?.exists() == true
         val artifactLoad = if (translationFile?.exists() == true || artifactManifestFileExists) {
             val migrationLock = artifactMigrationLock(parent, fileName)
+            val migrateStage = ReaderEntryTrace.begin("openStore.migrate", null)
             synchronized(migrationLock) {
                 runCatching {
-                    migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt)
+                    migrateArtifactManifest(translationFile, parent, fileName, legacyBytes, existing, legacyCorrupt, isArtifactAuthoritative)
                 }.onFailure { error ->
                     logcat(LogPriority.WARN, error) {
                         "TachiyomiAT artifact manifest migration skipped: reason=open failure"
                     }
                 }.getOrNull()
-            }
+            }.also { migrateStage.end() }
         } else {
             null
         }
+        openStoreStage.end()
         return ChapterTranslationStore(
             translationFile = translationFile,
             fileCreator = null,
@@ -103,7 +122,9 @@ internal object LegacyChapterMigrationSource {
             artifactParent = parent,
             artifactFileName = fileName,
         ).also {
+            val loadGlossaryStage = ReaderEntryTrace.begin("openStore.loadGlossary", null)
             it.loadGlossary()
+            loadGlossaryStage.end()
         }
     }
 
@@ -132,6 +153,7 @@ internal object LegacyChapterMigrationSource {
         legacyBytes: ByteArray?,
         legacyPages: Map<String, PageTranslation>,
         legacyCorrupt: Boolean,
+        isArtifactAuthoritative: Boolean,
     ): ArtifactLoad {
         val parent = parent ?: return ArtifactLoad(
             ChapterArtifactStore(
@@ -142,6 +164,7 @@ internal object LegacyChapterMigrationSource {
             emptyMap(),
             legacyPages,
         )
+        val startMs = System.currentTimeMillis()
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val artifactStore = ChapterArtifactStore(documents, layout, artifactImageProbe)
@@ -156,23 +179,37 @@ internal object LegacyChapterMigrationSource {
             )
         }
         val glossaryFileName = legacyGlossaryName(fileName)
-        val glossaryFile = parent.findFile(glossaryFileName)
-        val glossaryFilePresent = glossaryFile?.exists() == true
-        val glossaryBytes = runCatching {
-            glossaryFile?.takeIf { it.exists() }?.openInputStream()?.use { input -> input.readBytes() }
-        }.getOrNull()
-        val glossaryLastModified = runCatching { glossaryFile?.lastModified() ?: 0L }.getOrDefault(0L)
+        // An artifact-authoritative manifest never consults the legacy
+        // snapshot: loadOrMigrate returns from its ARTIFACTS fast path before
+        // reading legacy at all. Skip the glossary find+read+parse that used
+        // to run under the migration lock on every open of a migrated
+        // chapter; the not-present branch below produces the exact same
+        // empty-glossary snapshot fields.
+        var glossaryBytes: ByteArray? = null
+        var glossaryLastModified = 0L
         var glossaryFileCorrupt = false
-        val glossary = if (glossaryFilePresent) {
-            runCatching {
-                legacyPageJson.decodeFromStream<Map<String, String>>(
-                    glossaryBytes?.inputStream() ?: error("glossary bytes unavailable"),
-                )
-            }.onFailure { glossaryFileCorrupt = true }.getOrDefault(emptyMap())
+        val glossary: Map<String, String> = if (!isArtifactAuthoritative) {
+            val glossaryFile = parent.findFile(glossaryFileName)
+            val glossaryFilePresent = glossaryFile?.exists() == true
+            val bytes = runCatching {
+                glossaryFile?.takeIf { it.exists() }?.openInputStream()?.use { input -> input.readBytes() }
+            }.getOrNull()
+            glossaryBytes = bytes
+            glossaryLastModified = runCatching { glossaryFile?.lastModified() ?: 0L }.getOrDefault(0L)
+            if (glossaryFilePresent) {
+                runCatching {
+                    legacyPageJson.decodeFromStream<Map<String, String>>(
+                        bytes?.inputStream() ?: error("glossary bytes unavailable"),
+                    )
+                }.onFailure { glossaryFileCorrupt = true }.getOrDefault(emptyMap())
+            } else {
+                emptyMap()
+            }
         } else {
             emptyMap()
         }
         val migratedAtEpochMs = System.currentTimeMillis()
+        val loadOrMigrateStage = ReaderEntryTrace.begin("migrate.loadOrMigrate", null)
         val loaded = artifactStore.loadOrMigrate(
             LegacyChapterSnapshot(
                 pages = facts,
@@ -189,7 +226,7 @@ internal object LegacyChapterMigrationSource {
                 migratedByVersionCode = BuildConfig.VERSION_CODE.toLong(),
                 migratedAtEpochMs = migratedAtEpochMs,
             ),
-        )
+        ).also { loadOrMigrateStage.end() }
         var manifest = loaded.manifest
         if (manifest.authority == ManifestAuthority.ARTIFACTS) {
             manifest = artifactStore.reconcileLegacyPreservation(manifest)
@@ -208,27 +245,59 @@ internal object LegacyChapterMigrationSource {
                     eu.kanade.translation.artifact.LegacyPreservationState.PRESERVED,
                 )
             if (needsHealthVerification) {
-                manifest = artifactStore.verifyLegacyArtifactHealth(
-                    manifest = manifest,
-                    currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
-                    hasActiveLease = false,
-                ).manifest
+                if (manifest.pages.size <= 8) {
+                    manifest = artifactStore.verifyLegacyArtifactHealth(
+                        manifest = manifest,
+                        currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                        hasActiveLease = false,
+                    ).manifest
+                } else {
+                    // For large chapters (>8 pages), offload health verification and
+                    // preserved source cleanup to background so chapter entry is instant.
+                    val currentManifest = manifest
+                    @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
+                    kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        val verifyHealthStage = ReaderEntryTrace.begin("store.verifyHealthBackground", null)
+                        runCatching {
+                            artifactStore.verifyLegacyArtifactHealth(
+                                manifest = currentManifest,
+                                currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                                hasActiveLease = false,
+                            )
+                        }
+                        verifyHealthStage.end()
+                    }
+                }
             }
         }
+        val eagerSnapshotsStage = ReaderEntryTrace.begin("migrate.eagerSnapshots", null)
+        val maxEagerSnapshots = if (manifest.pages.size <= 8) manifest.pages.size else 4
+        var eagerCommittedLoaded = 0
         val committedPages = manifest.pages.mapNotNull { (pageKey, record) ->
             val committed = record.committed ?: return@mapNotNull null
-            val snapshot = artifactStore.readPageSnapshot(committed.pageSnapshotFileName)
+            val snapshot = if (eagerCommittedLoaded < maxEagerSnapshots) {
+                val loaded = artifactStore.readPageSnapshot(committed.pageSnapshotFileName)
+                if (loaded != null) eagerCommittedLoaded++
+                loaded
+            } else {
+                null
+            }
                 ?: legacyPages[pageKey]?.takeIf { manifest.authority == ManifestAuthority.LEGACY }
-            snapshot?.let { pageKey to it }
+                ?: record.toSynthesizedPageTranslation()
+            pageKey to snapshot
         }.toMap()
         val livePages = when (manifest.authority) {
             ManifestAuthority.LEGACY -> legacyPages
             ManifestAuthority.ARTIFACTS -> manifest.pages.mapNotNull { (pageKey, record) ->
-                val candidateSnapshot = artifactStore.readPageSnapshot(record.candidate?.pageSnapshotFileName)
+                val candidateSnapshot = record.candidate?.pageSnapshotFileName?.let {
+                    artifactStore.readPageSnapshot(it)
+                }
                 val committedSnapshot = committedPages[pageKey]
-                (candidateSnapshot ?: committedSnapshot)?.let { pageKey to it }
+                val snapshot = candidateSnapshot ?: committedSnapshot ?: record.toSynthesizedPageTranslation()
+                pageKey to snapshot
             }.toMap()
         }
+        eagerSnapshotsStage.end()
         val retiredCleanedImages = manifest.pages.mapNotNull { (pageKey, record) ->
             val previous = record.previousCommitted ?: return@mapNotNull null
             val name = previous.displayBase.fileName
@@ -236,6 +305,11 @@ internal object LegacyChapterMigrationSource {
                 ?: return@mapNotNull null
             pageKey to setOf(name)
         }.toMap()
+        val elapsed = System.currentTimeMillis() - startMs
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT chapter open completed in ${elapsed}ms: pages=${manifest.pages.size} " +
+                "eagerSnapshots=$eagerCommittedLoaded authority=${manifest.authority}"
+        }
         return ArtifactLoad(artifactStore, manifest, committedPages, livePages, retiredCleanedImages)
     }
 
@@ -297,5 +371,46 @@ internal object LegacyChapterMigrationSource {
     internal fun artifactMigrationLock(parent: UniFile?, fileName: String): Any {
         val parentKey = parent?.filePath ?: parent?.uri?.toString() ?: "<unknown>"
         return ARTIFACT_MIGRATION_LOCKS.computeIfAbsent("$parentKey:$fileName") { Any() }
+    }
+
+    private fun PageArtifactRecord.toSynthesizedPageTranslation(): PageTranslation {
+        val committed = this.committed
+        val isReady = this.displayState == PageDisplayState.DISPLAY_READY ||
+            this.displayState == PageDisplayState.TEXTLESS_COMPLETE ||
+            this.displayState == PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT ||
+            this.displayState == PageDisplayState.FAILED_WITH_COMMITTED_RESULT
+        val isRunning = this.displayState == PageDisplayState.CANDIDATE_RUNNING
+        val isFailed = this.displayState == PageDisplayState.FAILED_NO_RESULT
+
+        return PageTranslation(
+            sourceFileName = pageKey,
+            cleanedImageName = committed?.displayBase?.fileName ?: legacyVisible?.fileName,
+            ocrStatus = when {
+                isReady -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            translationStatus = when {
+                isReady -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            inpaintStatus = when {
+                isReady && (committed?.displayBase?.fileName != null || legacyVisible?.fileName != null) -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            renderStatus = when {
+                isReady && (committed?.displayBase?.fileName != null || legacyVisible?.fileName != null) -> StageStatus.READY
+                isRunning -> StageStatus.RUNNING
+                isFailed -> StageStatus.FAILED
+                else -> StageStatus.PENDING
+            },
+            pageVersion = pageVersion,
+            updatedAt = committed?.promotedAtEpochMs ?: 0L,
+        )
     }
 }

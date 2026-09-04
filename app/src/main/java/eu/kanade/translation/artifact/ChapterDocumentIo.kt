@@ -66,20 +66,55 @@ class UniFileChapterDocumentIo(
     private val root: UniFile,
 ) : ChapterDocumentIo {
 
-    private fun resolve(name: String): UniFile? {
-        if (name.isEmpty()) return root
+    private val dirCache = java.util.concurrent.ConcurrentHashMap<String, UniFile>()
+
+    private fun resolveDir(dirPath: String): UniFile? {
+        if (dirPath.isEmpty()) return root
+        dirCache[dirPath]?.takeIf { it.exists() && it.isDirectory }?.let { return it }
+        val segments = dirPath.split('/')
         var current: UniFile = root
-        name.split('/').forEach { segment ->
-            current = current.findFile(segment) ?: return null
+        var currentPath = ""
+        for (segment in segments) {
+            if (segment.isEmpty()) continue
+            currentPath = if (currentPath.isEmpty()) segment else "$currentPath/$segment"
+            val cached = dirCache[currentPath]
+            if (cached != null && cached.exists() && cached.isDirectory) {
+                current = cached
+            } else {
+                current = current.findFile(segment) ?: return null
+                dirCache[currentPath] = current
+            }
         }
         return current
+    }
+
+    private fun resolve(name: String): UniFile? {
+        if (name.isEmpty()) return root
+        val slashIndex = name.lastIndexOf('/')
+        if (slashIndex == -1) {
+            return root.findFile(name)
+        }
+        val dirPath = name.substring(0, slashIndex)
+        val fileName = name.substring(slashIndex + 1)
+        val dir = resolveDir(dirPath) ?: return null
+        return dir.findFile(fileName)
     }
 
     private fun resolveOrCreate(name: String): UniFile? {
         val segments = name.split('/')
         var current: UniFile = root
+        var currentPath = ""
         segments.dropLast(1).forEach { segment ->
-            current = current.findFile(segment) ?: current.createDirectory(segment) ?: return null
+            if (segment.isNotEmpty()) {
+                currentPath = if (currentPath.isEmpty()) segment else "$currentPath/$segment"
+                val cached = dirCache[currentPath]
+                if (cached != null && cached.exists() && cached.isDirectory) {
+                    current = cached
+                } else {
+                    current = current.findFile(segment) ?: current.createDirectory(segment) ?: return null
+                    dirCache[currentPath] = current
+                }
+            }
         }
         val last = segments.last()
         return current.findFile(last) ?: current.createFile(last)
@@ -153,7 +188,10 @@ class UniFileChapterDocumentIo(
         return runCatching { source.renameTo(segments.last()) }.getOrDefault(false)
     }
 
-    override fun delete(name: String): Boolean = resolve(name)?.delete() == true
+    override fun delete(name: String): Boolean {
+        dirCache.remove(name)
+        return resolve(name)?.delete() == true
+    }
 
     override fun list(directoryName: String): List<String>? =
         resolve(directoryName)?.takeIf { it.isDirectory }?.listFiles()?.mapNotNull { it.name }
