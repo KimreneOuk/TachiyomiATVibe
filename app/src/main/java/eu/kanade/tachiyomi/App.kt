@@ -48,6 +48,7 @@ import eu.kanade.tachiyomi.util.system.cancelNotification
 import eu.kanade.tachiyomi.util.system.notify
 import eu.kanade.translation.TranslationManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import logcat.AndroidLogcatLogger
@@ -165,6 +166,13 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         }
 
         initializeMigrator()
+
+        if (BuildConfig.DEBUG) {
+            scope.launch(Dispatchers.IO) {
+                kotlinx.coroutines.delay(1000)
+                eu.kanade.translation.runtime.onnx.QnnDiagnostics.runOnce()
+            }
+        }
     }
 
     private fun initializeMigrator() {

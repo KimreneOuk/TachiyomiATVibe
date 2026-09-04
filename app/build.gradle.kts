@@ -116,6 +116,7 @@ android {
     }
 
     packaging {
+        jniLibs.useLegacyPackaging = true
         resources.excludes.addAll(
             listOf(
                 "kotlin-tooling-metadata.json",

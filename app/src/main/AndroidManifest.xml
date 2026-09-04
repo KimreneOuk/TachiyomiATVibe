@@ -49,6 +49,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Tachiyomi">
 
+        <uses-native-library
+            android:name="libcdsprpc.so"
+            android:required="false" />
+        <uses-native-library
+            android:name="libOpenCL.so"
+            android:required="false" />
+
         <activity
             android:name=".ui.main.MainActivity"
             android:exported="true"
