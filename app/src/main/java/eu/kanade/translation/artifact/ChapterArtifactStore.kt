@@ -121,13 +121,19 @@ class ChapterArtifactStore(
                 }
                 return LoadResult(existing, migratedFromLegacy = false, resyncedFromLegacy = false)
             }
-            // T921 hotfix: retention reconciliation is a multi-second recursive
-            // SAF crawl that holds this store's monitor. Even launched on a
-            // background dispatcher, it serialized reader entry behind the
-            // lock for its full duration on EVERY open (measured 56.7s of a
-            // 57.1s open). It must never run inside an open. Cleanup is owned
-            // by the deferred maintenance path (follow-up: event-driven
-            // retention per T920 Recommendation 1).
+            // T921: the recursive sweep must not run for large chapters — it
+            // holds this store's monitor and serialized reader entry behind
+            // the lock for its full crawl duration (measured 56.7s of a 57.1s
+            // open). Large-chapter cleanup is owned by the deferred
+            // maintenance path (follow-up: event-driven retention per T920
+            // Recommendation 1). Small chapters keep the synchronous sweep:
+            // their managed tree is a handful of SAF listings, and
+            // crash/cancel garbage must not accumulate between passes.
+            if (existing.pages.size <= 8) {
+                val retentionStage = ReaderEntryTrace.begin("store.retention", null)
+                reconcileRetention(existing)
+                retentionStage.end()
+            }
             if (existing.authority == ManifestAuthority.ARTIFACTS) {
                 // Phase 3 cutover: transactional writes own this manifest.
                 // Legacy bytes (still written by the live pipeline) must never
