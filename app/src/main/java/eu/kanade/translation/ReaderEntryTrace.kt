@@ -35,10 +35,27 @@ object ReaderEntryTrace {
         Thread(runnable, "ReaderEntryTrace-Watchdog").apply { isDaemon = true }
     }
 
-    private val mainHandler = Handler(Looper.getMainLooper())
+    // JVM unit tests have no Android looper; constructing the handler there
+    // would throw and fail the whole object initializer, so resolve it lazily
+    // and treat "no looper" as heartbeat-disabled.
+    private val mainHandler: Handler? by lazy {
+        runCatching { Handler(Looper.getMainLooper()) }.getOrNull()
+    }
+
+    /**
+     * Monotonic milliseconds. JVM unit tests run against the android.jar
+     * stubs where [SystemClock.elapsedRealtime] throws "not mocked"; fall
+     * back to [System.nanoTime] there so tracing stays usable in tests.
+     */
+    private fun nowMs(): Long =
+        try {
+            SystemClock.elapsedRealtime()
+        } catch (_: Throwable) {
+            System.nanoTime() / 1_000_000L
+        }
 
     fun begin(stage: String, chapterId: Long?): TracedStage {
-        val startedAtMs = SystemClock.elapsedRealtime()
+        val startedAtMs = nowMs()
         logcat(LogPriority.INFO) { "[reader_entry] begin stage=$stage chapterId=$chapterId" }
         var ticks = 0
         var future: ScheduledFuture<*>? = null
@@ -50,7 +67,7 @@ object ReaderEntryTrace {
                 } else {
                     logcat(LogPriority.INFO) {
                         "[reader_entry] still-running stage=$stage chapterId=$chapterId " +
-                            "elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs}"
+                            "elapsedMs=${nowMs() - startedAtMs}"
                     }
                 }
             },
@@ -82,11 +99,11 @@ object ReaderEntryTrace {
         private var maxMainDelayMs = 0L
 
         init {
-            heartbeatMarkMs = SystemClock.elapsedRealtime()
+            heartbeatMarkMs = nowMs()
             val runnable = object : Runnable {
                 override fun run() {
                     if (completed.get()) return
-                    val now = SystemClock.elapsedRealtime()
+                    val now = nowMs()
                     val delay = now - heartbeatMarkMs
                     heartbeatMarkMs = now
                     if (delay > maxMainDelayMs) maxMainDelayMs = delay
@@ -95,10 +112,10 @@ object ReaderEntryTrace {
                             "[reader_entry] main-heartbeat stage=$stage chapterId=$chapterId delayMs=$delay"
                         }
                     }
-                    mainHandler.postDelayed(this, MAIN_HEARTBEAT_PERIOD_MS)
+                    mainHandler?.postDelayed(this, MAIN_HEARTBEAT_PERIOD_MS)
                 }
             }
-            mainHandler.postDelayed(runnable, MAIN_HEARTBEAT_PERIOD_MS)
+            mainHandler?.postDelayed(runnable, MAIN_HEARTBEAT_PERIOD_MS)
         }
 
         fun end() {
@@ -106,7 +123,7 @@ object ReaderEntryTrace {
             watchdogFuture.cancel(false)
             logcat(LogPriority.INFO) {
                 "[reader_entry] end stage=$stage chapterId=$chapterId " +
-                    "elapsedMs=${SystemClock.elapsedRealtime() - startedAtMs} " +
+                    "elapsedMs=${nowMs() - startedAtMs} " +
                     "maxMainDelayMs=$maxMainDelayMs"
             }
         }
