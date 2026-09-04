@@ -7,6 +7,7 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterDocumentIo
+import eu.kanade.translation.artifact.ArtifactManifestProbe
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.pipeline.batch.TranslationBatchTrackerRegistry
@@ -1138,6 +1139,8 @@ class TranslationManager(
                         scanlator,
                         mangaTitle,
                         source,
+                        prefoundDocument = document,
+                        preflightManifestProbe = manifestProbe,
                     )?.state?.value.orEmpty()
                 }
                 return@withContext document.file
@@ -1171,9 +1174,16 @@ class TranslationManager(
         scanlator: String?,
         mangaTitle: String,
         source: Source,
+        prefoundDocument: TranslationDocument? = null,
+        preflightManifestProbe: ArtifactManifestProbe? = null,
     ): ChapterTranslationStore? {
-        val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source) ?: return null
-        val manifestProbe = ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
+        // Callers that already resolved the document and probed the manifest
+        // (getChapterTranslationForReader) hand them through — re-running the
+        // SAF walks here doubled the cost on every artifact-chapter open.
+        val document = prefoundDocument ?: findTranslationDocument(chapterName, scanlator, mangaTitle, source)
+            ?: return null
+        val manifestProbe = preflightManifestProbe
+            ?: ChapterTranslationStore.probeArtifactManifest(document.parent, document.fileName)
         if (document.file?.exists() != true && !manifestProbe.exists) return null
         // Only an actual open can complete a LEGACY rescue and advance
         // durable truth. A registry hit performed no open — wiping here would
@@ -1375,6 +1385,13 @@ class TranslationManager(
         source: Source,
         mangaId: Long?,
     ): ChapterTranslationStore? {
+        // Registry fast path: the live store for this chapter needs no
+        // document walk or manifest probe — both ran when it was opened and
+        // their result is already baked into the registry entry.
+        activeStores.get(chapterId)?.let { registered ->
+            scheduleRetiredCleanedImageCleanup(registered, chapterId, chapterName, scanlator, mangaTitle, source, mangaId)
+            return registered
+        }
         val document = findTranslationDocument(chapterName, scanlator, mangaTitle, source)
         val fileName = document?.fileName ?: provider.getTranslationFileName(chapterName, scanlator)
         val manifestProbe = document?.let {
