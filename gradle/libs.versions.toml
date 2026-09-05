@@ -13,7 +13,7 @@ voyager = "1.0.1"
 spotless = "7.0.0.BETA4"
 ktlint-core = "1.5.0"
 firebase-bom = "33.7.0"
-onnxruntime-android-version = "1.27.0"
+onnxruntime-android-version = "1.28.0"
 jtokkit_version = "1.1.0"
 
 [libraries]

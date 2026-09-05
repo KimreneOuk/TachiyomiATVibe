@@ -26,6 +26,24 @@ object QnnDiagnostics {
 
     @Volatile
     private var ran = false
+    private var reportFile: File? = null
+
+    private fun logcat(
+        priority: LogPriority = LogPriority.INFO,
+        throwable: Throwable? = null,
+        message: () -> String,
+    ) {
+        val msg = message()
+        val fullMsg = if (throwable != null) "$msg\n" + android.util.Log.getStackTraceString(throwable) else msg
+        when (priority) {
+            LogPriority.WARN -> android.util.Log.w("QnnDiagnostics", fullMsg)
+            LogPriority.ERROR -> android.util.Log.e("QnnDiagnostics", fullMsg)
+            else -> android.util.Log.i("QnnDiagnostics", fullMsg)
+        }
+        try {
+            reportFile?.appendText("$fullMsg\n")
+        } catch (_: Throwable) {}
+    }
 
     data class Stats(
         val min: Long,
@@ -62,11 +80,17 @@ object QnnDiagnostics {
     }
 
     private fun run() {
+        val app = Injekt.get<Application>()
+        try {
+            val file = File(app.filesDir, "qnn_diagnostics_report.txt")
+            file.writeText("=== QNN DIAGNOSTICS REPORT ===\nDate: ${java.util.Date()}\n")
+            reportFile = file
+        } catch (_: Throwable) {}
+
         logcat(LogPriority.INFO) {
             "$TAG device=${DeviceCapability.describe()} board=${Build.BOARD} hardware=${Build.HARDWARE} " +
                 "qnnSocModel=${DeviceCapability.qnnSocModel} qnnHtpArch=${DeviceCapability.qnnHtpArch}"
         }
-        val app = Injekt.get<Application>()
         val libDir = app.applicationInfo.nativeLibraryDir
 
         val startTemp = getBatteryTemp(app)
@@ -100,6 +124,7 @@ object QnnDiagnostics {
         val endThermal = getThermalStatus(app)
         val tempDelta = if (startTemp > 0 && endTemp > 0) String.format("%+.1fC", endTemp - startTemp) else "N/A"
         logcat(LogPriority.INFO) { "$TAG [THERMAL_END] batteryTemp=${endTemp}C delta=$tempDelta thermalStatus=$endThermal" }
+        logcat(LogPriority.INFO) { "$TAG [ALL_DONE] completed successfully" }
     }
 
     private fun getBatteryTemp(app: Application): Float {
@@ -286,6 +311,7 @@ object QnnDiagnostics {
         var cpuCreateMs = -1L
         var cpuSession: OrtSession? = null
         val cpuRuns = mutableListOf<Long>()
+        var cpuOutputFloats: FloatArray? = null
         try {
             val t0 = System.nanoTime()
             val opts = OnnxRuntimeProvider.createRequiredXnnpackSessionOptions()
@@ -301,9 +327,17 @@ object QnnDiagnostics {
             repeat(3) {
                 cpuSession.run(feed).close()
             }
-            repeat(10) {
+            repeat(3) {
                 val tStart = System.nanoTime()
-                cpuSession.run(feed).close()
+                cpuSession.run(feed).use { res ->
+                    if (cpuOutputFloats == null) {
+                        val outTensor = res[0] as OnnxTensor
+                        val buf = outTensor.floatBuffer
+                        val arr = FloatArray(buf.remaining())
+                        buf.get(arr)
+                        cpuOutputFloats = arr
+                    }
+                }
                 cpuRuns.add((System.nanoTime() - tStart) / 1_000_000)
             }
             imgTensor.close()
@@ -368,7 +402,7 @@ object QnnDiagnostics {
                 "runs=${cpuRuns.joinToString()}"
         }
 
-        // 4. QNN HTP Benchmark on aot-512.onnx
+        // 4. QNN HTP Benchmark on aot-512.onnx (>=30 measured runs + numerical parity)
         var aotHtpStrictOk = false
         var aotHtpStrictErr = ""
         try {
@@ -384,6 +418,8 @@ object QnnDiagnostics {
         val aotHtpRuns = mutableListOf<Long>()
         var aotHtpShape = ""
         var aotHtpValidFinite = false
+        var htpOutputFloats: FloatArray? = null
+
         try {
             val t0 = System.nanoTime()
             val opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(strictCpuFallbackDisabled = false)
@@ -397,16 +433,18 @@ object QnnDiagnostics {
             val feed = mapOf("image" to imgTensor, "mask" to maskTensor)
 
             repeat(3) { aotHtpSession.run(feed).close() }
-            repeat(10) {
+            repeat(30) {
                 val tStart = System.nanoTime()
                 aotHtpSession.run(feed).use { res ->
                     val outTensor = res[0] as OnnxTensor
                     if (aotHtpRuns.isEmpty()) {
                         aotHtpShape = outTensor.info.shape.contentToString()
                         val buf = outTensor.floatBuffer
+                        val arr = FloatArray(buf.remaining())
+                        buf.get(arr)
+                        htpOutputFloats = arr
                         var hasNanOrInf = false
-                        for (idx in 0 until minOf(2000, buf.remaining())) {
-                            val v = buf.get(idx)
+                        for (v in arr) {
                             if (v.isNaN() || v.isInfinite()) hasNanOrInf = true
                         }
                         aotHtpValidFinite = !hasNanOrInf
@@ -427,7 +465,115 @@ object QnnDiagnostics {
         logcat(LogPriority.INFO) {
             "$TAG [R1_AOT_HTP] createMs=$aotHtpCreateMs min=${aotHtpStats.min} median=${aotHtpStats.median} " +
                 "mean=${String.format("%.1f", aotHtpStats.mean)} p95=${aotHtpStats.p95} max=${aotHtpStats.max} " +
-                "speedup=$aotHtpSpeedup shape=$aotHtpShape validFinite=$aotHtpValidFinite runs=${aotHtpRuns.joinToString()}"
+                "speedup=$aotHtpSpeedup shape=$aotHtpShape validFinite=$aotHtpValidFinite count=${aotHtpRuns.size} runs=${aotHtpRuns.joinToString()}"
+        }
+
+        // Numerical Parity: CPU vs HTP
+        val cpuOut = cpuOutputFloats
+        val htpOut = htpOutputFloats
+        if (cpuOut != null && htpOut != null && cpuOut.size == htpOut.size) {
+            val n = cpuOut.size
+            var sumAbsDiff = 0.0
+            var maxAbsDiff = 0.0
+            var sumSqDiff = 0.0
+            for (i in 0 until n) {
+                val diff = Math.abs(cpuOut[i].toDouble() - htpOut[i].toDouble())
+                sumAbsDiff += diff
+                if (diff > maxAbsDiff) maxAbsDiff = diff
+                sumSqDiff += (diff * diff)
+            }
+            val mae = sumAbsDiff / n
+            val rmse = Math.sqrt(sumSqDiff / n)
+            val psnr = if (rmse > 1e-9) 20.0 * Math.log10(2.0 / rmse) else 999.0
+            logcat(LogPriority.INFO) {
+                "$TAG [R1_AOT_NUMERICS] count=$n mae=${String.format("%.6f", mae)} " +
+                    "maxAbsError=${String.format("%.6f", maxAbsDiff)} rmse=${String.format("%.6f", rmse)} " +
+                    "psnr=${String.format("%.2f", psnr)}dB"
+            }
+        }
+
+        // 5. AOT Context Caching Lifecycle Benchmark on HTP
+        val aotCacheDir = File(model.parentFile, "qnn-cache-aot")
+        aotCacheDir.mkdirs()
+        val aotCtxFile = File(aotCacheDir, "${model.name}.qnnctx.bin")
+        val aotQnnBin = File(aotCacheDir, "${model.name}.qnnctx_qnn.bin")
+
+        if (aotCtxFile.exists() && aotQnnBin.exists() && aotQnnBin.length() > 0) {
+            // Cold reload test from precompiled binary in fresh process
+            var aotCtxReloadMs = -1L
+            val aotCtxReloadRuns = mutableListOf<Long>()
+            try {
+                val t0 = System.nanoTime()
+                val opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(contextCacheFile = null, strictCpuFallbackDisabled = true)
+                env.createSession(aotCtxFile.absolutePath, opts).use { reloadedSession ->
+                    aotCtxReloadMs = (System.nanoTime() - t0) / 1_000_000
+                    imgDirect.rewind()
+                    maskDirect.rewind()
+                    val imgTensor = OnnxTensor.createTensor(env, imgDirect, longArrayOf(1, 3, 512, 512))
+                    val maskTensor = OnnxTensor.createTensor(env, maskDirect, longArrayOf(1, 1, 512, 512))
+                    val feed = mapOf("image" to imgTensor, "mask" to maskTensor)
+                    repeat(3) { reloadedSession.run(feed).close() }
+                    repeat(10) {
+                        val t = System.nanoTime()
+                        reloadedSession.run(feed).close()
+                        aotCtxReloadRuns.add((System.nanoTime() - t) / 1_000_000)
+                    }
+                    imgTensor.close()
+                    maskTensor.close()
+                }
+            } catch (t: Throwable) {
+                logcat(LogPriority.WARN, t) { "$TAG [R1_AOT_EXISTING_CACHE] Reload failed: ${t.message}" }
+            }
+            val aotCtxStats = Stats.of(aotCtxReloadRuns)
+            logcat(LogPriority.INFO) {
+                "$TAG [R1_AOT_CONTEXT_CACHE] isPrecompiledCold=true ctxFileSize=${aotCtxFile.length()}B qnnBinSize=${aotQnnBin.length()}B " +
+                    "reloadMs=$aotCtxReloadMs reloadedInferenceMedian=${aotCtxStats.median}ms min=${aotCtxStats.min} max=${aotCtxStats.max}"
+            }
+        } else {
+            var aotCtxGenMs = -1L
+            try {
+                val t0 = System.nanoTime()
+                val opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(contextCacheFile = aotCtxFile, strictCpuFallbackDisabled = true)
+                env.createSession(model.absolutePath, opts).close()
+                aotCtxGenMs = (System.nanoTime() - t0) / 1_000_000
+            } catch (t: Throwable) {
+                logcat(LogPriority.WARN, t) { "$TAG [R1_AOT_CACHE] Gen failed: ${t.message}" }
+            }
+
+            val aotCtxSize = aotCtxFile.length()
+            val aotQnnBinSize = if (aotQnnBin.exists()) aotQnnBin.length() else 0L
+
+            var aotCtxReloadMs = -1L
+            val aotCtxReloadRuns = mutableListOf<Long>()
+            if (aotCtxFile.exists()) {
+                try {
+                    val t0 = System.nanoTime()
+                    val opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(contextCacheFile = null, strictCpuFallbackDisabled = true)
+                    env.createSession(aotCtxFile.absolutePath, opts).use { reloadedSession ->
+                        aotCtxReloadMs = (System.nanoTime() - t0) / 1_000_000
+                        imgDirect.rewind()
+                        maskDirect.rewind()
+                        val imgTensor = OnnxTensor.createTensor(env, imgDirect, longArrayOf(1, 3, 512, 512))
+                        val maskTensor = OnnxTensor.createTensor(env, maskDirect, longArrayOf(1, 1, 512, 512))
+                        val feed = mapOf("image" to imgTensor, "mask" to maskTensor)
+                        repeat(3) { reloadedSession.run(feed).close() }
+                        repeat(10) {
+                            val t = System.nanoTime()
+                            reloadedSession.run(feed).close()
+                            aotCtxReloadRuns.add((System.nanoTime() - t) / 1_000_000)
+                        }
+                        imgTensor.close()
+                        maskTensor.close()
+                    }
+                } catch (t: Throwable) {
+                    logcat(LogPriority.WARN, t) { "$TAG [R1_AOT_CACHE] Reload failed: ${t.message}" }
+                }
+            }
+            val aotCtxStats = Stats.of(aotCtxReloadRuns)
+            logcat(LogPriority.INFO) {
+                "$TAG [R1_AOT_CONTEXT_CACHE] isPrecompiledCold=false genMs=$aotCtxGenMs ctxFileSize=${aotCtxSize}B qnnBinSize=${aotQnnBinSize}B " +
+                    "reloadMs=$aotCtxReloadMs reloadedInferenceMedian=${aotCtxStats.median}ms min=${aotCtxStats.min} max=${aotCtxStats.max}"
+            }
         }
 
         // 5. Sustained 20-run test on GPU (if functional) or NNAPI/CPU

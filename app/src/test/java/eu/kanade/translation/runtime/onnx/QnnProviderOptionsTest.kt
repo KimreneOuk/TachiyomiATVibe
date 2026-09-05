@@ -6,10 +6,10 @@ import org.junit.jupiter.api.Test
 class QnnProviderOptionsTest {
 
     @Test
-    fun `provider options carry soc and arch when both are known`() {
+    fun `provider options carry soc and arch when explicitly requested without forced burst`() {
         val opts = OnnxRuntimeProvider.buildQnnProviderOptions(socModel = "57", htpArch = "75")
         opts["backend_type"] shouldBe "htp"
-        opts["htp_performance_mode"] shouldBe "burst"
+        opts.containsKey("htp_performance_mode") shouldBe false
         opts["soc_model"] shouldBe "57"
         opts["htp_arch"] shouldBe "75"
     }

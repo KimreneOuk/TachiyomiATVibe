@@ -140,4 +140,52 @@ class AotBoxGeometryTest {
             minOverlapFraction = 0.12f,
         ) shouldBe true
     }
+
+    @Test
+    fun `clusterFreeTextGroups handles empty and single groups`() {
+        AotBoxGeometry.clusterFreeTextGroups(emptyList()) shouldBe emptyList()
+        val single = listOf(intArrayOf(10, 10, 50, 50))
+        AotBoxGeometry.clusterFreeTextGroups(listOf(single)).size shouldBe 1
+    }
+
+    @Test
+    fun `clusterFreeTextGroups merges adjacent groups within maxContextSize`() {
+        val g1 = listOf(intArrayOf(100, 100, 150, 200))
+        val g2 = listOf(intArrayOf(160, 110, 200, 210))
+        val g3 = listOf(intArrayOf(220, 120, 280, 190))
+
+        val clusters = AotBoxGeometry.clusterFreeTextGroups(listOf(g1, g2, g3), maxContextSize = 512)
+        clusters.size shouldBe 1
+        clusters[0].size shouldBe 3
+    }
+
+    @Test
+    fun `clusterFreeTextGroups isolates distant groups exceeding maxContextSize`() {
+        val topGroup = listOf(intArrayOf(50, 50, 100, 100))
+        val bottomGroup = listOf(intArrayOf(50, 600, 100, 650))
+
+        val clusters = AotBoxGeometry.clusterFreeTextGroups(listOf(topGroup, bottomGroup), maxContextSize = 512)
+        clusters.size shouldBe 2
+    }
+
+    @Test
+    fun `clusterFreeTextGroups clusters multi-panel page into separate spatial groups`() {
+        // Panel 1 (top): 3 text lines
+        val p1_1 = listOf(intArrayOf(50, 100, 90, 250))
+        val p1_2 = listOf(intArrayOf(110, 120, 150, 260))
+        val p1_3 = listOf(intArrayOf(170, 100, 210, 240))
+
+        // Panel 2 (bottom): 2 text lines
+        val p2_1 = listOf(intArrayOf(60, 900, 100, 1050))
+        val p2_2 = listOf(intArrayOf(120, 920, 160, 1060))
+
+        val clusters = AotBoxGeometry.clusterFreeTextGroups(
+            listOf(p1_1, p1_2, p1_3, p2_1, p2_2),
+            maxContextSize = 512,
+        )
+
+        clusters.size shouldBe 2
+        val totalBoxes = clusters.sumOf { it.size }
+        totalBoxes shouldBe 5
+    }
 }

@@ -138,6 +138,29 @@ class ReaderTranslationFeedbackTest {
     }
 
     @Test
+    fun `durable ocr running state is ignored if inpaint or cleaned image is already ready`() {
+        val ocrStaleWithInpaintReady = PageTranslation(
+            ocrStatus = StageStatus.RUNNING,
+            inpaintStatus = StageStatus.READY,
+        )
+        ocrStaleWithInpaintReady.toReaderPageFeedback() shouldBe null
+
+        val ocrStaleWithCleanedReady = PageTranslation(
+            cleanedImageName = "page.cleaned.webp",
+            inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+            ocrStatus = StageStatus.RUNNING,
+            inpaintStatus = StageStatus.READY,
+        )
+        ocrStaleWithCleanedReady.toReaderPageFeedback() shouldBe null
+
+        val genuineOcrRunning = PageTranslation(
+            ocrStatus = StageStatus.RUNNING,
+            inpaintStatus = StageStatus.PENDING,
+        )
+        genuineOcrRunning.toReaderPageFeedback() shouldBe ReaderPageFeedbackState.ReadingText
+    }
+
+    @Test
     fun `pager durable running state owns stale auto feedback and accepts its result`() {
         val durableRunning = ReaderPageFeedbackState.ReadingText
 

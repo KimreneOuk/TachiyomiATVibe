@@ -10,22 +10,29 @@ import ai.onnxruntime.OrtSession
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.RectF
+import android.app.Application
 import android.os.Build
 import eu.kanade.translation.runtime.onnx.DeviceCapability
 import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
+import eu.kanade.translation.runtime.onnx.ModelRoutingEngine
 import eu.kanade.translation.runtime.onnx.OnnxRuntimeProvider
+import eu.kanade.translation.runtime.onnx.QnnContextCacheManager
 import eu.kanade.translation.util.TranslationMemoryBudget
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.translation.pools.BitmapPool
 import tachiyomi.domain.translation.pools.DirectBufferPool
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import java.io.File
 import java.nio.FloatBuffer
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-class AOTInpainting {
+class AOTInpainting(
+    val performanceMode: String? = "burst",
+) {
 
     companion object {
         private const val MAX_INFERENCE_DIM = 768
@@ -121,22 +128,71 @@ class AOTInpainting {
     }
 
     private fun initializeQnnSession(modelFile: File): OrtSession? {
+        val modelId = ModelRoutingEngine.resolveModelId(modelFile.absolutePath)
+        if (!ModelRoutingEngine.isSupported(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP)) {
+            logcat(LogPriority.INFO) { "[inpaint] route=qnn_htp model=$modelId is marked UNSUPPORTED; skipping" }
+            return null
+        }
+
+        val app = try {
+            Injekt.get<Application>()
+        } catch (_: Throwable) {
+            null
+        }
+        val htpOptions = OnnxRuntimeProvider.buildGenericHtpOptions(performanceMode = performanceMode)
+
+        // 1. Warm load from precompiled context cache if valid (~300ms)
+        if (app != null) {
+            val validCachedModel = QnnContextCacheManager.getValidCachedModel(app, modelFile, htpOptions)
+            if (validCachedModel != null) {
+                var loadOpts: OrtSession.SessionOptions? = null
+                try {
+                    loadOpts = OnnxRuntimeProvider.createQnnHtpSessionOptions(
+                        contextCacheFile = null,
+                        strictCpuFallbackDisabled = true,
+                        qnnOptions = htpOptions,
+                    )
+                    val session = OnnxRuntimeProvider.environment.createSession(validCachedModel.absolutePath, loadOpts)
+                    AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(session))
+                    ModelRoutingEngine.markSupported(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP)
+                    logcat(LogPriority.INFO) {
+                        "[inpaint] route=qnn_htp init=ok cached=true model=$modelId ${DeviceCapability.describe()}"
+                    }
+                    return session
+                } catch (t: Throwable) {
+                    logcat(LogPriority.WARN, t) {
+                        "[inpaint] route=qnn_htp cached context load failed; invalidating cache and compiling fresh"
+                    }
+                    QnnContextCacheManager.invalidate(app, modelFile, htpOptions)
+                } finally {
+                    try { loadOpts?.close() } catch (_: Throwable) {}
+                }
+            }
+        }
+
+        // 2. Cold compilation and atomic staging
+        val stagingCtxFile = if (app != null) {
+            QnnContextCacheManager.prepareStaging(app, modelFile, htpOptions)
+        } else {
+            null
+        }
+
         var opts: OrtSession.SessionOptions? = null
         var created: OrtSession? = null
         return try {
-            // Persist compiled HTP graph binaries next to the models so the
-            // multi-second finalization is paid once per install, not per run.
-            // The path must be a per-model FILE — ORT writes/loads the exact
-            // context binary at ep.context_file_path.
-            val contextCacheFile = File(File(modelFile.parentFile, "qnn-cache"), "${modelFile.name}.qnnctx.bin")
             opts = OnnxRuntimeProvider.createQnnHtpSessionOptions(
-                contextCacheFile = contextCacheFile,
+                contextCacheFile = stagingCtxFile,
                 strictCpuFallbackDisabled = true,
+                qnnOptions = htpOptions,
             )
             created = OnnxRuntimeProvider.environment.createSession(modelFile.absolutePath, opts)
             AotModelContract.validate(AotModelContract.Kind.FIXED_512, readContract(created))
+            if (app != null) {
+                QnnContextCacheManager.commitStaging(app, modelFile, htpOptions)
+            }
+            ModelRoutingEngine.markSupported(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP)
             logcat(LogPriority.INFO) {
-                "[inpaint] route=qnn_htp init=ok model=${modelFile.name} ${DeviceCapability.describe()}"
+                "[inpaint] route=qnn_htp init=ok cached=false generated=true model=$modelId ${DeviceCapability.describe()}"
             }
             created
         } catch (error: Throwable) {
@@ -145,12 +201,9 @@ class AOTInpainting {
             } catch (closeError: Throwable) {
                 error.addSuppressed(closeError)
             }
-            // Strict options mean this failure is real (HTP broken or the graph
-            // is not HTP-partitionable). Device health is gated by the hardware
-            // probe, so this is a per-model demotion: do not trip the breaker
-            // and cost every other engine its accelerator.
+            val canRetry = ModelRoutingEngine.recordFailure(modelId, HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP, error)
             logcat(LogPriority.ERROR, error) {
-                "[inpaint] route=qnn_htp init=failed model=${modelFile.name} ${DeviceCapability.describe()}"
+                "[inpaint] route=qnn_htp init=failed canRetry=$canRetry model=$modelId ${DeviceCapability.describe()}"
             }
             null
         } finally {
@@ -343,7 +396,7 @@ class AOTInpainting {
 
         var paddleLinesTotal = 0
         var paddleFallback = 0
-        val freeTextGroups: List<List<IntArray>> = if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
+        val rawFreeTextGroups: List<List<IntArray>> = if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
             val refined = refineFreeTextGroups(image, freeTextDetectorBoxes)
             paddleLinesTotal = refined.paddleLineCount
             paddleFallback = refined.fallbackCount
@@ -352,9 +405,11 @@ class AOTInpainting {
             freeTextDetectorBoxes.map { listOf(it.copyOf()) }
         }
 
+        val freeTextGroups = AotBoxGeometry.clusterFreeTextGroups(rawFreeTextGroups, REPORT_AOT_CONTEXT)
+
         logcat(LogPriority.INFO) {
             "[inpaint] pipeline=investigation_report bubbleText=${bubbleTextBoxes.size} " +
-                "freeDets=${freeTextDetectorBoxes.size} freeGroups=${freeTextGroups.size} " +
+                "freeDets=${freeTextDetectorBoxes.size} rawGroups=${rawFreeTextGroups.size} clusteredGroups=${freeTextGroups.size} " +
                 "mode=$mode fixed=${fixedSess != null} dynamic=${dynamicSess != null}"
         }
         if (paddleDetector != null && freeTextDetectorBoxes.isNotEmpty()) {
@@ -577,7 +632,21 @@ class AOTInpainting {
             )
             return when (result) {
                 is AotFallbackCoordinator.Result.Accepted -> {
-                    image.setPixels(result.pixels, 0, side, crop[0], crop[1], side, side)
+                    val originalPixels = IntArray(side * side)
+                    image.getPixels(originalPixels, 0, side, crop[0], crop[1], side, side)
+                    val alphaField = BubbleMaskBuilder.featherAlphaField(
+                        mask = maskBytes,
+                        width = side,
+                        height = side,
+                        rampWidth = REPORT_FREE_TEXT_FEATHER,
+                    )
+                    for (i in originalPixels.indices) {
+                        val a = alphaField[i]
+                        if (a > 0.0f) {
+                            originalPixels[i] = AotPixelOps.blendPixel(originalPixels[i], result.pixels[i], a)
+                        }
+                    }
+                    image.setPixels(originalPixels, 0, side, crop[0], crop[1], side, side)
                     image
                 }
                 is AotFallbackCoordinator.Result.Exhausted -> {

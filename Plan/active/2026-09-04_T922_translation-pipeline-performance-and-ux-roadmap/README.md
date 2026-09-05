@@ -22,7 +22,8 @@ Plan/active/2026-09-04_T922_translation-pipeline-performance-and-ux-roadmap/
     ├── npu-gpu-hardware-acceleration.md                  # Deep dive: NPU failure diagnosis & Adreno GPU fallback
     ├── reader-sluggishness-layout-persistence.md         # Architecture: 0ms reader layout hydration & disk persistence
     ├── model-picker-reachability-ux.md                    # Architecture: Pre-flight reachability & Settings test button
-    └── batch-translation-mechanics.md                    # Verification: Streaming chunk planner & 15 RPM governance
+    ├── batch-translation-mechanics.md                    # Verification: Streaming chunk planner & 15 RPM governance
+    └── auto-translation-failure-and-recovery-handover.md # Handover: Eviction deadlock fix & QNN Error 1100 resolution
 ```
 
 ## Executive Document Summaries
@@ -38,3 +39,5 @@ Plan/active/2026-09-04_T922_translation-pipeline-performance-and-ux-roadmap/
    - Eliminates wasted compute (running 4s of OCR/inpaint before failing on a bad key or quota) via pre-flight gates and an interactive Settings "Test Connection" button.
 5. **[Batch Translation Mechanics (`engineering/batch-translation-mechanics.md`)](file:///C:/Users/User/.gemini/antigravity/worktrees/TachiyomiAT-1.16.8-dev/optimize_translation_pipeline_ux/Plan/active/2026-09-04_T922_translation-pipeline-performance-and-ux-roadmap/engineering/batch-translation-mechanics.md)**:
    - Verifies the streaming chunk planner's role in satisfying the 15 RPM limit and maintaining character dialogue consistency across pages.
+6. **[Auto-Translation Handover Guide (`engineering/auto-translation-failure-and-recovery-handover.md`)](file:///C:/Users/User/.gemini/antigravity/worktrees/TachiyomiAT-1.16.8-dev/optimize_translation_pipeline_ux/Plan/active/2026-09-04_T922_translation-pipeline-performance-and-ux-roadmap/engineering/auto-translation-failure-and-recovery-handover.md)**:
+   - Complete handover guide for Claude Code: documents the verified eviction state deadlock fix, isolates the QNN Error 1100 crash on `bubble_segmenter.onnx`, aligns the model with the Target Matrix (CPU / XNNPACK), and specifies step-by-step implementation instructions and verification commands.

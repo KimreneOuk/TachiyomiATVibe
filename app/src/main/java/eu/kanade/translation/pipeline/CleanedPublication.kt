@@ -148,6 +148,19 @@ internal class CleanedPublication(
                             inpaintingModeUsed = currentInpaintingMode().name
                             inpaintFingerprint = pageTranslation.inpaintFingerprint
                             inpaintStatus = StageStatus.READY
+                            if (pageTranslation.ocrStatus == StageStatus.READY) {
+                                ocrStatus = StageStatus.READY
+                            }
+                            if (blocks.isEmpty() && pageTranslation.blocks.isNotEmpty()) {
+                                blocks = pageTranslation.blocks.map { it.copy() }.toMutableList()
+                            }
+                            if (inpaintMaskBoxes.isEmpty() && pageTranslation.inpaintMaskBoxes.isNotEmpty()) {
+                                inpaintMaskBoxes = pageTranslation.inpaintMaskBoxes
+                            }
+                            if (imgWidth == 0f && pageTranslation.imgWidth != 0f) {
+                                imgWidth = pageTranslation.imgWidth
+                                imgHeight = pageTranslation.imgHeight
+                            }
                             errorMessage = null
                         }
                     }

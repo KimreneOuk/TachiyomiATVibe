@@ -14,22 +14,167 @@ object OnnxRuntimeProvider {
     }
 
     /**
-     * QNN HTP provider options shared by every QNN session (probe, detectors,
-     * inpainting). ORT 1.27 parses these strictly:
-     * - soc_model/htp_arch are integer strings (std::stoi) — string names throw;
-     * - htp_arch only accepts 0/68/69/73/75/81;
-     * - context caching is NOT a provider option — it is enabled via the
-     *   "ep.context_enable"/"ep.context_file_path" session config entries.
+     * T922 Phase 5 (plan §3.4): typed execution-provider registration result.
+     * Reported by [createSessionOptionsWithRegistration] from what actually
+     * registered on the built options — never from
+     * [HardwareDiscoveryEngine.activeRoute], which is device preference only.
+     * The wire label (`providerSink` value) is the lowercase [wireLabel].
      */
-    internal fun buildQnnProviderOptions(
-        socModel: String? = DeviceCapability.qnnSocModel,
-        htpArch: String? = DeviceCapability.qnnHtpArch,
+    enum class RegisteredExecutionProvider { QNN_HTP, QNN_GPU, NNAPI, XNNPACK, CPU }
+
+    /** Lowercase wire label used by `providerSink` and per-engine route logging. */
+    val RegisteredExecutionProvider.wireLabel: String
+        get() = when (this) {
+            RegisteredExecutionProvider.QNN_HTP -> "qnn_htp"
+            RegisteredExecutionProvider.QNN_GPU -> "qnn_gpu"
+            RegisteredExecutionProvider.NNAPI -> "nnapi"
+            RegisteredExecutionProvider.XNNPACK -> "xnnpack"
+            RegisteredExecutionProvider.CPU -> "cpu"
+        }
+
+    /**
+     * Session options together with the execution provider that actually
+     * registered on them. [registered] is a registration fact only — it is
+     * NOT execution proof (plan amendment §10.8); provenance requires
+     * [ModelRoutingEngine.recordSuccessfulInference] after a real run.
+     */
+    class SessionOptionsWithRegistration(
+        val options: OrtSession.SessionOptions,
+        val registered: RegisteredExecutionProvider,
+    )
+
+    /**
+     * T922 Phase 5 (plan §3.4): a STRICT accelerator execution provider failed
+     * to register while building session options. The options are already
+     * closed by the builder when this is thrown; [OnnxRuntimeProvider.createSessionWithFallback]
+     * owns the CPU retry so a default-CPU session can never masquerade as the
+     * requested accelerator.
+     */
+    class AcceleratorRegistrationException(
+        val route: HardwareDiscoveryEngine.HardwareRoute,
+        cause: Throwable,
+    ) : RuntimeException("Execution provider registration failed for route $route", cause)
+
+
+    /**
+     * Generic production QNN HTP provider options.
+     * By default, only backend_type="htp" is specified, allowing ORT and QNN runtime
+     * to automatically query the device's DSP capabilities and negotiate optimal settings
+     * without hardcoding SoC or HTP architecture assumptions.
+     *
+     * Model-specific profiles or benchmark overrides can pass explicit options
+     * (e.g. performanceMode, socModel, htpArch) when empirically justified.
+     */
+    internal fun buildGenericHtpOptions(
+        performanceMode: String? = null,
+        socModel: String? = null,
+        htpArch: String? = null,
+        extraOptions: Map<String, String> = emptyMap(),
     ): Map<String, String> = buildMap {
         put("backend_type", "htp")
-        put("htp_performance_mode", "burst")
-        put("htp_graph_finalization_optimization_mode", "3")
+        performanceMode?.let { put("htp_performance_mode", it) }
         socModel?.let { put("soc_model", it) }
         htpArch?.let { put("htp_arch", it) }
+        putAll(extraOptions)
+    }
+
+    internal fun buildQnnProviderOptions(
+        socModel: String? = null,
+        htpArch: String? = null,
+    ): Map<String, String> = buildGenericHtpOptions(socModel = socModel, htpArch = htpArch)
+
+    /**
+     * T922 Phase 5 (plan §3.4): typed options build used by the generic
+     * orchestration core; [OnnxRuntimeProvider.SessionOptionsWithRegistration]
+     * is its native-typed form.
+     */
+    internal class ProviderOptionsBuild<O>(
+        val options: O,
+        val registered: RegisteredExecutionProvider,
+    )
+
+    /**
+     * T922 Phase 5 (plan §3.4): pure, ORT-free core of the
+     * [createSessionWithFallback] main path, generic over the concrete
+     * option/session types so JVM provenance tests can drive it with inert
+     * tokens (ai.onnxruntime classes refuse to initialize off-device — their
+     * static initializers load the native library — so the native-typed
+     * surface itself is not JVM-drivable).
+     *
+     * Contract executed here verbatim by [createSessionWithFallback]:
+     * - a strict accelerator registration failure thrown by [buildRequested]
+     *   is device-level: the CPU retry happens here, the model routing state
+     *   is untouched (the builder already logged + tripped the circuit
+     *   breaker), and the sink label is the CPU registration result;
+     * - the sink receives the TYPED registration result of the options that
+     *   actually opened — never derived from the device [route] — exactly
+     *   once, and ONLY after [open] returned successfully;
+     * - an [open] failure records the model failure (accelerator attempts
+     *   only, via [recordModelFailure]) and retries exactly once on CPU, even
+     *   when the failed attempt was already CPU (pre-existing behavior).
+     */
+    internal fun <O, S> openSessionWithHonestLabel(
+        route: HardwareDiscoveryEngine.HardwareRoute,
+        canUseAccelerator: Boolean,
+        useXnnpack: Boolean,
+        buildRequested: () -> ProviderOptionsBuild<O>,
+        buildCpu: () -> ProviderOptionsBuild<O>,
+        open: (O) -> S,
+        closeOptions: (O) -> Unit,
+        sink: (String) -> Unit,
+        recordModelFailure: (Throwable) -> Unit,
+    ): S {
+        val requested = try {
+            buildRequested()
+        } catch (registrationError: AcceleratorRegistrationException) {
+            // A STRICT accelerator registration failure is device-level, not
+            // model-level. This provider owns the CPU retry: the session is
+            // created on the default CPU EP and labelled cpu — a default-CPU
+            // session must never be labelled qnn_htp/qnn_gpu/nnapi/xnnpack.
+            logcat(LogPriority.WARN, registrationError) {
+                "Strict accelerator registration failed for route ${registrationError.route}; " +
+                    "creating this session on default CPU"
+            }
+            val cpu = buildCpu()
+            return try {
+                open(cpu.options).also { sink(cpu.registered.wireLabel) }
+            } finally {
+                closeQuietly(cpu.options, closeOptions)
+            }
+        }
+
+        // Describes the ATTEMPT in failure logs only — never the sink label.
+        val routeName = when {
+            canUseAccelerator -> route.name
+            useXnnpack -> "XNNPACK"
+            else -> "CPU"
+        }
+        return try {
+            open(requested.options).also { sink(requested.registered.wireLabel) }
+        } catch (error: Throwable) {
+            closeQuietly(requested.options, closeOptions)
+            if (canUseAccelerator) {
+                recordModelFailure(error)
+            }
+            logcat(LogPriority.WARN, error) {
+                "Session creation with $routeName failed (model likely not fully partitionable on this EP); " +
+                    "retrying this model on CPU only (device health is probe-gated; circuit breaker not tripped)"
+            }
+            val cpu = buildCpu()
+            try {
+                open(cpu.options).also { sink(cpu.registered.wireLabel) }
+            } finally {
+                closeQuietly(cpu.options, closeOptions)
+            }
+        } finally {
+            closeQuietly(requested.options, closeOptions)
+        }
+    }
+
+    private fun <O> closeQuietly(options: O, close: (O) -> Unit) {
+        try {
+            close(options)
+        } catch (_: Throwable) {}
     }
 
     /**
@@ -43,7 +188,16 @@ object OnnxRuntimeProvider {
      * runtime execution failures on accelerator sessions still do.
      *
      * [providerSink] receives the provider that actually served the session
-     * ("qnn_htp", "nnapi", or "cpu") for honest per-engine route logging.
+     * ("qnn_htp", "qnn_gpu", "nnapi", "xnnpack", or "cpu") for honest
+     * per-engine route logging. T922 Phase 5 (plan §3.4): the label is the
+     * TYPED registration result of the options actually used — it NEVER
+     * derives from [HardwareDiscoveryEngine.activeRoute] alone — and it is
+     * emitted only after `createSession` succeeds. A strict accelerator
+     * registration failure is owned here: the retry session is created on the
+     * default CPU EP and labelled `cpu`, never the requested accelerator.
+     * Session creation proves SESSION_CREATED, not execution (plan §3.3):
+     * routing support is marked only by
+     * [ModelRoutingEngine.recordSuccessfulInference] after a real run.
      */
     fun createSessionWithFallback(
         modelPath: String,
@@ -51,54 +205,59 @@ object OnnxRuntimeProvider {
         useXnnpack: Boolean = false,
         disableIntraOpSpinning: Boolean = false,
         contextCacheFile: File? = null,
+        configure: (OrtSession.SessionOptions) -> Unit = {},
         providerSink: (String) -> Unit = {},
     ): OrtSession {
-        val opts = createSessionOptions(
-            useAccelerator = useAccelerator,
-            useXnnpack = useXnnpack,
-            disableIntraOpSpinning = disableIntraOpSpinning,
-            contextCacheFile = contextCacheFile,
-        )
-        val routeName = when {
-            useAccelerator -> HardwareDiscoveryEngine.activeRoute.name
-            useXnnpack -> "XNNPACK"
-            else -> "CPU"
-        }
-        return try {
-            environment.createSession(modelPath, opts).also {
-                providerSink(
-                    when {
-                        !useAccelerator && !useXnnpack -> "cpu"
-                        HardwareDiscoveryEngine.activeRoute ==
-                            HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP -> "qnn_htp"
-                        HardwareDiscoveryEngine.activeRoute == HardwareDiscoveryEngine.HardwareRoute.NNAPI -> "nnapi"
-                        else -> "cpu"
-                    },
-                )
-            }
-        } catch (error: Throwable) {
-            try {
-                opts.close()
-            } catch (_: Throwable) {}
-            logcat(LogPriority.WARN, error) {
-                "Session creation with $routeName failed (model likely not fully partitionable on this EP); " +
-                    "retrying this model on CPU only (device health is probe-gated; circuit breaker not tripped)"
+        val modelName = ModelRoutingEngine.resolveModelId(modelPath)
+        val route = HardwareDiscoveryEngine.activeRoute
+        // T922 Phase 5 (plan §3.3): the attempt gate is the coherent
+        // accelerator gate — TEMPORARY_FAILURE still owns its one documented
+        // recreation attempt (bounded by the SSR retry counter).
+        val canUseAccelerator = useAccelerator && ModelRoutingEngine.isAcceleratorAttemptAllowed(modelName, route)
+
+        if (useAccelerator && !canUseAccelerator) {
+            logcat(LogPriority.INFO) {
+                "[model_routing] Model '$modelName' is known UNSUPPORTED on route $route; bypassing accelerator to CPU"
             }
             val cpuOpts = createSessionOptions(
                 useAccelerator = false,
                 useXnnpack = false,
                 disableIntraOpSpinning = disableIntraOpSpinning,
+                configure = configure,
             )
-            try {
+            return try {
                 environment.createSession(modelPath, cpuOpts).also { providerSink("cpu") }
             } finally {
                 cpuOpts.close()
             }
-        } finally {
-            try {
-                opts.close()
-            } catch (_: Throwable) {}
         }
+
+        return openSessionWithHonestLabel(
+            route = route,
+            canUseAccelerator = canUseAccelerator,
+            useXnnpack = useXnnpack,
+            buildRequested = {
+                createSessionOptionsWithRegistration(
+                    useAccelerator = canUseAccelerator,
+                    useXnnpack = useXnnpack,
+                    disableIntraOpSpinning = disableIntraOpSpinning,
+                    contextCacheFile = contextCacheFile,
+                    configure = configure,
+                ).let { ProviderOptionsBuild(it.options, it.registered) }
+            },
+            buildCpu = {
+                createSessionOptionsWithRegistration(
+                    useAccelerator = false,
+                    useXnnpack = false,
+                    disableIntraOpSpinning = disableIntraOpSpinning,
+                    configure = configure,
+                ).let { ProviderOptionsBuild(it.options, it.registered) }
+            },
+            open = { opts -> environment.createSession(modelPath, opts) },
+            closeOptions = { opts -> opts.close() },
+            sink = providerSink,
+            recordModelFailure = { error -> ModelRoutingEngine.recordFailure(modelName, route, error) },
+        )
     }
 
     /**
@@ -117,9 +276,10 @@ object OnnxRuntimeProvider {
     fun createQnnHtpSessionOptions(
         contextCacheFile: File? = null,
         strictCpuFallbackDisabled: Boolean = true,
+        qnnOptions: Map<String, String> = buildGenericHtpOptions(),
         configure: (OrtSession.SessionOptions) -> Unit = {},
     ): OrtSession.SessionOptions {
-        logcat(LogPriority.INFO) { "ONNX session options using Qualcomm QNN HTP NPU provider (contextCacheFile=$contextCacheFile)" }
+        logcat(LogPriority.INFO) { "ONNX session options using Qualcomm QNN HTP NPU provider (contextCacheFile=$contextCacheFile, options=$qnnOptions)" }
         val options = OrtSession.SessionOptions()
         try {
             options.apply {
@@ -137,7 +297,6 @@ object OnnxRuntimeProvider {
                         logcat(LogPriority.WARN, e) { "setMemoryPatternOptimization(false) rejected; mem-pattern will stay on" }
                     }
 
-                val qnnOptions = buildQnnProviderOptions()
                 addQnn(qnnOptions)
                 if (strictCpuFallbackDisabled) {
                     addConfigEntry("session.disable_cpu_ep_fallback", "1")
@@ -229,13 +388,27 @@ object OnnxRuntimeProvider {
             addConfigEntry("session.intra_op.allow_spinning", "0")
         }
 
-    fun createSessionOptions(
+    /**
+     * T922 Phase 5 (plan §3.4): [createSessionOptions] plus a TYPED
+     * registration result describing what actually registered on the built
+     * options. Behavior is otherwise byte-identical to the pre-Phase-5
+     * builder — same logs, same option code — except:
+     * - a STRICT accelerator registration failure (QNN HTP / QNN GPU /
+     *   NNAPI) now PROPAGATES as [AcceleratorRegistrationException] (options
+     *   closed first) instead of being swallowed into a default-CPU session
+     *   that would masquerade as the accelerator — the caller
+     *   ([createSessionWithFallback]) owns the CPU retry;
+     * - an XNNPACK registration failure explicitly resolves to
+     *   [RegisteredExecutionProvider.CPU] (the default CPU EP stays in use)
+     *   instead of only being logged.
+     */
+    fun createSessionOptionsWithRegistration(
         useAccelerator: Boolean = false,
         useXnnpack: Boolean = false,
         disableIntraOpSpinning: Boolean = false,
         contextCacheFile: File? = null,
         configure: (OrtSession.SessionOptions) -> Unit = {},
-    ): OrtSession.SessionOptions {
+    ): SessionOptionsWithRegistration {
         val route = when {
             useAccelerator -> HardwareDiscoveryEngine.resolveRoute()
             useXnnpack -> HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK
@@ -245,6 +418,8 @@ object OnnxRuntimeProvider {
         when (route) {
             HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP ->
                 logcat(LogPriority.INFO) { "ONNX session options using Qualcomm QNN HTP NPU provider (strict)" }
+            HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU ->
+                logcat(LogPriority.INFO) { "ONNX session options using Qualcomm QNN Adreno GPU provider (strict)" }
             HardwareDiscoveryEngine.HardwareRoute.NNAPI ->
                 logcat(LogPriority.INFO) { "ONNX session options using Hardware Accelerator (NNAPI, strict)" }
             HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK ->
@@ -253,7 +428,12 @@ object OnnxRuntimeProvider {
                 logcat(LogPriority.INFO) { "ONNX session options using CPU execution provider" }
         }
 
-        return OrtSession.SessionOptions().apply {
+        // T922 Phase 5 (plan §3.4): strict registration failures propagate to
+        // the session creator; XNNPACK failures resolve to CPU.
+        var strictRegistrationFailure: Pair<HardwareDiscoveryEngine.HardwareRoute, Throwable>? = null
+        var xnnpackRegistrationFailed = false
+
+        val options = OrtSession.SessionOptions().apply {
             val cpuCores = Runtime.getRuntime().availableProcessors()
             val threads = (cpuCores / 2).coerceIn(2, 4)
             setInterOpNumThreads(threads)
@@ -298,6 +478,18 @@ object OnnxRuntimeProvider {
                     }.onFailure { e ->
                         logcat(LogPriority.ERROR, e) { "Failed to add QNN HTP EP, falling back to CPU!" }
                         HardwareDiscoveryEngine.tripCircuitBreaker("qnn_htp_add_failed", e)
+                        strictRegistrationFailure = HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP to e
+                    }
+                }
+                HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU -> {
+                    runCatching {
+                        addQnn(mapOf("backend_type" to "gpu"))
+                        addConfigEntry("session.disable_cpu_ep_fallback", "1")
+                        logcat(LogPriority.INFO) { "Successfully added QNN GPU EP (strict)" }
+                    }.onFailure { e ->
+                        logcat(LogPriority.ERROR, e) { "Failed to add QNN GPU EP, falling back to CPU!" }
+                        HardwareDiscoveryEngine.tripCircuitBreaker("qnn_gpu_add_failed", e)
+                        strictRegistrationFailure = HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU to e
                     }
                 }
                 HardwareDiscoveryEngine.HardwareRoute.NNAPI -> {
@@ -308,6 +500,7 @@ object OnnxRuntimeProvider {
                     }.onFailure { e ->
                         logcat(LogPriority.ERROR, e) { "Failed to add NNAPI EP, falling back to CPU!" }
                         HardwareDiscoveryEngine.tripCircuitBreaker("nnapi_add_failed", e)
+                        strictRegistrationFailure = HardwareDiscoveryEngine.HardwareRoute.NNAPI to e
                     }
                 }
                 HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK -> {
@@ -315,6 +508,11 @@ object OnnxRuntimeProvider {
                         addXnnpack(java.util.HashMap<String, String>())
                         logcat(LogPriority.INFO) { "Successfully added XNNPACK EP" }
                     }.onFailure { e ->
+                        // T922 Phase 5 (plan §3.4): the failure no longer stops
+                        // at logging — the options keep the default CPU EP and
+                        // the reported registration resolves to CPU so the
+                        // session is labelled honestly.
+                        xnnpackRegistrationFailed = true
                         logcat(LogPriority.ERROR, e) { "Failed to add XNNPACK EP!" }
                     }
                 }
@@ -322,5 +520,43 @@ object OnnxRuntimeProvider {
             }
             configure(this)
         }
+
+        strictRegistrationFailure?.let { (failedRoute, error) ->
+            try {
+                options.close()
+            } catch (closeError: Throwable) {
+                error.addSuppressed(closeError)
+            }
+            throw AcceleratorRegistrationException(failedRoute, error)
+        }
+
+        val registered = when (route) {
+            HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_HTP -> RegisteredExecutionProvider.QNN_HTP
+            HardwareDiscoveryEngine.HardwareRoute.QUALCOMM_QNN_GPU -> RegisteredExecutionProvider.QNN_GPU
+            HardwareDiscoveryEngine.HardwareRoute.NNAPI -> RegisteredExecutionProvider.NNAPI
+            HardwareDiscoveryEngine.HardwareRoute.CPU_XNNPACK ->
+                if (xnnpackRegistrationFailed) {
+                    RegisteredExecutionProvider.CPU
+                } else {
+                    RegisteredExecutionProvider.XNNPACK
+                }
+            null -> RegisteredExecutionProvider.CPU
+        }
+        return SessionOptionsWithRegistration(options, registered)
     }
+
+    fun createSessionOptions(
+        useAccelerator: Boolean = false,
+        useXnnpack: Boolean = false,
+        disableIntraOpSpinning: Boolean = false,
+        contextCacheFile: File? = null,
+        configure: (OrtSession.SessionOptions) -> Unit = {},
+    ): OrtSession.SessionOptions =
+        createSessionOptionsWithRegistration(
+            useAccelerator = useAccelerator,
+            useXnnpack = useXnnpack,
+            disableIntraOpSpinning = disableIntraOpSpinning,
+            contextCacheFile = contextCacheFile,
+            configure = configure,
+        ).options
 }

@@ -5,6 +5,7 @@ import eu.kanade.tachiyomi.ui.reader.ReaderAutoTranslationSlotState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasExhaustedRetries
+import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageCancelled
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.toPageDisplayProjection
@@ -80,7 +81,7 @@ fun PageTranslation.toReaderPageFeedback(): ReaderPageFeedbackState? = when {
     renderStatus == StageStatus.RUNNING -> ReaderPageFeedbackState.FinishingPage
     inpaintStatus == StageStatus.RUNNING -> ReaderPageFeedbackState.CleaningBubbles
     translationStatus == StageStatus.RUNNING -> ReaderPageFeedbackState.TranslatingText
-    ocrStatus == StageStatus.RUNNING -> ReaderPageFeedbackState.ReadingText
+    ocrStatus == StageStatus.RUNNING && !isCleanedImageReady && inpaintStatus != StageStatus.READY -> ReaderPageFeedbackState.ReadingText
     isStageCancelled -> null
     else -> null
 }

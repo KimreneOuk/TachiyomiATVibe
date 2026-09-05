@@ -75,4 +75,86 @@ internal object AotBoxGeometry {
         }
         return false
     }
+
+    /**
+     * Clusters nearby free-text box groups that can fit together inside a single
+     * [maxContextSize] × [maxContextSize] window.
+     *
+     * Groups whose combined bounding union fits within [maxContextSize] along both dimensions
+     * are merged into a single cluster. This drastically cuts the number of required neural
+     * inpainting passes while preserving the exact mask boundaries of each individual text box.
+     */
+    internal fun clusterFreeTextGroups(
+        groups: List<List<IntArray>>,
+        maxContextSize: Int = 512,
+    ): List<List<IntArray>> {
+        val validGroups = groups.filter { it.isNotEmpty() }
+        if (validGroups.size <= 1) return validGroups
+
+        class Cluster(
+            val boxes: MutableList<IntArray>,
+            var minX: Int,
+            var minY: Int,
+            var maxX: Int,
+            var maxY: Int,
+        ) {
+            fun canMergeWith(other: Cluster, maxSize: Int): Boolean {
+                val newMinX = min(minX, other.minX)
+                val newMinY = min(minY, other.minY)
+                val newMaxX = max(maxX, other.maxX)
+                val newMaxY = max(maxY, other.maxY)
+                return (newMaxX - newMinX) <= maxSize && (newMaxY - newMinY) <= maxSize
+            }
+
+            fun merge(other: Cluster) {
+                boxes.addAll(other.boxes)
+                minX = min(minX, other.minX)
+                minY = min(minY, other.minY)
+                maxX = max(maxX, other.maxX)
+                maxY = max(maxY, other.maxY)
+            }
+
+            fun unionAreaWith(other: Cluster): Long {
+                val w = (max(maxX, other.maxX) - min(minX, other.minX)).toLong()
+                val h = (max(maxY, other.maxY) - min(minY, other.minY)).toLong()
+                return w * h
+            }
+        }
+
+        val clusters = validGroups.map { group ->
+            val minX = group.minOf { it[0] }
+            val minY = group.minOf { it[1] }
+            val maxX = group.maxOf { it[2] }
+            val maxY = group.maxOf { it[3] }
+            Cluster(group.toMutableList(), minX, minY, maxX, maxY)
+        }.toMutableList()
+
+        while (true) {
+            var bestI = -1
+            var bestJ = -1
+            var minUnionArea = Long.MAX_VALUE
+
+            for (i in 0 until clusters.size) {
+                for (j in i + 1 until clusters.size) {
+                    if (clusters[i].canMergeWith(clusters[j], maxContextSize)) {
+                        val area = clusters[i].unionAreaWith(clusters[j])
+                        if (area < minUnionArea) {
+                            minUnionArea = area
+                            bestI = i
+                            bestJ = j
+                        }
+                    }
+                }
+            }
+
+            if (bestI != -1 && bestJ != -1) {
+                clusters[bestI].merge(clusters[bestJ])
+                clusters.removeAt(bestJ)
+            } else {
+                break
+            }
+        }
+
+        return clusters.map { it.boxes }
+    }
 }

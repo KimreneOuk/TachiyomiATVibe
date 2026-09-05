@@ -28,6 +28,7 @@ object HardwareDiscoveryEngine {
 
     enum class HardwareRoute {
         QUALCOMM_QNN_HTP,
+        QUALCOMM_QNN_GPU,
         NNAPI,
         CPU_XNNPACK,
     }
@@ -45,6 +46,7 @@ object HardwareDiscoveryEngine {
         private set
 
     internal var qnnProbeRunner: () -> Boolean = { probeQnnHtp() }
+    internal var gpuProbeRunner: () -> Boolean = { probeQnnGpu() }
     internal var nnapiProbeRunner: () -> Boolean = { probeNnapi() }
 
     /**
@@ -99,6 +101,7 @@ object HardwareDiscoveryEngine {
         supportedAbis: Array<String> = Build.SUPPORTED_ABIS ?: emptyArray(),
         isQualcomm: Boolean = DeviceCapability.isQualcommSnapdragon,
         probeQnn: () -> Boolean = qnnProbeRunner,
+        probeGpu: () -> Boolean = gpuProbeRunner,
         probeNnapi: () -> Boolean = nnapiProbeRunner,
     ): HardwareRoute {
         if (isEmulator) {
@@ -120,8 +123,11 @@ object HardwareDiscoveryEngine {
             if (probeQnn()) {
                 logcat(LogPriority.INFO) { "[hardware_discovery] Latched Qualcomm QNN HTP route" }
                 HardwareRoute.QUALCOMM_QNN_HTP
+            } else if (probeGpu()) {
+                logcat(LogPriority.INFO) { "[hardware_discovery] HTP probe failed; latched Qualcomm QNN GPU route" }
+                HardwareRoute.QUALCOMM_QNN_GPU
             } else {
-                logcat(LogPriority.WARN) { "[hardware_discovery] QNN HTP probe failed; fallback latched CPU_XNNPACK" }
+                logcat(LogPriority.WARN) { "[hardware_discovery] QNN HTP & GPU probes failed; fallback latched CPU_XNNPACK" }
                 HardwareRoute.CPU_XNNPACK
             }
         } else {
@@ -136,7 +142,6 @@ object HardwareDiscoveryEngine {
     }
 
     private fun discoverRoute(): HardwareRoute {
-        QnnDiagnostics.runOnce()
         val pref = try {
             Injekt.get<TranslationPreferences>()
                 .translationHardwareAccelerator()
@@ -167,28 +172,28 @@ object HardwareDiscoveryEngine {
                     HardwareRoute.CPU_XNNPACK
                 }
             }
-            TranslationHardwareAccelerator.AUTO, null -> evaluateRoute()
-            else -> evaluateRoute()
+            TranslationHardwareAccelerator.AUTO -> evaluateRoute()
         }
     }
 
     private fun probeQnnHtp(): Boolean {
         for ((soc, arch) in qnnProbeCombos(DeviceCapability.qnnSocModel, DeviceCapability.qnnHtpArch)) {
             var opts: ai.onnxruntime.OrtSession.SessionOptions? = null
+            val qnnOpts = OnnxRuntimeProvider.buildGenericHtpOptions(socModel = soc, htpArch = arch)
             try {
                 opts = ai.onnxruntime.OrtSession.SessionOptions()
-                opts.addQnn(OnnxRuntimeProvider.buildQnnProviderOptions(socModel = soc, htpArch = arch))
+                opts.addQnn(qnnOpts)
                 opts.addConfigEntry("session.disable_cpu_ep_fallback", "1")
                 OnnxRuntimeProvider.environment.createSession(QnnProbeModel.MODEL_BYTES, opts).use { session ->
                     logcat(LogPriority.INFO) {
-                        "[hardware_discovery] QNN HTP probe OK (soc_model=$soc htp_arch=$arch): " +
+                        "[hardware_discovery] QNN HTP probe OK (options=$qnnOpts): " +
                             "strict session created end-to-end inputs=${session.inputNames}"
                     }
                 }
                 return true
             } catch (t: Throwable) {
                 logcat(LogPriority.WARN, t) {
-                    "[hardware_discovery] QNN HTP probe combo failed (soc_model=$soc htp_arch=$arch): ${t.message}"
+                    "[hardware_discovery] QNN HTP probe combo failed (options=$qnnOpts): ${t.message}"
                 }
             } finally {
                 try {
@@ -198,6 +203,28 @@ object HardwareDiscoveryEngine {
         }
         logcat(LogPriority.WARN) { "[hardware_discovery] All QNN HTP probe combos failed; HTP unusable with this device/runtime combination" }
         return false
+    }
+
+    private fun probeQnnGpu(): Boolean {
+        var opts: ai.onnxruntime.OrtSession.SessionOptions? = null
+        return try {
+            opts = ai.onnxruntime.OrtSession.SessionOptions()
+            opts.addQnn(mapOf("backend_type" to "gpu"))
+            opts.addConfigEntry("session.disable_cpu_ep_fallback", "1")
+            OnnxRuntimeProvider.environment.createSession(QnnProbeModel.MODEL_BYTES, opts).use { session ->
+                logcat(LogPriority.INFO) {
+                    "[hardware_discovery] QNN GPU probe OK: strict session created end-to-end inputs=${session.inputNames}"
+                }
+            }
+            true
+        } catch (t: Throwable) {
+            logcat(LogPriority.WARN, t) { "[hardware_discovery] QNN GPU probe failed: ${t.message}" }
+            false
+        } finally {
+            try {
+                opts?.close()
+            } catch (_: Throwable) {}
+        }
     }
 
     private fun probeNnapi(): Boolean {
@@ -221,8 +248,10 @@ object HardwareDiscoveryEngine {
     }
 
     internal fun qnnProbeCombos(socModel: String?, htpArch: String?): List<Pair<String?, String?>> = buildList {
+        // 1. Generic defaults FIRST: backend_type=htp only, letting QNN negotiate automatically
+        add(null to null)
+        // 2. Explicit fallbacks if device capability has quirks
         if (socModel != null && htpArch != null) add(socModel to htpArch)
         if (socModel != null) add(socModel to null)
-        add(null to null)
     }
 }

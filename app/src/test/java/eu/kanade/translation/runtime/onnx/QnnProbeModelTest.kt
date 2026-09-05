@@ -15,11 +15,11 @@ class QnnProbeModelTest {
     }
 
     @Test
-    fun `probe combos order most-specific first and always end with autodetect`() {
+    fun `probe combos prioritize generic autodetect first followed by device quirks`() {
         HardwareDiscoveryEngine.qnnProbeCombos("57", "75") shouldBe
-            listOf("57" to "75", "57" to null, null to null)
+            listOf(null to null, "57" to "75", "57" to null)
         HardwareDiscoveryEngine.qnnProbeCombos("69", null) shouldBe
-            listOf("69" to null, null to null)
+            listOf(null to null, "69" to null)
     }
 
     @Test

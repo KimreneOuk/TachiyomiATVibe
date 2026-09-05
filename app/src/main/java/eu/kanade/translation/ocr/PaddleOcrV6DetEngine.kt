@@ -70,8 +70,15 @@ class PaddleOcrV6DetEngine : Closeable {
                 "(${modelFile.length()}B exists=${modelFile.exists()})"
         }
         session = OnnxRuntimeProvider.createSessionWithFallback(
-            modelFile.absolutePath,
+            modelPath = modelFile.absolutePath,
             useAccelerator = true,
+            configure = { opts ->
+                // PaddleOCR v6 det model uses dynamic input shape ['DynamicDimension.0', 3, 'DynamicDimension.1', 'DynamicDimension.2'].
+                // Fix symbolic dimensions to [1, 3, 736, 736] for accelerator graph partitioning.
+                opts.setSymbolicDimensionValue("DynamicDimension.0", 1L)
+                opts.setSymbolicDimensionValue("DynamicDimension.1", TARGET.toLong())
+                opts.setSymbolicDimensionValue("DynamicDimension.2", TARGET.toLong())
+            },
             providerSink = { executionProviderLabel = it },
         )
         inputName = session?.inputNames?.firstOrNull() ?: "x"
@@ -172,23 +179,42 @@ class PaddleOcrV6DetEngine : Closeable {
         }
     }
 
+    private var scratchPixels: IntArray? = null
+    private var scratchPlane: FloatArray? = null
+
+    private fun getScratchPixels(): IntArray {
+        val existing = scratchPixels
+        if (existing != null && existing.size == TARGET * TARGET) return existing
+        return IntArray(TARGET * TARGET).also { scratchPixels = it }
+    }
+
+    private fun getScratchPlane(): FloatArray {
+        val existing = scratchPlane
+        if (existing != null && existing.size == TARGET * TARGET) return existing
+        return FloatArray(TARGET * TARGET).also { scratchPlane = it }
+    }
+
     override fun close() {
         closed = true
         session?.close()
         session = null
         inputPixelPool.clear()
+        scratchPixels = null
+        scratchPlane = null
     }
 
     /**
-     * No persistent off-heap state to reclaim by default (the input buffer is
-     * returned to [inputPixelPool] in the detectLines finally block). Implementing
-     * the contract anyway so [RoiPageRecognitionEngine] can forward uniformly to
-     * all sub-engines.
+     * Reclaims pooled and scratch memory.
      */
-    fun reclaimPooledMemory() {}
+    fun reclaimPooledMemory() {
+        scratchPixels = null
+        scratchPlane = null
+    }
 
     fun forceReleaseNativeBuffers() {
         inputPixelPool.clear()
+        scratchPixels = null
+        scratchPlane = null
     }
 
     /**
@@ -221,14 +247,18 @@ class PaddleOcrV6DetEngine : Closeable {
             padded.eraseColor(0xFF000000.toInt())
             Canvas(padded).drawBitmap(resized, 0f, 0f, null)
 
-            val pixels = IntArray(TARGET * TARGET)
-            padded.getPixels(pixels, 0, TARGET, 0, 0, TARGET, TARGET)
-            // NCHW RGB plane order. Written via absolute puts into the direct
-            // buffer with one pixel scan per plane (no intermediate FloatArray).
             val total = TARGET * TARGET
-            for (i in 0 until total) out.put(normalizeR(pixels[i] shr 16 and 0xFF))
-            for (i in 0 until total) out.put(normalizeG(pixels[i] shr 8 and 0xFF))
-            for (i in 0 until total) out.put(normalizeB(pixels[i] and 0xFF))
+            val pixels = getScratchPixels()
+            val plane = getScratchPlane()
+            padded.getPixels(pixels, 0, TARGET, 0, 0, TARGET, TARGET)
+            // NCHW RGB plane order. Written via vectorized bulk puts into the direct buffer
+            // avoiding JNI per-float method call overhead across 1.62M elements.
+            for (i in 0 until total) plane[i] = normalizeR(pixels[i] shr 16 and 0xFF)
+            out.put(plane, 0, total)
+            for (i in 0 until total) plane[i] = normalizeG(pixels[i] shr 8 and 0xFF)
+            out.put(plane, 0, total)
+            for (i in 0 until total) plane[i] = normalizeB(pixels[i] and 0xFF)
+            out.put(plane, 0, total)
             return Preprocessed(
                 cropToMapX = resizedW.toFloat() / w.toFloat(),
                 cropToMapY = resizedH.toFloat() / h.toFloat(),
