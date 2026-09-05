@@ -3,6 +3,13 @@ package eu.kanade.translation.translator.contextual
 import eu.kanade.translation.artifact.StageFingerprints
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.shouldNotBe
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.jupiter.api.Test
 
 /**
@@ -258,6 +265,113 @@ class AnalysisChunkPlannerGoldenTest {
     }
 
     @Test
+    fun `golden small-corpus fixture is byte-stable`() {
+        val success = success(AnalysisChunkPlanner.plan(goldenPages(), AnalysisChunkPolicy()))
+        val goldenBytes = javaClass.getResourceAsStream(GOLDEN_RESOURCE)?.use { it.readBytes() }
+            ?: error("missing golden fixture $GOLDEN_RESOURCE")
+        val actual = Json
+            .encodeToString(JsonElement.serializer(), canonicalPlanJson(success))
+        actual.toByteArray(Charsets.UTF_8) shouldBe goldenBytes
+        // In-source pins of the deterministic first-chunk identity (mirrors the
+        // envelope golden test's fingerprint-literal pin).
+        success.chunks.first().chunkId shouldBe GOLDEN_FIRST_CHUNK_ID
+        success.chunks.first().contributingCorpusFingerprint shouldBe
+            GOLDEN_FIRST_CHUNK_FINGERPRINT
+    }
+
+    /**
+     * The fixed golden corpus: five pages with fixed 64-hex content
+     * fingerprints, provable natural indexes and varied block counts (one
+     * textless page). Under the default policy the summed token estimate
+     * (15000 + 5000) exceeds the default 16384 input cap, forcing a second
+     * chunk that carries the adjacent p2 as its context overlap.
+     */
+    private fun goldenPages(): List<ChunkPlannerPage> = listOf(
+        ChunkPlannerPage(
+            pageKey = "p0",
+            naturalPageIndex = 0,
+            contentFingerprint = GOLDEN_PAGE_FP_0,
+            blockIds = listOf("p0_b0", "p0_b1", "p0_b2", "p0_b3"),
+            estimatedInputTokens = 5000,
+        ),
+        ChunkPlannerPage(
+            pageKey = "p1",
+            naturalPageIndex = 1,
+            contentFingerprint = GOLDEN_PAGE_FP_1,
+            blockIds = listOf("p1_b0", "p1_b1"),
+            estimatedInputTokens = 5000,
+        ),
+        ChunkPlannerPage(
+            pageKey = "p2",
+            naturalPageIndex = 2,
+            contentFingerprint = GOLDEN_PAGE_FP_2,
+            blockIds = listOf("p2_b0", "p2_b1", "p2_b2", "p2_b3", "p2_b4", "p2_b5"),
+            estimatedInputTokens = 5000,
+        ),
+        ChunkPlannerPage(
+            pageKey = "p3",
+            naturalPageIndex = 3,
+            contentFingerprint = GOLDEN_PAGE_FP_3,
+            blockIds = emptyList(),
+            estimatedInputTokens = 0,
+        ),
+        ChunkPlannerPage(
+            pageKey = "p4",
+            naturalPageIndex = 4,
+            contentFingerprint = GOLDEN_PAGE_FP_4,
+            blockIds = listOf("p4_b0", "p4_b1", "p4_b2"),
+            estimatedInputTokens = 5000,
+        ),
+    )
+
+    /**
+     * Canonical serialization of a successful plan (field order is the
+     * canonical byte order; compact single-line JSON, no trailing newline).
+     * The plan data classes are deliberately pure (not persisted), so the
+     * golden harness owns this stable projection of [AnalysisChunkPlanner]
+     * output; any planner-visible change breaks the byte pin below.
+     */
+    private fun canonicalPlanJson(result: AnalysisChunkPlanResult.Success): JsonElement =
+        buildJsonObject {
+            put("plannerVersion", AnalysisChunkPlanner.PLANNER_VERSION)
+            put(
+                "chunks",
+                JsonArray(
+                    result.chunks.map { chunk ->
+                        buildJsonObject {
+                            put("chunkOrdinal", chunk.chunkOrdinal)
+                            put("chunkId", chunk.chunkId)
+                            put(
+                                "corePageKeys",
+                                JsonArray(chunk.corePageKeys.map(::JsonPrimitive)),
+                            )
+                            put(
+                                "contextOverlapPageKeys",
+                                JsonArray(chunk.contextOverlapPageKeys.map(::JsonPrimitive)),
+                            )
+                            put("contributingCorpusFingerprint", chunk.contributingCorpusFingerprint)
+                            put("coreBlockCount", chunk.coreBlockCount)
+                            put("contributingBlockCount", chunk.contributingBlockCount)
+                            put("estimatedInputTokens", chunk.estimatedInputTokens)
+                            put(
+                                "contributingBlockIds",
+                                JsonObject(
+                                    chunk.contributingBlockIds.mapValues { (_, ids) ->
+                                        JsonArray(ids.map(::JsonPrimitive))
+                                    },
+                                ),
+                            )
+                        }
+                    },
+                ),
+            )
+            put(
+                "skippedTextlessPageKeys",
+                JsonArray(result.skippedTextlessPageKeys.map(::JsonPrimitive)),
+            )
+        }
+
+    @Test
     fun `changing any plan input changes chunk fingerprints`() {
         val base = success(AnalysisChunkPlanner.plan((0 until 3).map { page(it) }, AnalysisChunkPolicy(maxCorePages = 2)))
         val differentContent = success(
@@ -268,5 +382,17 @@ class AnalysisChunkPlannerGoldenTest {
         )
         base.chunks.map { it.contributingCorpusFingerprint } shouldNotBe
             differentContent.chunks.map { it.contributingCorpusFingerprint }
+    }
+
+    private companion object {
+        const val GOLDEN_RESOURCE = "/t924/golden/analysis-chunks-small.json"
+        const val GOLDEN_FIRST_CHUNK_ID = "chunk-0-8a5beeb9"
+        const val GOLDEN_FIRST_CHUNK_FINGERPRINT =
+            "8a5beeb944022a8b0ea2bf1e8ead7cd5e4b42f9032bf3874c0d9cd361ff6b407"
+        const val GOLDEN_PAGE_FP_0 = "c02088c751c66ba1aa8cd4f430bcee7eb496d044510917726e218561e84b00af"
+        const val GOLDEN_PAGE_FP_1 = "ca3d946850027ff5f4bd86e9bef3c1d39533d3252928dc7ea0251f724d3facfc"
+        const val GOLDEN_PAGE_FP_2 = "d8f50e1c4858d4796205be8e2b7e27bf8fbbd3728b1688c363a045ce0860ff8f"
+        const val GOLDEN_PAGE_FP_3 = "e6693f052d07c6cf45a4f8f944c557d7c7e670af4c6874e8c6e5d518e33e171b"
+        const val GOLDEN_PAGE_FP_4 = "22aa8335f92bac13ed6ce6a704fc48b3798ead3586452c14e969a1daaf902a37"
     }
 }
