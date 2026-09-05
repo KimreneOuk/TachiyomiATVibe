@@ -16,8 +16,23 @@ import eu.kanade.translation.artifact.PageArtifactRecord
  */
 object PageWorkPlanner {
 
-    /** Compatibility projection for the older four-boolean API. */
-    fun plan(page: PageTranslation?, force: Boolean = false): PageWorkPlan {
+    /**
+     * Compatibility projection for the older four-boolean API.
+     *
+     * T924-R012: a caller that can observe current source/configuration
+     * evidence may supply [expectedFingerprints]/[sourceFingerprint]; a forced
+     * plan then validates its detection/OCR reuse against that evidence.
+     * Callers that supply none (the historical signature) keep the
+     * status/payload-only pass-through, and the non-force path ignores both
+     * parameters entirely (it delegates to [planPage], whose evidence inputs
+     * are unchanged).
+     */
+    fun plan(
+        page: PageTranslation?,
+        force: Boolean = false,
+        expectedFingerprints: BatchExpectedFingerprints = BatchExpectedFingerprints(),
+        sourceFingerprint: String? = null,
+    ): PageWorkPlan {
         if (page == null) {
             return PageWorkPlan(
                 runOcr = true,
@@ -28,11 +43,19 @@ object PageWorkPlanner {
         }
 
         if (force) {
+            // T924-R012: forced translation reuses valid detection/OCR evidence
+            // independently of inpaint readiness. Inpaint readiness only decides
+            // the inpaint stage: a page with valid OCR evidence is no longer
+            // re-OCR'd just because its cleaned image is missing or stale. A
+            // stale OCR stage still drags inpaint with it (OCR changes invalidate
+            // downstream stages), so `canReuseNative` keeps gating inpaint only.
             val ocrReady = page.ocrStatus == StageStatus.READY && page.blocks.isNotEmpty()
             val inpaintReady = page.inpaintStatus == StageStatus.READY && page.cleanedImageName != null
-            val canReuseNative = ocrReady && inpaintReady
+            val ocrEvidenceValid = ocrReady &&
+                forceOcrEvidenceMatches(page, expectedFingerprints, sourceFingerprint)
+            val canReuseNative = ocrEvidenceValid && inpaintReady
             return PageWorkPlan(
-                runOcr = !canReuseNative,
+                runOcr = !ocrEvidenceValid,
                 runTranslation = true,
                 runInpaint = !canReuseNative,
                 runRender = true,
@@ -369,6 +392,43 @@ object PageWorkPlanner {
         val sourceMatches = evidence.expectedSourceFingerprint == null ||
             evidence.sourceFingerprint == evidence.expectedSourceFingerprint
         return configMatches && sourceMatches
+    }
+
+    /**
+     * T924-R012 evidence gate for the forced path's combined detection+OCR
+     * reuse decision. Mirrors the batch planner's [fingerprintMatches] and
+     * [stageEvidence] semantics:
+     *  - a supplied configuration expectation must equal the recorded
+     *    fingerprint; a legacy snapshot with NO recorded fingerprint keeps the
+     *    batch pass-through (`!provenanceRequired`), while
+     *    `provenanceRequired = true` refuses to reuse unknown provenance;
+     *  - a supplied current source hash must equal the recorded one, and a
+     *    missing recorded source fingerprint under a known current hash is a
+     *    mismatch (the batch UNKNOWN_PROVENANCE rule).
+     * Absent expectations never invalidate: callers that supply none reuse on
+     * status/payload evidence exactly as before.
+     */
+    private fun forceOcrEvidenceMatches(
+        page: PageTranslation,
+        expected: BatchExpectedFingerprints,
+        sourceFingerprint: String?,
+    ): Boolean {
+        val detectionExpectation = expected.detection.takeUnless {
+            !expected.provenanceRequired && page.detectionFingerprint == null
+        }
+        if (detectionExpectation != null && page.detectionFingerprint != detectionExpectation) {
+            return false
+        }
+        val ocrExpectation = expected.ocr.takeUnless {
+            !expected.provenanceRequired && page.ocrFingerprint == null
+        }
+        if (ocrExpectation != null && page.ocrFingerprint != ocrExpectation) {
+            return false
+        }
+        if (sourceFingerprint != null && page.sourceFingerprint != sourceFingerprint) {
+            return false
+        }
+        return true
     }
 
     private fun skipReason(stage: BatchStage, evidence: StageEvidence): StageReasonCode =
