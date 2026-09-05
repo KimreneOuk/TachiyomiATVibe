@@ -54,8 +54,14 @@ class StandardLaneMultiPageCompletionTest {
             // pass is still running. RED: it never does (static dependency
             // skip), so this bounded probe raises the named assertion instead
             // of a choreography timeout.
+            // T922 flake stabilization: this is a POSITIVE probe (p1 must
+            // start), not a negative oracle — the 2s NEGATIVE_PROBE_MS budget
+            // was marginally tight for a fresh 3-page pipeline under full-suite
+            // load (observed 2 misses in 6 runs). The full harness await budget
+            // bounds it; the "never starts" defect still raises the same named
+            // assertion on expiry.
             try {
-                withTimeout(NEGATIVE_PROBE_MS) { harness.transportStarted.getValue("p1").await() }
+                withTimeout(AWAIT_TIMEOUT_MS) { harness.transportStarted.getValue("p1").await() }
             } catch (e: TimeoutCancellationException) {
                 throw AssertionError(
                     "multi-page standard batch never translates p1: static " +

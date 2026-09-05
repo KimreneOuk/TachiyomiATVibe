@@ -16,6 +16,11 @@ import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
 import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
@@ -35,6 +40,7 @@ import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.retry.RequestRetryBudget
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.translation.translator.TranslationBlockValidation
+import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.translator.retry.classifyProviderFailure
@@ -205,6 +211,15 @@ internal class SinglePageHttpRenderPhase(
         // transport retries and is shared by the contextual call plus any
         // bounded partial retries below.
         val retryBudget = RequestRetryBudget()
+        // T922 Phase 3: provider-governor wait — opened at phase entry (the
+        // translator borrow above is the admission gate) and settled by the
+        // first translator invocation; when no translation runs, the outer
+        // finally settles it. Queue-class stage: feeds schedule maxQueueMs.
+        val governorSpan = TranslationTrace.beginStage(
+            TranslationTraceStage.PROVIDER_GOVERNOR_WAIT,
+            lane = TranslationTraceLane.PROVIDER,
+        )
+        var governorSpanSettled = false
         var translationOutcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
         val renderFailure = ProviderFailure(
             kind = ProviderFailureKind.PROTOCOL,
@@ -270,6 +285,12 @@ internal class SinglePageHttpRenderPhase(
         // round, so an epoch retry naturally picks up a fresh glossary) or makes
         // the plain translatePage call.
         suspend fun translateOnce(targetPage: PageTranslation) {
+            // T922 Phase 3: the first translator invocation is the moment the
+            // governor/admission wait ends.
+            if (!governorSpanSettled) {
+                governorSpanSettled = true
+                governorSpan.end()
+            }
             val ct = activeTranslator as? ContextualTextTranslator
             if (ct != null) {
                 val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
@@ -319,6 +340,7 @@ internal class SinglePageHttpRenderPhase(
                     if (e is CancellationException) throw e
                     if (!epochRetryUsed && engines.currentEngineEpoch() != epochAtCapture) {
                         epochRetryUsed = true
+                        TranslationTrace.currentRun()?.recordRetry()
                         logcat(LogPriority.WARN) {
                             "T917 D7: engine close raced the in-flight HTTP call (epoch " +
                                 "$epochAtCapture -> ${engines.currentEngineEpoch()}); rebuilding the " +
@@ -347,6 +369,19 @@ internal class SinglePageHttpRenderPhase(
                         "translator=${activeTranslator::class.simpleName} " +
                         "blocks=${pageTranslation.blocks.size} nonEmptyText=$nonEmptyBlocks"
                 }
+                // T922 Phase 3: correlated translate stage. `provider` is the
+                // remote/local execution fact from the shared compute
+                // classification; model stays none (plan §4.2).
+                val translateSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.TRANSLATE,
+                    provider = if (
+                        TranslatorComputeClass.forTranslator(activeTranslator) == TranslatorComputeClass.LOCAL_COMPUTE
+                    ) {
+                        TranslationTraceProvider.LOCAL
+                    } else {
+                        TranslationTraceProvider.REMOTE
+                    },
+                )
                 BatchTranslationDiagnostics.stageDecision(
                     stage = BatchDiagnosticStage.TRANSLATION,
                     pageKey = pageKey,
@@ -373,6 +408,7 @@ internal class SinglePageHttpRenderPhase(
                             val missing = AiTranslationRetryPlanner.untranslatedBlocks(pageTranslation)
                             if (missing.isEmpty()) break
                             singlePageRetry++
+                            TranslationTrace.currentRun()?.recordRetry()
                             logcat(LogPriority.INFO) {
                                 "TachiyomiAT single-page PARTIAL retry $singlePageRetry/$SINGLE_PAGE_PARTIAL_MAX_RETRIES: " +
                                     "pageKey=$pageKey missing=${missing.size}"
@@ -428,6 +464,7 @@ internal class SinglePageHttpRenderPhase(
                             "status=${pageTranslation.translationStatus}" +
                             (if (singlePageRetry > 0) " partialRetries=$singlePageRetry" else "")
                     }
+                    translateSpan.end(TranslationTraceOutcome.SUCCESS)
                 } catch (e: ProviderFailureException) {
                     val failure = e.failure
                     val retryable = failure.retryability != ProviderFailureRetryability.TERMINAL
@@ -455,8 +492,14 @@ internal class SinglePageHttpRenderPhase(
                         "TachiyomiAT single-page provider outcome: pageHash=${ShortHash.hash(pageKey)} " +
                             "kind=${failure.kind} retryable=$retryable"
                     }
+                    translateSpan.end(
+                        if (retryable) TranslationTraceOutcome.PAUSE else TranslationTraceOutcome.FAILURE,
+                    )
                 } catch (e: Exception) {
-                    if (e is CancellationException) throw e
+                    if (e is CancellationException) {
+                        translateSpan.end(TranslationTraceOutcome.CANCELLED, error = e)
+                        throw e
+                    }
                     val failure = classifyProviderFailure(e)
                     val retryable = failure.retryability != ProviderFailureRetryability.TERMINAL
                     if (retryable) {
@@ -483,6 +526,9 @@ internal class SinglePageHttpRenderPhase(
                         "Failed to translate text for single page pageHash=${ShortHash.hash(pageKey)}: " +
                             "kind=${failure.kind} retryable=$retryable"
                     }
+                    translateSpan.end(
+                        if (retryable) TranslationTraceOutcome.PAUSE else TranslationTraceOutcome.FAILURE,
+                    )
                 }
             }
 
@@ -499,16 +545,35 @@ internal class SinglePageHttpRenderPhase(
                 val hasCleanedOnDisk = pageTranslation.cleanedImageName != null && pageTranslation.inpaintStatus == StageStatus.READY
                 if (hasCleanedBitmap || hasCleanedOnDisk) {
                     val cleanedBitmap = pageTranslation.cleanedBitmap
+                    // T922 Phase 3: layout (color estimation) is a sub-interval
+                    // of the render attempt; the render stage sum therefore
+                    // includes it (noted in the phase report).
+                    val layoutSpan = TranslationTrace.beginStage(
+                        TranslationTraceStage.LAYOUT,
+                        lane = TranslationTraceLane.RENDER,
+                    )
+                    val renderSpan = TranslationTrace.beginStage(
+                        TranslationTraceStage.RENDER,
+                        lane = TranslationTraceLane.RENDER,
+                    )
                     try {
                         pageTranslation.renderStatus = StageStatus.RUNNING
                         stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
                         if (cleanedBitmap != null) {
                             RenderColorEstimator.recomputeFor(cleanedBitmap, pageTranslation.blocks)
                         }
+                        layoutSpan.end()
                         pageTranslation.renderStatus = StageStatus.READY
                         pageTranslation.updatedAt = System.currentTimeMillis()
+                        renderSpan.end()
                     } catch (e: Exception) {
-                        if (e is CancellationException) throw e
+                        if (e is CancellationException) {
+                            layoutSpan.end(TranslationTraceOutcome.CANCELLED)
+                            renderSpan.end(TranslationTraceOutcome.CANCELLED, error = e)
+                            throw e
+                        }
+                        layoutSpan.end(TranslationTraceOutcome.FAILURE)
+                        renderSpan.end(TranslationTraceOutcome.FAILURE, error = e)
                         markRenderFailure()
                         logcat(LogPriority.ERROR, e) { "Failed to render text for single page $pageKey" }
                     } finally {
@@ -555,8 +620,20 @@ internal class SinglePageHttpRenderPhase(
                         if (published != null) {
                             commitPrecondition = published.toPrecondition()
                         }
+                        // T922 Phase 3: spans hoisted above the try so every
+                        // outcome (skip/failure/cancel/success) settles them.
+                        val retryLayoutSpan = TranslationTrace.beginStage(
+                            TranslationTraceStage.LAYOUT,
+                            lane = TranslationTraceLane.RENDER,
+                        )
+                        val retryRenderSpan = TranslationTrace.beginStage(
+                            TranslationTraceStage.RENDER,
+                            lane = TranslationTraceLane.RENDER,
+                        )
                         try {
                             if (published == null) {
+                                retryLayoutSpan.end(TranslationTraceOutcome.SKIP)
+                                retryRenderSpan.end(TranslationTraceOutcome.SKIP)
                                 markRenderFailure()
                                 pageTranslation.errorMessage =
                                     "Cleaned image could not be published; translated text was not rendered."
@@ -564,11 +641,19 @@ internal class SinglePageHttpRenderPhase(
                                 pageTranslation.renderStatus = StageStatus.RUNNING
                                 stageListener?.onStageEntered(pageKey, TranslationStageEvent.RENDERING)
                                 RenderColorEstimator.recomputeFor(retriedCleaned, pageTranslation.blocks)
+                                retryLayoutSpan.end()
                                 pageTranslation.renderStatus = StageStatus.READY
                                 pageTranslation.updatedAt = System.currentTimeMillis()
+                                retryRenderSpan.end()
                             }
                         } catch (e: Exception) {
-                            if (e is CancellationException) throw e
+                            if (e is CancellationException) {
+                                retryLayoutSpan.end(TranslationTraceOutcome.CANCELLED)
+                                retryRenderSpan.end(TranslationTraceOutcome.CANCELLED, error = e)
+                                throw e
+                            }
+                            retryLayoutSpan.end(TranslationTraceOutcome.FAILURE)
+                            retryRenderSpan.end(TranslationTraceOutcome.FAILURE, error = e)
                             markRenderFailure()
                             logcat(LogPriority.ERROR, e) { "Failed to render text for single page (retry path) $pageKey" }
                         } finally {
@@ -622,11 +707,31 @@ internal class SinglePageHttpRenderPhase(
                     )
                 }
             }
-            val commit = store.patchPage(
-                pageKey = pageKey,
-                expected = commitPrecondition,
-                description = "commit single-page translation and render",
-            ) { pageTranslation }
+            // T922 Phase 3: guarded commit boundary (storage lane).
+            // T922 Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
+            // including a throw from patchPage — no dangling stage_start.
+            val commitSpan = TranslationTrace.beginStage(
+                TranslationTraceStage.STORE_COMMIT,
+                lane = TranslationTraceLane.STORAGE,
+            )
+            val commit = try {
+                val result = store.patchPage(
+                    pageKey = pageKey,
+                    expected = commitPrecondition,
+                    description = "commit single-page translation and render",
+                ) { pageTranslation }
+                commitSpan.end(
+                    if (result is ChapterTranslationStore.PatchResult.Rejected) {
+                        TranslationTraceOutcome.FAILURE
+                    } else {
+                        TranslationTraceOutcome.SUCCESS
+                    },
+                )
+                result
+            } catch (t: Throwable) {
+                commitSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+                throw t
+            }
             if (commit is ChapterTranslationStore.PatchResult.Rejected) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT single-page late result rejected: chapter=${chapter.name} " +
@@ -643,7 +748,24 @@ internal class SinglePageHttpRenderPhase(
                 deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
             }
         } finally {
-            store.flush()
+            // T922 Phase 3: settle the governor wait when no translation ran,
+            // and measure the durable flush (storage lane). All non-suspending.
+            if (!governorSpanSettled) {
+                governorSpanSettled = true
+                governorSpan.end()
+            }
+            val flushSpan = TranslationTrace.beginStage(
+                TranslationTraceStage.STORE_FLUSH,
+                lane = TranslationTraceLane.STORAGE,
+            )
+            // T922 Phase 4 (Phase 3 review F2): try/finally so the flush span
+            // settles even when store.flush() itself throws. The throw still
+            // propagates unchanged (pre-existing finally semantics).
+            try {
+                store.flush()
+            } finally {
+                flushSpan.end()
+            }
             // Defensive recycle: a cancel/timeout can unwind here from before render, where
             // cleanedBitmap (the inpainted full-page bitmap, ~10–48 MB) was never recycled.
             pageTranslation.cleanedBitmap?.let {

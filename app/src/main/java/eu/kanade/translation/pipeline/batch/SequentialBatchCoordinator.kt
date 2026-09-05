@@ -1,6 +1,15 @@
 package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationRunTrace
+import eu.kanade.translation.diagnostics.TranslationScheduleTrace
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTracePlan
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
@@ -9,6 +18,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -25,6 +35,13 @@ import java.util.concurrent.ConcurrentHashMap
  * per-page render join remains the publication boundary, and the next chunk is
  * not admitted until every current page has rendered or reached its terminal
  * failure path.
+ *
+ * T922 Phase 4: when a [TranslationScheduleTrace] is supplied, every page gets
+ * one correlated run trace sharing the batch schedule, stage timers replace
+ * the isolated legacy [BatchTranslationDiagnostics.timing] calls, lane
+ * enter/exit transitions feed the schedule overlap accumulator, and every run
+ * receives exactly one terminal outcome on every exit path (amendment §10.2).
+ * With a null schedule everything below fails open at zero cost.
  */
 class SequentialBatchCoordinator(
     private val nativeWorker: NativeLaneWorker,
@@ -33,7 +50,11 @@ class SequentialBatchCoordinator(
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
     private val awaitLeaseHandback: (suspend (String) -> Boolean)? = null,
     private val deferredPages: MutableMap<String, PageWriteOrigin?>? = null,
+    private val scheduleTrace: TranslationScheduleTrace? = null,
 ) {
+
+    /** Admitted-but-unclosed page runs, keyed by page key (§10.2 sweep registry). */
+    private val activeRuns = ConcurrentHashMap<String, TranslationRunTrace>()
 
     suspend fun runPass1(
         orderedPages: List<PageKey>,
@@ -44,6 +65,8 @@ class SequentialBatchCoordinator(
         }
 
         val remote = computeClass.mayOverlapNative
+        // T922 Phase 4: bounded provider token for translate stage events.
+        val providerLabel = if (remote) TranslationTraceProvider.REMOTE else TranslationTraceProvider.LOCAL
         val adaptiveChunks = translatorWorker.usesChunkAdmission
         // The legacy standard remote lane keeps bounded native lookahead. Local
         // compute remains page-serial so OCR/inference/inpaint never overlap.
@@ -64,49 +87,85 @@ class SequentialBatchCoordinator(
             val (pageKey, pageIndex) = page
             var ref: OcrReadyPageRef? = null
             listener.ocrStarted(pageKey)
-            val startedAt = System.nanoTime()
+            // T922 Phase 4: one page run per OCR admission, sharing the batch
+            // schedule. Registered for the terminal sweep before any work so a
+            // cancelled admission can never strand a run (amendment §10.2).
+            val runTrace = scheduleTrace?.let {
+                TranslationPipelineDiagnostics.startRun(
+                    schedule = it,
+                    pageRaw = pageKey,
+                    pageIndex = pageIndex,
+                    plan = TranslationTracePlan.FRESH,
+                )
+            }
+            if (runTrace != null) activeRuns[pageKey] = runTrace
+            val traceContext: kotlin.coroutines.CoroutineContext =
+                runTrace?.let { TranslationTrace.elementFor(it) } ?: kotlin.coroutines.EmptyCoroutineContext
+            val ocrSpan = runTrace?.beginStage(TranslationTraceStage.OCR)
+            val nativeLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.NATIVE)
+            var ocrOutcome = TranslationTraceOutcome.SUCCESS
             try {
                 currentCoroutineContext().ensureActive()
-                ref = nativeWorker.runOcrStage(pageKey, pageIndex)
+                ref = withContext(traceContext) {
+                    nativeWorker.runOcrStage(pageKey, pageIndex)
+                }
             } catch (e: BatchPersistenceRejectedException) {
+                ocrOutcome = TranslationTraceOutcome.FAILURE
+                // Phase 4 review N1: settle the stage span BEFORE the run
+                // terminal — finishStage drops post-terminal stage ends, so
+                // ending the run first would drop this stage_end. The finally
+                // below re-ends the already-settled span (CAS no-op).
+                ocrSpan?.end(ocrOutcome, error = e)
+                runTrace?.end(TranslationTraceOutcome.PERSISTENCE_REJECTED, error = e)
+                if (runTrace != null) activeRuns.remove(pageKey, runTrace)
                 throw e
             } catch (e: Exception) {
-                if (e is CancellationException) throw e
-                BatchTranslationDiagnostics.failure(
-                    stage = BatchDiagnosticStage.OCR,
-                    pageKey = pageKey,
-                    errorClass = e::class.java.simpleName,
-                )
+                if (e is CancellationException) {
+                    ocrOutcome = TranslationTraceOutcome.CANCELLED
+                    // Phase 4 review N1: span before run terminal (see above).
+                    ocrSpan?.end(ocrOutcome, error = e)
+                    runTrace?.end(TranslationTraceOutcome.CANCELLED, error = e)
+                    if (runTrace != null) activeRuns.remove(pageKey, runTrace)
+                    throw e
+                }
+                ocrOutcome = TranslationTraceOutcome.FAILURE
+                // Phase 4 review N1: span before run terminal (see above).
+                ocrSpan?.end(ocrOutcome, error = e)
+                runTrace?.end(TranslationTraceOutcome.FAILURE, error = e)
+                if (runTrace != null) activeRuns.remove(pageKey, runTrace)
                 throw UnexpectedBatchStageException(pageKey, BatchDiagnosticStage.OCR)
             } finally {
-                BatchTranslationDiagnostics.timing(
-                    stage = BatchDiagnosticStage.OCR,
-                    pageKey = pageKey,
-                    durationMs = elapsedMs(startedAt),
-                )
+                ocrSpan?.end(ocrOutcome)
+                nativeLaneToken?.close()
                 listener.ocrFinished(pageKey)
             }
 
             if (ref != null) {
-                BatchTranslationDiagnostics.stageDecision(
-                    stage = BatchDiagnosticStage.OCR,
-                    pageKey = pageKey,
-                    decision = BatchDiagnosticDecision.EXECUTE,
-                    reason = BatchDiagnosticReason.REFERENCE_READY,
-                    fingerprint = ref!!.dependencyFingerprint,
-                    itemCount = ref!!.blockFingerprints.size,
-                )
+                // Legacy stage_decision(EXECUTE) parity: the correlated
+                // stage=ocr stage_end above carries the execution fact and the
+                // run's item count.
                 listener.ocrPublished(pageKey)
                 needsTranslation += pageKey
             } else {
-                BatchTranslationDiagnostics.stageDecision(
-                    stage = BatchDiagnosticStage.OCR,
-                    pageKey = pageKey,
-                    decision = BatchDiagnosticDecision.SKIP,
-                    reason = BatchDiagnosticReason.NO_REFERENCE,
-                )
+                // No work item this pass: lease-deferred, externally completed,
+                // or a durable resume-skip. Terminal is skip; a later rescan
+                // admission creates a fresh run.
+                runTrace?.updatePlan(TranslationTracePlan.SKIP)
+                runTrace?.end(TranslationTraceOutcome.SKIP)
+                if (runTrace != null) activeRuns.remove(pageKey, runTrace)
             }
-            return ChunkPage(pageKey = pageKey, pageIndex = pageIndex, ref = ref)
+            val nowNanos = System.nanoTime()
+            return ChunkPage(
+                pageKey = pageKey,
+                pageIndex = pageIndex,
+                ref = ref,
+                // A skipped page's run already reached its terminal (skip);
+                // nulling the trace here prevents post-terminal stage spans
+                // from the render join on a closed run.
+                trace = if (ref != null) runTrace else null,
+                ocrReadyAtNanos = nowNanos,
+                translateReadyAtNanos = nowNanos,
+            )
         }
 
         suspend fun processChunk(
@@ -134,8 +193,19 @@ class SequentialBatchCoordinator(
 
             val renderJob = async {
                 chunk.forEach { page ->
-                    nativeGate(page.pageKey).await()
-                    translationGate(page.pageKey).await()
+                    val renderRun = page.trace
+                    // T922 Phase 4: render-join wait = both branch gates.
+                    // Phase 4 review N2: the span settles in a finally so a
+                    // cancellation while suspended on either gate cannot leave
+                    // stage_start(render_join) without its stage_end.
+                    val joinSpan = renderRun?.beginStage(TranslationTraceStage.RENDER_JOIN)
+                    try {
+                        nativeGate(page.pageKey).await()
+                        translationGate(page.pageKey).await()
+                        page.renderJoinReadyAtNanos = System.nanoTime()
+                    } finally {
+                        joinSpan?.end()
+                    }
                     val nonRenderable = nonRenderablePages.contains(page.pageKey)
                     if (nonRenderable) {
                         renderJoin.awaitAndSettle(page.pageKey)
@@ -145,24 +215,33 @@ class SequentialBatchCoordinator(
                     }
                     listener.renderStarted(page.pageKey)
                     val startedAt = System.nanoTime()
+                    val renderSpan = renderRun?.beginStage(TranslationTraceStage.RENDER)
+                    val renderLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.RENDER)
+                    var renderOutcome = TranslationTraceOutcome.SUCCESS
                     try {
-                        renderJoin.awaitAndRender(page.pageKey)
+                        if (renderRun != null) {
+                            withContext(TranslationTrace.elementFor(renderRun)) {
+                                renderJoin.awaitAndRender(page.pageKey)
+                            }
+                        } else {
+                            renderJoin.awaitAndRender(page.pageKey)
+                        }
                     } catch (e: BatchPersistenceRejectedException) {
+                        renderOutcome = TranslationTraceOutcome.FAILURE
+                        renderSpan?.end(renderOutcome, error = e)
                         throw e
                     } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        BatchTranslationDiagnostics.failure(
-                            stage = BatchDiagnosticStage.RENDER,
-                            pageKey = page.pageKey,
-                            errorClass = e::class.java.simpleName,
-                        )
+                        if (e is CancellationException) {
+                            renderOutcome = TranslationTraceOutcome.CANCELLED
+                            renderSpan?.end(renderOutcome, error = e)
+                            throw e
+                        }
+                        renderOutcome = TranslationTraceOutcome.FAILURE
+                        renderSpan?.end(renderOutcome, error = e)
                         throw UnexpectedBatchStageException(page.pageKey, BatchDiagnosticStage.RENDER)
                     } finally {
-                        BatchTranslationDiagnostics.timing(
-                            stage = BatchDiagnosticStage.RENDER,
-                            pageKey = page.pageKey,
-                            durationMs = elapsedMs(startedAt),
-                        )
+                        renderSpan?.end(renderOutcome)
+                        renderLaneToken?.close()
                         listener.renderFinished(page.pageKey)
                         nativeDone.remove(page.pageKey)
                         translationDone.remove(page.pageKey)
@@ -251,31 +330,48 @@ class SequentialBatchCoordinator(
 
             val translationJob = if (remote) {
                 async {
-                    if (translatorWorker.usesChunkAdmission) {
-                        chunk.forEach { page ->
-                            if (page.ref != null) listener.translationRequested(page.pageKey)
-                        }
-                        val outcome = normalizeCompletedOutcome(
-                            try {
-                                translatorWorker.completeChunkOutcome(finalChunk)
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                val pageKey = chunk.firstOrNull { it.ref != null }?.pageKey
-                                BatchTranslationDiagnostics.failure(
-                                    stage = BatchDiagnosticStage.TRANSLATION,
-                                    pageKey = pageKey ?: "<chunk>",
-                                    errorClass = e::class.java.simpleName,
-                                )
-                                failureOutcome(pageKey, e, BatchDiagnosticStage.TRANSLATION)
-                            },
-                        )
-                        chunk.forEach { page ->
-                            if (page.ref != null) listener.translationFinished(page.pageKey)
-                        }
-                        settleTranslationBranches(outcome)
-                        outcome
-                    } else {
+                    // T922 Phase 4: the provider lane feeds the schedule
+                    // overlap accumulator for the whole chunk translation.
+                    val providerLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.PROVIDER)
+                    val workStartNanos = System.nanoTime()
+                    try {
+                        if (translatorWorker.usesChunkAdmission) {
+                            chunk.forEach { page ->
+                                if (page.ref != null) {
+                                    listener.translationRequested(page.pageKey)
+                                    // Per-page provider WAIT: the span opens at
+                                    // envelope work start and carries the page's
+                                    // planner/assembly wait as queueMs. The
+                                    // envelope duration itself is measured ONCE
+                                    // at schedule scope in the lane worker.
+                                    page.translateSpan = page.trace?.beginStage(
+                                        TranslationTraceStage.TRANSLATE,
+                                        lane = TranslationTraceLane.PROVIDER,
+                                        provider = providerLabel,
+                                        items = page.ref.blockFingerprints.size,
+                                    )
+                                }
+                            }
+                            val outcome = normalizeCompletedOutcome(
+                                try {
+                                    translatorWorker.completeChunkOutcome(finalChunk)
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    val pageKey = chunk.firstOrNull { it.ref != null }?.pageKey
+                                    failureOutcome(pageKey, e, BatchDiagnosticStage.TRANSLATION)
+                                },
+                            )
+                            chunk.forEach { page ->
+                                if (page.ref != null) listener.translationFinished(page.pageKey)
+                            }
+                            settleTranslationBranches(outcome)
+                            // Translate WAIT spans close here; the RUN terminals
+                            // wait until the render join so the run's stage facts
+                            // (render_join/render) precede its terminal summary.
+                            settleTranslateWaits(chunk, outcome, workStartNanos)
+                            outcome
+                        } else {
                         var outcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
                         chunk.forEach { page ->
                             if (outcome !is ChunkCompletionOutcome.Completed) return@forEach
@@ -285,23 +381,34 @@ class SequentialBatchCoordinator(
                             }
                             listener.translationRequested(page.pageKey)
                             val startedAt = System.nanoTime()
+                            val translateSpan = page.trace?.beginStage(
+                                TranslationTraceStage.TRANSLATE,
+                                lane = TranslationTraceLane.PROVIDER,
+                                provider = providerLabel,
+                                items = ref.blockFingerprints.size,
+                            )
                             try {
-                                outcome = translatorWorker.translateOutcome(ref)
+                                val pageRun = page.trace
+                                if (pageRun != null) {
+                                    withContext(TranslationTrace.elementFor(pageRun)) {
+                                        outcome = translatorWorker.translateOutcome(ref)
+                                    }
+                                } else {
+                                    outcome = translatorWorker.translateOutcome(ref)
+                                }
                             } catch (e: Exception) {
-                                if (e is CancellationException) throw e
-                                BatchTranslationDiagnostics.failure(
-                                    stage = BatchDiagnosticStage.TRANSLATION,
-                                    pageKey = page.pageKey,
-                                    errorClass = e::class.java.simpleName,
-                                )
+                                if (e is CancellationException) {
+                                    translateSpan?.end(TranslationTraceOutcome.CANCELLED, error = e)
+                                    throw e
+                                }
                                 outcome = failureOutcome(page.pageKey, e, BatchDiagnosticStage.TRANSLATION)
                             } finally {
-                                BatchTranslationDiagnostics.timing(
-                                    stage = BatchDiagnosticStage.TRANSLATION,
-                                    pageKey = page.pageKey,
-                                    durationMs = elapsedMs(startedAt),
-                                    itemCount = ref.blockFingerprints.size,
+                                translateSpan?.end(
+                                    outcome = mappedRunTerminal(page.pageKey, outcome),
+                                    queueMs = (startedAt - (page.translateReadyAtNanos ?: startedAt))
+                                        .coerceAtLeast(0L) / 1_000_000L,
                                 )
+                                page.translateSpan = null
                                 listener.translationFinished(page.pageKey)
                             }
                         }
@@ -312,11 +419,6 @@ class SequentialBatchCoordinator(
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
-                                    BatchTranslationDiagnostics.failure(
-                                        stage = BatchDiagnosticStage.TRANSLATION,
-                                        pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
-                                        errorClass = e::class.java.simpleName,
-                                    )
                                     failureOutcome(
                                         chunk.firstOrNull { it.ref != null }?.pageKey,
                                         e,
@@ -326,7 +428,17 @@ class SequentialBatchCoordinator(
                             )
                         }
                         settleTranslationBranches(outcome)
+                        settleTranslateWaits(chunk, outcome)
                         outcome
+                        }
+                    } finally {
+                        // Phase 4 review N2: on cancellation mid-envelope the
+                        // normal settle path above is never reached; sweep any
+                        // still-open per-page translate WAIT span here. On the
+                        // normal path every span is already settled and nulled,
+                        // so this is a no-op.
+                        sweepOpenTranslateWaits(chunk)
+                        providerLaneToken?.close()
                     }
                 }
             } else {
@@ -338,75 +450,29 @@ class SequentialBatchCoordinator(
 
             try {
                 if (!remote) {
-                    if (translatorWorker.usesChunkAdmission) {
-                        chunk.forEach { page ->
-                            if (page.ref != null) listener.translationRequested(page.pageKey)
-                        }
-                        val outcome = normalizeCompletedOutcome(
-                            try {
-                                translatorWorker.completeChunkOutcome(finalChunk)
-                            } catch (e: CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                BatchTranslationDiagnostics.failure(
-                                    stage = BatchDiagnosticStage.TRANSLATION,
-                                    pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
-                                    errorClass = e::class.java.simpleName,
-                                )
-                                failureOutcome(
-                                    chunk.firstOrNull { it.ref != null }?.pageKey,
-                                    e,
-                                    BatchDiagnosticStage.TRANSLATION,
-                                )
-                            },
-                        )
-                        chunk.forEach { page ->
-                            if (page.ref != null) listener.translationFinished(page.pageKey)
-                        }
-                        settleTranslationBranches(outcome)
-                        inlineTranslationOutcome = outcome
-                    } else {
-                        var outcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
-                        chunk.forEach { page ->
-                            if (outcome !is ChunkCompletionOutcome.Completed) return@forEach
-                            val ref = page.ref
-                            if (ref == null) {
-                                return@forEach
+                    // T922 Phase 4: inline translation still owns the provider
+                    // lane token for the accumulator.
+                    val inlineProviderLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.PROVIDER)
+                    val inlineWorkStartNanos = System.nanoTime()
+                    try {
+                        if (translatorWorker.usesChunkAdmission) {
+                            chunk.forEach { page ->
+                                if (page.ref != null) {
+                                    listener.translationRequested(page.pageKey)
+                                    page.translateSpan = page.trace?.beginStage(
+                                        TranslationTraceStage.TRANSLATE,
+                                        lane = TranslationTraceLane.PROVIDER,
+                                        provider = providerLabel,
+                                        items = page.ref.blockFingerprints.size,
+                                    )
+                                }
                             }
-                            listener.translationRequested(page.pageKey)
-                            val startedAt = System.nanoTime()
-                            try {
-                                outcome = translatorWorker.translateOutcome(ref)
-                            } catch (e: Exception) {
-                                if (e is CancellationException) throw e
-                                BatchTranslationDiagnostics.failure(
-                                    stage = BatchDiagnosticStage.TRANSLATION,
-                                    pageKey = page.pageKey,
-                                    errorClass = e::class.java.simpleName,
-                                )
-                                outcome = failureOutcome(page.pageKey, e, BatchDiagnosticStage.TRANSLATION)
-                            } finally {
-                                BatchTranslationDiagnostics.timing(
-                                    stage = BatchDiagnosticStage.TRANSLATION,
-                                    pageKey = page.pageKey,
-                                    durationMs = elapsedMs(startedAt),
-                                    itemCount = ref.blockFingerprints.size,
-                                )
-                                listener.translationFinished(page.pageKey)
-                            }
-                        }
-                        if (outcome is ChunkCompletionOutcome.Completed) {
-                            outcome = normalizeCompletedOutcome(
+                            val outcome = normalizeCompletedOutcome(
                                 try {
                                     translatorWorker.completeChunkOutcome(finalChunk)
                                 } catch (e: CancellationException) {
                                     throw e
                                 } catch (e: Exception) {
-                                    BatchTranslationDiagnostics.failure(
-                                        stage = BatchDiagnosticStage.TRANSLATION,
-                                        pageKey = chunk.firstOrNull { it.ref != null }?.pageKey ?: "<chunk>",
-                                        errorClass = e::class.java.simpleName,
-                                    )
                                     failureOutcome(
                                         chunk.firstOrNull { it.ref != null }?.pageKey,
                                         e,
@@ -414,9 +480,80 @@ class SequentialBatchCoordinator(
                                     )
                                 },
                             )
+                            chunk.forEach { page ->
+                                if (page.ref != null) listener.translationFinished(page.pageKey)
+                            }
+                            settleTranslationBranches(outcome)
+                            inlineTranslationOutcome = outcome
+                            // Translate WAIT spans close here; run terminals
+                            // wait for the render join (see remote branch).
+                            settleTranslateWaits(chunk, outcome, inlineWorkStartNanos)
+                        } else {
+                            var outcome: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
+                            chunk.forEach { page ->
+                                if (outcome !is ChunkCompletionOutcome.Completed) return@forEach
+                                val ref = page.ref
+                                if (ref == null) {
+                                    return@forEach
+                                }
+                                listener.translationRequested(page.pageKey)
+                                val startedAt = System.nanoTime()
+                                val translateSpan = page.trace?.beginStage(
+                                    TranslationTraceStage.TRANSLATE,
+                                    lane = TranslationTraceLane.PROVIDER,
+                                    provider = providerLabel,
+                                    items = ref.blockFingerprints.size,
+                                )
+                                try {
+                                    val pageRun = page.trace
+                                    if (pageRun != null) {
+                                        withContext(TranslationTrace.elementFor(pageRun)) {
+                                            outcome = translatorWorker.translateOutcome(ref)
+                                        }
+                                    } else {
+                                        outcome = translatorWorker.translateOutcome(ref)
+                                    }
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) {
+                                        translateSpan?.end(TranslationTraceOutcome.CANCELLED, error = e)
+                                        throw e
+                                    }
+                                    outcome = failureOutcome(page.pageKey, e, BatchDiagnosticStage.TRANSLATION)
+                                } finally {
+                                    translateSpan?.end(
+                                        outcome = mappedRunTerminal(page.pageKey, outcome),
+                                        queueMs = (startedAt - (page.translateReadyAtNanos ?: startedAt))
+                                            .coerceAtLeast(0L) / 1_000_000L,
+                                    )
+                                    page.translateSpan = null
+                                    listener.translationFinished(page.pageKey)
+                                }
+                            }
+                            if (outcome is ChunkCompletionOutcome.Completed) {
+                                outcome = normalizeCompletedOutcome(
+                                    try {
+                                        translatorWorker.completeChunkOutcome(finalChunk)
+                                    } catch (e: CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        failureOutcome(
+                                            chunk.firstOrNull { it.ref != null }?.pageKey,
+                                            e,
+                                            BatchDiagnosticStage.TRANSLATION,
+                                        )
+                                    },
+                                )
+                            }
+                            settleTranslationBranches(outcome)
+                            inlineTranslationOutcome = outcome
+                            settleTranslateWaits(chunk, outcome)
                         }
-                        settleTranslationBranches(outcome)
-                        inlineTranslationOutcome = outcome
+                    } finally {
+                        // Phase 4 review N2: see the remote branch finally —
+                        // settle any still-open translate WAIT span the normal
+                        // path did not reach (cancellation mid-envelope).
+                        sweepOpenTranslateWaits(chunk)
+                        inlineProviderLaneToken?.close()
                     }
                 }
 
@@ -428,25 +565,34 @@ class SequentialBatchCoordinator(
                         return@forEach
                     }
                     listener.inpaintStarted(page.pageKey)
-                    val startedAt = System.nanoTime()
+                    val inpaintSpan = page.trace?.beginStage(TranslationTraceStage.INPAINT)
+                    val nativeLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.NATIVE)
+                    var inpaintOutcome = TranslationTraceOutcome.SUCCESS
                     try {
-                        nativeWorker.runInpaintStage(page.pageKey, ref.nativeHandoff)
+                        val pageRun = page.trace
+                        if (pageRun != null) {
+                            withContext(TranslationTrace.elementFor(pageRun)) {
+                                nativeWorker.runInpaintStage(page.pageKey, ref.nativeHandoff)
+                            }
+                        } else {
+                            nativeWorker.runInpaintStage(page.pageKey, ref.nativeHandoff)
+                        }
                     } catch (e: BatchPersistenceRejectedException) {
+                        inpaintOutcome = TranslationTraceOutcome.FAILURE
+                        inpaintSpan?.end(inpaintOutcome, error = e)
                         throw e
                     } catch (e: Exception) {
-                        if (e is CancellationException) throw e
-                        BatchTranslationDiagnostics.failure(
-                            stage = BatchDiagnosticStage.INPAINT,
-                            pageKey = page.pageKey,
-                            errorClass = e::class.java.simpleName,
-                        )
+                        if (e is CancellationException) {
+                            inpaintOutcome = TranslationTraceOutcome.CANCELLED
+                            inpaintSpan?.end(inpaintOutcome, error = e)
+                            throw e
+                        }
+                        inpaintOutcome = TranslationTraceOutcome.FAILURE
+                        inpaintSpan?.end(inpaintOutcome, error = e)
                         throw UnexpectedBatchStageException(page.pageKey, BatchDiagnosticStage.INPAINT)
                     } finally {
-                        BatchTranslationDiagnostics.timing(
-                            stage = BatchDiagnosticStage.INPAINT,
-                            pageKey = page.pageKey,
-                            durationMs = elapsedMs(startedAt),
-                        )
+                        inpaintSpan?.end(inpaintOutcome)
+                        nativeLaneToken?.close()
                         listener.inpaintFinished(page.pageKey)
                         nativeWorker.releaseNativeHandoff(ref)
                         unreleasedHandoffs.remove(page.pageKey)
@@ -457,6 +603,10 @@ class SequentialBatchCoordinator(
 
                 val translationOutcome = translationJob?.await() ?: inlineTranslationOutcome
                 renderJob.await()
+                // T922 Phase 4: any run still open after both branches joined
+                // (e.g. a page whose translation branch was skipped) settles
+                // here against the chunk outcome.
+                settleChunkRuns(chunk, translationOutcome)
                 translationOutcome
             } finally {
                 unreleasedHandoffs.values.forEach(nativeWorker::releaseNativeHandoff)
@@ -516,6 +666,9 @@ class SequentialBatchCoordinator(
                         throw e
                     }
 
+                    // T922 Phase 4: translation/inpaint-ready timestamp = lane
+                    // admission completion (planner buffering for AI lanes).
+                    entry.translateReadyAtNanos = System.nanoTime()
                     if (admission == ChunkAdmission.PROBE && chunk.isNotEmpty()) {
                         retainedProbe = entry
                         boundaryReached = true
@@ -633,10 +786,13 @@ class SequentialBatchCoordinator(
                 reason = "Batch persistence publication rejected",
                 persistenceRejectedStage = e.stage,
             )
-            BatchTranslationDiagnostics.failure(
-                stage = e.stage ?: BatchDiagnosticStage.ARTIFACT,
-                pageKey = e.pageKey ?: "<batch>",
-                errorClass = e::class.java.simpleName,
+            // T922 Phase 4: anchor terminal + sweep of the co-chunk runs the
+            // rejection cut short (replaces the legacy stage_failure line —
+            // the run_end outcome + schedule summary carry the same facts).
+            sweepUnsettledRuns(
+                anchor = e.pageKey,
+                anchorTerminal = TranslationTraceOutcome.PERSISTENCE_REJECTED,
+                error = e,
             )
             return@coroutineScope outcome
         } catch (e: UnexpectedBatchStageException) {
@@ -649,20 +805,150 @@ class SequentialBatchCoordinator(
                 reason = e.reason,
                 unexpectedStage = e.stage,
             )
-            BatchTranslationDiagnostics.failure(
-                stage = e.stage,
-                pageKey = e.pageKey,
-                errorClass = e::class.java.simpleName,
+            sweepUnsettledRuns(
+                anchor = e.pageKey,
+                anchorTerminal = TranslationTraceOutcome.FAILURE,
+                error = null,
             )
             return@coroutineScope outcome
         } finally {
             retainedProbe?.ref?.let(nativeWorker::releaseNativeHandoff)
             retainedProbe = null
+            // T922 Phase 4 (§10.2): unwind sweep — a cancelled pass still
+            // gives every open run exactly one terminal.
+            sweepUnsettledRuns(anchor = null, anchorTerminal = TranslationTraceOutcome.CANCELLED)
         }
     }
 
-    private fun elapsedMs(startedAt: Long): Long =
-        ((System.nanoTime() - startedAt) / 1_000_000L).coerceAtLeast(0L)
+    // ---- T922 Phase 4: page-run terminal ownership (amendment §10.2) ----
+
+    /** Typed terminal for one page under a chunk outcome. */
+    private fun mappedRunTerminal(
+        pageKey: String,
+        outcome: ChunkCompletionOutcome,
+    ): TranslationTraceOutcome {
+        if (pageKey in outcome.completedPageKeysForPass()) return TranslationTraceOutcome.SUCCESS
+        return when (outcome) {
+            is ChunkCompletionOutcome.Paused -> TranslationTraceOutcome.PAUSE
+            is ChunkCompletionOutcome.PersistenceRejected ->
+                if (pageKey == outcome.anchorPageKey) {
+                    TranslationTraceOutcome.PERSISTENCE_REJECTED
+                } else {
+                    TranslationTraceOutcome.CANCELLED
+                }
+            is ChunkCompletionOutcome.Failed ->
+                if (pageKey == outcome.anchorPageKey || pageKey in outcome.terminalPageKeys) {
+                    TranslationTraceOutcome.FAILURE
+                } else {
+                    TranslationTraceOutcome.CANCELLED
+                }
+            is ChunkCompletionOutcome.Unexpected ->
+                if (pageKey == outcome.anchorPageKey || pageKey in outcome.terminalPageKeys) {
+                    TranslationTraceOutcome.FAILURE
+                } else {
+                    TranslationTraceOutcome.CANCELLED
+                }
+            is ChunkCompletionOutcome.Completed -> TranslationTraceOutcome.CANCELLED
+        }
+    }
+
+    /**
+     * Phase 4 review N2: settles any still-open per-page translate WAIT span
+     * when the translation branch unwinds without reaching
+     * [settleTranslateWaits] (e.g. cancellation while suspended inside the
+     * envelope call). On the normal path every span is already settled and
+     * nulled, so this is a no-op. Never throws, never suspends.
+     */
+    private fun sweepOpenTranslateWaits(chunk: List<ChunkPage>) {
+        for (page in chunk) {
+            page.translateSpan?.let { span ->
+                span.end(TranslationTraceOutcome.CANCELLED)
+                page.translateSpan = null
+            }
+        }
+    }
+
+    /**
+     * Settles one chunk page's open translate WAIT span exactly once when the
+     * translation branch completes. Run TERMINALS are deliberately NOT closed
+     * here: the render join still has to measure render_join/render on the
+     * live run, and the chronological order stage_end...→run_end must hold.
+     * The run terminal itself is issued by [settleChunkRuns] after the render
+     * job joins (or by a sweep on unwind).
+     */
+    private fun settleTranslateWaits(
+        chunk: List<ChunkPage>,
+        outcome: ChunkCompletionOutcome,
+        workStartNanos: Long? = null,
+    ) {
+        for (page in chunk) {
+            val span = page.translateSpan ?: continue
+            val queueMs = if (workStartNanos != null) {
+                ((workStartNanos - (page.translateReadyAtNanos ?: workStartNanos)) / 1_000_000L)
+                    .coerceAtLeast(0L)
+            } else {
+                0L
+            }
+            span.end(
+                outcome = mappedRunTerminal(page.pageKey, outcome),
+                queueMs = queueMs,
+            )
+            page.translateSpan = null
+        }
+    }
+
+    /**
+     * Settles every chunk page's run (and any still-open translate wait span)
+     * exactly once after the chunk outcome AND the render join are complete.
+     * The translate span's queueMs carries the planner/assembly wait measured
+     * from the page's translation-ready timestamp to the envelope work start —
+     * the envelope DURATION itself is never attributed per page (plan §9).
+     */
+    private fun settleChunkRuns(
+        chunk: List<ChunkPage>,
+        outcome: ChunkCompletionOutcome,
+        workStartNanos: Long? = null,
+    ) {
+        for (page in chunk) {
+            val run = page.trace ?: continue
+            page.translateSpan?.let { span ->
+                val queueMs = if (workStartNanos != null) {
+                    ((workStartNanos - (page.translateReadyAtNanos ?: workStartNanos)) / 1_000_000L)
+                        .coerceAtLeast(0L)
+                } else {
+                    0L
+                }
+                span.end(
+                    outcome = mappedRunTerminal(page.pageKey, outcome),
+                    queueMs = queueMs,
+                )
+                page.translateSpan = null
+            }
+            run.end(mappedRunTerminal(page.pageKey, outcome))
+            page.trace = null
+            activeRuns.remove(page.pageKey, run)
+        }
+    }
+
+    /**
+     * Sweeps runs left open by an unwinding pass (unexpected stage exception
+     * or cancellation). The anchor page receives [anchorTerminal]; every
+     * other open run is cancelled — the pass stopped before reaching it.
+     */
+    private fun sweepUnsettledRuns(
+        anchor: String?,
+        anchorTerminal: TranslationTraceOutcome,
+        error: Throwable? = null,
+    ) {
+        for ((pageKey, run) in activeRuns) {
+            if (pageKey == anchor) {
+                run.end(anchorTerminal, error = error)
+            } else {
+                run.end(TranslationTraceOutcome.CANCELLED)
+            }
+            activeRuns.remove(pageKey, run)
+        }
+    }
 
     private fun ChunkCompletionOutcome.completedPageKeysForPass(): Set<String> = when (this) {
         is ChunkCompletionOutcome.Completed -> completedPageKeys
@@ -672,10 +958,21 @@ class SequentialBatchCoordinator(
         is ChunkCompletionOutcome.PersistenceRejected -> completedPageKeys
     }
 
+    /**
+     * T922 Phase 4: one chunk page's live trace state. Carries the page run
+     * plus the contract timestamps (OCR-ready, translation/inpaint-ready,
+     * render-join-ready) used for queue attribution; the open translate wait
+     * span is settled by [settleChunkRuns].
+     */
     private data class ChunkPage(
         val pageKey: String,
         val pageIndex: Int,
         val ref: OcrReadyPageRef?,
+        var trace: TranslationRunTrace? = null,
+        val ocrReadyAtNanos: Long? = null,
+        var translateReadyAtNanos: Long? = null,
+        var renderJoinReadyAtNanos: Long? = null,
+        var translateSpan: eu.kanade.translation.diagnostics.TranslationStageSpan? = null,
     )
 
     private class UnexpectedBatchStageException(

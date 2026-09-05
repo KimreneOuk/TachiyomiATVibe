@@ -1,19 +1,56 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationRunIdentity
+import eu.kanade.translation.diagnostics.TranslationScheduleState
+import eu.kanade.translation.diagnostics.TranslationScheduleTrace
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceReason
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.util.ShortHash
+import java.util.Locale
 import logcat.LogPriority
 import logcat.logcat
 
 /**
- * Privacy-safe observability for the ordered batch path.
+ * T922 Phase 4: compatibility facade over `translation_trace_v1`
+ * ([TranslationPipelineDiagnostics], tag `TachiyomiAT.Translation`).
  *
- * Event fields deliberately accept only opaque identifiers, fingerprints,
- * counts, timings, and reason codes. Source/OCR text, translations, prompts,
- * scene cards, and profile labels never cross this boundary.
+ * The legacy `TachiyomiAT.Batch` timing/status lines are migrated: every
+ * method below now delegates to a schema event under the unified tag. The
+ * public surface is unchanged for out-of-scope callers (artifact store,
+ * single-page render phase, AI retry controller). Delegated events correlate
+ * with the caller's current [TranslationTrace] run when one is installed,
+ * else with the active batch schedule registered by
+ * [BatchChapterTranslator]; with neither, they fail open (no identity, no
+ * emission — a fabricated sid is never invented).
+ *
+ * Delegated events are standalone: they never record into a run stage map or
+ * the schedule overlap accumulator, so they can never double-count against
+ * the trace-native spans the coordinator/workers emit.
+ *
+ * Exception: [memorySnapshot] keeps the legacy tag and format — JVM heap
+ * telemetry is not a translation_trace_v1 event family and contains no raw
+ * content.
  */
 object BatchTranslationDiagnostics {
 
     private const val TAG = "TachiyomiAT.Batch"
+
+    /**
+     * The batch schedule owned by the in-flight [BatchChapterTranslator]
+     * invocation, registered for correlation by facade callers that hold no
+     * page run (AI retry controller, artifact store). One @Volatile
+     * reference; cleared at schedule end.
+     */
+    @Volatile
+    internal var activeSchedule: TranslationScheduleTrace? = null
+
+    fun noteActiveSchedule(schedule: TranslationScheduleTrace?) {
+        activeSchedule = schedule
+    }
 
     fun stageDecision(
         stage: BatchDiagnosticStage,
@@ -23,9 +60,16 @@ object BatchTranslationDiagnostics {
         fingerprint: String? = null,
         itemCount: Int = 0,
     ) {
-        logcat(tag = TAG, priority = LogPriority.INFO) {
-            stageDecisionMessage(stage, pageKey, decision, reason, fingerprint, itemCount)
-        }
+        val identity = resolveIdentity() ?: return
+        TranslationPipelineDiagnostics.recordBatchScheduleState(
+            identity = identity,
+            state = when (decision) {
+                BatchDiagnosticDecision.EXECUTE -> TranslationScheduleState.ADMITTED
+                BatchDiagnosticDecision.REUSE, BatchDiagnosticDecision.SKIP -> TranslationScheduleState.SKIP
+                BatchDiagnosticDecision.RETRY, BatchDiagnosticDecision.FAIL -> TranslationScheduleState.DEFERRED
+            },
+            reason = reason.toTraceToken().token,
+        )
     }
 
     fun timing(
@@ -35,9 +79,15 @@ object BatchTranslationDiagnostics {
         itemCount: Int = 0,
         success: Boolean = true,
     ) {
-        logcat(tag = TAG, priority = if (success) LogPriority.INFO else LogPriority.WARN) {
-            timingMessage(stage, pageKey, durationMs, itemCount, success)
-        }
+        val identity = resolveIdentity() ?: return
+        TranslationPipelineDiagnostics.recordBatchStageEnd(
+            identity = identity,
+            stage = stage.toTraceStage(),
+            lane = stage.toTraceLane(),
+            durationMs = durationMs,
+            items = itemCount,
+            outcome = if (success) TranslationTraceOutcome.SUCCESS else TranslationTraceOutcome.FAILURE,
+        )
     }
 
     fun reuse(
@@ -46,9 +96,12 @@ object BatchTranslationDiagnostics {
         reason: BatchDiagnosticReason,
         fingerprint: String? = null,
     ) {
-        logcat(tag = TAG, priority = LogPriority.INFO) {
-            reuseMessage(stage, pageKey, reason, fingerprint)
-        }
+        val identity = resolveIdentity() ?: return
+        TranslationPipelineDiagnostics.recordBatchScheduleState(
+            identity = identity,
+            state = TranslationScheduleState.SKIP,
+            reason = reason.toTraceToken().token,
+        )
     }
 
     fun failure(
@@ -58,9 +111,15 @@ object BatchTranslationDiagnostics {
         retryCount: Int = 0,
         reason: BatchDiagnosticReason = BatchDiagnosticReason.STAGE_FAILURE,
     ) {
-        logcat(tag = TAG, priority = LogPriority.ERROR) {
-            failureMessage(stage, pageKey, errorClass, retryCount, reason)
-        }
+        val identity = resolveIdentity() ?: return
+        TranslationPipelineDiagnostics.recordBatchStageEnd(
+            identity = identity,
+            stage = stage.toTraceStage(),
+            lane = stage.toTraceLane(),
+            durationMs = 0,
+            outcome = TranslationTraceOutcome.FAILURE,
+            errorType = boundedErrorType(errorClass),
+        )
     }
 
     fun memorySnapshot(
@@ -84,68 +143,93 @@ object BatchTranslationDiagnostics {
         receivedItemCount: Int? = null,
         reason: BatchDiagnosticReason? = null,
     ) {
-        val priority = when (phase) {
-            BatchEnvelopeLifecycle.FAILED -> LogPriority.ERROR
-            BatchEnvelopeLifecycle.RETRY -> LogPriority.WARN
-            else -> LogPriority.INFO
-        }
-        logcat(tag = TAG, priority = priority) {
-            envelopeLifecycleMessage(
-                phase = phase,
-                pageKeys = pageKeys,
-                attempt = attempt,
-                expectedItemCount = expectedItemCount,
-                receivedItemCount = receivedItemCount,
-                reason = reason,
-            )
-        }
+        val identity = resolveIdentity() ?: return
+        TranslationPipelineDiagnostics.recordBatchScheduleState(
+            identity = identity,
+            state = when (phase) {
+                BatchEnvelopeLifecycle.ADMITTED -> TranslationScheduleState.QUEUED
+                BatchEnvelopeLifecycle.PROVIDER_REQUEST, BatchEnvelopeLifecycle.PARSED,
+                BatchEnvelopeLifecycle.SUCCEEDED,
+                -> TranslationScheduleState.ADMITTED
+                BatchEnvelopeLifecycle.RETRY, BatchEnvelopeLifecycle.FAILED ->
+                    TranslationScheduleState.DEFERRED
+            },
+            reason = when (phase) {
+                BatchEnvelopeLifecycle.ADMITTED -> TranslationTraceReason.ENVELOPE_ADMITTED
+                BatchEnvelopeLifecycle.PROVIDER_REQUEST -> TranslationTraceReason.ENVELOPE_REQUEST
+                BatchEnvelopeLifecycle.RETRY -> TranslationTraceReason.ENVELOPE_RETRY
+                BatchEnvelopeLifecycle.PARSED -> TranslationTraceReason.ENVELOPE_PARSED
+                BatchEnvelopeLifecycle.SUCCEEDED -> TranslationTraceReason.ENVELOPE_SUCCEEDED
+                BatchEnvelopeLifecycle.FAILED -> TranslationTraceReason.ENVELOPE_FAILED
+            }.token,
+            envelope = traceEnvelopeToken(pageKeys),
+            attempt = attempt,
+        )
     }
 
     /** Stable opaque id for an envelope; page keys never appear in diagnostics. */
     fun envelopeId(pageKeys: Collection<String>): String = opaque(pageKeys.joinToString("\u0000"))
 
-    internal fun stageDecisionMessage(
-        stage: BatchDiagnosticStage,
-        pageKey: String,
-        decision: BatchDiagnosticDecision,
-        reason: BatchDiagnosticReason,
-        fingerprint: String?,
-        itemCount: Int,
-    ): String =
-        "event=stage_decision stage=${stage.name.lowercase()} page=${opaque(pageKey)} " +
-            "decision=${decision.name.lowercase()} reason=${reason.name.lowercase()} " +
-            "fingerprint=${opaque(fingerprint)} items=${itemCount.coerceAtLeast(0)}"
+    /**
+     * Trace-safe envelope token for schema fields: the same opaque digest as
+     * [envelopeId] without the `h#` prefix (the `#` separator is not part of
+     * the schema's safe token charset).
+     */
+    internal fun traceEnvelopeToken(pageKeys: Collection<String>): String =
+        envelopeId(pageKeys).removePrefix("h#")
 
-    internal fun timingMessage(
-        stage: BatchDiagnosticStage,
-        pageKey: String,
-        durationMs: Long,
-        itemCount: Int,
-        success: Boolean,
-    ): String =
-        "event=stage_timing stage=${stage.name.lowercase()} page=${opaque(pageKey)} " +
-            "durationMs=${durationMs.coerceAtLeast(0L)} success=$success " +
-            "items=${itemCount.coerceAtLeast(0)}"
+    /** Current page run first, else the active batch schedule; else null. */
+    private fun resolveIdentity(): TranslationRunIdentity? =
+        TranslationTrace.currentRun()?.identity
+            ?: activeSchedule?.takeIf { !it.isClosed }?.identity
 
-    internal fun reuseMessage(
-        stage: BatchDiagnosticStage,
-        pageKey: String,
-        reason: BatchDiagnosticReason,
-        fingerprint: String?,
-    ): String =
-        "event=reuse stage=${stage.name.lowercase()} page=${opaque(pageKey)} " +
-            "reason=${reason.name.lowercase()} fingerprint=${opaque(fingerprint)}"
+    /** Bounded stage token per legacy diagnostic stage. */
+    private fun BatchDiagnosticStage.toTraceStage(): TranslationTraceStage = when (this) {
+        BatchDiagnosticStage.OCR -> TranslationTraceStage.OCR
+        BatchDiagnosticStage.INPAINT -> TranslationTraceStage.INPAINT
+        BatchDiagnosticStage.TRANSLATION, BatchDiagnosticStage.CONTEXT -> TranslationTraceStage.TRANSLATE
+        BatchDiagnosticStage.RENDER -> TranslationTraceStage.RENDER
+        BatchDiagnosticStage.ARTIFACT -> TranslationTraceStage.STORE_COMMIT
+    }
 
-    internal fun failureMessage(
-        stage: BatchDiagnosticStage,
-        pageKey: String,
-        errorClass: String,
-        retryCount: Int,
-        reason: BatchDiagnosticReason,
-    ): String =
-        "event=stage_failure stage=${stage.name.lowercase()} page=${opaque(pageKey)} " +
-            "reason=${reason.name.lowercase()} error=${safeClass(errorClass)} " +
-            "retries=${retryCount.coerceAtLeast(0)}"
+    private fun BatchDiagnosticStage.toTraceLane(): TranslationTraceLane = when (this) {
+        BatchDiagnosticStage.OCR, BatchDiagnosticStage.INPAINT -> TranslationTraceLane.NATIVE
+        BatchDiagnosticStage.TRANSLATION, BatchDiagnosticStage.CONTEXT -> TranslationTraceLane.PROVIDER
+        BatchDiagnosticStage.RENDER -> TranslationTraceLane.RENDER
+        BatchDiagnosticStage.ARTIFACT -> TranslationTraceLane.STORAGE
+    }
+
+    /** Legacy reason vocabulary -> bounded schema reason tokens. */
+    private fun BatchDiagnosticReason.toTraceToken(): TranslationTraceReason = when (this) {
+        BatchDiagnosticReason.SUCCESS -> TranslationTraceReason.ADMITTED
+        BatchDiagnosticReason.REFERENCE_READY -> TranslationTraceReason.REFERENCE_READY
+        BatchDiagnosticReason.NO_REFERENCE -> TranslationTraceReason.NO_REFERENCE
+        BatchDiagnosticReason.CACHE_HIT -> TranslationTraceReason.CACHE_HIT
+        BatchDiagnosticReason.CANDIDATE_ACTIVE -> TranslationTraceReason.CANDIDATE_ACTIVE
+        BatchDiagnosticReason.STAGE_FAILURE -> TranslationTraceReason.STAGE_FAILURE
+        BatchDiagnosticReason.TRANSIENT_FAILURE -> TranslationTraceReason.TRANSIENT_FAILURE
+        BatchDiagnosticReason.TERMINAL_FAILURE -> TranslationTraceReason.TERMINAL_FAILURE
+        BatchDiagnosticReason.CANCELLED -> TranslationTraceReason.CANCEL_REQUESTED
+        BatchDiagnosticReason.CORRUPT_ARTIFACT, BatchDiagnosticReason.ORPHAN_ARTIFACT ->
+            TranslationTraceReason.TERMINAL_FAILURE
+    }
+
+    /**
+     * Bounded errorType mapping for legacy `errorClass` simple names. Only
+     * recognized classes map onto the diagnostics vocabulary; everything else
+     * collapses to the fixed `unknown` token (never the raw class name).
+     */
+    private fun boundedErrorType(errorClass: String): String = when (
+        errorClass.lowercase(Locale.ROOT)
+    ) {
+        "ortexception" -> "ort"
+        "cancellationexception" -> "cancel"
+        "outofmemoryerror" -> "oom"
+        "sockettimeoutexception" -> "http"
+        "ioexception" -> "io"
+        "illegalstateexception", "illegalargumentexception", "batchpersistencerejectedexception" -> "contract"
+        else -> "unknown"
+    }
 
     internal fun memoryMessage(
         stage: String,
@@ -158,25 +242,8 @@ object BatchTranslationDiagnostics {
             "maxBytes=${maxBytes.coerceAtLeast(0L)} queueDepth=${queueDepth.coerceAtLeast(0)} " +
             "activePages=${activePages.coerceAtLeast(0)}"
 
-    internal fun envelopeLifecycleMessage(
-        phase: BatchEnvelopeLifecycle,
-        pageKeys: Collection<String>,
-        attempt: Int,
-        expectedItemCount: Int?,
-        receivedItemCount: Int?,
-        reason: BatchDiagnosticReason?,
-    ): String =
-        "event=envelope_lifecycle phase=${phase.name.lowercase()} " +
-            "envelope=${envelopeId(pageKeys)} pages=${pageKeys.size.coerceAtLeast(0)} " +
-            "attempt=${attempt.coerceAtLeast(0)} " +
-            "expectedItems=${expectedItemCount?.coerceAtLeast(0) ?: "none"} " +
-            "receivedItems=${receivedItemCount?.coerceAtLeast(0) ?: "none"} " +
-            "reason=${reason?.name?.lowercase() ?: "none"}"
-
     private fun opaque(value: String?): String =
         value?.takeIf { it.isNotEmpty() }?.let { "h#${ShortHash.hash(it)}" } ?: "none"
-
-    private fun safeClass(value: String): String = opaque(value)
 
     private fun safeStage(value: String): String = when (value) {
         "pass1", "pass2", "chapter" -> value

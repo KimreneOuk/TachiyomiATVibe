@@ -2,6 +2,13 @@ package eu.kanade.translation.recognition
 
 import android.content.Context
 import android.graphics.Bitmap
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationStageSpan
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceModel
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.Detection
 import eu.kanade.translation.detection.OnnxPageTextDetector
 import eu.kanade.translation.detection.OnnxPanelDetector
@@ -22,7 +29,6 @@ import eu.kanade.translation.ocr.PaddleOcrV6SmallEngine
 import eu.kanade.translation.ocr.RoiOcrEngine
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.rendering.RenderColorEstimator
-import eu.kanade.translation.runtime.onnx.HardwareDiscoveryEngine
 import eu.kanade.translation.runtime.onnx.OnnxModelStore
 import eu.kanade.translation.segmentation.OnnxBubbleSegmenter
 import eu.kanade.translation.util.TranslationMemoryBudget
@@ -280,17 +286,60 @@ class RoiPageRecognitionEngine(
         var detectMs = 0L
         var segmentMs = 0L
         var ocrMs = 0L
+        // T922 Phase 3: correlated engine stages. The run arrives through the
+        // installed TranslationTrace element; outside a traced coroutine every
+        // span is a fail-open NO_OP. openRecognitionSpan tracks whichever
+        // engine stage is currently open so the outer catch below can settle
+        // it with a typed failure (never leaks an unclosed stage_start).
+        var openRecognitionSpan: TranslationStageSpan? = null
         val analyzed = try {
             nativeGuard.withLock {
                 if (closed) throw IllegalStateException("ONNX recognition engine closed before detect")
+                val detectSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.DETECT,
+                    provider = TranslationPipelineDiagnostics.providerFromLabel(localDetector.executionProviderLabel),
+                    model = TranslationTraceModel.PAGE_DETECTOR,
+                )
+                openRecognitionSpan = detectSpan
                 val detectStart = System.nanoTime()
-                val detections = WebtoonSlidingDetector.detectSliding(bitmap) { localDetector.detect(it) }
+                val detections = try {
+                    WebtoonSlidingDetector.detectSliding(bitmap) { localDetector.detect(it) }
+                } catch (t: Throwable) {
+                    detectSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+                    openRecognitionSpan = null
+                    throw t
+                }
+                detectSpan.end(
+                    TranslationTraceOutcome.SUCCESS,
+                    items = detections.size,
+                    registeredProvider = TranslationPipelineDiagnostics.providerFromLabel(localDetector.executionProviderLabel),
+                )
+                openRecognitionSpan = null
                 detectMs = (System.nanoTime() - detectStart) / 1_000_000
 
                 val segmentStart = System.nanoTime()
                 val segmenter = bubbleSegmenter
                 val bubbleMasks = if (segmenter != null) {
-                    WebtoonSlidingDetector.segmentSliding(bitmap) { segmenter.segment(it) }
+                    val segmentSpan = TranslationTrace.beginStage(
+                        TranslationTraceStage.SEGMENT,
+                        provider = TranslationPipelineDiagnostics.providerFromLabel(segmenter.executionProviderLabel),
+                        model = TranslationTraceModel.BUBBLE_SEGMENTER,
+                    )
+                    openRecognitionSpan = segmentSpan
+                    try {
+                        WebtoonSlidingDetector.segmentSliding(bitmap) { segmenter.segment(it) }
+                    } catch (t: Throwable) {
+                        segmentSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+                        openRecognitionSpan = null
+                        throw t
+                    }.also { masks ->
+                        segmentSpan.end(
+                            TranslationTraceOutcome.SUCCESS,
+                            items = masks.size,
+                            registeredProvider = TranslationPipelineDiagnostics.providerFromLabel(segmenter.executionProviderLabel),
+                        )
+                        openRecognitionSpan = null
+                    }
                 } else {
                     emptyList()
                 }
@@ -327,6 +376,16 @@ class RoiPageRecognitionEngine(
                     !isWebtoonMode
 
                 val ocrStart = System.nanoTime()
+                val ocrSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.OCR,
+                    provider = TranslationPipelineDiagnostics.providerFromLabel(localOcrEngine.executionProviderLabel),
+                    model = when (localOcrEngine) {
+                        is MangaOcrEngine -> TranslationTraceModel.MANGA_OCR
+                        is PaddleOcrV6SmallEngine -> TranslationTraceModel.PADDLE_OCR
+                        else -> TranslationTraceModel.NONE
+                    },
+                )
+                openRecognitionSpan = ocrSpan
                 if (!engine.prefersHorizontalText) {
                     if (closed) throw IllegalStateException("ONNX recognition engine closed before batch OCR")
                     val crops = filteredDetections.map { detection ->
@@ -509,8 +568,20 @@ class RoiPageRecognitionEngine(
                     }
                 }
                 ocrMs = (System.nanoTime() - ocrStart) / 1_000_000
+                ocrSpan.end(
+                    TranslationTraceOutcome.SUCCESS,
+                    items = lockedRecognizedBlocks.size,
+                    registeredProvider = TranslationPipelineDiagnostics.providerFromLabel(localOcrEngine.executionProviderLabel),
+                )
+                openRecognitionSpan = null
                 RecognizedAnalyzeResult(lockedPageTranslation, lockedRecognizedBlocks)
             }
+        } catch (t: Throwable) {
+            // Settle whichever engine stage was still open (detect/segment/ocr)
+            // so a mid-recognition throw never leaves a stage_start unclosed.
+            openRecognitionSpan?.end(TranslationTraceOutcome.FAILURE, error = t)
+            openRecognitionSpan = null
+            throw t
         } finally {
             if (closed && initialized) {
                 if (nativeGuard.tryLock()) {
@@ -553,7 +624,10 @@ class RoiPageRecognitionEngine(
         pageTranslation.inpaintMaskBoxes = PageInpaintingPlanner.computeMask(pageTranslation)
         val elapsedMs = (System.nanoTime() - startTime) / 1_000_000
         logcat(LogPriority.INFO) {
-            "[translation_perf] route=${HardwareDiscoveryEngine.activeRoute.name} " +
+            // T922 Phase 3: the ambiguous global route= token (device
+            // preference) was removed — per-engine execution providers below
+            // and the correlated trace stages are the execution truth.
+            "[translation_perf] " +
                 "providers(detector=${detector?.executionProviderLabel ?: "n/a"}, " +
                 "segmenter=${bubbleSegmenter?.executionProviderLabel ?: "n/a"}, " +
                 "ocr=${localOcrEngine.executionProviderLabel}) " +
@@ -580,6 +654,14 @@ class RoiPageRecognitionEngine(
         // Re-check [closed] inside the lock. Box/mask computation is delegated to
         // PageInpaintingEngine (do not duplicate here — an earlier copy was
         // unreachable and masked the real planner path).
+        // T922 Phase 3: correlated inpaint stage. AOT provenance: the
+        // inpainter exposes only its execution-proven route (lastAcceptedRoute)
+        // after inference, so that is the `provenProvider` level; no
+        // registered-provider label exists yet (Phase 5).
+        val inpaintSpan = TranslationTrace.beginStage(
+            TranslationTraceStage.INPAINT,
+            model = if (inpainting != null) TranslationTraceModel.AOT_GAN else TranslationTraceModel.NONE,
+        )
         val inpaintStart = System.nanoTime()
         val result = try {
             nativeGuard.withLock {
@@ -593,6 +675,9 @@ class RoiPageRecognitionEngine(
                         .inpaint(bitmap, pageTranslation)
                 }
             }
+        } catch (t: Throwable) {
+            inpaintSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+            throw t
         } finally {
             if (closed && initialized) {
                 if (nativeGuard.tryLock()) {
@@ -605,8 +690,15 @@ class RoiPageRecognitionEngine(
             }
         }
         val inpaintMs = (System.nanoTime() - inpaintStart) / 1_000_000
+        inpaintSpan.end(
+            if (result == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS,
+            provenProvider = TranslationPipelineDiagnostics.providerFromLabel(inpainting?.lastAcceptedRoute),
+        )
         logcat(LogPriority.INFO) {
-            "[translation_perf] route=${HardwareDiscoveryEngine.activeRoute.name} " +
+            // T922 Phase 3: the ambiguous global route= token (device
+            // preference) was removed; inpaintRoute= is the execution-proven
+            // route and stays.
+            "[translation_perf] " +
                 "stage=inpainting total=${inpaintMs}ms mode=$inpaintingMode maskBoxes=${pageTranslation.inpaintMaskBoxes.size} " +
                 "inpaintRoute=${inpainting?.lastAcceptedRoute ?: "n/a"}"
         }

@@ -2,7 +2,22 @@ package eu.kanade.translation.scheduling
 
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.TranslationSession
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.artifact.AttemptOrigin
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationRunTrace
+import eu.kanade.translation.diagnostics.TranslationScheduleState
+import eu.kanade.translation.diagnostics.TranslationScheduleTrace
+import eu.kanade.translation.diagnostics.TranslationStageSpan
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceClock
+import eu.kanade.translation.diagnostics.TranslationTraceElement
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTracePlan
+import eu.kanade.translation.diagnostics.TranslationTraceReason
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.isTranslationDisplayReady
@@ -28,6 +43,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -127,6 +143,30 @@ class RollingAutoCoordinator(
     // callback's internal poke must not immediately start a fresh budget.
     private val pausedTranslations = ConcurrentHashMap<Int, Long>()
 
+    // ------------------------------------------------------------------
+    // T922 Phase 3: correlated trace state (bounded, fail-open; no bitmaps or
+    // models are retained — only trace tokens and finished-stage sums).
+    // ------------------------------------------------------------------
+
+    /** Current rolling-Auto schedule trace; guarded by [lifecycleLock]. */
+    @Volatile
+    private var scheduleTrace: TranslationScheduleTrace? = null
+
+    /**
+     * Runs created at admission whose terminal has not been observed yet.
+     * Swept on every generation death so every started run gets exactly one
+     * terminal (amendment §10.2). Keyed by page index (one live run per page).
+     */
+    private val activeRunTraces = ConcurrentHashMap<Int, TranslationRunTrace>()
+
+    /**
+     * The run currently executing under the drain-not-cancel
+     * [NonCancellable] block. Exempt from the cancel sweep so a drained
+     * in-flight call still reports its real outcome.
+     */
+    @Volatile
+    private var drainingRun: TranslationRunTrace? = null
+
     @Volatile
     private var currentSpec: WindowSpec? = null
 
@@ -172,10 +212,33 @@ class RollingAutoCoordinator(
                     currentSpec?.session?.key != session.key ||
                     currentSpec?.session?.store !== session.store
                 ) {
-                    cancelLocked()
+                    // T922 Phase 3: chapter/session identity change closes the
+                    // old schedule (and its active runs) as coordinator_replaced
+                    // before a fresh schedule starts for the new identity.
+                    cancelLocked(TranslationTraceOutcome.COORDINATOR_REPLACED)
                     currentIdentity = identity
                     resetState()
                 }
+                // T922 Phase 3: one schedule per rolling-Auto session; repeated
+                // viewport updates coalesce into schedule_state events on the
+                // SAME schedule instead of opening new ones. Re-created after a
+                // cancel/re-arm (the previous schedule was terminally closed).
+                val existingSchedule = scheduleTrace
+                if (existingSchedule == null || existingSchedule.isClosed) {
+                    scheduleTrace = TranslationPipelineDiagnostics.startSchedule(
+                        mode = TranslationTraceMode.AUTO,
+                        origin = TranslationTraceMode.AUTO,
+                        chapterRaw = identity.chapterId?.toString(),
+                        pages = pageCount,
+                    )
+                }
+                scheduleTrace?.reportState(
+                    state = TranslationScheduleState.QUEUED,
+                    reason = TranslationTraceReason.WINDOW_UPDATE.token,
+                    queueDepth = translateAdmitted.size,
+                    nativeActive = nativeAdmitted.size,
+                    providerActive = translateAdmitted.size,
+                )
                 currentSpec = WindowSpec(
                     identity = identity,
                     visiblePageIndex = visiblePageIndex,
@@ -265,11 +328,49 @@ class RollingAutoCoordinator(
         }
     }
 
-    /** Caller holds [lifecycleLock]. Cancels the coordination job only. */
-    private fun cancelLocked() {
+    /**
+     * Caller holds [lifecycleLock]. Cancels the coordination job only.
+     * [terminalOutcome] types the trace sweep: `cancelled` for user cancel /
+     * shutdown, `coordinator_replaced` for a chapter/session identity change.
+     */
+    private fun cancelLocked(
+        terminalOutcome: TranslationTraceOutcome = TranslationTraceOutcome.CANCELLED,
+    ) {
         coordinationJob?.cancel()
         generationCounter += 1L
         activeGeneration = generationCounter
+        sweepTracesLocked(terminalOutcome)
+    }
+
+    /**
+     * T922 Phase 3 (amendment §10.2): every started run gets exactly one
+     * terminal. Called on generation death under [lifecycleLock]: closes all
+     * admitted-but-unclosed runs and the schedule itself. The currently
+     * draining run is exempt — its real outcome lands when the drained call
+     * finishes (its close is idempotent, so a race cannot double-emit).
+     * Non-suspending; safe from the lifecycle monitor.
+     */
+    private fun sweepTracesLocked(outcome: TranslationTraceOutcome) {
+        val drain = drainingRun
+        for ((pageIndex, run) in activeRunTraces) {
+            if (run === drain) continue
+            run.end(outcome)
+            activeRunTraces.remove(pageIndex, run)
+        }
+        val schedule = scheduleTrace
+        // A natural teardown of a fully-successful window reports success; any
+        // swept/cancelled/failed run keeps the lifecycle outcome honest.
+        val scheduleOutcome =
+            if (outcome == TranslationTraceOutcome.CANCELLED &&
+                schedule != null &&
+                schedule.hasNoFailedRuns()
+            ) {
+                TranslationTraceOutcome.SUCCESS
+            } else {
+                outcome
+            }
+        schedule?.end(scheduleOutcome)
+        scheduleTrace = null
     }
 
     /**
@@ -369,8 +470,10 @@ class RollingAutoCoordinator(
             )
         }.onFailure {
             logcat(LogPriority.WARN) {
+                // T922 Phase 3 migration: raw pageKey removed from the log
+                // (privacy contract); the correlated run's pageIndex is kept.
                 "TachiyomiAT D9: auto attempt-ledger record failed (fail-open): " +
-                    "pageKey=${work.prepared.pageKey}"
+                    "pageIndex=${work.pageIndex}"
             }
         }.getOrDefault(true)
         if (admitted) return null
@@ -423,14 +526,30 @@ class RollingAutoCoordinator(
     ) {
         for (work in preparedChannel) {
             coroutineContext.ensureActive()
-            if (!isWorkCurrent(work) || work.generation != loopGeneration) continue
+            // T922 Phase 3: settle the prepared-queue wait first (even for a
+            // stale pickup) — queue-class stage feeds schedule maxQueueMs.
+            work.preparedQueueSpan?.end()
+            if (!isWorkCurrent(work) || work.generation != loopGeneration) {
+                // Reviewed terminal hole (stale pickup before the try): the
+                // run still gets exactly one terminal.
+                work.trace?.end(TranslationTraceOutcome.STALE_HANDOFF)
+                retireRunTrace(work.pageIndex, work.trace)
+                continue
+            }
             // The prepare phase already set Cleaning; promote to Translating
             // eagerly so the snapshot never shows a stale stage while the
             // provider request is in flight. The stage listener refines this.
             updateSlot(work.pageIndex, AutoSlotState.Translating, work.generation)
             publishSnapshot(work.generation)
+            // T922 Phase 3: provider lane occupancy for the schedule overlap
+            // accumulator (N translate overlapping N+1 native prep).
+            val providerLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.PROVIDER)
             try {
-                if (!isWorkCurrent(work)) continue
+                if (!isWorkCurrent(work)) {
+                    work.trace?.end(TranslationTraceOutcome.STALE_HANDOFF)
+                    retireRunTrace(work.pageIndex, work.trace)
+                    continue
+                }
                 // T917 Phase 3 (D6 §2.3): drain-not-cancel. The translate +
                 // commit runs under NonCancellable inside [drainGraceMs], so a
                 // cancelled window lets the in-flight call finish, commit and
@@ -439,7 +558,12 @@ class RollingAutoCoordinator(
                 // cancellation-class (the attempt entry stays unresolved). The
                 // outcome bookkeeping after the block stays generation-guarded,
                 // so a drained result commits even though the window is gone.
-                val translated = withContext(NonCancellable) {
+                // T922 Phase 3: drainingRun marks the sweep exemption so a
+                // cancelled window cannot race this run's real outcome.
+                drainingRun = work.trace
+                val translated = withContext(
+                    NonCancellable + (work.trace?.let { TranslationTrace.elementFor(it) } ?: kotlin.coroutines.EmptyCoroutineContext),
+                ) {
                     withTimeout(drainGraceMs) {
                         if (computeGate != null) {
                             computeGate.withPermit {
@@ -522,21 +646,72 @@ class RollingAutoCoordinator(
                         }
                     }
                 }
+                // T922 Phase 3: exactly one typed terminal for the run, mapped
+                // from the translated outcome (also covers the drained result
+                // of a window that died mid-flight — slot logic above stayed
+                // generation-guarded, the trace still tells the truth).
+                work.trace?.end(mapTranslatedTraceOutcome(work, translated))
+                retireRunTrace(work.pageIndex, work.trace)
+            } catch (e: TimeoutCancellationException) {
+                // T922 Phase 3: drain grace expired — typed timeout. Caught
+                // BEFORE the CancellationException catch (it is a subclass);
+                // control flow is unchanged: the exception rethrows exactly as
+                // before, only after the typed outcome is preserved.
+                work.trace?.end(TranslationTraceOutcome.TIMEOUT, error = e)
+                retireRunTrace(work.pageIndex, work.trace)
+                throw e
             } catch (e: CancellationException) {
+                // Consumer cancelled outside the drain block (loop unwind): the
+                // run's sweep may already have fired — idempotent close keeps
+                // exactly one terminal.
+                work.trace?.end(TranslationTraceOutcome.CANCELLED)
+                retireRunTrace(work.pageIndex, work.trace)
                 throw e
             } catch (e: Throwable) {
+                work.trace?.end(TranslationTraceOutcome.FAILURE, error = e)
+                retireRunTrace(work.pageIndex, work.trace)
                 logcat(LogPriority.ERROR, e) { "Rolling auto translate failed: pageIndex=${work.pageIndex}" }
                 if (isWorkCurrent(work)) {
                     clearReprepareAttempts(work.pageIndex, work.generation)
                     updateSlot(work.pageIndex, AutoSlotState.Failed(retryable = true), work.generation)
                 }
             } finally {
+                drainingRun = null
+                providerLaneToken?.close()
                 if (isWorkCurrent(work)) {
                     removeTranslateAdmitted(work.pageIndex, work.generation)
                     poke()
                 }
             }
             publishSnapshot(work.generation)
+        }
+    }
+
+    /**
+     * T922 Phase 3: pure, non-suspending mapping of a translate outcome onto
+     * the bounded trace terminal. A persistence rejection is discriminated as
+     * EVICTED when a MANUAL owner now holds the page lease (T917 preemption),
+     * else PERSISTENCE_REJECTED. `null` (stale handoff / missing cleaned
+     * image) maps to stale_handoff.
+     */
+    private fun mapTranslatedTraceOutcome(
+        work: PreparedWork,
+        translated: ChunkCompletionOutcome?,
+    ): TranslationTraceOutcome = when (translated) {
+        is ChunkCompletionOutcome.Completed -> TranslationTraceOutcome.SUCCESS
+        null -> TranslationTraceOutcome.STALE_HANDOFF
+        is ChunkCompletionOutcome.Paused -> TranslationTraceOutcome.PAUSE
+        is ChunkCompletionOutcome.Failed -> TranslationTraceOutcome.FAILURE
+        is ChunkCompletionOutcome.Unexpected -> TranslationTraceOutcome.FAILURE
+        is ChunkCompletionOutcome.PersistenceRejected -> {
+            val owner = runCatching {
+                work.session.store.pageLeaseOwner(work.prepared.pageKey)
+            }.getOrNull()
+            if (owner != null && owner != PageWriteOrigin.AUTO) {
+                TranslationTraceOutcome.EVICTED
+            } else {
+                TranslationTraceOutcome.PERSISTENCE_REJECTED
+            }
         }
     }
 
@@ -636,6 +811,13 @@ class RollingAutoCoordinator(
                     slotStates[idx]?.deferralReason != AutoDeferralReason.Memory
                 ) {
                     updateSlot(idx, AutoSlotState.Deferred(AutoDeferralReason.Memory), spec.generation)
+                    scheduleTrace?.reportState(
+                        state = TranslationScheduleState.DEFERRED,
+                        reason = TranslationTraceReason.MEMORY_PRESSURE.token,
+                        queueDepth = translateAdmitted.size,
+                        nativeActive = nativeAdmitted.size,
+                        providerActive = translateAdmitted.size,
+                    )
                 }
             }
             publishSnapshot(spec.generation)
@@ -654,6 +836,13 @@ class RollingAutoCoordinator(
                 // retried when a stream-available signal pokes reconcile().
                 if (slotStates[idx]?.deferralReason != AutoDeferralReason.SourceUnavailable) {
                     updateSlot(idx, AutoSlotState.Deferred(AutoDeferralReason.SourceUnavailable), spec.generation)
+                    scheduleTrace?.reportState(
+                        state = TranslationScheduleState.DEFERRED,
+                        reason = TranslationTraceReason.SOURCE_UNAVAILABLE.token,
+                        queueDepth = translateAdmitted.size,
+                        nativeActive = nativeAdmitted.size,
+                        providerActive = translateAdmitted.size,
+                    )
                     publishSnapshot(spec.generation)
                 }
                 continue
@@ -661,10 +850,71 @@ class RollingAutoCoordinator(
 
             // Admit into the native lane (serialized inline by this loop).
             if (!markNativeAdmitted(idx, spec.generation)) return false
+            // T922 Phase 3: the page run starts at native admission. The trace
+            // element wraps the prepare so deep ONNX/OCR code correlates its
+            // stages with this run across suspension points. scheduleTrace is
+            // null when tracing is off → every call below fails open.
+            val runTrace = scheduleTrace?.let {
+                TranslationPipelineDiagnostics.startRun(
+                    schedule = it,
+                    pageRaw = item.pageKey,
+                    pageIndex = idx,
+                    plan = TranslationTracePlan.FRESH,
+                )
+            }
+            // T922 Phase 4 (Phase 3 review F1): the run joins the terminal-sweep
+            // registry and the generation liveness re-check ATOMICALLY under the
+            // SAME lock the cancel sweep holds. A sweep can therefore never
+            // interleave between admission and registration: either the
+            // generation is alive (the run is registered and the sweep owns its
+            // terminal), or the generation is already dead (the sweep already
+            // ran and never saw this run, so it closes + retires it locally —
+            // idempotent even if a sweep raced the put).
+            var generationDeadAtRegistration = false
+            synchronized(lifecycleLock) {
+                if (isGenerationActiveLocked(spec.generation)) {
+                    if (runTrace != null) activeRunTraces[idx] = runTrace
+                } else {
+                    generationDeadAtRegistration = true
+                }
+            }
+            if (generationDeadAtRegistration) {
+                runTrace?.end(TranslationTraceOutcome.CANCELLED)
+                if (runTrace != null) activeRunTraces.remove(idx, runTrace)
+                removeNativeAdmitted(idx, spec.generation)
+                return false
+            }
+            scheduleTrace?.reportState(
+                state = TranslationScheduleState.ADMITTED,
+                reason = TranslationTraceReason.ADMITTED.token,
+                queueDepth = translateAdmitted.size,
+                nativeActive = nativeAdmitted.size,
+                providerActive = translateAdmitted.size,
+            )
+            val nativeLaneToken = scheduleTrace?.enterLane(TranslationTraceLane.NATIVE)
+            var sendingPrepared = false
             try {
                 if (!isGenerationActive(spec.generation)) return false
-                val prepared = if (computeGate != null) {
-                    computeGate.withPermit {
+                val traceContext: kotlin.coroutines.CoroutineContext =
+                    runTrace?.let { TranslationTrace.elementFor(it) } ?: kotlin.coroutines.EmptyCoroutineContext
+                val prepared = withContext(traceContext) {
+                    if (computeGate != null) {
+                        computeGate.withPermit {
+                            if (!isGenerationActive(spec.generation)) {
+                                null
+                            } else {
+                                executor.prepareSinglePage(
+                                    spec.session.manga,
+                                    spec.session.chapter,
+                                    spec.session.source,
+                                    item.pageKey,
+                                    item.streamFn,
+                                    force = false,
+                                    stageListenerFor(idx, spec.generation),
+                                )
+                            }
+                        }
+                    } else {
                         if (!isGenerationActive(spec.generation)) {
                             null
                         } else {
@@ -679,28 +929,20 @@ class RollingAutoCoordinator(
                             )
                         }
                     }
-                } else {
-                    if (!isGenerationActive(spec.generation)) {
-                        null
-                    } else {
-                        executor.prepareSinglePage(
-                            spec.session.manga,
-                            spec.session.chapter,
-                            spec.session.source,
-                            item.pageKey,
-                            item.streamFn,
-                            force = false,
-                            stageListenerFor(idx, spec.generation),
-                        )
-                    }
                 }
                 if (!isGenerationActive(spec.generation)) return false
                 when {
                     prepared == null -> {
+                        runTrace?.end(TranslationTraceOutcome.FAILURE)
+                        retireRunTrace(idx, runTrace)
                         clearReprepareAttempts(idx, spec.generation)
                         updateSlot(idx, AutoSlotState.Failed(retryable = true), spec.generation)
                     }
                     prepared.isTerminal -> {
+                        // Terminal prepared page: textless, render-only resume
+                        // already complete, or a no-op resume — no run work left.
+                        runTrace?.end(TranslationTraceOutcome.SKIP)
+                        retireRunTrace(idx, runTrace)
                         markCompleted(idx, spec.generation)
                         clearReprepareAttempts(idx, spec.generation)
                         updateSlot(idx, AutoSlotState.Ready, spec.generation)
@@ -711,6 +953,13 @@ class RollingAutoCoordinator(
                         // native lane releasing it and the translate lane
                         // picking it up (the duplicate-execution race).
                         if (markTranslateAdmitted(idx, spec.generation)) {
+                            // Prepared-queue wait = send→consumer-pickup. The
+                            // span is settled by the consumer; the run terminal
+                            // passes to the consumer as well.
+                            val preparedQueueSpan = runTrace?.beginStage(
+                                TranslationTraceStage.PREPARED_QUEUE,
+                            )
+                            sendingPrepared = true
                             preparedChannel.send(
                                 PreparedWork(
                                     pageIndex = idx,
@@ -718,22 +967,38 @@ class RollingAutoCoordinator(
                                     identity = spec.identity,
                                     session = spec.session,
                                     generation = spec.generation,
+                                    trace = runTrace,
+                                    preparedQueueSpan = preparedQueueSpan,
                                 ),
                             )
                         } else {
+                            // Window died between prepare and handoff: the
+                            // cancel sweep already typed this run; the
+                            // idempotent close keeps the guarantee.
+                            runTrace?.end(TranslationTraceOutcome.CANCELLED)
+                            retireRunTrace(idx, runTrace)
                             return false
                         }
                     }
                 }
             } catch (e: CancellationException) {
+                if (sendingPrepared) {
+                    // Cancelled while parked handing off (channel full / loop
+                    // unwind): the work never reached the translate consumer.
+                    runTrace?.end(TranslationTraceOutcome.CANCELLED_DURING_SEND)
+                    retireRunTrace(idx, runTrace)
+                }
                 throw e
             } catch (e: Throwable) {
+                runTrace?.end(TranslationTraceOutcome.FAILURE, error = e)
+                retireRunTrace(idx, runTrace)
                 logcat(LogPriority.ERROR, e) { "Rolling auto prepare failed: pageIndex=$idx" }
                 if (isGenerationActive(spec.generation)) {
                     clearReprepareAttempts(idx, spec.generation)
                     updateSlot(idx, AutoSlotState.Failed(retryable = true), spec.generation)
                 }
             } finally {
+                nativeLaneToken?.close()
                 removeNativeAdmitted(idx, spec.generation)
             }
             publishSnapshot(spec.generation)
@@ -858,6 +1123,11 @@ class RollingAutoCoordinator(
                 stateSequence++
             }
         }
+    }
+
+    /** Removes a finished run from the terminal-ownership sweep registry. */
+    private fun retireRunTrace(pageIndex: Int, run: TranslationRunTrace?) {
+        if (run != null) activeRunTraces.remove(pageIndex, run)
     }
 
     private fun clearReprepareAttempts(pageIndex: Int, generation: Long) {
@@ -1061,6 +1331,10 @@ class RollingAutoCoordinator(
         val identity: AutoChapterIdentity,
         val session: TranslationSession,
         val generation: Long,
+        // T922 Phase 3: the run's terminal is owned by the translate consumer
+        // once the handoff completes; the queue span measures send→pickup.
+        val trace: TranslationRunTrace? = null,
+        val preparedQueueSpan: TranslationStageSpan? = null,
     )
 
     /** One page's identity and stream, resolvable by page index. */

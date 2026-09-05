@@ -11,6 +11,10 @@ import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
 import eu.kanade.translation.pipeline.batch.BatchPersistenceRejectedException
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTracePlan
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.finalizePostOcrStage
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
@@ -165,8 +169,26 @@ internal class SinglePageOnnxPhase(
     private fun decodePageBitmapAtSize(fileName: String, sampleSize: Int, streams: List<Pair<String, () -> InputStream>>): Bitmap? =
         PageDecode.decodePageBitmapAtSize(fileName, sampleSize, streams)
 
-    private suspend fun decodePageBitmapForTranslation(fileName: String, streamFn: () -> InputStream): DecodedPage? =
-        PageDecode.decodePageBitmapForTranslation(context, { recognitionEngine }, fileName, streamFn)
+    /**
+     * T922 Phase 3: correlated `source_decode` stage boundary. The run arrives
+     * through the installed [TranslationTrace] element; outside a traced
+     * coroutine this is a fail-open NO_OP span. Both call sites (fresh decode
+     * and inpaint-resume re-decode) are measured; repeated intervals accumulate
+     * in the run's stage map.
+     */
+    private suspend fun decodePageBitmapForTranslation(fileName: String, streamFn: () -> InputStream): DecodedPage? {
+        val decodeSpan = TranslationTrace.beginStage(TranslationTraceStage.SOURCE_DECODE)
+        val decoded = try {
+            PageDecode.decodePageBitmapForTranslation(context, { recognitionEngine }, fileName, streamFn)
+        } catch (t: Throwable) {
+            decodeSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+            throw t
+        }
+        decodeSpan.end(
+            if (decoded == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS,
+        )
+        return decoded
+    }
 
     private fun preflightAnalyzeGate(bitmap: Bitmap, fileName: String) {
         MemoryGovernance.preflightAnalyzeGate({ recognitionEngine }, bitmap, fileName)
@@ -256,7 +278,21 @@ internal class SinglePageOnnxPhase(
 
             val workPlan = eu.kanade.translation.model.PageWorkPlanner.plan(adjustedResume, force)
 
+            // T922 Phase 3: resolve the resume plan onto the run trace (run_end
+            // carries the resolved plan; run_start held the initial default).
+            val traceRun = TranslationTrace.currentRun()
+            if (traceRun != null) {
+                val resolvedPlan = when {
+                    workPlan.runOcr -> TranslationTracePlan.FRESH
+                    !workPlan.runOcr && !workPlan.runInpaint && !workPlan.runTranslation ->
+                        TranslationTracePlan.RENDER_ONLY
+                    else -> TranslationTracePlan.RESUME
+                }
+                traceRun.updatePlan(resolvedPlan)
+            }
+
             if (!workPlan.runOcr && !workPlan.runTranslation && !workPlan.runInpaint && !workPlan.runRender) {
+                traceRun?.updatePlan(TranslationTracePlan.SKIP)
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT single-page resume skip: pageKey=$pageKey already has final output"
                 }
@@ -1097,11 +1133,19 @@ internal class SinglePageOnnxPhase(
         pageTranslation.originalImgHeight = decoded.originalHeight.toFloat()
         pageTranslation.sourceFileName = fileName
         pageTranslation.updatedAt = System.currentTimeMillis()
+        // T922 Phase 3: when the page runs inside a correlated trace, the
+        // ambiguous local pageStart total is replaced by the correlated run
+        // total (parity: both are wall-clock ms for the page work). Outside a
+        // trace the legacy local total is kept.
+        val traceTotalMs = TranslationTrace.currentRun()?.totalMsAt(System.nanoTime())
         logcat(LogPriority.INFO) {
             "[translation_page] $fileName blocks=${pageTranslation.blocks.size} " +
                 "engine=${pageTranslation.recognitionEngine} sample=${pageTranslation.decodeSampleSize} " +
                 "cleaned=${pageTranslation.cleanedBitmap != null} " +
-                "elapsedMs=${(System.nanoTime() - pageStart) / 1_000_000}"
+                (
+                    traceTotalMs?.let { "traceTotalMs=$it" }
+                        ?: "elapsedMs=${(System.nanoTime() - pageStart) / 1_000_000}"
+                    )
         }
 
         // Cooperative cancellation checkpoint: recognize()/inpaint() internals (ONNX native

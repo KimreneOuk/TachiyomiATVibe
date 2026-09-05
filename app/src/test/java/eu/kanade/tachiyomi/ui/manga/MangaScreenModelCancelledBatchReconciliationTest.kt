@@ -264,6 +264,14 @@ class MangaScreenModelCancelledBatchReconciliationTest {
             withTimeout(AWAIT_TIMEOUT_MS) {
                 model.state.first { it is MangaScreenModel.State.Success }
             }
+            // T922 flake stabilization: the status emissions this class drives
+            // ride a no-replay MutableSharedFlow, and the screen model
+            // subscribes to it asynchronously (init launch on Dispatchers.IO).
+            // An emission fired before that subscription is live is silently
+            // dropped forever — observed as the item stuck at NOT_TRANSLATED
+            // until the 10s await budget expired, only under full-suite load.
+            // Hold setup until the status collector has actually subscribed.
+            translationStatusFlow.subscriptionCount.first { it > 0 }
         }
     }
 

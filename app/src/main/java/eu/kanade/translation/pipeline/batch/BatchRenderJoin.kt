@@ -8,6 +8,10 @@ import eu.kanade.translation.RenderBlockPatch
 import eu.kanade.translation.RenderStagePatch
 import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageTranslation
@@ -190,10 +194,24 @@ internal class BatchRenderJoin(
                     )
                 }
                 val renderInput = store.snapshot(pageKey)
-                RenderColorEstimator.recomputeFor(bitmap, page.blocks)
-                page.renderStatus = StageStatus.READY
-                page.updatedAt = System.currentTimeMillis()
-                val patch = RenderStagePatch(
+                // T922 Phase 4: layout stage outcome for the page run. The
+                // span settles even when the estimator throws (layout failure
+                // path below keeps its existing handling).
+                val layoutSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.LAYOUT,
+                    lane = TranslationTraceLane.RENDER,
+                )
+                val patch: RenderStagePatch = try {
+                    RenderColorEstimator.recomputeFor(bitmap, page.blocks)
+                    layoutSpan.end(TranslationTraceOutcome.SUCCESS)
+                    page.renderStatus = StageStatus.READY
+                    page.updatedAt = System.currentTimeMillis()
+                    val renderSpan = TranslationTrace.beginStage(
+                        TranslationTraceStage.RENDER,
+                        lane = TranslationTraceLane.RENDER,
+                    )
+                    try {
+                        RenderStagePatch(
                     pageKey = pageKey,
                     generation = renderInput.generation,
                     expectedPageVersion = renderInput.pageVersion,
@@ -215,8 +233,42 @@ internal class BatchRenderJoin(
                         )
                     },
                     renderStatus = StageStatus.READY,
+                    )
+                    } finally {
+                        renderSpan.end()
+                    }
+                } catch (t: Throwable) {
+                    layoutSpan.end(
+                        if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
+                        error = t,
+                    )
+                    throw t
+                }
+                // T922 Phase 4: store commit outcome for the render stage patch.
+                // Phase 4 review N3: the span settles in try/catch so a throw
+                // from mergeRender (cancellation while suspended, store error)
+                // cannot leave stage_start(store_commit) dangling.
+                val commitSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.STORE_COMMIT,
+                    lane = TranslationTraceLane.STORAGE,
                 )
-                val renderResult = store.mergeRender(patch)
+                val renderResult = try {
+                    val result = store.mergeRender(patch)
+                    commitSpan.end(
+                        if (result is StagePatchResult.Accepted) {
+                            TranslationTraceOutcome.SUCCESS
+                        } else {
+                            TranslationTraceOutcome.FAILURE
+                        },
+                    )
+                    result
+                } catch (t: Throwable) {
+                    commitSpan.end(
+                        if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
+                        error = t,
+                    )
+                    throw t
+                }
                 renderPersisted = renderResult is StagePatchResult.Accepted
                 if (renderResult is StagePatchResult.Rejected) {
                     abortBatchCandidate(pageKey, "render commit rejected: ${renderResult.reason}")

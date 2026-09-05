@@ -8,6 +8,10 @@ import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.pipeline.batch.ChunkCompletionOutcome
 import eu.kanade.translation.pipeline.batch.TranslationBatchProgressTracker
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageStage
@@ -510,6 +514,14 @@ class TranslationPipeline(
         // store truth outranks the timer there, and no timeout placeholder
         // may overwrite terminal truth.
         var httpTimeoutLandedDurableResult = false
+        // T922 Phase 3 (plan §4.4 Manual): boundary-level trace wiring. The
+        // run arrives via the TranslationTraceElement installed by the caller
+        // (scheduler launch / rolling-coordinator wrap); outside a trace every
+        // helper is a NO_OP. Emission is non-suspending and fail-open.
+        val traceRun = TranslationTrace.currentRun()
+        val traceSchedule = traceRun?.schedule
+        val nativeQueueSpan = traceRun?.beginStage(TranslationTraceStage.NATIVE_QUEUE)
+        val nativeLaneToken = traceSchedule?.enterLane(TranslationTraceLane.NATIVE)
         try {
             // T917 D8: a same-page request whose predecessor still owns the
             // stove (e.g. a timed-out-but-parked native call) is rejected
@@ -523,6 +535,7 @@ class TranslationPipeline(
                     "TachiyomiAT native admission rejected: chapter=${chapter.name} " +
                         "pageKey=$pageKey reason=already in flight (residual)"
                 }
+                nativeLaneToken?.close()
                 return SinglePageOutcome.Rejected(null, "page already translating")
             }
             // T917 D11 (phase4-design §4.4): storage-tail deferral holder. The
@@ -548,6 +561,10 @@ class TranslationPipeline(
                             markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
                         },
                     ) {
+                        // Queue behind the native lane settled: the span was
+                        // begun at boundary entry, so its duration is the
+                        // admission→execution wait (schedule maxQueueMs feed).
+                        nativeQueueSpan?.end()
                         if (!inFlightPageKeys.add(pageKey)) {
                             logcat(LogPriority.WARN) { "TachiyomiAT native admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
                             throw NativePageAlreadyInFlightException()
@@ -570,11 +587,13 @@ class TranslationPipeline(
                         } finally {
                             inFlightPageKeys.remove(pageKey)
                         }
-                    }
+                    }.also { nativeLaneToken?.close() }
                 } catch (_: NativePageAlreadyInFlightException) {
+                    nativeLaneToken?.close()
                     return SinglePageOutcome.Rejected(null, "page already translating")
                 }
             } catch (t: Throwable) {
+                nativeLaneToken?.close()
                 // Exception path: the boundary does not continue, so run any
                 // deferred storage tails inline (best effort — the block has
                 // already failed the page) and rethrow the original failure.
@@ -615,12 +634,37 @@ class TranslationPipeline(
                 return SinglePageOutcome.Failed(pageKey, "native phase timed out")
             }
 
-            val publishedResult = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
-                ?: return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
+            // T922 Phase 3: cleaned-image persistence boundary (storage lane).
+            // T922 Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
+            // including a throw from persistOnnxCleanedImage (cancellation or a
+            // store exception on paths that historically propagate) — no
+            // stage_start is left dangling.
+            val persistSpan = traceRun?.beginStage(
+                TranslationTraceStage.CLEANED_PERSIST,
+                lane = TranslationTraceLane.STORAGE,
+            )
+            val publishedResult = try {
+                val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+                persistSpan?.end(
+                    if (result == null) {
+                        TranslationTraceOutcome.FAILURE
+                    } else {
+                        TranslationTraceOutcome.SUCCESS
+                    },
+                )
+                result
+            } catch (t: Throwable) {
+                persistSpan?.end(TranslationTraceOutcome.FAILURE, error = t)
+                throw t
+            }
+            if (publishedResult == null) {
+                return SinglePageOutcome.Failed(pageKey, "native cleaned publication failed")
+            }
 
             // T917 Phase 3 (D6 §2.2a): capture the phase's typed completion so a
             // governor deferral surfaces as a typed pause instead of a silent
             // Completed.
+            val providerLaneToken = traceSchedule?.enterLane(TranslationTraceLane.PROVIDER)
             try {
                 httpOutcome = withTimeoutOrNull(singlePageTimeoutMs) {
                     translateSinglePageHttpRender(manga, chapter, source, pageKey, publishedResult, stageListener, origin)
@@ -639,6 +683,7 @@ class TranslationPipeline(
                     null
                 }
             } catch (t: Throwable) {
+                providerLaneToken?.close()
                 if (t is CancellationException) throw t
                 logcat(LogPriority.ERROR, t) {
                     "TachiyomiAT HTTP+render phase failed: pageKey=$pageKey"
@@ -646,6 +691,7 @@ class TranslationPipeline(
                 markPageFailed(manga, chapter, source, pageKey, t)
                 throw t
             }
+            providerLaneToken?.close()
         } finally {
             releaseReaderPageLease(leaseStore, pageKey, origin)
         }
@@ -849,6 +895,13 @@ class TranslationPipeline(
             // the resume paths' storage publication runs; orphaned tails run
             // inline; the normal-path drain is fail-closed.
             val deferredPublications = DeferredPagePublications()
+            // T922 Phase 3: correlated trace for the rolling-Auto prepared
+            // boundary. The coordinator installs the run through
+            // TranslationTraceElement; outside that context every trace call
+            // here is a fail-open no-op.
+            val traceRun = TranslationTrace.currentRun()
+            val nativeQueueSpan = traceRun?.beginStage(TranslationTraceStage.NATIVE_QUEUE)
+            val nativeLaneToken = traceRun?.schedule?.enterLane(TranslationTraceLane.NATIVE)
             val onnxResult = try {
                 withNativeLane(
                     timeoutMs = nativeTimeoutMs,
@@ -860,6 +913,10 @@ class TranslationPipeline(
                         markPageTimedOut(manga, chapter, source, pageKey, nativeTimeoutMs)
                     },
                 ) {
+                    // Queue behind the native lane settled: the span was begun
+                    // at prepare entry, so its duration is the
+                    // admission→execution wait (schedule maxQueueMs feed).
+                    nativeQueueSpan?.end()
                     if (!inFlightPageKeys.add(pageKey)) {
                         logcat(LogPriority.WARN) { "TachiyomiAT prepare admission rejected: chapter=${chapter.name} pageKey=$pageKey reason=already in flight" }
                         throw NativePageAlreadyInFlightException()
@@ -882,8 +939,9 @@ class TranslationPipeline(
                     } finally {
                         inFlightPageKeys.remove(pageKey)
                     }
-                }
+                }.also { nativeLaneToken?.close() }
             } catch (t: Throwable) {
+                nativeLaneToken?.close()
                 // Exception path: best-effort inline drain of deferred storage
                 // tails (the block has already failed the page), then rethrow.
                 runCatching { deferredPublications.drainAll() }
@@ -914,7 +972,27 @@ class TranslationPipeline(
 
             // Durability gate: persist the cleaned image BEFORE publishing the
             // prepared reference. If publication fails the page is not prepared.
-            val published = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+            // T922 Phase 3: persistence boundary stage (storage lane).
+            // T922 Phase 4 (Phase 3 review F2): the span settles on EVERY exit,
+            // including a throw from persistOnnxCleanedImage.
+            val persistSpan = traceRun?.beginStage(
+                TranslationTraceStage.CLEANED_PERSIST,
+                lane = TranslationTraceLane.STORAGE,
+            )
+            val published = try {
+                val result = persistOnnxCleanedImage(manga, chapter, source, pageKey, onnxResult)
+                persistSpan?.end(
+                    if (result == null) {
+                        TranslationTraceOutcome.FAILURE
+                    } else {
+                        TranslationTraceOutcome.SUCCESS
+                    },
+                )
+                result
+            } catch (t: Throwable) {
+                persistSpan?.end(TranslationTraceOutcome.FAILURE, error = t)
+                throw t
+            }
             if (published == null) {
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT prepare handoff aborted: cleaned image not durable pageKey=$pageKey"
@@ -1090,7 +1168,12 @@ class TranslationPipeline(
                 decoded = decoded,
                 commitPrecondition = snapshot.toPrecondition(),
             )
-            return try {
+            // T922 Phase 3: the provider lane is active for the whole HTTP
+            // translate + render section of the prepared path so the schedule
+            // accumulator measures it overlapping the next page's native prep.
+            val providerLaneToken =
+                TranslationTrace.currentRun()?.schedule?.enterLane(TranslationTraceLane.PROVIDER)
+            val preparedOutcome = try {
                 val completed = withTimeoutOrNull(SINGLE_PAGE_TIMEOUT_MS) {
                     translateSinglePageHttpRender(manga, chapter, source, prepared.pageKey, ctx, stageListener, PageWriteOrigin.AUTO)
                 }
@@ -1107,12 +1190,15 @@ class TranslationPipeline(
                     completed
                 }
             } catch (e: CancellationException) {
+                providerLaneToken?.close()
                 throw e
             } catch (e: java.io.IOException) {
+                providerLaneToken?.close()
                 // A genuine failure (unreadable cleaned image, timeout) — propagate
                 // so the caller attributes it as a failure, not a race loss.
                 throw e
             } catch (t: Throwable) {
+                providerLaneToken?.close()
                 if (t is CancellationException) throw t
                 logcat(LogPriority.ERROR, t) {
                     "TachiyomiAT translatePreparedPage failed: pageKey=${prepared.pageKey}"
@@ -1120,6 +1206,8 @@ class TranslationPipeline(
                 markPageFailed(manga, chapter, source, prepared.pageKey, t)
                 throw t
             }
+            providerLaneToken?.close()
+            return preparedOutcome
         } finally {
             releaseReaderPageLease(store, prepared.pageKey, PageWriteOrigin.AUTO)
         }

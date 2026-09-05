@@ -168,10 +168,40 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
         initializeMigrator()
 
         if (BuildConfig.DEBUG) {
-            scope.launch(Dispatchers.IO) {
-                kotlinx.coroutines.delay(1000)
-                eu.kanade.translation.runtime.onnx.QnnDiagnostics.runOnce()
-            }
+            // TachiyomiAT (T922 §3.5): automatic QNN diagnostics no longer run at
+            // debug startup — they overlapped real translation work and polluted
+            // timing measurements. QnnDiagnostics stays intact and reachable, with
+            // this narrow developer-only trigger that never runs during normal
+            // startup. Debug builds only; fire it explicitly with:
+            //   adb shell am broadcast -a tachi.action.DEBUG_RUN_QNN_DIAGNOSTICS
+            // (Exported so the adb shell uid can deliver; release never registers it.)
+            ContextCompat.registerReceiver(
+                this,
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        scope.launch(Dispatchers.IO) {
+                            eu.kanade.translation.runtime.onnx.QnnDiagnostics.runOnce()
+                        }
+                    }
+                },
+                IntentFilter(ACTION_DEBUG_RUN_QNN_DIAGNOSTICS),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
+            // TachiyomiAT (T922 §10.5 device A/B): debug-only toggle for the
+            // detailed translation trace gate. Mirrors the QNN diagnostics
+            // receiver pattern above; adb shell only, release never registers:
+            //   adb shell am broadcast -a tachi.action.DEBUG_SET_TRANSLATION_TRACE --ez enabled false
+            ContextCompat.registerReceiver(
+                this,
+                object : BroadcastReceiver() {
+                    override fun onReceive(context: Context, intent: Intent) {
+                        val enabled = intent.getBooleanExtra("enabled", true)
+                        eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics.detailedTracingEnabled = enabled
+                    }
+                },
+                IntentFilter(ACTION_DEBUG_SET_TRANSLATION_TRACE),
+                ContextCompat.RECEIVER_EXPORTED,
+            )
         }
     }
 
@@ -288,3 +318,5 @@ class App : Application(), DefaultLifecycleObserver, SingletonImageLoader.Factor
 }
 
 private const val ACTION_DISABLE_INCOGNITO_MODE = "tachi.action.DISABLE_INCOGNITO_MODE"
+private const val ACTION_DEBUG_RUN_QNN_DIAGNOSTICS = "tachi.action.DEBUG_RUN_QNN_DIAGNOSTICS"
+private const val ACTION_DEBUG_SET_TRANSLATION_TRACE = "tachi.action.DEBUG_SET_TRANSLATION_TRACE"

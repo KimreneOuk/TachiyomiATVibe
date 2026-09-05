@@ -10,6 +10,12 @@ import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
 import eu.kanade.translation.TranslationPipeline.Companion.UNKNOWN_SOURCE_FINGERPRINT
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationScheduleTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
@@ -35,6 +41,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -193,17 +200,76 @@ internal class BatchChapterTranslator(
         tracker: TranslationBatchProgressTracker? = null,
         naturalPageIndexes: Map<String, Int> = emptyMap(),
     ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
-        if (orderedStreams.isEmpty()) {
-            // T911 slice 3 (R4): a zero-page chapter must terminate its tracker.
-            // The empty ordered set keeps this a DISTINCT zero-page failure
-            // (0 total pages, aborted with a reason) — the sheet's hero renders
-            // it as FAILED_NO_PAGES, never as a numeric 0/0 or a generic error.
-            tracker?.abort(
-                remainingPageKeys = emptySet(),
-                reason = "Chapter has no readable pages to translate",
+        // T922 Phase 4 (plan §4.4 batch): ONE schedule trace per batch
+        // invocation, created before engine setup and closed in the OUTER
+        // finally on EVERY exit (empty batch, setup timeout, OOM, pause,
+        // failure, cancellation, success). The closure is exception-safe even
+        // when the teardown/flush/callback region itself throws.
+        val scheduleTrace = TranslationPipelineDiagnostics.startSchedule(
+            mode = TranslationTraceMode.BATCH,
+            origin = TranslationTraceMode.BATCH,
+            chapterRaw = chapter.name,
+            pages = orderedStreams.size.takeIf { it > 0 },
+        )
+        BatchTranslationDiagnostics.noteActiveSchedule(scheduleTrace)
+        var scheduleOutcome = TranslationTraceOutcome.TEARDOWN_EXCEPTION
+        try {
+            if (orderedStreams.isEmpty()) {
+                // T911 slice 3 (R4): a zero-page chapter must terminate its tracker.
+                // The empty ordered set keeps this a DISTINCT zero-page failure
+                // (0 total pages, aborted with a reason) — the sheet's hero renders
+                // it as FAILED_NO_PAGES, never as a numeric 0/0 or a generic error.
+                scheduleOutcome = TranslationTraceOutcome.SKIP
+                tracker?.abort(
+                    remainingPageKeys = emptySet(),
+                    reason = "Chapter has no readable pages to translate",
+                )
+                return null
+            }
+            return translateBatchTraced(
+                manga = manga,
+                chapter = chapter,
+                source = source,
+                store = store,
+                orderedStreams = orderedStreams,
+                tracker = tracker,
+                naturalPageIndexes = naturalPageIndexes,
+                scheduleTrace = scheduleTrace,
+                setScheduleOutcome = { scheduleOutcome = it },
             )
-            return null
+        } catch (e: CancellationException) {
+            scheduleOutcome = TranslationTraceOutcome.CANCELLED
+            throw e
+        } catch (t: Throwable) {
+            scheduleOutcome = TranslationTraceOutcome.TEARDOWN_EXCEPTION
+            throw t
+        } finally {
+            // Exactly-once terminal summary; the Phase 2 handle is idempotent
+            // and never throws, so teardown exceptions above cannot starve it.
+            scheduleTrace.end(scheduleOutcome)
+            if (BatchTranslationDiagnostics.activeSchedule === scheduleTrace) {
+                BatchTranslationDiagnostics.noteActiveSchedule(null)
+            }
         }
+    }
+
+    /**
+     * T922 Phase 4: the traced batch body (verbatim pre-existing shell) plus
+     * schedule-scoped stage measurement. [setScheduleOutcome] publishes the
+     * typed terminal for every planned exit; unplanned throwaways keep the
+     * [TranslationTraceOutcome.TEARDOWN_EXCEPTION] default set by the caller.
+     */
+    private suspend fun translateBatchTraced(
+        manga: Manga,
+        chapter: Chapter,
+        source: HttpSource,
+        store: ChapterTranslationStore,
+        orderedStreams: List<Pair<String, () -> InputStream>>,
+        tracker: TranslationBatchProgressTracker?,
+        naturalPageIndexes: Map<String, Int>,
+        scheduleTrace: TranslationScheduleTrace,
+        setScheduleOutcome: (TranslationTraceOutcome) -> Unit,
+    ): eu.kanade.translation.pipeline.batch.ReconciliationResult? {
         val resolvedNaturalPageIndexes = if (naturalPageIndexes.isNotEmpty()) {
             naturalPageIndexes
         } else {
@@ -224,21 +290,40 @@ internal class BatchChapterTranslator(
             // the candidate that explains the durable state.
             val durableFailurePageKeys = ConcurrentHashMap.newKeySet<String>()
             try {
-                withNativeLane(
-                    timeoutMs = ONNX_PHASE_TIMEOUT_MS,
-                    chapterId = chapter.id,
-                    chapterName = chapter.name,
-                    pageKey = "<engine-setup>",
-                    onTimeout = {
-                        store.invalidateGeneration("engine setup timeout chapter=${chapter.name}")
-                    },
-                ) {
-                    engineRebuildMutex.withLock {
-                        ensureEnginesBuiltFor(fromLang, toLang)
+                // T922 Phase 4: schedule-scoped engine_setup stage; the span
+                // settles on every exit, including a teardown-lane throw.
+                val engineSetupSpan = scheduleTrace.beginStage(
+                    TranslationTraceStage.ENGINE_SETUP,
+                )
+                var engineSetupTimedOut = false
+                val engineSetupResult = try {
+                    withNativeLane(
+                        timeoutMs = ONNX_PHASE_TIMEOUT_MS,
+                        chapterId = chapter.id,
+                        chapterName = chapter.name,
+                        pageKey = "<engine-setup>",
+                        onTimeout = {
+                            engineSetupTimedOut = true
+                            store.invalidateGeneration("engine setup timeout chapter=${chapter.name}")
+                        },
+                    ) {
+                        engineRebuildMutex.withLock {
+                            ensureEnginesBuiltFor(fromLang, toLang)
+                        }
                     }
-                } ?: run {
+                } catch (t: Throwable) {
+                    engineSetupSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+                    throw t
+                }
+                engineSetupSpan.end(
+                    if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.SUCCESS,
+                )
+                if (engineSetupResult == null) {
                     // Phase 3: no batch page lease outlives its run, whatever exit
                     // path the batch takes.
+                    setScheduleOutcome(
+                        if (engineSetupTimedOut) TranslationTraceOutcome.TIMEOUT else TranslationTraceOutcome.FAILURE,
+                    )
                     store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                     // T911 slice 3: an engine-setup failure is an exceptional
                     // exit — terminate the tracker with the typed reason instead
@@ -301,13 +386,27 @@ internal class BatchChapterTranslator(
                 // page under the same natural key cannot reuse old artifacts.
                 // This is an I/O-only preflight; no detector/OCR/inpaint or
                 // translator work is invoked for a matching completed page.
-                val sourceFingerprints = coroutineScope {
-                    orderedStreams.map { (pageKey, streamFn) ->
-                        async(Dispatchers.IO) {
-                            pageKey to (computeSourceFingerprint(streamFn) ?: UNKNOWN_SOURCE_FINGERPRINT)
-                        }
-                    }.awaitAll().toMap()
+                // T922 Phase 4: schedule-scoped source_fingerprint stage.
+                val fingerprintSpan = scheduleTrace.beginStage(
+                    TranslationTraceStage.SOURCE_FINGERPRINT,
+                    items = orderedStreams.size,
+                )
+                val sourceFingerprints = try {
+                    coroutineScope {
+                        orderedStreams.map { (pageKey, streamFn) ->
+                            async(Dispatchers.IO) {
+                                pageKey to (computeSourceFingerprint(streamFn) ?: UNKNOWN_SOURCE_FINGERPRINT)
+                            }
+                        }.awaitAll().toMap()
+                    }
+                } catch (t: Throwable) {
+                    fingerprintSpan.end(TranslationTraceOutcome.FAILURE, error = t)
+                    throw t
                 }
+                fingerprintSpan.end(
+                    TranslationTraceOutcome.SUCCESS,
+                    items = sourceFingerprints.size,
+                )
 
                 // T909 Phase 20.3: resume planning (page plans, provenance stamping,
                 // translation failure fence, context-frontier bookkeeping, resume gate)
@@ -516,6 +615,7 @@ internal class BatchChapterTranslator(
                     abortBatchCandidateFn = ::abortBatchCandidate,
                     scheduleListener = batchScheduleListener,
                     deferredPages = deferredPages,
+                    scheduleTrace = scheduleTrace,
                 )
 
 
@@ -524,6 +624,7 @@ internal class BatchChapterTranslator(
                     translatorWorker = batchLaneWorkers.translatorWorker,
                     renderJoin = renderJoin,
                     listener = batchScheduleListener,
+                    scheduleTrace = scheduleTrace,
                     awaitLeaseHandback = { pageKey ->
                         // T917 D3 (design §3.2): the deferring owner commits its
                         // terminal stage BEFORE releasing its lease (the manual
@@ -567,6 +668,7 @@ internal class BatchChapterTranslator(
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT batch aborted (OOM), skipping reconciler finish: chapter=${chapter.name}"
                     }
+                    setScheduleOutcome(TranslationTraceOutcome.FAILURE)
                     // T911 slice 3: the OOM abort is a terminal exit — emit the
                     // aborted snapshot with the still-untranslated pages instead
                     // of leaving a live nonterminal tracker behind.
@@ -625,6 +727,7 @@ internal class BatchChapterTranslator(
                     } else {
                         tracker?.finish(reconciliation)
                     }
+                    setScheduleOutcome(effectiveOutcome.status.toScheduleOutcome())
                     logcat(LogPriority.WARN) {
                         "TachiyomiAT batch stopped before tail reconciliation chapter=${chapter.name} " +
                             "status=${effectiveOutcome.status} anchor=${effectiveOutcome.anchorPageKey?.let(ShortHash::hash)}"
@@ -660,6 +763,7 @@ internal class BatchChapterTranslator(
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"
                 }
+                setScheduleOutcome(TranslationTraceOutcome.SUCCESS)
                 store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                 return@withGeneration reconciliation
             } finally {
@@ -675,12 +779,30 @@ internal class BatchChapterTranslator(
                 batchWriteIdentities.clear()
                 store.releaseAllPageLeases(PageWriteOrigin.BATCH)
                 withContext(NonCancellable) {
-                    store.flush()
+                    // T922 Phase 4: schedule-scoped store_flush; try/finally so
+                    // the span settles even when the flush itself throws.
+                    val flushSpan = scheduleTrace.beginStage(
+                        TranslationTraceStage.STORE_FLUSH,
+                        lane = TranslationTraceLane.STORAGE,
+                    )
+                    try {
+                        store.flush()
+                    } finally {
+                        flushSpan.end()
+                    }
                 }
                 store.reconcileArtifactRetention()
                 onBatchClosed?.invoke(manga, chapter, source, store)
             }
         }
+    }
+
+    /** T922 Phase 4: typed schedule terminal per pass-1 stop status. */
+    private fun BatchPass1Status.toScheduleOutcome(): TranslationTraceOutcome = when (this) {
+        BatchPass1Status.PAUSED -> TranslationTraceOutcome.PAUSE
+        BatchPass1Status.PERSISTENCE_REJECTED -> TranslationTraceOutcome.PERSISTENCE_REJECTED
+        BatchPass1Status.FAILED -> TranslationTraceOutcome.FAILURE
+        BatchPass1Status.COMPLETED -> TranslationTraceOutcome.SUCCESS
     }
 
     /**

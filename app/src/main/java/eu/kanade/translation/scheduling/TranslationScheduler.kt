@@ -15,6 +15,12 @@ import eu.kanade.translation.model.isCleanedImageReady
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
 import eu.kanade.translation.model.lifecycle
+import eu.kanade.translation.diagnostics.TranslationPipelineDiagnostics
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceMode
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTracePlan
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.translator.TranslatorComputeClass
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +46,7 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * TachiyomiAT: owns single-page (and auto) translation jobs so they can be
@@ -279,6 +286,21 @@ class TranslationScheduler(
         }
     }
 
+    /**
+     * T922 Phase 3 amendment §10.7 reachability inventory: the ONLY caller of
+     * this method is [eu.kanade.translation.TranslationManager.requestAutoWindow],
+     * which itself has zero callers in live code (repo-wide sweep: definitions
+     * plus this delegation only; the reader drives
+     * [updateAutoWindow]/[RollingAutoCoordinator]). The path is dormant, so it
+     * is NOT wired into the trace schema and its internal legacy logs are
+     * intentionally retained for the dormant code path. Deprecation is the
+     * audit marker; actual removal/re-wiring is a separate reviewed change
+     * (this phase must not delete it).
+     */
+    @Deprecated(
+        message = "Superseded by updateAutoWindow/RollingAutoCoordinator. No live callers remain; " +
+            "scheduled for removal or trace wiring in a separate change (T922 §10.7).",
+    )
     fun requestAutoWindow(
         session: TranslationSession,
         requests: List<TranslationPageRequest>,
@@ -652,10 +674,31 @@ class TranslationScheduler(
                 activePageJobs.remove(jobKey)
             }
             logcat(LogPriority.DEBUG) { "translatePage: launching $jobKey" }
-            val job = scope.launch {
+            // T922 Phase 3 (plan §4.4 Manual): the schedule + run are created
+            // BEFORE the coroutine is launched, and the lease_wait span starts
+            // here so its duration is the request→coroutine-start scheduler
+            // queue. The terminal run event is owned by the invoke-on-completion
+            // handler below (outside the coroutine), so even a job cancelled
+            // before its body starts emits exactly one idempotent run_end.
+            val schedule = TranslationPipelineDiagnostics.startSchedule(
+                mode = TranslationTraceMode.MANUAL,
+                origin = TranslationTraceMode.MANUAL,
+                chapterRaw = chapter.name,
+                pages = 1,
+            )
+            val run = TranslationPipelineDiagnostics.startRun(
+                schedule = schedule,
+                pageRaw = pageKey,
+                pageIndex = null,
+                plan = TranslationTracePlan.FRESH,
+            )
+            val leaseWaitSpan = run.beginStage(TranslationTraceStage.LEASE_WAIT)
+            val traceOutcome = AtomicReference<TranslationTraceOutcome?>(null)
+            val job = scope.launch(TranslationTrace.elementFor(run)) {
                 var cancelledMidFlight = false
                 var outcome: SinglePageOutcome? = null
                 try {
+                    leaseWaitSpan.end()
                     outcome = executor.translateSinglePage(manga, chapter, source, pageKey, force = force)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     // Cancelled (chapter switch / reader exit / Stop all) after the
@@ -663,13 +706,25 @@ class TranslationScheduler(
                     // page is stranded RUNNING because the store is never updated as
                     // the coroutine tears down. Flag for the finally to reset it.
                     cancelledMidFlight = true
+                    traceOutcome.set(TranslationTraceOutcome.CANCELLED)
                     throw e
                 } catch (e: Throwable) {
+                    // T922 §10.4 legacy-log migration: the raw page/chapter/manga
+                    // identifiers this line used to carry are covered by the
+                    // correlated trace run (sid/rid + keyed page token), so the
+                    // retained log carries only a bounded errorType token plus
+                    // the throwable for native/ORT stack diagnostics (default
+                    // logcat tag, outside the TachiyomiAT.Translation privacy
+                    // boundary).
+                    traceOutcome.set(TranslationTraceOutcome.FAILURE)
                     logcat(LogPriority.ERROR, e) {
-                        "TachiyomiAT single-page translation failed: pageKey=$pageKey " +
-                            "chapter=${chapter.name} manga=${manga.title} source=${source.id}"
+                        "TachiyomiAT single-page translation failed: " +
+                            "errorType=${TranslationPipelineDiagnostics.classifyError(e).type}"
                     }
                 } finally {
+                    if (traceOutcome.get() == null) {
+                        traceOutcome.set(mapManualTraceOutcome(outcome))
+                    }
                     outcome?.let { manualOutcomes[jobKey] = it }
                     synchronized(activePageJobs) {
                         activePageJobs.remove(jobKey)
@@ -706,7 +761,37 @@ class TranslationScheduler(
                 }
             }
             activePageJobs[jobKey] = job
+            // Terminal ownership (amendment §10.2): completion handlers run after
+            // the coroutine's finally, so the mapped outcome above is visible;
+            // if the job was cancelled before the body ever ran, the handler
+            // still closes run + schedule exactly once (idempotent terminals).
+            job.invokeOnCompletion { _ ->
+                val outcomeToken = traceOutcome.get()
+                    ?: if (job.isCancelled) {
+                        TranslationTraceOutcome.CANCELLED
+                    } else {
+                        TranslationTraceOutcome.TEARDOWN_EXCEPTION
+                    }
+                leaseWaitSpan.end()
+                run.end(outcomeToken)
+                schedule.end(outcomeToken)
+            }
         }
+    }
+
+    /**
+     * T922 Phase 3: bounded trace outcome for a manual single-page outcome
+     * value. Attached-family jobs never owned the page; Rejected means the
+     * request performed no owned work (dedup residual / persistence reject).
+     */
+    private fun mapManualTraceOutcome(outcome: SinglePageOutcome?): TranslationTraceOutcome = when (outcome) {
+        null -> TranslationTraceOutcome.TEARDOWN_EXCEPTION
+        is SinglePageOutcome.Completed -> TranslationTraceOutcome.SUCCESS
+        is SinglePageOutcome.Paused -> TranslationTraceOutcome.PAUSE
+        is SinglePageOutcome.Failed -> TranslationTraceOutcome.FAILURE
+        is SinglePageOutcome.Stalled -> TranslationTraceOutcome.FAILURE
+        is SinglePageOutcome.Attached, is SinglePageOutcome.AttachedUnresolved -> TranslationTraceOutcome.ATTACHED
+        is SinglePageOutcome.Rejected -> TranslationTraceOutcome.SKIP
     }
 
     /**

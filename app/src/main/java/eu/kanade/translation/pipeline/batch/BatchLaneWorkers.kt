@@ -12,6 +12,12 @@ import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_M
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.data.TranslationProvider
+import eu.kanade.translation.diagnostics.TranslationScheduleTrace
+import eu.kanade.translation.diagnostics.TranslationTrace
+import eu.kanade.translation.diagnostics.TranslationTraceLane
+import eu.kanade.translation.diagnostics.TranslationTraceOutcome
+import eu.kanade.translation.diagnostics.TranslationTraceProvider
+import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
 import eu.kanade.translation.model.PageStage
@@ -145,6 +151,14 @@ internal class BatchLaneWorkers(
     private val abortBatchCandidateFn: suspend (String, String) -> Unit,
     private val scheduleListener: BatchScheduleListener = BatchScheduleListener.NOOP,
     private val deferredPages: MutableMap<String, PageWriteOrigin?>? = null,
+
+    /**
+     * T922 Phase 4: the shared batch schedule. Provider-envelope work is
+     * measured ONCE at schedule scope here (plan §4.4 batch, §9) — never
+     * multiplied into page runs; per-page provider waiting is attributed
+     * separately by the coordinator. Null when tracing is off → fail-open.
+     */
+    private val scheduleTrace: TranslationScheduleTrace? = null,
 ) {
 
     val chunkCounter = AtomicLong(0L)
@@ -310,8 +324,52 @@ internal class BatchLaneWorkers(
      * recent source=>target pairs (voice/terminology continuity);
      * a page whose output is a structural refusal fails alone — it
      * never cascades to later pages of the envelope.
+     *
+     * T922 Phase 4: the envelope duration is measured ONCE at SCHEDULE scope
+     * (a stage=translate lane=provider schedule event carrying the existing
+     * opaque envelope ID) — it is never multiplied into page runs. Per-page
+     * provider waiting is attributed separately by the coordinator's
+     * translate spans. The span settles with a typed outcome on every exit.
      */
     suspend fun translateChunkAi(
+        chunk: TranslationContextChunk,
+        rolling: String,
+    ): ChunkCompletionOutcome {
+        val envelopeSpan = scheduleTrace?.beginStage(
+            TranslationTraceStage.TRANSLATE,
+            lane = TranslationTraceLane.PROVIDER,
+            provider = TranslationTraceProvider.REMOTE,
+            items = chunk.blockCount,
+        )
+        val envelopeToken = BatchTranslationDiagnostics.traceEnvelopeToken(chunk.pages.keys)
+        val outcome = try {
+            translateChunkAiTraced(chunk, rolling)
+        } catch (t: Throwable) {
+            envelopeSpan?.end(
+                outcome = if (t is CancellationException) {
+                    TranslationTraceOutcome.CANCELLED
+                } else {
+                    TranslationTraceOutcome.FAILURE
+                },
+                error = t,
+                envelope = envelopeToken,
+            )
+            throw t
+        }
+        envelopeSpan?.end(
+            outcome = when (outcome) {
+                is ChunkCompletionOutcome.Completed -> TranslationTraceOutcome.SUCCESS
+                is ChunkCompletionOutcome.Paused -> TranslationTraceOutcome.PAUSE
+                is ChunkCompletionOutcome.Failed -> TranslationTraceOutcome.FAILURE
+                is ChunkCompletionOutcome.Unexpected -> TranslationTraceOutcome.FAILURE
+                is ChunkCompletionOutcome.PersistenceRejected -> TranslationTraceOutcome.PERSISTENCE_REJECTED
+            },
+            envelope = envelopeToken,
+        )
+        return outcome
+    }
+
+    private suspend fun translateChunkAiTraced(
         chunk: TranslationContextChunk,
         rolling: String,
     ): ChunkCompletionOutcome {
@@ -839,13 +897,19 @@ internal class BatchLaneWorkers(
             }
             var producedTarget: PageTranslation? = null
             var producedDecoded: DecodedPage? = null
-            withNativeLane(
-                timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
-                chapterId = chapter.id,
-                chapterName = chapter.name,
-                pageKey = pageKey,
-                onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
-            ) {
+            // T922 Phase 4: page queueing on the pipeline native lane. The
+            // span settles when admission grants (first statement inside the
+            // lane) and is re-settled (idempotently) on timeout/failure.
+            val nativeQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
+            val ocrLaneResult: Unit? = try {
+                withNativeLane(
+                    timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
+                    chapterId = chapter.id,
+                    chapterName = chapter.name,
+                    pageKey = pageKey,
+                    onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
+                ) {
+                    nativeQueueSpan.end()
                 val latest = store.state.value[pageKey]
                 val innerGate = resumeGate(latest)
                 if (innerGate == BatchResumeGate.SKIP_ALL) {
@@ -931,6 +995,18 @@ internal class BatchLaneWorkers(
                     abortBatchCandidate(pageKey, rejected.message ?: "OCR persistence rejected")
                     throw rejected
                 }
+                }
+            } catch (t: Throwable) {
+                nativeQueueSpan.end(
+                    if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
+                    error = t,
+                )
+                throw t
+            }
+            if (ocrLaneResult == null) {
+                // Timeout path: admission never granted (or onTimeout ran);
+                // the queue span settles exactly once via CAS.
+                nativeQueueSpan.end(TranslationTraceOutcome.TIMEOUT)
             }
             val target = producedTarget ?: run {
                 releaseDecodedPage(producedDecoded)
@@ -1003,14 +1079,20 @@ internal class BatchLaneWorkers(
                 target.cleanedBitmap = null
                 return
             }
+            // T922 Phase 4: page queueing on the pipeline native lane for the
+            // inpaint pass. The span settles on admission (first statement in
+            // the lane) and is re-settled (idempotently) on timeout/failure.
+            val inpaintQueueSpan = TranslationTrace.beginStage(TranslationTraceStage.NATIVE_QUEUE)
+            val inpaintLaneResult: Unit?
             try {
-                withNativeLane(
+                inpaintLaneResult = withNativeLane(
                     timeoutMs = SINGLE_PAGE_TIMEOUT_MS,
                     chapterId = chapter.id,
                     chapterName = chapter.name,
                     pageKey = pageKey,
                     onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                 ) {
+                    inpaintQueueSpan.end()
                     val handedOffDecoded = nativeHandoff as? DecodedPage
                     var decoded: DecodedPage? = handedOffDecoded
                     try {
@@ -1070,27 +1152,53 @@ internal class BatchLaneWorkers(
                         if (handedOffDecoded == null) releaseDecodedPage(decoded)
                     }
                 }
+            } catch (cancelled: CancellationException) {
+                inpaintQueueSpan.end(TranslationTraceOutcome.CANCELLED, error = cancelled)
+                throw cancelled
             } catch (rejected: BatchPersistenceRejectedException) {
+                inpaintQueueSpan.end(TranslationTraceOutcome.FAILURE, error = rejected)
                 tracker?.markInpaintFailed(pageKey, rejected.message ?: "Inpaint persistence rejected")
                 abortBatchCandidate(pageKey, rejected.message ?: "Inpaint persistence rejected")
                 throw rejected
+            }
+            if (inpaintLaneResult == null) {
+                // Timeout path: admission never granted (or onTimeout ran);
+                // the queue span settles exactly once via CAS.
+                inpaintQueueSpan.end(TranslationTraceOutcome.TIMEOUT)
             }
             // Persist the cleaned bitmap off the native permit (matches the prior
             // producer's post-inpaint publication step) and hand it to render.
             val cleaned = target.cleanedBitmap
             if (cleaned != null) {
                 val companionDir = ensureCompanionDir()
-                val published = persistCleanedBitmap(
-                    target,
-                    cleaned,
-                    companionDir,
-                    pageKey,
-                    chapter.name,
-                    store,
-                    source.id,
-                    manga.id,
-                    chapter.id,
-                    expectedPrecondition = batchWritePrecondition(pageKey),
+                // T922 Phase 4: cleaned-image publication substage with typed
+                // outcome; settles even when the persist call throws.
+                val persistSpan = TranslationTrace.beginStage(
+                    TranslationTraceStage.CLEANED_PERSIST,
+                    lane = TranslationTraceLane.STORAGE,
+                )
+                val published = try {
+                    persistCleanedBitmap(
+                        target,
+                        cleaned,
+                        companionDir,
+                        pageKey,
+                        chapter.name,
+                        store,
+                        source.id,
+                        manga.id,
+                        chapter.id,
+                        expectedPrecondition = batchWritePrecondition(pageKey),
+                    )
+                } catch (t: Throwable) {
+                    persistSpan.end(
+                        if (t is CancellationException) TranslationTraceOutcome.CANCELLED else TranslationTraceOutcome.FAILURE,
+                        error = t,
+                    )
+                    throw t
+                }
+                persistSpan.end(
+                    if (published == null) TranslationTraceOutcome.FAILURE else TranslationTraceOutcome.SUCCESS,
                 )
                 published?.let { refreshBatchIdentity(pageKey, it) }
                 if (published == null) {
