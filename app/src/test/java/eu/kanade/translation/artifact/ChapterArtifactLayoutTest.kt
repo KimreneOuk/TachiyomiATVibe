@@ -104,6 +104,60 @@ class ChapterArtifactLayoutTest {
             "c_artifacts/glossary",
             // T917 Phase 3 (D9): the attempt-ledger sidecar directory.
             "c_artifacts/attempts",
+            // T924 Stage 1 (T924-SC-21): versioned sidecar directories.
+            "c_artifacts/runs",
+            "c_artifacts/ocr",
+            "c_artifacts/analysis",
+            "c_artifacts/profiles",
+            "c_artifacts/envelopes",
+            "c_artifacts/layout",
+            "c_artifacts/color",
         )
     }
+
+    @Test
+    fun `T924 sidecar names are content-addressed, deterministic, and managed`() {
+        val layout = ChapterArtifactLayout("c")
+        val fingerprint = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        val segment = "f-${sha256Hex(fingerprint)}"
+
+        // Chapter-scoped kinds hash the content fingerprint into f-<sha256>.json.
+        val run = layout.runRecordFile(fingerprint)
+        run shouldBe "c_artifacts/runs/$segment.json"
+        run shouldBe layout.runRecordFile(fingerprint)
+        layout.analysisChunkFile(fingerprint) shouldBe "c_artifacts/analysis/$segment.json"
+        layout.profileFile(fingerprint) shouldBe "c_artifacts/profiles/$segment.json"
+        layout.envelopePlanFile(fingerprint) shouldBe "c_artifacts/envelopes/$segment.json"
+        listOf(
+            run,
+            layout.analysisChunkFile(fingerprint),
+            layout.profileFile(fingerprint),
+            layout.envelopePlanFile(fingerprint),
+        ).forEach { path -> layout.isManagedPath(path) shouldBe true }
+
+        // Page-scoped kinds nest under the injective page segment.
+        val ocr = layout.ocrCheckpointFile("pg/1.jpg", fingerprint)
+        ocr shouldBe "c_artifacts/ocr/${layout.pageSegment("pg/1.jpg")}/$segment.json"
+        ocr shouldBe layout.ocrCheckpointFile("pg/1.jpg", fingerprint)
+        layout.ocrCheckpointFile("pg_1.jpg", fingerprint) shouldNotBe ocr
+        layout.layoutPlanFile("pg/1.jpg", fingerprint) shouldBe
+            "c_artifacts/layout/${layout.pageSegment("pg/1.jpg")}/$segment.json"
+        layout.colorPreparationFile("pg/1.jpg", fingerprint) shouldBe
+            "c_artifacts/color/${layout.pageSegment("pg/1.jpg")}/$segment.json"
+        listOf(
+            ocr,
+            layout.layoutPlanFile("pg/1.jpg", fingerprint),
+            layout.colorPreparationFile("pg/1.jpg", fingerprint),
+        ).forEach { path -> layout.isManagedPath(path) shouldBe true }
+
+        // Distinct content fingerprints never share a sidecar name.
+        val other = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        layout.runRecordFile(other) shouldNotBe run
+        layout.ocrCheckpointFile("pg/1.jpg", other) shouldNotBe ocr
+    }
+
+    private fun sha256Hex(value: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
 }

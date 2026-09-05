@@ -198,6 +198,18 @@ class UniFileChapterDocumentIo(
 }
 
 /**
+ * T924-SC-06: the single canonical artifact Json configuration. Every durable
+ * artifact document — manifests, sidecars, and the T924 versioned DTOs —
+ * serializes through this shared instance (compact UTF-8 output,
+ * declaration-order fields, defaults encoded); creating bespoke `Json`
+ * instances for durable documents is forbidden.
+ */
+val ArtifactDocumentJson: Json = Json {
+    ignoreUnknownKeys = true
+    encodeDefaults = true
+}
+
+/**
  * TachiyomiAT: crash-safe document publication (lifecycle contract §§14–15).
  *
  * Publish sequence: write `name.tmp`, re-read and validate it, rotate the
@@ -217,10 +229,7 @@ class AtomicChapterDocuments(
     internal val io: ChapterDocumentIo,
 ) {
     @PublishedApi
-    internal val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = true
-    }
+    internal val json = ArtifactDocumentJson
 
     fun exists(name: String): Boolean = io.exists(name)
 

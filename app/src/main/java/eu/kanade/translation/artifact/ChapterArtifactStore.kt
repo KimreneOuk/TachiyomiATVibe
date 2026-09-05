@@ -235,6 +235,103 @@ class ChapterArtifactStore(
     fun publishAttemptLedger(document: ChapterAttemptLedgerDocument): Boolean =
         documents.publishJson(layout.attemptLedgerFileName, document)
 
+    // ------------------------------------------------------------------
+    // T924 Stage 1 (T924-SC-19/20/22): versioned sidecar publication.
+    //
+    // The ONLY publication mechanism for the new sidecar kinds is the
+    // existing AtomicChapterDocuments publish path, and the ONLY
+    // manifest-update mechanism is publishManifestInternal. Sidecars are
+    // published FIRST (content-addressed names, T924-SC-21), and one atomic
+    // manifest publication installs their pointers SECOND — a crash between
+    // the two leaves at most an orphan sidecar, never a dangling pointer.
+    // On any precondition or publication failure the prior manifest stays
+    // authoritative (T924-SC-22); orphan sidecars are reclaimed exclusively
+    // by retention store-reachability sweeps.
+    // ------------------------------------------------------------------
+
+    /** Outcome of reading a versioned sidecar through a manifest pointer. */
+    sealed interface RunRecordRead {
+        /** Semantically valid at a supported schema version. */
+        data class Usable(val record: ChapterRunRecord) : RunRecordRead
+
+        /**
+         * T924-SC-13: a newer schema owns the semantics — unusable for
+         * planning (artifact = ABSENT for decisions), bytes preserved
+         * untouched, never deleted or overwritten by this version.
+         */
+        data class UnsupportedVersion(val schemaVersion: Int) : RunRecordRead
+
+        /**
+         * T924-SC-17: missing, corrupt (parse failure, kind mismatch, bound
+         * violation — quarantined as `.corrupt` by the document layer), or
+         * otherwise invalid. Treated as ABSENT for planning; corrupt bytes
+         * stay quarantined while a pointer references them.
+         */
+        data object Absent : RunRecordRead
+    }
+
+    /** Reads the pointed run record with unknown-version preservation (T924-SC-12/13). */
+    fun readRunRecord(pointer: SidecarPointer): RunRecordRead {
+        if (!pointer.isWellFormed()) return RunRecordRead.Absent
+        val bytes = io.read(pointer.fileName) ?: return RunRecordRead.Absent
+        val record = runCatching {
+            documents.json.decodeFromStream<ChapterRunRecord>(bytes.inputStream())
+        }.getOrNull() ?: run {
+            documents.quarantineCorrupt(pointer.fileName)
+            return RunRecordRead.Absent
+        }
+        if (record.schemaVersion > ChapterRunRecord.SCHEMA_VERSION) {
+            return RunRecordRead.UnsupportedVersion(record.schemaVersion)
+        }
+        if (record.kind != ChapterRunRecord.KIND || !record.isSemanticallyValid) {
+            documents.quarantineCorrupt(pointer.fileName)
+            return RunRecordRead.Absent
+        }
+        return RunRecordRead.Usable(record)
+    }
+
+    /**
+     * T924-SC-20/SC-22 run-record publication: validates the record, publishes
+     * the immutable sidecar into the content-addressed `runs/` directory
+     * FIRST, then installs the [ChapterArtifactManifest.activeRun] pointer in
+     * ONE manifest publication. Any failure leaves the prior manifest
+     * authoritative and at most an orphan sidecar behind.
+     */
+    @Synchronized
+    fun publishActiveRun(
+        manifest: ChapterArtifactManifest,
+        record: ChapterRunRecord,
+        contentFingerprint: String,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome {
+        record.validationError()?.let { reason ->
+            return TransactionOutcome.Rejected("run record invalid: $reason")
+        }
+        if (!contentFingerprint.isSha256Hex()) {
+            return TransactionOutcome.Rejected("run record content fingerprint is not sha256 hex")
+        }
+        val fileName = layout.runRecordFile(contentFingerprint)
+        return publishSidecarPointers(
+            manifest = manifest,
+            sidecars = listOf(
+                SidecarPublication(fileName, contentFingerprint) {
+                    documents.publishJson(fileName, record)
+                },
+            ),
+            updatePointers = { current ->
+                current.copy(
+                    activeRun = SidecarPointer(
+                        fileName = fileName,
+                        schemaVersion = ChapterRunRecord.SCHEMA_VERSION,
+                        contentFingerprint = contentFingerprint,
+                    ),
+                )
+            },
+            nowEpochMs = nowEpochMs,
+        )
+    }
+
+
     /**
      * Records durable terminal failure/retry metadata (lifecycle contract
      * §13) and persists it crash-safely. [RecordOutcome.NotStored] means the
@@ -280,6 +377,59 @@ class ChapterArtifactStore(
         ) : TransactionOutcome
 
         data class Rejected(val reason: String) : TransactionOutcome
+    }
+
+    /**
+     * One immutable sidecar to publish before its manifest pointer may move
+     * (T924-SC-19/20). [contentFingerprint] is the semantic content identity
+     * the caller established for the sidecar (it must match the pointer's);
+     * [publish] must go through [AtomicChapterDocuments.publish]/[AtomicChapterDocuments.publishJson].
+     */
+    class SidecarPublication(
+        val fileName: String,
+        val contentFingerprint: String,
+        val publish: () -> Boolean,
+    )
+
+    /**
+     * T924-SC-20: the generic sidecar-then-pointer transaction. Every
+     * [SidecarPublication] is durably published FIRST, then [updatePointers]
+     * installs all pointers in ONE atomic manifest publication. Crash or
+     * failure windows:
+     *
+     * - before a sidecar publish completes → nothing visible;
+     * - between sidecar and manifest publication → orphan sidecar files only;
+     * - during the manifest publication → `.bak` rotation semantics.
+     *
+     * On any precondition or publication failure the prior manifest stays
+     * authoritative (T924-SC-22) and pointers never dangle.
+     */
+    @Synchronized
+    fun publishSidecarPointers(
+        manifest: ChapterArtifactManifest,
+        sidecars: List<SidecarPublication>,
+        updatePointers: (ChapterArtifactManifest) -> ChapterArtifactManifest,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome {
+        staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
+        sidecars.forEach { sidecar ->
+            if (!ChapterArtifactLayout.isSafeSegment(sidecar.fileName.substringAfterLast('/'))) {
+                return TransactionOutcome.Rejected("unsafe sidecar file name: file=${sidecar.fileName}")
+            }
+            if (!layout.isManagedPath(sidecar.fileName)) {
+                return TransactionOutcome.Rejected("sidecar outside the managed tree: file=${sidecar.fileName}")
+            }
+        }
+        sidecars.forEach { sidecar ->
+            if (!sidecar.publish()) {
+                return TransactionOutcome.Rejected("sidecar publication failed: file=${sidecar.fileName}")
+            }
+        }
+        val updated = updatePointers(manifest).copy(updatedAtEpochMs = nowEpochMs)
+        if (!publishManifestInternal(updated)) {
+            return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
+        }
+        return TransactionOutcome.Committed(updated)
     }
 
     /** Reads a complete live-store page snapshot referenced by a manifest pointer. */
@@ -957,7 +1107,22 @@ class ChapterArtifactStore(
 
     private fun parseManifest(bytes: ByteArray): ChapterArtifactManifest? = runCatching {
         documents.json.decodeFromStream<ChapterArtifactManifest>(bytes.inputStream())
-    }.getOrNull()
+    }.getOrNull()?.normalizeSupportedSchema()
+
+    /**
+     * T924-SC-04: new code reads manifest schema versions 2 and 3 and writes
+     * v3. Older supported manifests load with the additive pointer fields
+     * defaulted and are normalized in memory to the current schema version so
+     * the next publication rewrites them as v3 — new pointers can never ride
+     * inside an old-schema document a rolled-back build would strip. Future
+     * schemas stay untouched (the `>` guard must still see and refuse them).
+     */
+    private fun ChapterArtifactManifest.normalizeSupportedSchema(): ChapterArtifactManifest =
+        if (schemaVersion in 1 until ChapterArtifactManifest.SCHEMA_VERSION) {
+            copy(schemaVersion = ChapterArtifactManifest.SCHEMA_VERSION)
+        } else {
+            this
+        }
 
     private fun recoverPrimaryFromBackupOrNull(backup: ChapterArtifactManifest?): ChapterArtifactManifest? {
         if (backup == null) return null

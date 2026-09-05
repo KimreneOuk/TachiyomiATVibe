@@ -58,6 +58,11 @@ internal class ArtifactRetention(
         if (path.endsWith(".tmp")) return false
         // Backups of reachable files survive one sweep.
         if (reachable.any { reachablePath -> path == "$reachablePath.bak" }) return true
+        // T924-SC-17: a corrupt sidecar's quarantined `.corrupt` bytes are
+        // reclaimed only when no manifest pointer references the sidecar.
+        if (reachable.any { reachablePath -> path == "$reachablePath.corrupt" || path.startsWith("$reachablePath.corrupt.") }) {
+            return true
+        }
         if (!path.startsWith("${layout.imagesRootDirectory}/")) return false
         val fileName = path.removeSuffix(".bak").substringAfterLast('/')
         return retainedImageGenerations.any { generationSegment -> fileName.startsWith("$generationSegment-") }
@@ -109,6 +114,16 @@ internal class ArtifactRetention(
         // it is not manifest-pointed, so without this rule the retention sweep
         // would delete the crash-loop evidence it exists to preserve.
         add(layout.attemptLedgerFileName)
+        // T924 Stage 1 (T924-SC-20): every new manifest pointer keeps its
+        // sidecar reachable; sidecars no pointer references remain orphans
+        // and are reclaimed here.
+        manifest.activeRun?.fileName?.let(::add)
+        manifest.ocrCheckpoints.values.forEach { pointer -> add(pointer.fileName) }
+        manifest.analysisChunks.forEach { pointer -> add(pointer.fileName) }
+        manifest.profile?.fileName?.let(::add)
+        manifest.envelopePlan?.fileName?.let(::add)
+        manifest.layoutPlans.values.forEach { pointer -> add(pointer.fileName) }
+        manifest.colorPreparations.values.forEach { pointer -> add(pointer.fileName) }
     }
 }
 

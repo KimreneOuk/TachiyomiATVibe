@@ -1194,4 +1194,76 @@ class ChapterArtifactStoreTest {
 
         cancelled.manifest.pages.getValue("page.jpg").displayState shouldBe PageDisplayState.TEXTLESS_COMPLETE
     }
+
+    // ------------------------------------------------------------------
+    // T924 Stage 1 gate 1.1 (T924-SC-04): a pre-change schemaVersion-2
+    // manifest loads cleanly under the new code (additive pointer fields
+    // defaulted) and survives a write cycle rewritten as schemaVersion 3
+    // with the old data intact.
+    // ------------------------------------------------------------------
+
+    private fun v2FixtureBytes(): ByteArray =
+        javaClass.getResourceAsStream("/t924/manifest-v2.json")!!.readBytes()
+
+    @Test
+    fun `pre-change v2 manifest fixture loads cleanly with new pointer fields defaulted`() {
+        val io = FakeChapterDocumentIo()
+        io.write(layout.manifestFileName, v2FixtureBytes())
+
+        val loaded = artifactStore(io).loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+
+        loaded.migratedFromLegacy shouldBe false
+        loaded.resyncedFromLegacy shouldBe false
+        val manifest = loaded.manifest
+        // In-memory normalization stamps the current schema version.
+        manifest.schemaVersion shouldBe 3
+        manifest.authority shouldBe ManifestAuthority.ARTIFACTS
+        // Old data intact.
+        manifest.chapterKey shouldBe "Chapter 1"
+        manifest.expectedPageCount shouldBe 1
+        manifest.expectedPageCountTrusted shouldBe true
+        manifest.legacySource shouldBe LegacySourceIdentity(
+            sha256 = "4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c",
+            lengthBytes = 4211L,
+            lastModifiedMs = 1757030000000L,
+        )
+        manifest.glossary shouldBe GlossaryPointer(
+            fileName = "Chapter 1_artifacts/glossary/chapter.glossary.1.json",
+            version = 1,
+            versionFingerprint = "2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a",
+        )
+        val page = manifest.pages.getValue("0001.jpg")
+        page.pageVersion shouldBe 3L
+        page.committed.shouldNotBeNull().generationId shouldBe "g-1757040000000-0001jpg-5baa61e4"
+        page.displayState shouldBe PageDisplayState.DISPLAY_READY
+        // New additive pointer fields load with neutral defaults.
+        manifest.activeRun shouldBe null
+        manifest.ocrCheckpoints shouldBe emptyMap()
+        manifest.analysisChunks shouldBe emptyList()
+        manifest.profile shouldBe null
+        manifest.envelopePlan shouldBe null
+        manifest.layoutPlans shouldBe emptyMap()
+        manifest.colorPreparations shouldBe emptyMap()
+    }
+
+    @Test
+    fun `v2 manifest survives a write cycle rewritten as v3 with old data intact`() {
+        val io = FakeChapterDocumentIo()
+        io.write(layout.manifestFileName, v2FixtureBytes())
+        val store = artifactStore(io)
+        val loaded = store.loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L)).manifest
+
+        store.publishManifest(loaded.copy(updatedAtEpochMs = 999L)) shouldBe true
+
+        String(io.read(layout.manifestFileName)!!).contains("\"schemaVersion\":3") shouldBe true
+        val reparsed = store.readManifest().shouldNotBeNull()
+        reparsed shouldBe loaded.copy(updatedAtEpochMs = 999L)
+        // The old page record and glossary pointer survive the rewrite byte-for-byte.
+        reparsed.pages shouldBe loaded.pages
+        reparsed.glossary shouldBe loaded.glossary
+        reparsed.legacyMigration shouldBe loaded.legacyMigration
+        // Second load with unchanged bytes takes the fast path and stays equal.
+        val reloaded = store.loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+        reloaded.manifest shouldBe reparsed
+    }
 }

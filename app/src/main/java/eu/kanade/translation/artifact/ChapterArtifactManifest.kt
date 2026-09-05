@@ -54,9 +54,33 @@ data class ChapterArtifactManifest(
     val cutoverAtEpochMs: Long? = null,
     val migratedFromLegacyAtEpochMs: Long? = null,
     val updatedAtEpochMs: Long = 0L,
+    // T924-SC-04 additive pointer extensions: appended at the END of the
+    // declaration (T924-SC-06) with neutral defaults so schemaVersion 2
+    // manifests decode unchanged. A v3 rewrite stamps the current
+    // [SCHEMA_VERSION] so a rolled-back build refuses the chapter read-only
+    // instead of silently stripping these pointers on rewrite.
+    /** The one Batch run record attempt currently owning the chapter, if any. */
+    val activeRun: SidecarPointer? = null,
+    /** Origin-neutral per-page OCR checkpoints; key = pageKey. */
+    val ocrCheckpoints: Map<String, SidecarPointer> = emptyMap(),
+    /** Validated analysis chunk results in chunk-ordinal order. */
+    val analysisChunks: List<SidecarPointer> = emptyList(),
+    /** The frozen chapter translation profile. */
+    val profile: ProfilePointer? = null,
+    /** The durable whole-chapter envelope plan. */
+    val envelopePlan: SidecarPointer? = null,
+    /** Persisted per-page layout draw plans; key = pageKey. */
+    val layoutPlans: Map<String, SidecarPointer> = emptyMap(),
+    /** Persisted per-page color/style preparations; key = pageKey. */
+    val colorPreparations: Map<String, SidecarPointer> = emptyMap(),
 ) {
     companion object {
-        const val SCHEMA_VERSION = 2
+        /**
+         * T924-SC-04: bumped 2 → 3 with the pointer extensions. New code reads
+         * v2 and v3 and writes v3; the verified future-schema guard refuses
+         * versions greater than this read-only.
+         */
+        const val SCHEMA_VERSION = 3
     }
 }
 
@@ -345,6 +369,63 @@ data class ChapterAttemptLedgerDocument(
         const val MAX_CONSECUTIVE_UNRESOLVED = 3
     }
 }
+
+// ---------------------------------------------------------------------------
+// T924 Stage 1 (schemas contract §1.8): generalized manifest pointers.
+// ---------------------------------------------------------------------------
+
+/**
+ * T924-SC-03: generalization of the [GlossaryPointer] pattern — a pointer to
+ * one immutable, content-addressed sidecar document. [contentFingerprint] is
+ * the semantic content identity of the pointed document (64 lowercase hex);
+ * the file name is `f-<sha256(contentFingerprint)>.json` under its stage
+ * directory (T924-SC-21).
+ */
+@Serializable
+data class SidecarPointer(
+    /** File name under the chapter artifact tree (a managed relative path). */
+    val fileName: String,
+    /** Schema version of the pointed document at pointer-install time. */
+    val schemaVersion: Int = 1,
+    val contentFingerprint: String,
+) {
+    /** Structural well-formedness; reachability is the store's concern. */
+    fun isWellFormed(): Boolean =
+        fileName.isNotBlank() && schemaVersion > 0 && contentFingerprint.isSha256Hex()
+}
+
+/**
+ * T924-SC-03: [SidecarPointer] extended with the profile's monotonic
+ * [version] (operational ordering only, T924-FP-05) and its input identity.
+ * Flat data class following the [GlossaryPointer] precedent.
+ */
+@Serializable
+data class ProfilePointer(
+    val fileName: String,
+    val schemaVersion: Int = 1,
+    val contentFingerprint: String,
+    /** Monotonic per chapter; operational ordering ONLY (T924-FP-05). */
+    val version: Int,
+    /** `ProfileInputFingerprint` (T924-FP-04). */
+    val profileInputFingerprint: String,
+) {
+    fun isWellFormed(): Boolean =
+        fileName.isNotBlank() &&
+            schemaVersion > 0 &&
+            version >= 1 &&
+            contentFingerprint.isSha256Hex() &&
+            profileInputFingerprint.isSha256Hex()
+
+    fun toSidecarPointer(): SidecarPointer = SidecarPointer(
+        fileName = fileName,
+        schemaVersion = schemaVersion,
+        contentFingerprint = contentFingerprint,
+    )
+}
+
+/** True when [value] is 64 lowercase hexadecimal characters (a SHA-256 form). */
+internal fun String.isSha256Hex(): Boolean =
+    length == 64 && all { it in '0'..'9' || it in 'a'..'f' }
 
 /**
  * Run ownership and lifecycle state of one generation
