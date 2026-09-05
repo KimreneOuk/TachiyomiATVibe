@@ -1,8 +1,10 @@
 package eu.kanade.translation.artifact
 
+import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.stableFingerprint
 import java.security.MessageDigest
+import java.text.Normalizer
 
 /**
  * TachiyomiAT: deterministic provenance fingerprints for the chapter artifact
@@ -160,6 +162,345 @@ object StageFingerprints {
         page.blocks.map { it.stableFingerprint() },
     )
 
+    /**
+     * T924-FP-02 (`PageOcrContentFingerprint`): semantic content fingerprint
+     * over one page's OCR payload. Inputs, in fixed order: corpus schema
+     * version; pageKey; naturalPageIndex; source sha256 + width + height +
+     * orientation; detection fingerprint (or the explicit [DETECTION_SKIPPED]
+     * marker when detection was legitimately skipped); OCR engine/model/config
+     * fingerprint (the persisted `StageFingerprints.ocr(...)` value);
+     * per-block, in reading order: stable block id, NFC/LF-normalized source
+     * text, geometry (`toRawBits` of x/y/width/height/angle) and label; the
+     * textless state; the ordered `inpaintMaskBoxes` content (with label) plus
+     * `inpaintMaskRevision`.
+     *
+     * Excluded per T924-FP-01: block `translation`, `userEditedAt`, colors,
+     * score-derived data (already covered by the detection fingerprint),
+     * candidate/page versions, sidecar file names, generation ids. A pure OCR
+     * content key must not change when a user edits target text — deliberately
+     * differs from `TranslationBlock.stableFingerprint()`.
+     */
+    fun pageOcrContentFingerprint(
+        pageKey: String,
+        naturalPageIndex: Int?,
+        sourceSha256: String,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        sourceOrientation: String,
+        detectionFingerprint: String?,
+        ocrFingerprint: String,
+        textless: Boolean,
+        inpaintMaskRevision: Int,
+        blocks: List<OcrBlockContent>,
+        inpaintMaskBoxes: List<InpaintMaskBox>,
+    ): String {
+        val fields = mutableListOf<Any?>(
+            "page-ocr-content",
+            OCR_CORPUS_SCHEMA_VERSION,
+            pageKey,
+            naturalPageIndex,
+            sourceSha256,
+            sourceWidth,
+            sourceHeight,
+            sourceOrientation,
+            detectionFingerprint ?: DETECTION_SKIPPED,
+            ocrFingerprint,
+        )
+        blocks.forEachIndexed { index, block ->
+            fields += "block[$index]"
+            fields += block.stableBlockId
+            fields += normalizeText(block.sourceText)
+            fields += block.x.toRawBits()
+            fields += block.y.toRawBits()
+            fields += block.width.toRawBits()
+            fields += block.height.toRawBits()
+            fields += block.angle.toRawBits()
+            fields += block.label
+        }
+        fields += textless
+        inpaintMaskBoxes.forEachIndexed { index, box ->
+            fields += "mask[$index]"
+            fields += box.x1
+            fields += box.y1
+            fields += box.x2
+            fields += box.y2
+            fields += box.label
+        }
+        fields += inpaintMaskRevision
+        return fingerprintIndexed(fields)
+    }
+
+    /**
+     * T924-FP-03 (`OcrCorpusFingerprint`): order-stable semantic fingerprint
+     * over the chapter's full OCR corpus. Inputs: corpus schema version;
+     * expected page count (+ trusted flag); the sequence of per-page
+     * [OcrBlockContent]-level [StageFingerprints.pageOcrContentFingerprint]
+     * values, length-prefixed and indexed.
+     *
+     * When [naturalOrderProven] is true, [pages] must be in natural page
+     * order. When false (unprovable page ordering — the never-guess rule for
+     * `naturalPageIndex`), the entries are hashed in sorted pageKey order and
+     * `ordered=false` is recorded as an explicit field. Re-running OCR with
+     * identical outputs does not change the value; page insertion, removal,
+     * or reorder does.
+     *
+     * Interpretation note (recorded in the T924-S1 fingerprints report): the
+     * pageKey is fed explicitly next to each page content fingerprint so the
+     * sorted-key fallback order is itself hashed, not just implied.
+     */
+    fun ocrCorpusFingerprint(
+        pages: List<Pair<String, String>>,
+        expectedPageCount: Int,
+        expectedPageCountTrusted: Boolean,
+        naturalOrderProven: Boolean,
+    ): String {
+        val orderedPages =
+            if (naturalOrderProven) pages else pages.sortedBy { it.first }
+        val fields = mutableListOf<Any?>(
+            "ocr-corpus",
+            OCR_CORPUS_SCHEMA_VERSION,
+            expectedPageCount,
+            expectedPageCountTrusted,
+        )
+        orderedPages.forEachIndexed { index, (pageKey, contentFingerprint) ->
+            fields += "page[$index]"
+            fields += pageKey
+            fields += contentFingerprint
+        }
+        fields += naturalOrderProven
+        return fingerprintIndexed(fields)
+    }
+
+    /**
+     * T924-FP-04 (`ProfileInputFingerprint`): identity of everything the
+     * analysis/profile stage consumes. Absent user/series authority is the
+     * explicit [AUTHORITY_ABSENT] literal — absence is a value, never an
+     * empty-string collision. Any single input change changes the value; an
+     * OCR re-run over an identical corpus does not.
+     */
+    fun profileInputFingerprint(
+        ocrCorpusFingerprint: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        analysisSchemaVersion: Int,
+        analysisPromptVersion: Int,
+        analyzerProvider: String,
+        analyzerModel: String,
+        analyzerCredentialSignature: String?,
+        analyzerPolicyFingerprint: String,
+        userAuthorityFingerprint: String?,
+        seriesAuthorityFingerprint: String?,
+    ): String = fingerprintIndexed(
+        "profile-input",
+        ocrCorpusFingerprint,
+        sourceLanguage,
+        targetLanguage,
+        analysisSchemaVersion,
+        analysisPromptVersion,
+        analyzerProvider,
+        analyzerModel,
+        analyzerCredentialSignature,
+        analyzerPolicyFingerprint,
+        userAuthorityFingerprint ?: AUTHORITY_ABSENT,
+        seriesAuthorityFingerprint ?: AUTHORITY_ABSENT,
+    )
+
+    /**
+     * T924-FP-05 / T924-SC-10 (`ProfileContentFingerprint`): SHA-256 over the
+     * canonical re-encoded JSON of the validated profile (decode-then-encode
+     * under the shared [ArtifactDocumentJson] instance). Operational fields
+     * (`version`, `frozenAtEpochMs`, `sourceRunId`) are zeroed in the hashing
+     * copy only — stored bytes are never mutated. `contentFingerprint` itself
+     * is blanked (a value cannot contain its own hash);
+     * `profileInputFingerprint` stays a hashed field.
+     */
+    fun profileContentFingerprint(profile: ChapterTranslationProfile): String {
+        val hashingView = profile.copy(
+            version = 0,
+            contentFingerprint = "",
+            frozenAtEpochMs = 0L,
+            sourceRunId = "",
+        )
+        val canonical = ArtifactDocumentJson.encodeToString(
+            ChapterTranslationProfile.serializer(),
+            hashingView,
+        )
+        return sha256Hex(canonical.toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * T924-FP-06: translation provenance fingerprint (per page or per
+     * envelope). Inputs: [ProfileContentFingerprint]; translator signature
+     * (provider/model/credential + protocol version); prompt version; source
+     * and target language; per contributing page, in order: that page's
+     * [StageFingerprints.pageOcrContentFingerprint] plus the ordered stable
+     * block ids and per-block source-text hashes actually sent (use
+     * [StageFingerprints.sourceExcerptHash]).
+     *
+     * Envelope policy and envelope-plan fingerprints are deliberately NOT
+     * inputs: an envelope-policy-only change must not invalidate an otherwise
+     * compatible translation (invalidation matrix row 7). Rolling-context and
+     * profile-subset fingerprints are recorded separately by callers, never
+     * merged here.
+     */
+    fun translationProvenanceFingerprint(
+        profileContentFingerprint: String,
+        translatorProvider: String,
+        translatorModel: String,
+        translatorCredentialSignature: String?,
+        translatorProtocolVersion: Int,
+        promptVersion: Int,
+        sourceLanguage: String,
+        targetLanguage: String,
+        contributingPages: List<TranslationProvenancePage>,
+    ): String {
+        val fields = mutableListOf<Any?>(
+            "translation-provenance",
+            profileContentFingerprint,
+            translatorProvider,
+            translatorModel,
+            translatorCredentialSignature,
+            translatorProtocolVersion,
+            promptVersion,
+            sourceLanguage,
+            targetLanguage,
+        )
+        contributingPages.forEachIndexed { pageIndex, page ->
+            fields += "contributing[$pageIndex]"
+            fields += page.pageOcrContentFingerprint
+            page.orderedStableBlockIds.forEachIndexed { blockIndex, blockId ->
+                fields += "block[$blockIndex]"
+                fields += blockId
+            }
+            page.orderedBlockSourceTextHashes.forEachIndexed { hashIndex, hash ->
+                fields += "sent-hash[$hashIndex]"
+                fields += hash
+            }
+        }
+        return fingerprintIndexed(fields)
+    }
+
+    /**
+     * T924-FP-07: layout compatibility fingerprint. Carries every existing
+     * [StageFingerprints.layout] input (same order, first seven parameters)
+     * plus ALL of: font asset identity (asset name + asset sha256),
+     * typeface/style, paint measurement flags, layout planner algorithm
+     * version, `platformShapingKey`, stroke policy version, decode sample
+     * size, and source-image page dimensions (`toRawBits`-encoded floats).
+     *
+     * Presentation transforms (SSIV zoom/pan/holder size/orientation) are
+     * never inputs (final-target §3). Any single component change invalidates
+     * the persisted layout (invalidation matrix row 9).
+     */
+    fun layoutCompatibilityFingerprint(
+        translationArtifactId: String,
+        cleanedImageArtifactIdOrOriginalSourceId: String,
+        layoutEngineVersion: String,
+        fontIdentity: String,
+        fontScalePreferences: String,
+        stylePreferences: String,
+        outputDimensions: String,
+        fontAssetName: String,
+        fontAssetSha256: String,
+        typefaceStyle: String,
+        paintMeasurementFlags: String,
+        layoutPlannerVersion: Int,
+        platformShapingKey: String,
+        strokePolicyVersion: Int,
+        decodeSampleSize: Int,
+        sourcePageWidth: Float,
+        sourcePageHeight: Float,
+    ): String = fingerprintIndexed(
+        "layout-compatible",
+        translationArtifactId,
+        cleanedImageArtifactIdOrOriginalSourceId,
+        layoutEngineVersion,
+        fontIdentity,
+        fontScalePreferences,
+        stylePreferences,
+        outputDimensions,
+        fontAssetName,
+        fontAssetSha256,
+        typefaceStyle,
+        paintMeasurementFlags,
+        layoutPlannerVersion,
+        platformShapingKey,
+        strokePolicyVersion,
+        decodeSampleSize,
+        sourcePageWidth.toRawBits(),
+        sourcePageHeight.toRawBits(),
+    )
+
+    /**
+     * T924-FP-08: color/style fingerprint. Inputs: color estimator version;
+     * consumed image identity — cleaned file name + `inpaintRevision`, or
+     * [DisplayBaseKind.ORIGINAL_SOURCE] marker + source sha256 when the
+     * original pixels were consumed; per-block geometry fingerprints consumed
+     * by estimation; page dimensions. Font, planner version and translated
+     * text are NOT inputs (color depends on pixels + geometry only).
+     */
+    fun colorStyleFingerprint(
+        colorEstimatorVersion: Int,
+        cleanedImageFileName: String?,
+        cleanedInpaintRevision: Int?,
+        originalSourceSha256: String?,
+        blockGeometryFingerprints: List<String>,
+        pageWidth: Float,
+        pageHeight: Float,
+    ): String {
+        val cleaned = cleanedImageFileName != null
+        val fields = mutableListOf<Any?>(
+            "color-style",
+            colorEstimatorVersion,
+            if (cleaned) DisplayBaseKind.CLEANED_IMAGE.name else DisplayBaseKind.ORIGINAL_SOURCE.name,
+        )
+        if (cleaned) {
+            fields += cleanedImageFileName
+            fields += cleanedInpaintRevision
+        } else {
+            fields += originalSourceSha256
+        }
+        blockGeometryFingerprints.forEachIndexed { index, fp ->
+            fields += "geometry[$index]"
+            fields += fp
+        }
+        fields += pageWidth.toRawBits()
+        fields += pageHeight.toRawBits()
+        return fingerprintIndexed(fields)
+    }
+
+    /** Convenience mapping of a live OCR snapshot onto [OcrBlockContent] order. */
+    fun pageOcrContentBlocks(page: PageTranslation): List<OcrBlockContent> =
+        page.blocks.map { block ->
+            OcrBlockContent(
+                stableBlockId = block.blockId,
+                sourceText = block.text,
+                x = block.x,
+                y = block.y,
+                width = block.width,
+                height = block.height,
+                angle = block.angle,
+                label = block.label,
+            )
+        }
+
+    /**
+     * T924-SC-09 text normalization applied before any hashing: Unicode NFC,
+     * CRLF/CR normalized to LF. No case folding, no whitespace collapsing
+     * (case and spacing are semantic in CJK/source text).
+     */
+    fun normalizeText(text: String): String =
+        Normalizer.normalize(text, Normalizer.Form.NFC)
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+
+    /**
+     * T924-SC-09 `sourceExcerptHash`: SHA-256 of the NFC/LF-normalized
+     * excerpt, lowercase hex.
+     */
+    fun sourceExcerptHash(excerpt: String): String =
+        sha256Hex(normalizeText(excerpt).toByteArray(Charsets.UTF_8))
+
     private fun fingerprint(vararg fields: Any?): String = fingerprintIndexed(fields.toList())
 
     /**
@@ -189,4 +530,49 @@ object StageFingerprints {
     private fun StringBuilder.appendField(value: String) {
         append(value.length).append(':').append(value).append('|')
     }
+
+    /** Schema version of the T924 OCR corpus content input set (FP-02/FP-03). */
+    const val OCR_CORPUS_SCHEMA_VERSION = 1
+
+    /** Explicit marker for a legitimately skipped detection stage (FP-02). */
+    const val DETECTION_SKIPPED = "SKIPPED"
+
+    /** Explicit absence value for authority fingerprints (FP-04); never "". */
+    const val AUTHORITY_ABSENT = "ABSENT"
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(bytes)
+            .joinToString("") { byte -> "%02x".format(byte) }
 }
+
+/**
+ * One OCR block's content-facing fields consumed by
+ * [StageFingerprints.pageOcrContentFingerprint] (T924-FP-02). Only the fields
+ * listed there are carried; translation, colors, score, panel/bubble context
+ * and masks are deliberately absent.
+ */
+data class OcrBlockContent(
+    /** OCR canonical block id (e.g. `p3_b12`); null encodes as `<null>`. */
+    val stableBlockId: String?,
+    val sourceText: String,
+    val x: Float,
+    val y: Float,
+    val width: Float,
+    val height: Float,
+    val angle: Float,
+    val label: Int,
+)
+
+/**
+ * One contributing page's actually-translated content for
+ * [StageFingerprints.translationProvenanceFingerprint] (T924-FP-06). The
+ * hashes are over the NFC/LF-normalized source text actually sent (use
+ * [StageFingerprints.sourceExcerptHash]); envelope ids and envelope policy
+ * are deliberately absent (T924-FP-01, matrix row 7).
+ */
+data class TranslationProvenancePage(
+    val pageOcrContentFingerprint: String,
+    val orderedStableBlockIds: List<String>,
+    val orderedBlockSourceTextHashes: List<String>,
+)
