@@ -57,6 +57,15 @@ data class RunConfigSnapshot(
     val analysisPolicy: AnalysisPolicySnapshot = AnalysisPolicySnapshot(),
     val envelopePolicy: EnvelopePolicySnapshot = EnvelopePolicySnapshot(),
     val readingOrderVersion: Int,
+    /**
+     * T924-FF-01d: the FF-01 value read once at dispatch and frozen into the
+     * run snapshot. Optional so pre-field records (written with the flag as a
+     * phaseCounters key only) decode unchanged; it participates in
+     * frozenRunConfigFingerprint by construction (a flag flip is a config
+     * change, so ST-03.1 starts a new run — per-page checkpoint reuse is
+     * unaffected, being keyed by content fingerprints).
+     */
+    val flagProfilePipeline: Boolean? = null,
 )
 
 /** Analysis policy fields frozen at RUN_SNAPSHOT (values owned by T924-AP-*). */

@@ -619,23 +619,63 @@ internal class BatchChapterTranslator(
                 )
 
 
-                val coordinator = SequentialBatchCoordinator(
-                    nativeWorker = batchLaneWorkers.nativeWorker,
-                    translatorWorker = batchLaneWorkers.translatorWorker,
-                    renderJoin = renderJoin,
-                    listener = batchScheduleListener,
-                    scheduleTrace = scheduleTrace,
-                    awaitLeaseHandback = { pageKey ->
-                        // T917 D3 (design §3.2): the deferring owner commits its
-                        // terminal stage BEFORE releasing its lease (the manual
-                        // boundary's finally), so observing the release is
-                        // sufficient — the terminal state is already published
-                        // when the rescan re-offers the page and the worker's
-                        // externally-completed gate routes it to SKIP_ALL.
-                        store.awaitPageLeaseRelease(pageKey, LEASE_HANDBACK_WAIT_MS)
-                    },
-                    deferredPages = deferredPages,
-                )
+                /**
+                 * T924-FF-01a: THE single FF-01 dispatch point. The flag is
+                 * read ONCE per run here (T924-FF-01d — the value is frozen
+                 * into the flagged run's ChapterRunRecord; mid-run settings
+                 * changes never re-read it, T924-FF-01e/ST-15). Flag ON
+                 * constructs the T924 [ChapterProfileBatchCoordinator] (WP4
+                 * shell: OCR preflight through its stop/diagnostic terminal);
+                 * flag OFF constructs the legacy [SequentialBatchCoordinator]
+                 * unchanged (FF-01b byte-for-byte legacy behavior).
+                 */
+                suspend fun runBatchPass1(
+                    orderedPages: List<PageKey>,
+                    computeClass: TranslatorComputeClass,
+                ): BatchPass1Outcome {
+                    val profilePipelineEnabled = translationPreferences
+                        .translationBatchProfilePipeline()
+                        .get()
+                    return when (ChapterProfileBatchCoordinator.dispatchKind(profilePipelineEnabled)) {
+                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE ->
+                            ChapterProfileBatchCoordinator(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                listener = batchScheduleListener,
+                                frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+                                    sourceLang = fromLang.code,
+                                    targetLang = toLang.code,
+                                    ocrEngine = recognitionEngine::class.java.simpleName,
+                                    inpaintMode = inpaintingModeFromPref().name,
+                                    providerKey = textTranslator::class.java.simpleName,
+                                    flagProfilePipeline = profilePipelineEnabled,
+                                ),
+                                orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
+                                    pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
+                                },
+                                flagProfilePipeline = true,
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                            ).runPass1(orderedPages, computeClass)
+                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL ->
+                            SequentialBatchCoordinator(
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                translatorWorker = batchLaneWorkers.translatorWorker,
+                                renderJoin = renderJoin,
+                                listener = batchScheduleListener,
+                                scheduleTrace = scheduleTrace,
+                                awaitLeaseHandback = { pageKey ->
+                                    // T917 D3 (design §3.2): the deferring owner commits its
+                                    // terminal stage BEFORE releasing its lease (the manual
+                                    // boundary's finally), so observing the release is
+                                    // sufficient — the terminal state is already published
+                                    // when the rescan re-offers the page and the worker's
+                                    // externally-completed gate routes it to SKIP_ALL.
+                                    store.awaitPageLeaseRelease(pageKey, LEASE_HANDBACK_WAIT_MS)
+                                },
+                                deferredPages = deferredPages,
+                            ).runPass1(orderedPages, computeClass)
+                    }
+                }
 
                 var pass1Outcome: BatchPass1Outcome? = null
                 try {
@@ -644,7 +684,7 @@ internal class BatchChapterTranslator(
                             pageKey to (resolvedNaturalPageIndexes[pageKey] ?: index)
                         }
 
-                        pass1Outcome = coordinator.runPass1(orderedPages, computeClass)
+                        pass1Outcome = runBatchPass1(orderedPages, computeClass)
                     }
                 } finally {
                     // Only the registry's REMAINING entries need a release here: consumed/
