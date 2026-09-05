@@ -239,6 +239,21 @@ class TranslationPreferences(
 
     fun translationRateLimitSafe() = preferenceStore.getBoolean("translation_rate_limit_safe", false)
 
+    /**
+     * T924-FF-01: contextual-AI chapter-profile Batch pipeline (OCR preflight,
+     * analysis/profile, global envelope translation). Default OFF; consulted
+     * only at Batch coordinator construction. Kill switch: turning it OFF is a
+     * complete rollback of the new pipeline (all T924 artifacts are additive).
+     */
+    fun translationBatchProfilePipeline() = preferenceStore.getBoolean("translation_batch_profile_pipeline", false)
+
+    /**
+     * T924-FF-02: persisted LAYOUT_PREPARE — durable draw-plan publication and
+     * reader hydration with mandatory fallback to the runtime async planner.
+     * Default OFF and independent of FF-01.
+     */
+    fun translationBatchPersistedLayout() = preferenceStore.getBoolean("translation_batch_persisted_layout", false)
+
     //endregion
 
     companion object {
