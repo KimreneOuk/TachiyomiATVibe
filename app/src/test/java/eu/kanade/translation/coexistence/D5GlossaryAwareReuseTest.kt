@@ -24,6 +24,7 @@ import eu.kanade.translation.pipeline.toPrecondition
 import eu.kanade.translation.translator.TextTranslatorLanguage
 import eu.kanade.tachiyomi.source.online.HttpSource
 import io.kotest.assertions.withClue
+import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.mockk.every
 import io.mockk.mockk
@@ -88,16 +89,19 @@ class D5GlossaryAwareReuseTest {
         toLang,
     )
 
+    /** Durable document set + layout, kept so a test can reload the manifest bytes. */
+    private lateinit var d5Documents: AtomicChapterDocuments
+    private lateinit var d5Layout: ChapterArtifactLayout
+
     /**
      * Real store with ARTIFACTS authority over in-memory artifact documents —
      * the minimal production state in which a glossary version exists at all
      * (memory-only stores never publish a manifest glossary pointer).
      */
     private fun artifactBackedStore(pageKeys: List<String>): ChapterTranslationStore {
-        val artifactStore = ChapterArtifactStore(
-            AtomicChapterDocuments(FakeChapterDocumentIo()),
-            ChapterArtifactLayout("D5 Chapter"),
-        )
+        d5Documents = AtomicChapterDocuments(FakeChapterDocumentIo())
+        d5Layout = ChapterArtifactLayout("D5 Chapter")
+        val artifactStore = ChapterArtifactStore(d5Documents, d5Layout)
         // Production fresh-chapter recipe (ChapterTranslationStore.ensureArtifactStoreLocked):
         // migrate the empty legacy snapshot, then flip the authority.
         var manifest = artifactStore
@@ -305,6 +309,58 @@ class D5GlossaryAwareReuseTest {
         withClue("D5 (b): the repaired page is reusable again") {
             decisions.getValue("p0") shouldBe StageDecision.REUSE
         }
+    }
+
+    // ------------------------------------------------------------------
+    // (b2) T924 gate 1.5: glossary-repair reuse survives a manifest v3 rewrite
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `glossary repair reuse stays authoritative after a manifest v3 rewrite cycle`() = runBlocking<Unit> {
+        val store = maturedGlossaryChapter()
+        // The repair pass, exactly as in (b): one paid RUN, then convergence.
+        val pass1 = planner(store, listOf("p0", "p2"), isAi = true)
+        val repaired = pass1.stampBatchProvenance(
+            checkNotNull(store.snapshot("p0").page),
+            BatchStage.TRANSLATION,
+        )
+        commitPage(store, repaired)
+        store.updateGlossary(mapOf("太郎" to "Taro"))
+
+        // The manifest v3 rewrite cycle: every publication rewrites the
+        // manifest as current-version bytes (T924-SC-04), and a restart
+        // reloads them through a fresh artifact store. Republish the loaded
+        // manifest (a real publication primitive) and reload it.
+        val reloadedArtifactStore = ChapterArtifactStore(d5Documents, d5Layout)
+        val manifestBeforeRewrite = reloadedArtifactStore.readManifest().shouldNotBeNull()
+        check(
+            reloadedArtifactStore.publishManifest(
+                manifestBeforeRewrite.copy(updatedAtEpochMs = manifestBeforeRewrite.updatedAtEpochMs + 1),
+            ),
+        ) { "D5 (b2): manifest v3 rewrite publication failed" }
+        val manifest = reloadedArtifactStore.readManifest().shouldNotBeNull()
+        withClue("D5 (b2): the rewrite cycle must preserve the glossary version") {
+            manifest.glossary?.version shouldBe 1
+        }
+
+        // The reloaded durable state still plans zero paid work: the repaired
+        // page's translation provenance stayed authoritative, so the batch
+        // re-run REUSEs it instead of re-billing.
+        val reloadedStore = ChapterTranslationStore(
+            translationFile = null as UniFile?,
+            fileCreator = null,
+            initialPages = listOf("p0", "p2").associateWith { key ->
+                checkNotNull(store.snapshot(key).page) { "D5 (b2): live page $key missing" }
+            },
+            artifactStore = reloadedArtifactStore,
+            initialArtifactManifest = manifest,
+        )
+        val decisions = translationDecisions(planner(reloadedStore, listOf("p0", "p2"), isAi = true))
+        withClue("D5 (b2): zero paid work after the manifest v3 rewrite cycle") {
+            decisions.values.filter { it == StageDecision.RUN } shouldBe emptyList()
+        }
+        decisions.getValue("p0") shouldBe StageDecision.REUSE
+        decisions.getValue("p2") shouldBe StageDecision.TERMINAL_COMPLETE
     }
 
     // ------------------------------------------------------------------

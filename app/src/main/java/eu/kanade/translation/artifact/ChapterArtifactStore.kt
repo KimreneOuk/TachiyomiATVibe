@@ -36,6 +36,25 @@ import tachiyomi.core.common.util.system.logcat
  * legacy record (authority resets to LEGACY), and backup/quarantine rotation
  * remains crash-safe.
  */
+/**
+ * T924-TX-03 close-vs-rebase decision for [ChapterArtifactStore.checkpointOcr].
+ *
+ * - [CLOSE] (default): close the active BATCH candidate (CANCELLED generation
+ *   record, candidate pointer cleared, checkpoint pointer installed in ONE
+ *   manifest publication). Used whenever the page's future ownership is not
+ *   deterministically this Batch run.
+ * - [REBASE]: close the BATCH generation G and open a named successor
+ *   generation G′ (origin BATCH, dependency fingerprint = the checkpoint's
+ *   content fingerprint) in the SAME manifest publication. Used only when the
+ *   same run continues to a later phase for the page and will retain or
+ *   deterministically re-acquire the lease.
+ *
+ * An "origin-neutral open candidate" is not representable: `ArtifactOrigin`
+ * has exactly two durable values (T924-TX-03), so neutrality lives in the
+ * checkpoint sidecar, never in the candidate.
+ */
+enum class OcrCheckpointMode { CLOSE, REBASE }
+
 class ChapterArtifactStore(
     private val documents: AtomicChapterDocuments,
     private val layout: ChapterArtifactLayout,
@@ -332,6 +351,286 @@ class ChapterArtifactStore(
     }
 
 
+    // ------------------------------------------------------------------
+    // T924 Stage 1 Phase 2a: the checkpointOcr transaction (T924-TX-01..).
+    // Contract: Plan/active/2026-09-05_T924_chunk-sizing-and-fast-feedback/
+    // stage0/contracts-state-transactions.md §2. The transaction owns ONLY
+    // the durable publication; the caller keeps the page lease until after
+    // a Committed outcome and releases it as a separate, strictly-later
+    // step (T924-TX-06). Store-generation/pageVersion/leaseToken fencing
+    // (TX-02 inputs 1-3) belongs to the ChapterTranslationStore façade;
+    // this transaction compares the manifest-level identity (inputs 4-6)
+    // against the durable manifest under the whole-manifest CAS.
+    // ------------------------------------------------------------------
+
+    /**
+     * T924-TX-01: atomically publishes the origin-neutral
+     * [PageOcrCheckpoint] sidecar plus its immutable OCR page snapshot, and
+     * closes or rebases the active BATCH candidate — all in ONE manifest
+     * publication (T924-SC-20). Three branches:
+     *
+     * - **Standard CLOSE/REBASE** ([checkpoint.producerGenerationId] != null,
+     *   active BATCH candidate): compares candidateGenerationId,
+     *   artifact pageVersion, and dependency fingerprint against the
+     *   durable manifest (TX-02 inputs 4-6, no grace clause — T924-TX-02.1),
+     *   then CLOSE clears the candidate (CANCELLED record) or REBASE opens a
+     *   successor generation whose dependency fingerprint equals the
+     *   checkpoint content fingerprint (T924-TX-03). The prior committed
+     *   display pointer is never touched (T924-TX-07).
+     * - **Adopt-committed** ([checkpoint.producerGenerationId] == null,
+     *   no active candidate, TX-03.1): requires a committed bundle whose
+     *   OCR content fingerprint equals the checkpoint's; publishes the
+     *   checkpoint sidecar + pointer ONLY. A fingerprint mismatch is
+     *   REJECTED as content drift — Batch must re-plan, not adopt.
+     *
+     * On any precondition or publication failure the prior manifest stays
+     * authoritative (TX-11 BX) and at most an orphan sidecar exists (B1-B2).
+     */
+    @Synchronized
+    fun checkpointOcr(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        expectedPageVersion: Long,
+        expectedDependencyFingerprint: String?,
+        ocrSnapshot: PageTranslation,
+        checkpoint: PageOcrCheckpoint,
+        mode: OcrCheckpointMode = OcrCheckpointMode.CLOSE,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome {
+        staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
+        checkpoint.validationError()?.let { reason ->
+            return TransactionOutcome.Rejected("checkpoint invalid: $reason")
+        }
+        if (checkpoint.pageKey != pageKey) {
+            return TransactionOutcome.Rejected(
+                "checkpoint pageKey mismatch: checkpoint=${checkpoint.pageKey} transaction=$pageKey",
+            )
+        }
+        val page = manifest.pages[pageKey]
+            ?: return TransactionOutcome.Rejected("page missing: pageKey=$pageKey")
+        if (manifest.authority != ManifestAuthority.ARTIFACTS) {
+            return TransactionOutcome.Rejected(
+                "manifest is not artifact-authoritative: authority=${manifest.authority}",
+            )
+        }
+        if (page.pageVersion != expectedPageVersion) {
+            return TransactionOutcome.Rejected(
+                "stale page version: pageKey=$pageKey expected=$expectedPageVersion actual=${page.pageVersion}",
+            )
+        }
+        val snapshotFileName = checkpoint.ocrPageSnapshotPointer.fileName
+        if (checkpoint.ocrPageSnapshotPointer.contentFingerprint != StageFingerprints.pageSnapshot(ocrSnapshot)) {
+            return TransactionOutcome.Rejected("ocr snapshot pointer fingerprint mismatch: pageKey=$pageKey")
+        }
+        val candidate = page.candidate
+        val checkpointFileName = layout.ocrCheckpointFile(pageKey, checkpoint.ocrContentFingerprint)
+        val ocrRecord = StageArtifactRecord(
+            status = if (ocrSnapshot.isTextlessTerminal) ArtifactStageStatus.TEXTLESS else ArtifactStageStatus.READY,
+            fingerprint = checkpoint.ocrFingerprint,
+            origin = checkpoint.producedByOrigin,
+            artifactFileName = snapshotFileName,
+            updatedAtEpochMs = nowEpochMs,
+        )
+        val ocrSnapshotCopy = ocrSnapshot.detachedCopy()
+        val sidecars = mutableListOf(
+            SidecarPublication(snapshotFileName, checkpoint.ocrPageSnapshotPointer.contentFingerprint) {
+                documents.publishJson(snapshotFileName, ocrSnapshotCopy)
+            },
+            SidecarPublication(checkpointFileName, checkpoint.ocrContentFingerprint) {
+                documents.publishJson(checkpointFileName, checkpoint)
+            },
+        )
+        val producerGenerationId = checkpoint.producerGenerationId
+        var successorGenerationId: String? = null
+        var sweepAfterCommit = false
+        val updatedPage: PageArtifactRecord
+        val updatedActiveCandidateIds: Set<String>
+        if (producerGenerationId != null) {
+            if (candidate == null) {
+                return TransactionOutcome.Rejected("candidate missing: pageKey=$pageKey")
+            }
+            if (candidate.generationId != producerGenerationId) {
+                return TransactionOutcome.Rejected(
+                    "candidate mismatch: pageKey=$pageKey expected=$producerGenerationId actual=${candidate.generationId}",
+                )
+            }
+            if (candidate.origin != ArtifactOrigin.BATCH) {
+                return TransactionOutcome.Rejected(
+                    "candidate provenance mismatch: pageKey=$pageKey expected=BATCH actual=${candidate.origin}",
+                )
+            }
+            // T924-TX-02.1 (fail closed): the store-level grace clause that
+            // disarms the dependency-fingerprint check without a candidate
+            // (patchPage) must never be copied here — C2.
+            if (expectedDependencyFingerprint == null) {
+                return TransactionOutcome.Rejected("dependency fingerprint required for checkpoint: pageKey=$pageKey")
+            }
+            if (candidate.dependencyFingerprint != expectedDependencyFingerprint) {
+                return TransactionOutcome.Rejected("dependency fingerprint changed: pageKey=$pageKey")
+            }
+            val cancelledName = layout.generationFile(candidate.generationId)
+            val cancelledRecord = GenerationRecord(
+                generationId = candidate.generationId,
+                pageKey = pageKey,
+                origin = candidate.origin,
+                lifecycle = GenerationLifecycle.CANCELLED,
+                createdAtEpochMs = candidate.createdAtEpochMs,
+                closedAtEpochMs = nowEpochMs,
+            )
+            sidecars += SidecarPublication(cancelledName, checkpoint.ocrContentFingerprint) {
+                documents.publishJson(cancelledName, cancelledRecord)
+            }
+            when (mode) {
+                OcrCheckpointMode.CLOSE -> {
+                    fun isCandidateOwned(record: StageArtifactRecord?): Boolean =
+                        record != null && record.generationId == candidate.generationId
+                    updatedPage = page.copy(
+                        detection = page.detection.takeUnless(::isCandidateOwned),
+                        // The OCR stage record is re-owned by the manifest:
+                        // it now points at the checkpoint-published snapshot
+                        // sidecar, so retention keeps the snapshot reachable
+                        // through the page record after the candidate clears.
+                        ocr = ocrRecord,
+                        inpaint = page.inpaint.takeUnless(::isCandidateOwned),
+                        translation = page.translation.takeUnless(::isCandidateOwned),
+                        layout = page.layout.takeUnless(::isCandidateOwned),
+                        candidate = null,
+                        displayState = when {
+                            candidate.priorDisplayState == PageDisplayState.TEXTLESS_COMPLETE ->
+                                PageDisplayState.TEXTLESS_COMPLETE
+                            page.displayState == PageDisplayState.TEXTLESS_COMPLETE ->
+                                PageDisplayState.TEXTLESS_COMPLETE
+                            page.committed != null -> PageDisplayState.DISPLAY_READY
+                            else -> PageDisplayState.ORIGINAL_ONLY
+                        },
+                        pageVersion = page.pageVersion + 1,
+                    )
+                    updatedActiveCandidateIds = manifest.activeCandidateGenerationIds - candidate.generationId
+                    sweepAfterCommit = true
+                }
+                OcrCheckpointMode.REBASE -> {
+                    val successorId = newGenerationId(pageKey, nowEpochMs)
+                    successorGenerationId = successorId
+                    val successorName = layout.generationFile(successorId)
+                    val successorRecord = GenerationRecord(
+                        generationId = successorId,
+                        pageKey = pageKey,
+                        origin = ArtifactOrigin.BATCH,
+                        lifecycle = GenerationLifecycle.ACTIVE,
+                        createdAtEpochMs = nowEpochMs,
+                    )
+                    sidecars += SidecarPublication(successorName, checkpoint.ocrContentFingerprint) {
+                        documents.publishJson(successorName, successorRecord)
+                    }
+                    updatedPage = page.copy(
+                        ocr = ocrRecord,
+                        candidate = CandidateGenerationMetadata(
+                            generationId = successorId,
+                            origin = ArtifactOrigin.BATCH,
+                            // T924-TX-03(c): the successor's first write
+                            // validates against the checkpoint content.
+                            dependencyFingerprint = checkpoint.ocrContentFingerprint,
+                            createdAtEpochMs = nowEpochMs,
+                            priorDisplayState = candidate.priorDisplayState ?: page.displayState,
+                        ),
+                        displayState = if (page.committed != null) {
+                            PageDisplayState.REFRESHING_WITH_COMMITTED_RESULT
+                        } else {
+                            PageDisplayState.CANDIDATE_RUNNING
+                        },
+                        pageVersion = page.pageVersion + 1,
+                    )
+                    updatedActiveCandidateIds =
+                        (manifest.activeCandidateGenerationIds - candidate.generationId) + successorId
+                    sweepAfterCommit = true
+                }
+            }
+        } else {
+            // T924-TX-03.1 adopt-committed: no active candidate; a committed
+            // bundle exists whose OCR content fingerprint equals the input.
+            // Publish the checkpoint sidecar + pointer ONLY — the committed
+            // display pointer is untouched by construction (T924-TX-07).
+            if (candidate != null) {
+                return TransactionOutcome.Rejected(
+                    "active candidate present; standard checkpoint branch required: pageKey=$pageKey",
+                )
+            }
+            val committed = page.committed
+                ?: return TransactionOutcome.Rejected(
+                    "committed bundle missing for checkpoint adoption: pageKey=$pageKey",
+                )
+            val committedSnapshotName = committed.pageSnapshotFileName
+                ?: return TransactionOutcome.Rejected("committed bundle snapshot missing: pageKey=$pageKey")
+            val committedSnapshot = documents.readValidated<PageTranslation>(committedSnapshotName)
+                ?: return TransactionOutcome.Rejected("committed bundle snapshot unreadable: pageKey=$pageKey")
+            val committedFingerprint = committedOcrContentFingerprint(committedSnapshot, page.naturalPageIndex, checkpoint)
+            if (committedFingerprint != checkpoint.ocrContentFingerprint) {
+                // Content drift: the durable OCR differs from what the reader
+                // committed under — Batch must re-plan the page, not adopt it.
+                return TransactionOutcome.Rejected("committed OCR content drift: pageKey=$pageKey")
+            }
+            updatedPage = page.copy(ocr = ocrRecord, pageVersion = page.pageVersion + 1)
+            updatedActiveCandidateIds = manifest.activeCandidateGenerationIds
+        }
+        val updated = manifest.copy(
+            pages = manifest.pages + (pageKey to updatedPage),
+            activeCandidateGenerationIds = updatedActiveCandidateIds,
+            ocrCheckpoints = manifest.ocrCheckpoints + (
+                pageKey to SidecarPointer(
+                    fileName = checkpointFileName,
+                    schemaVersion = PageOcrCheckpoint.SCHEMA_VERSION,
+                    contentFingerprint = checkpoint.ocrContentFingerprint,
+                )
+                ),
+            updatedAtEpochMs = nowEpochMs,
+        )
+        val outcome = publishSidecarPointers(
+            manifest = manifest,
+            sidecars = sidecars,
+            updatePointers = { updated },
+            nowEpochMs = nowEpochMs,
+        )
+        return when (outcome) {
+            is TransactionOutcome.Committed ->
+                if (sweepAfterCommit) {
+                    val retention = reconcileRetention(outcome.manifest)
+                    TransactionOutcome.Committed(
+                        outcome.manifest,
+                        successorGenerationId ?: outcome.generationId,
+                        retention.deletedNames,
+                    )
+                } else {
+                    outcome
+                }
+            is TransactionOutcome.Rejected -> outcome
+        }
+    }
+
+    /**
+     * The committed bundle's OCR content fingerprint (T924-FP-02 identity),
+     * computed with the same source identity (including orientation) the
+     * checkpoint claims, so both sides of the T924-TX-03.1 comparison
+     * canonicalize identically.
+     */
+    private fun committedOcrContentFingerprint(
+        snapshot: PageTranslation,
+        naturalPageIndex: Int?,
+        checkpoint: PageOcrCheckpoint,
+    ): String = StageFingerprints.pageOcrContentFingerprint(
+        pageKey = checkpoint.sourceIdentity.pageKey,
+        naturalPageIndex = naturalPageIndex,
+        sourceSha256 = snapshot.sourceFingerprint.orEmpty(),
+        sourceWidth = snapshot.imgWidth.toInt(),
+        sourceHeight = snapshot.imgHeight.toInt(),
+        sourceOrientation = checkpoint.sourceIdentity.orientation.orEmpty(),
+        detectionFingerprint = snapshot.detectionFingerprint,
+        ocrFingerprint = snapshot.ocrFingerprint.orEmpty(),
+        textless = snapshot.isTextlessTerminal,
+        inpaintMaskRevision = snapshot.inpaintRevision,
+        blocks = StageFingerprints.pageOcrContentBlocks(snapshot),
+        inpaintMaskBoxes = snapshot.inpaintMaskBoxes,
+    )
+
     /**
      * Records durable terminal failure/retry metadata (lifecycle contract
      * §13) and persists it crash-safely. [RecordOutcome.NotStored] means the
@@ -431,6 +730,54 @@ class ChapterArtifactStore(
         }
         return TransactionOutcome.Committed(updated)
     }
+
+    /** Outcome of reading an OCR checkpoint through its manifest pointer. */
+    sealed interface OcrCheckpointRead {
+        /** Semantically valid at a supported schema version. */
+        data class Usable(val checkpoint: PageOcrCheckpoint) : OcrCheckpointRead
+
+        /**
+         * T924-SC-13: a newer schema owns the semantics — unusable for
+         * planning (artifact = ABSENT for decisions), bytes preserved
+         * untouched, never deleted or overwritten by this version.
+         */
+        data class UnsupportedVersion(val schemaVersion: Int) : OcrCheckpointRead
+
+        /**
+         * T924-SC-17: missing, corrupt, or otherwise invalid. Treated as
+         * ABSENT for planning; the page re-enters OCR planning (safe
+         * re-derivation) per T924-SC-17.
+         */
+        data object Absent : OcrCheckpointRead
+    }
+
+    /** Reads the pointed OCR checkpoint with unknown-version preservation (T924-SC-12/13). */
+    fun readOcrCheckpoint(pointer: SidecarPointer): OcrCheckpointRead {
+        if (!pointer.isWellFormed()) return OcrCheckpointRead.Absent
+        val bytes = io.read(pointer.fileName) ?: return OcrCheckpointRead.Absent
+        val checkpoint = runCatching {
+            documents.json.decodeFromStream<PageOcrCheckpoint>(bytes.inputStream())
+        }.getOrNull() ?: run {
+            documents.quarantineCorrupt(pointer.fileName)
+            return OcrCheckpointRead.Absent
+        }
+        if (checkpoint.schemaVersion > PageOcrCheckpoint.SCHEMA_VERSION) {
+            return OcrCheckpointRead.UnsupportedVersion(checkpoint.schemaVersion)
+        }
+        if (checkpoint.kind != PageOcrCheckpoint.KIND || !checkpoint.isSemanticallyValid) {
+            documents.quarantineCorrupt(pointer.fileName)
+            return OcrCheckpointRead.Absent
+        }
+        return OcrCheckpointRead.Usable(checkpoint)
+    }
+
+    /** Content-addressed OCR-complete page snapshot sidecar name (existing stage layout). */
+    internal fun ocrStageSnapshotName(pageKey: String, fingerprint: String): String =
+        layout.stageArtifactFile(pageKey, ArtifactStage.OCR, fingerprint)
+
+    /** Content-addressed `PageOcrCheckpoint` sidecar name under `ocr/` (T924-SC-21). */
+    internal fun ocrCheckpointSidecarName(pageKey: String, contentFingerprint: String): String =
+        layout.ocrCheckpointFile(pageKey, contentFingerprint)
 
     /** Reads a complete live-store page snapshot referenced by a manifest pointer. */
     fun readPageSnapshot(fileName: String?): PageTranslation? =

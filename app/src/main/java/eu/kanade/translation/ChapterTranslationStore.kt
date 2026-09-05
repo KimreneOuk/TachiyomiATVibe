@@ -14,12 +14,16 @@ import eu.kanade.translation.artifact.ChapterArtifactManifest
 import eu.kanade.translation.artifact.ChapterArtifactManifestReader
 import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.CleanedImageProbe
+import eu.kanade.translation.artifact.CommittedDisplayRef
 import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.OcrCheckpointMode
+import eu.kanade.translation.artifact.PageOcrCheckpoint
 import eu.kanade.translation.artifact.PartialBatchDetermination
 import eu.kanade.translation.artifact.PartialBatchInfo
 import eu.kanade.translation.artifact.LegacyChapterMigrationSource
 import eu.kanade.translation.artifact.LegacyChapterSnapshot
 import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
@@ -61,6 +65,16 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
+
+/** Durable outcome of the [ChapterTranslationStore.checkpointOcr] transaction. */
+sealed interface CheckpointOcrResult {
+    data class Committed(
+        val snapshot: ChapterTranslationStore.PageSnapshot,
+        val manifest: ChapterArtifactManifest,
+    ) : CheckpointOcrResult
+
+    data class Rejected(val reason: String) : CheckpointOcrResult
+}
 
 /** Durable admission result for a page mutation. */
 sealed interface MutationAdmission {
@@ -942,6 +956,192 @@ class ChapterTranslationStore(
         patch: RenderStagePatch,
         description: String = "render stage merge",
     ): StagePatchResult = applyStagePatch(StagePatch.Render(patch), description)
+
+    // ------------------------------------------------------------------
+    // T924 Stage 1 Phase 2a: checkpointOcr façade (T924-TX-01..TX-06).
+    //
+    // Validates the store-level fencing identity (TX-02 inputs 1-3:
+    // generation, pageVersion, lease token — the lease MUST be held), then
+    // delegates the durable publication to
+    // [ChapterArtifactStore.checkpointOcr] (inputs 4-6 against the durable
+    // manifest). Ordering rule T924-TX-06: validate → publish → install
+    // checkpoint pointer + close/rebase candidate; the caller releases the
+    // page lease ONLY after a Committed outcome — never before.
+    // ------------------------------------------------------------------
+
+    /**
+     * Checkpoints the page's current (already merged) OCR state while the
+     * caller still owns its writer lease. [expectedCandidateGenerationId]
+     * non-null selects the standard CLOSE/REBASE branch against the active
+     * BATCH candidate; null selects the T924-TX-03.1 adopt-committed branch
+     * (no active candidate; the committed bundle's OCR content fingerprint
+     * must equal the live OCR state's). [sourceOrientation] and
+     * [sourceSha256] complete the checkpoint's [SourceIdentity] — the sha
+     * falls back to the live page's recorded source fingerprint; a checkpoint
+     * without a provably complete source identity is rejected (fail closed).
+     */
+    suspend fun checkpointOcr(
+        pageKey: String,
+        generation: Long,
+        expectedPageVersion: Long,
+        expectedLeaseToken: Long,
+        expectedCandidateGenerationId: String?,
+        expectedArtifactPageVersion: Long?,
+        expectedDependencyFingerprint: String?,
+        sourceOrientation: String? = null,
+        sourceSha256: String? = null,
+        expectedPriorOcrFingerprints: List<String>? = null,
+        mode: OcrCheckpointMode = OcrCheckpointMode.CLOSE,
+        nowEpochMs: Long = System.currentTimeMillis(),
+        description: String = "ocr checkpoint",
+    ): CheckpointOcrResult {
+        if (defunct) return rejectedCheckpoint(description, "store is defunct")
+        return mutex.withLock {
+            when (val admission = admitMutationLocked()) {
+                MutationAdmission.Granted -> Unit
+                is MutationAdmission.Rejected -> return@withLock rejectedCheckpoint(
+                    description,
+                    "${admission.code}: ${admission.message}",
+                )
+            }
+            val artifact = artifactStore
+            val manifest = artifactManifest
+            if (artifact == null || manifest == null || manifest.authority != ManifestAuthority.ARTIFACTS) {
+                return@withLock rejectedCheckpoint(description, "artifact authority was not established")
+            }
+            val current = pages[pageKey]
+            val artifactPage = manifest.pages[pageKey]
+            val rejection = when {
+                generation != this.generation -> "generation expected=$generation actual=${this.generation}"
+                current == null -> "page missing"
+                expectedPageVersion != current.pageVersion ->
+                    "pageVersion expected=$expectedPageVersion actual=${current.pageVersion}"
+                // T924-TX-02.1: the lease token is mandatory and must still
+                // fence this page — a released or stolen lease rejects.
+                pageLeases[pageKey] == null -> "page lease required for checkpoint"
+                pageLeases[pageKey]?.token != expectedLeaseToken -> "page lease token changed"
+                expectedArtifactPageVersion != null &&
+                    expectedArtifactPageVersion != artifactPage?.pageVersion ->
+                    "artifact pageVersion changed"
+                expectedCandidateGenerationId != null &&
+                    expectedCandidateGenerationId != artifactPage?.candidate?.generationId ->
+                    "candidate generation changed"
+                // T924-TX-02.1 / C2: no grace clause on the checkpoint path —
+                // a missing dependency fingerprint is a programmer error.
+                expectedCandidateGenerationId != null && expectedDependencyFingerprint == null ->
+                    "dependency fingerprint required for checkpoint"
+                expectedCandidateGenerationId != null &&
+                    artifactPage?.candidate?.dependencyFingerprint != expectedDependencyFingerprint ->
+                    "candidate dependency fingerprint changed"
+                expectedCandidateGenerationId == null && artifactPage?.candidate != null ->
+                    "active candidate present; standard checkpoint branch required"
+                expectedPriorOcrFingerprints != null &&
+                    expectedPriorOcrFingerprints != current.ocrBlockFingerprints() ->
+                    "prior OCR identity changed"
+                else -> null
+            }
+            if (rejection != null) return@withLock rejectedCheckpoint(description, rejection)
+            val live = current ?: return@withLock rejectedCheckpoint(description, "page missing")
+            val resolvedSourceSha256 = sourceSha256 ?: live.sourceFingerprint
+            val sourceIdentity = SourceIdentity(
+                pageKey = pageKey,
+                sha256 = resolvedSourceSha256,
+                width = live.imgWidth.takeIf { it > 0f }?.toInt(),
+                height = live.imgHeight.takeIf { it > 0f }?.toInt(),
+                orientation = sourceOrientation,
+            )
+            if (!sourceIdentity.isComplete) {
+                return@withLock rejectedCheckpoint(description, "incomplete source identity for checkpoint")
+            }
+            val snapshotFingerprint = StageFingerprints.pageSnapshot(live)
+            val snapshotFileName = artifact.ocrStageSnapshotName(pageKey, snapshotFingerprint)
+            val naturalPageIndex = artifactPage?.naturalPageIndex
+            val checkpoint = PageOcrCheckpoint(
+                pageKey = pageKey,
+                naturalPageIndex = naturalPageIndex,
+                sourceIdentity = sourceIdentity,
+                detectionFingerprint = live.detectionFingerprint,
+                ocrFingerprint = live.ocrFingerprint.orEmpty(),
+                ocrContentFingerprint = pageOcrContentFingerprint(pageKey, live, naturalPageIndex, sourceOrientation),
+                ocrPageSnapshotPointer = SidecarPointer(
+                    fileName = snapshotFileName,
+                    schemaVersion = 1,
+                    contentFingerprint = snapshotFingerprint,
+                ),
+                inpaintMaskRevision = live.inpaintRevision,
+                priorCommittedDisplay = artifactPage?.committed?.let { committed ->
+                    CommittedDisplayRef(
+                        generationId = committed.generationId,
+                        bundleFingerprint = committed.bundleFingerprint,
+                        pageSnapshotFileName = committed.pageSnapshotFileName,
+                    )
+                },
+                producedByOrigin = pageLeases.getValue(pageKey).origin.toArtifactOrigin(),
+                producerGenerationId = expectedCandidateGenerationId,
+                checkpointedAtEpochMs = nowEpochMs,
+            )
+            val outcome = artifact.checkpointOcr(
+                manifest = manifest,
+                pageKey = pageKey,
+                expectedPageVersion = artifactPage?.pageVersion ?: 0L,
+                expectedDependencyFingerprint = expectedDependencyFingerprint,
+                ocrSnapshot = live,
+                checkpoint = checkpoint,
+                mode = mode,
+                nowEpochMs = nowEpochMs,
+            )
+            when (outcome) {
+                is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                    artifactManifest = outcome.manifest
+                    _state.value = snapshotPages()
+                    _display.value = displaySnapshotLocked()
+                    CheckpointOcrResult.Committed(snapshotLocked(pageKey), outcome.manifest)
+                }
+                is ChapterArtifactStore.TransactionOutcome.Rejected ->
+                    rejectedCheckpoint(description, outcome.reason)
+            }
+        }
+    }
+
+    /**
+     * The semantic `PageOcrContentFingerprint` of the page's current OCR
+     * state (T924-FP-02, T924-SC-08 encoding). Transaction identities
+     * (versions, generations, timestamps, file names) are excluded by the
+     * builder (T924-FP-01).
+     *
+     * T924-F-1: [pageKey] MUST be the transaction pageKey, never
+     * [PageTranslation.sourceFileName] — the TX-03.1 adopt side
+     * ([ChapterArtifactStore.committedOcrContentFingerprint]) canonicalizes
+     * with `checkpoint.sourceIdentity.pageKey` (the transaction pageKey), so
+     * both sides of the drift comparison must share one pageKey source.
+     */
+    private fun pageOcrContentFingerprint(
+        pageKey: String,
+        page: PageTranslation,
+        naturalPageIndex: Int?,
+        sourceOrientation: String?,
+    ): String = StageFingerprints.pageOcrContentFingerprint(
+        pageKey = pageKey,
+        naturalPageIndex = naturalPageIndex,
+        sourceSha256 = page.sourceFingerprint.orEmpty(),
+        sourceWidth = page.imgWidth.toInt(),
+        sourceHeight = page.imgHeight.toInt(),
+        sourceOrientation = sourceOrientation.orEmpty(),
+        detectionFingerprint = page.detectionFingerprint,
+        ocrFingerprint = page.ocrFingerprint.orEmpty(),
+        textless = page.isTextlessTerminal,
+        inpaintMaskRevision = page.inpaintRevision,
+        blocks = StageFingerprints.pageOcrContentBlocks(page),
+        inpaintMaskBoxes = page.inpaintMaskBoxes,
+    )
+
+    private fun rejectedCheckpoint(description: String, reason: String): CheckpointOcrResult.Rejected {
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT ocr checkpoint rejected: generation=$generation " +
+                "operation=$description reason=$reason"
+        }
+        return CheckpointOcrResult.Rejected(reason)
+    }
 
     private fun mergeTranslationLocked(
         current: PageTranslation?,
