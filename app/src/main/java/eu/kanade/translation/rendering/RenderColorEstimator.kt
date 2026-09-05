@@ -37,6 +37,16 @@ import kotlin.math.pow
  */
 object RenderColorEstimator {
 
+    /**
+     * T924 WP8 (T924-FP-08): algorithm version of this estimator (seeded
+     * 2-means sampling + binary contrast fill policy). Consumed by color-style
+     * fingerprinting (`StageFingerprints.colorStyleFingerprint`) and the
+     * persisted `ColorStylePreparation.colorEstimatorVersion`. Bump on any
+     * behavior change that can alter produced colors. Additive constant only —
+     * no estimator behavior depends on it.
+     */
+    const val COLOR_ESTIMATOR_VERSION: Int = 1
+
     // The one tuning knob — see Phase 2 measurement.
     // Rec.601 background-luma threshold (0..255); below it the background is
     // "dark" → white text when the ink is forced.
