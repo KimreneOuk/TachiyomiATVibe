@@ -305,12 +305,14 @@ class TranslationBatchProgressTracker(
             indexResolver: Map<String, Int>? = null,
             permitHolderPageKey: String? = null,
             aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
-            batchPhase: TranslationBatchPhase = if (chapterState ==
-                Translation.State.TRANSLATING
-            ) {
-                TranslationBatchPhase.FIRST_PASS
-            } else {
-                TranslationBatchPhase.IDLE
+            // T924 restart-retry fix: a durable ERROR chapter is a run that
+            // ENDED. Defaulting it to IDLE is why the progress sheet's Retry
+            // affordance vanished after an app restart — the truth rule needs
+            // ERROR+FINISHED, and only the live tracker used to emit FINISHED.
+            batchPhase: TranslationBatchPhase = when (chapterState) {
+                Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
+                Translation.State.ERROR -> TranslationBatchPhase.FINISHED
+                else -> TranslationBatchPhase.IDLE
             },
             chapterId: Long = 0,
             /** Reader-facing committed pages; defaults to the live map for pure callers. */

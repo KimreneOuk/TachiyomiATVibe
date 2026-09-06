@@ -1,7 +1,13 @@
 package eu.kanade.translation.manager
 
+import com.hippo.unifile.FakeUniFile
+import com.hippo.unifile.UniFile
 import eu.kanade.translation.ActiveChapterStoreRegistry
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.artifact.AtomicChapterDocuments
+import eu.kanade.translation.artifact.ChapterArtifactLayout
+import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.TranslationPipeline
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
@@ -15,6 +21,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -35,12 +43,30 @@ class BatchProgressProjectorDurableReconstructionTest {
             batchPhase = TranslationBatchPhase.FINISHED,
         )
 
+    @TempDir
+    lateinit var mangaDir: File
+
+    private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
+
+    private fun seededStore(): ChapterTranslationStore {
+        ChapterArtifactStore(
+            AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
+            ChapterArtifactLayout("Chapter 5"),
+        )
+        return ChapterTranslationStore.lazy(
+            fileCreator = { root().createFile("Chapter 5.json")!! },
+            artifactParent = root(),
+            artifactFileName = "Chapter 5.json",
+        )
+    }
+
     private fun projector(
         durableSnapshot: suspend (Long) -> TranslationProgressSnapshot?,
         openOrCreateInvocations: MutableList<Long>,
         registry: TranslationBatchTrackerRegistry = TranslationBatchTrackerRegistry(),
+        activeStores: ActiveChapterStoreRegistry = ActiveChapterStoreRegistry(),
     ): BatchProgressProjector = BatchProgressProjector(
-        activeStoresProvider = { ActiveChapterStoreRegistry() },
+        activeStoresProvider = { activeStores },
         batchTrackerRegistryProvider = { registry },
         queueStateProvider = { MutableStateFlow(emptyList()) },
         pendingTranslationRequestsProvider = { MutableStateFlow(emptyMap()) },
@@ -174,5 +200,29 @@ class BatchProgressProjectorDurableReconstructionTest {
         val result = resolver.withDurableStore(chapterId, "Chapter 1", null, "fixture", 1L) { store -> store }
 
         result shouldBe activeStore
+    }
+
+    @Test
+    fun `durable state hint restores the terminal error projection after a restart`() = runTest {
+        // T924 restart-retry defect: after a restart the store is active but
+        // no queue entry or tracker exists — the state fallback used to hard-
+        // code NOT_TRANSLATED, hiding the terminal ERROR (and its Retry
+        // affordance) from the progress sheet.
+        val openOrCreateInvocations = mutableListOf<Long>()
+        val activeStores = ActiveChapterStoreRegistry()
+        activeStores.register(chapterId, seededStore())
+        val projector = projector(
+            durableSnapshot = { null },
+            openOrCreateInvocations,
+            activeStores = activeStores,
+        )
+
+        val snapshot = projector
+            .observeBatchProgress(chapterId, durableStateHint = Translation.State.ERROR)
+            .first()
+
+        snapshot.state shouldBe Translation.State.ERROR
+        snapshot.batchPhase shouldBe TranslationBatchPhase.FINISHED
+        openOrCreateInvocations shouldBe emptyList()
     }
 }

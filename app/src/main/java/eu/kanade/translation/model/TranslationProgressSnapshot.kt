@@ -180,12 +180,13 @@ data class TranslationProgressSnapshot(
             permitHolderPageKey: String? = null,
             aiPageStates: Map<String, AiPageProgressState> = emptyMap(),
             displayPageMap: Map<String, PageTranslation>? = null,
-            batchPhase: TranslationBatchPhase = if (state ==
-                Translation.State.TRANSLATING
-            ) {
-                TranslationBatchPhase.FIRST_PASS
-            } else {
-                TranslationBatchPhase.IDLE
+            // T924 restart-retry fix: a durable ERROR chapter is a run that
+            // ENDED (IDLE here is why the sheet's Retry affordance vanished
+            // after an app restart — the truth rule needs ERROR + FINISHED).
+            batchPhase: TranslationBatchPhase = when (state) {
+                Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
+                Translation.State.ERROR -> TranslationBatchPhase.FINISHED
+                else -> TranslationBatchPhase.IDLE
             },
             /** T917 Phase 5 (D10): trusted source-total fact from the manifest. */
             expectedPageCountTrusted: Boolean = false,

@@ -137,4 +137,29 @@ class T918SheetRetryTruthTest {
         }
         prop(truth, "label").toString() shouldBe "Retry translation"
     }
+
+    @Test
+    fun `durable reconstruction of an error chapter offers the retry control after restart`() {
+        // T924 restart-retry defect: after an app restart the sheet's snapshot
+        // comes from the durable reconstruction (compute with an ERROR chapter
+        // state), which used to default batchPhase to IDLE — the truth rule
+        // (ERROR + FINISHED) then never passed and the Retry button vanished.
+        val defect =
+            "T924 restart-retry defect: a durably reconstructed ERROR chapter " +
+                "must project ERROR + FINISHED so the sheet keeps offering Retry " +
+                "after an app restart"
+        val reconstructed = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.ERROR,
+            pageMap = emptyMap(),
+        )
+        withClue("compute must treat a durable ERROR chapter as a finished run") {
+            reconstructed.state shouldBe Translation.State.ERROR
+            reconstructed.batchPhase shouldBe TranslationBatchPhase.FINISHED
+        }
+        val truth = callTruth("forSheetRetryAction", 2, defect, reconstructed, true)
+        withClue("reconstructed terminal-failed snapshot + callback → Retry offered") {
+            truth ?: throw AssertionError(defect)
+        }
+    }
 }

@@ -565,7 +565,10 @@ class MangaScreenModel(
     // status cannot erase an unchanged live or terminal snapshot.
     private val translationSnapshots = ChapterTranslationSnapshotRegistry()
 
-    private fun observeTranslationProgress(chapterId: Long) {
+    private fun observeTranslationProgress(
+        chapterId: Long,
+        durableStateHint: eu.kanade.translation.model.Translation.State? = null,
+    ) {
         if (translationProgressJobs[chapterId]?.isActive == true) return
         translationProgressJobs[chapterId] = screenModelScope.launchIO {
             val chapterItem = successState?.chapters?.firstOrNull { it.id == chapterId }
@@ -581,7 +584,7 @@ class MangaScreenModel(
                     mangaId = manga.id,
                 )
             }
-            translationManager.observeBatchProgress(chapterId)
+            translationManager.observeBatchProgress(chapterId, durableStateHint)
                 .distinctUntilChanged()
                 .catch { error -> logcat(LogPriority.ERROR, error) }
                 .flowWithLifecycle(lifecycle)
@@ -734,8 +737,18 @@ class MangaScreenModel(
                 requestState = translationRequest,
                 downloaded = downloadState == Download.State.DOWNLOADED,
             )
-            if (queuedTranslation != null || translationRequest != null) {
-                chapter.id?.let(::observeTranslationProgress)
+            // T924 restart-retry fix: a durably FAILED chapter (no queue
+            // entry, no request after an app restart) must still surface its
+            // terminal progress so the sheet can offer Retry — without this,
+            // translationProgress stayed null and the sheet rendered an empty
+            // snapshot with no affordance.
+            if (queuedTranslation != null ||
+                translationRequest != null ||
+                translationState == eu.kanade.translation.model.Translation.State.ERROR
+            ) {
+                chapter.id?.let { id ->
+                    observeTranslationProgress(id, durableStateHint = translationState)
+                }
             }
 
             ChapterList.Item(

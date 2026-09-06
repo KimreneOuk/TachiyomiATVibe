@@ -1606,8 +1606,11 @@ class TranslationManager(
 
     internal fun terminalSnapshotCacheSize(): Int = batchTrackerRegistry.terminalSnapshotCacheSize()
 
-    fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
-        progressProjector.observeBatchProgress(chapterId)
+    fun observeBatchProgress(
+        chapterId: Long,
+        durableStateHint: Translation.State? = null,
+    ): Flow<TranslationProgressSnapshot> =
+        progressProjector.observeBatchProgress(chapterId, durableStateHint)
 
     fun observeTranslationProgress(chapterId: Long): Flow<TranslationProgressSnapshot> =
         progressProjector.observeTranslationProgress(chapterId)

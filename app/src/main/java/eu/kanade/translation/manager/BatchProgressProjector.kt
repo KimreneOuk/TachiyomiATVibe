@@ -176,7 +176,10 @@ internal class BatchProgressProjector(
      * request acknowledgement, follows queue status changes, then switches to
      * the live tracker or shared store without consulting download-cache state.
      */
-    fun observeBatchProgress(chapterId: Long): Flow<TranslationProgressSnapshot> {
+    fun observeBatchProgress(
+        chapterId: Long,
+        durableStateHint: Translation.State? = null,
+    ): Flow<TranslationProgressSnapshot> {
         val pending = pendingTranslationRequests
             .map { requests -> requests[chapterId] }
             .distinctUntilChanged()
@@ -191,7 +194,7 @@ internal class BatchProgressProjector(
                         ),
                     )
                 } else {
-                    observeBatchProgressProjection(chapterId, queueStatus)
+                    observeBatchProgressProjection(chapterId, queueStatus, durableStateHint)
                         .map { snapshot -> snapshot.copy(requestState = null) }
                 }
             }
@@ -216,6 +219,7 @@ internal class BatchProgressProjector(
     private fun observeBatchProgressProjection(
         chapterId: Long,
         queueStatus: Translation.State?,
+        durableStateHint: Translation.State? = null,
     ): Flow<TranslationProgressSnapshot> = batchTrackerRegistry.live
         .flatMapLatest { trackers ->
             val tracker = trackers[chapterId]
@@ -227,7 +231,16 @@ internal class BatchProgressProjector(
                     flowOf(terminal)
                 } else {
                     val queued = getQueuedTranslationOrNull(chapterId)
-                    val state = queueStatus ?: queued?.status ?: Translation.State.NOT_TRANSLATED
+                    // T924 restart-retry fix: after a restart there is no queue
+                    // entry and no live tracker, so the fallback used to hard-
+                    // code NOT_TRANSLATED — hiding a durably FAILED chapter's
+                    // terminal state from the sheet (and its Retry affordance).
+                    // The caller's projected persisted state is the honest
+                    // fallback; a queued/live status always wins.
+                    val state = queueStatus
+                        ?: queued?.status
+                        ?: durableStateHint
+                        ?: Translation.State.NOT_TRANSLATED
                     val store = activeStores.get(chapterId)
                     if (store == null && queued != null) {
                         flow {
