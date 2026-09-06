@@ -46,7 +46,10 @@ class BatchProgressReconcilerTest {
     }
 
     @Test
-    fun `persistence rejection is reconciled as an in-memory warning`() {
+    fun `persistence rejection is a retryable error without durable tail failures`() {
+        // T924 field fix (Chapter 21): the old in-memory READY_WITH_WARNINGS
+        // classification rendered the chapter as completed with no Retry
+        // affordance while the tail pages were never resolved.
         val result = BatchProgressReconciler.reconcile(
             pageMap = mapOf("p0" to readyPage("p0")),
             orderedKeys = listOf("p0", "p1"),
@@ -61,12 +64,33 @@ class BatchProgressReconcilerTest {
             ),
         )
 
-        result.chapterStatus shouldBe Translation.State.READY_WITH_WARNINGS
+        result.chapterStatus shouldBe Translation.State.ERROR
         result.paused shouldBe false
         result.nonDurableFailure shouldBe true
         result.failedCount shouldBe 0
         result.pendingCount shouldBe 1
         result.retryableCount shouldBe 0
+    }
+
+    @Test
+    fun `a partial candidate with no rendered result is unresolved work, not a warning`() {
+        val partialUnrendered = PageTranslation(
+            sourceFileName = "p1",
+            blocks = mutableListOf(block()),
+            ocrStatus = StageStatus.READY,
+            translationStatus = StageStatus.PARTIAL,
+            inpaintStatus = StageStatus.READY,
+        )
+        val result = BatchProgressReconciler.reconcile(
+            pageMap = mapOf("p0" to readyPage("p0"), "p1" to partialUnrendered),
+            orderedKeys = listOf("p0", "p1"),
+            activeGeneration = 0L,
+        )
+
+        result.chapterStatus shouldBe Translation.State.ERROR
+        result.failedCount shouldBe 1
+        result.partialCount shouldBe 1
+        result.strandedPages.keys shouldBe setOf("p1")
     }
 
     private fun readyPage(key: String) = PageTranslation(

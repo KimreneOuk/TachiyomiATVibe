@@ -87,9 +87,17 @@ object BatchProgressReconciler {
             when {
                 page.isStageFailed -> failedCount++
                 page.hasRenderedResult || page.isTextlessTerminal -> doneCount++
+                // T924 field fix (Chapter 21): this branch is only reachable
+                // when the page is NOT display-ready — a partial candidate with
+                // no rendered result shows nothing readable, so it is
+                // unresolved work (ERROR, retryable), never a usable warning.
+                // Counting it done+partial produced "Ready (Warnings)"
+                // chapters with unrendered pages and no Retry affordance.
                 page.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL -> {
                     partialCount++
-                    doneCount++
+                    strandedPages[pageKey] =
+                        "Translation incomplete — partial result was never rendered"
+                    failedCount++
                 }
                 page.isStageCancelled || page.isStageRunning || page.isNonTerminalWithoutOutput() -> {
                     strandedPages[pageKey] = "Translation incomplete — page was left cancelled or non-terminal"
@@ -178,7 +186,14 @@ object BatchProgressReconciler {
 
         return ReconciliationResult(
             chapterStatus = when {
-                persistenceRejected -> Translation.State.READY_WITH_WARNINGS
+                // T924 field fix (Chapter 21): a persistence-rejected run
+                // stopped with unresolved work (tail pages cancelled). It must
+                // surface as a retryable ERROR — the old in-memory
+                // READY_WITH_WARNINGS rendered as a completed chapter with no
+                // Retry affordance. [nonDurableFailure] stays true so callers
+                // still skip tail reconciliation and never synthesize
+                // durable failures the store does not own.
+                persistenceRejected -> Translation.State.ERROR
                 outcome.status == BatchPass1Status.FAILED || terminalCount > 0 -> Translation.State.ERROR
                 else -> Translation.State.PAUSED
             },

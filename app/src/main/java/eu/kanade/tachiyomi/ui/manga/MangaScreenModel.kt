@@ -742,9 +742,14 @@ class MangaScreenModel(
             // terminal progress so the sheet can offer Retry — without this,
             // translationProgress stayed null and the sheet rendered an empty
             // snapshot with no affordance.
+            // T924 field fix: a durable READY_WITH_WARNINGS chapter that
+            // ended with unresolved pages gets the same terminal surface.
+            val durableTerminal =
+                translationState == eu.kanade.translation.model.Translation.State.ERROR ||
+                    translationState == eu.kanade.translation.model.Translation.State.READY_WITH_WARNINGS
             if (queuedTranslation != null ||
                 translationRequest != null ||
-                translationState == eu.kanade.translation.model.Translation.State.ERROR
+                durableTerminal
             ) {
                 chapter.id?.let { id ->
                     observeTranslationProgress(id, durableStateHint = translationState)

@@ -167,7 +167,13 @@ class TranslationManagerArtifactReadTest {
     }
 
     @Test
-    fun `in-flight artifact page does not report chapter error`() = runTest {
+    fun `in-flight artifact page leaves the chapter retryable, not warnings`() = runTest {
+        // T924 field fix (Chapter 21): the old softener reported a store
+        // interrupted mid-run (real page left in-flight/cancelled) as
+        // READY_WITH_WARNINGS — a "completed" badge with an unrendered page
+        // and no Retry affordance. An unresolved REAL page must resolve the
+        // chapter to retryable ERROR; only placeholder-count shortfalls
+        // without any recorded failure stay warnings.
         installImageProbe()
         val root = FakeUniFile(parent = null, backing = mangaDir)
         File(mangaDir, "Chapter 5.json").createNewFile()
@@ -188,7 +194,7 @@ class TranslationManagerArtifactReadTest {
 
         val manager = newManager(file)
         manager.getChapterTranslationStatus(46L, "Chapter 5", null, "Manga", 77L) shouldBe
-            Translation.State.READY_WITH_WARNINGS
+            Translation.State.ERROR
     }
 
     @Test

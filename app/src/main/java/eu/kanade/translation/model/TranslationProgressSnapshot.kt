@@ -183,9 +183,14 @@ data class TranslationProgressSnapshot(
             // T924 restart-retry fix: a durable ERROR chapter is a run that
             // ENDED (IDLE here is why the sheet's Retry affordance vanished
             // after an app restart — the truth rule needs ERROR + FINISHED).
+            // T924 field fix: READY_WITH_WARNINGS that ENDED with unresolved
+            // pages is the same terminal shape — it must read FINISHED too,
+            // or its Retry affordance vanishes the same way.
             batchPhase: TranslationBatchPhase = when (state) {
                 Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
-                Translation.State.ERROR -> TranslationBatchPhase.FINISHED
+                Translation.State.ERROR,
+                Translation.State.READY_WITH_WARNINGS,
+                -> TranslationBatchPhase.FINISHED
                 else -> TranslationBatchPhase.IDLE
             },
             /** T917 Phase 5 (D10): trusted source-total fact from the manifest. */

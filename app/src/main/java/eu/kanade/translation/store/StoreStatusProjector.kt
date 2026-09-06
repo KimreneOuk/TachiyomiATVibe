@@ -114,8 +114,17 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
         }
         val activeGeneration = pagesSnapshot.values.maxOfOrNull { it.runGeneration } ?: 0L
         val reconciliation = BatchProgressReconciler.reconcile(pagesSnapshot, expectedKeys, activeGeneration)
+        // T924 field fix (Chapter 21): the softener exists for stores whose
+        // trusted expected total exceeds the registered pages with no recorded
+        // failure (upgrade residue) — reconcile synthesizes placeholder keys
+        // for the shortfall. A REAL page stranded cancelled/non-terminal is
+        // not that case: softening it produced a "Ready (Warnings)" chapter
+        // with unrendered pages and no Retry affordance.
+        val strandedRealPages =
+            reconciliation.strandedPages.keys.any { !it.startsWith("__missing_expected_page_") }
         return if (
             reconciliation.chapterStatus == Translation.State.ERROR &&
+            !strandedRealPages &&
             pagesSnapshot.values.none { it.isStageFailed }
         ) {
             Translation.State.READY_WITH_WARNINGS

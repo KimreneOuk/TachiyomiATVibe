@@ -309,9 +309,13 @@ class TranslationBatchProgressTracker(
             // ENDED. Defaulting it to IDLE is why the progress sheet's Retry
             // affordance vanished after an app restart — the truth rule needs
             // ERROR+FINISHED, and only the live tracker used to emit FINISHED.
+            // T924 field fix: a durable READY_WITH_WARNINGS chapter that ended
+            // with unresolved pages is the same terminal shape (Chapter 21).
             batchPhase: TranslationBatchPhase = when (chapterState) {
                 Translation.State.TRANSLATING -> TranslationBatchPhase.FIRST_PASS
-                Translation.State.ERROR -> TranslationBatchPhase.FINISHED
+                Translation.State.ERROR,
+                Translation.State.READY_WITH_WARNINGS,
+                -> TranslationBatchPhase.FINISHED
                 else -> TranslationBatchPhase.IDLE
             },
             chapterId: Long = 0,

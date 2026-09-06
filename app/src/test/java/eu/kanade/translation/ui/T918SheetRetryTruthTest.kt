@@ -162,4 +162,45 @@ class T918SheetRetryTruthTest {
             truth ?: throw AssertionError(defect)
         }
     }
+
+    @Test
+    fun `durable reconstruction of a warnings chapter with unresolved pages offers retry`() {
+        // T924 field defect (Chapter 21): a persistence-rejected run ended
+        // READY_WITH_WARNINGS — the badge read as completed and the sheet
+        // offered nothing, because the truth rule only accepted ERROR.
+        val defect =
+            "T924 field defect: a durable READY_WITH_WARNINGS chapter that ENDED " +
+                "must project FINISHED and keep offering Retry after an app restart"
+        val reconstructed = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.READY_WITH_WARNINGS,
+            pageMap = emptyMap(),
+        )
+        withClue("compute must treat a durable READY_WITH_WARNINGS chapter as a finished run") {
+            reconstructed.state shouldBe Translation.State.READY_WITH_WARNINGS
+            reconstructed.batchPhase shouldBe TranslationBatchPhase.FINISHED
+        }
+        val truth = callTruth("forSheetRetryAction", 2, defect, reconstructed, true)
+        withClue("durable warnings snapshot + callback → Retry offered") {
+            truth ?: throw AssertionError(defect)
+        }
+    }
+
+    @Test
+    fun `a fully finished translated chapter never offers retry`() {
+        val finished = TranslationProgressSnapshot.compute(
+            chapterId = 1L,
+            state = Translation.State.TRANSLATED,
+            pageMap = emptyMap(),
+        )
+        finished.batchPhase shouldBe TranslationBatchPhase.IDLE
+        val truth = callTruth(
+            "forSheetRetryAction",
+            2,
+            "translated chapter must never offer Retry",
+            finished,
+            true,
+        )
+        truth shouldBe null
+    }
 }
