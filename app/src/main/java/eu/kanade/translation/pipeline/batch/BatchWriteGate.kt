@@ -90,19 +90,40 @@ internal class BatchWriteGate(
     ): ChapterTranslationStore.PatchResult {
         val identity = batchWriteIdentities[pageKey]
             ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
-        val result = store.updatePageGuarded(
+        fun expected() = ChapterTranslationStore.PatchPrecondition(
+            generation = identity.generation,
+            pageVersion = identity.pageVersion,
+            leaseToken = identity.leaseToken,
+            candidateGenerationId = identity.candidateGenerationId,
+            dependencyFingerprint = identity.dependencyFingerprint,
+            artifactPageVersion = identity.artifactPageVersion,
+        )
+        var result = store.updatePageGuarded(
             pageKey = pageKey,
-            expected = ChapterTranslationStore.PatchPrecondition(
-                generation = identity.generation,
-                pageVersion = identity.pageVersion,
-                leaseToken = identity.leaseToken,
-                candidateGenerationId = identity.candidateGenerationId,
-                dependencyFingerprint = identity.dependencyFingerprint,
-                artifactPageVersion = identity.artifactPageVersion,
-            ),
+            expected = expected(),
             description = description,
             update = { current -> stampBatchProvenance(update(current), stage) },
         )
+        if (result is ChapterTranslationStore.PatchResult.Rejected) {
+            // T924 device fix (Chapter-21 batch failure): the cached identity
+            // can drift behind ungated store writes (reader stranded sweep,
+            // OOM-recovery retries, reuse paths that skip the post-write
+            // refresh). A precondition miss while the batch STILL HOLDS the
+            // page lease is our own cache being stale, not a foreign writer:
+            // re-sync from the live snapshot and retry ONCE. A lease-token or
+            // generation mismatch keeps the rejection — the manual lane's
+            // ownership fence (T917) must never be preempted here.
+            val live = store.snapshot(pageKey)
+            if (live.generation == identity.generation && live.leaseToken == identity.leaseToken) {
+                refreshBatchIdentity(pageKey, live)
+                result = store.updatePageGuarded(
+                    pageKey = pageKey,
+                    expected = expected(),
+                    description = description,
+                    update = { current -> stampBatchProvenance(update(current), stage) },
+                )
+            }
+        }
         if (result is ChapterTranslationStore.PatchResult.Accepted) {
             identity.pageVersion = result.snapshot.pageVersion
             identity.candidateGenerationId = result.snapshot.candidateGenerationId
@@ -239,11 +260,19 @@ internal class BatchWriteGate(
     ): ChapterTranslationStore.PatchResult {
         val expected = batchWritePrecondition(pageKey)
             ?: return ChapterTranslationStore.PatchResult.Rejected("batch page lease missing")
-        return persistPageWithOomRecovery(
+        val result = persistPageWithOomRecovery(
             store,
             pageKey,
             pageTranslation,
             expectedPrecondition = expected,
         )
+        // T924 device fix: every accepted gate write must refresh the cached
+        // identity — the OOM-recovery retry inside persistPageWithOomRecovery
+        // can commit under a rewritten precondition, which would otherwise
+        // leave this identity stale for the next guarded write.
+        if (result is ChapterTranslationStore.PatchResult.Accepted) {
+            refreshBatchIdentity(pageKey, result.snapshot)
+        }
+        return result
     }
 }

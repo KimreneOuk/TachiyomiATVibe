@@ -416,8 +416,9 @@ internal class BatchLaneWorkers(
             glossary = glossaryText,
         )
         var admissionFailure: String? = null
-        chunk.pages.keys.forEach { pk ->
-            val p = translationRegistry[pk] ?: return@forEach
+        var admissionFailurePageKey: String? = null
+        admission@ for (pk in chunk.pages.keys) {
+            val p = translationRegistry[pk] ?: continue
             val running = guardedBatchUpdate(pk, "batch translation running", BatchStage.TRANSLATION) {
                 (it ?: p).apply {
                     translationStatus = StageStatus.RUNNING
@@ -426,14 +427,31 @@ internal class BatchLaneWorkers(
                 }
             }
             if (running is ChapterTranslationStore.PatchResult.Rejected) {
+                // T924 device fix: STOP at the first rejection — the envelope
+                // is not admissible, and continuing burns one serialized store
+                // write (≈1s SAF publication each) per remaining page while
+                // the outcome is already decided.
                 admissionFailure = "translation admission rejected for $pk: ${running.reason}"
+                admissionFailurePageKey = pk
+                break@admission
             }
             tracker?.markTranslateRunning(pk)
             tracker?.markAiRunning(pk)
         }
         admissionFailure?.let { reason ->
-            val failure = protocolFailure(reason)
-            val anchor = firstUnresolved(emptySet()) ?: return ChunkCompletionOutcome.Failed(
+            // T924 device fix: an admission rejection is a local CAS conflict
+            // (stale write identity, or a foreign writer holding the page) —
+            // never a provider protocol failure. The guarded-write heal in
+            // BatchWriteGate already absorbs same-lease drift, so reaching
+            // here means the page is genuinely contended: classify it as a
+            // retryable PAUSE (T918 affordance on the anchor, siblings keep
+            // their committed work for the next pass) instead of the previous
+            // TERMINAL failure that durably failed the anchor and cancelled
+            // every sibling without a single provider call.
+            val failure = protocolFailure(reason).copy(
+                retryability = ProviderFailureRetryability.PAUSE,
+            )
+            val anchor = admissionFailurePageKey ?: firstUnresolved(emptySet()) ?: return ChunkCompletionOutcome.Failed(
                 failure = failure,
                 reason = reason,
             )
@@ -443,17 +461,17 @@ internal class BatchLaneWorkers(
                     pageKey = anchor,
                     page = page,
                     failure = failure,
-                    retryable = false,
+                    retryable = true,
                     partialCandidate = false,
                     envelopeId = null,
                     missingBlockIds = emptySet(),
                 )
             }
-            tracker?.markTranslateFailed(anchor, reason)
-            tracker?.markAiFailed(anchor, reason)
-            return ChunkCompletionOutcome.Failed(
+            tracker?.markTranslatePaused(anchor, reason)
+            tracker?.markAiPaused(anchor, reason)
+            return ChunkCompletionOutcome.Paused(
                 anchorPageKey = anchor,
-                terminalPageKeys = setOf(anchor),
+                retryablePageKeys = setOf(anchor),
                 failure = failure,
                 reason = reason,
             )
