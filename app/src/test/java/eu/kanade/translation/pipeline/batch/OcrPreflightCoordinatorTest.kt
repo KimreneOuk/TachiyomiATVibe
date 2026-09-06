@@ -214,10 +214,12 @@ class OcrPreflightCoordinatorTest {
         val outcome = coordinator(store, worker, pages).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Stopped-not-finished: never a COMPLETED pass (which would strand the
-        // untranslated pages as failed), always resumable.
+        // untranslated pages as failed), always resumable. Stage-5 slice A:
+        // the complete corpus continues into the analysis phase, which pauses
+        // at the typed CONFIGURATION gate (no transport wired in this slice).
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.needsTranslation shouldContainExactly emptyList()
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.STOP_REASON
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
         outcome.completedPageKeys shouldBe setOf("p1", "p2", "p3")
 
         // Serial OCR only: natural order, one decoded page at a time, every
@@ -233,10 +235,11 @@ class OcrPreflightCoordinatorTest {
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.ocrCheckpoints.keys shouldBe setOf("p1", "p2", "p3")
 
-        // The durable diagnostic: OCR_PREFLIGHT complete + counter summary +
-        // corpus fingerprint; flag frozen (FF-01d).
+        // The durable diagnostic: preflight complete + counter summary +
+        // corpus fingerprint; the analysis phase recorded its CONFIGURATION
+        // gate (no transport in this slice); flag frozen (FF-01d).
         val record = runRecord(store).shouldNotBeNull()
-        record.state shouldBe ChapterRunState.OCR_PREFLIGHT
+        record.state shouldBe ChapterRunState.ANALYSIS_CHUNKS
         record.runId shouldMatch Regex("run-\\d+-[0-9a-f]{8}")
         record.frozenConfig shouldBe frozenConfig()
         record.frozenRunConfigFingerprint shouldMatch Regex("[0-9a-f]{64}")
@@ -249,6 +252,9 @@ class OcrPreflightCoordinatorTest {
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_REUSED] shouldBe 0
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_STOP] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_GAPS] shouldBe 0
+        // 3 pages fit ONE analysis chunk window.
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_TOTAL] shouldBe 1
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_SKIPPED_NO_TRANSPORT] shouldBe 1
         val corpusFingerprint = record.ocrCorpusFingerprint.shouldNotBeNull()
         corpusFingerprint shouldBe StageFingerprints.ocrCorpusFingerprint(
             pages = listOf("p1", "p2", "p3").map { pageKey ->
@@ -298,17 +304,20 @@ class OcrPreflightCoordinatorTest {
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
         // Only the remainder was OCR'd: the checkpointed page was skipped by
-        // content identity (ST-01.4/ST-06), never re-decoded.
+        // content identity (ST-01.4/ST-06), never re-decoded. The analysis
+        // phase then pauses at the no-transport gate again (no chunks were
+        // persisted — the slice-A shell never wires a transport).
         resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.STOP_REASON
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_NO_TRANSPORT_REASON
         resumedWorker.ocrPages shouldContainExactly listOf("p2", "p3")
         resumedWorker.releasedHandoffs shouldContainExactly listOf("p2", "p3")
         resumedStore.pageLeaseOwner("p1").shouldBeNull()
 
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.ocrCheckpoints.keys shouldBe setOf("p1", "p2", "p3")
+        manifest.analysisChunks shouldBe emptyList()
         val record = runRecord(resumedStore).shouldNotBeNull()
-        record.state shouldBe ChapterRunState.OCR_PREFLIGHT
+        record.state shouldBe ChapterRunState.ANALYSIS_CHUNKS
         // Same frozen configuration: the interrupted run is CONTINUED (same
         // run id), not silently restarted under a new snapshot (ST-03.1).
         record.runId shouldBe interruptedRecord.runId

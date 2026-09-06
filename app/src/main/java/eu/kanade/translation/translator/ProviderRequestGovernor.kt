@@ -551,6 +551,21 @@ class ProviderRequestGovernor(
         }
     }
 
+    /**
+     * T924 DR-D all-or-nothing nested admission: releases a permit obtained
+     * via [admit] WITHOUT executing the request. Used by the Batch sub-limit
+     * gate when the inner (provider) bucket defers after the outer (sub-limit)
+     * bucket already granted — the outer permit is given back before waiting,
+     * never held across a defer.
+     */
+    suspend fun releaseAdmitted(
+        permit: ProviderRequestPermit,
+        metadata: ProviderRequestMetadata,
+        outcome: String = "released_unexecuted",
+    ) {
+        release(permit, usage = null, metadata = metadata.copy(key = permit.key), outcome = outcome)
+    }
+
     private suspend fun release(
         permit: ProviderRequestPermit,
         usage: ProviderUsage?,
@@ -671,4 +686,101 @@ object SharedProviderRequestGovernor {
         policy = { key -> ProviderRequestGovernor.defaultPolicy(key) },
     )
 }
+
+/**
+ * T924 DR-C/DR-D (Stage 5): the Batch aggregate sub-limit. ONE allowance per
+ * credential, shared by ALL Batch traffic (analysis chunks and, from Stage 6,
+ * Batch translation envelopes) — never two pools of 15. A measured constant,
+ * not a flag; Manual/Auto/reader INTERACTIVE requests never enter this bucket.
+ *
+ * Mechanism (DR-D, accepted recommendation): a SECOND rolling-window
+ * governor bucket nested BENEATH the shared provider bucket.
+ *  - Bucket 1 = the existing per-provider bucket ([SharedProviderRequestGovernor]),
+ *    untouched: interactive reserve, starvation guard, cooldowns all hold.
+ *  - Bucket 2 = the sub-limit bucket keyed credential-wide
+ *    (`model = null`, [ProviderRequestKey.credentialScope] preserved), 15
+ *    requests per any rolling 60 s window — burst tolerance from the window,
+ *    never a forced 4-second sleep. Tokens are not re-counted here (bucket 1
+ *    already enforces the TPM window); the DR-C per-provider TPM values are
+ *    deferred to measurement, so the sub-limit is RPM-only in v1.
+ */
+object BatchProviderSublimit {
+
+    /** The aggregate Batch allowance (requests per rolling 60 s window). */
+    const val BATCH_REQUESTS_PER_MINUTE = 15
+
+    /**
+     * Credential-wide, model-agnostic sub-limit bucket key (DR-D): same
+     * backend + credential scope as the real request, no model dimension, so
+     * every Batch request to one credential competes for the same 15.
+     */
+    fun batchSublimitKey(key: ProviderRequestKey): ProviderRequestKey =
+        ProviderRequestKey(
+            backend = key.backend,
+            model = null,
+            credentialScope = key.credentialScope,
+        )
+
+    /**
+     * Sub-limit bucket policy: pacing comes from the rolling window
+     * (`minimumSpacingMs = 0` — no forced spacing), `maxInFlight = 1`
+     * serializes Batch traffic so the all-or-nothing nested admission never
+     * holds a permit while another Batch request is in flight.
+     */
+    val policy: ProviderQuotaPolicy = ProviderQuotaPolicy(
+        requestsPerMinute = BATCH_REQUESTS_PER_MINUTE,
+        tokensPerMinute = Int.MAX_VALUE,
+        minimumSpacingMs = 0L,
+        maxInFlight = 1,
+        maxForegroundWaitMs = 15_000L,
+        windowMs = 60_000L,
+    )
+}
+
+/**
+ * Nested bucket-2 admission gate (DR-D): admits the Batch sub-limit FIRST,
+ * then runs [block] which admits through the shared provider bucket
+ * (bucket 1) itself. All-or-nothing: if bucket 1 defers after bucket 2
+ * granted, bucket 2's permit is released BEFORE the pause propagates —
+ * permits are short-lived because `maxInFlight = 1` serializes Batch traffic.
+ * Interactive requests skip this gate entirely, so reader latency is
+ * structurally unaffected; the bucket-1 interactive reserve and starvation
+ * guard are untouched.
+ */
+class BatchRequestSublimitGate(
+    private val clock: ProviderRequestClock = SystemProviderRequestClock,
+) {
+
+    private val sublimitGovernor = ProviderRequestGovernor(
+        policy = { BatchProviderSublimit.policy },
+        clock = clock,
+    )
+
+    suspend fun <T> executeBatch(
+        metadata: ProviderRequestMetadata,
+        block: suspend () -> T,
+    ): T {
+        val sublimitMetadata = metadata.copy(key = BatchProviderSublimit.batchSublimitKey(metadata.key))
+        val decision = sublimitGovernor.admit(sublimitMetadata)
+        val permit = when (decision) {
+            is ProviderAdmissionDecision.Admitted -> decision.permit
+            is ProviderAdmissionDecision.Deferred -> throw ProviderRequestPausedException(
+                key = metadata.key,
+                nextEligibleRetryAtEpochMs = decision.nextEligibleRetryAtEpochMs,
+                reason = "Batch sub-limit deferred: ${decision.reason}",
+            )
+        }
+        // The permit is ALWAYS given back when this call site exits — success,
+        // pause (bucket 1 deferred after bucket 2 granted: released BEFORE the
+        // pause propagates), or cancellation. `maxInFlight = 1` keeps permits
+        // short-lived; the sub-limit's quota accounting lives entirely in the
+        // rolling-window reservation.
+        try {
+            return block()
+        } finally {
+            sublimitGovernor.releaseAdmitted(permit, sublimitMetadata)
+        }
+    }
+}
+
 

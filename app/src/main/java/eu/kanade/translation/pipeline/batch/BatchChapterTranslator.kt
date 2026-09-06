@@ -50,9 +50,11 @@ import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
+import tachiyomi.domain.translation.AiEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -651,7 +653,21 @@ internal class BatchChapterTranslator(
                             contextualAiParity = isAi,
                         )
                     ) {
-                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE ->
+                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE -> {
+                            // T924-D4 (wave-3 owed): the run snapshot freezes
+                            // the REAL provider/model identity from the active
+                            // translator configuration, not a class name. The
+                            // credential freezes as a one-way signature, never
+                            // a raw key (T924-FP-04).
+                            val aiEnginePref = translationPreferences.translationAiEngine().get()
+                            val aiModel = translationPreferences.translationAiModel(aiEnginePref)
+                                .get()
+                                .ifBlank { "unspecified" }
+                            val credentialSecret = if (aiEnginePref == AiEngine.LMSTUDIO) {
+                                translationPreferences.translationAiBaseUrlLmStudio().get()
+                            } else {
+                                translationPreferences.translationAiApiKey(aiEnginePref).get()
+                            }
                             ChapterProfileBatchCoordinator(
                                 store = store,
                                 nativeWorker = batchLaneWorkers.nativeWorker,
@@ -661,7 +677,10 @@ internal class BatchChapterTranslator(
                                     targetLang = toLang.code,
                                     ocrEngine = recognitionEngine::class.java.simpleName,
                                     inpaintMode = inpaintingModeFromPref().name,
-                                    providerKey = textTranslator::class.java.simpleName,
+                                    providerKey = "${aiEnginePref.name.lowercase(Locale.ROOT)}:$aiModel",
+                                    credentialId = credentialSecret.takeIf { it.isNotBlank() }
+                                        ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
+                                        .orEmpty(),
                                     flagProfilePipeline = profilePipelineEnabled,
                                 ),
                                 orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
@@ -670,6 +689,7 @@ internal class BatchChapterTranslator(
                                 flagProfilePipeline = true,
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                             ).runPass1(orderedPages, computeClass)
+                        }
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL ->
                             SequentialBatchCoordinator(
                                 nativeWorker = batchLaneWorkers.nativeWorker,

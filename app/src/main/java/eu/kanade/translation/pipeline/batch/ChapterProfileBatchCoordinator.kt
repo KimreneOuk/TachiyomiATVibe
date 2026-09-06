@@ -3,6 +3,7 @@ package eu.kanade.translation.pipeline.batch
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.CheckpointOcrResult
 import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
@@ -11,15 +12,36 @@ import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.ExtractedEntity
+import eu.kanade.translation.artifact.ExtractedRelationship
+import eu.kanade.translation.artifact.ExtractedTerm
+import eu.kanade.translation.artifact.ExtractedTermKind
 import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.OcrCheckpointMode
+import eu.kanade.translation.artifact.PageRange
+import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.RunConfigSnapshot
+import eu.kanade.translation.artifact.SceneRegister
+import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.artifact.ToneFlag
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.translator.TranslatorComputeClass
+import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
+import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
+import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
+import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
+import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
+import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
+import eu.kanade.translation.translator.contextual.AnalysisChunkPolicy
+import eu.kanade.translation.translator.contextual.ChunkPlannerPage
+import eu.kanade.translation.translator.contextual.OcrCorpusManifest
+import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
+import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -30,35 +52,33 @@ import tachiyomi.core.common.util.system.logcat
 import java.security.MessageDigest
 
 /**
- * T924 Stage 3 (WP4) — the FF-01 flagged chapter-profile Batch coordinator
- * SHELL. This slice implements the durable machine ONLY through OCR_PREFLIGHT
- * (T924-ST-02..06):
+ * T924 Stage 3 + Stage 5 slice A (WP4 + WP5a) — the FF-01 flagged
+ * chapter-profile Batch coordinator. Stage 3 landed the durable machine
+ * through OCR_PREFLIGHT (T924-ST-02..06); Stage-5 slice A continues after a
+ * COMPLETE preflight into:
  *
- *   RUN_SNAPSHOT (record published) -> OCR_PLAN (transition published) ->
- *   OCR_PREFLIGHT (serial per page: plan -> OCR -> `checkpointOcr` CLOSE ->
- *   release lease -> next page) -> STOP with a durable diagnostic summary.
+ *   ANALYSIS_PLAN (ST-07: corpus re-derived from the durable checkpoints,
+ *   skip rules recorded) -> ANALYSIS_CHUNKS (ST-08: resume skips the
+ *   persisted pointer prefix; each chunk runs through the typed analysis
+ *   runner and persists crash-safely via [AnalysisChunkPublication]) ->
+ *   STOP with a PAUSED diagnostic (profile reconcile/freeze are slice B).
  *
- * Analysis / profile / envelope / translation / inpaint are LATER stages and
- * are deliberately NOT implemented here: after the last page checkpoints, the
- * coordinator reports STOPPED-NOT-FINISHED (a paused, fully resumable pass —
- * never a COMPLETED pass, which would strand the untranslated pages as
- * failed) and publishes a final run record whose state shows OCR_PREFLIGHT
- * complete plus a diagnostic counter summary. Completion semantics are NOT
- * redefined; committed display is never touched (T924-TX-07 — checkpointOcr
- * preserves it by construction), so no page visually regresses.
- *
- * Invariants kept by the loop (gates §2.3):
- *  - ONE decoded page at a time: the loop is strictly serial, the OCR worker's
- *    native handoff is released before the next page is admitted, and the page
- *    lease is released strictly AFTER the checkpoint committed (T924-TX-06).
- *  - No inpaint, no analysis, no translation, no provider calls.
- *  - Resume re-enters OCR_PREFLIGHT and skips pages whose origin-neutral
- *    `PageOcrCheckpoint` matches the current source identity (T924-ST-06);
- *    only the remainder is re-OCR'd.
- *  - The run record ([ChapterRunRecord]) is published at run start (FF-01d:
- *    the FF-01 flag value is frozen into it) and advanced as pages checkpoint;
- *    counter publications are best-effort progress carriers — per-page
- *    checkpoints in the manifest stay authoritative (T924-ST-06).
+ * Invariants kept by the loop (gates §2.3 + §2.4):
+ *  - ONE decoded page at a time: the preflight loop is strictly serial, the
+ *    OCR worker's native handoff is released before the next page is admitted,
+ *    and the page lease is released strictly AFTER the checkpoint committed
+ *    (T924-TX-06).
+ *  - No inpaint, no translation, no display promotion; provider calls happen
+ *    ONLY inside the analysis phase, through the typed runner (never
+ *    `promptText`), gated by the 15-RPM Batch sub-limit + shared provider
+ *    bucket (T924-AP-08, DR-C/DR-D).
+ *  - Resume re-enters OCR_PREFLIGHT (checkpoint reuse by content identity) or
+ *    ANALYSIS_CHUNKS (never re-sends persisted chunks, ST-08).
+ *  - The run record ([ChapterRunRecord]) is published at run start (FF-01d)
+ *    and advanced at phase transitions + chunk completions; counter
+ *    publications are best-effort progress carriers — the manifest's
+ *    checkpoints and `analysisChunks` pointers stay authoritative
+ *    (T924-ST-06/ST-08).
  */
 /**
  * Typed identity of ONE unresolved preflight page failure (wave-2 review R2):
@@ -106,6 +126,13 @@ internal class ChapterProfileBatchCoordinator(
      */
     private val failureRecorder: suspend (PreflightStageFailure) -> Unit =
         { failure -> persistDurablePreflightFailure(store, failure, nowEpochMs) },
+    /**
+     * Stage-5 slice A: the typed analysis runner (executor + transport, or a
+     * test fake). `null` keeps the slice-A shell behavior: the run pauses at
+     * ANALYSIS_CHUNKS with a typed CONFIGURATION-class skip counter instead of
+     * producing provider calls without a typed transport.
+     */
+    private val analysisChunkRunner: AnalysisChunkRunner? = null,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -304,10 +331,8 @@ internal class ChapterProfileBatchCoordinator(
             }
         }
 
-        // ---- STOP with a durable diagnostic (this slice's terminal). ----
-        // OCR_PREFLIGHT is COMPLETE durably (state + corpus fingerprint when
-        // every page carries a usable checkpoint); the chapter stays paused
-        // and resumable — analysis/profile/translation are later stages.
+        // ---- OCR_PREFLIGHT complete durably; continue into the analysis ----
+        // ---- phase when the corpus is complete (T924-ST-07/08).        ----
         val corpusGaps = total - corpusFingerprints.size
         val corpusFingerprint = if (corpusGaps == 0 && corpusFingerprints.isNotEmpty()) {
             val naturalOrderProven = orderedPages.map { it.second }.toSet() == (0 until total).toSet()
@@ -335,16 +360,551 @@ internal class ChapterProfileBatchCoordinator(
                 ocrCorpusFingerprint = corpusFingerprint,
             ),
         )
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT t924 preflight stopped-not-finished: ocr=$total reused=$reusedPages gaps=$corpusGaps " +
-                "analysis/translation arrive in later T924 stages"
+        if (corpusFingerprint == null) {
+            // Incomplete corpus (reused/deferred gaps): analysis needs the
+            // whole OCR corpus — stop exactly like the S3 shell did.
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT t924 preflight stopped-not-finished: ocr=$total reused=$reusedPages gaps=$corpusGaps " +
+                    "analysis deferred until the corpus is complete"
+            }
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = corpusFingerprints.mapTo(mutableSetOf()) { it.first },
+                reason = STOP_REASON,
+            )
         }
+
+        // ---- T924 Stage 5 slice A: ANALYSIS_PLAN -> ANALYSIS_CHUNKS. ----
+        // The chapter stays PAUSED after the chunks (profile reconcile/freeze
+        // is slice B); completion semantics are still NOT redefined.
+        return runAnalysisPhase(
+            artifact = artifact,
+            runId = runId,
+            orderedPages = orderedPages,
+            corpusFingerprint = corpusFingerprint,
+            baseCounters = finalCounters,
+        )
+    }
+
+    /**
+     * Stage-5 slice A analysis phase (T924-ST-07/ST-08):
+     *
+     *  1. ANALYSIS_PLAN — the OCR corpus manifest is a pure, recomputable
+     *     planner output re-derived from the durable checkpoints (ST-01.4 /
+     *     ST-05 analogy: only the phase transition persists). Skip rules
+     *     (no-work/textless) and the chunk plan are recorded via the record.
+     *  2. ANALYSIS_CHUNKS — resume skips the persisted pointer prefix
+     *     (chunk-ordinal order, WP1 deviation note); each remaining chunk is
+     *     executed through the typed analysis runner and persisted through
+     *     the crash-safe sidecar-then-pointer transaction (T924-SC-20).
+     *
+     * Typed failures pause the run at the failing chunk (ST-08: resume
+     * restarts at the first unpersisted chunk; the validated prefix stays
+     * durable and is never re-sent). The run NEVER advances to
+     * PROFILE_RECONCILE here (slice B), so nothing in this slice publishes
+     * `COMPLETE` and [decideResume] wiring stays untouched (wave-2 F1).
+     */
+    private suspend fun runAnalysisPhase(
+        artifact: ChapterArtifactStore,
+        runId: String,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+        baseCounters: Map<String, Int>,
+    ): BatchPass1Outcome {
+        val total = orderedPages.size
+        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+
+        fun analysisCounters(extra: Map<String, Int>): Map<String, Int> =
+            baseCounters + mapOf(COUNTER_ANALYSIS_PLAN to 1) + extra
+
+        // ST-07: phase transition only — the corpus manifest is recomputed
+        // from the checkpoints below (pure planner output, never stale).
+        publishRecord(
+            artifact,
+            record(
+                runId,
+                ChapterRunState.ANALYSIS_PLAN,
+                frozenFingerprint,
+                sourceDigest,
+                analysisCounters(mapOf(COUNTER_ANALYSIS_PLAN to 1)),
+                ocrCorpusFingerprint = corpusFingerprint,
+            ),
+        )
+
+        // Rebuild the corpus entries from the DURABLE checkpoints (never from
+        // the in-memory pass): idempotent against the ST-07 postcondition.
+        val corpus = corpusEntriesFromCheckpoints(artifact, orderedPages, total)
+        if (corpus == null) {
+            // A checkpoint vanished between the preflight barrier and here
+            // (concurrent invalidation): stop; resume re-plans honestly.
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
+                reason = "T924 analysis plan deferred: corpus checkpoints changed under the run",
+            )
+        }
+        if (corpus.corpusFingerprint != corpusFingerprint) {
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
+                reason = "T924 analysis plan deferred: corpus fingerprint drifted between preflight and plan",
+            )
+        }
+
+        val chunkPages = corpus.entries.map { entry ->
+            ChunkPlannerPage(
+                pageKey = entry.storagePageKey,
+                naturalPageIndex = entry.naturalPageIndex,
+                contentFingerprint = entry.contentFingerprint,
+                blockIds = entry.wireBlockIds,
+                estimatedInputTokens = entry.estimatedInputTokens,
+            )
+        }
+        val policy = AnalysisChunkPolicy(
+            overlapPages = frozenConfig.analysisPolicy.overlapPages
+                .coerceIn(0, AnalysisChunkResult.MAX_OVERLAP_PAGES),
+        )
+        val plan = when (val planned = AnalysisChunkPlanner.plan(chunkPages, policy)) {
+            is AnalysisChunkPlanResult.Success -> planned
+            is AnalysisChunkPlanResult.Rejected -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 analysis plan rejected: ${planned.reason}"
+                }
+                return BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.FAILED,
+                    reason = "T924 analysis plan rejected: ${planned.reason}",
+                )
+            }
+        }
+
+        // Skip rules (provider-analysis contract §5): no chunkable work
+        // (textless / no translatable blocks) skips provider analysis.
+        if (plan.chunks.isEmpty()) {
+            publishRecord(
+                artifact,
+                record(
+                    runId,
+                    ChapterRunState.ANALYSIS_CHUNKS,
+                    frozenFingerprint,
+                    sourceDigest,
+                    analysisCounters(
+                        mapOf(
+                            COUNTER_CHUNKS_TOTAL to 0,
+                            COUNTER_CHUNKS_DONE to 0,
+                            COUNTER_SKIPPED_NO_WORK to 1,
+                        ),
+                    ),
+                    ocrCorpusFingerprint = corpusFingerprint,
+                ),
+            )
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = corpus.entries.mapTo(mutableSetOf()) { it.storagePageKey },
+                reason = ANALYSIS_NO_WORK_REASON,
+            )
+        }
+
+        val runner = analysisChunkRunner
+        if (runner == null) {
+            // Slice-A shell: no typed analysis transport is wired yet. A
+            // missing transport is a typed CONFIGURATION-class gate failure
+            // (provider-analysis contract §2.1) — never garbage chunks.
+            publishRecord(
+                artifact,
+                record(
+                    runId,
+                    ChapterRunState.ANALYSIS_CHUNKS,
+                    frozenFingerprint,
+                    sourceDigest,
+                    analysisCounters(
+                        mapOf(
+                            COUNTER_CHUNKS_TOTAL to plan.chunks.size,
+                            COUNTER_CHUNKS_DONE to 0,
+                            COUNTER_SKIPPED_NO_TRANSPORT to 1,
+                        ),
+                    ),
+                    ocrCorpusFingerprint = corpusFingerprint,
+                ),
+            )
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = corpus.entries.mapTo(mutableSetOf()) { it.storagePageKey },
+                reason = ANALYSIS_NO_TRANSPORT_REASON,
+            )
+        }
+
+        // ST-08 resume rule: the persisted pointer prefix (chunk-ordinal
+        // order) is never re-sent; execution restarts at the first missing
+        // chunk. An invalid/corrupt sidecar reads back as ABSENT and its
+        // ordinal is re-executed by the size-based prefix rule only when it
+        // was never appended; a corrupt POINTERED chunk surfaces via the
+        // read-back gate below.
+        val manifestNow = store.artifactManifest
+        val persistedPrefix = manifestNow?.analysisChunks?.size ?: 0
+
+        val identity = AnalysisRunIdentity(
+            runId = runId,
+            mangaKeyHash = AnalysisRunIdentity.SCOPE_ABSENT,
+            chapterKeyHash = "sha256:$sourceDigest",
+            sourceLanguage = frozenConfig.sourceLang,
+            targetLanguage = frozenConfig.targetLang,
+            analysisPolicyFingerprint = policyFingerprint(
+                "analysis-policy-v1",
+                frozenConfig.analysisPolicy.overlapPages,
+            ),
+            ocrCorpusFingerprint = corpusFingerprint,
+            maxOutputTokens = ANALYSIS_MAX_OUTPUT_TOKENS,
+        )
+
+        publishRecord(
+            artifact,
+            record(
+                runId,
+                ChapterRunState.ANALYSIS_CHUNKS,
+                frozenFingerprint,
+                sourceDigest,
+                analysisCounters(
+                    mapOf(
+                        COUNTER_CHUNKS_TOTAL to plan.chunks.size,
+                        COUNTER_CHUNKS_DONE to persistedPrefix,
+                        COUNTER_CHUNKS_PENDING to 0,
+                    ),
+                ),
+                ocrCorpusFingerprint = corpusFingerprint,
+            ),
+        )
+
+        var done = persistedPrefix
+        var pending = 0
+        for (chunk in plan.chunks) {
+            currentCoroutineContext().ensureActive()
+            if (chunk.chunkOrdinal < persistedPrefix) continue
+            yield() // reader-priority courtesy between paid provider calls
+            val evidence = corpus.evidenceTextsFor(chunk)
+            when (val outcome = runner.executeChunk(chunk, identity, evidence)) {
+                is AnalysisChunkRunOutcome.Completed -> {
+                    val input = corpus.publicationInput(chunk, outcome)
+                        ?: return BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.PAUSED,
+                            reason = "T924 analysis chunk ${chunk.chunkId} deferred: " +
+                                "contributing OCR snapshots no longer readable",
+                        )
+                    val result = AnalysisChunkPublication.buildResult(chunk, input, nowEpochMs())
+                    val publication = AnalysisChunkPublication.publish(
+                        artifact = artifact,
+                        manifest = store.artifactManifest ?: return BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.PERSISTENCE_REJECTED,
+                            reason = "T924 analysis chunk publication: manifest unavailable",
+                        ),
+                        result = result,
+                        nowEpochMs = nowEpochMs(),
+                    )
+                    when (publication) {
+                        is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                            store.artifactManifest = publication.manifest
+                            done++
+                            if (outcome.coverage.kind == AnalysisCoverageKind.MISSING_ONLY) {
+                                // DR-A Option 1: the independently complete
+                                // subset committed; the remainder is pending
+                                // and never blocks the chapter.
+                                pending++
+                            }
+                            publishRecord(
+                                artifact,
+                                record(
+                                    runId,
+                                    ChapterRunState.ANALYSIS_CHUNKS,
+                                    frozenFingerprint,
+                                    sourceDigest,
+                                    analysisCounters(
+                                        mapOf(
+                                            COUNTER_CHUNKS_TOTAL to plan.chunks.size,
+                                            COUNTER_CHUNKS_DONE to done,
+                                            COUNTER_CHUNKS_PENDING to pending,
+                                        ),
+                                    ),
+                                    ocrCorpusFingerprint = corpusFingerprint,
+                                ),
+                            )
+                        }
+                        is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                            // Prior manifest stays authoritative; the chunk
+                            // stays unpersisted; resume re-executes it.
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT t924 analysis chunk publication rejected " +
+                                    "chunk=${chunk.chunkId}: ${publication.reason}"
+                            }
+                            return BatchPass1Outcome(
+                                needsTranslation = emptyList(),
+                                status = BatchPass1Status.PERSISTENCE_REJECTED,
+                                anchorPageKey = chunk.corePageKeys.firstOrNull(),
+                                reason = "T924 analysis chunk publication rejected: ${publication.reason}",
+                            )
+                        }
+                    }
+                }
+                is AnalysisChunkRunOutcome.Paused -> {
+                    publishRecord(
+                        artifact,
+                        record(
+                            runId,
+                            ChapterRunState.ANALYSIS_CHUNKS,
+                            frozenFingerprint,
+                            sourceDigest,
+                            analysisCounters(
+                                mapOf(
+                                    COUNTER_CHUNKS_TOTAL to plan.chunks.size,
+                                    COUNTER_CHUNKS_DONE to done,
+                                    COUNTER_CHUNKS_PENDING to pending,
+                                    COUNTER_CHUNKS_FAILURES to 1,
+                                ),
+                            ),
+                            ocrCorpusFingerprint = corpusFingerprint,
+                        ),
+                    )
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 analysis paused at chunk=${chunk.chunkId}: ${outcome.reason}"
+                    }
+                    return BatchPass1Outcome(
+                        needsTranslation = emptyList(),
+                        status = BatchPass1Status.PAUSED,
+                        anchorPageKey = chunk.corePageKeys.firstOrNull(),
+                        failure = outcome.failure,
+                        nextEligibleRetryAtEpochMs = outcome.failure.retryAfterAtEpochMs,
+                        reason = outcome.reason,
+                    )
+                }
+                is AnalysisChunkRunOutcome.Refused -> {
+                    publishRecord(
+                        artifact,
+                        record(
+                            runId,
+                            ChapterRunState.ANALYSIS_CHUNKS,
+                            frozenFingerprint,
+                            sourceDigest,
+                            analysisCounters(
+                                mapOf(
+                                    COUNTER_CHUNKS_TOTAL to plan.chunks.size,
+                                    COUNTER_CHUNKS_DONE to done,
+                                    COUNTER_CHUNKS_PENDING to pending,
+                                    COUNTER_CHUNKS_FAILURES to 1,
+                                ),
+                            ),
+                            ocrCorpusFingerprint = corpusFingerprint,
+                        ),
+                    )
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 analysis refusal at chunk=${chunk.chunkId}: ${outcome.reason}"
+                    }
+                    return BatchPass1Outcome(
+                        needsTranslation = emptyList(),
+                        status = BatchPass1Status.PAUSED,
+                        anchorPageKey = chunk.corePageKeys.firstOrNull(),
+                        failure = outcome.failure,
+                        reason = outcome.reason,
+                    )
+                }
+            }
+        }
+
+        // Stop-after-chunks terminal for slice A: the validated chunk set is
+        // durable; reconcile/freeze are slice B. PAUSED — never COMPLETED.
         return BatchPass1Outcome(
             needsTranslation = emptyList(),
             status = BatchPass1Status.PAUSED,
-            completedPageKeys = corpusFingerprints.mapTo(mutableSetOf()) { it.first },
-            reason = STOP_REASON,
+            completedPageKeys = corpus.entries.mapTo(mutableSetOf()) { it.storagePageKey },
+            reason = ANALYSIS_STOP_REASON,
         )
+    }
+
+    /**
+     * Rebuilds the analysis corpus from the durable checkpoints. Each entry
+     * carries the wire identities the analysis request/evidence universe uses
+     * (`p<N>` pages, `p<N>_b<M>` blocks) alongside the persisted identities.
+     */
+    private fun corpusEntriesFromCheckpoints(
+        artifact: ChapterArtifactStore,
+        orderedPages: List<PageKey>,
+        expectedPageCount: Int,
+    ): AnalysisCorpus? {
+        val manifest = store.artifactManifest ?: return null
+        val entries = mutableListOf<AnalysisCorpusEntry>()
+        for ((pageKey, pageIndex) in orderedPages) {
+            val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
+            val checkpoint = when (val read = artifact.readOcrCheckpoint(pointer)) {
+                is ChapterArtifactStore.OcrCheckpointRead.Usable -> read.checkpoint
+                else -> return null
+            }
+            val snapshot = artifact.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+                ?: return null
+            val wirePageKey = "p$pageIndex"
+            val blocks = snapshot.blocks
+            val wireBlockIds = blocks.mapIndexed { index, block ->
+                wireBlockId(block.blockId, wirePageKey, index)
+            }
+            entries += AnalysisCorpusEntry(
+                storagePageKey = pageKey,
+                naturalPageIndex = pageIndex,
+                contentFingerprint = checkpoint.ocrContentFingerprint,
+                snapshotPointer = checkpoint.ocrPageSnapshotPointer,
+                wirePageKey = wirePageKey,
+                wireBlockIds = wireBlockIds,
+                blockTexts = blocks.map { it.text },
+                estimatedInputTokens = blocks.sumOf { (it.text.length + 3) / 4 }.coerceAtLeast(1),
+            )
+        }
+        val corpusManifest = OcrCorpusManifest.assemble(
+            pages = entries.map { entry ->
+                OcrCorpusPageEntry(
+                    pageKey = entry.storagePageKey,
+                    naturalPageIndex = entry.naturalPageIndex,
+                    contentFingerprint = entry.contentFingerprint,
+                    trusted = true,
+                )
+            },
+            expectedPageCount = expectedPageCount,
+            expectedPageCountTrusted = true,
+        )
+        return AnalysisCorpus(entries = entries, corpusFingerprint = corpusManifest.corpusFingerprint)
+    }
+
+    /** `p<N>_b<M>` canonicalization: trusted as stored, else synthesized. */
+    private fun wireBlockId(storedBlockId: String?, wirePageKey: String, index: Int): String {
+        val id = storedBlockId.orEmpty()
+        if (id.matches(Regex("p\\d+_b\\d+"))) return id
+        val local = Regex("^(?:p\\d+_)?b(\\d+)$").find(id)?.groupValues?.getOrNull(1)
+        return "${wirePageKey}_b${local ?: index.toString()}"
+    }
+
+    /** One rebuilt-corpus OCR page entry (durable checkpoint + wire identity). */
+    private class AnalysisCorpusEntry(
+        val storagePageKey: String,
+        val naturalPageIndex: Int,
+        val contentFingerprint: String,
+        val snapshotPointer: SidecarPointer,
+        val wirePageKey: String,
+        val wireBlockIds: List<String>,
+        val blockTexts: List<String>,
+        val estimatedInputTokens: Int,
+    )
+
+    private class AnalysisCorpus(
+        val entries: List<AnalysisCorpusEntry>,
+        val corpusFingerprint: String,
+    ) {
+        /** Chunks are planned over STORAGE page keys; look them up here. */
+        private val byStorageKey = entries.associateBy { it.storagePageKey }
+
+        /** Wire evidence universe + source texts for one planned chunk. */
+        fun evidenceTextsFor(chunk: PlannedAnalysisChunk): AnalysisEvidenceTexts {
+            val blockIdsByPage = mutableMapOf<String, List<String>>()
+            val textByBlockId = mutableMapOf<String, String>()
+            val wirePageKeyByStorageKey = mutableMapOf<String, String>()
+            for (pageKey in chunk.contributingPageKeys) {
+                val entry = byStorageKey[pageKey] ?: continue
+                wirePageKeyByStorageKey[pageKey] = entry.wirePageKey
+                blockIdsByPage[entry.wirePageKey] = entry.wireBlockIds
+                entry.wireBlockIds.forEachIndexed { index, blockId ->
+                    textByBlockId[blockId] = entry.blockTexts[index]
+                }
+            }
+            return AnalysisEvidenceTexts(
+                blockIdsByPage = blockIdsByPage,
+                textByBlockId = textByBlockId,
+                wirePageKeyByStorageKey = wirePageKeyByStorageKey,
+            )
+        }
+
+        /**
+         * Maps a validated response onto the durable publication input:
+         * persistable subset only, evidence page keys translated from wire
+         * `p<N>` to the persisted page keys, and OCR artifact pointers in
+         * contributing (core-then-context) order.
+         */
+        fun publicationInput(
+            chunk: PlannedAnalysisChunk,
+            outcome: AnalysisChunkRunOutcome.Completed,
+        ): AnalysisChunkPublication.AnalysisChunkPublicationInput? {
+            val refs = mutableListOf<SidecarPointer>()
+            for (pageKey in chunk.contributingPageKeys) {
+                val entry = byStorageKey[pageKey] ?: return null
+                refs += entry.snapshotPointer
+            }
+
+            fun storageKey(wireKey: String): String =
+                entries.firstOrNull { it.wirePageKey == wireKey }?.storagePageKey ?: wireKey
+
+            val scenes = outcome.response.scenes.map { scene ->
+                ProfileScene(
+                    sceneId = scene.sceneId,
+                    pageRange = PageRange(
+                        firstNaturalPageIndex = naturalIndexOrZero(scene.fromPageWireKey),
+                        lastNaturalPageIndex = naturalIndexOrZero(scene.toPageWireKey),
+                    ),
+                    participants = scene.participants,
+                    toneFlags = (scene.tone + scene.contentTags).mapNotNull { name ->
+                        when (name) {
+                            "EXPLICIT", "INTIMATE", "VIOLENT", "COMEDIC", "SERIOUS", "ACTION" ->
+                                ToneFlag.valueOf(name)
+                            else -> ToneFlag.OTHER
+                        }
+                    }.toSet(),
+                    register = SceneRegister.entries.firstOrNull { it.name == scene.register }
+                        ?: SceneRegister.OTHER,
+                    narrativeContext = scene.narrative,
+                )
+            }
+            return AnalysisChunkPublication.AnalysisChunkPublicationInput(
+                provenance = outcome.provenance,
+                ocrArtifactRefs = refs,
+                terms = outcome.response.terms.map { term ->
+                    ExtractedTerm(
+                        termId = term.termId,
+                        sourceForm = term.sourceForm,
+                        canonicalTarget = term.canonicalTarget,
+                        aliases = term.aliases,
+                        kind = ExtractedTermKind.entries.firstOrNull { it.name == term.kind }
+                            ?: ExtractedTermKind.TERM,
+                    )
+                },
+                entities = outcome.response.entities.map { entity ->
+                    ExtractedEntity(
+                        entityId = entity.entityId,
+                        canonicalSourceName = entity.canonicalSourceName,
+                        proposedTargetName = entity.proposedTargetName,
+                        sourceNames = entity.sourceNames,
+                        titles = entity.titles,
+                    )
+                },
+                relationships = outcome.response.entities.flatMap { entity ->
+                    entity.relationships.map { relationship ->
+                        ExtractedRelationship(
+                            type = relationship.type,
+                            sourceEntityId = relationship.sourceEntityId,
+                            targetEntityId = relationship.targetEntityId,
+                        )
+                    }
+                },
+                scenes = scenes,
+                narrativeSummary = outcome.response.narrativeSummary,
+                conflictNotes = outcome.response.conflictNotes,
+                evidenceRefs = outcome.response.evidenceRefs.map { ref ->
+                    ref.copy(pageKey = storageKey(ref.pageKey))
+                },
+            )
+        }
+
+        private fun naturalIndexOrZero(wirePageKey: String): Int =
+            wirePageKey.removePrefix("p").toIntOrNull()?.coerceAtLeast(0) ?: 0
     }
 
     /**
@@ -535,6 +1095,17 @@ internal class ChapterProfileBatchCoordinator(
         const val STOP_REASON =
             "T924 OCR preflight complete; analysis/profile/translation arrive in later stages"
 
+        /** Stage-5 slice A terminals (still PAUSED — slice B owns the freeze). */
+        const val ANALYSIS_STOP_REASON =
+            "T924 analysis chunks persisted; profile reconcile/freeze arrive in slice B"
+        const val ANALYSIS_NO_WORK_REASON =
+            "T924 analysis skipped: no chunkable OCR work in this chapter"
+        const val ANALYSIS_NO_TRANSPORT_REASON =
+            "T924 analysis paused: no typed analysis transport wired (CONFIGURATION gate)"
+
+        /** Analysis output budget default (T924-AP-03 `outputBudget`). */
+        const val ANALYSIS_MAX_OUTPUT_TOKENS = 8192
+
         /** FF-01d flag state, frozen as an operational (never fingerprinted) counter. */
         const val COUNTER_FLAG = "flagProfilePipeline"
         const val COUNTER_TOTAL = "ocrPagesTotal"
@@ -542,6 +1113,13 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_REUSED = "ocrPagesReused"
         const val COUNTER_STOP = "preflightStop"
         const val COUNTER_GAPS = "preflightCheckpointGaps"
+        const val COUNTER_ANALYSIS_PLAN = "analysisPlanPublished"
+        const val COUNTER_CHUNKS_TOTAL = "analysisChunksTotal"
+        const val COUNTER_CHUNKS_DONE = "analysisChunksDone"
+        const val COUNTER_CHUNKS_PENDING = "analysisChunksPending"
+        const val COUNTER_CHUNKS_FAILURES = "analysisChunkFailures"
+        const val COUNTER_SKIPPED_NO_WORK = "analysisSkippedNoWork"
+        const val COUNTER_SKIPPED_NO_TRANSPORT = "analysisSkippedNoTransport"
 
         /**
          * T924-FF-01a dispatch decision. The flag is consulted exactly ONCE per
@@ -589,6 +1167,8 @@ internal class ChapterProfileBatchCoordinator(
             protocolVersion: Int = 1,
             readingOrderVersion: Int = 1,
             flagProfilePipeline: Boolean? = null,
+            /** Opaque credential signature (one-way hash); never a raw key. */
+            credentialId: String = "",
         ): RunConfigSnapshot = RunConfigSnapshot(
             sourceLang = sourceLang,
             targetLang = targetLang,
@@ -597,6 +1177,7 @@ internal class ChapterProfileBatchCoordinator(
             detectorModelHash = detectorModelHash,
             inpaintMode = inpaintMode,
             providerKey = providerKey,
+            credentialId = credentialId,
             protocolVersion = protocolVersion,
             readingOrderVersion = readingOrderVersion,
             flagProfilePipeline = flagProfilePipeline,
