@@ -3,6 +3,7 @@ package eu.kanade.translation.pipeline.batch
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.CheckpointOcrResult
 import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.ArtifactStage
@@ -24,6 +25,7 @@ import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.artifact.SceneRegister
 import eu.kanade.translation.artifact.SidecarPointer
+import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.ToneFlag
 import eu.kanade.translation.model.PageTranslation
@@ -482,6 +484,20 @@ internal class ChapterProfileBatchCoordinator(
             }
         }
 
+        // Wave-4 F-W4-1: the persisted pointer prefix is resume-authoritative
+        // ONLY when it came from THIS plan. A cross-run corpus change
+        // (re-download → new checkpoints → re-planned windows) must never be
+        // silently skipped into a mixed-plan chunk list — mismatch is a typed
+        // PAUSED, exactly like the within-run drift gate above.
+        validatePersistedPrefix(artifact, plan.chunks)?.let { staleReason ->
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = corpus.entries.mapTo(mutableSetOf()) { it.storagePageKey },
+                reason = staleReason,
+            )
+        }
+
         // Skip rules (provider-analysis contract §5): no chunkable work
         // (textless / no translatable blocks) skips provider analysis.
         if (plan.chunks.isEmpty()) {
@@ -541,11 +557,8 @@ internal class ChapterProfileBatchCoordinator(
         }
 
         // ST-08 resume rule: the persisted pointer prefix (chunk-ordinal
-        // order) is never re-sent; execution restarts at the first missing
-        // chunk. An invalid/corrupt sidecar reads back as ABSENT and its
-        // ordinal is re-executed by the size-based prefix rule only when it
-        // was never appended; a corrupt POINTERED chunk surfaces via the
-        // read-back gate below.
+        // order, identity-validated above) is never re-sent; execution
+        // restarts at the first missing chunk.
         val manifestNow = store.artifactManifest
         val persistedPrefix = manifestNow?.analysisChunks?.size ?: 0
 
@@ -727,6 +740,53 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
+     * Wave-4 F-W4-1: the ST-08 resume prefix is only valid when the persisted
+     * chunks ARE the re-planned chunks. Every persisted ordinal i is read back
+     * and compared against planned chunk i (chunkId + core page keys +
+     * contributing corpus fingerprint — the chunkId alone already embeds the
+     * ordinal and corpus8, but all three are compared explicitly); an
+     * unreadable/corrupt sidecar or a prefix longer than the plan counts as a
+     * mismatch. Returns the typed pause reason, or null when the prefix is
+     * empty or fully consistent with the current plan.
+     */
+    private fun validatePersistedPrefix(
+        artifact: ChapterArtifactStore,
+        plannedChunks: List<PlannedAnalysisChunk>,
+    ): String? {
+        val pointers = store.artifactManifest?.analysisChunks ?: return null
+        if (pointers.isEmpty()) return null
+        for (index in pointers.indices) {
+            val planned = plannedChunks.getOrNull(index)
+                ?: return "T924 analysis prefix stale: persisted ${pointers.size} chunks " +
+                    "but the re-planned corpus yields ${plannedChunks.size}"
+            val persisted = when (
+                val read = artifact.readSidecarDocument(
+                    pointer = pointers[index],
+                    serializer = AnalysisChunkResult.serializer(),
+                    currentSchemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
+                    expectedKind = AnalysisChunkResult.KIND,
+                    schemaVersionOf = { it.schemaVersion },
+                    kindOf = { it.kind },
+                    isValid = { it.isSemanticallyValid },
+                )
+            ) {
+                is SidecarRead.Usable -> read.document
+                else -> null
+            }
+            if (persisted == null ||
+                persisted.chunkId != planned.chunkId ||
+                persisted.corePageKeys != planned.corePageKeys ||
+                persisted.contributingCorpusFingerprint != planned.contributingCorpusFingerprint
+            ) {
+                return "T924 analysis prefix stale: persisted chunk $index " +
+                    "(${persisted?.chunkId ?: "unreadable"}) does not match the re-planned " +
+                    "chunk ${planned.chunkId} — the OCR corpus changed under the chunk list"
+            }
+        }
+        return null
+    }
+
+    /**
      * Rebuilds the analysis corpus from the durable checkpoints. Each entry
      * carries the wire identities the analysis request/evidence universe uses
      * (`p<N>` pages, `p<N>_b<M>` blocks) alongside the persisted identities.
@@ -866,6 +926,12 @@ internal class ChapterProfileBatchCoordinator(
             return AnalysisChunkPublication.AnalysisChunkPublicationInput(
                 provenance = outcome.provenance,
                 ocrArtifactRefs = refs,
+                // Wave-4 F-W4-3: the DR-A coverage classification is durable
+                // so slice-B reconcile can treat MISSING_ONLY as pending.
+                coverage = when (outcome.coverage.kind) {
+                    AnalysisCoverageKind.COMPLETE -> AnalysisChunkCoverage.COMPLETE
+                    AnalysisCoverageKind.MISSING_ONLY -> AnalysisChunkCoverage.MISSING_ONLY
+                },
                 terms = outcome.response.terms.map { term ->
                     ExtractedTerm(
                         termId = term.termId,

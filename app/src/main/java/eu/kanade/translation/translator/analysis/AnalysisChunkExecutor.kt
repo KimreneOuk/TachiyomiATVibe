@@ -8,6 +8,7 @@ import eu.kanade.translation.translator.ProviderFailureKind
 import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.ProviderRequestKey
 import eu.kanade.translation.translator.ProviderRequestMetadata
+import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.translator.SharedProviderRequestGovernor
 import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator.AnalysisResponseOutcome
@@ -87,7 +88,7 @@ sealed interface AnalysisChunkAttempt {
  */
 class AnalysisChunkExecutor(
     private val transport: AnalysisTextTransport,
-    private val sublimitGate: BatchRequestSublimitGate = BatchRequestSublimitGate(),
+    private val sublimitGate: BatchRequestSublimitGate = SharedBatchRequestSublimitGate.instance,
     private val governor: eu.kanade.translation.translator.ProviderRequestGovernor =
         SharedProviderRequestGovernor.instance,
 ) {

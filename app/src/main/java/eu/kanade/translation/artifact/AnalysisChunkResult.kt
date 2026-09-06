@@ -15,6 +15,13 @@ import kotlinx.serialization.Serializable
 /** Persisted validation outcome of one chunk (schemas contract §1.3). */
 enum class AnalysisChunkStatus { VALID, INVALID }
 
+/**
+ * Persisted DR-A coverage classification (wave-4 F-W4-3): a VALID chunk with
+ * `MISSING_ONLY` coverage carries the independently complete subset (possibly
+ * zero records) and stays PENDING at reconcile — never canon.
+ */
+enum class AnalysisChunkCoverage { COMPLETE, MISSING_ONLY }
+
 /** Term kind of an extracted term (closed enum v1, T924-AP-04). */
 enum class ExtractedTermKind { NAME, PLACE, TERM, TITLE, ORG }
 
@@ -79,6 +86,8 @@ data class AnalysisChunkResult(
     /** Every ref must resolve to a core or overlap page and an existing stableBlockId. */
     val evidenceRefs: List<EvidenceRef>,
     val analyzerProvenance: AnalyzerProvenance,
+    /** DR-A coverage classification (wave-4 F-W4-3); additive default for pre-fix readers. */
+    val coverage: AnalysisChunkCoverage = AnalysisChunkCoverage.COMPLETE,
     /** INVALID chunks carry [validationFailureReason] and are never consumed. */
     val status: AnalysisChunkStatus,
     val validationFailureReason: String? = null,

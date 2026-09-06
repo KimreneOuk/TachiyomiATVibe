@@ -47,7 +47,8 @@ object AnalysisResponseValidator {
     /** Record id pattern, scoped per chunk (T924-AP-06). */
     private val RECORD_ID_REGEX = Regex("^[tesuc]\\d{3,4}$")
 
-    private val EXCERPT_HASH_REGEX = Regex("^(?:e:)?([0-9a-f]{16})$")
+    /** T924-AP-05 wire form is `e:` + 16 hex, nothing else (wave-4 F-W4-4). */
+    private val EXCERPT_HASH_REGEX = Regex("^e:([0-9a-f]{16})$")
 
     private val GENDER_VALUES = setOf("MALE", "FEMALE", "UNKNOWN", "CONFLICTING")
     private val STRENGTH_VALUES = setOf("EXPLICIT", "STRONG_CONTEXTUAL", "WEAK")
@@ -184,6 +185,11 @@ object AnalysisResponseValidator {
                     violations += "V4 terms[$index] aliases exceed $MAX_ALIAS_ITEMS"
                 }
                 aliases.forEach { overlong(it, MAX_TEXT_FIELD_CHARS, violations, "terms[$index].alias item") }
+                // Wave-4 F-W4-4: `kind` is REQUIRED (V3) — previously only an
+                // invalid value was fatal; a missing one silently defaulted.
+                if (term.string("kind") == null) {
+                    violations += "V3 terms[$index].kind required"
+                }
                 val kind = enumField(term, "kind", TERM_KINDS, violations, "terms[$index]") ?: "TERM"
                 applicability(term, violations, "terms[$index]")
                 validateEvidenceArray(term, request, corePageKeys, contextPageKeys, evidence, violations, "terms[$index]")
@@ -276,7 +282,12 @@ object AnalysisResponseValidator {
                             violations += "V3 entities[$index].relationships[$rIndex].type required"
                         }
                         val target = rel.string("targetEntityId")
-                        if (target == null || (target !in knownIds && target !in existingCanonIds && !pendingEntityIdWillResolve(target, rawEntities))) {
+                        // Wave-4 F-W4-5: resolution is existing canon ids +
+                        // pending entity ids of THIS response (forward
+                        // references allowed) — never the type-prefixed
+                        // knownIds set, whose keys can never match the bare
+                        // wire ids used here.
+                        if (target == null || (target !in existingCanonIds && !pendingEntityIdWillResolve(target, rawEntities))) {
                             violations += "V1 entities[$index].relationships[$rIndex].targetEntityId " +
                                 "does not resolve: $target"
                         }

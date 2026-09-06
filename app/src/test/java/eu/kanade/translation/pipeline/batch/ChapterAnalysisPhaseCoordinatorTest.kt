@@ -7,6 +7,7 @@ import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.OcrStagePatch
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.StagePatchResult
+import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.AnalysisChunkStatus
 import eu.kanade.translation.artifact.AnalyzerProvenance
@@ -42,6 +43,7 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
@@ -112,6 +114,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         worker: FakePreflightOcrWorker,
         pages: List<PageKey>,
         runner: AnalysisChunkRunner?,
+        sourceShaOverride: Map<String, String> = emptyMap(),
     ): ChapterProfileBatchCoordinator = ChapterProfileBatchCoordinator(
         store = store,
         nativeWorker = worker,
@@ -123,7 +126,9 @@ class ChapterAnalysisPhaseCoordinatorTest {
             providerKey = "fake:provider",
             flagProfilePipeline = true,
         ),
-        orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
+        orderedSourcePairs = pages.map { (pageKey, _) ->
+            pageKey to (sourceShaOverride[pageKey] ?: hex64("source-$pageKey"))
+        },
         flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
@@ -132,6 +137,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
     /** M1-idiom OCR lane: lease, merge under the token, hand the identity back. */
     private inner class FakePreflightOcrWorker(
         private val store: ChapterTranslationStore,
+        private val textByPage: Map<String, String> = emptyMap(),
     ) : NativeLaneWorker {
         val ocrPages = mutableListOf<String>()
 
@@ -140,7 +146,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
             val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
                 .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
             val before = store.snapshot(pageKey)
-            val resultPage = ocrPage(pageKey, "source-$pageKey")
+            val resultPage = ocrPage(pageKey, textByPage[pageKey] ?: "source-$pageKey")
             store.mergeOcr(
                 OcrStagePatch(
                     pageKey = pageKey,
@@ -289,6 +295,8 @@ class ChapterAnalysisPhaseCoordinatorTest {
         chunk.chunkOrdinal shouldBe 0
         chunk.chunkId shouldBe analyzer.chunkIdsByOrdinal.getValue(0)
         chunk.status shouldBe AnalysisChunkStatus.VALID
+        // Wave-4 F-W4-3: the DR-A coverage classification is durable.
+        chunk.coverage shouldBe AnalysisChunkCoverage.COMPLETE
         // Evidence page keys were translated to PERSISTED page keys at
         // publication — never wire `p<N>` identities in durable bytes.
         chunk.evidenceRefs.single().pageKey shouldBe "p1"
@@ -320,6 +328,10 @@ class ChapterAnalysisPhaseCoordinatorTest {
         outcome.status shouldBe BatchPass1Status.PAUSED
         outcome.reason shouldBe ChapterProfileBatchCoordinator.ANALYSIS_STOP_REASON
         artifactStore().readManifest().shouldNotBeNull().analysisChunks.shouldHaveSize(1)
+        // Wave-4 F-W4-3: an empty-but-valid MISSING_ONLY chunk is durable as
+        // MISSING_ONLY, so slice-B reconcile treats it as pending, not canon.
+        readChunk(artifactStore().readManifest().shouldNotBeNull().analysisChunks.single())
+            .coverage shouldBe AnalysisChunkCoverage.MISSING_ONLY
         val record = runRecord(store)
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_DONE] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_PENDING] shouldBe 1
@@ -375,6 +387,48 @@ class ChapterAnalysisPhaseCoordinatorTest {
         finalRecord.runId shouldBe interruptedRecord.runId
         finalRecord.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_DONE] shouldBe 2
         finalRecord.state shouldBe ChapterRunState.ANALYSIS_CHUNKS
+    }
+
+    @Test
+    fun `cross-run corpus change pauses typed instead of skipping a stale chunk prefix`() = runTest {
+        val store = lazyStore()
+        val pageKeys = (1..3).map { "p$it" }
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+
+        // Pass 1: one chunk commits over the 3-page corpus.
+        val analyzer1 = FakeAnalyzer()
+        coordinator(store, FakePreflightOcrWorker(store), pages, analyzer1)
+            .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+        val persistedChunkId = readChunk(artifactStore().readManifest().shouldNotBeNull().analysisChunks.single())
+            .chunkId
+
+        // ---- simulated process death + re-download: page 2's source changed.
+        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedWorker = FakePreflightOcrWorker(resumedStore, textByPage = mapOf("p2" to "source-v2-p2"))
+        val analyzer2 = FakeAnalyzer()
+
+        val resumed = coordinator(
+            resumedStore,
+            resumedWorker,
+            pages,
+            analyzer2,
+            sourceShaOverride = mapOf("p2" to hex64("source-v2-p2")),
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        // Only the changed page re-OCR'd (checkpoint identity reuse for the
+        // rest). The re-planned corpus differs from the persisted chunk's, so
+        // the resume is a TYPED pause (wave-4 F-W4-1) — never a silent prefix
+        // skip that would append onto a mixed-plan chunk list.
+        resumedWorker.ocrPages shouldContainExactly listOf("p2")
+        analyzer2.executedOrdinals shouldBe emptyList()
+        resumed.status shouldBe BatchPass1Status.PAUSED
+        resumed.reason shouldContain "analysis prefix stale"
+
+        // The durable chunk list is untouched by the rejected resume.
+        val manifest = artifactStore().readManifest().shouldNotBeNull()
+        manifest.analysisChunks.shouldHaveSize(1)
+        readChunk(manifest.analysisChunks.single()).chunkId shouldBe persistedChunkId
     }
 
     @Test

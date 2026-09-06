@@ -783,4 +783,16 @@ class BatchRequestSublimitGate(
     }
 }
 
+/**
+ * T924 wave-4 F-W4-2: the process-wide Batch sub-limit gate. The sub-limit is
+ * ONE allowance per credential (DR-C) — every production Batch executor must
+ * share THIS gate exactly like [SharedProviderRequestGovernor]; a per-instance
+ * default would create independent 15-RPM pools ("two pools of 15"). Test
+ * code may still construct private [BatchRequestSublimitGate]s for isolation.
+ */
+object SharedBatchRequestSublimitGate {
+    val instance: BatchRequestSublimitGate = BatchRequestSublimitGate()
+}
+
+
 

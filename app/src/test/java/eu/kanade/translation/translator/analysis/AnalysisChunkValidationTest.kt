@@ -255,6 +255,22 @@ class AnalysisChunkValidationTest {
     )
 
     @Test
+    fun `V8 bare 16-hex hash without the e- prefix is fatal (wave-4 F-W4-4)`() = assertMalformed(
+        validResponseJson()
+            .replace("\"COMEDY_X\", ", "")
+            .replace("excerptHash\":\"e:${excerptHash16()}", "excerptHash\":\"${excerptHash16()}"),
+        "V8",
+    )
+
+    @Test
+    fun `V3 missing term kind is fatal, not silently defaulted (wave-4 F-W4-4)`() = assertMalformed(
+        validResponseJson()
+            .replace("\"COMEDY_X\", ", "")
+            .replace("\"kind\": \"TERM\",", ""),
+        "V3 terms[0].kind required",
+    )
+
+    @Test
     fun `V9 record anchored only on CONTEXT pages is fatal`() = assertMalformed(
         validResponseJson()
             .replace("\"COMEDY_X\", ", "")

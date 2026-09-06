@@ -1,5 +1,6 @@
 package eu.kanade.translation.pipeline.batch
 
+import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.AnalysisChunkStatus
 import eu.kanade.translation.artifact.AnalyzerProvenance
@@ -126,6 +127,7 @@ internal object AnalysisChunkPublication {
             conflictNotes = response.conflictNotes,
             evidenceRefs = response.evidenceRefs,
             analyzerProvenance = response.provenance,
+            coverage = response.coverage,
             status = AnalysisChunkStatus.VALID,
             validationFailureReason = null,
             createdAtEpochMs = nowEpochMs,
@@ -136,6 +138,8 @@ internal object AnalysisChunkPublication {
     data class AnalysisChunkPublicationInput(
         val provenance: AnalyzerProvenance,
         val ocrArtifactRefs: List<SidecarPointer>,
+        /** DR-A coverage classification (wave-4 F-W4-3). */
+        val coverage: AnalysisChunkCoverage = AnalysisChunkCoverage.COMPLETE,
         val terms: List<ExtractedTerm> = emptyList(),
         val entities: List<ExtractedEntity> = emptyList(),
         val relationships: List<ExtractedRelationship> = emptyList(),
