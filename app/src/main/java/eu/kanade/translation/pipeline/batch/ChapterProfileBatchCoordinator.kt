@@ -2,14 +2,23 @@ package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.CheckpointOcrResult
+import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.artifact.ArtifactDocumentJson
+import eu.kanade.translation.artifact.ArtifactStage
+import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
+import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.OcrCheckpointMode
 import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
@@ -51,6 +60,27 @@ import java.security.MessageDigest
  *    counter publications are best-effort progress carriers — per-page
  *    checkpoints in the manifest stay authoritative (T924-ST-06).
  */
+/**
+ * Typed identity of ONE unresolved preflight page failure (wave-2 review R2):
+ * the durable-failure-ledger input for a page whose OCR_PREFLIGHT attempt
+ * could not be resolved — a REJECTED `checkpointOcr` CLOSE transaction or a
+ * thrown OCR-lane worker exception.
+ */
+internal data class PreflightStageFailure(
+    val pageKey: String,
+    val kind: PreflightFailureKind,
+    /** The typed checkpoint rejection reason or exception identity, verbatim. */
+    val reason: String,
+)
+
+internal enum class PreflightFailureKind {
+    /** `checkpointOcr` rejected the CLOSE transaction with a typed reason. */
+    CHECKPOINT_REJECTED,
+
+    /** The OCR lane worker threw before a checkpoint could be attempted. */
+    OCR_WORKER_FAILED,
+}
+
 internal class ChapterProfileBatchCoordinator(
     private val store: ChapterTranslationStore,
     private val nativeWorker: NativeLaneWorker,
@@ -63,6 +93,19 @@ internal class ChapterProfileBatchCoordinator(
     private val releaseBatchLease: suspend (String) -> Unit,
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
     private val nowEpochMs: () -> Long = System::currentTimeMillis,
+    /**
+     * Wave-2 review R2: the durable failure-ledger writer for an unresolved
+     * preflight page. The DEFAULT writer mirrors the legacy
+     * `persistUnexpectedBatchStageFailure` idiom (T924 wave-3 slice B): the
+     * page patch (OCR FAILED + one `recordAttemptFailure()` charge per
+     * attempt) and the `manifest.durableFailures` record share ONE atomic
+     * store publication, with the consecutive-unresolved count bounded by
+     * [ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED] — never
+     * unlimited. Invoked AFTER the checkpoint attempt and BEFORE the lease
+     * release (the legacy order: record precedes teardown).
+     */
+    private val failureRecorder: suspend (PreflightStageFailure) -> Unit =
+        { failure -> persistDurablePreflightFailure(store, failure, nowEpochMs) },
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -161,6 +204,11 @@ internal class ChapterProfileBatchCoordinator(
 
             listener.ocrStarted(pageKey)
             var ref: OcrReadyPageRef? = null
+            // Set when THIS page's attempt ended unresolved (REJECTED checkpoint
+            // or worker exception): the ledger record is written in `finally`,
+            // AFTER the B0 candidate teardown — cancelCandidate strips
+            // candidate-owned stage records, so the record must outlive it.
+            var pendingFailure: PreflightStageFailure? = null
             try {
                 ref = nativeWorker.runOcrStage(pageKey, pageIndex)
                 if (ref == null) {
@@ -189,6 +237,14 @@ internal class ChapterProfileBatchCoordinator(
                                 "TachiyomiAT t924 preflight checkpoint rejected pageHash=${pageHash(pageKey)} " +
                                     "reason=${outcome.reason}"
                             }
+                            // R2: make the failure durable BEFORE the teardown
+                            // (the legacy persistUnexpectedBatchStageFailure
+                            // order), still strictly after the checkpoint attempt.
+                            pendingFailure = PreflightStageFailure(
+                                pageKey = pageKey,
+                                kind = PreflightFailureKind.CHECKPOINT_REJECTED,
+                                reason = outcome.reason,
+                            )
                             return BatchPass1Outcome(
                                 needsTranslation = emptyList(),
                                 status = BatchPass1Status.FAILED,
@@ -210,6 +266,13 @@ internal class ChapterProfileBatchCoordinator(
                 logcat(LogPriority.WARN) {
                     "TachiyomiAT t924 preflight ocr failed pageHash=${pageHash(pageKey)} error=${e::class.java.simpleName}"
                 }
+                // R2: same durable ledger as a REJECTED checkpoint, carrying the
+                // exception identity as the typed reason.
+                pendingFailure = PreflightStageFailure(
+                    pageKey = pageKey,
+                    kind = PreflightFailureKind.OCR_WORKER_FAILED,
+                    reason = "${e::class.java.simpleName}: ${e.message ?: "no message"}",
+                )
                 return BatchPass1Outcome(
                     needsTranslation = emptyList(),
                     status = BatchPass1Status.FAILED,
@@ -222,6 +285,18 @@ internal class ChapterProfileBatchCoordinator(
                 // lease is released strictly after the checkpoint attempt
                 // (T924-TX-06; one-decoded-page invariant).
                 ref?.let(nativeWorker::releaseNativeHandoff)
+                if (pendingFailure != null) {
+                    // B0 teardown idiom: the unresolved page's candidate-held OCR
+                    // never committed (no checkpoint), so cancel it — the page
+                    // re-OCRs next attempt. The durable failure record is
+                    // written AFTER the cancellation: `cancelCandidate` strips
+                    // candidate-owned stage records, so the ledger record must
+                    // be installed once no candidate owns it (the legacy
+                    // persistUnexpectedBatchStageFailure order — the shell
+                    // persists after the coordinator's teardown).
+                    store.cancelPageStageWork(pageKey, PageWriteOrigin.BATCH)
+                    recordPageFailure(pendingFailure)
+                }
                 releaseBatchLease(pageKey)
                 listener.ocrFinished(pageKey)
             }
@@ -270,7 +345,29 @@ internal class ChapterProfileBatchCoordinator(
         )
     }
 
-    /** The per-page checkpoint transaction: CLOSE the BATCH candidate (TX-03 default). */
+    /**
+     * R2: route one unresolved page failure into the durable failure ledger.
+     * Best-effort: a rejected ledger publication is logged and the honest
+     * FAILED outcome still stands (the pass semantics are unchanged) — the
+     * record is a durability ADDITION, never a new failure source. The write
+     * happens while the page lease is still held (strictly after the
+     * checkpoint attempt, strictly before the `finally` release — TX-06).
+     */
+    private suspend fun recordPageFailure(failure: PreflightStageFailure) {
+        try {
+            failureRecorder(failure)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t924 preflight durable failure record rejected pageHash=${pageHash(failure.pageKey)} " +
+                    "error=${e::class.java.simpleName}"
+            }
+        }
+    }
+
+    /**
+     * The per-page checkpoint transaction: CLOSE the BATCH candidate (TX-03 default). */
     private suspend fun checkpointPage(
         artifact: ChapterArtifactStore,
         pageKey: String,
@@ -510,6 +607,83 @@ internal class ChapterProfileBatchCoordinator(
             "run-${System.currentTimeMillis()}-${sha256Hex(
                 "$sourceDigest:$frozenFingerprint".encodeToByteArray(),
             ).take(8)}"
+
+        /**
+         * Wave-2 review R2 (slice B): the DEFAULT durable failure-ledger
+         * writer, mirroring the legacy `persistUnexpectedBatchStageFailure`
+         * idiom through the store's ATOMIC
+         * [ChapterTranslationStore.persistDurableStageFailure] publication:
+         * the page patch and the `manifest.durableFailures` record are ONE
+         * manifest write, so a restart can never observe one without the other.
+         *
+         * Cap semantics (mirrored from the legacy attempt ledger,
+         * `ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED`): the
+         * record's `retryCount` counts CONSECUTIVE unresolved preflight
+         * attempts and stops at the bound — at the cap the record is
+         * re-stamped as an INTERRUPTED-class, manual-retry-only failure (the
+         * `applyAttemptCapPause` vocabulary) instead of charging forever.
+         */
+        suspend fun persistDurablePreflightFailure(
+            store: ChapterTranslationStore,
+            failure: PreflightStageFailure,
+            nowEpochMs: () -> Long = System::currentTimeMillis,
+        ) {
+            val existing = store.durableFailuresSnapshot()[durableFailureKey(failure.pageKey)]
+            val consecutive = existing?.retryCount ?: 0
+            val capped = consecutive >= ChapterAttemptLedgerDocument.MAX_CONSECUTIVE_UNRESOLVED
+            val retryCount = if (capped) consecutive else consecutive + 1
+            val message = if (capped) {
+                "${failure.reason}; attempt cap reached " +
+                    "($retryCount consecutive unresolved preflight attempts); manual retry required"
+            } else {
+                failure.reason
+            }
+            val snapshot = store.snapshot(failure.pageKey)
+            val metadata = DurableFailureMetadata(
+                pageKey = failure.pageKey,
+                stage = ArtifactStage.OCR,
+                status = ArtifactStageStatus.FAILED_RETRYABLE,
+                category = when {
+                    capped -> FailureCategory.INTERRUPTED
+                    failure.kind == PreflightFailureKind.CHECKPOINT_REJECTED -> FailureCategory.PROTOCOL
+                    else -> FailureCategory.TRANSIENT
+                },
+                retryCount = retryCount,
+                lastFailureMessage = message,
+                lastFailedAtEpochMs = nowEpochMs(),
+                nextEligibleRetryAtEpochMs = null,
+            )
+            val result = store.persistDurableStageFailure(
+                pageKey = failure.pageKey,
+                expected = ChapterTranslationStore.PatchPrecondition(
+                    generation = snapshot.generation,
+                    pageVersion = snapshot.pageVersion,
+                    leaseToken = snapshot.leaseToken,
+                ),
+                failure = metadata,
+                description = "t924 preflight durable failure record",
+            ) { current ->
+                (current ?: PageTranslation(sourceFileName = failure.pageKey)).apply {
+                    sourceFileName = failure.pageKey
+                    ocrStatus = StageStatus.FAILED
+                    errorMessage = message
+                    // At most ONE exhaustion charge per attempt (the
+                    // attemptCharged guard), exactly like the legacy
+                    // persistUnexpectedBatchStageFailure path.
+                    recordAttemptFailure()
+                    updatedAt = nowEpochMs()
+                }
+            }
+            when (result) {
+                is ChapterTranslationStore.PatchResult.Accepted -> Unit
+                is ChapterTranslationStore.PatchResult.Rejected -> throw IllegalStateException(
+                    "t924 preflight durable failure record rejected: ${result.reason}",
+                )
+            }
+        }
+
+        /** The manifest `durableFailures` key for the preflight OCR stage. */
+        private fun durableFailureKey(pageKey: String): String = "$pageKey:${ArtifactStage.OCR.name}"
 
         /** T924-SC-08-style length-prefixed hash over the canonical config JSON. */
         fun runConfigFingerprint(config: RunConfigSnapshot): String = sha256Hex(
