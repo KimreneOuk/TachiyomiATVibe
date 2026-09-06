@@ -262,13 +262,13 @@ internal object ProfileReconciler {
         val unresolved = orderedUnresolved.take(MAX_CANDIDATES)
             .map { draft -> draft.toFact(takeFactId()) }
 
-        val factIdsForIdentities = sequence {
-            var id = 1
-            for (draft in entityDrafts.take(MAX_FACTS_PER_LIST)) {
-                if (draft.type == FactType.ENTITY_IDENTITY) yield(draft.source.orEmpty() to "f-$id")
-                id++
-            }
-        }.toMap()
+        // Wave-5 F-W5-2: participant remap keys on the FINAL (post-demotion)
+        // fact types — an oversized identity fact demotes to NARRATIVE_STATE,
+        // so participants referencing it DROP rather than point at a
+        // non-entity note fact (§1.4: participants resolve to entity facts).
+        val factIdsForIdentities = entities
+            .filter { it.type == FactType.ENTITY_IDENTITY }
+            .associate { it.canonicalSourceForm.orEmpty() to it.factId }
 
         val orderedScenes = sceneDrafts
             .sortedWith(
@@ -365,13 +365,17 @@ internal object ProfileReconciler {
     private fun identityFact(source: String, proposals: List<IdentityProposal>): FactDraft {
         val chunks = proposals.map { it.chunk }.distinct()
         val evidence = evidenceOf(chunks)
+        val allAliases = proposals.flatMap { it.aliases }
         return FactDraft(
             type = FactType.ENTITY_IDENTITY,
             source = bounded(source),
             target = bounded(proposals.first().target),
-            aliases = boundedAliases(proposals.flatMap { it.aliases }),
+            aliases = boundedAliases(allAliases),
             evidence = evidence,
-            note = if (evidence.isEmpty()) "no chunk-level evidence refs" else null,
+            note = listOfNotNull(
+                if (evidence.isEmpty()) "no chunk-level evidence refs" else null,
+                oversizedAliasNote(allAliases),
+            ).joinToString("; ").ifEmpty { null },
             evidenceStrength = if (evidence.isEmpty()) EvidenceStrength.WEAK
             else EvidenceStrength.STRONG_CONTEXTUAL,
             contributingChunks = chunks,
@@ -387,13 +391,15 @@ internal object ProfileReconciler {
             else -> "termKind=$kind"
         }
         val boundNote = if (evidence.isEmpty()) "no chunk-level evidence refs" else null
+        val allAliases = proposals.flatMap { it.aliases }
         return FactDraft(
             type = FactType.TERM,
             source = bounded(source),
             target = bounded(proposals.first().target),
-            aliases = boundedAliases(proposals.flatMap { it.aliases }),
+            aliases = boundedAliases(allAliases),
             evidence = evidence,
-            note = listOfNotNull(kindNote, boundNote).joinToString("; ").ifEmpty { null },
+            note = listOfNotNull(kindNote, boundNote, oversizedAliasNote(allAliases))
+                .joinToString("; ").ifEmpty { null },
             evidenceStrength = if (evidence.isEmpty()) EvidenceStrength.WEAK
             else EvidenceStrength.STRONG_CONTEXTUAL,
             contributingChunks = chunks,
@@ -455,7 +461,19 @@ internal object ProfileReconciler {
     private fun boundedAliases(aliases: List<String>): List<String> =
         aliases.filter { it.isNotEmpty() }
             .distinct()
+            // Wave-5 F-W5-1: an overlong alias (post-NFC) is DROPPED, never
+            // fatal — ProfileFact would reject it and wedge the freeze in a
+            // PERSISTENCE_REJECTED loop on every resume.
+            .filter { it.length <= ProfileFact.MAX_NAME_CHARS }
             .take(ProfileFact.MAX_ALIASES)
+
+    /** Wave-5 F-W5-1: deterministic drop marker for the fact note. */
+    private fun oversizedAliasNote(aliases: List<String>): String? =
+        if (aliases.any { it.isNotEmpty() && it.length > ProfileFact.MAX_NAME_CHARS }) {
+            "oversized alias dropped"
+        } else {
+            null
+        }
 
     private fun bounded(value: String): String? = value.takeIf { it.isNotEmpty() }
 

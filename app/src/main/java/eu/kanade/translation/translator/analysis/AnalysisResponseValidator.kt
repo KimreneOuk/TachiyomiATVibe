@@ -224,6 +224,15 @@ object AnalysisResponseValidator {
                 overlong(proposedTargetName, MAX_TEXT_FIELD_CHARS, violations, "entities[$index].proposedTargetName")
                 val titles = textList(entity, "titles", violations, "entities[$index].titles") ?: emptyList()
                 if (titles.size > MAX_ALIAS_ITEMS) violations += "V4 entities[$index] titles exceed $MAX_ALIAS_ITEMS"
+                // Wave-5 F-W5-1 (source side): per-item length caps — term
+                // aliases already had one; entity-side lists did not, letting
+                // an overlong string persist VALID into the chunk.
+                sourceNames.orEmpty().forEach {
+                    overlong(it, MAX_TEXT_FIELD_CHARS, violations, "entities[$index].sourceNames item")
+                }
+                titles.forEach {
+                    overlong(it, MAX_TEXT_FIELD_CHARS, violations, "entities[$index].titles item")
+                }
 
                 // gender fact: evidence REQUIRED (V3), closed enum (V5).
                 (entity["gender"] as? kotlinx.serialization.json.JsonObject)?.let { gender ->

@@ -26,6 +26,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.string.shouldContain
 import io.kotest.matchers.types.shouldBeInstanceOf
 import org.junit.jupiter.api.Test
 
@@ -417,5 +418,59 @@ class ProfileReconcilerTest {
     fun `reconciling zero chunks rejects`() {
         ProfileReconciler.reconcile(emptyList())
             .shouldBeInstanceOf<ProfileReconciler.ReconcileOutcome.Rejected>()
+    }
+
+    @Test
+    fun `oversized entity alias is dropped and never fails the freeze (wave-5 F-W5-1)`() {
+        val longTitle = "姫".repeat(200)
+        val chunks = listOf(
+            chunk(
+                ordinal = 0,
+                entities = listOf(
+                    ExtractedEntity(
+                        entityId = "e1",
+                        canonicalSourceName = "カイル",
+                        proposedTargetName = "Kail",
+                        sourceNames = listOf("カイル"),
+                        titles = listOf(longTitle),
+                    ),
+                ),
+            ),
+        )
+        val content = ProfileReconciler.reconcile(chunks)
+            .shouldBeInstanceOf<ProfileReconciler.ReconcileOutcome.Reconciled>().content
+        val fact = content.entities.single()
+        // The valid sourceName alias survives; only the oversized title drops.
+        fact.aliases.shouldContainExactly("カイル")
+        fact.note shouldContain "oversized alias dropped"
+        // The freeze gate: the assembled fact is schema-valid as-is.
+        fact.validationError().shouldBeNull()
+    }
+
+    @Test
+    fun `scene participant of a demoted oversized entity drops (wave-5 F-W5-2)`() {
+        // ASCII is NFC-stable, so 130 chars stays over the 128-char bound.
+        val longName = "K".repeat(130)
+        val chunks = listOf(
+            chunk(
+                ordinal = 0,
+                entities = listOf(entity("e1", longName, "Kail")),
+                scenes = listOf(
+                    ProfileScene(
+                        sceneId = "s001",
+                        pageRange = PageRange(0, 0),
+                        participants = listOf("e1"),
+                        register = SceneRegister.CASUAL,
+                    ),
+                ),
+            ),
+        )
+        val content = ProfileReconciler.reconcile(chunks)
+            .shouldBeInstanceOf<ProfileReconciler.ReconcileOutcome.Reconciled>().content
+        // The oversized identity demoted to a WEAK note fact…
+        content.entities.single().type shouldBe FactType.NARRATIVE_STATE
+        // …so the participant no longer resolves to an ENTITY fact and drops
+        // instead of pointing at the demoted note fact (§1.4).
+        content.scenes.single().participants.shouldBeEmpty()
     }
 }

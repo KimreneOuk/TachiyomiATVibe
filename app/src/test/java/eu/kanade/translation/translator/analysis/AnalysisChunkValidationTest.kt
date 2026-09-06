@@ -271,6 +271,14 @@ class AnalysisChunkValidationTest {
     )
 
     @Test
+    fun `V4 overlong entity sourceNames or titles item is fatal (wave-5 F-W5-1)`() = assertMalformed(
+        validResponseJson()
+            .replace("\"COMEDIC_X\", ", "")
+            .replace("\"sourceNames\": [\"レイナ\"]", "\"sourceNames\": [\"${"レ".repeat(200)}\"]"),
+        "V4 entities[0].sourceNames item",
+    )
+
+    @Test
     fun `V9 record anchored only on CONTEXT pages is fatal`() = assertMalformed(
         validResponseJson()
             .replace("\"COMEDY_X\", ", "")
