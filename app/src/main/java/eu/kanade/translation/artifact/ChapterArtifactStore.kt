@@ -828,6 +828,13 @@ class ChapterArtifactStore(
     internal fun profileSidecarName(contentFingerprint: String): String =
         layout.profileFile(contentFingerprint)
 
+    /**
+     * T924 Stage-6 slice A (additive, WP9 idiom): content-addressed
+     * `EnvelopePlan` sidecar name under `envelopes/` (T924-SC-21).
+     */
+    internal fun envelopePlanSidecarName(contentFingerprint: String): String =
+        layout.envelopePlanFile(contentFingerprint)
+
     /** Content-addressed `ColorStylePreparation` sidecar name under `color/` (T924-SC-21). */
     internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.colorPreparationFile(pageKey, contentFingerprint)

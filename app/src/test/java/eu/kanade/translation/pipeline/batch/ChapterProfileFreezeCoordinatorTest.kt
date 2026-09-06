@@ -253,8 +253,11 @@ class ChapterProfileFreezeCoordinatorTest {
         val outcome = coordinator(store, worker, pages, analyzer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
+        // Stage-6 slice A: freeze now CONTINUES into the envelope phase;
+        // without a wired text translator the run pauses at the typed
+        // TRANSLATE CONFIGURATION gate — never COMPLETED.
         outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.PROFILE_FROZEN_STOP_REASON
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         outcome.needsTranslation shouldBe emptyList()
         worker.ocrPages shouldContainExactly pageKeys
         analyzer.executedOrdinals shouldContainExactly listOf(0)
@@ -275,11 +278,14 @@ class ChapterProfileFreezeCoordinatorTest {
         pointer.contentFingerprint shouldBe profile.contentFingerprint
 
         val record = runRecord(store)
-        record.state shouldBe ChapterRunState.PROFILE_FROZEN
+        record.state shouldBe ChapterRunState.TRANSLATE
         record.profilePointer.shouldNotBeNull() shouldBe pointer
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_FROZEN] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_CHUNKS_RECONCILED] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_CHUNKS_PENDING] shouldBe 0
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_SKIPPED_NO_TRANSPORT] shouldBe 1
+        // The envelope plan was published (SC-20) and its pointer is durable.
+        manifest.envelopePlan.shouldNotBeNull()
     }
 
     @Test
@@ -307,11 +313,13 @@ class ChapterProfileFreezeCoordinatorTest {
         resumedWorker.ocrPages shouldBe emptyList()
         resumedAnalyzer.executedOrdinals shouldBe emptyList()
         resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.PROFILE_FROZEN_REUSE_REASON
+        // Stage-6 slice A: the reuse path CONTINUES into the envelope phase
+        // (zero re-OCR, zero re-analysis still hold) and pauses at TRANSLATE.
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
 
         val record = runRecord(resumedStore)
         record.runId shouldBe frozenRecord.runId
-        record.state shouldBe ChapterRunState.PROFILE_FROZEN
+        record.state shouldBe ChapterRunState.TRANSLATE
         record.profilePointer.shouldNotBeNull() shouldBe frozenPointer
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_REUSED] shouldBe 1
         // The reuse run did NOT re-freeze: no profileFrozen counter.
@@ -344,13 +352,13 @@ class ChapterProfileFreezeCoordinatorTest {
         resumedWorker.ocrPages shouldBe emptyList()
         resumedAnalyzer.executedOrdinals shouldBe emptyList()
         resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.PROFILE_FROZEN_STOP_REASON
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
 
         val v2Pointer = artifactStore().readManifest().shouldNotBeNull().profile.shouldNotBeNull()
         v2Pointer.version shouldBe 2
         v2Pointer.profileInputFingerprint shouldNotBe v1Pointer.profileInputFingerprint
         val record = runRecord(resumedStore)
-        record.state shouldBe ChapterRunState.PROFILE_FROZEN
+        record.state shouldBe ChapterRunState.TRANSLATE
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_FROZEN] shouldBe 1
         record.phaseCounters.containsKey(ChapterProfileBatchCoordinator.COUNTER_PROFILE_REUSED) shouldBe false
         // The v1 file is untouched; v2 content differs (input fingerprint is
@@ -385,7 +393,7 @@ class ChapterProfileFreezeCoordinatorTest {
         resumedWorker.ocrPages shouldBe emptyList()
         resumedAnalyzer.executedOrdinals shouldBe emptyList()
         resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.PROFILE_FROZEN_STOP_REASON
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
 
         val (_, profile) = readProfile()
         profile.version shouldBe 2

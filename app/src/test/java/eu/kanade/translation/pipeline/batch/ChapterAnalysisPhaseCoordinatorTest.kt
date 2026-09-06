@@ -279,11 +279,12 @@ class ChapterAnalysisPhaseCoordinatorTest {
         val outcome = coordinator(store, worker, pages, analyzer)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Slice B: the durable chunk set flows into reconcile + freeze; the
-        // run STILL ends PAUSED (envelope/translation are Stage 6) — never
-        // COMPLETED.
+        // Slice B: the durable chunk set flows into reconcile + freeze.
+        // Stage-6 slice A: the run CONTINUES into the envelope phase and ends
+        // PAUSED at the typed TRANSLATE CONFIGURATION gate (no transport
+        // wired in this test) — never COMPLETED.
         outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.PROFILE_FROZEN_STOP_REASON
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         outcome.needsTranslation shouldBe emptyList()
         outcome.completedPageKeys shouldBe pageKeys.toSet()
 
@@ -305,7 +306,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         chunk.terms.single().canonicalTarget shouldBe "sword"
 
         val record = runRecord(store)
-        record.state shouldBe ChapterRunState.PROFILE_FROZEN
+        record.state shouldBe ChapterRunState.TRANSLATE
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_ANALYSIS_PLAN] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_TOTAL] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_DONE] shouldBe 1
@@ -332,7 +333,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         // DR-A Option 1: the independently complete empty subset committed;
         // the un-extracted remainder is pending and NEVER blocks the chapter.
         outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.PROFILE_FROZEN_STOP_REASON
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
         artifactStore().readManifest().shouldNotBeNull().analysisChunks.shouldHaveSize(1)
         // Wave-4 F-W4-3: an empty-but-valid MISSING_ONLY chunk is durable as
         // MISSING_ONLY, so slice-B reconcile treats it as pending, not canon.
@@ -343,7 +344,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_PENDING] shouldBe 1
         // Reconcile still freezes (an all-pending canon is a valid empty
         // profile); the pending count is carried on the freeze record.
-        record.state shouldBe ChapterRunState.PROFILE_FROZEN
+        record.state shouldBe ChapterRunState.TRANSLATE
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_CHUNKS_PENDING] shouldBe 1
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_PROFILE_FROZEN] shouldBe 1
     }
@@ -384,7 +385,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         resumedWorker.ocrPages shouldBe emptyList()
         analyzer2.executedOrdinals shouldContainExactly listOf(1)
         resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.PROFILE_FROZEN_STOP_REASON
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_NO_TRANSPORT_REASON
 
         val manifest = artifactStore().readManifest().shouldNotBeNull()
         manifest.analysisChunks.shouldHaveSize(2)
@@ -396,7 +397,7 @@ class ChapterAnalysisPhaseCoordinatorTest {
         val finalRecord = runRecord(resumedStore)
         finalRecord.runId shouldBe interruptedRecord.runId
         finalRecord.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_CHUNKS_DONE] shouldBe 2
-        finalRecord.state shouldBe ChapterRunState.PROFILE_FROZEN
+        finalRecord.state shouldBe ChapterRunState.TRANSLATE
         finalRecord.profilePointer.shouldNotBeNull().version shouldBe 1
     }
 

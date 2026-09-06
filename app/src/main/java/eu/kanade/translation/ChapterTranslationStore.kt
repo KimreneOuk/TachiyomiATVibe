@@ -1159,6 +1159,15 @@ class ChapterTranslationStore(
             patch.expectedArtifactPageVersion,
         )
             ?: ocrIdentityRejection(current, patch.expectedOcrBlockFingerprints, patch.expectedSourceTexts)
+            // T924-TX-20 (Stage-6 slice A): provenance preconditions. BOTH new
+            // patch fields default to null — a legacy patch short-circuits
+            // with byte-identical behavior (no extra manifest reads, no new
+            // rejection class). Non-null fields are validated against the
+            // manifest's CURRENTLY frozen profile / envelope-plan pointers;
+            // a mismatch rejects the WHOLE page patch (stale-profile and
+            // stale-plan protection; a rejected commit never advances any
+            // frontier or page state).
+            ?: translationProvenanceRejection(patch)
         if (identityRejection != null) {
             return rejectedStage(patch.pageKey, description, identityRejection)
         }
@@ -1202,6 +1211,44 @@ class ChapterTranslationStore(
             return rejectedStage(patch.pageKey, description, "ARTIFACT_PUBLICATION_FAILED")
         }
         return StagePatchResult.Accepted(snapshotLocked(patch.pageKey), applied)
+    }
+
+    /**
+     * T924-TX-20 provenance preconditions (Stage-6 slice A). Active ONLY when
+     * the patch carries at least one of the new nullable provenance fields;
+     * a fully-null patch returns `null` before touching the manifest, so
+     * every legacy caller keeps byte-identical merge behavior.
+     *
+     *  - `profileContentFingerprint` must equal the manifest's currently
+     *    frozen `profile` pointer content fingerprint (T924-FP-05) — a
+     *    commit built from a superseded/absent frozen profile is rejected.
+     *  - `envelopePlanFingerprint` must equal the manifest's current
+     *    `envelopePlan` pointer content fingerprint (T924-SC-10) — a commit
+     *    built from a superseded plan is rejected.
+     *
+     * A rejected patch never mutates page state and never advances any
+     * frontier (T924-TX-20 tail clause).
+     */
+    private fun translationProvenanceRejection(patch: TranslationStagePatch): String? {
+        if (patch.profileContentFingerprint == null && patch.envelopePlanFingerprint == null) {
+            return null
+        }
+        val manifest = artifactManifest
+        patch.profileContentFingerprint?.let { expected ->
+            val frozen = manifest?.profile?.contentFingerprint
+            if (frozen != expected) {
+                return "translation provenance rejected: frozen profile changed " +
+                    "(expected=$expected current=${frozen ?: "<absent>"})"
+            }
+        }
+        patch.envelopePlanFingerprint?.let { expected ->
+            val plan = manifest?.envelopePlan?.contentFingerprint
+            if (plan != expected) {
+                return "translation provenance rejected: envelope plan changed " +
+                    "(expected=$expected current=${plan ?: "<absent>"})"
+            }
+        }
+        return null
     }
 
     private fun mergeInpaintLocked(

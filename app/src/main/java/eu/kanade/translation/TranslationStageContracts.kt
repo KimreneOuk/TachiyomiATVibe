@@ -98,6 +98,22 @@ data class TranslationStagePatch(
     val expectedCandidateGenerationId: String? = null,
     val expectedDependencyFingerprint: String? = null,
     val expectedArtifactPageVersion: Long? = null,
+    /**
+     * T924-TX-20 (Stage-6 slice A): the frozen profile content fingerprint
+     * (T924-FP-05) the translation request was built from. `null` keeps the
+     * pre-T924 merge behavior byte-identical (legacy callers); non-null makes
+     * the merge REJECT when the manifest's currently frozen profile carries a
+     * different content fingerprint (stale-profile protection).
+     */
+    val profileContentFingerprint: String? = null,
+    /**
+     * T924-TX-20: the envelope-plan fingerprint (T924-SC-10) the dispatch was
+     * planned under. `null` keeps the pre-T924 merge behavior byte-identical;
+     * non-null makes the merge REJECT when the manifest's `envelopePlan`
+     * pointer carries a different content fingerprint (stale-plan commit
+     * protection; rejected commits never advance any frontier).
+     */
+    val envelopePlanFingerprint: String? = null,
 )
 
 /** Inpaint-owned fields and the durable OCR/mask identity they were derived from. */

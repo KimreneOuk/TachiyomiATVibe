@@ -688,6 +688,14 @@ internal class BatchChapterTranslator(
                                 },
                                 flagProfilePipeline = true,
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                // T924 Stage-6 slice A: the resolved AI text
+                                // translator rides the FF-01 ON branch ONLY —
+                                // the legacy OFF construction below stays
+                                // byte-identical. `null` (non-AI engines are
+                                // already fenced by profilePipelineDispatchKind)
+                                // is the typed CONFIGURATION pause inside the
+                                // coordinator.
+                                textTranslator = contextualTranslator,
                             ).runPass1(orderedPages, computeClass)
                         }
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL ->

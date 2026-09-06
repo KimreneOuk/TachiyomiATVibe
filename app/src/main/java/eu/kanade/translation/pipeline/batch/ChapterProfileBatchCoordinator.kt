@@ -2,7 +2,11 @@ package eu.kanade.translation.pipeline.batch
 
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.CheckpointOcrResult
+import eu.kanade.translation.LeaseAcquisition
+import eu.kanade.translation.OcrStagePatch
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.PageWriteOrigin
+import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AnalysisChunkCoverage
 import eu.kanade.translation.artifact.AnalysisChunkResult
 import eu.kanade.translation.artifact.ArtifactDocumentJson
@@ -12,7 +16,9 @@ import eu.kanade.translation.artifact.ChapterArtifactStore
 import eu.kanade.translation.artifact.ChapterAttemptLedgerDocument
 import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
+import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.ExtractedEntity
 import eu.kanade.translation.artifact.ExtractedRelationship
 import eu.kanade.translation.artifact.ExtractedTerm
@@ -21,7 +27,6 @@ import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.OcrCheckpointMode
 import eu.kanade.translation.artifact.PageRange
-import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.ProfilePointer
 import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.RunConfigSnapshot
@@ -32,7 +37,13 @@ import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.ToneFlag
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.recordAttemptFailure
+import eu.kanade.translation.ocrBlockFingerprints
+import eu.kanade.translation.ocrFingerprint
+import eu.kanade.translation.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
+import eu.kanade.translation.translator.BatchRequestSublimitGate
 import eu.kanade.translation.translator.TranslatorComputeClass
 import eu.kanade.translation.translator.analysis.AnalysisChunkRunner
 import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
@@ -44,10 +55,16 @@ import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
 import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
 import eu.kanade.translation.translator.contextual.AnalysisChunkPolicy
 import eu.kanade.translation.translator.contextual.ChunkPlannerPage
+import eu.kanade.translation.translator.contextual.EnvelopePlannerBlock
+import eu.kanade.translation.translator.contextual.EnvelopePlannerPage
+import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
+import eu.kanade.translation.translator.contextual.EnvelopePlanResult
+import eu.kanade.translation.translator.contextual.GlobalEnvelopePlanner
 import eu.kanade.translation.translator.contextual.OcrCorpusManifest
 import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.translator.contextual.ProfileReconciler
+import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -146,6 +163,22 @@ internal class ChapterProfileBatchCoordinator(
      * producing provider calls without a typed transport.
      */
     private val analysisChunkRunner: AnalysisChunkRunner? = null,
+    /**
+     * Stage-6 slice A: the typed AI text translator for the envelope phase
+     * (ST-11/ST-12). `null` is a typed CONFIGURATION-class gate: the run
+     * plans nothing provider-bound and pauses at TRANSLATE — exactly like
+     * the analysis runner seam above. Production wiring of BOTH seams is
+     * the provider package's acceptance condition; tests drive the seam
+     * with fakes.
+     */
+    private val textTranslator: ContextualTextTranslator? = null,
+    /**
+     * Stage-6 slice A: the Batch sub-limit gate every translation envelope
+     * must ride (wave-4 F-W4-2: ONE allowance per credential for ALL Batch
+     * traffic). Defaults to the process-wide shared gate.
+     */
+    private val translationSublimitGate: BatchRequestSublimitGate =
+        SharedBatchRequestSublimitGate.instance,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -242,11 +275,16 @@ internal class ChapterProfileBatchCoordinator(
                     profilePointer = reusableProfile.pointer,
                 ),
             )
-            return BatchPass1Outcome(
-                needsTranslation = emptyList(),
-                status = BatchPass1Status.PAUSED,
-                completedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
-                reason = PROFILE_FROZEN_REUSE_REASON,
+            // Stage-6 slice A: the reuse path CONTINUES into the envelope
+            // phase — the whole point of the frozen-profile skip is
+            // translating under the reused profile with zero re-OCR and
+            // zero provider analysis (D5).
+            return runEnvelopePlanAndTranslate(
+                artifact = artifact,
+                runId = runId,
+                orderedPages = orderedPages,
+                corpusFingerprint = reusableProfile.corpusFingerprint,
+                baseCounters = counters() + mapOf(COUNTER_PROFILE_REUSED to 1),
             )
         }
 
@@ -785,6 +823,7 @@ internal class ChapterProfileBatchCoordinator(
         return runProfileReconcileAndFreeze(
             artifact = artifact,
             runId = runId,
+            orderedPages = orderedPages,
             corpusFingerprint = corpusFingerprint,
             baseCounters = analysisCounters(
                 mapOf(
@@ -822,6 +861,7 @@ internal class ChapterProfileBatchCoordinator(
     private suspend fun runProfileReconcileAndFreeze(
         artifact: ChapterArtifactStore,
         runId: String,
+        orderedPages: List<PageKey>,
         corpusFingerprint: String,
         baseCounters: Map<String, Int>,
     ): BatchPass1Outcome {
@@ -988,11 +1028,23 @@ internal class ChapterProfileBatchCoordinator(
                     "TachiyomiAT t924 profile frozen version=$nextVersion " +
                         "reconciled=${content.reconciledChunkCount} pending=${content.pendingChunkCount}"
                 }
-                BatchPass1Outcome(
-                    needsTranslation = emptyList(),
-                    status = BatchPass1Status.PAUSED,
-                    completedPageKeys = manifestForPublish.pages.keys,
-                    reason = PROFILE_FROZEN_STOP_REASON,
+                // Stage-6 slice A: PROFILE_FROZEN no longer terminates the
+                // run — the coordinator CONTINUES into ENVELOPE_PLAN (ST-11)
+                // and TRANSLATE (ST-12). The terminal stays PAUSED (native /
+                // render are Stage 7; NEVER COMPLETE in this slice).
+                return runEnvelopePlanAndTranslate(
+                    artifact = artifact,
+                    runId = runId,
+                    orderedPages = orderedPages,
+                    corpusFingerprint = corpusFingerprint,
+                    baseCounters = freezeCounters(
+                        mapOf(
+                            COUNTER_PROFILE_CHUNKS_TOTAL to chunks.size,
+                            COUNTER_PROFILE_CHUNKS_RECONCILED to content.reconciledChunkCount,
+                            COUNTER_PROFILE_CHUNKS_PENDING to content.pendingChunkCount,
+                            COUNTER_PROFILE_FROZEN to 1,
+                        ),
+                    ),
                 )
             }
             is ChapterArtifactStore.TransactionOutcome.Rejected -> {
@@ -1017,6 +1069,601 @@ internal class ChapterProfileBatchCoordinator(
                     status = BatchPass1Status.PERSISTENCE_REJECTED,
                     reason = "T924 profile freeze rejected: ${publication.reason}",
                 )
+            }
+        }
+    }
+
+    /**
+     * Stage-6 slice A (T924-ST-11 + ST-12, TX-21/TX-20, DR-A Option 1):
+     * ENVELOPE_PLAN -> TRANSLATE, entered from PROFILE_FROZEN (fresh freeze)
+     * or from the ST-05 frozen-profile reuse branch.
+     *
+     *  1. The pending dispatch work is REBUILT from durable state (durable
+     *     checkpoints + live per-page translation state; committed, skipped,
+     *     manual-authoritative pages and user-edited blocks are never
+     *     planned) and the pure [GlobalEnvelopePlanner] runs over it —
+     *     deterministic, so a resume with unchanged inputs re-derives the
+     *     SAME plan fingerprint and REUSES the published plan (ST-11 resume:
+     *     re-plan if any input changed, else reuse).
+     *  2. The [EnvelopePlan] sidecar + manifest pointer publish in ONE SC-20
+     *     transaction when the fingerprint changed (superseding plan = new
+     *     content-addressed file; TX-21 suffix re-plans ride the same path).
+     *  3. TRANSLATE: the serial [ProfileEnvelopeExecutor] dispatches one
+     *     envelope at a time through the legacy typed retry machinery under
+     *     the shared Batch sub-limit gate, revalidating every page (TX-21)
+     *     and committing through the TX-20 provenance ladder. Progress is
+     *     durable per-page store state; the terminal stays PAUSED
+     *     (TRANSLATE_STOP_REASON — native/render are Stage 7; this slice
+     *     NEVER publishes COMPLETE).
+     */
+    private suspend fun runEnvelopePlanAndTranslate(
+        artifact: ChapterArtifactStore,
+        runId: String,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+        baseCounters: Map<String, Int>,
+    ): BatchPass1Outcome {
+        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
+
+        fun envelopeCounters(extra: Map<String, Int>): Map<String, Int> =
+            baseCounters + extra
+
+        fun envelopeRecord(state: ChapterRunState, counters: Map<String, Int>): ChapterRunRecord =
+            record(
+                runId,
+                state,
+                frozenFingerprint,
+                sourceDigest,
+                counters,
+                ocrCorpusFingerprint = corpusFingerprint,
+                profilePointer = store.artifactManifest?.profile,
+            )
+
+        // ST-11 entry: phase record, then plan (pure re-derivation).
+        publishRecord(
+            artifact,
+            envelopeRecord(ChapterRunState.ENVELOPE_PLAN, envelopeCounters(emptyMap())),
+        )
+
+        val manifest = store.artifactManifest ?: return BatchPass1Outcome(
+            needsTranslation = emptyList(),
+            status = BatchPass1Status.PERSISTENCE_REJECTED,
+            reason = "T924 envelope plan deferred: manifest unavailable",
+        )
+        val frozenProfilePointer = manifest.profile ?: return BatchPass1Outcome(
+            needsTranslation = emptyList(),
+            status = BatchPass1Status.PAUSED,
+            completedPageKeys = allPageKeys,
+            reason = "T924 envelope plan deferred: frozen profile pointer absent",
+        )
+
+        // ST-12 entry needs a typed AI transport; the plan still publishes so
+        // a later wired run resumes directly into TRANSLATE.
+        val translator = textTranslator
+
+        // ---- ENVELOPE_PLAN: build + plan + publish (or reuse). ----
+        when (val build = buildEnvelopeDispatchWork(artifact, orderedPages, corpusFingerprint)) {
+            is EnvelopeWorkBuild.CorpusDrift -> return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = allPageKeys,
+                reason = build.reason,
+            )
+            is EnvelopeWorkBuild.NothingPending -> {
+                // Skip rule (ST-11): no translatable work — textless chapters
+                // never reach TRANSLATE. Typed PAUSED no-work terminal.
+                publishRecord(
+                    artifact,
+                    envelopeRecord(
+                        ChapterRunState.ENVELOPE_PLAN,
+                        envelopeCounters(
+                            mapOf(
+                                COUNTER_ENVELOPES_TOTAL to 0,
+                                COUNTER_ENVELOPES_DONE to 0,
+                                COUNTER_SKIPPED_NO_WORK to 1,
+                                COUNTER_STOP to 1,
+                            ),
+                        ),
+                    ),
+                )
+                return BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PAUSED,
+                    completedPageKeys = allPageKeys,
+                    reason = ENVELOPE_NO_WORK_REASON,
+                )
+            }
+            is EnvelopeWorkBuild.PlannerRejected -> {
+                // ST-11 terminal: a page that cannot fit any legal envelope
+                // is rejected whole (page atomicity); it takes a durable
+                // structural failure and the phase pauses at it.
+                build.namedPageKeys.forEach { pageKey ->
+                    persistEnvelopeStructuralFailure(pageKey, build.reasons.joinToString("; "))
+                }
+                publishRecord(
+                    artifact,
+                    envelopeRecord(
+                        ChapterRunState.ENVELOPE_PLAN,
+                        envelopeCounters(
+                            mapOf(
+                                COUNTER_ENVELOPE_PLAN_REJECTED to 1,
+                                COUNTER_STOP to 1,
+                            ),
+                        ),
+                    ),
+                )
+                return BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PAUSED,
+                    anchorPageKey = build.namedPageKeys.firstOrNull(),
+                    reason = "T924 envelope plan rejected: ${build.reasons.joinToString("; ")}",
+                )
+            }
+            is EnvelopeWorkBuild.Ready -> {
+                val fresh = build.plan
+                // ST-11 resume rule: identical inputs re-derive an identical
+                // plan fingerprint — reuse the published plan, no write.
+                val reuse = manifest.envelopePlan != null &&
+                    EnvelopePlanPublication.readValidatedPlan(artifact, manifest).let { read ->
+                        read is EnvelopePlanPublication.EnvelopePlanRead.Usable &&
+                            read.plan.planFingerprint == fresh.planFingerprint
+                    }
+                if (!reuse) {
+                    val manifestForPublish = store.artifactManifest ?: return BatchPass1Outcome(
+                        needsTranslation = emptyList(),
+                        status = BatchPass1Status.PERSISTENCE_REJECTED,
+                        reason = "T924 envelope plan deferred: manifest unavailable",
+                    )
+                    when (
+                        val publication = EnvelopePlanPublication.publish(
+                            artifact = artifact,
+                            manifest = manifestForPublish,
+                            plan = fresh,
+                            nowEpochMs = nowEpochMs(),
+                        )
+                    ) {
+                        is ChapterArtifactStore.TransactionOutcome.Committed ->
+                            store.artifactManifest = publication.manifest
+                        is ChapterArtifactStore.TransactionOutcome.Rejected ->
+                            // Prior manifest stays authoritative (SC-20/22).
+                            return BatchPass1Outcome(
+                                needsTranslation = emptyList(),
+                                status = BatchPass1Status.PERSISTENCE_REJECTED,
+                                reason = "T924 envelope plan publication rejected: ${publication.reason}",
+                            )
+                    }
+                }
+
+                // ---- ST-12 TRANSLATE. ----
+                if (translator == null) {
+                    publishRecord(
+                        artifact,
+                        envelopeRecord(
+                            ChapterRunState.TRANSLATE,
+                            envelopeCounters(
+                                mapOf(
+                                    COUNTER_ENVELOPES_TOTAL to fresh.envelopes.size,
+                                    COUNTER_ENVELOPES_DONE to 0,
+                                    COUNTER_SKIPPED_NO_TRANSPORT to 1,
+                                    COUNTER_STOP to 1,
+                                ),
+                            ),
+                        ),
+                    )
+                    return BatchPass1Outcome(
+                        needsTranslation = emptyList(),
+                        status = BatchPass1Status.PAUSED,
+                        completedPageKeys = allPageKeys,
+                        reason = TRANSLATE_NO_TRANSPORT_REASON,
+                    )
+                }
+
+                publishRecord(
+                    artifact,
+                    envelopeRecord(
+                        ChapterRunState.TRANSLATE,
+                        envelopeCounters(
+                            mapOf(
+                                COUNTER_ENVELOPES_TOTAL to fresh.envelopes.size,
+                                COUNTER_ENVELOPES_DONE to 0,
+                                COUNTER_ENVELOPES_PENDING to fresh.envelopes.size,
+                            ),
+                        ),
+                    ),
+                )
+
+                val work = build.work
+                val executor = ProfileEnvelopeExecutor(
+                    store = store,
+                    textTranslator = translator,
+                    profileContentFingerprint = frozenProfilePointer.contentFingerprint,
+                    replan = { reason ->
+                        rebuildDispatchWork(artifact, orderedPages, corpusFingerprint, reason)
+                    },
+                    sublimitGate = translationSublimitGate,
+                    providerProfile = providerChunkProfile(),
+                    nowEpochMs = nowEpochMs,
+                )
+                return when (val outcome = executor.run(work)) {
+                    is ProfileEnvelopeExecutor.PhaseOutcome.Drained -> {
+                        publishRecord(
+                            artifact,
+                            envelopeRecord(
+                                ChapterRunState.TRANSLATE,
+                                envelopeCounters(
+                                    outcome.counters.toMap() + mapOf(COUNTER_STOP to 1),
+                                ),
+                            ),
+                        )
+                        BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.PAUSED,
+                            completedPageKeys = allPageKeys,
+                            reason = TRANSLATE_STOP_REASON,
+                        )
+                    }
+                    is ProfileEnvelopeExecutor.PhaseOutcome.Paused -> {
+                        publishRecord(
+                            artifact,
+                            envelopeRecord(
+                                ChapterRunState.TRANSLATE,
+                                envelopeCounters(
+                                    outcome.counters.toMap() +
+                                        mapOf(
+                                            COUNTER_STOP to 1,
+                                            COUNTER_ENVELOPES_PENDING to outcome.counters.envelopesPending,
+                                        ),
+                                ),
+                            ),
+                        )
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT t924 translate paused: ${outcome.reason}"
+                        }
+                        BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.PAUSED,
+                            anchorPageKey = outcome.anchorPageKey,
+                            failure = outcome.failure,
+                            nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
+                            reason = outcome.reason,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * TX-21.4 deterministic suffix re-plan: rebuilds the pending work from
+     * fresh store state with the SAME pure planner and publishes the
+     * superseding plan (SC-20) before dispatch resumes. An unchanged
+     * fingerprint reuses the published plan (identical content-addressed
+     * bytes, idempotent). Never mutates committed history — committed pages
+     * are simply no longer pending.
+     */
+    private suspend fun rebuildDispatchWork(
+        artifact: ChapterArtifactStore,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+        reason: String,
+    ): ReplanResult {
+        return when (val rebuilt = buildEnvelopeDispatchWork(artifact, orderedPages, corpusFingerprint)) {
+            is EnvelopeWorkBuild.Ready -> {
+                val manifestNow = store.artifactManifest
+                    ?: return ReplanResult.Failed("manifest unavailable for superseding plan")
+                val alreadyPublished =
+                    EnvelopePlanPublication.readValidatedPlan(artifact, manifestNow)
+                        .let { read ->
+                            read is EnvelopePlanPublication.EnvelopePlanRead.Usable &&
+                                read.plan.planFingerprint == rebuilt.plan.planFingerprint
+                        }
+                if (alreadyPublished) {
+                    ReplanResult.Ready(rebuilt.work)
+                } else {
+                    when (
+                        val publication = EnvelopePlanPublication.publish(
+                            artifact = artifact,
+                            manifest = manifestNow,
+                            plan = rebuilt.plan,
+                            nowEpochMs = nowEpochMs(),
+                        )
+                    ) {
+                        is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                            store.artifactManifest = publication.manifest
+                            ReplanResult.Ready(rebuilt.work)
+                        }
+                        is ChapterArtifactStore.TransactionOutcome.Rejected ->
+                            ReplanResult.Failed("superseding plan publication rejected: ${publication.reason}")
+                    }
+                }
+            }
+            is EnvelopeWorkBuild.NothingPending -> ReplanResult.NothingPending
+            is EnvelopeWorkBuild.CorpusDrift -> ReplanResult.Failed(rebuilt.reason)
+            is EnvelopeWorkBuild.PlannerRejected ->
+                ReplanResult.Failed("re-plan rejected: ${rebuilt.reasons.joinToString("; ")} ($reason)")
+        }
+    }
+
+    /** Analysis-corpus entries rebuilt; null when a checkpoint vanished (drift). */
+    private sealed interface EnvelopeWorkBuild {
+        data class Ready(
+            val work: EnvelopeDispatchWork,
+            val plan: EnvelopePlan,
+        ) : EnvelopeWorkBuild
+
+        data object NothingPending : EnvelopeWorkBuild
+
+        data class CorpusDrift(val reason: String) : EnvelopeWorkBuild
+
+        data class PlannerRejected(
+            val reasons: List<String>,
+            val namedPageKeys: Set<String>,
+        ) : EnvelopeWorkBuild
+    }
+
+    /**
+     * Rebuilds the pending dispatch work from FRESH store state (T924-ST-11
+     * "re-plan from fresh store state"): durable checkpoints provide the OCR
+     * corpus identity; the live store provides the plan-time page identities
+     * TX-21 revalidates against. Committed/skipped pages, manual-authoritative
+     * pages, user-edited blocks and already-translated blocks are never
+     * planned — durable progress is the STORE's per-page translation state,
+     * never a coordinator list.
+     */
+    private suspend fun buildEnvelopeDispatchWork(
+        artifact: ChapterArtifactStore,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+    ): EnvelopeWorkBuild {
+        val corpus = corpusEntriesFromCheckpoints(artifact, orderedPages, orderedPages.size)
+            ?: return EnvelopeWorkBuild.CorpusDrift(
+                "T924 envelope plan deferred: corpus checkpoints changed under the run",
+            )
+        val sceneStarts = frozenProfileSceneStartIndexes(artifact)
+        val policy = EnvelopePlannerPolicy(
+            maxBlocksPerEnvelope = frozenConfig.envelopePolicy.maxBlocks,
+            maxContributingPages = frozenConfig.envelopePolicy.maxPages,
+        )
+        val workPages = linkedMapOf<String, PageDispatchWork>()
+        val plannerPages = mutableListOf<EnvelopePlannerPage>()
+        for (entry in corpus.entries) {
+            val snapshot = store.snapshot(entry.storagePageKey)
+            val page = snapshot.page ?: return EnvelopeWorkBuild.CorpusDrift(
+                "T924 envelope plan deferred: live page state missing for ${entry.storagePageKey}",
+            )
+            if (pageEnvelopeDone(entry.storagePageKey, page)) continue
+            // Resume hydration: a page restored from the artifact store after
+            // process death is a synthesized placeholder WITHOUT blocks — the
+            // durable OCR content lives in the checkpoint's page-snapshot
+            // sidecar (checkpoint CLOSE re-owns it and clears the candidate).
+            // Adopt it into the live store under the M1 lease+merge idiom so
+            // planning, TX-21 revalidation and TX-20 commits all operate on
+            // real block state. Fresh in-session pages carry blocks and skip
+            // this entirely; committed/skipped/manual pages are never adopted.
+            val (effectiveSnapshot, effectivePage) = if (page.blocks.isEmpty()) {
+                val adopted = adoptCheckpointSnapshot(artifact, entry.storagePageKey, snapshot)
+                if (adopted?.page == null) {
+                    return EnvelopeWorkBuild.CorpusDrift(
+                        "T924 envelope plan deferred: checkpoint adoption failed for ${entry.storagePageKey}",
+                    )
+                }
+                adopted to adopted.page
+            } else {
+                snapshot to page
+            }
+            val dispatchBlocks = mutableListOf<PlannedBlock>()
+            val plannerBlocks = mutableListOf<EnvelopePlannerBlock>()
+            effectivePage.blocks.forEachIndexed { index, block ->
+                if (block.text.isBlank()) return@forEachIndexed
+                // TX-21.3 / INV-07: user edits are authoritative — never planned.
+                if (block.userEditedAt != null) return@forEachIndexed
+                // Blocks the provider already translated validly (manual or a
+                // prior partial candidate) are not requestable — mirrors the
+                // retry controller's requestability rule so page completeness
+                // stays achievable.
+                if (block.translation.isNotBlank() &&
+                    block.translation.trim() != block.text.trim()
+                ) {
+                    return@forEachIndexed
+                }
+                val stableId = wireBlockId(block.blockId, entry.wirePageKey, index)
+                dispatchBlocks += PlannedBlock(
+                    stableBlockId = stableId,
+                    sourceText = block.text,
+                    ocrFingerprint = block.ocrFingerprint(),
+                    blockIndex = index,
+                )
+                plannerBlocks += EnvelopePlannerBlock(stableBlockId = stableId, sourceText = block.text)
+            }
+            if (dispatchBlocks.isEmpty()) continue
+            workPages[entry.storagePageKey] = PageDispatchWork(
+                pageKey = entry.storagePageKey,
+                naturalPageIndex = entry.naturalPageIndex,
+                ocrContentFingerprint = entry.contentFingerprint,
+                sourceFingerprint = effectivePage.sourceFingerprint,
+                planPageVersion = effectiveSnapshot.pageVersion,
+                planCandidateGenerationId = effectiveSnapshot.candidateGenerationId,
+                planDependencyFingerprint = effectiveSnapshot.dependencyFingerprint,
+                planArtifactPageVersion = effectiveSnapshot.artifactPageVersion,
+                blocks = dispatchBlocks,
+            )
+            plannerPages += EnvelopePlannerPage(
+                pageKey = entry.storagePageKey,
+                naturalPageIndex = entry.naturalPageIndex,
+                contentFingerprint = entry.contentFingerprint,
+                blocks = plannerBlocks,
+                sceneBoundaryBefore = entry.naturalPageIndex in sceneStarts,
+            )
+        }
+        if (plannerPages.isEmpty()) return EnvelopeWorkBuild.NothingPending
+        return when (
+            val result = GlobalEnvelopePlanner.plan(
+                pages = plannerPages,
+                corpusFingerprint = corpusFingerprint,
+                policy = policy,
+                createdAtEpochMs = nowEpochMs(),
+            )
+        ) {
+            is EnvelopePlanResult.Rejected -> EnvelopeWorkBuild.PlannerRejected(
+                reasons = result.reasons,
+                namedPageKeys = result.reasons.mapNotNull { reason ->
+                    oversizedPageRegex.find(reason)?.groupValues?.getOrNull(1)
+                }.toSet(),
+            )
+            is EnvelopePlanResult.Success -> EnvelopeWorkBuild.Ready(
+                work = EnvelopeDispatchWork(
+                    plan = result.plan,
+                    planFingerprint = result.plan.planFingerprint,
+                    pages = workPages,
+                    providerBackend = frozenConfig.providerKey.substringBefore(':'),
+                    providerModel = frozenConfig.providerKey
+                        .substringAfter(':', missingDelimiterValue = "")
+                        .ifEmpty { null },
+                    credentialScope = frozenConfig.credentialId.ifBlank { "default" },
+                ),
+                plan = result.plan,
+            )
+        }
+    }
+
+    /** ST-11 whole-page done rule: committed, skipped, rendered, or manual-authoritative. */
+    private fun pageEnvelopeDone(pageKey: String, page: PageTranslation): Boolean {
+        if (page.translationStatus == StageStatus.READY ||
+            page.translationStatus == StageStatus.SKIPPED ||
+            page.hasRenderedResult
+        ) {
+            return true
+        }
+        val committed = store.artifactManifest?.pages?.get(pageKey)?.committed ?: return false
+        return committed.hasManualEdits
+    }
+
+    /**
+     * Resume hydration for a synthesized (block-less) page: loads the page's
+     * durable OCR checkpoint snapshot sidecar and merges it into the live
+     * store under the standard BATCH OCR lease (M1 idiom), fenced by the
+     * placeholder page's identity. Returns the post-merge page snapshot, or
+     * null when the checkpoint/snapshot is unreadable or the identity-fenced
+     * merge was rejected — the caller defers the phase (typed pause), never
+     * plans against fabricated content.
+     */
+    private suspend fun adoptCheckpointSnapshot(
+        artifact: ChapterArtifactStore,
+        pageKey: String,
+        before: ChapterTranslationStore.PageSnapshot,
+    ): ChapterTranslationStore.PageSnapshot? {
+        val manifest = store.artifactManifest ?: return null
+        val pointer = manifest.ocrCheckpoints[pageKey] ?: return null
+        val checkpoint = when (val read = artifact.readOcrCheckpoint(pointer)) {
+            is ChapterArtifactStore.OcrCheckpointRead.Usable -> read.checkpoint
+            else -> return null
+        }
+        val ocrSnapshot = artifact.readPageSnapshot(checkpoint.ocrPageSnapshotPointer.fileName)
+            ?: return null
+        val lease = when (
+            val acquisition = store.tryAcquirePageStageLease(pageKey, PageStage.Ocr, PageWriteOrigin.BATCH)
+        ) {
+            is LeaseAcquisition.Granted -> acquisition.lease
+            else -> return null
+        }
+        try {
+            val outcome = store.mergeOcr(
+                OcrStagePatch(
+                    pageKey = pageKey,
+                    generation = before.generation,
+                    expectedPageVersion = before.pageVersion,
+                    expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
+                    ocrResult = ocrSnapshot,
+                    expectedLeaseToken = lease.token,
+                ),
+                description = "t924 envelope resume: adopt checkpointed OCR into the live store",
+            )
+            return when (outcome) {
+                is StagePatchResult.Accepted -> store.snapshot(pageKey)
+                is StagePatchResult.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT t924 checkpoint adoption rejected pageHash=${pageHash(pageKey)} " +
+                            "reason=${outcome.reason}"
+                    }
+                    null
+                }
+            }
+        } finally {
+            store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
+        }
+    }
+
+    /** Frozen-profile scene starts (page-preference input for the pure planner). */
+    private fun frozenProfileSceneStartIndexes(artifact: ChapterArtifactStore): Set<Int> {
+        val manifest = store.artifactManifest ?: return emptySet()
+        val pointer = manifest.profile ?: return emptySet()
+        val profile = when (
+            val read = artifact.readSidecarDocument(
+                pointer = pointer.toSidecarPointer(),
+                serializer = ChapterTranslationProfile.serializer(),
+                currentSchemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
+                expectedKind = ChapterTranslationProfile.KIND,
+                schemaVersionOf = { it.schemaVersion },
+                kindOf = { it.kind },
+                isValid = { it.isSemanticallyValid },
+            )
+        ) {
+            is SidecarRead.Usable -> read.document
+            else -> return emptySet()
+        }
+        return profile.scenes.map { it.pageRange.firstNaturalPageIndex }.toSet()
+    }
+
+    /** The contextual-chunk provider profile derived from the frozen provider key. */
+    private fun providerChunkProfile(): TranslationContextChunkPlanner.Profile =
+        if (frozenConfig.providerKey.startsWith("lmstudio:", ignoreCase = true)) {
+            TranslationContextChunkPlanner.Profile.LM_STUDIO
+        } else {
+            TranslationContextChunkPlanner.Profile.DEFAULT
+        }
+
+    /**
+     * ST-11 terminal: a page that cannot fit any legal envelope takes a
+     * durable structural failure (SOURCE category — the page content, not
+     * the transport, cannot fit the policy) so later runs do not re-plan it
+     * silently. Best-effort: a rejected record keeps the typed pause.
+     */
+    private suspend fun persistEnvelopeStructuralFailure(pageKey: String, reason: String) {
+        try {
+            val snapshot = store.snapshot(pageKey)
+            val metadata = DurableFailureMetadata(
+                pageKey = pageKey,
+                stage = ArtifactStage.TRANSLATION,
+                status = ArtifactStageStatus.FAILED_RETRYABLE,
+                category = FailureCategory.SOURCE,
+                retryCount = 1,
+                lastFailureMessage = "envelope planner rejected the page: $reason",
+                lastFailedAtEpochMs = nowEpochMs(),
+                nextEligibleRetryAtEpochMs = null,
+            )
+            store.persistDurableStageFailure(
+                pageKey = pageKey,
+                expected = ChapterTranslationStore.PatchPrecondition(
+                    generation = snapshot.generation,
+                    pageVersion = snapshot.pageVersion,
+                    leaseToken = snapshot.leaseToken,
+                ),
+                failure = metadata,
+                description = "t924 envelope structural failure",
+            ) { current ->
+                (current ?: PageTranslation(sourceFileName = pageKey)).apply {
+                    sourceFileName = pageKey
+                    translationStatus = StageStatus.FAILED
+                    errorMessage = metadata.lastFailureMessage
+                    updatedAt = nowEpochMs()
+                }
+            }
+        } catch (e: Exception) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t924 envelope structural failure record rejected pageHash=" +
+                    "${ShortHash.hash(pageKey)} error=${e::class.java.simpleName}"
             }
         }
     }
@@ -1536,6 +2183,20 @@ internal class ChapterProfileBatchCoordinator(
             "T924 compatible frozen profile reused (ST-05 skip-to-phase); " +
                 "envelope plan/translation arrive in Stage 6"
 
+        /**
+         * Stage-6 slice A terminals. The PROFILE_FROZEN_* reasons above are
+         * retained only for record-history compatibility — slice A runs no
+         * longer return them: PROFILE_FROZEN now CONTINUES into the envelope
+         * phase and the run terminates at one of the terminals below (still
+         * PAUSED — native/render are Stage 7 and COMPLETE is never published).
+         */
+        const val ENVELOPE_NO_WORK_REASON =
+            "T924 envelope plan skipped: no translatable OCR work in this chapter"
+        const val TRANSLATE_NO_TRANSPORT_REASON =
+            "T924 translation paused: no typed AI text translator wired (CONFIGURATION gate)"
+        const val TRANSLATE_STOP_REASON =
+            "T924 translation envelopes drained; native/render arrive in Stage 7"
+
         /** Analysis output budget default (T924-AP-03 `outputBudget`). */
         const val ANALYSIS_MAX_OUTPUT_TOKENS = 8192
 
@@ -1562,6 +2223,19 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_PROFILE_REUSED = "profileReused"
         const val COUNTER_PROFILE_RECONCILE_REJECTED = "profileReconcileRejected"
         const val COUNTER_PROFILE_FREEZE_REJECTED = "profileFreezeRejected"
+
+        /** Stage-6 slice A typed counters (operational only, never fingerprinted). */
+        const val COUNTER_ENVELOPES_TOTAL = "envelopesTotal"
+        const val COUNTER_ENVELOPES_DONE = "envelopesDone"
+        const val COUNTER_ENVELOPES_PENDING = "envelopesPending"
+        const val COUNTER_ENVELOPES_FAILURES = "envelopeFailures"
+        const val COUNTER_ENVELOPES_SKIPPED = "envelopesSkipped"
+        const val COUNTER_PAGES_TRANSLATED = "pagesTranslated"
+        const val COUNTER_ENVELOPE_REPLANS = "envelopeReplans"
+        const val COUNTER_ENVELOPE_PLAN_REJECTED = "envelopePlanRejected"
+
+        /** Matches the planner's oversized-page reason prefix ("page <key> oversized: ..."). */
+        private val oversizedPageRegex = Regex("""^page (\S+) oversized""")
 
         /**
          * T924-FF-01a dispatch decision. The flag is consulted exactly ONCE per
