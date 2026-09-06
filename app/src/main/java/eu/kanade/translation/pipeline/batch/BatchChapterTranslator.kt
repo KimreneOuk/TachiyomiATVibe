@@ -30,6 +30,9 @@ import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.recognition.PageRecognitionEngine
 import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.translator.analysis.AnalysisChunkExecutor
+import eu.kanade.translation.translator.analysis.AnalysisEngineTransport
+import eu.kanade.translation.translator.providers.AiTranslator
 import eu.kanade.translation.translator.providers.LmStudioTranslator
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.TextTranslator
@@ -669,8 +672,17 @@ internal class BatchChapterTranslator(
                             // the REAL provider/model identity from the active
                             // translator configuration, not a class name. The
                             // credential freezes as a one-way signature, never
-                            // a raw key (T924-FP-04).
+                            // a raw key (T924-FP-04). Wave-7c: the engine part
+                            // of the key uses the TRANSLATOR'S governor backend
+                            // spelling (e.g. `lm_studio`, not the enum's
+                            // `lmstudio`) so the envelope work builder's
+                            // `substringBefore(':')` derivation and every
+                            // Batch admission key share ONE spelling per
+                            // backend (wave-6 F-W6-4 alignment).
                             val aiEnginePref = translationPreferences.translationAiEngine().get()
+                            val aiEngine = contextualTranslator as? AiTranslator
+                            val providerKeyEngine = aiEngine?.analysisBackendId
+                                ?: aiEnginePref.name.lowercase(Locale.ROOT)
                             val aiModel = translationPreferences.translationAiModel(aiEnginePref)
                                 .get()
                                 .ifBlank { "unspecified" }
@@ -679,6 +691,19 @@ internal class BatchChapterTranslator(
                             } else {
                                 translationPreferences.translationAiApiKey(aiEnginePref).get()
                             }
+                            // T924 wave-7c: the typed analysis transport rides
+                            // the SAME engine instance — the runner seam is
+                            // now production-wired for every engine that
+                            // exposes a raw completion (Gemini +
+                            // OpenAI-compatible family). Engines without one
+                            // keep the typed CONFIGURATION pause.
+                            val analysisRunner = aiEngine
+                                ?.takeIf { it.analysisBackendId != null }
+                                ?.let { engine ->
+                                    AnalysisChunkExecutor(
+                                        transport = AnalysisEngineTransport(engine),
+                                    ).runner()
+                                }
                             // T924 Stage 7 (D1/D2): the overlap scheduler runs
                             // the EXISTING native inpaint lane inside each
                             // remote envelope window (ST-13) and the render
@@ -702,7 +727,7 @@ internal class BatchChapterTranslator(
                                     targetLang = toLang.code,
                                     ocrEngine = recognitionEngine::class.java.simpleName,
                                     inpaintMode = inpaintingModeFromPref().name,
-                                    providerKey = "${aiEnginePref.name.lowercase(Locale.ROOT)}:$aiModel",
+                                    providerKey = "$providerKeyEngine:$aiModel",
                                     credentialId = credentialSecret.takeIf { it.isNotBlank() }
                                         ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
                                         .orEmpty(),
@@ -721,6 +746,11 @@ internal class BatchChapterTranslator(
                                 // is the typed CONFIGURATION pause inside the
                                 // coordinator.
                                 textTranslator = contextualTranslator,
+                                // T924 wave-7c: production analysis transport
+                                // (engine-backed raw completions) feeds the
+                                // Stage 3-5 profile chunk runner; null keeps
+                                // the typed CONFIGURATION pause.
+                                analysisChunkRunner = analysisRunner,
                                 overlapScheduler = overlapScheduler,
                                 renderJoin = renderJoin,
                             ).runPass1(orderedPages, computeClass)

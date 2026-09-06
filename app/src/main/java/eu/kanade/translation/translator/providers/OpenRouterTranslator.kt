@@ -30,6 +30,10 @@ class OpenRouterTranslator(
     override val providerModel: String get() = modelName
     override val providerCredentialScope: String? get() = ShortHash.hash(apiKey).ifEmpty { null }
 
+    // T924 wave-7c: structured-analysis endpoint.
+    override fun analysisEndpointUrl(): String = "https://openrouter.ai/api/v1/chat/completions"
+    override fun analysisHeaders(): Map<String, String> = mapOf("Authorization" to "Bearer $apiKey")
+
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
         val blockCount = linkedPages.values.sumOf { it.blocks.size }

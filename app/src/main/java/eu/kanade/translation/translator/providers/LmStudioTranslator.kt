@@ -32,6 +32,9 @@ class LmStudioTranslator(
     override val providerModel: String get() = modelName
     override val providerCredentialScope: String? get() = ShortHash.hash(normalizedBaseUrl).ifEmpty { null }
 
+    // T924 wave-7c: structured-analysis endpoint (local server, no auth).
+    override fun analysisEndpointUrl(): String = "$normalizedBaseUrl/chat/completions"
+
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
         val blockCount = linkedPages.values.sumOf { it.blocks.size }

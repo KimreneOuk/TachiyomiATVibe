@@ -30,6 +30,10 @@ class DeepSeekTranslator(
     override val providerModel: String get() = modelName.ifBlank { "deepseek-chat" }
     override val providerCredentialScope: String? get() = ShortHash.hash(apiKey).ifEmpty { null }
 
+    // T924 wave-7c: structured-analysis endpoint.
+    override fun analysisEndpointUrl(): String = "https://api.deepseek.com/chat/completions"
+    override fun analysisHeaders(): Map<String, String> = mapOf("Authorization" to "Bearer $apiKey")
+
     override suspend fun translate(pages: MutableMap<String, PageTranslation>) {
         val linkedPages = LinkedHashMap(pages)
         val blockCount = linkedPages.values.sumOf { it.blocks.size }

@@ -45,6 +45,17 @@ object AnalysisRequestBuilder {
     data class RequestBlock(
         val blockId: String,
         val text: String,
+        /**
+         * T924-AP-05 V8 echo basis: `e:` + the first 16 hex chars of
+         * [eu.kanade.translation.artifact.StageFingerprints.sourceExcerptHash]
+         * over this block's source text, computed at request-build time. An
+         * LLM cannot compute SHA-256 — the contract's anchor-integrity rule is
+         * realizable only as an ECHO: the model copies the block's hash into
+         * its evidence anchors and the validator recomputes locally, so an
+         * invented/paraphrased anchor (a hash that does not match the cited
+         * block) stays response-fatal (wave-7c).
+         */
+        val excerptHash: String,
     )
 
     /**
@@ -117,7 +128,11 @@ object AnalysisRequestBuilder {
                 append("{\"pageKey\":\"${jsonEscape(page.pageKey)}\",\"role\":\"${page.role}\",\"blocks\":[")
                 page.blocks.forEachIndexed { blockIndex, block ->
                     if (blockIndex > 0) append(",")
-                    append("{\"blockId\":\"${jsonEscape(block.blockId)}\",\"text\":\"${jsonEscape(block.text)}\"}")
+                    append("{\"blockId\":\"${jsonEscape(block.blockId)}\",\"text\":\"${jsonEscape(block.text)}\",")
+                    // T924-AP-05 V8 echo basis (wave-7c): the model copies
+                    // this hash into its evidence anchors; the validator
+                    // recomputes it locally from the same text.
+                    append("\"excerptHash\":\"${jsonEscape(block.excerptHash)}\"}")
                 }
                 append("]}")
             }

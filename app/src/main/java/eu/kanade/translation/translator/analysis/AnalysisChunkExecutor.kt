@@ -1,5 +1,6 @@
 package eu.kanade.translation.translator.analysis
 
+import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.translator.AdmissionPriority
 import eu.kanade.translation.translator.BatchProviderSublimit
 import eu.kanade.translation.translator.BatchRequestSublimitGate
@@ -315,9 +316,14 @@ fun AnalysisEvidenceTexts.toRequestPages(
                 AnalysisRequestBuilder.ROLE_CONTEXT
             },
             blocks = blockIds.map { blockId ->
+                val text = textByBlockId[blockId].orEmpty()
                 AnalysisRequestBuilder.RequestBlock(
                     blockId = blockId,
-                    text = textByBlockId[blockId].orEmpty(),
+                    text = text,
+                    // Wave-7c: the V8 echo basis is computed from the SAME
+                    // text the request carries, with the SAME fingerprint
+                    // function the validator recomputes with (16-hex prefix).
+                    excerptHash = "e:" + StageFingerprints.sourceExcerptHash(text).take(16),
                 )
             },
         )

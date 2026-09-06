@@ -120,6 +120,29 @@ class GeminiTranslator(
         }
     }
 
+    // ------------------------------------------------------------------
+    // T924 wave-7c: the typed structured-analysis transport (AiTranslator
+    // hooks). generateContent already throws typed failures
+    // (GeminiApiException : ProviderFailureException) and makes ONE raw
+    // attempt — exactly the transport contract.
+    // ------------------------------------------------------------------
+
+    override val analysisBackendId: String = "gemini"
+
+    override val analysisModelId: String get() = modelName
+
+    override val analysisCredentialScope: String? get() = ShortHash.hash(apiKey).ifEmpty { null }
+
+    override suspend fun postStructuredAnalysisRaw(
+        systemPrompt: String,
+        userPrompt: String,
+        maxOutputTokens: Int,
+    ): String = generateContent(
+        systemPrompt = systemPrompt,
+        prompt = userPrompt,
+        maxOutputTokens = maxOutputTokens,
+    )
+
     override suspend fun promptText(prompt: String): String =
         try {
             withTranslationRetry(logTag = "gemini") {

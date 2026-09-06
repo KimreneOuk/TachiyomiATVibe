@@ -50,6 +50,57 @@ abstract class OpenAiCompatibleTranslator(
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    // ------------------------------------------------------------------
+    // T924 wave-7c: the typed structured-analysis transport (AiTranslator
+    // hooks). The OpenAI-compatible family shares ONE completion shape —
+    // only the endpoint URL and auth headers differ per backend, so the
+    // subclass supplies those two and the base builds the payload.
+    // ------------------------------------------------------------------
+
+    override val analysisBackendId: String get() = providerBackend
+
+    override val analysisModelId: String? get() = providerModel
+
+    override val analysisCredentialScope: String? get() = providerCredentialScope
+
+    /** The chat-completions endpoint for structured analysis, or null when unsupported. */
+    protected open fun analysisEndpointUrl(): String? = null
+
+    /** Auth headers for [analysisEndpointUrl] (no Content-Type — postChatCompletion enforces it). */
+    protected open fun analysisHeaders(): Map<String, String> = emptyMap()
+
+    override suspend fun postStructuredAnalysisRaw(
+        systemPrompt: String,
+        userPrompt: String,
+        maxOutputTokens: Int,
+    ): String {
+        val url = analysisEndpointUrl()
+            ?: throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.CONFIGURATION,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    safeSummary = "backend has no analysis endpoint",
+                ),
+            )
+        val payload = JSONObject().apply {
+            put("model", analysisModelId.orEmpty())
+            // Structured extraction: low temperature, honest max_tokens.
+            put("temperature", 0.2)
+            put("max_tokens", maxOutputTokens)
+            put("messages", org.json.JSONArray().apply {
+                put(JSONObject().put("role", "system").put("content", systemPrompt))
+                put(JSONObject().put("role", "user").put("content", userPrompt))
+            })
+        }.toString()
+        return postChatCompletion(
+            url = url,
+            headers = analysisHeaders(),
+            payloadJson = payload,
+            reservedOutputTokens = maxOutputTokens,
+            operation = "analysis_completion",
+        )
+    }
+
     /**
      * Posts a chat completion request to an OpenAI-compatible API.
      * Returns the content string from choices[0].message.content.

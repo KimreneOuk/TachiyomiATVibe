@@ -38,14 +38,22 @@ class AnalysisChunkValidationTest {
                     pageKey = "p0",
                     role = AnalysisRequestBuilder.ROLE_CORE,
                     blocks = listOf(
-                        AnalysisRequestBuilder.RequestBlock("p0_b0", blockText),
+                        AnalysisRequestBuilder.RequestBlock(
+                            "p0_b0",
+                            blockText,
+                            "e:${excerptHash16()}",
+                        ),
                     ),
                 ),
                 AnalysisRequestBuilder.RequestPage(
                     pageKey = "p1",
                     role = AnalysisRequestBuilder.ROLE_CONTEXT,
                     blocks = listOf(
-                        AnalysisRequestBuilder.RequestBlock("p1_b0", "context page text"),
+                        AnalysisRequestBuilder.RequestBlock(
+                            "p1_b0",
+                            "context page text",
+                            "e:${excerptHash16("context page text")}",
+                        ),
                     ),
                 ),
             ),
