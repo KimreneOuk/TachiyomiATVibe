@@ -542,6 +542,71 @@ class ProfileEnvelopeDispatchTest {
     }
 
     @Test
+    fun `unchanged resume reuses the published envelope plan without republication (ST-11, wave-6 F-W6-2)`() = runTest {
+        val store = lazyStore()
+        val pageKeys = (1..9).map { "p$it" }
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+
+        // Run 1: envelope 1 fails terminally BEFORE any page commits — the
+        // plan is durable, all pages stay pending.
+        val failingTranslator = FakeTranslator { _, _ ->
+            throw ProviderFailureException(
+                ProviderFailure(
+                    kind = ProviderFailureKind.AUTHENTICATION,
+                    retryability = ProviderFailureRetryability.TERMINAL,
+                    safeSummary = "invalid credentials",
+                ),
+            )
+        }
+        val first = coordinator(
+            store,
+            FakePreflightOcrWorker(store),
+            pages,
+            FakeAnalyzer(),
+            failingTranslator,
+            maxPagesPerEnvelope = 8,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+        first.status shouldBe BatchPass1Status.PAUSED
+        runCounters(store).second["pagesTranslated"] shouldBe 0
+
+        val pointer1 = artifactStore().readManifest().shouldNotBeNull().envelopePlan.shouldNotBeNull()
+        val planFile = mangaDir.walkTopDown()
+            .single { it.isFile && it.name == pointer1.fileName.substringAfterLast('/') }
+        val planMtime = planFile.lastModified()
+        val planBytes = planFile.readBytes()
+
+        // ---- simulated process death with UNCHANGED state: the pending set
+        // and all plan inputs are identical, so the ST-11 reuse branch must
+        // skip republication entirely (same pointer, no file write) and the
+        // run still drains.
+        Thread.sleep(1_100) // exceed 1s-granularity filesystem clocks
+        val resumedStore = ChapterTranslationStore.openArtifact(root(), "Chapter 1.json")
+        val resumedWorker = FakePreflightOcrWorker(resumedStore)
+        val workingTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+
+        val resumed = coordinator(
+            resumedStore,
+            resumedWorker,
+            pages,
+            FakeAnalyzer(),
+            workingTranslator,
+            maxPagesPerEnvelope = 8,
+        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+        resumed.status shouldBe BatchPass1Status.PAUSED
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        // Zero re-OCR through the reuse path.
+        resumedWorker.ocrPages shouldBe emptyList()
+        // The published plan was REUSED, never rewritten.
+        val pointer2 = artifactStore().readManifest().shouldNotBeNull().envelopePlan.shouldNotBeNull()
+        pointer2.contentFingerprint shouldBe pointer1.contentFingerprint
+        planFile.lastModified() shouldBe planMtime
+        planFile.readBytes() shouldBe planBytes
+        runCounters(resumedStore).second["pagesTranslated"] shouldBe 9
+    }
+
+    @Test
     fun `structural refusal discards the response and pauses terminal`() = runTest {
         val store = lazyStore()
         val pageKeys = (1..3).map { "p$it" }

@@ -293,6 +293,11 @@ internal class ProfileEnvelopeExecutor(
                 val snapshot = store.snapshot(pageKey)
                 val live = snapshot.page
                 if (live == null) {
+                    // Wave-6 F-W6-1: the page is not yet in `held`, so the
+                    // just-acquired lease must be released before the early
+                    // return — otherwise a MANUAL attempt on this page is
+                    // denied for the whole replan window.
+                    store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
                     return replanOrPause("page $pageKey lost its live state", pageKey)
                 }
                 // TX-21.3 skip re-check: the page became committed /
@@ -304,6 +309,9 @@ internal class ProfileEnvelopeExecutor(
                 // TX-21.2 live-revalidate the plan-time identities.
                 val drift = revalidationDrift(pageWork, snapshot, live)
                 if (drift != null) {
+                    // Wave-6 F-W6-1: same release-before-early-return as the
+                    // lost-page path above.
+                    store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH)
                     return EnvelopeDispatchResult.ReplanNeeded(
                         reason = "page $pageKey drifted: $drift",
                         anchorPageKey = pageKey,
