@@ -1139,6 +1139,34 @@ internal class ChapterProfileBatchCoordinator(
             reason = "T924 envelope plan deferred: frozen profile pointer absent",
         )
 
+        // Stage-6 slice B (design §7): load the frozen profile DTO for prompt
+        // enrichment. The SAME ST-05/ST-30 reuse discipline applies — a
+        // sidecar that does not read back fully valid and identity-matched is
+        // treated as ABSENT and the executor keeps the LEGACY prompt shape
+        // (degraded-but-correct, never partially trusted).
+        val frozenProfile = when (
+            val profileRead = ProfileFreezePublication.readReusableFrozenProfile(
+                artifact = artifact,
+                manifest = manifest,
+                expectedInputFingerprint = profileInputFingerprintOf(corpusFingerprint),
+            )
+        ) {
+            is ProfileFreezePublication.FrozenProfileRead.Reusable -> {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT t924 envelope prompt shape=enriched " +
+                        "(frozen profile v${profileRead.profile.version} loaded)"
+                }
+                profileRead.profile
+            }
+            ProfileFreezePublication.FrozenProfileRead.NotReusable -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 envelope prompt shape=legacy " +
+                        "(frozen profile sidecar unreadable — degraded-but-correct)"
+                }
+                null
+            }
+        }
+
         // ST-12 entry needs a typed AI transport; the plan still publishes so
         // a later wired run resumes directly into TRANSLATE.
         val translator = textTranslator
@@ -1279,6 +1307,7 @@ internal class ChapterProfileBatchCoordinator(
                     store = store,
                     textTranslator = translator,
                     profileContentFingerprint = frozenProfilePointer.contentFingerprint,
+                    frozenProfile = frozenProfile,
                     replan = { reason ->
                         rebuildDispatchWork(artifact, orderedPages, corpusFingerprint, reason)
                     },

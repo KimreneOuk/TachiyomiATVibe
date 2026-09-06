@@ -7,6 +7,7 @@ import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.TranslationBlockPatch
 import eu.kanade.translation.TranslationStagePatch
 import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.EnvelopePlan
 import eu.kanade.translation.artifact.PlannedEnvelope
 import eu.kanade.translation.model.PageStage
@@ -27,8 +28,11 @@ import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.translator.SystemProviderRequestClock
 import eu.kanade.translation.translator.contextual.ContextualRequestProtocol
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
+import eu.kanade.translation.translator.contextual.ProfileSubsetMatcher
+import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
 import eu.kanade.translation.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
+import eu.kanade.translation.translator.contextual.TranslationPrompts
 import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.retry.AiChunkOutcome
 import eu.kanade.translation.translator.retry.AiTranslationRetryPolicy
@@ -85,6 +89,15 @@ internal class ProfileEnvelopeExecutor(
     /** The frozen profile content fingerprint this run dispatches under (FP-05). */
     private val profileContentFingerprint: String,
     /**
+     * T924 Stage-6 slice B (design §7): the LOADED frozen profile DTO. When
+     * present, every envelope prompt is ENRICHED with the profile subset
+     * matcher's capped subset, range-safe scene context, and the gap-free
+     * rolling history (pronoun-marking rule), and the execution-time token
+     * recompute + whole-page split applies. `null` — no usable frozen profile
+     * — keeps the slice-A LEGACY prompt shape unchanged (degraded-but-correct).
+     */
+    private val frozenProfile: ChapterTranslationProfile? = null,
+    /**
      * Deterministic suffix re-plan callback: rebuilds the pending set from
      * fresh store state, re-plans with the SAME pure planner, publishes the
      * superseding plan (SC-20) and returns [ReplanResult.Ready]; [ReplanResult.NothingPending]
@@ -112,6 +125,16 @@ internal class ProfileEnvelopeExecutor(
         var envelopeFailures: Int = 0,
         var pagesTranslated: Int = 0,
         var replans: Int = 0,
+        /** Slice B (D6): whole-page execution-time splits actually dispatched. */
+        var envelopeSplits: Int = 0,
+        /** Slice B (D6): envelopes sent in the ENRICHED prompt shape. */
+        var promptShapeEnriched: Int = 0,
+        /** Slice B (D6): envelopes sent in the LEGACY prompt shape. */
+        var promptShapeLegacy: Int = 0,
+        /** Slice B (D6): largest profile-subset fact count sent in ONE envelope. */
+        var profileSubsetFactsMax: Int = 0,
+        /** Slice B (D6): largest gap-free rolling-context page count carried. */
+        var rollingContextPagesMax: Int = 0,
     ) {
         fun toMap(): Map<String, Int> = mapOf(
             "envelopesTotal" to envelopesTotal,
@@ -121,6 +144,11 @@ internal class ProfileEnvelopeExecutor(
             "envelopeFailures" to envelopeFailures,
             "pagesTranslated" to pagesTranslated,
             "envelopeReplans" to replans,
+            "envelopeSplits" to envelopeSplits,
+            "promptShapeEnriched" to promptShapeEnriched,
+            "promptShapeLegacy" to promptShapeLegacy,
+            "profileSubsetFactsMax" to profileSubsetFactsMax,
+            "rollingContextPagesMax" to rollingContextPagesMax,
         )
     }
 
@@ -341,56 +369,224 @@ internal class ProfileEnvelopeExecutor(
                 return EnvelopeDispatchResult.Skipped
             }
 
-            // ---- Dispatch ONE envelope (hard one-in-flight invariant). ----
-            val chunk = buildEnvelopeChunk(envelope, held, frontier.rollingContext)
-            val metadata = ProviderRequestMetadata(
-                key = ProviderRequestKey(
-                    backend = work.providerBackend,
-                    model = work.providerModel,
-                    credentialScope = work.credentialScope,
-                ),
-                estimatedInputTokens = envelope.estimatedInputTokens,
-                reservedOutputTokens = envelope.estimatedOutputTokens,
-                operation = "translation_envelope",
-                envelopeId = envelope.envelopeId,
-                priority = AdmissionPriority.BACKGROUND,
-            )
-            val outcome = try {
-                sublimitGate.executeBatch(metadata) {
-                    translateAiChunkWithAdaptiveRetry(
-                        translator = textTranslator,
-                        chunk = chunk,
-                        requestedOutputTokens = envelope.estimatedOutputTokens,
-                        profile = providerProfile,
-                        label = "t924-${envelope.envelopeId}",
-                        retryDepth = 0,
-                        retryPolicy = retryPolicy,
-                        clock = clock,
-                    )
+            // D6: the gap-free rolling-context page count carried into prompts
+            // (contiguous committed prefix only — the frontier never moves on
+            // a rejected commit).
+            counters.rollingContextPagesMax =
+                maxOf(counters.rollingContextPagesMax, frontier.frontierIndex + 1)
+
+            // ---- Slice B D5 (design §8 tail): execution-time token ----
+            // ---- recompute; split at WHOLE-PAGE boundaries before sending.
+            val batches = splitForTokenFit(held, frontier.rollingContext)
+            counters.envelopeSplits += (batches.fitted.size - 1).coerceAtLeast(0)
+
+            // ---- Dispatch the fitted sub-batches SEQUENTIALLY ----
+            // ---- (still hard one-in-flight: each returns before the next). ----
+            var last: EnvelopeDispatchResult = EnvelopeDispatchResult.Dispatched
+            batches.fitted.forEachIndexed { batchIndex, batch ->
+                when (val result = dispatchSingleHeldBatch(envelope, batch, work, frontier, batchIndex)) {
+                    is EnvelopeDispatchResult.Paused -> return result
+                    else -> last = result
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: ProviderRequestPausedException) {
+            }
+
+            // A single token-oversized page is REJECTED, never sent (page
+            // atomicity invariant): typed pause AFTER any fitted pages
+            // committed (the slice-A commit-then-pause idiom).
+            if (batches.oversized.isNotEmpty()) {
                 return EnvelopeDispatchResult.Paused(
-                    reason = "T924 envelope dispatch paused at ${envelope.envelopeId}: ${e.failure.safeSummary}",
-                    anchorPageKey = held.first().pageKey,
-                    failure = e.failure,
-                    nextEligibleRetryAtEpochMs = e.nextEligibleRetryAtEpochMs,
-                )
-            } catch (e: Exception) {
-                return EnvelopeDispatchResult.Paused(
-                    reason = "T924 envelope dispatch paused at ${envelope.envelopeId}: " +
-                        "${e::class.java.simpleName}: ${e.message ?: "no message"}",
-                    anchorPageKey = held.first().pageKey,
+                    reason = "T924 envelope ${envelope.envelopeId} paused: " +
+                        "${batches.oversized.size} page(s) token-oversized under the " +
+                        "execution-time enriched-context recompute; page atomicity kept — " +
+                        "the page(s) were NOT translated (native/render stages unaffected)",
+                    anchorPageKey = batches.oversized.first().pageKey,
                     failure = ProviderFailure(
-                        kind = ProviderFailureKind.NETWORK,
+                        kind = ProviderFailureKind.PROTOCOL,
                         retryability = ProviderFailureRetryability.PAUSE,
-                        safeSummary = "envelope dispatch failed: ${e::class.java.simpleName}",
+                        safeSummary = "page token-oversized under execution-time recompute",
                         requestId = envelope.envelopeId,
                     ),
                     nextEligibleRetryAtEpochMs = null,
                 )
             }
+            return last
+        } finally {
+            // Any page still held (paused/replan paths) releases its lease.
+            held.forEach { page ->
+                store.releasePageStageLease(page.pageKey, PageWriteOrigin.BATCH)
+            }
+        }
+    }
+
+    /**
+     * Slice B D5: splits the held pages into deterministic whole-page
+     * sub-batches whose ACTUAL enriched payload (source lines + profile
+     * subset + scene context + rolling history) fits the provider context
+     * window. Greedy prefix packing in plan order — the same planner
+     * discipline as the global planner, never a page split. Pages that alone
+     * exceed the window are returned as [SplitPlan.oversized] (rejected, not
+     * sent). Without a frozen profile (legacy shape) this is the identity
+     * split: ONE batch, slice-A behavior unchanged. The context reserve is
+     * estimated ONCE over the FULL envelope range (an upper bound for any
+     * sub-batch: a smaller page range matches fewer scenes/facts), so every
+     * sub-batch built from it fits a fortiori.
+     */
+    private fun splitForTokenFit(held: List<HeldPage>, rollingContext: String): SplitPlan {
+        if (frozenProfile == null) return SplitPlan(fitted = listOf(held), oversized = emptyList())
+        val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
+        val contextTokens = estimateEnrichedContextTokens(held, rollingContext)
+
+        val fitted = ArrayList<List<HeldPage>>()
+        val oversized = ArrayList<HeldPage>()
+        var batch = ArrayList<HeldPage>()
+        var batchLineTokens = 0
+        fun flush() {
+            if (batch.isEmpty()) return
+            if (batch.size == 1) {
+                val page = batch.single()
+                val pageTokens = pageLineEstimate(page)
+                val blocks = page.dispatchBlocks.size
+                val available = promptAvailableTokens(constraints, blocks, pageCount = 1)
+                if (pageTokens + contextTokens > available) {
+                    oversized += page
+                } else {
+                    fitted += listOf(page)
+                }
+            } else {
+                fitted += batch.toList()
+            }
+            batch = ArrayList()
+            batchLineTokens = 0
+        }
+        for (page in held) {
+            val pageTokens = pageLineEstimate(page)
+            if (batch.isNotEmpty()) {
+                val candidateBlocks = batch.sumOf { it.dispatchBlocks.size } + page.dispatchBlocks.size
+                val available = promptAvailableTokens(constraints, candidateBlocks, pageCount = batch.size + 1)
+                if (batchLineTokens + pageTokens + contextTokens > available) {
+                    flush()
+                }
+            }
+            batch += page
+            batchLineTokens += pageTokens
+        }
+        flush()
+        return SplitPlan(fitted = fitted, oversized = oversized)
+    }
+
+    private class SplitPlan(
+        val fitted: List<List<HeldPage>>,
+        val oversized: List<HeldPage>,
+    )
+
+    /** Provider prompt budget for given structural shape (planner idiom). */
+    private fun promptAvailableTokens(
+        constraints: TranslationContextChunkPlanner.Constraints,
+        blockCount: Int,
+        pageCount: Int,
+    ): Int = constraints.maxContextTokens - constraints.safetyMargin - constraints.minOutputTokens -
+        TranslationContextChunkPlanner.batchResponseOverheadTokens(blockCount, pageCount)
+
+    /** Source-line estimate for one page, mirroring the wire `id|text` lines. */
+    private fun pageLineEstimate(page: HeldPage): Int =
+        page.dispatchBlocks.sumOf { block -> estimateWireLineTokens(block.stableBlockId, block.sourceText) }
+
+    private fun estimateWireLineTokens(stableBlockId: String, sourceText: String): Int =
+        TranslationContextChunkPlanner.estimateTokens(
+            stableBlockId + "|" + sourceText.replace("\r\n", " ").replace('\r', ' ').replace('\n', ' '),
+        )
+
+    /**
+     * Upper-bound context estimate for [held]: the FULL-range profile subset
+     * + scene context + rolling history, exactly as the enriched chunk
+     * builder renders them.
+     */
+    private fun estimateEnrichedContextTokens(held: List<HeldPage>, rollingContext: String): Int {
+        val profile = frozenProfile ?: return 0
+        val subset = ProfileSubsetMatcher.match(profile, envelopeSourcesOf(held))
+        val glossary = TranslationPrompts.profileAwareGlossaryPrefix(subset)
+        val rolling = TranslationPrompts.profileAwareRollingPrefix(
+            rollingPairs = rollingContext,
+            resolvedEntityLines = ProfileSubsetMatcher.resolvedEntityLines(profile, rollingContext),
+            unresolvedLines = ProfileSubsetMatcher.unresolvedReferenceLines(profile),
+        )
+        return TranslationContextChunkPlanner.estimateTokens(glossary) +
+            TranslationContextChunkPlanner.estimateTokens(rolling)
+    }
+
+    private fun envelopeSourcesOf(held: List<HeldPage>): List<ProfileSubsetMatcher.EnvelopeSource> =
+        held.map { page ->
+            ProfileSubsetMatcher.EnvelopeSource(
+                naturalPageIndex = page.work.naturalPageIndex,
+                sourceText = page.dispatchBlocks.joinToString("\n") { it.sourceText },
+            )
+        }
+
+    /**
+     * Dispatches ONE provider request over ONE (sub-)batch of held pages —
+     * the hard one-envelope-in-flight unit. Chunk assembly enriches per
+     * [frozenProfile] (slice B) or keeps the slice-A legacy shape; DR-A
+     * Option 1 classification and TX-20 provenance commits are unchanged.
+     * Page leases stay held; [dispatchEnvelope]'s `finally` releases them.
+     */
+    private suspend fun dispatchSingleHeldBatch(
+        envelope: PlannedEnvelope,
+        batch: List<HeldPage>,
+        work: EnvelopeDispatchWork,
+        frontier: BatchContextFrontier,
+        batchIndex: Int,
+    ): EnvelopeDispatchResult {
+        val held = batch // DR-A classification operates over exactly this batch
+        // ---- Dispatch ONE provider envelope (hard one-in-flight invariant). ----
+        val prepared = buildEnvelopeChunk(envelope, held, frontier.rollingContext)
+        val metadata = ProviderRequestMetadata(
+            key = ProviderRequestKey(
+                backend = work.providerBackend,
+                model = work.providerModel,
+                credentialScope = work.credentialScope,
+            ),
+            estimatedInputTokens = prepared.estimatedInputTokens,
+            reservedOutputTokens = envelope.estimatedOutputTokens,
+            operation = "translation_envelope",
+            envelopeId = envelope.envelopeId,
+            priority = AdmissionPriority.BACKGROUND,
+        )
+        val outcome = try {
+            sublimitGate.executeBatch(metadata) {
+                translateAiChunkWithAdaptiveRetry(
+                    translator = textTranslator,
+                    chunk = prepared.chunk,
+                    requestedOutputTokens = envelope.estimatedOutputTokens,
+                    profile = providerProfile,
+                    label = "t924-${envelope.envelopeId}#$batchIndex",
+                    retryDepth = 0,
+                    retryPolicy = retryPolicy,
+                    clock = clock,
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ProviderRequestPausedException) {
+            return EnvelopeDispatchResult.Paused(
+                reason = "T924 envelope dispatch paused at ${envelope.envelopeId}: ${e.failure.safeSummary}",
+                anchorPageKey = held.first().pageKey,
+                failure = e.failure,
+                nextEligibleRetryAtEpochMs = e.nextEligibleRetryAtEpochMs,
+            )
+        } catch (e: Exception) {
+            return EnvelopeDispatchResult.Paused(
+                reason = "T924 envelope dispatch paused at ${envelope.envelopeId}: " +
+                    "${e::class.java.simpleName}: ${e.message ?: "no message"}",
+                anchorPageKey = held.first().pageKey,
+                failure = ProviderFailure(
+                    kind = ProviderFailureKind.NETWORK,
+                    retryability = ProviderFailureRetryability.PAUSE,
+                    safeSummary = "envelope dispatch failed: ${e::class.java.simpleName}",
+                    requestId = envelope.envelopeId,
+                ),
+                nextEligibleRetryAtEpochMs = null,
+            )
+        }
 
             // ---- DR-A Option 1 classification over the typed outcome. ----
             val refused = outcome.blockTranslations.values.any {
@@ -473,12 +669,6 @@ internal class ProfileEnvelopeExecutor(
                     }
                 }
             }
-        } finally {
-            // Any page still held (paused/replan paths) releases its lease.
-            held.forEach { page ->
-                store.releasePageStageLease(page.pageKey, PageWriteOrigin.BATCH)
-            }
-        }
     }
 
     /** Releases every held lease and returns a typed pause (response discarded). */
@@ -613,18 +803,31 @@ internal class ProfileEnvelopeExecutor(
         }
     }
 
+    /** The request chunk plus its honest execution-time input-token estimate. */
+    private class PreparedChunk(
+        val chunk: TranslationContextChunk,
+        val estimatedInputTokens: Int,
+    )
+
     /**
      * Builds the ONE in-flight context chunk from the revalidated live pages:
      * detached copies only (never the live store objects), wire stable block
      * ids matching the plan, strict BATCH_V1 protocol, rolling context from
-     * the gap-free frontier. Existing prompt shapes only (profile-subset /
-     * scene enrichment is slice B).
+     * the gap-free frontier.
+     *
+     * Slice B (design §7): with a frozen profile the chunk is ENRICHED — the
+     * capped profile-subset sheet + range-safe scene context ride the
+     * glossary slot, the gap-free rolling history (recent source/target
+     * pairs, resolved entity ids, compact unresolved state, pronoun-marking
+     * rule) rides the rolling slot, and the prompt tokens are recomputed over
+     * the ACTUAL payload. Without a profile the legacy slice-A shape is kept
+     * unchanged (degraded-but-correct).
      */
     private fun buildEnvelopeChunk(
         envelope: PlannedEnvelope,
         held: List<HeldPage>,
         rollingContext: String,
-    ): TranslationContextChunk {
+    ): PreparedChunk {
         val pages = linkedMapOf<String, PageTranslation>()
         val pageIndexes = linkedMapOf<String, Int>()
         var blockCount = 0
@@ -642,23 +845,119 @@ internal class ProfileEnvelopeExecutor(
             pages[page.pageKey] = page.livePage.detachedCopy().apply { this.blocks = blocks.toMutableList() }
             pageIndexes[page.pageKey] = page.work.naturalPageIndex
         }
-        val base = TranslationContextChunk(
-            pages = pages,
-            blockCount = blockCount,
-            rollingContext = "",
-            estimatedPromptTokens = envelope.estimatedInputTokens,
-            maxOutputTokens = envelope.estimatedOutputTokens,
-            protocol = ContextualRequestProtocol.BATCH_V1,
-            pageIndexes = pageIndexes,
-        )
-        return TranslationContextChunkPlanner.withRollingContext(
-            chunk = base,
-            rollingContext = rollingContext,
-            requestedOutputTokens = envelope.estimatedOutputTokens,
-            profile = providerProfile,
-            glossary = "",
+        val profile = frozenProfile
+            ?: return PreparedChunk(
+                chunk = TranslationContextChunkPlanner.withRollingContext(
+                    chunk = TranslationContextChunk(
+                        pages = pages,
+                        blockCount = blockCount,
+                        rollingContext = "",
+                        estimatedPromptTokens = envelope.estimatedInputTokens,
+                        maxOutputTokens = envelope.estimatedOutputTokens,
+                        protocol = ContextualRequestProtocol.BATCH_V1,
+                        pageIndexes = pageIndexes,
+                    ),
+                    rollingContext = rollingContext,
+                    requestedOutputTokens = envelope.estimatedOutputTokens,
+                    profile = providerProfile,
+                    glossary = "",
+                ),
+                estimatedInputTokens = envelope.estimatedInputTokens,
+            ).also { counters.promptShapeLegacy++ }
+
+        // ---- Slice B enriched assembly (design §7.1-7.3). ----
+        val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
+        var subset = ProfileSubsetMatcher.match(profile, envelopeSourcesOf(held))
+        var includeScenes = true
+        var resolvedLines = ProfileSubsetMatcher.resolvedEntityLines(profile, rollingContext)
+        var unresolvedLines = ProfileSubsetMatcher.unresolvedReferenceLines(profile)
+        var pairLines = rollingContext
+        var glossary = TranslationPrompts.profileAwareGlossaryPrefix(subset, includeScenes)
+        var rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
+        var contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
+            TranslationContextChunkPlanner.estimateTokens(rolling)
+
+        // Deterministic bounded trim (design §8 tail: bounded context, never
+        // unbounded): drop scene narratives, then unresolved state, then
+        // resolved-entity lines, then halve the recent pairs, then drop the
+        // pairs entirely, then trim the subset tail. The frontier keeps the
+        // full history — trimming affects THIS prompt only.
+        fun rebuild() {
+            glossary = TranslationPrompts.profileAwareGlossaryPrefix(subset, includeScenes)
+            rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
+            contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
+                TranslationContextChunkPlanner.estimateTokens(rolling)
+        }
+        fun pairLineCount(): Int = pairLines.lineSequence().count { it.isNotBlank() }
+        if (contextTokens > constraints.maxRollingContextTokens) {
+            includeScenes = false
+            rebuild()
+        }
+        if (contextTokens > constraints.maxRollingContextTokens) {
+            unresolvedLines = emptyList()
+            rebuild()
+        }
+        if (contextTokens > constraints.maxRollingContextTokens) {
+            resolvedLines = emptyList()
+            rebuild()
+        }
+        while (contextTokens > constraints.maxRollingContextTokens && pairLineCount() > 1) {
+            val keep = (pairLineCount() + 1) / 2
+            pairLines = pairLines
+                .lineSequence()
+                .filter { it.isNotBlank() }
+                .toList()
+                .takeLast(keep)
+                .joinToString("\n")
+            rebuild()
+        }
+        if (contextTokens > constraints.maxRollingContextTokens && pairLines.isNotBlank()) {
+            pairLines = ""
+            rebuild()
+        }
+        while (contextTokens > constraints.maxRollingContextTokens && subset.entries.size > 1) {
+            subset = subset.copy(entries = subset.entries.take((subset.entries.size + 1) / 2))
+            rebuild()
+        }
+        if (contextTokens > constraints.maxRollingContextTokens && subset.entries.isNotEmpty()) {
+            subset = subset.copy(entries = emptyList())
+            rebuild()
+        }
+
+        val linesEstimate = held.sumOf { page -> pageLineEstimate(page) }
+        val promptTokens = linesEstimate + contextTokens
+        counters.promptShapeEnriched++
+        counters.profileSubsetFactsMax = maxOf(counters.profileSubsetFactsMax, subset.entries.size)
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT t924 envelope prompt shape=enriched facts=${subset.entries.size} " +
+                "scenes=${if (includeScenes) subset.scenes.size else 0} " +
+                "rollingPairs=${pairLineCountIf(pairLines)} rollingPages=${counters.rollingContextPagesMax} " +
+                "contextTokens=$contextTokens envelopeId=${envelope.envelopeId}"
+        }
+        return PreparedChunk(
+            chunk = TranslationContextChunk(
+                pages = pages,
+                blockCount = blockCount,
+                rollingContext = rolling,
+                glossary = glossary,
+                estimatedPromptTokens = promptTokens,
+                maxOutputTokens = StreamingChunkPlanner.effectiveOutputCap(
+                    promptTokens,
+                    envelope.estimatedOutputTokens,
+                    constraints,
+                    protocol = ContextualRequestProtocol.BATCH_V1,
+                    blockCount = blockCount,
+                    pageCount = pages.size,
+                ),
+                protocol = ContextualRequestProtocol.BATCH_V1,
+                pageIndexes = pageIndexes,
+            ),
+            estimatedInputTokens = promptTokens,
         )
     }
+
+    private fun pairLineCountIf(pairLines: String): Int =
+        pairLines.lineSequence().count { it.isNotBlank() }
 
     /** Whole-page authoritativeness re-check (TX-21.3, fresh reads). */
     private fun pageAuthoritativelyDone(pageKey: String, live: PageTranslation): Boolean {
