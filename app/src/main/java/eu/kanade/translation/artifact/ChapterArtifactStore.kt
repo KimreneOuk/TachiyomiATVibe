@@ -11,6 +11,8 @@ import eu.kanade.translation.model.isTextlessTerminal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromStream
 import logcat.LogPriority
@@ -54,6 +56,26 @@ import tachiyomi.core.common.util.system.logcat
  * checkpoint sidecar, never in the candidate.
  */
 enum class OcrCheckpointMode { CLOSE, REBASE }
+
+/**
+ * T924 WP9 (additive): outcome of reading a generic sidecar document through
+ * its manifest pointer — same semantics as [RunRecordRead]/[OcrCheckpointRead],
+ * generalized over the document type for the persisted-layout track
+ * (`layoutPlans` / `colorPreparations`).
+ */
+sealed interface SidecarRead<out T : Any> {
+    /** Parsed, schema-supported, and semantically valid. */
+    data class Usable<T : Any>(val document: T) : SidecarRead<T>
+
+    /**
+     * T924-SC-13: a newer schema owns the semantics — unusable here, bytes
+     * preserved untouched, never deleted, quarantined, or overwritten.
+     */
+    data class UnsupportedVersion(val schemaVersion: Int) : SidecarRead<Nothing>
+
+    /** Missing, malformed pointer, corrupt (quarantined), or semantically invalid. */
+    data object Absent : SidecarRead<Nothing>
+}
 
 class ChapterArtifactStore(
     private val documents: AtomicChapterDocuments,
@@ -779,6 +801,73 @@ class ChapterArtifactStore(
     internal fun ocrCheckpointSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.ocrCheckpointFile(pageKey, contentFingerprint)
 
+    // ------------------------------------------------------------------
+    // T924 WP9 (additive): generic sidecar reading/publication support for
+    // the persisted-layout track (`layoutPlans` / `colorPreparations`
+    // pointers). Mirrors the readOcrCheckpoint/readRunRecord idioms exactly
+    // (quarantine on corrupt, unknown-version preservation) and the
+    // publishActiveRun sidecar-then-pointer pattern; nothing existing changed.
+    // ------------------------------------------------------------------
+
+    /** Content-addressed `PageLayoutDrawPlan` sidecar name under `layout/` (T924-SC-21). */
+    internal fun layoutPlanSidecarName(pageKey: String, contentFingerprint: String): String =
+        layout.layoutPlanFile(pageKey, contentFingerprint)
+
+    /** Content-addressed `ColorStylePreparation` sidecar name under `color/` (T924-SC-21). */
+    internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
+        layout.colorPreparationFile(pageKey, contentFingerprint)
+
+    /**
+     * Builds one immutable JSON sidecar publication for
+     * [publishSidecarPointers] through the shared [AtomicChapterDocuments]
+     * Json (T924-SC-06), so callers outside this package can stage
+     * sidecar-then-pointer transactions without touching the document layer.
+     */
+    fun <T : Any> jsonSidecarPublication(
+        fileName: String,
+        contentFingerprint: String,
+        document: T,
+        serializer: KSerializer<T>,
+    ): SidecarPublication = SidecarPublication(fileName, contentFingerprint) {
+        val bytes = documents.json.encodeToString(serializer, document).toByteArray(Charsets.UTF_8)
+        documents.publish(fileName, bytes) { written ->
+            runCatching { documents.json.decodeFromStream(serializer, written.inputStream()) }.isSuccess
+        }
+    }
+
+    /**
+     * Generic pointer read with the `readOcrCheckpoint` idiom: well-formedness
+     * gate, parse with quarantine on corruption, unknown-version preservation
+     * (NEVER quarantined), kind check + semantic validation with quarantine on
+     * invalid payloads (T924-SC-12/13/17).
+     */
+    fun <T : Any> readSidecarDocument(
+        pointer: SidecarPointer,
+        serializer: KSerializer<T>,
+        currentSchemaVersion: Int,
+        expectedKind: String,
+        schemaVersionOf: (T) -> Int,
+        kindOf: (T) -> String,
+        isValid: (T) -> Boolean,
+    ): SidecarRead<T> {
+        if (!pointer.isWellFormed()) return SidecarRead.Absent
+        val bytes = io.read(pointer.fileName) ?: return SidecarRead.Absent
+        val document = runCatching {
+            documents.json.decodeFromStream(serializer, bytes.inputStream())
+        }.getOrNull() ?: run {
+            documents.quarantineCorrupt(pointer.fileName)
+            return SidecarRead.Absent
+        }
+        val version = schemaVersionOf(document)
+        if (version > currentSchemaVersion) {
+            return SidecarRead.UnsupportedVersion(version)
+        }
+        if (kindOf(document) != expectedKind || !isValid(document)) {
+            documents.quarantineCorrupt(pointer.fileName)
+            return SidecarRead.Absent
+        }
+        return SidecarRead.Usable(document)
+    }
     /** Reads a complete live-store page snapshot referenced by a manifest pointer. */
     fun readPageSnapshot(fileName: String?): PageTranslation? =
         fileName?.let { documents.readValidated<PageTranslation>(it) }
@@ -883,7 +972,14 @@ class ChapterArtifactStore(
                 status = failure.status,
                 fingerprint = expectedDependencyFingerprint,
                 origin = origin,
-                generationId = generationId,
+                // Generation-less by intent: a durable failure is a page-level
+                // ledger fact, not candidate work product. Candidate stamping
+                // would make the NEXT attempt's teardown (cancelCandidate strips
+                // candidate-owned records and their ledger keys) erase the
+                // previous attempt's entry before the consecutive-unresolved
+                // count is charged — the attempt cap could never advance across
+                // attempts or restarts. Success-path cleanup stays explicit.
+                generationId = null,
                 updatedAtEpochMs = nowEpochMs,
             )
         }

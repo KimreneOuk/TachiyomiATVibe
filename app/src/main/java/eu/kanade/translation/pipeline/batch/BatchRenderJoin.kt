@@ -1,12 +1,27 @@
 package eu.kanade.translation.pipeline.batch
 
+import android.app.Application
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Typeface
+import androidx.core.content.res.ResourcesCompat
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.LayoutFailureException
 import eu.kanade.translation.RenderBlockPatch
 import eu.kanade.translation.RenderStagePatch
 import eu.kanade.translation.StagePatchResult
+import eu.kanade.translation.artifact.ArtifactOrigin
+import eu.kanade.translation.artifact.ArtifactStageStatus
+import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ColorStylePreparation
+import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.PageLayoutDrawPlan
+import eu.kanade.translation.artifact.SidecarPointer
+import eu.kanade.translation.artifact.StageArtifactRecord
 import eu.kanade.translation.ocrBlockFingerprints
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
@@ -19,6 +34,10 @@ import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.model.stableFingerprint
+import eu.kanade.translation.rendering.DrawPlanFingerprint
+import eu.kanade.translation.rendering.LayoutPlanPublication
+import eu.kanade.translation.rendering.PersistedLayoutRuntime
+import eu.kanade.translation.rendering.ProductionTextMeasurer
 import eu.kanade.translation.rendering.RenderColorEstimator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -269,7 +288,8 @@ internal class BatchRenderJoin(
                     )
                     throw t
                 }
-                renderPersisted = renderResult is StagePatchResult.Accepted
+                val acceptedRender = renderResult as? StagePatchResult.Accepted
+                renderPersisted = acceptedRender != null
                 if (renderResult is StagePatchResult.Rejected) {
                     abortBatchCandidate(pageKey, "render commit rejected: ${renderResult.reason}")
                     throw BatchPersistenceRejectedException(
@@ -281,6 +301,14 @@ internal class BatchRenderJoin(
                     // A newer committed display bundle may have just
                     // promoted; the file it superseded is now deletable.
                     deleteRetiredCleanedFile(manga, chapter, source, pageKey, store)
+                    // T924 WP9 (T924-FF-02a(1)): with FF-02 ON the color-only
+                    // render body becomes LAYOUT_PREPARE orchestration — the
+                    // color preparation above is joined by the page geometry
+                    // draw plan, both published as separately invalidatable
+                    // sub-results (T924-TX-23 CAS set). Every failure here is
+                    // non-fatal: the committed render stays authoritative and
+                    // readers keep the async planner (T924-FF-02b/02c).
+                    publishPersistedLayoutIfEnabled(pageKey, page, acceptedRender!!.snapshot)
                 }
                 tracker?.markRenderDone(pageKey)
             } catch (e: BatchPersistenceRejectedException) {
@@ -319,6 +347,236 @@ internal class BatchRenderJoin(
                 }
             }
         }
+    }
+
+    // ------------------------------------------------------------------
+    // T924 WP9 (T924-FF-02a(1)): LAYOUT_PREPARE publication. FF-02 OFF keeps
+    // the legacy color-only render body byte-for-byte; ON adds the per-page
+    // persisted draw plan + color preparation publication after the render
+    // commit, through ChapterArtifactStore.publishSidecarPointers with the
+    // full T924-TX-23 CAS precondition set. Plans are late, per-page, and
+    // additive: any precondition or publication failure keeps the committed
+    // render authoritative and simply leaves "no plan" for the page
+    // (T924-FF-02c — readers fall back to the async planner).
+    // ------------------------------------------------------------------
+
+    /** Lazily resolved Android context for the font asset read; null on JVM. */
+    private val layoutPublicationContext: Context? by lazy {
+        runCatching { Injekt.get<Application>() as Context }.getOrNull()
+    }
+
+    private fun publishPersistedLayoutIfEnabled(
+        pageKey: String,
+        page: PageTranslation,
+        postSnapshot: ChapterTranslationStore.PageSnapshot,
+    ) {
+        if (!PersistedLayoutRuntime.flagEnabled()) return
+        try {
+            publishPersistedLayout(pageKey, page, postSnapshot)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication failed: pageKey=$pageKey error=$t"
+            }
+        }
+    }
+
+    private fun publishPersistedLayout(
+        pageKey: String,
+        page: PageTranslation,
+        postSnapshot: ChapterTranslationStore.PageSnapshot,
+    ) {
+        val artifact = store.artifactStore ?: return
+        val manifest = store.artifactManifest ?: return
+        if (manifest.authority != ManifestAuthority.ARTIFACTS) return
+        val artifactPage = manifest.pages[pageKey] ?: return
+
+        // T924-TX-23 precondition set, checked against the post-render-merge
+        // snapshot; the whole-manifest CAS in publishSidecarPointers rejects
+        // the commit if ANY durable state moved between this snapshot and the
+        // manifest publication (fail-closed, prior manifest stays
+        // authoritative).
+        // (1) artifact pageVersion fencing.
+        if (postSnapshot.artifactPageVersion != null &&
+            artifactPage.pageVersion != postSnapshot.artifactPageVersion
+        ) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=artifact pageVersion changed"
+            }
+            return
+        }
+        // (2) candidate generation + dependency fingerprint fencing.
+        val candidate = artifactPage.candidate
+        if (postSnapshot.candidateGenerationId != null &&
+            candidate?.generationId != postSnapshot.candidateGenerationId
+        ) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=candidate generation changed"
+            }
+            return
+        }
+        if (postSnapshot.dependencyFingerprint != null &&
+            candidate != null &&
+            candidate.dependencyFingerprint != postSnapshot.dependencyFingerprint
+        ) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=dependency fingerprint changed"
+            }
+            return
+        }
+        // (3) OCR geometry/block identity: the plan carries the stable block
+        // ids and mask content hashes; the page's OCR identity must still be
+        // the merged snapshot's (pageVersion fencing above covers replacement,
+        // this pins per-block drift).
+        if (postSnapshot.page != null &&
+            page.ocrBlockFingerprints() != postSnapshot.page.ocrBlockFingerprints()
+        ) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=ocr block identity changed"
+            }
+            return
+        }
+        // (4)/(5) color + cleaned-image identity are embedded IN the published
+        // ColorStylePreparation (cleanedImageRef fileName + inpaintRevision,
+        // imageSource kind) and in the geometry plan's mask content hashes, so
+        // a later reader-side fingerprint/identity comparison invalidates them.
+
+        val pageWidth = page.imgWidth
+        val pageHeight = page.imgHeight
+        val context = layoutPublicationContext
+        if (context == null) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=no Android context for font identity"
+            }
+            return
+        }
+        installFontDigestLoader(context)
+        val fontDigest = PersistedLayoutRuntime.productionFontSha256()
+        if (fontDigest == null) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=font digest unavailable"
+            }
+            return
+        }
+        val typeface = runCatching {
+            ResourcesCompat.getFont(context, R.font.animeace)?.let { Typeface.create(it, Typeface.BOLD) }
+        }.getOrNull()
+        if (typeface == null) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=font resource unavailable"
+            }
+            return
+        }
+        val compatInputs = LayoutPlanPublication.CompatInputs(
+            translationArtifactId = page.ocrArtifactId.orEmpty(),
+            cleanedImageArtifactIdOrOriginalSourceId =
+                page.cleanedImageName ?: "original:${page.sourceFingerprint.orEmpty()}",
+        )
+        val prepared = LayoutPlanPublication.prepare(
+            blocks = page.blocks,
+            pageWidth = pageWidth,
+            pageHeight = pageHeight,
+            decodeSampleSize = page.decodeSampleSize,
+            measurer = ProductionTextMeasurer.create(typeface),
+            cleanedImageName = page.cleanedImageName,
+            inpaintRevision = page.inpaintRevision,
+            fontAssetSha256 = fontDigest,
+            compatInputs = compatInputs,
+        )
+        if (prepared == null) {
+            // Unpublishable (no drawable blocks, DTO validation failure, or
+            // schema cap) — skip; never publish a plan that would fail
+            // validation (provable-only rule).
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT persisted-layout publication skipped: pageKey=$pageKey reason=plan not publishable"
+            }
+            return
+        }
+
+        val planFileName = artifact.layoutPlanSidecarName(pageKey, prepared.planContentFingerprint)
+        val colorFileName = artifact.colorPreparationSidecarName(pageKey, prepared.colorContentFingerprint)
+        val now = System.currentTimeMillis()
+        val outcome = artifact.publishSidecarPointers(
+            manifest = manifest,
+            sidecars = listOf(
+                artifact.jsonSidecarPublication(
+                    fileName = planFileName,
+                    contentFingerprint = prepared.planContentFingerprint,
+                    document = prepared.plan,
+                    serializer = PageLayoutDrawPlan.serializer(),
+                ),
+                artifact.jsonSidecarPublication(
+                    fileName = colorFileName,
+                    contentFingerprint = prepared.colorContentFingerprint,
+                    document = prepared.colorPreparation,
+                    serializer = ColorStylePreparation.serializer(),
+                ),
+            ),
+            updatePointers = { current ->
+                val updatedPage = current.pages.getValue(pageKey).copy(
+                    layout = StageArtifactRecord(
+                        status = ArtifactStageStatus.READY,
+                        fingerprint = prepared.compatibilityFingerprint,
+                        origin = ArtifactOrigin.BATCH,
+                        artifactFileName = planFileName,
+                        updatedAtEpochMs = now,
+                    ),
+                )
+                current.copy(
+                    pages = current.pages + (pageKey to updatedPage),
+                    layoutPlans = current.layoutPlans + (
+                        pageKey to SidecarPointer(
+                            fileName = planFileName,
+                            schemaVersion = PageLayoutDrawPlan.SCHEMA_VERSION,
+                            contentFingerprint = prepared.planContentFingerprint,
+                        )
+                        ),
+                    colorPreparations = current.colorPreparations + (
+                        pageKey to SidecarPointer(
+                            fileName = colorFileName,
+                            schemaVersion = ColorStylePreparation.SCHEMA_VERSION,
+                            contentFingerprint = prepared.colorContentFingerprint,
+                        )
+                        ),
+                )
+            },
+        )
+        when (outcome) {
+            is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                // Keep the store façade's manifest snapshot current (mirrors
+                // the checkpointOcr façade), so later transactions CAS against
+                // the fresh durable state instead of rejecting as stale.
+                store.artifactManifest = outcome.manifest
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT persisted layout published: pageKey=$pageKey blocks=${prepared.plan.blocks.size}"
+                }
+            }
+            is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT persisted-layout publication rejected (committed render kept): " +
+                        "pageKey=$pageKey reason=${outcome.reason}"
+                }
+            }
+        }
+    }
+
+    /**
+     * One-time process install of the production font digest loader
+     * (res/font/animeace.ttf read via the application context). The overlay
+     * installs the same loader at its Android entry point; installation is
+     * idempotent and the digest itself is computed once and cached
+     * (wave-2 review gap 6).
+     */
+    private fun installFontDigestLoader(context: Context) {
+        if (PersistedLayoutRuntime.fontSourceInstalled) return
+        PersistedLayoutRuntime.fontSha256Loader = {
+            val app = Injekt.get<Application>()
+            DrawPlanFingerprint.fontAssetSha256(
+                app.resources.openRawResource(R.font.animeace).use { it.readBytes() },
+            )
+        }
+        PersistedLayoutRuntime.fontSourceInstalled = true
     }
 
     fun signalFor(

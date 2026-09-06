@@ -27,7 +27,12 @@ internal data class TextLayoutCacheKey(
  * layouts synchronously with zero planner work; the planner itself is never
  * invoked on the calling thread.
  *
- * NOT thread-safe by design: production confines every `get`/`put` to the Main
+ * T924 WP9 (gate 7.6): the cache holds HYDRATED/prepared draw objects only —
+ * never persisted plan DTO bytes or documents — whether the value was produced
+ * by the async planner or by persisted-layout hydration (a hydrated hit keeps
+ * the planner-invocation counter at 0 across LRU re-binds and process-restart
+ * re-binds). NOT thread-safe by design: production confines every
+ * `get`/`put` to the Main
  * thread (lookups happen inside `bind`, stores happen inside the Main-thread
  * apply callback), so no synchronization is needed. The bound is strict: the
  * least-recently-used entry is evicted the moment [maxEntries] would be

@@ -16,6 +16,9 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.translation.model.TranslationBlock
 import eu.kanade.translation.rendering.BlockLayout
 import eu.kanade.translation.rendering.ComponentClipCache
+import eu.kanade.translation.rendering.DrawPlanFingerprint
+import eu.kanade.translation.rendering.PersistedLayoutReaderBridge
+import eu.kanade.translation.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.rendering.ReaderTextLayoutCache
 import eu.kanade.translation.rendering.TextAlign
 import eu.kanade.translation.rendering.TextLayoutBindResult
@@ -68,9 +71,26 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         }
     }
 
+    // T924 WP9 (wave-2 review gap 6): production font digest — read the exact
+    // bundled font bytes ONCE at this Android entry point and pin their
+    // SHA-256 process-wide, so the Batch-side LAYOUT_PREPARE publisher and
+    // every reader-side hydration verify the same font identity
+    // (PersistedLayoutRuntime.productionFontSha256). Installing the loader is
+    // idempotent; the digest itself is computed lazily once and cached.
+    init {
+        if (!PersistedLayoutRuntime.fontSourceInstalled) {
+            PersistedLayoutRuntime.fontSha256Loader = {
+                DrawPlanFingerprint.fontAssetSha256(
+                    context.resources.openRawResource(R.font.animeace).use { it.readBytes() },
+                )
+            }
+            PersistedLayoutRuntime.fontSourceInstalled = true
+        }
+    }
+
     // T920 3.1: bind identity + background planning. bind() never runs the
     // planner synchronously on the calling thread; identical rebinds stay the
-    // cheap early-return and cache hits apply synchronously with zero planner
+    // cheap early-return and cache hits apply prepared layouts synchronously with zero planner
     // work (see [TextLayoutCoordinator]).
     private val layoutCoordinator = TextLayoutCoordinator(
         cache = sharedLayoutCache,
@@ -81,6 +101,15 @@ internal class TranslationOverlayView @JvmOverloads constructor(
             buildPreparedLayouts(layouts, width, height)
         },
         onPrepared = ::applyPreparedLayouts,
+        // T924 WP9 (T924-FF-02a(2)): consult the persisted-layout hydration
+        // source BEFORE the async planner. Null (FF-02 off, no source
+        // installed, missing/corrupt/incompatible/lossy plan) falls back to
+        // the planner above — the fallback is mandatory (T924-FF-02b).
+        hydrate = { blocks, width, height ->
+            PersistedLayoutReaderBridge.hydrate(blocks, width, height)?.let { hydrated ->
+                buildPreparedLayouts(hydrated, width, height)
+            }
+        },
     )
 
     private fun applyPreparedLayouts(prepared: List<PreparedOverlayLayout>) {
