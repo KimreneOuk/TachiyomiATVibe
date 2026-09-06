@@ -529,4 +529,52 @@ class CheckpointOcrTransactionTest {
         fx.manifest.ocrCheckpoints shouldBe emptyMap()
         io.files.keys.none { it.startsWith("${layout.ocrCheckpointsRootDirectory}/") } shouldBe true
     }
+
+    @Test
+    fun `checkpoint success clears the stale OCR durable failure entry but no other ledger key`() {
+        val io = FakeChapterDocumentIo()
+        val fx = fixtureWithActiveCandidate(io)
+
+        // A prior failed attempt left OCR + TRANSLATION ledger entries on this
+        // page (written through the real API on the same candidate).
+        fun ledgerFailure(stage: ArtifactStage) = DurableFailureMetadata(
+            pageKey = "page.jpg",
+            stage = stage,
+            status = ArtifactStageStatus.FAILED_RETRYABLE,
+            category = FailureCategory.PROTOCOL,
+            retryCount = 1,
+            lastFailureMessage = "prior attempt failed",
+            lastFailedAtEpochMs = 1L,
+        )
+        var manifest = fx.manifest
+        for (stage in listOf(ArtifactStage.OCR, ArtifactStage.TRANSLATION)) {
+            manifest = fx.store.persistLiveCandidate(
+                manifest = manifest,
+                pageKey = "page.jpg",
+                generationId = fx.generationId,
+                expectedPageVersion = manifest.pages.getValue("page.jpg").pageVersion,
+                expectedDependencyFingerprint = "deps-v1",
+                pageSnapshot = fx.ocrSnapshot,
+                origin = ArtifactOrigin.BATCH,
+                durableFailure = ledgerFailure(stage),
+                nowEpochMs = 501L,
+            ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>().manifest
+        }
+        manifest.durableFailures.keys shouldBe setOf("page.jpg:OCR", "page.jpg:TRANSLATION")
+
+        // A later successful attempt checkpoints the OCR content.
+        val outcome = checkpointTransaction(
+            fx.store,
+            manifest,
+            fx.ocrSnapshot,
+            checkpointFor(fx.ocrSnapshot, fx.store, fx.generationId),
+            mode = OcrCheckpointMode.CLOSE,
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        // F-W3-1: the stale OCR entry is cleared on success (the page's OCR is
+        // now durably checkpointed), while every other ledger key survives for
+        // its own stage's success/cleanup path.
+        outcome.manifest.durableFailures.keys shouldBe setOf("page.jpg:TRANSLATION")
+        fx.store.readManifest().shouldNotBeNull().durableFailures.keys shouldBe setOf("page.jpg:TRANSLATION")
+    }
 }

@@ -604,6 +604,13 @@ class ChapterArtifactStore(
                     contentFingerprint = checkpoint.ocrContentFingerprint,
                 )
                 ),
+            // Every checkpoint branch (CLOSE, REBASE, adopt) durably
+            // publishes this page's OCR content, so any prior OCR durable-
+            // failure entry is stale — clear it on success (mirror of the
+            // TRANSLATION clear in promoteLiveCandidate). Without this a
+            // recovered page keeps StoreStatusProjector projecting the
+            // chapter PAUSED forever (wave-3 review F-W3-1).
+            durableFailures = manifest.durableFailures - "$pageKey:${ArtifactStage.OCR.name}",
             updatedAtEpochMs = nowEpochMs,
         )
         val outcome = publishSidecarPointers(

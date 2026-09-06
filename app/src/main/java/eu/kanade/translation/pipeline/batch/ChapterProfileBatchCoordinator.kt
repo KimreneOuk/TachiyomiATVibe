@@ -237,9 +237,11 @@ internal class ChapterProfileBatchCoordinator(
                                 "TachiyomiAT t924 preflight checkpoint rejected pageHash=${pageHash(pageKey)} " +
                                     "reason=${outcome.reason}"
                             }
-                            // R2: make the failure durable BEFORE the teardown
-                            // (the legacy persistUnexpectedBatchStageFailure
-                            // order), still strictly after the checkpoint attempt.
+                            // R2: record the failure for the `finally` writer,
+                            // which persists it AFTER the B0 teardown (a
+                            // pre-teardown write would be stripped by
+                            // cancelCandidate's candidate-owned record sweep),
+                            // still strictly after the checkpoint attempt.
                             pendingFailure = PreflightStageFailure(
                                 pageKey = pageKey,
                                 kind = PreflightFailureKind.CHECKPOINT_REJECTED,
