@@ -238,12 +238,41 @@ object PersistedLayoutReaderBridge {
         fun hydrate(blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int): List<BlockLayout>?
     }
 
+    /**
+     * T924 Stage 7 (D3): the chapter-keyed production source. Receives the
+     * page key alongside the bind inputs so the install site can resolve the
+     * page's manifest `layoutPlans` pointer directly (the page key is
+     * propagated from the reader holder binding — the overlay's legacy
+     * pageKey-less bind path keeps the planner fallback, byte-identical).
+     */
+    fun interface PageKeyedSource {
+        fun hydrate(
+            pageKey: String,
+            blocks: List<TranslationBlock>,
+            pageWidth: Int,
+            pageHeight: Int,
+        ): List<BlockLayout>?
+    }
+
     @Volatile
     internal var source: Source? = null
+
+    /** T924 Stage 7 (D3): the per-chapter production source (FF-02-gated). */
+    @Volatile
+    internal var chapterSource: PageKeyedSource? = null
 
     /** Installs the per-reader hydration source (reader chapter wiring). */
     fun install(source: Source?) {
         this.source = source
+    }
+
+    /**
+     * T924 Stage 7 (D3): installs (or uninstalls with null) the chapter
+     * hydration source. Called by the reader chapter wiring when the chapter's
+     * artifact store opens/closes; FF-02 OFF installs null.
+     */
+    fun installChapterSource(source: PageKeyedSource?) {
+        this.chapterSource = source
     }
 
     /**
@@ -252,4 +281,19 @@ object PersistedLayoutReaderBridge {
      */
     fun hydrate(blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int): List<BlockLayout>? =
         runCatching { source?.hydrate(blocks, pageWidth, pageHeight) }.getOrNull()
+
+    /**
+     * T924 Stage 7 (D3): page-keyed consult. The chapter source is preferred;
+     * a null pageKey, a null/throwing chapter source, or any non-Resolved
+     * outcome returns null — the async planner fallback (T924-FF-02b).
+     */
+    fun hydrate(
+        pageKey: String?,
+        blocks: List<TranslationBlock>,
+        pageWidth: Int,
+        pageHeight: Int,
+    ): List<BlockLayout>? {
+        if (pageKey == null) return null
+        return runCatching { chapterSource?.hydrate(pageKey, blocks, pageWidth, pageHeight) }.getOrNull()
+    }
 }

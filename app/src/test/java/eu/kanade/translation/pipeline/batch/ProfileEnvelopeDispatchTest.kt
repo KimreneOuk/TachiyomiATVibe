@@ -323,9 +323,10 @@ class ProfileEnvelopeDispatchTest {
         val outcome = coordinator(store, FakePreflightOcrWorker(store), pages, FakeAnalyzer(), translator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // Terminal: PAUSED with the TRANSLATE stop reason — NEVER COMPLETE.
-        outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        // Stage-7 terminal: the drained run FINALIZEs and completes under the
+        // legacy completion semantics (gate-7.8 DISPLAY_READY stays OFF).
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         outcome.needsTranslation shouldBe emptyList()
 
         // ONE envelope for the 3 single-block pages; ONE call in flight.
@@ -345,7 +346,8 @@ class ProfileEnvelopeDispatchTest {
         artifactStore().readManifest().shouldNotBeNull().envelopePlan.shouldNotBeNull()
 
         val (state, counters) = runCounters(store)
-        state shouldBe ChapterRunState.TRANSLATE
+        // Stage 7: the drained run closed as COMPLETE.
+        state shouldBe ChapterRunState.COMPLETE
         counters["envelopesTotal"] shouldBe 1
         counters["envelopesDone"] shouldBe 1
         counters["pagesTranslated"] shouldBe 3
@@ -376,8 +378,8 @@ class ProfileEnvelopeDispatchTest {
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
 
         // The committed prefix was NEVER touched by the re-plan.
         store.snapshot("p1").page.shouldNotBeNull().blocks.single().translation shouldBe "translated-p0_b1"
@@ -416,8 +418,8 @@ class ProfileEnvelopeDispatchTest {
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
 
         // The user edit is authoritative: never overwritten, never re-sent.
         val edited = store.snapshot("p12").page.shouldNotBeNull().blocks.single()
@@ -594,8 +596,8 @@ class ProfileEnvelopeDispatchTest {
             maxPagesPerEnvelope = 8,
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        resumed.status shouldBe BatchPass1Status.COMPLETED
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         // Zero re-OCR through the reuse path.
         resumedWorker.ocrPages shouldBe emptyList()
         // The published plan was REUSED, never rewritten.
@@ -674,8 +676,8 @@ class ProfileEnvelopeDispatchTest {
         // reuse), and the committed 8 pages are NEVER re-sent.
         resumedWorker.ocrPages shouldBe emptyList()
         resumedAnalyzer.executedOrdinals shouldBe emptyList()
-        resumed.status shouldBe BatchPass1Status.PAUSED
-        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        resumed.status shouldBe BatchPass1Status.COMPLETED
+        resumed.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         val sentIds = secondTranslator.requests.flatMap(::requestIds).toSet()
         (0..7).forEach { index -> sentIds.contains("p${index}_b1") shouldBe false }
         (8..16).forEach { index -> sentIds.contains("p${index}_b1") shouldBe true }

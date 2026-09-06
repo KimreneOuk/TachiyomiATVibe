@@ -603,14 +603,20 @@ object TextLayoutPlanner {
         sampleSize: Int,
         renderSourceText: Boolean,
         measurer: TextMeasurer,
-    ): PageLayoutPlan = planPageInternal(
-        blocks,
-        pageWidth,
-        pageHeight,
-        sampleSize,
-        renderSourceText,
-        measurer,
-    ).plan
+    ): PageLayoutPlan {
+        // T924 gate 7.5: observation only — every async planner entry counts;
+        // hydrated binds never reach this (TextLayoutCoordinator consults the
+        // persisted-plan hydrate hook first).
+        TextLayoutPlannerProbe.recordInvocation()
+        return planPageInternal(
+            blocks,
+            pageWidth,
+            pageHeight,
+            sampleSize,
+            renderSourceText,
+            measurer,
+        ).plan
+    }
 
     /**
      * T912 slice 7 test seam: [planPage] plus the deterministic count of

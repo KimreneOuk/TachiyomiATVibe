@@ -37,6 +37,7 @@ import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.ToneFlag
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocrBlockFingerprints
@@ -67,8 +68,12 @@ import eu.kanade.translation.translator.contextual.ProfileReconciler
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import logcat.LogPriority
 import tachiyomi.core.common.util.system.logcat
@@ -179,6 +184,23 @@ internal class ChapterProfileBatchCoordinator(
      */
     private val translationSublimitGate: BatchRequestSublimitGate =
         SharedBatchRequestSublimitGate.instance,
+    /**
+     * T924 Stage 7 (D1): the inpaint-overlap scheduler. When present, the
+     * TRANSLATE phase wraps [translationSublimitGate] so every provider
+     * envelope window drives serial inpaint of committed pages (ST-13
+     * overlap), and the FINALIZE drains remaining pages serially (the
+     * gate-6.5 "keep serial" arm — semantics identical). `null` keeps the
+     * pre-Stage-7 machine shape exactly.
+     */
+    private val overlapScheduler: OverlapScheduler? = null,
+    /**
+     * T924 Stage 7 (D2): the render join that owns the T924-TX-23
+     * persisted-layout publication transaction. When present (and FF-02 ON),
+     * every inpaint-committed page publishes its draw plan per page, and the
+     * FINALIZE sweeps any page the overlap hook missed. `null` keeps the
+     * async-planner fallback for every page (reader display never breaks).
+     */
+    private val renderJoin: BatchRenderJoin? = null,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -1303,6 +1325,21 @@ internal class ChapterProfileBatchCoordinator(
                 )
 
                 val work = build.work
+                // T924 Stage 7 (D1): when the overlap scheduler is present,
+                // every provider envelope dispatch opens a remote window that
+                // drives serial inpaint of committed pages (ST-13). Admission
+                // semantics are unchanged — the wrapper delegates to the SAME
+                // process-wide sub-limit gate.
+                val dispatchGate = overlapScheduler?.let { scheduler ->
+                    OverlapScheduler.WindowSignallingGate(translationSublimitGate, scheduler)
+                } ?: translationSublimitGate
+                // D2: publish the persisted layout right after each inpaint
+                // commits (per page, never blocking the envelope loop — the
+                // hook runs inside the overlap scheduler's coroutine).
+                overlapScheduler?.onInpaintCommitted = { pageKey ->
+                    renderJoin?.publishPersistedLayoutForCompletedPage(pageKey)
+                    Unit
+                }
                 val executor = ProfileEnvelopeExecutor(
                     store = store,
                     textTranslator = translator,
@@ -1311,56 +1348,255 @@ internal class ChapterProfileBatchCoordinator(
                     replan = { reason ->
                         rebuildDispatchWork(artifact, orderedPages, corpusFingerprint, reason)
                     },
-                    sublimitGate = translationSublimitGate,
+                    sublimitGate = dispatchGate,
                     providerProfile = providerChunkProfile(),
                     nowEpochMs = nowEpochMs,
                 )
-                return when (val outcome = executor.run(work)) {
-                    is ProfileEnvelopeExecutor.PhaseOutcome.Drained -> {
-                        publishRecord(
-                            artifact,
-                            envelopeRecord(
-                                ChapterRunState.TRANSLATE,
-                                envelopeCounters(
+                val overlapLoop: suspend (suspend () -> ProfileEnvelopeExecutor.PhaseOutcome) -> ProfileEnvelopeExecutor.PhaseOutcome =
+                    { runPhase ->
+                        if (overlapScheduler == null) {
+                            runPhase()
+                        } else {
+                            kotlinx.coroutines.coroutineScope {
+                                val loop = launch { overlapScheduler.runOverlapLoop() }
+                                val outcome = runPhase()
+                                // No further windows: stop the loop between pages
+                                // (a running inpaint finishes through the lane).
+                                overlapScheduler.stopOverlap()
+                                loop.join()
+                                outcome
+                            }
+                        }
+                    }
+                return overlapLoop { executor.run(work) }.let { outcome ->
+                    when (outcome) {
+                        is ProfileEnvelopeExecutor.PhaseOutcome.Drained -> {
+                            publishRecord(
+                                artifact,
+                                envelopeRecord(
+                                    ChapterRunState.TRANSLATE,
+                                    envelopeCounters(
+                                        outcome.counters.toMap() + mapOf(COUNTER_STOP to 1),
+                                    ),
+                                ),
+                            )
+                            // T924 Stage 7 (D4): TRANSLATE drained — the
+                            // ST-14 FINALIZE phase completes the run and
+                            // publishes its single COMPLETE.
+                            runFinalizeAndComplete(
+                                artifact = artifact,
+                                runId = runId,
+                                orderedPages = orderedPages,
+                                corpusFingerprint = corpusFingerprint,
+                                baseCounters = envelopeCounters(
                                     outcome.counters.toMap() + mapOf(COUNTER_STOP to 1),
                                 ),
-                            ),
-                        )
-                        BatchPass1Outcome(
-                            needsTranslation = emptyList(),
-                            status = BatchPass1Status.PAUSED,
-                            completedPageKeys = allPageKeys,
-                            reason = TRANSLATE_STOP_REASON,
-                        )
-                    }
-                    is ProfileEnvelopeExecutor.PhaseOutcome.Paused -> {
-                        publishRecord(
-                            artifact,
-                            envelopeRecord(
-                                ChapterRunState.TRANSLATE,
-                                envelopeCounters(
-                                    outcome.counters.toMap() +
-                                        mapOf(
-                                            COUNTER_STOP to 1,
-                                            COUNTER_ENVELOPES_PENDING to outcome.counters.envelopesPending,
-                                        ),
-                                ),
-                            ),
-                        )
-                        logcat(LogPriority.WARN) {
-                            "TachiyomiAT t924 translate paused: ${outcome.reason}"
+                            )
                         }
-                        BatchPass1Outcome(
-                            needsTranslation = emptyList(),
-                            status = BatchPass1Status.PAUSED,
-                            anchorPageKey = outcome.anchorPageKey,
-                            failure = outcome.failure,
-                            nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
-                            reason = outcome.reason,
-                        )
+                        is ProfileEnvelopeExecutor.PhaseOutcome.Paused -> {
+                            overlapScheduler?.stopOverlap()
+                            publishRecord(
+                                artifact,
+                                envelopeRecord(
+                                    ChapterRunState.TRANSLATE,
+                                    envelopeCounters(
+                                        outcome.counters.toMap() +
+                                            mapOf(
+                                                COUNTER_STOP to 1,
+                                                COUNTER_ENVELOPES_PENDING to outcome.counters.envelopesPending,
+                                            ),
+                                    ),
+                                ),
+                            )
+                            logcat(LogPriority.WARN) {
+                                "TachiyomiAT t924 translate paused: ${outcome.reason}"
+                            }
+                            BatchPass1Outcome(
+                                needsTranslation = emptyList(),
+                                status = BatchPass1Status.PAUSED,
+                                anchorPageKey = outcome.anchorPageKey,
+                                failure = outcome.failure,
+                                nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
+                                reason = outcome.reason,
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * T924 Stage 7 (D4) — ST-14 FINALIZE, entered exactly when TRANSLATE
+     * drained (every planned envelope dispatched, committed, or skipped):
+     *
+     *  1. `FINALIZE` phase record (ST-14 durable write: activePhase pointer).
+     *  2. Serial inpaint drain through the overlap scheduler (the legacy
+     *     post-translate serial schedule — the gate-6.5 keep-serial arm; when
+     *     the scheduler is absent this is a no-op and the run keeps the
+     *     pre-Stage-7 completion semantics).
+     *  3. Per-page persisted-layout publication sweep (D2): any page with
+     *     committed translation + committed inpaint that the overlap hook did
+     *     not publish gets its TX-23 plan publication here; failures keep the
+     *     async planner fallback (reader display never breaks).
+     *  4. Stranded-page reconciliation — the VERIFIED legacy idiom
+     *     (`BatchChapterTranslator.kt:747-760`): every page that is not
+     *     durably terminal gets a durable failure so callers that observe the
+     *     terminal state can also inspect retryable failures.
+     *  5. Final `store.flush()` under [kotlinx.coroutines.NonCancellable]
+     *     (:781-793 idiom) + artifact retention reconciliation (:794).
+     *  6. Final run record: `state=COMPLETE` — the run's FIRST and ONLY
+     *     COMPLETE publication (wave-2 F1: the OFF+COMPLETE resume decision
+     *     tree keys on exactly this state).
+     *
+     * Completion semantics are the LEGACY translation-committed ones. The
+     * DISPLAY_READY redefinition is gate-7.8-gated and MUST stay OFF until
+     * gate 7.5 (restart/LRU rehydrate without planner invocation) has passed
+     * on device for Pager AND Webtoon — see
+     * [Companion.GATE_7_8_DISPLAY_READY_COMPLETION_ENABLED].
+     */
+    private suspend fun runFinalizeAndComplete(
+        artifact: ChapterArtifactStore,
+        runId: String,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+        baseCounters: Map<String, Int>,
+    ): BatchPass1Outcome {
+        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
+
+        // ST-14 entry: the FINALIZE phase pointer (resume re-runs finalize —
+        // every step below is an idempotent re-run).
+        publishRecord(
+            artifact,
+            record(
+                runId,
+                ChapterRunState.FINALIZE,
+                frozenFingerprint,
+                sourceDigest,
+                baseCounters + mapOf(COUNTER_FINALIZE to 1) +
+                    // Gate-6.5 evidence rides the FINALIZE record: the schema
+                    // bounds phaseCounters at 32 keys, and baseCounters + the
+                    // finalize keys + the full overlap snapshot would push the
+                    // COMPLETE record past it (36 > 32 — the COMPLETE
+                    // publication would be silently rejected, wave-7b fix).
+                    (overlapScheduler?.let { scheduler ->
+                        scheduler.counters.snapshot().mapValues { it.value.toInt() }
+                    } ?: emptyMap()),
+                ocrCorpusFingerprint = corpusFingerprint,
+                profilePointer = store.artifactManifest?.profile,
+            ),
+        )
+
+        // 2. Serial post-translate inpaint drain (overlap-fallback arm).
+        overlapScheduler?.drainSerial()
+
+        // 3. Persisted-layout publication sweep for any page the per-page
+        //    hook missed (idempotent — pages with a published plan skip).
+        var layoutsPublished = 0
+        if (renderJoin != null) {
+            for ((pageKey, _) in orderedPages) {
+                if (renderJoin.publishPersistedLayoutForCompletedPage(pageKey)) {
+                    layoutsPublished++
+                }
+            }
+        }
+
+        // 4. Stranded-page reconciliation: pages that are not durably
+        //    terminal get a durable failure + a reported reason. The T924
+        //    terminal predicate is NOT the legacy reconciler's one: the legacy
+        //    schedule renders + promotes display in-pass (hasRenderedResult),
+        //    while the flagged pipeline's committed-translation state is
+        //    terminal WITHOUT an in-pass render — reusing the legacy
+        //    definition here would mark every healthy page stranded.
+        val stateNow = store.state.value
+        var strandedReconciled = 0
+        for (pageKey in orderedPages.map { it.first }) {
+            val page = stateNow[pageKey]
+            if (t924PageTerminalAtFinalize(page, store.currentGeneration)) continue
+            val reason = if (page == null) {
+                "expected page is missing from the store"
+            } else {
+                "translation left non-terminal at FINALIZE (status=${page.translationStatus})"
+            }
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t924 stranded page at FINALIZE pageHash=${ShortHash.hash(pageKey)} reason=$reason"
+            }
+            persistEnvelopeStructuralFailure(pageKey, "stranded page reconciled at FINALIZE: $reason")
+            strandedReconciled++
+        }
+
+        // 5. Durable teardown: NonCancellable flush + retention reconciliation
+        //    (the BatchChapterTranslator :781-794 idiom).
+        withContext(NonCancellable) {
+            store.flush()
+        }
+        store.reconcileArtifactRetention()
+
+        // 6. Run closure: the single COMPLETE publication of the run. The
+        //    overlap counters live on the FINALIZE record (see above — the
+        //    32-key phaseCounters bound).
+        publishRecord(
+            artifact,
+            record(
+                runId,
+                ChapterRunState.COMPLETE,
+                frozenFingerprint,
+                sourceDigest,
+                baseCounters +
+                    mapOf(
+                        COUNTER_FINALIZE to 1,
+                        COUNTER_RUN_COMPLETE to 1,
+                        COUNTER_LAYOUTS_PUBLISHED to layoutsPublished,
+                        COUNTER_STRANDED_RECONCILED to strandedReconciled,
+                    ),
+                ocrCorpusFingerprint = corpusFingerprint,
+                profilePointer = store.artifactManifest?.profile,
+            ),
+        )
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT t924 run COMPLETE pages=${allPageKeys.size} stranded=$strandedReconciled " +
+                "layouts=$layoutsPublished overlap=${overlapScheduler?.counters?.snapshot() ?: emptyMap()}"
+        }
+        return BatchPass1Outcome(
+            needsTranslation = emptyList(),
+            status = BatchPass1Status.COMPLETED,
+            completedPageKeys = allPageKeys,
+            reason = TRANSLATE_COMPLETE_REASON,
+        )
+    }
+
+    /**
+     * T924 terminal predicate for the FINALIZE stranded sweep. A page is
+     * terminal when its translation work reached a durable outcome the reader
+     * or a later run can act on:
+     *
+     *  - committed translation (READY/PARTIAL) — the flagged pipeline's
+     *    normal terminal (inpaint failures carry their own durable records
+     *    from the lane; they never invalidate the translation);
+     *  - already durably FAILED / SKIPPED / TEXTLESS;
+     *  - legacy rendered display or textless terminal (cross-schedule safety);
+     *  - PENDING but every block user-edited — the reader owns the page
+     *    (TX-21.3 user authority; marking it failed would overwrite nothing
+     *    but would lie about the page's state).
+     *
+     * A page that is none of these (PENDING/RUNNING/CANCELLED with
+     * translatable work, or not owned by the active generation) is stranded:
+     * the drained run expected to reach it and did not.
+     */
+    private fun t924PageTerminalAtFinalize(page: PageTranslation?, activeGeneration: Long): Boolean {
+        if (page == null) return false
+        if (page.hasRenderedResult || page.isTextlessTerminal) return true
+        if (page.runGeneration != activeGeneration) return false
+        return when (page.translationStatus) {
+            StageStatus.READY,
+            StageStatus.PARTIAL,
+            StageStatus.FAILED,
+            StageStatus.SKIPPED,
+            StageStatus.TEXTLESS,
+            -> true
+            else -> page.blocks.isNotEmpty() && page.blocks.all { it.userEditedAt != null }
         }
     }
 
@@ -2226,6 +2462,34 @@ internal class ChapterProfileBatchCoordinator(
         const val TRANSLATE_STOP_REASON =
             "T924 translation envelopes drained; native/render arrive in Stage 7"
 
+        /**
+         * T924 Stage 7 (D4): the terminal of a drained run. The completion
+         * semantics are the LEGACY translation-committed ones — the
+         * DISPLAY_READY redefinition below is still gate-7.8-gated OFF.
+         */
+        const val TRANSLATE_COMPLETE_REASON =
+            "T924 run complete: every page reached its durable terminal state " +
+                "(legacy completion semantics; DISPLAY_READY redefinition is gate-7.8-gated OFF)"
+
+        /**
+         * T924 gate 7.8 ENCODED GATE (never activated on device-gated
+         * authority): redefining Batch completion as DISPLAY_READY (all reader
+         * paths hydrate durable plans instead of translating committed) is
+         * allowed ONLY after gate 7.5 — restart/LRU rehydrate with ZERO
+         * [TextLayoutPlanner][eu.kanade.translation.rendering.TextLayoutPlanner]
+         * invocations — has passed ON DEVICE for Pager AND Webtoon (evidence
+         * rows owed per `evidence/stage2/wp9-report.md` §6 + Stage-7 device
+         * evidence). It MUST remain `false` in this slice: runs complete under
+         * the legacy semantics regardless of hydration coverage.
+         */
+        const val GATE_7_8_DISPLAY_READY_COMPLETION_ENABLED = false
+
+        /** Stage-7 typed counters (operational only, never fingerprinted). */
+        const val COUNTER_FINALIZE = "finalizeEntered"
+        const val COUNTER_RUN_COMPLETE = "runComplete"
+        const val COUNTER_LAYOUTS_PUBLISHED = "layoutPlansPublished"
+        const val COUNTER_STRANDED_RECONCILED = "strandedPagesReconciled"
+
         /** Analysis output budget default (T924-AP-03 `outputBudget`). */
         const val ANALYSIS_MAX_OUTPUT_TOKENS = 8192
 
@@ -2278,6 +2542,38 @@ internal class ChapterProfileBatchCoordinator(
             } else {
                 BatchCoordinatorKind.LEGACY_SEQUENTIAL
             }
+
+        /**
+         * Wave-2 F1 production wiring (T924 Stage 7): the shell consults this
+         * BEFORE constructing a coordinator. [decideResume] decides; a
+         * TreatAsFinished outcome (flag now OFF + the recorded run reached
+         * COMPLETE — FF-01e.2a) becomes the typed COMPLETED outcome here so
+         * the legacy schedule never re-runs a chapter the flagged path
+         * already finished. `null` = dispatch normally
+         * ([FlaggedRunResumeDecision.RunFlaggedPath] /
+         * [FlaggedRunResumeDecision.DropToLegacy]).
+         */
+        fun resumeCompletedOutcome(
+            record: ChapterRunRecord?,
+            currentFlagOn: Boolean,
+            orderedPageKeys: Set<String>,
+        ): BatchPass1Outcome? =
+            when (decideResume(record, currentFlagOn)) {
+                FlaggedRunResumeDecision.TreatAsFinished -> BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.COMPLETED,
+                    completedPageKeys = orderedPageKeys,
+                    reason = "T924 FF-01e.2a: recorded run COMPLETE; flag OFF treats the chapter as finished",
+                )
+                else -> null
+            }
+
+        /** The chapter's active run record, or null when none is readable. */
+        fun activeRunRecordOrNull(store: ChapterTranslationStore): ChapterRunRecord? {
+            val artifact = store.artifactStore ?: return null
+            val pointer = store.artifactManifest?.activeRun ?: return null
+            return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
+        }
 
         /**
          * FF-01e resume case analysis (contract §1.3 FF-01e.2/3): the recorded

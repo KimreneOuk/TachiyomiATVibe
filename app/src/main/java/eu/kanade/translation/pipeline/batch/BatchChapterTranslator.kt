@@ -647,6 +647,17 @@ internal class BatchChapterTranslator(
                     val profilePipelineEnabled = translationPreferences
                         .translationBatchProfilePipeline()
                         .get()
+                    // T924 wave-2 F1 (Stage 7): the FIRST COMPLETE publisher
+                    // exists, so the FF-01e resume decision tree wires in. A
+                    // flag-OFF run over a chapter whose recorded run reached
+                    // COMPLETE is treated as finished — the legacy schedule
+                    // never re-runs it. Flag ON / no COMPLETE record keeps the
+                    // dispatch below byte-identical.
+                    ChapterProfileBatchCoordinator.resumeCompletedOutcome(
+                        record = ChapterProfileBatchCoordinator.activeRunRecordOrNull(store),
+                        currentFlagOn = profilePipelineEnabled,
+                        orderedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
+                    )?.let { finished -> return finished }
                     return when (
                         profilePipelineDispatchKind(
                             flagOn = profilePipelineEnabled,
@@ -668,6 +679,20 @@ internal class BatchChapterTranslator(
                             } else {
                                 translationPreferences.translationAiApiKey(aiEnginePref).get()
                             }
+                            // T924 Stage 7 (D1/D2): the overlap scheduler runs
+                            // the EXISTING native inpaint lane inside each
+                            // remote envelope window (ST-13) and the render
+                            // join publishes persisted layouts per page
+                            // (T924-TX-23). Both ride the shared identity map
+                            // + lease release idiom; the legacy OFF branch
+                            // below stays byte-identical.
+                            val overlapScheduler = OverlapScheduler(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                orderedPageKeys = orderedPages.map { it.first },
+                                batchWriteIdentities = batchWriteIdentities,
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                            )
                             ChapterProfileBatchCoordinator(
                                 store = store,
                                 nativeWorker = batchLaneWorkers.nativeWorker,
@@ -696,6 +721,8 @@ internal class BatchChapterTranslator(
                                 // is the typed CONFIGURATION pause inside the
                                 // coordinator.
                                 textTranslator = contextualTranslator,
+                                overlapScheduler = overlapScheduler,
+                                renderJoin = renderJoin,
                             ).runPass1(orderedPages, computeClass)
                         }
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL ->

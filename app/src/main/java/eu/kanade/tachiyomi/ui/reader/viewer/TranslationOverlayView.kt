@@ -105,10 +105,13 @@ internal class TranslationOverlayView @JvmOverloads constructor(
         // source BEFORE the async planner. Null (FF-02 off, no source
         // installed, missing/corrupt/incompatible/lossy plan) falls back to
         // the planner above — the fallback is mandatory (T924-FF-02b).
+        // Stage 7 (D3): the pageKeyed chapter source is consulted first; a
+        // null page key (legacy bind path, FF-02 OFF, no installation) keeps
+        // the byte-identical legacy behavior.
         hydrate = { blocks, width, height ->
-            PersistedLayoutReaderBridge.hydrate(blocks, width, height)?.let { hydrated ->
-                buildPreparedLayouts(hydrated, width, height)
-            }
+            val hydrated = PersistedLayoutReaderBridge.hydrate(boundPageKey, blocks, width, height)
+                ?: PersistedLayoutReaderBridge.hydrate(blocks, width, height)
+            hydrated?.let { buildPreparedLayouts(it, width, height) }
         },
     )
 
@@ -121,6 +124,12 @@ internal class TranslationOverlayView @JvmOverloads constructor(
     private var blocks: List<TranslationBlock> = emptyList()
     private var pageWidth = 0
     private var pageHeight = 0
+    // T924 Stage 7 (D3): the translation page key of the current binding, set
+    // by the pageKeyed [bind] overload. The background hydrate lambda reads it
+    // to resolve the chapter's persisted plan. Null (legacy 4-arg bind path)
+    // keeps the byte-identical planner-only behavior.
+    @Volatile
+    private var boundPageKey: String? = null
     private var preparedLayouts = emptyList<PreparedOverlayLayout>()
     private var framePending = false
     private val frameCallback = Choreographer.FrameCallback {
@@ -140,11 +149,28 @@ internal class TranslationOverlayView @JvmOverloads constructor(
      * while its own layout is in flight.
      */
     fun bind(imageView: SubsamplingScaleImageView?, blocks: List<TranslationBlock>, pageWidth: Int, pageHeight: Int) {
+        bind(imageView, blocks, pageWidth, pageHeight, pageKey = null)
+    }
+
+    /**
+     * T924 Stage 7 (D3): pageKeyed bind — enables the persisted-layout
+     * hydration consult for this binding ([PersistedLayoutReaderBridge]
+     * chapter source, FF-02-gated at the install site). A null [pageKey]
+     * behaves exactly like the legacy bind.
+     */
+    fun bind(
+        imageView: SubsamplingScaleImageView?,
+        blocks: List<TranslationBlock>,
+        pageWidth: Int,
+        pageHeight: Int,
+        pageKey: String?,
+    ) {
         val imageViewChanged = this.imageView !== imageView
         this.imageView = imageView
         this.blocks = blocks
         this.pageWidth = pageWidth
         this.pageHeight = pageHeight
+        this.boundPageKey = pageKey?.takeIf { it.isNotEmpty() && blocks.isNotEmpty() }
         when (val result = layoutCoordinator.bind(blocks, pageWidth, pageHeight)) {
             is TextLayoutBindResult.Ready -> {
                 preparedLayouts = result.prepared

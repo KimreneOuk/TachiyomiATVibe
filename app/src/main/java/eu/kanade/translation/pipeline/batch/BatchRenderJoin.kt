@@ -579,6 +579,49 @@ internal class BatchRenderJoin(
         PersistedLayoutRuntime.fontSourceInstalled = true
     }
 
+    // ------------------------------------------------------------------
+    // T924 Stage 7 (D2): per-page persisted-layout publication entry for the
+    // flagged coordinator's NATIVE/RENDER path. Called after a page reached
+    // committed-translation + committed-inpaint state (via the OverlapScheduler's
+    // commit hook and the FINALIZE sweep). Reuses the EXISTING T924-TX-23
+    // publication transaction above — same CAS fences, same sidecars, same
+    // fail-safe: any precondition/failure keeps the committed display and the
+    // async planner fallback authoritative (T924-FF-02b; reader display never
+    // breaks, no rasterized output ever — R041, the published artifacts are
+    // geometry/color DTOs only).
+    // ------------------------------------------------------------------
+
+    /**
+     * Publishes the persisted layout for [pageKey] when the page carries the
+     * full stage evidence (translation READY/PARTIAL, inpaint READY, drawable
+     * blocks) and no plan is published yet (idempotent sweep). Returns true
+     * when a plan is (already) published for the page.
+     */
+    internal suspend fun publishPersistedLayoutForCompletedPage(pageKey: String): Boolean {
+        if (!PersistedLayoutRuntime.flagEnabled()) return false
+        return try {
+            val manifestNow = store.artifactManifest
+            if (manifestNow?.layoutPlans?.containsKey(pageKey) == true) return true
+            val snapshot = store.snapshot(pageKey)
+            val page = snapshot.page ?: return false
+            val translationReady = page.translationStatus == StageStatus.READY ||
+                page.translationStatus == StageStatus.PARTIAL
+            if (!translationReady || page.inpaintStatus != StageStatus.READY) return false
+            if (page.blocks.isEmpty()) return false
+            if (manifestNow == null || manifestNow.authority != ManifestAuthority.ARTIFACTS) return false
+            publishPersistedLayout(pageKey, page, snapshot)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT persisted-layout stage-7 publication failed (planner fallback kept): " +
+                    "pageKey=$pageKey error=$t"
+            }
+            false
+        }
+    }
+
     fun signalFor(
         signals: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
         pageKey: String,

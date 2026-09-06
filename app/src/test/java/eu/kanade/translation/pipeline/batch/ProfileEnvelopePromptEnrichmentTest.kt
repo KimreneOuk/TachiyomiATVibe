@@ -310,8 +310,8 @@ class ProfileEnvelopePromptEnrichmentTest {
         val outcome = coordinator(store, pages, FakeAnalyzer(), translator)
             .runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
         translator.requests.size shouldBe 1
 
         val chunk = translator.requests.single()
@@ -403,8 +403,8 @@ class ProfileEnvelopePromptEnrichmentTest {
             translationSublimitGate = BatchRequestSublimitGate(),
         ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_STOP_REASON
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
 
         // ONE planned envelope became THREE whole-page provider requests —
         // never a block split.

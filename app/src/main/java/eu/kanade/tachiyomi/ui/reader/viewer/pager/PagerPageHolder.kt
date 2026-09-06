@@ -378,7 +378,7 @@ class PagerPageHolder(
         val streamFn = page.stream ?: return
         prepareTranslationImage(page.showTranslatedImage)
         selectReaderTranslationOverlayBinding(page.showTranslatedImage, page.translation).let { overlay ->
-            setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight)
+            setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight, overlay.pageKey)
         }
 
         // Record the rendered/cleaned image file name to avoid no-op decodes on refresh.
@@ -492,7 +492,7 @@ class PagerPageHolder(
         prepareTranslationImage(page.showTranslatedImage)
         val overlay = selectReaderTranslationOverlayBinding(page.showTranslatedImage, page.translation)
         viewer.activity.runOnUiThread {
-            setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight)
+            setTranslationBlocks(overlay.blocks, overlay.pageWidth, overlay.pageHeight, overlay.pageKey)
         }
     }
 

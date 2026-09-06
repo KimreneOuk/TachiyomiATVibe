@@ -747,7 +747,11 @@ object BatchProviderSublimit {
  * structurally unaffected; the bucket-1 interactive reserve and starvation
  * guard are untouched.
  */
-class BatchRequestSublimitGate(
+// T924 Stage 7: `open` ONLY so the coordinator can wrap the gate with the
+// OverlapScheduler's remote-window signalling subclass (gate 6.5 evidence).
+// Admission semantics are untouched; the default construction behaves
+// byte-identically.
+open class BatchRequestSublimitGate(
     private val clock: ProviderRequestClock = SystemProviderRequestClock,
 ) {
 
@@ -756,7 +760,7 @@ class BatchRequestSublimitGate(
         clock = clock,
     )
 
-    suspend fun <T> executeBatch(
+    open suspend fun <T> executeBatch(
         metadata: ProviderRequestMetadata,
         block: suspend () -> T,
     ): T {
