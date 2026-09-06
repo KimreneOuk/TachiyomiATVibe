@@ -216,6 +216,23 @@ class ProfileSubsetMatcherTest {
     }
 
     @Test
+    fun `scoped facts with missing range payloads default-deny (wave-7a F-W7-2)`() {
+        val p = profile(
+            entities = listOf(
+                // Text-matching fact whose scope payload is absent — the
+                // permissive default would have ridden it ahead of its range.
+                fact("r001", FactType.ENTITY_IDENTITY, "賊", "Bandit", scope = FactScope.RANGE_SCOPED),
+                fact("a001", FactType.ENTITY_IDENTITY, "盗人", "Thief", scope = FactScope.AVAILABLE_FROM),
+                fact("w001", FactType.ENTITY_IDENTITY, "勇者", "Hero"),
+            ),
+        )
+        val subset = ProfileSubsetMatcher.match(p, sources(2 to "賊と盗人と勇者。"))
+        // Only the chapter-wide fact survives; both malformed scoped facts
+        // default-DENY even though their forms match the source text.
+        subset.entries.map { it.factId } shouldContainExactly listOf("w001")
+    }
+
+    @Test
     fun `scene participant is added even without a text hit`() {
         val p = profile(
             entities = listOf(

@@ -427,14 +427,23 @@ internal class ProfileEnvelopeExecutor(
      * exceed the window are returned as [SplitPlan.oversized] (rejected, not
      * sent). Without a frozen profile (legacy shape) this is the identity
      * split: ONE batch, slice-A behavior unchanged. The context reserve is
-     * estimated ONCE over the FULL envelope range (an upper bound for any
-     * sub-batch: a smaller page range matches fewer scenes/facts), so every
-     * sub-batch built from it fits a fortiori.
+     * re-derived per CANDIDATE batch (wave-7a F-W7-1) — a full-range estimate
+     * is not a strict upper bound because AVAILABLE_FROM facts gate on the
+     * sub-batch's own first page and the subset cap can pick different
+     * entries on a narrower range.
      */
     private fun splitForTokenFit(held: List<HeldPage>, rollingContext: String): SplitPlan {
         if (frozenProfile == null) return SplitPlan(fitted = listOf(held), oversized = emptyList())
         val constraints = TranslationContextChunkPlanner.constraintsFor(providerProfile)
-        val contextTokens = estimateEnrichedContextTokens(held, rollingContext)
+
+        // Wave-7a F-W7-1: the context reserve is re-derived per CANDIDATE
+        // batch. A single full-range estimate is not a strict upper bound:
+        // AVAILABLE_FROM facts become usable at later sub-batch starts, and
+        // the 24-entry cap can select different entries on a narrower range.
+        // The matcher is pure and dispatch is sequential — the recompute is
+        // cheap and closes both exceptions.
+        fun contextTokensFor(pages: List<HeldPage>): Int =
+            estimateEnrichedContextTokens(pages, rollingContext)
 
         val fitted = ArrayList<List<HeldPage>>()
         val oversized = ArrayList<HeldPage>()
@@ -447,7 +456,7 @@ internal class ProfileEnvelopeExecutor(
                 val pageTokens = pageLineEstimate(page)
                 val blocks = page.dispatchBlocks.size
                 val available = promptAvailableTokens(constraints, blocks, pageCount = 1)
-                if (pageTokens + contextTokens > available) {
+                if (pageTokens + contextTokensFor(batch) > available) {
                     oversized += page
                 } else {
                     fitted += listOf(page)
@@ -463,7 +472,7 @@ internal class ProfileEnvelopeExecutor(
             if (batch.isNotEmpty()) {
                 val candidateBlocks = batch.sumOf { it.dispatchBlocks.size } + page.dispatchBlocks.size
                 val available = promptAvailableTokens(constraints, candidateBlocks, pageCount = batch.size + 1)
-                if (batchLineTokens + pageTokens + contextTokens > available) {
+                if (batchLineTokens + pageTokens + contextTokensFor(batch + page) > available) {
                     flush()
                 }
             }

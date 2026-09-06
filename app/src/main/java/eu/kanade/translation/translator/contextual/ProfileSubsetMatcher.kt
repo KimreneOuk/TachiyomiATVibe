@@ -262,10 +262,15 @@ object ProfileSubsetMatcher {
      */
     private fun usableAt(fact: ProfileFact, firstPage: Int, lastPage: Int): Boolean = when (fact.scope) {
         FactScope.CANONICAL_CHAPTER_WIDE -> true
+        // Wave-7a F-W7-2: a scoped fact with a MISSING scope payload
+        // default-DENIES — a malformed sidecar fact must never ride the
+        // prompt ahead of its range (§7.2 fence).
         FactScope.RANGE_SCOPED -> fact.applicableRange?.let {
             overlaps(it.firstNaturalPageIndex, it.lastNaturalPageIndex, firstPage, lastPage)
-        } ?: true
-        FactScope.AVAILABLE_FROM -> (fact.availableFrom?.naturalPageIndex ?: Int.MIN_VALUE) <= firstPage
+        } ?: false
+        FactScope.AVAILABLE_FROM -> fact.availableFrom
+            ?.let { it.naturalPageIndex <= firstPage }
+            ?: false
     }
 
     private fun overlaps(aFirst: Int, aLast: Int, bFirst: Int, bLast: Int): Boolean =
