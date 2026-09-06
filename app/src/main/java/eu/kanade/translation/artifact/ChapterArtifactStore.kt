@@ -824,6 +824,10 @@ class ChapterArtifactStore(
     internal fun analysisChunkSidecarName(contentFingerprint: String): String =
         layout.analysisChunkFile(contentFingerprint)
 
+    /** Content-addressed `ChapterTranslationProfile` sidecar name under `profiles/` (T924-SC-21). */
+    internal fun profileSidecarName(contentFingerprint: String): String =
+        layout.profileFile(contentFingerprint)
+
     /** Content-addressed `ColorStylePreparation` sidecar name under `color/` (T924-SC-21). */
     internal fun colorPreparationSidecarName(pageKey: String, contentFingerprint: String): String =
         layout.colorPreparationFile(pageKey, contentFingerprint)

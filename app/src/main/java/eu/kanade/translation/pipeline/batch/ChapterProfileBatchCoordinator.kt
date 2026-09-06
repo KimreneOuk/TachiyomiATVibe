@@ -21,6 +21,8 @@ import eu.kanade.translation.artifact.FailureCategory
 import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.artifact.OcrCheckpointMode
 import eu.kanade.translation.artifact.PageRange
+import eu.kanade.translation.artifact.ChapterTranslationProfile
+import eu.kanade.translation.artifact.ProfilePointer
 import eu.kanade.translation.artifact.ProfileScene
 import eu.kanade.translation.artifact.RunConfigSnapshot
 import eu.kanade.translation.artifact.SceneRegister
@@ -37,6 +39,7 @@ import eu.kanade.translation.translator.analysis.AnalysisChunkRunOutcome
 import eu.kanade.translation.translator.analysis.AnalysisCoverageKind
 import eu.kanade.translation.translator.analysis.AnalysisEvidenceTexts
 import eu.kanade.translation.translator.analysis.AnalysisRunIdentity
+import eu.kanade.translation.translator.analysis.AnalyzerProvenanceFactory
 import eu.kanade.translation.translator.contextual.AnalysisChunkPlanResult
 import eu.kanade.translation.translator.contextual.AnalysisChunkPlanner
 import eu.kanade.translation.translator.contextual.AnalysisChunkPolicy
@@ -44,6 +47,7 @@ import eu.kanade.translation.translator.contextual.ChunkPlannerPage
 import eu.kanade.translation.translator.contextual.OcrCorpusManifest
 import eu.kanade.translation.translator.contextual.OcrCorpusPageEntry
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
+import eu.kanade.translation.translator.contextual.ProfileReconciler
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -63,7 +67,14 @@ import java.security.MessageDigest
  *   skip rules recorded) -> ANALYSIS_CHUNKS (ST-08: resume skips the
  *   persisted pointer prefix; each chunk runs through the typed analysis
  *   runner and persists crash-safely via [AnalysisChunkPublication]) ->
- *   STOP with a PAUSED diagnostic (profile reconcile/freeze are slice B).
+ *   PROFILE_RECONCILE (ST-09: pure deterministic reconciler over the durable
+ *   chunks) -> PROFILE_FROZEN (ST-10: one atomic TX-22 publication) ->
+ *   STOP with a PAUSED diagnostic (envelope/translation are Stage 6).
+ *
+ * Stage-5 slice B also owns the ST-05/OCR_PLAN skip rule: at run start, a
+ * compatible frozen profile (valid sidecar + matching FP-04 input identity +
+ * recomputed FP-05) skips the ENTIRE run through analysis with zero OCR and
+ * zero provider calls.
  *
  * Invariants kept by the loop (gates §2.3 + §2.4):
  *  - ONE decoded page at a time: the preflight loop is strictly serial, the
@@ -195,12 +206,50 @@ internal class ChapterProfileBatchCoordinator(
             COUNTER_FLAG to if (flagProfilePipeline) 1 else 0,
         )
 
+        // ---- ST-05/OCR_PLAN skip rule (contracts-state-transactions :114): ----
+        // when a compatible frozen profile already exists (its sidecar reads
+        // back valid, the pointer identities match, and the current run's
+        // FP-04 input fingerprint equals the pointer's), the plan records
+        // skip-to-phase PROFILE_FROZEN reuse and the ENTIRE run through
+        // analysis is skipped: zero OCR, zero provider calls (the T924
+        // fast-feedback core). The probe is LOCAL reads only (durable
+        // checkpoints + profile sidecar), never decode/native work.
+        val reusableProfile = frozenProfileReuse(artifact, orderedPages, total)
+
         // ST-03: run start — RUN_SNAPSHOT record with the frozen configuration,
         // the ordered source digest, and the frozen flag state (FF-01d).
         publishRecord(
             artifact,
             record(runId, ChapterRunState.RUN_SNAPSHOT, frozenFingerprint, sourceDigest, counters()),
         )
+        if (reusableProfile != null) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT t924 profile reuse: compatible frozen profile, " +
+                    "skipping OCR+analysis (skip-to-phase PROFILE_FROZEN)"
+            }
+            publishRecord(
+                artifact,
+                record(
+                    runId,
+                    ChapterRunState.PROFILE_FROZEN,
+                    frozenFingerprint,
+                    sourceDigest,
+                    counters() + mapOf(
+                        COUNTER_STOP to 1,
+                        COUNTER_PROFILE_REUSED to 1,
+                    ),
+                    ocrCorpusFingerprint = reusableProfile.corpusFingerprint,
+                    profilePointer = reusableProfile.pointer,
+                ),
+            )
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
+                reason = PROFILE_FROZEN_REUSE_REASON,
+            )
+        }
+
         // ST-05: the OCR plan is recomputed in-memory (pure function of the
         // ordered pages + store state); only the phase transition persists.
         publishRecord(
@@ -377,9 +426,10 @@ internal class ChapterProfileBatchCoordinator(
             )
         }
 
-        // ---- T924 Stage 5 slice A: ANALYSIS_PLAN -> ANALYSIS_CHUNKS. ----
-        // The chapter stays PAUSED after the chunks (profile reconcile/freeze
-        // is slice B); completion semantics are still NOT redefined.
+        // ---- T924 Stage 5 slices A+B: ANALYSIS_PLAN -> ANALYSIS_CHUNKS ----
+        // ---- -> PROFILE_RECONCILE -> PROFILE_FROZEN. The chapter stays   ----
+        // ---- PAUSED (envelope/translation are Stage 6; completion        ----
+        // ---- semantics are still NOT redefined).                         ----
         return runAnalysisPhase(
             artifact = artifact,
             runId = runId,
@@ -403,9 +453,10 @@ internal class ChapterProfileBatchCoordinator(
      *
      * Typed failures pause the run at the failing chunk (ST-08: resume
      * restarts at the first unpersisted chunk; the validated prefix stays
-     * durable and is never re-sent). The run NEVER advances to
-     * PROFILE_RECONCILE here (slice B), so nothing in this slice publishes
-     * `COMPLETE` and [decideResume] wiring stays untouched (wave-2 F1).
+     * durable and is never re-sent). When every chunk is durable, slice B's
+     * [runProfileReconcileAndFreeze] continues into ST-09/ST-10; nothing
+     * here publishes `COMPLETE` and [decideResume] wiring stays untouched
+     * (wave-2 F1).
      */
     private suspend fun runAnalysisPhase(
         artifact: ChapterArtifactStore,
@@ -729,15 +780,324 @@ internal class ChapterProfileBatchCoordinator(
             }
         }
 
-        // Stop-after-chunks terminal for slice A: the validated chunk set is
-        // durable; reconcile/freeze are slice B. PAUSED — never COMPLETED.
-        return BatchPass1Outcome(
-            needsTranslation = emptyList(),
-            status = BatchPass1Status.PAUSED,
-            completedPageKeys = corpus.entries.mapTo(mutableSetOf()) { it.storagePageKey },
-            reason = ANALYSIS_STOP_REASON,
+        // ---- Stage-5 slice B: the validated chunk set is durable; run the ----
+        // ---- ST-09 reconcile over the DURABLE chunk list, then ST-10 freeze.
+        return runProfileReconcileAndFreeze(
+            artifact = artifact,
+            runId = runId,
+            corpusFingerprint = corpusFingerprint,
+            baseCounters = analysisCounters(
+                mapOf(
+                    COUNTER_CHUNKS_TOTAL to plan.chunks.size,
+                    COUNTER_CHUNKS_DONE to done,
+                    COUNTER_CHUNKS_PENDING to pending,
+                ),
+            ),
         )
     }
+
+    /**
+     * Stage-5 slice B (T924-ST-09 → ST-10, T924-TX-22): reconcile + freeze.
+     *
+     *  1. The durable chunk list is RE-READ from the manifest pointers
+     *     (identity-consistent with the run: the wave-4 prefix validation
+     *     above proved the persisted list IS this run's plan). Any
+     *     unreadable/invalid sidecar is treated as ABSENT (T924-ST-30) — a
+     *     typed pause, never a partial reconcile.
+     *  2. PROFILE_RECONCILE phase record published, then the pure
+     *     [ProfileReconciler] runs over the validated chunk set. A typed
+     *     reconcile rejection pauses BEFORE any freeze; chunk evidence stays
+     *     durable for a later run (ST-09 terminal).
+     *  3. The profile DTO is assembled around the reconciled CONTENT with
+     *     this run's FP-04 input fingerprint and the next monotonic chapter
+     *     version; its FP-05 content fingerprint is computed over the DTO.
+     *  4. [ProfileFreezePublication.publish] performs the ONE atomic
+     *     TX-22 publication; on success the PROFILE_FROZEN record carries
+     *     the new pointer and the run stops PAUSED (envelope/translation are
+     *     Stage 6). On rejection the prior manifest stays authoritative.
+     *
+     * NOTHING here publishes `COMPLETE` (wave-2 F1 still owed to the first
+     * COMPLETE-publishing stage) and no page display state is touched.
+     */
+    private suspend fun runProfileReconcileAndFreeze(
+        artifact: ChapterArtifactStore,
+        runId: String,
+        corpusFingerprint: String,
+        baseCounters: Map<String, Int>,
+    ): BatchPass1Outcome {
+        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+
+        fun freezeCounters(extra: Map<String, Int>): Map<String, Int> = baseCounters + extra
+
+        // ST-09 entry: re-read the durable chunk list from the manifest.
+        val manifestAtEntry = store.artifactManifest
+        if (manifestAtEntry == null || manifestAtEntry.analysisChunks.isEmpty()) {
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PERSISTENCE_REJECTED,
+                reason = "T924 profile reconcile deferred: durable chunk list unavailable",
+            )
+        }
+        val chunks = mutableListOf<AnalysisChunkResult>()
+        for (index in manifestAtEntry.analysisChunks.indices) {
+            val read = artifact.readSidecarDocument(
+                pointer = manifestAtEntry.analysisChunks[index],
+                serializer = AnalysisChunkResult.serializer(),
+                currentSchemaVersion = AnalysisChunkResult.SCHEMA_VERSION,
+                expectedKind = AnalysisChunkResult.KIND,
+                schemaVersionOf = { it.schemaVersion },
+                kindOf = { it.kind },
+                isValid = { it.isSemanticallyValid },
+            )
+            if (read !is SidecarRead.Usable) {
+                // ST-30: unreadable/invalid target = absent, never partially
+                // trusted. Resume re-validates the prefix (typed pause there).
+                return BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PAUSED,
+                    reason = "T924 profile reconcile deferred: persisted chunk $index " +
+                        "unreadable or invalid ($read)",
+                )
+            }
+            chunks += read.document
+        }
+
+        // PROFILE_RECONCILE phase record (entered).
+        publishRecord(
+            artifact,
+            record(
+                runId,
+                ChapterRunState.PROFILE_RECONCILE,
+                frozenFingerprint,
+                sourceDigest,
+                freezeCounters(
+                    mapOf(
+                        COUNTER_PROFILE_CHUNKS_TOTAL to chunks.size,
+                        COUNTER_PROFILE_CHUNKS_RECONCILED to 0,
+                        COUNTER_PROFILE_CHUNKS_PENDING to 0,
+                    ),
+                ),
+                ocrCorpusFingerprint = corpusFingerprint,
+            ),
+        )
+
+        val content = when (val reconciled = ProfileReconciler.reconcile(chunks)) {
+            is ProfileReconciler.ReconcileOutcome.Reconciled -> reconciled.content
+            is ProfileReconciler.ReconcileOutcome.Rejected -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 profile reconcile rejected: ${reconciled.reason}"
+                }
+                publishRecord(
+                    artifact,
+                    record(
+                        runId,
+                        ChapterRunState.PROFILE_RECONCILE,
+                        frozenFingerprint,
+                        sourceDigest,
+                        freezeCounters(mapOf(COUNTER_PROFILE_RECONCILE_REJECTED to 1)),
+                        ocrCorpusFingerprint = corpusFingerprint,
+                    ),
+                )
+                return BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PAUSED,
+                    reason = "T924 profile reconcile rejected: ${reconciled.reason}",
+                )
+            }
+        }
+
+        publishRecord(
+            artifact,
+            record(
+                runId,
+                ChapterRunState.PROFILE_RECONCILE,
+                frozenFingerprint,
+                sourceDigest,
+                freezeCounters(
+                    mapOf(
+                        COUNTER_PROFILE_CHUNKS_TOTAL to chunks.size,
+                        COUNTER_PROFILE_CHUNKS_RECONCILED to content.reconciledChunkCount,
+                        COUNTER_PROFILE_CHUNKS_PENDING to content.pendingChunkCount,
+                    ),
+                ),
+                ocrCorpusFingerprint = corpusFingerprint,
+            ),
+        )
+
+        // Assemble the DTO: operational envelope + the FP-05 content hash
+        // (computed over the DTO with the operational fields zeroed, so the
+        // hash is computed BEFORE the field is set — FP-05 cannot contain
+        // itself). The input identity is the SAME FP-04 the reuse probe uses.
+        val inputFingerprint = profileInputFingerprintOf(corpusFingerprint)
+        val nextVersion = (store.artifactManifest?.profile?.version ?: 0) + 1
+        val draft = ChapterTranslationProfile(
+            version = nextVersion,
+            contentFingerprint = "",
+            profileInputFingerprint = inputFingerprint,
+            sourceRunId = runId,
+            analyzerProvenance = content.analyzerProvenance,
+            entities = content.entities,
+            terms = content.terms,
+            scenes = content.scenes,
+            unresolvedFacts = content.unresolvedFacts,
+            seriesUpdateCandidates = content.seriesUpdateCandidates,
+            correctionCandidates = content.correctionCandidates,
+            frozenAtEpochMs = nowEpochMs(),
+        )
+        val profile = draft.copy(
+            contentFingerprint = StageFingerprints.profileContentFingerprint(draft),
+        )
+
+        val manifestForPublish = store.artifactManifest ?: return BatchPass1Outcome(
+            needsTranslation = emptyList(),
+            status = BatchPass1Status.PERSISTENCE_REJECTED,
+            reason = "T924 profile freeze deferred: manifest unavailable",
+        )
+        return when (
+            val publication = ProfileFreezePublication.publish(
+                artifact = artifact,
+                manifest = manifestForPublish,
+                profile = profile,
+                nowEpochMs = nowEpochMs(),
+            )
+        ) {
+            is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                store.artifactManifest = publication.manifest
+                publishRecord(
+                    artifact,
+                    record(
+                        runId,
+                        ChapterRunState.PROFILE_FROZEN,
+                        frozenFingerprint,
+                        sourceDigest,
+                        freezeCounters(
+                            mapOf(
+                                COUNTER_PROFILE_CHUNKS_TOTAL to chunks.size,
+                                COUNTER_PROFILE_CHUNKS_RECONCILED to content.reconciledChunkCount,
+                                COUNTER_PROFILE_CHUNKS_PENDING to content.pendingChunkCount,
+                                COUNTER_PROFILE_FROZEN to 1,
+                                COUNTER_STOP to 1,
+                            ),
+                        ),
+                        ocrCorpusFingerprint = corpusFingerprint,
+                        profilePointer = publication.manifest.profile,
+                    ),
+                )
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT t924 profile frozen version=$nextVersion " +
+                        "reconciled=${content.reconciledChunkCount} pending=${content.pendingChunkCount}"
+                }
+                BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PAUSED,
+                    completedPageKeys = manifestForPublish.pages.keys,
+                    reason = PROFILE_FROZEN_STOP_REASON,
+                )
+            }
+            is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                // Prior manifest authoritative (TX-22); the run pauses; the
+                // next attempt re-reconciles deterministically (ST-09 resume).
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 profile freeze rejected: ${publication.reason}"
+                }
+                publishRecord(
+                    artifact,
+                    record(
+                        runId,
+                        ChapterRunState.PROFILE_RECONCILE,
+                        frozenFingerprint,
+                        sourceDigest,
+                        freezeCounters(mapOf(COUNTER_PROFILE_FREEZE_REJECTED to 1)),
+                        ocrCorpusFingerprint = corpusFingerprint,
+                    ),
+                )
+                BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PERSISTENCE_REJECTED,
+                    reason = "T924 profile freeze rejected: ${publication.reason}",
+                )
+            }
+        }
+    }
+
+    /** A reusable frozen profile plus the corpus identity it was probed with. */
+    private data class FrozenProfileReuse(
+        val pointer: ProfilePointer,
+        val corpusFingerprint: String,
+    )
+
+    /**
+     * ST-05 skip-rule probe: computes the current run's corpus identity from
+     * the DURABLE checkpoints (local reads only) and, when a frozen profile
+     * pointer exists whose FP-04 input fingerprint matches AND whose sidecar
+     * fully validates (content, version, recomputed FP-05), returns the
+     * reusable pointer. Any gap returns null — the normal path runs.
+     */
+    private fun frozenProfileReuse(
+        artifact: ChapterArtifactStore,
+        orderedPages: List<PageKey>,
+        expectedPageCount: Int,
+    ): FrozenProfileReuse? {
+        val manifest = store.artifactManifest ?: return null
+        val pointer = manifest.profile ?: return null
+        if (!pointer.isWellFormed()) return null
+        // The FP-04 corpus identity must come from checkpoints whose source
+        // identity STILL matches the current source (ST-04 resume: identities
+        // are revalidated against current files). A changed/missing page
+        // makes the frozen profile NOT reusable — the normal path re-OCRs it
+        // and the corpus drift gates downstream (wave-4 F-W4-1 discipline).
+        val corpusPairs = mutableListOf<Pair<String, String>>()
+        for ((pageKey, _) in orderedPages) {
+            val fingerprint = reusableCheckpointFingerprint(artifact, pageKey) ?: return null
+            corpusPairs += pageKey to fingerprint
+        }
+        val naturalOrderProven =
+            orderedPages.map { it.second }.toSet() == (0 until expectedPageCount).toSet()
+        val corpusFingerprint = StageFingerprints.ocrCorpusFingerprint(
+            pages = corpusPairs,
+            expectedPageCount = expectedPageCount,
+            expectedPageCountTrusted = true,
+            naturalOrderProven = naturalOrderProven,
+        )
+        val inputFingerprint = profileInputFingerprintOf(corpusFingerprint)
+        return when (
+            val read = ProfileFreezePublication.readReusableFrozenProfile(
+                artifact = artifact,
+                manifest = manifest,
+                expectedInputFingerprint = inputFingerprint,
+            )
+        ) {
+            is ProfileFreezePublication.FrozenProfileRead.Reusable ->
+                FrozenProfileReuse(pointer, corpusFingerprint)
+            is ProfileFreezePublication.FrozenProfileRead.NotReusable -> null
+        }
+    }
+
+    /**
+     * T924-FP-04 for this run — computed with the SAME policy-fingerprint
+     * helper the analysis identity uses, so the freeze-time input identity
+     * and the reuse-probe identity are consistent by construction. Absent
+     * user/series authority is the explicit ABSENT literal inside
+     * [StageFingerprints.profileInputFingerprint] (absence is a value).
+     */
+    private fun profileInputFingerprintOf(corpusFingerprint: String): String =
+        StageFingerprints.profileInputFingerprint(
+            ocrCorpusFingerprint = corpusFingerprint,
+            sourceLanguage = frozenConfig.sourceLang,
+            targetLanguage = frozenConfig.targetLang,
+            analysisSchemaVersion = AnalyzerProvenanceFactory.ANALYSIS_SCHEMA_VERSION,
+            analysisPromptVersion = AnalyzerProvenanceFactory.PROMPT_VERSION,
+            analyzerProvider = frozenConfig.providerKey.substringBefore(':'),
+            analyzerModel = frozenConfig.providerKey.substringAfter(':', missingDelimiterValue = ""),
+            analyzerCredentialSignature = frozenConfig.credentialId.takeIf { it.isNotBlank() },
+            analyzerPolicyFingerprint = policyFingerprint(
+                "analysis-policy-v1",
+                frozenConfig.analysisPolicy.overlapPages,
+            ),
+            userAuthorityFingerprint = null,
+            seriesAuthorityFingerprint = null,
+        )
 
     /**
      * Wave-4 F-W4-1: the ST-08 resume prefix is only valid when the persisted
@@ -1097,6 +1457,7 @@ internal class ChapterProfileBatchCoordinator(
         sourceDigest: String,
         counters: Map<String, Int>,
         ocrCorpusFingerprint: String? = null,
+        profilePointer: ProfilePointer? = null,
     ): ChapterRunRecord {
         val now = nowEpochMs()
         return ChapterRunRecord(
@@ -1115,6 +1476,7 @@ internal class ChapterProfileBatchCoordinator(
                 frozenConfig.envelopePolicy.maxBlocks,
                 frozenConfig.envelopePolicy.maxPages,
             ),
+            profilePointer = profilePointer,
             phaseCounters = counters,
             createdAtEpochMs = now,
             updatedAtEpochMs = now,
@@ -1162,12 +1524,17 @@ internal class ChapterProfileBatchCoordinator(
             "T924 OCR preflight complete; analysis/profile/translation arrive in later stages"
 
         /** Stage-5 slice A terminals (still PAUSED — slice B owns the freeze). */
-        const val ANALYSIS_STOP_REASON =
-            "T924 analysis chunks persisted; profile reconcile/freeze arrive in slice B"
         const val ANALYSIS_NO_WORK_REASON =
             "T924 analysis skipped: no chunkable OCR work in this chapter"
         const val ANALYSIS_NO_TRANSPORT_REASON =
             "T924 analysis paused: no typed analysis transport wired (CONFIGURATION gate)"
+
+        /** Stage-5 slice B terminals (STILL PAUSED — envelope/translation are Stage 6). */
+        const val PROFILE_FROZEN_STOP_REASON =
+            "T924 profile frozen; envelope plan/translation arrive in Stage 6"
+        const val PROFILE_FROZEN_REUSE_REASON =
+            "T924 compatible frozen profile reused (ST-05 skip-to-phase); " +
+                "envelope plan/translation arrive in Stage 6"
 
         /** Analysis output budget default (T924-AP-03 `outputBudget`). */
         const val ANALYSIS_MAX_OUTPUT_TOKENS = 8192
@@ -1186,6 +1553,15 @@ internal class ChapterProfileBatchCoordinator(
         const val COUNTER_CHUNKS_FAILURES = "analysisChunkFailures"
         const val COUNTER_SKIPPED_NO_WORK = "analysisSkippedNoWork"
         const val COUNTER_SKIPPED_NO_TRANSPORT = "analysisSkippedNoTransport"
+
+        /** Stage-5 slice B typed counters (operational only, never fingerprinted). */
+        const val COUNTER_PROFILE_CHUNKS_TOTAL = "profileChunksTotal"
+        const val COUNTER_PROFILE_CHUNKS_RECONCILED = "profileChunksReconciled"
+        const val COUNTER_PROFILE_CHUNKS_PENDING = "profileChunksPending"
+        const val COUNTER_PROFILE_FROZEN = "profileFrozen"
+        const val COUNTER_PROFILE_REUSED = "profileReused"
+        const val COUNTER_PROFILE_RECONCILE_REJECTED = "profileReconcileRejected"
+        const val COUNTER_PROFILE_FREEZE_REJECTED = "profileFreezeRejected"
 
         /**
          * T924-FF-01a dispatch decision. The flag is consulted exactly ONCE per
