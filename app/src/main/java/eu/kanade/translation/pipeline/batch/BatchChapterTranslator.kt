@@ -628,6 +628,15 @@ internal class BatchChapterTranslator(
                  * shell: OCR preflight through its stop/diagnostic terminal);
                  * flag OFF constructs the legacy [SequentialBatchCoordinator]
                  * unchanged (FF-01b byte-for-byte legacy behavior).
+                 *
+                 * T924 F3 (wave-2 review R3/gap 8): the flagged coordinator
+                 * currently stops at the OCR-preflight terminal, so dispatch
+                 * additionally requires the engine-category parity of the
+                 * legacy contextual-AI lane (`isAi` above):
+                 * `translationEngineCategory == AI_MODEL && textTranslator is
+                 * ContextualTextTranslator`. Any other engine keeps running the
+                 * verbatim legacy coordinator — never a preflight-only flagged
+                 * run — until the flagged path serves those stages.
                  */
                 suspend fun runBatchPass1(
                     orderedPages: List<PageKey>,
@@ -636,7 +645,12 @@ internal class BatchChapterTranslator(
                     val profilePipelineEnabled = translationPreferences
                         .translationBatchProfilePipeline()
                         .get()
-                    return when (ChapterProfileBatchCoordinator.dispatchKind(profilePipelineEnabled)) {
+                    return when (
+                        profilePipelineDispatchKind(
+                            flagOn = profilePipelineEnabled,
+                            contextualAiParity = isAi,
+                        )
+                    ) {
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE ->
                             ChapterProfileBatchCoordinator(
                                 store = store,
@@ -898,6 +912,29 @@ internal class BatchChapterTranslator(
     }
 
     internal companion object {
+        /**
+         * T924 F3 (wave-2 review R3, gap 8): the FF-01 dispatch decision WITH
+         * engine-category parity. The flagged [ChapterProfileBatchCoordinator]
+         * is constructed only when the flag is ON AND the translator matches
+         * the legacy contextual-AI lane's `isAi` gate
+         * (`translationEngineCategory == AI_MODEL && textTranslator is
+         * ContextualTextTranslator`); every other combination — flag OFF for
+         * any engine, or flag ON with a non-AI/non-contextual engine — runs
+         * the verbatim legacy [SequentialBatchCoordinator] (FF-01b). The
+         * flagged coordinator is preflight-only today; without this gate a
+         * non-AI Batch run under FF-01 would stop after OCR and never
+         * translate (risk R3). Pure and unit-testable; the single dispatch
+         * site in `runBatchPass1` consults this and nothing else
+         * (T924-FF-01a).
+         */
+        internal fun profilePipelineDispatchKind(
+            flagOn: Boolean,
+            contextualAiParity: Boolean,
+        ): ChapterProfileBatchCoordinator.BatchCoordinatorKind =
+            ChapterProfileBatchCoordinator.dispatchKind(
+                translationBatchProfilePipeline = flagOn && contextualAiParity,
+            )
+
         /**
          * T917 D3 defer-and-rescan: bound on how long a deferred page's lease
          * handback wait may suspend before the pass gives up on that page and

@@ -2,8 +2,9 @@ package eu.kanade.translation.translator.contextual
 
 import eu.kanade.translation.artifact.ArtifactDocumentJson
 import eu.kanade.translation.artifact.EnvelopePlan
+import eu.kanade.translation.artifact.EnvelopePlanInputPage
 import eu.kanade.translation.artifact.PlannedEnvelope
-import java.security.MessageDigest
+import eu.kanade.translation.artifact.StageFingerprints
 
 /**
  * T924 WP3 (pure planner, S4): global multi-budget whole-page envelope
@@ -63,15 +64,12 @@ data class EnvelopePlannerPolicy(
     }
 
     /** Stable policy identity for [EnvelopePlan.planInputFingerprint]. */
-    fun policyFingerprint(): String = PlannerFingerprints.sha256(
-        listOf(
-            "envelope-policy",
-            maxBlocksPerEnvelope,
-            maxContributingPages,
-            maxEstimatedInputTokens,
-            maxEstimatedOutputTokens,
-            preferSceneBreaks,
-        ),
+    fun policyFingerprint(): String = StageFingerprints.envelopePolicyFingerprint(
+        maxBlocksPerEnvelope = maxBlocksPerEnvelope,
+        maxContributingPages = maxContributingPages,
+        maxEstimatedInputTokens = maxEstimatedInputTokens,
+        maxEstimatedOutputTokens = maxEstimatedOutputTokens,
+        preferSceneBreaks = preferSceneBreaks,
     )
 }
 
@@ -241,15 +239,8 @@ object GlobalEnvelopePlanner {
         }
 
         val envelopes = groups.mapIndexed { ordinal, group ->
-            val contributingFingerprint = PlannerFingerprints.sha256(
-                buildList {
-                    add("envelope-contributing")
-                    group.forEachIndexed { index, page ->
-                        add("page[$index]")
-                        add(page.pageKey)
-                        add(page.contentFingerprint)
-                    }
-                },
+            val contributingFingerprint = StageFingerprints.envelopeContributingCorpusFingerprint(
+                group.map { page -> page.pageKey to page.contentFingerprint },
             )
             val blockIds = group.flatMap { page -> page.blocks.map { it.stableBlockId } }
             val crossesScene = group.drop(1).any { it.sceneBoundaryBefore }
@@ -284,7 +275,7 @@ object GlobalEnvelopePlanner {
         // zeroed; planFingerprint blanked — a value cannot contain its own hash).
         val hashingView = plan.copy(planFingerprint = "", createdAtEpochMs = 0L)
         val canonical = ArtifactDocumentJson.encodeToString(EnvelopePlan.serializer(), hashingView)
-        val planFingerprint = PlannerFingerprints.sha256Bytes(canonical.toByteArray(Charsets.UTF_8))
+        val planFingerprint = StageFingerprints.envelopePlanContentFingerprint(canonical)
         val finished = plan.copy(planFingerprint = planFingerprint)
 
         // Independent re-verification before returning success.
@@ -357,28 +348,23 @@ object GlobalEnvelopePlanner {
 
     /**
      * T924-SC-08 composite input fingerprint: corpus slice + pending-block
-     * set + envelope policy, canonical length-prefixed encoding (planner-local
-     * hasher mirroring the `StageFingerprints` discipline; editing
-     * `StageFingerprints.kt` is outside this slice's ownership).
+     * set + envelope policy. Encoding lives in the single consolidated
+     * [StageFingerprints] core (wave-2 review F2 — the former planner-local
+     * `PlannerFingerprints` hasher was byte-identical and is retired).
      */
     private fun planInputFingerprint(
         ordered: List<EnvelopePlannerPage>,
         corpusFingerprint: String,
         policy: EnvelopePlannerPolicy,
-    ): String = PlannerFingerprints.sha256(
-        buildList {
-            add("envelope-plan-input")
-            add(corpusFingerprint)
-            add(PLANNER_VERSION)
-            add(policy.policyFingerprint())
-            ordered.filter { it.blocks.isNotEmpty() }.forEachIndexed { pageIndex, page ->
-                add("page[$pageIndex]")
-                add(page.pageKey)
-                page.blocks.forEachIndexed { blockIndex, block ->
-                    add("block[$blockIndex]")
-                    add(block.stableBlockId)
-                }
-            }
+    ): String = StageFingerprints.envelopePlanInputFingerprint(
+        corpusFingerprint = corpusFingerprint,
+        plannerVersion = PLANNER_VERSION,
+        policyFingerprint = policy.policyFingerprint(),
+        pages = ordered.filter { it.blocks.isNotEmpty() }.map { page ->
+            EnvelopePlanInputPage(
+                pageKey = page.pageKey,
+                orderedStableBlockIds = page.blocks.map { it.stableBlockId },
+            )
         },
     )
 }
@@ -398,38 +384,5 @@ private class Accumulator {
         blocks += page.blocks.size
         inputTokens += page.blocks.sumOf { GlobalEnvelopePlanner.estimateSourceTokens(it.sourceText) }
         outputTokens += page.blocks.sumOf { GlobalEnvelopePlanner.estimateOutputTokens(it.sourceText) }
-    }
-}
-
-/**
- * Planner-local canonical hasher with the exact `StageFingerprints` encoding
- * discipline (T924-SC-08): length-prefixed fields `len:value|`, indexed list
- * elements, `<null>` literal, SHA-256 lowercase hex over UTF-8. Kept local to
- * the pure-planner package because `StageFingerprints.kt` itself is read-only
- * for this slice; conformance is pinned by golden tests.
- */
-internal object PlannerFingerprints {
-
-    fun sha256(fields: List<Any?>): String = sha256Bytes(encode(fields).toByteArray(Charsets.UTF_8))
-
-    fun sha256Bytes(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256")
-            .digest(bytes)
-            .joinToString("") { byte -> "%02x".format(byte) }
-
-    fun encode(fields: List<Any?>): String = buildString {
-        fields.forEach { value ->
-            when (value) {
-                is List<*> -> value.forEachIndexed { index, element ->
-                    appendField("[$index]")
-                    appendField(element?.toString() ?: "<null>")
-                }
-                else -> appendField(value?.toString() ?: "<null>")
-            }
-        }
-    }
-
-    private fun StringBuilder.appendField(value: String) {
-        append(value.length).append(':').append(value).append('|')
     }
 }

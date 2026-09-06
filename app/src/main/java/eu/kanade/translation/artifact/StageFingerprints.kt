@@ -469,6 +469,102 @@ object StageFingerprints {
         return fingerprintIndexed(fields)
     }
 
+    // -------------------------------------------------------------------------
+    // T924 wave-2 review F2 consolidation: the envelope planners' composite
+    // fingerprint builders (formerly the planner-local `PlannerFingerprints`
+    // core in `translator/contextual/GlobalEnvelopePlanner.kt`) moved here so
+    // there is exactly ONE canonical encoding for every persisted fingerprint.
+    // The retired local core was byte-identical in discipline
+    // (`len:value|` fields, `[$index]` list elements, `<null>` literal,
+    // SHA-256 lowercase hex over UTF-8), so every value below is byte-for-byte
+    // identical to the pre-consolidation values — pinned by the UNCHANGED
+    // `t924/golden/envelope-plan-small.json` fixture and its
+    // `5643a00c…9df8` plan-fingerprint literal.
+    // -------------------------------------------------------------------------
+
+    /**
+     * Envelope policy composite (schemas contract §1.5): identity of the
+     * measured-experiment [eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy]
+     * constants only. A policy-only change changes this value (and the plan
+     * input identity) while deliberately NOT invalidating compatible
+     * translations (invalidation matrix row 7 — policy is never an input of
+     * [translationProvenanceFingerprint]).
+     */
+    fun envelopePolicyFingerprint(
+        maxBlocksPerEnvelope: Int,
+        maxContributingPages: Int,
+        maxEstimatedInputTokens: Int,
+        maxEstimatedOutputTokens: Int,
+        preferSceneBreaks: Boolean,
+    ): String = fingerprintIndexed(
+        listOf(
+            "envelope-policy",
+            maxBlocksPerEnvelope,
+            maxContributingPages,
+            maxEstimatedInputTokens,
+            maxEstimatedOutputTokens,
+            preferSceneBreaks,
+        ),
+    )
+
+    /**
+     * Per-envelope contributing corpus composite (schemas contract §1.5):
+     * the contributing pages of ONE envelope, in planned order, each as
+     * `pageKey to pageOcrContentFingerprint`. Payload order is hashed
+     * verbatim — callers must pass the canonical planned order (same
+     * core-then-context convention as T924-AP-03, wave-2 F4).
+     */
+    fun envelopeContributingCorpusFingerprint(
+        contributingPages: List<Pair<String, String>>,
+    ): String {
+        val fields = mutableListOf<Any?>("envelope-contributing")
+        contributingPages.forEachIndexed { index, (pageKey, contentFingerprint) ->
+            fields += "page[$index]"
+            fields += pageKey
+            fields += contentFingerprint
+        }
+        return fingerprintIndexed(fields)
+    }
+
+    /**
+     * T924-SC-08 `EnvelopePlan.planInputFingerprint`: corpus slice + planner
+     * version + envelope policy + the pending-block set, in canonical page
+     * then reading order. Callers pass only pages that carry pending blocks
+     * (textless pages contribute nothing) — the composite hashes exactly the
+     * planner's pending universe.
+     */
+    fun envelopePlanInputFingerprint(
+        corpusFingerprint: String,
+        plannerVersion: Int,
+        policyFingerprint: String,
+        pages: List<EnvelopePlanInputPage>,
+    ): String {
+        val fields = mutableListOf<Any?>(
+            "envelope-plan-input",
+            corpusFingerprint,
+            plannerVersion,
+            policyFingerprint,
+        )
+        pages.forEachIndexed { pageIndex, page ->
+            fields += "page[$pageIndex]"
+            fields += page.pageKey
+            page.orderedStableBlockIds.forEachIndexed { blockIndex, blockId ->
+                fields += "block[$blockIndex]"
+                fields += blockId
+            }
+        }
+        return fingerprintIndexed(fields)
+    }
+
+    /**
+     * T924-SC-10 `EnvelopePlan.planFingerprint`: SHA-256 over the canonical
+     * re-encoded JSON of the plan DTO with operational fields zeroed and the
+     * `planFingerprint` itself blanked (a value cannot contain its own hash).
+     * Callers own the hashing view; this is the byte-level core only.
+     */
+    fun envelopePlanContentFingerprint(canonicalPlanJson: String): String =
+        sha256Hex(canonicalPlanJson.toByteArray(Charsets.UTF_8))
+
     /** Convenience mapping of a live OCR snapshot onto [OcrBlockContent] order. */
     fun pageOcrContentBlocks(page: PageTranslation): List<OcrBlockContent> =
         page.blocks.map { block ->
@@ -500,6 +596,15 @@ object StageFingerprints {
      */
     fun sourceExcerptHash(excerpt: String): String =
         sha256Hex(normalizeText(excerpt).toByteArray(Charsets.UTF_8))
+
+    /**
+     * Public canonical field hasher — the single T924-SC-08 encoding core
+     * behind every builder in this object (wave-2 F2 consolidation). Named
+     * builders are preferred; this is the sanctioned core for planner-domain
+     * composites whose inputs do not belong in the `artifact` package (e.g.
+     * the golden fixtures' page-content markers).
+     */
+    fun canonicalFingerprint(fields: List<Any?>): String = fingerprintIndexed(fields)
 
     private fun fingerprint(vararg fields: Any?): String = fingerprintIndexed(fields.toList())
 
@@ -540,7 +645,12 @@ object StageFingerprints {
     /** Explicit absence value for authority fingerprints (FP-04); never "". */
     const val AUTHORITY_ABSENT = "ABSENT"
 
-    private fun sha256Hex(bytes: ByteArray): String =
+    /**
+     * Raw SHA-256 over [bytes], lowercase hex — the byte-level core under
+     * [profileContentFingerprint], [envelopePlanContentFingerprint] and
+     * [sourceExcerptHash] (T924-SC-09/SC-10).
+     */
+    fun sha256Hex(bytes: ByteArray): String =
         MessageDigest.getInstance("SHA-256")
             .digest(bytes)
             .joinToString("") { byte -> "%02x".format(byte) }
@@ -575,4 +685,18 @@ data class TranslationProvenancePage(
     val pageOcrContentFingerprint: String,
     val orderedStableBlockIds: List<String>,
     val orderedBlockSourceTextHashes: List<String>,
+)
+
+/**
+ * One pending page's planning-facing input for
+ * [StageFingerprints.envelopePlanInputFingerprint] (T924-SC-08, wave-2 F2).
+ * Only the block ids matter to the composite — text, geometry and content
+ * fingerprints enter through [StageFingerprints.ocrCorpusFingerprint]
+ * (`corpusFingerprint`) instead, so this carrier keeps the plan input a
+ * function of the pending-block SET plus corpus identity.
+ */
+data class EnvelopePlanInputPage(
+    val pageKey: String,
+    /** Ordered (reading-order) stable block ids pending on this page. */
+    val orderedStableBlockIds: List<String>,
 )
