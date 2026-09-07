@@ -10,7 +10,6 @@ import eu.kanade.translation.translator.ProviderFailureRetryability
 import eu.kanade.translation.translator.ProviderRequestKey
 import eu.kanade.translation.translator.ProviderRequestMetadata
 import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
-import eu.kanade.translation.translator.SharedProviderRequestGovernor
 import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
 import eu.kanade.translation.translator.analysis.AnalysisResponseValidator.AnalysisResponseOutcome
 import eu.kanade.translation.translator.retry.RequestRetryBudget
@@ -84,14 +83,22 @@ sealed interface AnalysisChunkAttempt {
  * Executes the per-chunk attempt policy: transport retries under
  * `withTranslationRetry` (3 transport attempts inside the shared root budget
  * mechanism, T924-AP-08.3), admission through the nested 15-RPM Batch
- * sub-limit bucket and then the shared provider bucket (DR-D), semantic
- * policy = 0-1 identical reissues on PROTOCOL_MALFORMED, then pause.
+ * sub-limit bucket and then exactly ONE shared-provider-bucket admission
+ * made by the transport itself (DR-D; mirrors the translation envelope,
+ * ProfileEnvelopeExecutor), semantic policy = 0-1 identical reissues on
+ * PROTOCOL_MALFORMED, then pause.
+ *
+ * The executor deliberately holds NO [eu.kanade.translation.translator.ProviderRequestGovernor]:
+ * the real transports (`OpenAiCompatibleTranslator`/`GeminiTranslator`)
+ * already admit every HTTP attempt through the shared bucket. Passing
+ * request metadata to the retry driver as well made a SECOND nested
+ * admission on the same key, which `maxInFlight = 1` could never grant —
+ * every analysis chunk stalled to its foreground-wait deadline and paused
+ * (wave-7c review F-1).
  */
 class AnalysisChunkExecutor(
     private val transport: AnalysisTextTransport,
     private val sublimitGate: BatchRequestSublimitGate = SharedBatchRequestSublimitGate.instance,
-    private val governor: eu.kanade.translation.translator.ProviderRequestGovernor =
-        SharedProviderRequestGovernor.instance,
 ) {
 
     private val requestKey: ProviderRequestKey = ProviderRequestKey(
@@ -135,8 +142,9 @@ class AnalysisChunkExecutor(
 
     /**
      * ONE attempt sequence for one chunk: admitted through the Batch
-     * sub-limit, transport-retried through the shared governor bucket, then
-     * validated. Malformed responses get EXACTLY ONE identical reissue
+     * sub-limit, then transport-retried — the transport makes the ONE
+     * shared-provider-bucket admission per HTTP attempt — and validated.
+     * Malformed responses get EXACTLY ONE identical reissue
      * (T924-AP-05); refusals get none (typed terminal for the request).
      */
     suspend fun execute(
@@ -161,12 +169,15 @@ class AnalysisChunkExecutor(
             attemptsUsed++
             val rawText = try {
                 sublimitGate.executeBatch(metadata) {
+                    // No requestMetadata here: the transport self-admits
+                    // through the shared provider bucket exactly once
+                    // (wave-7c review F-1 — a driver-level admission would
+                    // nest a second one the maxInFlight=1 bucket never
+                    // grants).
                     withTranslationRetry(
                         maxAttempts = 3,
                         baseDelayMs = 1_000L,
                         logTag = transport.providerId,
-                        requestMetadata = metadata,
-                        governor = governor,
                         retryBudget = budget,
                     ) {
                         transport.postStructuredAnalysis(request.requestJson, request.chunkId)

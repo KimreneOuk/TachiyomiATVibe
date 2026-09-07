@@ -318,13 +318,9 @@ class AnalysisChunkValidationTest {
         override suspend fun delay(millis: Long) {}
     }
 
-    private fun executor(transport: FakeTransport) = AnalysisChunkExecutor(
+    private fun executor(transport: AnalysisTextTransport) = AnalysisChunkExecutor(
         transport = transport,
         sublimitGate = BatchRequestSublimitGate(NoDelayClock()),
-        governor = ProviderRequestGovernor(
-            policy = { ProviderQuotaPolicy(minimumSpacingMs = 0L, pollIntervalMs = 10L) },
-            clock = NoDelayClock(),
-        ),
     )
 
     @Test
@@ -395,6 +391,63 @@ class AnalysisChunkValidationTest {
         val attempt = AnalysisChunkExecutor(failing).execute(request(), corePageKeys = setOf("p0"))
         attempt.shouldBeInstanceOf<AnalysisChunkAttempt.TransportPaused>()
         attempt.failure.kind shouldBe ProviderFailureKind.RATE_LIMIT
+    }
+
+    // ------------------------------------------------------------------
+    // Wave-7c review F-1 regression: the transport makes the ONLY shared
+    // provider-bucket admission.
+    // ------------------------------------------------------------------
+
+    /**
+     * Self-admits through a real [ProviderRequestGovernor] exactly like the
+     * production engines (`OpenAiCompatibleTranslator`/`GeminiTranslator`
+     * wrap their HTTP call in `requestGovernor.executeValue`). The old
+     * executor ALSO admitted at the retry driver (`requestMetadata`), and
+     * with `maxInFlight = 1` that outer admission held the bucket the nested
+     * one needed — every chunk stalled to its foreground-wait deadline and
+     * came back `TransportPaused`. With the fix, the single admission is
+     * granted and the chunk validates.
+     */
+    private class SelfAdmittingTransport(
+        private val governor: ProviderRequestGovernor,
+        private val responseJson: () -> String,
+    ) : AnalysisTextTransport {
+        override val providerId: String = "fake"
+        override val modelId: String = "fake-model"
+        override val credentialSignature: String? = "cred-signature"
+
+        override suspend fun postStructuredAnalysis(requestJson: String, chunkId: String): String =
+            governor.executeValue(
+                eu.kanade.translation.translator.ProviderRequestMetadata(
+                    key = eu.kanade.translation.translator.ProviderRequestKey(
+                        backend = providerId,
+                        model = modelId,
+                        credentialScope = credentialSignature,
+                    ),
+                    operation = "analysis_chunk",
+                ),
+            ) {
+                responseJson()
+            }
+    }
+
+    @Test
+    fun `self-admitting transport with a maxInFlight=1 bucket still completes the chunk (F-1)`() = runTest {
+        val governor = ProviderRequestGovernor(
+            policy = {
+                ProviderQuotaPolicy(
+                    maxInFlight = 1,
+                    minimumSpacingMs = 0L,
+                    pollIntervalMs = 10L,
+                    maxForegroundWaitMs = 300L,
+                )
+            },
+        )
+        val attempt = executor(
+            SelfAdmittingTransport(governor) { validResponseJson().replace("\"COMEDY_X\", ", "") },
+        ).execute(request(), corePageKeys = setOf("p0"))
+        attempt.shouldBeInstanceOf<AnalysisChunkAttempt.Validated>()
+        attempt.coverage.kind shouldBe AnalysisCoverageKind.COMPLETE
     }
 }
 
