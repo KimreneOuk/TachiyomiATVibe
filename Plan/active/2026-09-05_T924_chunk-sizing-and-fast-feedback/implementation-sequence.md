@@ -559,15 +559,23 @@ Stage-7 owed items (status 2026-09-07):
   and paused under `maxInFlight=1`; FF-01 could never freeze a profile
   with a real engine) — FIXED in `45216e7` with a self-admitting
   transport regression test on a real `maxInFlight=1` governor.
-  Remaining review findings (all flagged-path-only, zero FF-OFF
-  regression): F-2 MED no FINALIZE-resume branch (crash between
-  FINALIZE and COMPLETE re-runs the machine from RUN_SNAPSHOT);
-  F-3 MED COMPLETED returned even when the record publication was
-  rejected; F-4 MED TreatAsFinished not gated on per-page display
-  commitment (inpaint-FAILED pages could be retired as finished);
-  F-5/F-6/F-7 LOW (overlay bind-time key, retention outside
-  NonCancellable, observability nits). Recommend F-2/F-3/F-4 as the
-  next flagged-path wave.
+  **F-2/F-3/F-4 MED: FIXED (2026-09-05, commit `9baa8aa`, one reviewed
+  commit on `t924/batch-profile-pipeline`).** F-2: ST-14
+  `resumeFinalizeOrComplete` — a durable FINALIZE re-enters the
+  idempotent finalize drain (never backward into TRANSLATE), a durable
+  COMPLETE resumes zero-work; enabling discovery: the FINALIZE record
+  had been silently rejected every run (D6 counters over the 32-key
+  phaseCounters bound — `publishRecord` now trims oldest keys). F-3:
+  the run-closure COMPLETE publication is inspected — rejection returns
+  typed PAUSED (`RUN_CLOSURE_REJECTED_REASON`), never a false COMPLETED.
+  F-4: `TreatAsFinished` requires per-page display evidence (manifest
+  committed bundle or textless terminal; REQUIRED
+  `allPagesDisplayCommitted` param), pinned by the dispatch-level
+  `BatchDispatchResumeWiringTest` Case 3 (RED verified pre-fix). Sweep
+  after the commit: 47 suites / 192 tests green. **Stage-7 activation
+  blocker CLEARED — FF-01 device A/B (gate 5.7) may proceed.** Remaining
+  LOW findings F-5/F-6/F-7 (overlay bind-time key, retention outside
+  NonCancellable, observability nits) stay open, non-blocking.
 - **F-W6-3 store strict-mode consideration:** at Stage 7 layout
   commits, where per-block CAS + page atomicity interact again,
   consider store-level strict mode (reject when
