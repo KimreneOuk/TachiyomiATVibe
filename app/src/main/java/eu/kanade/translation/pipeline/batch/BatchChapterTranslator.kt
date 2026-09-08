@@ -157,6 +157,22 @@ internal class BatchChapterTranslator(
         toLang: TextTranslatorLanguage,
     ): BatchExpectedFingerprints = batchExpectedFingerprintsFn(fromLang, toLang)
 
+    /**
+     * Stage-7 review F-4: per-page display evidence for the FF-01e.2a
+     * TreatAsFinished gate — a page counts only when its display is durably
+     * retired: a committed bundle in the artifact manifest OR a durable
+     * textless terminal. A page with neither has no display to retire, so
+     * [ChapterProfileBatchCoordinator.resumeCompletedOutcome] must NOT fire
+     * TreatAsFinished — the chapter is not actually finished.
+     */
+    private fun activeRunPagesDisplayCommitted(
+        store: ChapterTranslationStore,
+        orderedPages: List<Pair<String, Int>>,
+    ): Boolean = orderedPages.all { (pageKey, _) ->
+        store.artifactManifest?.pages?.get(pageKey)?.committed != null ||
+            store.state.value[pageKey]?.isTextlessTerminal == true
+    }
+
     private suspend fun updatePageFromCurrentSnapshot(
         store: ChapterTranslationStore,
         pageKey: String,
@@ -655,11 +671,16 @@ internal class BatchChapterTranslator(
                     // flag-OFF run over a chapter whose recorded run reached
                     // COMPLETE is treated as finished — the legacy schedule
                     // never re-runs it. Flag ON / no COMPLETE record keeps the
-                    // dispatch below byte-identical.
+                    // dispatch below byte-identical. Stage-7 review F-4: the
+                    // gate also demands per-page display evidence — a COMPLETE
+                    // record over an unrendered page dispatches normally so
+                    // the legacy schedule re-derives the missing display.
                     ChapterProfileBatchCoordinator.resumeCompletedOutcome(
                         record = ChapterProfileBatchCoordinator.activeRunRecordOrNull(store),
                         currentFlagOn = profilePipelineEnabled,
                         orderedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
+                        allPagesDisplayCommitted =
+                            activeRunPagesDisplayCommitted(store, orderedPages),
                     )?.let { finished -> return finished }
                     return when (
                         profilePipelineDispatchKind(

@@ -177,6 +177,150 @@ class BatchDispatchResumeWiringTest {
         sourceFingerprint = hex64("source-$pageKey"),
     )
 
+    /**
+     * Translation-committed but never displayable: the inpaint failed, so the
+     * reader has nothing to show for this page. The flagged run's COMPLETE
+     * records translation-terminal alone — exactly the F-4 hole.
+     */
+    private fun translatedUnrenderedPage(pageKey: String) = PageTranslation(
+        sourceFileName = pageKey,
+        blocks = mutableListOf(
+            eu.kanade.translation.model.TranslationBlock(
+                blockId = "b1",
+                text = "source",
+                translation = "translated",
+                width = 10f,
+                height = 10f,
+                x = 0f,
+                y = 0f,
+                symHeight = 1f,
+                symWidth = 1f,
+                angle = 0f,
+            ),
+        ),
+        imgWidth = 100f,
+        imgHeight = 160f,
+        decodeSampleSize = 1,
+        ocrStatus = StageStatus.READY,
+        translationStatus = StageStatus.READY,
+        inpaintStatus = StageStatus.FAILED,
+        sourceFingerprint = hex64("source-$pageKey"),
+        detectionFingerprint = hex64("detection-$pageKey"),
+        ocrFingerprint = hex64("ocr-$pageKey"),
+    )
+
+    /**
+     * Shared durable fixture: an ARTIFACTS-authority store whose manifest
+     * carries a durably published COMPLETE run record (real sidecar
+     * publication), with the given page states in memory.
+     */
+    private fun completeRecordStore(
+        pageKeys: List<String>,
+        pages: Map<String, PageTranslation>,
+    ): Triple<ChapterArtifactStore, ChapterArtifactStore.TransactionOutcome.Committed, ChapterTranslationStore> {
+        val artifact = ChapterArtifactStore(
+            AtomicChapterDocuments(FakeChapterDocumentIo()),
+            ChapterArtifactLayout("Chapter 1"),
+        )
+        var manifest = artifact
+            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
+            .manifest
+        manifest = manifest.copy(
+            authority = ManifestAuthority.ARTIFACTS,
+            cutoverAtEpochMs = 1L,
+            migratedFromLegacyAtEpochMs = 1L,
+            updatedAtEpochMs = 1L,
+        )
+        check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
+        val durable = artifact.readManifest().shouldNotBeNull()
+
+        val frozen = ChapterProfileBatchCoordinator.frozenRunConfig(
+            sourceLang = "ja",
+            targetLang = "en",
+            ocrEngine = "FakeOcrEngine",
+            inpaintMode = "OFF",
+            providerKey = "fake:provider",
+            flagProfilePipeline = true,
+        )
+        val completeRecord = ChapterRunRecord(
+            runId = "run-dispatch-complete-1",
+            state = ChapterRunState.COMPLETE,
+            frozenConfig = frozen,
+            frozenRunConfigFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozen),
+            orderedSourceDigest = hex64("ordered-source"),
+            analysisPolicyFingerprint = hex64("analysis-policy"),
+            envelopePolicyFingerprint = hex64("envelope-policy"),
+            createdAtEpochMs = 1L,
+            updatedAtEpochMs = 1L,
+        )
+        val publication = artifact.publishActiveRun(
+            manifest = durable,
+            record = completeRecord,
+            contentFingerprint = hex64("complete-run-record"),
+        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+
+        val store = ChapterTranslationStore(
+            translationFile = null as UniFile?,
+            fileCreator = null,
+            initialPages = pages,
+            artifactStore = artifact,
+            initialArtifactManifest = publication.manifest,
+        )
+        return Triple(artifact, publication, store)
+    }
+
+    /**
+     * F-4 (wave-7c review) at dispatch level: a recorded COMPLETE is NOT
+     * enough to retire the chapter — FF-01e.2a authorizes TreatAsFinished
+     * only when the final per-page displays committed. One translation-
+     * committed page with a FAILED inpaint has nothing to display: the
+     * dispatch must drop to the legacy schedule so that page re-runs, not
+     * return a typed COMPLETED that forever hides it.
+     */
+    @Test
+    fun `flag-off dispatch over a COMPLETE run with an unrendered page does not treat the chapter as finished`() {
+        val pageKeys = listOf("p0", "p1")
+        val (artifact, publication, store) = completeRecordStore(
+            pageKeys,
+            mapOf(
+                "p0" to finishedTextlessPage("p0"),
+                "p1" to translatedUnrenderedPage("p1"),
+            ),
+        )
+
+        val harness = TranslationCoexistenceHarness.create(pageKeys, storeOverride = store)
+        try {
+            harness.stubChapterPages(pageKeys)
+            val batch = harness.launchBatch(pageKeys)
+
+            // The legacy schedule must actually START the unrendered page's
+            // work. Use the same deterministic "schedule is EXECUTING" signal
+            // as Case 2 — the fake transport's start signal, fired at the
+            // identity check before any wait (the contextual native fakes are
+            // not reliable observation points from the standard lane). A
+            // TreatAsFinished short-circuit returns before ANY coordinator
+            // exists, so this await alone disproves it. Whether the legacy
+            // planner then re-inpaints or re-translates the page is its own
+            // decision, outside this dispatch-gate test's scope.
+            runBlocking {
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                    harness.transportStarted["p1"].shouldNotBeNull().await()
+                }
+            }
+
+            batch.job.cancel()
+            runBlocking {
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.job.join() }
+            }
+
+            // The durable COMPLETE record still owns the chapter, untouched.
+            val manifestAfter = artifact.readManifest().shouldNotBeNull()
+            manifestAfter.activeRun shouldBe publication.manifest.activeRun
+        } finally {
+            harness.close()
+        }
+    }
+
     // ------------------------------------------------------------------
     // Case 2 — FF-01e.2b at dispatch: flag OFF over an interrupted (non-
     // COMPLETE) flagged run drops to the legacy schedule, which STARTS.

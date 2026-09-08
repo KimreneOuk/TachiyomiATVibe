@@ -10,9 +10,11 @@ import eu.kanade.translation.StagePatchResult
 import eu.kanade.translation.artifact.AtomicChapterDocuments
 import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.EnvelopePolicySnapshot
 import eu.kanade.translation.artifact.EvidenceRef
+import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.InpaintMaskBox
 import eu.kanade.translation.model.PageStage
@@ -43,6 +45,7 @@ import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.kotest.matchers.types.shouldBeInstanceOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -51,18 +54,19 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * T924 Stage 7 (D4, ST-14): the drained TRANSLATE tail — FINALIZE (serial
- * inpaint drain through the overlap scheduler, stranded-page reconciliation,
- * flush, retention), the run's FIRST/ONLY COMPLETE publication, and the
- * wave-2 F1 decideResume production semantics (OFF+COMPLETE ⇒ TreatAsFinished).
+ * T924-ST-14 resume (wave-7c review F-2): a re-dispatch over a durable record
+ * already past TRANSLATE never steps the run record BACKWARD to RUN_SNAPSHOT.
+ * A FINALIZE record resumes the idempotent finalize drain (zero re-OCR,
+ * re-analysis, re-translation); a COMPLETE record is an idempotent finished
+ * outcome with zero work and no new record publication.
  */
-class Stage7FinalizeCoordinatorTest {
+class Stage7FinalizeResumeCoordinatorTest {
 
     @TempDir
     lateinit var mangaDir: File
 
     // ------------------------------------------------------------------
-    // Scaffolding (dispatch-test idioms, verbatim shapes).
+    // Scaffolding (Stage7FinalizeCoordinatorTest idioms).
     // ------------------------------------------------------------------
 
     private fun hex64(tag: String): String =
@@ -130,7 +134,7 @@ class Stage7FinalizeCoordinatorTest {
                     ocrResult = ocrPage(pageKey, "source-$pageKey"),
                     expectedLeaseToken = lease.token,
                 ),
-                description = "t924 stage7 fake preflight ocr",
+                description = "t924 stage7 resume fake preflight ocr",
             ).shouldBeInstanceOf<StagePatchResult.Accepted>()
             val after = store.snapshot(pageKey)
             return OcrReadyPageRef(
@@ -175,19 +179,65 @@ class Stage7FinalizeCoordinatorTest {
                     dependencyFingerprint = identity.dependencyFingerprint,
                     artifactPageVersion = identity.artifactPageVersion,
                 ),
-                description = "t924 stage7 fake overlap inpaint",
+                description = "t924 stage7 resume fake overlap inpaint",
             ) { page ->
                 page!!.apply { inpaintStatus = StageStatus.READY }
             }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
         }
     }
 
-    private inner class FakeAnalyzer : AnalysisChunkRunner {
+    /**
+     * The crash seam: performs the REAL guarded inpaint, but the moment the
+     * durable run record reads FINALIZE it dies with [CancellationException] —
+     * a process death AFTER the FINALIZE record is durable but BEFORE the
+     * COMPLETE publication (the drainSerial inpaint is the first finalize-
+     * window work under the test dispatcher).
+     */
+    private inner class FinalizeWindowKillLane(
+        private val store: ChapterTranslationStore,
+        private val identities: ConcurrentHashMap<String, BatchWriteIdentity>,
+    ) : NativeLaneWorker {
+        val inpainted = mutableListOf<String>()
+
+        override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? = null
+
+        override suspend fun runInpaintStage(pageKey: String) {
+            runInpaintStage(pageKey, null)
+        }
+
+        override suspend fun runInpaintStage(pageKey: String, nativeHandoff: Any?) {
+            if (durableRunRecord(store)?.state == ChapterRunState.FINALIZE) {
+                throw CancellationException("t924 test: process death in the finalize window")
+            }
+            inpainted += pageKey
+            val identity = identities[pageKey]
+                ?: error("overlap scheduler must register the write identity for $pageKey")
+            store.updatePageGuarded(
+                pageKey = pageKey,
+                expected = ChapterTranslationStore.PatchPrecondition(
+                    generation = identity.generation,
+                    pageVersion = identity.pageVersion,
+                    leaseToken = identity.leaseToken,
+                    candidateGenerationId = identity.candidateGenerationId,
+                    dependencyFingerprint = identity.dependencyFingerprint,
+                    artifactPageVersion = identity.artifactPageVersion,
+                ),
+                description = "t924 stage7 resume kill lane inpaint",
+            ) { page ->
+                page!!.apply { inpaintStatus = StageStatus.READY }
+            }.shouldBeInstanceOf<ChapterTranslationStore.PatchResult.Accepted>()
+        }
+    }
+
+    private inner class CountingAnalyzer : AnalysisChunkRunner {
+        val chunks = AtomicInteger(0)
+
         override suspend fun executeChunk(
             chunk: PlannedAnalysisChunk,
             identity: AnalysisRunIdentity,
             evidence: AnalysisEvidenceTexts,
         ): AnalysisChunkRunOutcome {
+            chunks.incrementAndGet()
             val firstStoragePage = chunk.contributingPageKeys.first()
             val wirePage = evidence.wirePageKeyByStorageKey[firstStoragePage].shouldNotBeNull()
             val wireBlock = evidence.blockIdsByPage[wirePage].shouldNotBeNull().first()
@@ -250,11 +300,14 @@ class Stage7FinalizeCoordinatorTest {
         return ContextualRequestBuilder.toBatch(request, results)
     }
 
-    private fun runRecord(store: ChapterTranslationStore): eu.kanade.translation.artifact.ChapterRunRecord {
+    private fun durableRunRecord(store: ChapterTranslationStore): ChapterRunRecord? {
         val artifact = artifactStore()
-        val pointer = artifact.readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
-        return (artifact.readRunRecord(pointer) as ChapterArtifactStore.RunRecordRead.Usable).record
+        val pointer = artifact.readManifest().shouldNotBeNull().activeRun ?: return null
+        return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
     }
+
+    private fun activeRunPointer(store: ChapterTranslationStore): SidecarPointer =
+        artifactStore().readManifest().shouldNotBeNull().activeRun.shouldNotBeNull()
 
     private fun coordinator(
         store: ChapterTranslationStore,
@@ -286,123 +339,139 @@ class Stage7FinalizeCoordinatorTest {
         renderJoin = null,
     )
 
+    private fun newScheduler(
+        store: ChapterTranslationStore,
+        pageKeys: List<String>,
+        identities: ConcurrentHashMap<String, BatchWriteIdentity>,
+        lane: NativeLaneWorker,
+    ): OverlapScheduler = OverlapScheduler(
+        store = store,
+        nativeWorker = lane,
+        orderedPageKeys = pageKeys,
+        batchWriteIdentities = identities,
+        releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
+    )
+
     // ------------------------------------------------------------------
     // Tests.
     // ------------------------------------------------------------------
 
     @Test
-    fun `drained run finalizes and publishes COMPLETE exactly once with the overlap inpaint drained`() = runTest {
-        val store = lazyStore()
-        val pageKeys = (1..3).map { "p$it" }
-        store.preRegisterPages(pageKeys)
-        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
-        val overlapLane = FakeOverlapInpaintLane(store, identities)
-        val overlapScheduler = OverlapScheduler(
-            store = store,
-            nativeWorker = overlapLane,
-            orderedPageKeys = pageKeys,
-            batchWriteIdentities = identities,
-            releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
-        )
-        val translator = FakeTranslator { _, chunk -> responseFor(chunk) }
+    fun `process death after the FINALIZE record resumes the idempotent drain without re-running work (ST-14 F-2)`() =
+        runTest {
+            val store = lazyStore()
+            val pageKeys = (1..3).map { "p$it" }
+            store.preRegisterPages(pageKeys)
+            val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
 
-        val outcome = coordinator(
-            store,
-            FakePreflightOcrWorker(store),
-            pages,
-            FakeAnalyzer(),
-            translator,
-            overlapScheduler,
-        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+            // ---- Pass 1: dies in the finalize window (FINALIZE durable, ----
+            // ---- COMPLETE never published).                             ----
+            val killIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val killLane = FinalizeWindowKillLane(store, killIdentities)
+            val firstTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+            val killOutcome = runCatching {
+                coordinator(
+                    store,
+                    FakePreflightOcrWorker(store),
+                    pages,
+                    CountingAnalyzer(),
+                    firstTranslator,
+                    newScheduler(store, pageKeys, killIdentities, killLane),
+                ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+            }
+            killOutcome.exceptionOrNull().shouldBeInstanceOf<CancellationException>()
 
-        // Stage-7 terminal: the run COMPLETES (legacy completion semantics;
-        // DISPLAY_READY redefinition is gate-7.8-gated OFF).
-        outcome.status shouldBe BatchPass1Status.COMPLETED
-        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
-        outcome.needsTranslation shouldBe emptyList()
-        ChapterProfileBatchCoordinator.GATE_7_8_DISPLAY_READY_COMPLETION_ENABLED shouldBe false
+            // The durable record is FINALIZE under the original run id —
+            // never regressed, never re-snapshotted.
+            val killedRecord = durableRunRecord(store).shouldNotBeNull()
+            killedRecord.state shouldBe ChapterRunState.FINALIZE
+            val killedRunId = killedRecord.runId
+            killLane.inpainted shouldBe emptyList()
 
-        // Every page: translation committed (envelope) + inpaint committed
-        // (serial drain through the overlap scheduler's lane).
-        pageKeys.forEach { key ->
-            val page = store.snapshot(key).page.shouldNotBeNull()
-            page.translationStatus shouldBe StageStatus.READY
-            page.inpaintStatus shouldBe StageStatus.READY
+            // ---- Pass 2: a SECOND coordinator over the SAME store. The ----
+            // ---- ST-14 resume must re-run ONLY the finalize drain.     ----
+            val resumeIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val resumeLane = FakeOverlapInpaintLane(store, resumeIdentities)
+            val resumeOcrWorker = FakePreflightOcrWorker(store)
+            val resumeAnalyzer = CountingAnalyzer()
+            val resumeTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+            val resumeOutcome = coordinator(
+                store,
+                resumeOcrWorker,
+                pages,
+                resumeAnalyzer,
+                resumeTranslator,
+                newScheduler(store, pageKeys, resumeIdentities, resumeLane),
+            ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+            // The run closes COMPLETE — same run id, no backward move.
+            resumeOutcome.status shouldBe BatchPass1Status.COMPLETED
+            resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+            val resumedRecord = durableRunRecord(store).shouldNotBeNull()
+            resumedRecord.state shouldBe ChapterRunState.COMPLETE
+            resumedRecord.runId shouldBe killedRunId
+            resumedRecord.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE] shouldBe 1
+
+            // Zero paid re-work: no re-OCR, no re-analysis, no re-translation.
+            resumeOcrWorker.ocrPages shouldBe emptyList()
+            resumeAnalyzer.chunks.get() shouldBe 0
+            resumeTranslator.requests shouldBe emptyList()
+
+            // The finalize drain re-inpainted exactly the pages the killed
+            // pass left pending (already-committed pages are never re-run).
+            resumeLane.inpainted shouldContainExactly pageKeys
+            pageKeys.forEach { key ->
+                val page = store.snapshot(key).page.shouldNotBeNull()
+                page.translationStatus shouldBe StageStatus.READY
+                page.inpaintStatus shouldBe StageStatus.READY
+            }
         }
-        overlapLane.inpainted shouldContainExactly pageKeys
-        overlapScheduler.counters.snapshot()["serialInpaintsExecuted"] shouldBe 3L
-
-        // The run record is CLOSED as COMPLETE with the finalize counters —
-        // the FIRST and ONLY COMPLETE publication of the run. (The gate-6.5
-        // overlap counters ride the FINALIZE record — the 32-key
-        // phaseCounters bound; the live snapshot is asserted above.)
-        val record = runRecord(store)
-        record.state shouldBe ChapterRunState.COMPLETE
-        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE] shouldBe 1
-        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_FINALIZE] shouldBe 1
-        record.phaseCounters["pagesTranslated"] shouldBe 3
-
-        // Wave-2 F1: the OFF+COMPLETE resume decision tree now applies.
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = false)
-            .shouldBeInstanceOf<ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.TreatAsFinished>()
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = true)
-            .shouldBeInstanceOf<ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.RunFlaggedPath>()
-        val finishedOutcome = ChapterProfileBatchCoordinator.resumeCompletedOutcome(
-            record = record,
-            currentFlagOn = false,
-            orderedPageKeys = pageKeys.toSet(),
-            allPagesDisplayCommitted = true,
-        ).shouldNotBeNull()
-        finishedOutcome.status shouldBe BatchPass1Status.COMPLETED
-        ChapterProfileBatchCoordinator.resumeCompletedOutcome(
-            record = null,
-            currentFlagOn = false,
-            orderedPageKeys = pageKeys.toSet(),
-            allPagesDisplayCommitted = true,
-        ) shouldBe null
-    }
 
     @Test
-    fun `a block that never returns is a typed resumable pause, never a drained COMPLETE (ST-12 gap)`() = runTest {
-        val store = lazyStore()
-        val pageKeys = (1..3).map { "p$it" }
-        store.preRegisterPages(pageKeys)
-        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
-        val overlapScheduler = OverlapScheduler(
-            store = store,
-            nativeWorker = FakeOverlapInpaintLane(store, identities),
-            orderedPageKeys = pageKeys,
-            batchWriteIdentities = identities,
-            releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
-        )
-        // p2's block never comes back: after the full repair budget the page
-        // is still partially covered — an UNRESOLVED GAP (ST-12). The run
-        // PAUSES for resume; it never drains into FINALIZE with untranslated
-        // planned work, and the gap page is never marked stranded.
-        val translator = FakeTranslator { _, chunk -> responseFor(chunk, omit = setOf("p2_b1")) }
+    fun `a durable COMPLETE record under flag ON re-dispatches as a finished outcome with zero work`() =
+        runTest {
+            val store = lazyStore()
+            val pageKeys = (1..3).map { "p$it" }
+            store.preRegisterPages(pageKeys)
+            val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
 
-        val outcome = coordinator(
-            store,
-            FakePreflightOcrWorker(store),
-            pages,
-            FakeAnalyzer(),
-            translator,
-            overlapScheduler,
-        ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+            // ---- Pass 1: the full happy path through COMPLETE. ----
+            val firstIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val firstOutcome = coordinator(
+                store,
+                FakePreflightOcrWorker(store),
+                pages,
+                CountingAnalyzer(),
+                FakeTranslator { _, chunk -> responseFor(chunk) },
+                newScheduler(store, pageKeys, firstIdentities, FakeOverlapInpaintLane(store, firstIdentities)),
+            ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+            firstOutcome.status shouldBe BatchPass1Status.COMPLETED
+            val completeRecord = durableRunRecord(store).shouldNotBeNull()
+            completeRecord.state shouldBe ChapterRunState.COMPLETE
+            val pointerAfterPass1 = activeRunPointer(store)
 
-        outcome.status shouldBe BatchPass1Status.PAUSED
-        outcome.failure.shouldNotBeNull()
-        val record = runRecord(store)
-        record.state shouldBe ChapterRunState.TRANSLATE
+            // ---- Pass 2: the flag-ON re-dispatch over the SAME store. ----
+            val resumeIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val resumeOcrWorker = FakePreflightOcrWorker(store)
+            val resumeAnalyzer = CountingAnalyzer()
+            val resumeTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+            val resumeOutcome = coordinator(
+                store,
+                resumeOcrWorker,
+                pages,
+                resumeAnalyzer,
+                resumeTranslator,
+                newScheduler(store, pageKeys, resumeIdentities, FakeOverlapInpaintLane(store, resumeIdentities)),
+            ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
 
-        // The ambiguous-partial response is discarded whole: NOTHING commits
-        // (p1/p3's valid blocks ride a response the classifier rejects), and
-        // all pages stay PENDING — resumable, never silently failed.
-        store.snapshot("p1").page.shouldNotBeNull().translationStatus shouldBe StageStatus.PENDING
-        store.snapshot("p3").page.shouldNotBeNull().translationStatus shouldBe StageStatus.PENDING
-        store.snapshot("p2").page.shouldNotBeNull().translationStatus shouldBe StageStatus.PENDING
-        store.durableFailuresSnapshot().containsKey("p2:TRANSLATION") shouldBe false
-    }
+            // Idempotent finished outcome, zero work, NO new publication.
+            resumeOutcome.status shouldBe BatchPass1Status.COMPLETED
+            resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.RESUME_COMPLETE_REASON
+            resumeOutcome.completedPageKeys.shouldNotBeNull() shouldBe pageKeys.toSet()
+            resumeOcrWorker.ocrPages shouldBe emptyList()
+            resumeAnalyzer.chunks.get() shouldBe 0
+            resumeTranslator.requests shouldBe emptyList()
+            activeRunPointer(store) shouldBe pointerAfterPass1
+            durableRunRecord(store).shouldNotBeNull().state shouldBe ChapterRunState.COMPLETE
+        }
 }

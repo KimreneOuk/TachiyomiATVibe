@@ -246,6 +246,16 @@ internal class ChapterProfileBatchCoordinator(
             ?.runId
             ?: newRunId(sourceDigest, frozenFingerprint)
 
+        // ---- ST-14 resume gates: a record already past TRANSLATE never ----
+        // ---- steps the durable state BACKWARD to RUN_SNAPSHOT.         ----
+        resumeFinalizeOrComplete(
+            artifact = artifact,
+            priorRecord = priorRecord,
+            frozenFingerprint = frozenFingerprint,
+            sourceDigest = sourceDigest,
+            orderedPages = orderedPages,
+        )?.let { resumed -> return resumed }
+
         val total = orderedPages.size
         var reusedPages = 0
         var checkpointedPages = 0
@@ -1464,7 +1474,6 @@ internal class ChapterProfileBatchCoordinator(
     ): BatchPass1Outcome {
         val frozenFingerprint = runConfigFingerprint(frozenConfig)
         val sourceDigest = orderedSourceDigest(orderedSourcePairs)
-        val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         // ST-14 entry: the FINALIZE phase pointer (resume re-runs finalize —
         // every step below is an idempotent re-run).
@@ -1488,6 +1497,38 @@ internal class ChapterProfileBatchCoordinator(
                 profilePointer = store.artifactManifest?.profile,
             ),
         )
+        return drainFinalizeAndComplete(
+            artifact = artifact,
+            runId = runId,
+            orderedPages = orderedPages,
+            corpusFingerprint = corpusFingerprint,
+            baseCounters = baseCounters,
+        )
+    }
+
+    /**
+     * Steps 2-6 of the ST-14 FINALIZE phase — the idempotent drain shared by
+     * the fresh entry ([runFinalizeAndComplete]) and the ST-14 FINALIZE
+     * resume ([resumeFinalizeOrComplete]):
+     *
+     *  2. Serial inpaint drain through the overlap scheduler — pages whose
+     *     inpaint already committed are skipped by the scheduler's candidate
+     *     rule (never re-inpainted); with no scheduler this is a no-op.
+     *  3. Persisted-layout publication sweep (idempotent per page).
+     *  4. Stranded-page reconciliation (safe re-run: terminal pages skip).
+     *  5. NonCancellable flush + retention reconciliation.
+     *  6. The run's FIRST and ONLY `COMPLETE` publication.
+     */
+    private suspend fun drainFinalizeAndComplete(
+        artifact: ChapterArtifactStore,
+        runId: String,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+        baseCounters: Map<String, Int>,
+    ): BatchPass1Outcome {
+        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
 
         // 2. Serial post-translate inpaint drain (overlap-fallback arm).
         overlapScheduler?.drainSerial()
@@ -1536,8 +1577,11 @@ internal class ChapterProfileBatchCoordinator(
 
         // 6. Run closure: the single COMPLETE publication of the run. The
         //    overlap counters live on the FINALIZE record (see above — the
-        //    32-key phaseCounters bound).
-        publishRecord(
+        //    32-key phaseCounters bound). The outcome is NOT advisory here:
+        //    a rejected (or unpublishable) closure leaves the run durably at
+        //    FINALIZE, so the coordinator pauses instead of reporting a
+        //    completion the record disagrees with (RUN_CLOSURE_REJECTED_REASON).
+        when (val closure = publishRecord(
             artifact,
             record(
                 runId,
@@ -1554,16 +1598,97 @@ internal class ChapterProfileBatchCoordinator(
                 ocrCorpusFingerprint = corpusFingerprint,
                 profilePointer = store.artifactManifest?.profile,
             ),
-        )
-        logcat(LogPriority.INFO) {
-            "TachiyomiAT t924 run COMPLETE pages=${allPageKeys.size} stranded=$strandedReconciled " +
-                "layouts=$layoutsPublished overlap=${overlapScheduler?.counters?.snapshot() ?: emptyMap()}"
+        )) {
+            is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT t924 run COMPLETE pages=${allPageKeys.size} stranded=$strandedReconciled " +
+                        "layouts=$layoutsPublished overlap=${overlapScheduler?.counters?.snapshot() ?: emptyMap()}"
+                }
+                return BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.COMPLETED,
+                    completedPageKeys = allPageKeys,
+                    reason = TRANSLATE_COMPLETE_REASON,
+                )
+            }
+            else -> {
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 run COMPLETE publication rejected " +
+                        "(outcome=${closure?.javaClass?.simpleName ?: "no-manifest"}); " +
+                        "pausing at FINALIZE"
+                }
+                return BatchPass1Outcome(
+                    needsTranslation = emptyList(),
+                    status = BatchPass1Status.PAUSED,
+                    completedPageKeys = allPageKeys,
+                    reason = RUN_CLOSURE_REJECTED_REASON,
+                )
+            }
         }
-        return BatchPass1Outcome(
-            needsTranslation = emptyList(),
-            status = BatchPass1Status.COMPLETED,
-            completedPageKeys = allPageKeys,
-            reason = TRANSLATE_COMPLETE_REASON,
+    }
+
+    /**
+     * ST-14 resume gates (contracts-state-transactions :188-197) for a
+     * durable record already past TRANSLATE, consulted at dispatch entry
+     * BEFORE any RUN_SNAPSHOT republication:
+     *
+     *  - `FINALIZE` (ST-14 Resume clause): a process death after the FINALIZE
+     *    record but before the COMPLETE publication resumes by RE-RUNNING the
+     *    idempotent finalize drain ([drainFinalizeAndComplete]) — never by
+     *    stepping the durable state BACKWARD to RUN_SNAPSHOT and re-entering
+     *    OCR/analysis/translate ("run FINALIZE to completion; do not
+     *    re-enter TRANSLATE/NATIVE/RENDER from FINALIZE"). The drain skips
+     *    already-committed pages and COMPLETE stays the run's FIRST/ONLY
+     *    closure record. Run identity (corpus fingerprint, progress counters)
+     *    rides the durable FINALIZE record — the same run, not a new one.
+     *  - `COMPLETE`: the run already closed — an idempotent finished outcome
+     *    with zero work and NO new record publication (the flag-ON complement
+     *    of the OFF+COMPLETE decision in [decideResume]/[resumeCompletedOutcome],
+     *    which only fires when the flag is OFF).
+     *
+     * Returns null — the normal run-start path proceeds unchanged — when the
+     * prior record is in any other state, or its frozen configuration
+     * fingerprint / ordered source digest no longer match this dispatch
+     * (ST-15: a mismatch starts a NEW run exactly as before).
+     */
+    private suspend fun resumeFinalizeOrComplete(
+        artifact: ChapterArtifactStore,
+        priorRecord: ChapterRunRecord?,
+        frozenFingerprint: String,
+        sourceDigest: String,
+        orderedPages: List<PageKey>,
+    ): BatchPass1Outcome? {
+        val resumable = priorRecord
+            ?.takeIf {
+                (it.state == ChapterRunState.FINALIZE || it.state == ChapterRunState.COMPLETE) &&
+                    it.frozenRunConfigFingerprint == frozenFingerprint &&
+                    it.orderedSourceDigest == sourceDigest
+            }
+            ?: return null
+        if (resumable.state == ChapterRunState.COMPLETE) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT t924 resume: recorded run already COMPLETE; finished without re-running work"
+            }
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.COMPLETED,
+                completedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
+                reason = RESUME_COMPLETE_REASON,
+            )
+        }
+        // A FINALIZE record always carries the run's corpus fingerprint (both
+        // drain entry paths publish it); a record without one is not this
+        // coordinator's shape — fall through to the normal start.
+        val corpusFingerprint = resumable.ocrCorpusFingerprint ?: return null
+        logcat(LogPriority.INFO) {
+            "TachiyomiAT t924 resume: FINALIZE record durable; re-running the idempotent finalize drain (ST-14)"
+        }
+        return drainFinalizeAndComplete(
+            artifact = artifact,
+            runId = resumable.runId,
+            orderedPages = orderedPages,
+            corpusFingerprint = corpusFingerprint,
+            baseCounters = resumable.phaseCounters,
         )
     }
 
@@ -2335,16 +2460,41 @@ internal class ChapterProfileBatchCoordinator(
      * state; per-page checkpoints in the manifest are the authoritative
      * durable state (T924-ST-06), so a rejected publication never fails the
      * preflight — it only loses advisory progress.
+     *
+     * Returns the publication outcome so callers that publish a NON-advisory
+     * record can act on it: the run-closure COMPLETE in
+     * [drainFinalizeAndComplete] MUST inspect it (a rejected closure leaves
+     * the run durably at FINALIZE — reporting finished would desynchronize
+     * the shell from the record), while the advisory preflight callers may
+     * ignore the return value.
+     *
+     * The phase pointer itself MUST never be lost to the T924-SC-02
+     * phaseCounters bound (32 keys): D6's executor counters re-blew the
+     * wave-7b budget, silently dropping the ST-14 FINALIZE record and with
+     * it the durable state a crash resume needs. Counters are best-effort
+     * progress carriers, so an over-bound record publishes with the OLDEST
+     * counter keys trimmed (insertion order) — the phase transition always
+     * lands.
      */
     private fun publishRecord(
         artifact: ChapterArtifactStore,
         record: ChapterRunRecord,
-    ) {
-        val manifest = store.artifactManifest ?: return
-        val json = ArtifactDocumentJson.encodeToString(record)
+    ): ChapterArtifactStore.TransactionOutcome? {
+        val manifest = store.artifactManifest ?: return null
+        val bounded = if (record.phaseCounters.size > ChapterRunRecord.MAX_PHASE_COUNTER_KEYS) {
+            record.copy(
+                phaseCounters = record.phaseCounters.entries
+                    .toList()
+                    .takeLast(ChapterRunRecord.MAX_PHASE_COUNTER_KEYS)
+                    .associate { it.key to it.value },
+            )
+        } else {
+            record
+        }
+        val json = ArtifactDocumentJson.encodeToString(bounded)
         val outcome = artifact.publishActiveRun(
             manifest = manifest,
-            record = record,
+            record = bounded,
             contentFingerprint = sha256Hex(json.encodeToByteArray()),
             nowEpochMs = nowEpochMs(),
         )
@@ -2360,6 +2510,7 @@ internal class ChapterProfileBatchCoordinator(
                 }
             }
         }
+        return outcome
     }
 
     private fun record(
@@ -2472,6 +2623,27 @@ internal class ChapterProfileBatchCoordinator(
                 "(legacy completion semantics; DISPLAY_READY redefinition is gate-7.8-gated OFF)"
 
         /**
+         * ST-14 resume: the durable record already reads COMPLETE — the
+         * re-dispatch finishes idempotently with zero work and no new record
+         * publication.
+         */
+        const val RESUME_COMPLETE_REASON =
+            "T924 recorded run already COMPLETE; treated as finished (ST-14 idempotent resume)"
+
+        /**
+         * Stage-7 review F-3: the run-closure COMPLETE publication was
+         * rejected by the artifact store (whole-manifest CAS conflict), so
+         * the run is still durably at FINALIZE. Reporting finished here
+         * would let the shell mark the chapter done while the durable
+         * record disagrees; the typed PAUSE instead makes the shell pause
+         * the run, and a later dispatch re-enters the ST-14 FINALIZE resume
+         * ([resumeFinalizeOrComplete] → [drainFinalizeAndComplete]), which
+         * re-attempts the run's single COMPLETE publication.
+         */
+        const val RUN_CLOSURE_REJECTED_REASON =
+            "T924 run-closure COMPLETE publication rejected; run stays at FINALIZE (ST-14 resume re-attempts closure)"
+
+        /**
          * T924 gate 7.8 ENCODED GATE (never activated on device-gated
          * authority): redefining Batch completion as DISPLAY_READY (all reader
          * paths hydrate durable plans instead of translating committed) is
@@ -2552,19 +2724,35 @@ internal class ChapterProfileBatchCoordinator(
          * already finished. `null` = dispatch normally
          * ([FlaggedRunResumeDecision.RunFlaggedPath] /
          * [FlaggedRunResumeDecision.DropToLegacy]).
+         *
+         * Stage-7 review F-4: a COMPLETE record alone is not proof the
+         * chapter is retired — [allPagesDisplayCommitted] must carry the
+         * per-page display evidence (REQUIRED, no default: every caller
+         * passes explicit evidence). When the decision is TreatAsFinished
+         * but any page lacks display evidence, this returns `null` so
+         * dispatch proceeds normally (with the flag OFF that maps to
+         * LEGACY_SEQUENTIAL, whose coordinator re-derives the missing
+         * display); the COMPLETE sidecar record stays untouched.
          */
         fun resumeCompletedOutcome(
             record: ChapterRunRecord?,
             currentFlagOn: Boolean,
             orderedPageKeys: Set<String>,
+            allPagesDisplayCommitted: Boolean,
         ): BatchPass1Outcome? =
             when (decideResume(record, currentFlagOn)) {
-                FlaggedRunResumeDecision.TreatAsFinished -> BatchPass1Outcome(
-                    needsTranslation = emptyList(),
-                    status = BatchPass1Status.COMPLETED,
-                    completedPageKeys = orderedPageKeys,
-                    reason = "T924 FF-01e.2a: recorded run COMPLETE; flag OFF treats the chapter as finished",
-                )
+                FlaggedRunResumeDecision.TreatAsFinished ->
+                    if (allPagesDisplayCommitted) {
+                        BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.COMPLETED,
+                            completedPageKeys = orderedPageKeys,
+                            reason =
+                                "T924 FF-01e.2a: recorded run COMPLETE; flag OFF treats the chapter as finished",
+                        )
+                    } else {
+                        null
+                    }
                 else -> null
             }
 
