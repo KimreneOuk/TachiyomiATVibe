@@ -588,3 +588,52 @@ Stage-7 owed items (status 2026-09-07):
   redefined before it.
 - **DB-10 small-chapter bypass:** instrumented-disabled stays; the
   threshold decision is a Stage-8 measurement decision (unchanged).
+
+## Legacy-interference audit (2026-09-09) — gate 5.7 RE-BLOCKED pending a pre-A/B fix wave
+
+Director-ordered deep audit of legacy machinery vs the FF-01 profile
+pipeline (two independent read-only sweeps + Main-Leader verification of
+the HIGH claims). Full report: `evidence/legacy-interference-audit.md`
+(findings LI-1..LI-15, verified-clean list, open questions, sequencing).
+
+- **LI-1 HIGH (A/B-BLOCKER, ML-verified):** the shell's post-pass
+  `BatchProgressReconciler.reconcile` (`BatchChapterTranslator.kt:902-928`)
+  uses the legacy display-committed predicate
+  (`hasRenderedResult || isTextlessTerminal`,
+  `BatchProgressReconciler.kt:89`; `renderStatus == READY` required,
+  `PageDisplayProjection.kt:140-144`) for flagged COMPLETED outcomes too —
+  every healthy flagged-completed chapter projects stranded pages + ERROR
+  to tracker/queue/manga-screen, and retry re-enters the zero-work
+  COMPLETE fast path → permanent ERROR loop. No test drives a flagged run
+  with translatable pages through the shell.
+- **LI-2 HIGH (A/B-BLOCKER, ML-verified):** chapter/inpaint reset paths
+  (`ChapterDataResetController.kt:195-282`) leave `activeRun`/run records
+  intact and the flag-ON COMPLETE fast path
+  (`resumeFinalizeOrComplete:1668-1677`) has no display-evidence gate (F-4
+  covered only the flag-OFF direction) — a post-reset flagged re-dispatch
+  returns zero-work COMPLETED and the reset is silently a no-op.
+- Pre-A/B also recommended: **LI-3** (reader/manual cancel writes punch
+  through BATCH-held leases via `updatePageFromCurrentSnapshot` → spurious
+  whole-run PAUSE; legacy survives via T917 rescan, flagged does not) and
+  **LI-4** (background `verifyLegacyArtifactHealth` on >8-page chapters
+  republishes the manifest after the façade cached the pre-verification
+  copy → first durable write spuriously stale-rejected → PAUSED).
+- Notable non-blockers: **LI-8** (mutex-free `store.artifactManifest`
+  façade + two non-CAS `publishManifest` paths can durably revert T924
+  pointers → retention deletes orphans; reachability open, fix mechanical),
+  **LI-9** (legacy lane has no `executeBatch` sub-limit admission — do not
+  run legacy+flagged chapters concurrently per credential during A/B),
+  **LI-7** (profile commits omit glossary/provenance stamps → flag-ON→OFF
+  switch re-translates whole chapter; fold into the owed provenance-schema
+  extension), LI-5/LI-6 (checkpoint reuse keyed on source-sha only),
+  LI-10/LI-11..LI-15 LOW.
+- Verified clean: single dispatch entry, legacy coordinator writes no
+  T924 sidecars, one-way authority cutover, retention preserves all
+  pointed sidecar families, shared governor/gate singletons (no F-W4-2
+  regression), no small-chapter bypass in code, queue PAUSED semantics
+  intact, layout hydrator cross-lane safe.
+- **Effect on sequencing:** gate 5.7 A/B is RE-BLOCKED. Next wave = LI-1 +
+  LI-2 (one coherent COMPLETE-semantics + coordinator-aware-projection
+  fix) + LI-3 + LI-4, with the three missing tests (flagged-through-shell
+  with translatable pages; reset-then-flagged-redispatch; stale-façade
+  dispatch), then A/B on that commit.
