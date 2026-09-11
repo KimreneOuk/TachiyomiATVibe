@@ -767,3 +767,59 @@ glossary." Implemented as a MODE inside ChapterProfileBatchCoordinator
   plan: Director gate 5.7 A/B (both lanes now testable in one install)
   → default ON → delete legacy (AI lane first, then SequentialBatchCoordinator
   entirely).
+
+## Zero-legacy final wave (2026-09-12, Director "Go") — ROUTE COMPLETE
+
+Director authorized the final step after the A/B window. Two waves:
+(reports: `evidence/zero-legacy-wave-d1.md`, `evidence/zero-legacy-wave-d2.md`)
+
+- **D1 — commit `ab82e6d` (41 files, +922/−3847):** FF-01 deleted
+  (pref, shell read, settings switch; `flagProfilePipeline` STAYS in
+  RunConfigSnapshot hardcoded `true` so the fingerprint basis and the
+  Director's existing flag-ON run records keep matching — resume
+  unaffected; the pref key left in device DataStore is a harmless
+  orphan). SequentialBatchCoordinator deleted. Dispatch unified:
+  STANDARD → STANDARD_PIPELINE, AI (contextual or not) →
+  PROFILE_PIPELINE (degenerate non-contextual AI takes the typed
+  CONFIGURATION pause). Shell-level resumeCompletedOutcome/TreatAsFinished/
+  DropToLegacy deleted — ALL resume is the coordinator's
+  resumeFinalizeOrComplete (ST-14 + LI-2 evidence gate). TWO PRODUCTION
+  FIXES the deletion exposed: (1) tracker `progressStage` now settles
+  translation-terminal READY/PARTIAL/SKIPPED pages as DONE (legacy's
+  in-pass render join used to own the settle; without it every healthy
+  page projected QUEUED at terminal); (2) preflight checkpoint-reuse now
+  ADOPTS the checkpoint snapshot into the live store
+  (adoptCheckpointSnapshot idiom) — on reopened stores the in-memory
+  placeholder (ocr PENDING, no blocks) made the translate tail's
+  dependency gate silently skip the paid call, so runs "completed"
+  without ever reaching the provider (D9 death cycle); adoption failure
+  falls through to fresh OCR, never planning against fabricated content.
+  Also: t924PageTerminalAtFinalize checks committed-terminal BEFORE the
+  generation guard (committed stages are durable across generations);
+  attachToOwnerTerminal accepts translation-terminal evidence. Tests:
+  3 legacy suites deleted (26 tests), 1 re-homed (queue restore), 7
+  consolidated in rewrites.
+- **D2 — commit `eeff99f` (−922 lines, reference-proved):** dead-code
+  sweep — RenderJoinWorker + BatchRenderJoin signal/await arms,
+  chunk-admission trio + SBC-only AI chunk cascade (~560 lines of
+  BatchLaneWorkers), BatchOomPolicy.kt, awaitPageLeaseRelease, dead
+  listener no-ops and shell delegates. KEPT with references:
+  BatchResumePlanner/GateDecider/AdmissionProbe/ContextFrontier/WriteGate,
+  PageWorkPlanner (reader path), ALL reconciler arms (StoreStatusProjector
+  still calls legacy reconcile). Behavior fix: shell COMPLETED path emits
+  markRenderSkipped per expected page → tracker fraction settles 5/5
+  (test-pinned).
+- **Final verification:** forced full sweep at `eeff99f`:
+  242 suites / 1764 tests / 0 failures / 0 errors (Main-Leader run).
+- **End state:** ONE batch coordinator for both engine categories
+  (AI profile lane + standard per-page lane), whole-chapter OCR preflight
+  shared, coordinator-owned durable resume, zero legacy batch code.
+- **Follow-ups recorded (non-blocking):** finalize stranded-write vs
+  COMPLETED projection tension (D1 cand. 2 — two projections should
+  share one authority); COUNTER_FLAG durable key retirement (schema
+  bump, cand. 4); manual-render-under-artifacts probe gap (pre-existing,
+  cand. 3); cross-origin OCR merge drops machine translations (cand. 7);
+  stale-resume-plan re-OCR churn (cand. 8); defer-and-rescan wiring and
+  lease-waiter machinery now orphaned-but-referenced (D2 kept-with-note);
+  plus standing T924 debts (LI-5/LI-6/LI-7, LI-8 façade/CAS hardening,
+  F-W6-3 strict mode, gate 7.8 FF-02 device evidence, DB-10).
