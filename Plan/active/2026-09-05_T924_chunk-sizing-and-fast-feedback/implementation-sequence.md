@@ -711,3 +711,59 @@ committed on `t924/batch-profile-pipeline`; full sweep at HEAD
   chapters simultaneously against one credential (LI-9); do not change
   engine/inpaint preferences mid-run (LI-10). FF-02 stays OFF for this
   gate (its device evidence gate 7.8 comes later).
+
+## Phase 4 — STANDARD_PIPELINE lane (2026-09-11, Director go) — COMPLETE
+
+Director design (binding): "both AI and standard engine do the same OCR,
+standard engine continues batch translation just like AI without the
+glossary." Implemented as a MODE inside ChapterProfileBatchCoordinator
+(investigation + seam map preceded the waves; reports:
+`evidence/phase4-wave-a.md`, `evidence/phase4-wave-b.md`).
+
+- **Wave A — commit `3a4fa8b`:** BatchCoordinatorKind.STANDARD_PIPELINE
+  (truth table: flag OFF → legacy; STANDARD → STANDARD_PIPELINE; AI +
+  contextual → PROFILE_PIPELINE; AI non-contextual → legacy);
+  `standardLane`/`standardTranslateOutcome` coordinator seams;
+  frozen-profile reuse probe fenced AI-only; `runStandardTranslateAndFinalize`
+  (TRANSLATE record with corpus fingerprint → in-order per-page translate
+  via the shell-injected seam delegating to the LEGACY
+  TranslatorLaneWorker.translateOutcome with a fresh BATCH Translation
+  lease + write identity per page, lease-deny = skip → overlap window
+  brackets EVERY call for ALL standard engines → shared engine-agnostic
+  FINALIZE); providerKey `standard:<engine>`, DeepL-only credential
+  sha256-16; textTranslator widened to TextTranslator (envelope path
+  re-narrows via cast + CONFIGURATION pause). Completion =
+  translation-terminal WITHOUT in-pass render (both flagged lanes);
+  `dispatchedFlaggedLane` covers STANDARD_PIPELINE (flagged projection).
+  New StandardPipelineCoordinatorTest (4 tests: end-to-end record
+  sequence, zero analysis/profile/envelope pointers, zero glossary
+  writes, checkpoint-resume zero-work).
+- **Wave B — commit `77ba628`:** BLANK-PAGE checkpoint CLOSE fix
+  (ChapterArtifactStore adopt-committed branch: `committed == null`
+  adoption allowed ONLY for OCR-READY zero-block snapshots; content-
+  bearing pages still fail closed; pre-existing gap that would have
+  failed any chapter with a genuinely blank page in EITHER flagged
+  lane's preflight; single production caller = flagged preflight, so
+  FF-01 OFF untouched). Lifecycle pins: OFF+COMPLETE over unrendered
+  standard pages → NOT TreatAsFinished (deliberate strict OFF gate,
+  drops to legacy re-derivation); OFF mid-run → DropToLegacy sidecars
+  byte-untouched; ON re-dispatch over stale TRANSLATE record → same
+  runId fresh RUN_SNAPSHOT, single COMPLETE; ON+COMPLETE zero-work via
+  isNoTextTerminal evidence. Real-shell integration:
+  TranslationCoexistenceHarness `createStandard` recipe (FF-01 ON +
+  ARTIFACTS-authority durable store + standard-engine transport fakes)
+  and StandardPipelineCoexistenceTest pinning all four Director
+  contracts (no legacy coordinator; full OCR strictly before first
+  translate; single COMPLETE, READY/PENDING pages; glossary untouched).
+- **Final verification:** full FORCED sweep at `77ba628`:
+  244 suites / 1794 tests / 0 failures / 0 errors (Main-Leader run).
+- **Known notes for the A/B:** fresh-process COMPLETE resume of
+  blank-page chapters re-runs the cheap checkpoint-reused tail (no
+  committed blank-page bundles — deliberate OFF-durability choice);
+  legacy lane still re-OCRs blank pages by design; a lease-denied page
+  during the standard tail skips and resolves via the stranded-page
+  reconciliation (retryable, never preempting MANUAL).
+- **Route state:** Phase 4 code complete behind FF-01. Remaining per
+  plan: Director gate 5.7 A/B (both lanes now testable in one install)
+  → default ON → delete legacy (AI lane first, then SequentialBatchCoordinator
+  entirely).
