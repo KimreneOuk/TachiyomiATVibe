@@ -45,6 +45,7 @@ import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocrBlockFingerprints
 import eu.kanade.translation.ocrFingerprint
+import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.SharedBatchRequestSublimitGate
 import eu.kanade.translation.translator.BatchRequestSublimitGate
@@ -106,10 +107,14 @@ import java.security.MessageDigest
  *    OCR worker's native handoff is released before the next page is admitted,
  *    and the page lease is released strictly AFTER the checkpoint committed
  *    (T924-TX-06).
- *  - No inpaint, no translation, no display promotion; provider calls happen
- *    ONLY inside the analysis phase, through the typed runner (never
- *    `promptText`), gated by the 15-RPM Batch sub-limit + shared provider
- *    bucket (T924-AP-08, DR-C/DR-D).
+ *  - No inpaint, no translation, no display promotion in the preflight;
+ *    provider calls happen inside the analysis phase (AI lane, through the
+ *    typed runner — never `promptText`) and inside the standard translate
+ *    tail (standard lane, through the injected per-page seam), both gated by
+ *    the 15-RPM Batch sub-limit + shared provider bucket discipline
+ *    (T924-AP-08, DR-C/DR-D; the standard tail additionally brackets every
+ *    per-page call with the overlap window so native inpaint never overlaps
+ *    translation — ALL standard engines, MLKit included).
  *  - Resume re-enters OCR_PREFLIGHT (checkpoint reuse by content identity) or
  *    ANALYSIS_CHUNKS (never re-sends persisted chunks, ST-08).
  *  - The run record ([ChapterRunRecord]) is published at run start (FF-01d)
@@ -117,6 +122,15 @@ import java.security.MessageDigest
  *    publications are best-effort progress carriers — the manifest's
  *    checkpoints and `analysisChunks` pointers stay authoritative
  *    (T924-ST-06/ST-08).
+ *
+ * T924 Phase 4 Wave A ([standardLane]): the DIRECTOR design — both AI and
+ * standard engines do the same OCR, and the standard engine continues with
+ * batch translation exactly like AI minus everything AI-specific: NO
+ * frozen-profile reuse probe, NO analysis/profile/envelope phases or
+ * pointers, NO glossary reads/writes. Translation runs IN ORDER per page
+ * through the injected seam (LEGACY per-page commit machinery), with the
+ * Stage-7 overlap windows + FINALIZE (completion = translation-terminal
+ * WITHOUT in-pass render, exactly like the AI lane).
  */
 /**
  * Typed identity of ONE unresolved preflight page failure (wave-2 review R2):
@@ -177,9 +191,12 @@ internal class ChapterProfileBatchCoordinator(
      * plans nothing provider-bound and pauses at TRANSLATE — exactly like
      * the analysis runner seam above. Production wiring of BOTH seams is
      * the provider package's acceptance condition; tests drive the seam
-     * with fakes.
+     * with fakes. Wave A: widened to [TextTranslator] so the standard lane
+     * can carry its plain per-page translator; the envelope path still
+     * requires the contextual type through a local cast (a non-contextual
+     * translator on the AI lane takes the same CONFIGURATION pause).
      */
-    private val textTranslator: ContextualTextTranslator? = null,
+    private val textTranslator: TextTranslator? = null,
     /**
      * Stage-6 slice A: the Batch sub-limit gate every translation envelope
      * must ride (wave-4 F-W4-2: ONE allowance per credential for ALL Batch
@@ -204,6 +221,24 @@ internal class ChapterProfileBatchCoordinator(
      * async-planner fallback for every page (reader display never breaks).
      */
     private val renderJoin: BatchRenderJoin? = null,
+    /**
+     * T924 Phase 4 Wave A: the STANDARD-engine lane discriminator. `false`
+     * (default) preserves the AI coordinator behavior exactly; `true` runs
+     * the same OCR preflight and then — instead of the AI
+     * analysis/profile/envelope phases — the per-page standard translate
+     * tail ([runStandardTranslateAndFinalize]) and the shared FINALIZE.
+     */
+    private val standardLane: Boolean = false,
+    /**
+     * T924 Phase 4 Wave A: the typed standard translate seam, injected by
+     * the shell so the coordinator never touches the legacy worker graph
+     * directly. Mirrors `TranslatorLaneWorker.translateOutcome(ref)` (the
+     * SBC per-page bridge): one page in, one typed [ChunkCompletionOutcome]
+     * out — commits ride the LEGACY per-page machinery, never the envelope
+     * provenance ladder. `null` with [standardLane] is a typed
+     * CONFIGURATION-class pause (same discipline as the analysis runner).
+     */
+    private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> ChunkCompletionOutcome)? = null,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -282,7 +317,14 @@ internal class ChapterProfileBatchCoordinator(
         // analysis is skipped: zero OCR, zero provider calls (the T924
         // fast-feedback core). The probe is LOCAL reads only (durable
         // checkpoints + profile sidecar), never decode/native work.
-        val reusableProfile = frozenProfileReuse(artifact, orderedPages, total)
+        // Wave A: AI-ONLY — the standard lane produces no frozen profile, so
+        // the probe is fenced off (it would short-circuit into the envelope
+        // phase, which requires one).
+        val reusableProfile = if (standardLane) {
+            null
+        } else {
+            frozenProfileReuse(artifact, orderedPages, total)
+        }
 
         // ST-03: run start — RUN_SNAPSHOT record with the frozen configuration,
         // the ordered source digest, and the frozen flag state (FF-01d).
@@ -496,6 +538,20 @@ internal class ChapterProfileBatchCoordinator(
                 status = BatchPass1Status.PAUSED,
                 completedPageKeys = corpusFingerprints.mapTo(mutableSetOf()) { it.first },
                 reason = STOP_REASON,
+            )
+        }
+
+        // ---- T924 Phase 4 Wave A: the standard lane branches to its ----
+        // ---- per-page translate tail; the AI lane continues into the   ----
+        // ---- analysis phases (Stage 5 slices A+B). Both share the     ----
+        // ---- engine-agnostic Stage-7 FINALIZE/COMPLETE.               ----
+        if (standardLane) {
+            return runStandardTranslateAndFinalize(
+                artifact = artifact,
+                runId = runId,
+                orderedPages = orderedPages,
+                corpusFingerprint = corpusFingerprint,
+                baseCounters = finalCounters,
             )
         }
 
@@ -1203,8 +1259,12 @@ internal class ChapterProfileBatchCoordinator(
         }
 
         // ST-12 entry needs a typed AI transport; the plan still publishes so
-        // a later wired run resumes directly into TRANSLATE.
-        val translator = textTranslator
+        // a later wired run resumes directly into TRANSLATE. Wave A: the
+        // constructor widened to TextTranslator for the standard lane, so the
+        // envelope path re-narrows here — a non-contextual translator on the
+        // AI lane takes the SAME typed CONFIGURATION pause as a missing one
+        // (the dispatch gate makes this unreachable in production).
+        val translator = textTranslator as? ContextualTextTranslator
 
         // ---- ENVELOPE_PLAN: build + plan + publish (or reuse). ----
         when (val build = buildEnvelopeDispatchWork(artifact, orderedPages, corpusFingerprint)) {
@@ -1631,6 +1691,285 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
+     * T924 Phase 4 Wave A — the STANDARD-engine translate tail, entered
+     * exactly when the OCR preflight published a COMPLETE corpus (the
+     * whole-corpus gap gate above is unchanged). The DIRECTOR design: the
+     * standard engine continues batch translation just like the AI lane,
+     * without the glossary and without anything AI-specific:
+     *
+     *  1. `TRANSLATE` phase record carrying the run's OCR corpus fingerprint
+     *     and NO analysis/profile/envelope pointers (the standard lane never
+     *     produces them; the ST-14 resume gate reads the fingerprint from
+     *     the FINALIZE record this tail leads to).
+     *  2. IN-ORDER per-page translation through the injected
+     *     [standardTranslateOutcome] seam — the LEGACY per-page machinery
+     *     (BatchLaneWorkers idiom), never the envelope provenance ladder.
+     *     Pages already translation-terminal (READY/PARTIAL, textless, or
+     *     rendered — resume-reuse parity) are never re-paid. Every seam call
+     *     is bracketed by the overlap window (open before, close after) for
+     *     ALL standard engines: native inpaint must never overlap
+     *     translation.
+     *  3. Typed seam outcomes map to the SAME chapter-level semantics the
+     *     legacy schedule uses (SBC): Completed → next page; Paused → typed
+     *     PAUSE; Failed/Unexpected → FAILED; PersistenceRejected →
+     *     PERSISTENCE_REJECTED.
+     *  4. When the translate loop drains → [runFinalizeAndComplete] verbatim
+     *     — the engine-agnostic Stage-7 finalize (serial inpaint drain,
+     *     layout sweep, stranded reconciliation, single COMPLETE
+     *     publication). Completion is translation-terminal WITHOUT an
+     *     in-pass render, exactly like the AI lane (display rides the live
+     *     overlay + candidate snapshots; renderStatus stays PENDING).
+     */
+    private suspend fun runStandardTranslateAndFinalize(
+        artifact: ChapterArtifactStore,
+        runId: String,
+        orderedPages: List<PageKey>,
+        corpusFingerprint: String,
+        baseCounters: Map<String, Int>,
+    ): BatchPass1Outcome {
+        val frozenFingerprint = runConfigFingerprint(frozenConfig)
+        val sourceDigest = orderedSourceDigest(orderedSourcePairs)
+        val allPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first }
+
+        fun translateCounters(extra: Map<String, Int>): Map<String, Int> = baseCounters + extra
+
+        fun translateRecord(state: ChapterRunState, counters: Map<String, Int>): ChapterRunRecord =
+            record(
+                runId,
+                state,
+                frozenFingerprint,
+                sourceDigest,
+                counters,
+                ocrCorpusFingerprint = corpusFingerprint,
+            )
+
+        // Phase entry: TRANSLATE (no profile pointer — the standard lane's
+        // records carry only the schema-required policy fingerprints).
+        publishRecord(artifact, translateRecord(ChapterRunState.TRANSLATE, translateCounters(emptyMap())))
+
+        val seam = standardTranslateOutcome
+        if (seam == null) {
+            // Typed CONFIGURATION-class gate, mirroring the analysis runner
+            // seam: never run provider-bound work without a typed transport.
+            publishRecord(
+                artifact,
+                translateRecord(
+                    ChapterRunState.TRANSLATE,
+                    translateCounters(mapOf(COUNTER_SKIPPED_NO_TRANSPORT to 1, COUNTER_STOP to 1)),
+                ),
+            )
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT t924 standard translate paused: no typed standard seam wired (CONFIGURATION gate)"
+            }
+            return BatchPass1Outcome(
+                needsTranslation = emptyList(),
+                status = BatchPass1Status.PAUSED,
+                completedPageKeys = allPageKeys,
+                reason = STANDARD_NO_SEAM_REASON,
+            )
+        }
+
+        // D2: publish the persisted layout right after each inpaint commits
+        // (the same per-page hook the AI envelope lane installs).
+        overlapScheduler?.onInpaintCommitted = { pageKey ->
+            renderJoin?.publishPersistedLayoutForCompletedPage(pageKey)
+            Unit
+        }
+        // T924 Stage 7 (D1) idiom: the overlap loop runs BESIDE the serial
+        // translate loop and is stopped between pages once the tail ends.
+        val overlapLoop: suspend (suspend () -> BatchPass1Outcome) -> BatchPass1Outcome =
+            { runTail ->
+                if (overlapScheduler == null) {
+                    runTail()
+                } else {
+                    coroutineScope {
+                        val loop = launch { overlapScheduler.runOverlapLoop() }
+                        val outcome = runTail()
+                        // No further windows: stop the loop between pages
+                        // (a running inpaint finishes through the lane).
+                        overlapScheduler.stopOverlap()
+                        loop.join()
+                        outcome
+                    }
+                }
+            }
+
+        return overlapLoop {
+            var translatedPages = 0
+            for (page in orderedPages) {
+                val (pageKey, pageIndex) = page
+                currentCoroutineContext().ensureActive()
+                // Reader-priority courtesy between pages (preflight idiom).
+                yield()
+
+                // Resume-reuse parity: an already-terminal page never re-pays
+                // the provider (READY/PARTIAL committed, textless, or the
+                // cross-schedule rendered safety).
+                val live = store.state.value[pageKey]
+                if (live != null && standardPageTerminalAtTranslate(live)) continue
+
+                // D1: bracket the per-page translate call with the SAME
+                // remote-window mechanism the AI lane rides — the overlap
+                // scheduler runs serial inpaint ONLY inside the window, so
+                // native work never overlaps translation (ALL engines).
+                overlapScheduler?.onRemoteWindowOpened()
+                val outcome = try {
+                    seam(
+                        OcrReadyPageRef(
+                            pageKey = pageKey,
+                            pageIndex = pageIndex,
+                            generation = store.currentGeneration,
+                            blockFingerprints = emptyList(),
+                        ),
+                    )
+                } finally {
+                    overlapScheduler?.onRemoteWindowClosed()
+                }
+                when (outcome) {
+                    is ChunkCompletionOutcome.Completed -> translatedPages += outcome.completedPageKeys.size
+                    is ChunkCompletionOutcome.Paused -> {
+                        publishRecord(
+                            artifact,
+                            translateRecord(
+                                ChapterRunState.TRANSLATE,
+                                translateCounters(
+                                    mapOf(
+                                        COUNTER_PAGES_TRANSLATED to translatedPages,
+                                        COUNTER_STOP to 1,
+                                    ),
+                                ),
+                            ),
+                        )
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT t924 standard translate paused: ${outcome.reason}"
+                        }
+                        return@overlapLoop BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.PAUSED,
+                            anchorPageKey = outcome.anchorPageKey,
+                            completedPageKeys = allPageKeys,
+                            retryablePageKeys = outcome.retryablePageKeys,
+                            failure = outcome.failure,
+                            nextEligibleRetryAtEpochMs = outcome.nextEligibleRetryAtEpochMs,
+                            reason = outcome.reason,
+                        )
+                    }
+                    is ChunkCompletionOutcome.Failed -> {
+                        publishRecord(
+                            artifact,
+                            translateRecord(
+                                ChapterRunState.TRANSLATE,
+                                translateCounters(
+                                    mapOf(
+                                        COUNTER_PAGES_TRANSLATED to translatedPages,
+                                        COUNTER_STOP to 1,
+                                    ),
+                                ),
+                            ),
+                        )
+                        logcat(LogPriority.WARN) {
+                            "TachiyomiAT t924 standard translate failed: ${outcome.reason}"
+                        }
+                        return@overlapLoop BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.FAILED,
+                            anchorPageKey = outcome.anchorPageKey,
+                            completedPageKeys = allPageKeys,
+                            terminalPageKeys = outcome.terminalPageKeys,
+                            failure = outcome.failure,
+                            reason = outcome.reason,
+                        )
+                    }
+                    is ChunkCompletionOutcome.Unexpected -> {
+                        publishRecord(
+                            artifact,
+                            translateRecord(
+                                ChapterRunState.TRANSLATE,
+                                translateCounters(
+                                    mapOf(
+                                        COUNTER_PAGES_TRANSLATED to translatedPages,
+                                        COUNTER_STOP to 1,
+                                    ),
+                                ),
+                            ),
+                        )
+                        return@overlapLoop BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.FAILED,
+                            anchorPageKey = outcome.anchorPageKey,
+                            completedPageKeys = allPageKeys,
+                            terminalPageKeys = outcome.terminalPageKeys,
+                            reason = outcome.reason,
+                            unexpectedStage = outcome.stage,
+                        )
+                    }
+                    is ChunkCompletionOutcome.PersistenceRejected -> {
+                        publishRecord(
+                            artifact,
+                            translateRecord(
+                                ChapterRunState.TRANSLATE,
+                                translateCounters(
+                                    mapOf(
+                                        COUNTER_PAGES_TRANSLATED to translatedPages,
+                                        COUNTER_STOP to 1,
+                                    ),
+                                ),
+                            ),
+                        )
+                        return@overlapLoop BatchPass1Outcome(
+                            needsTranslation = emptyList(),
+                            status = BatchPass1Status.PERSISTENCE_REJECTED,
+                            anchorPageKey = outcome.anchorPageKey,
+                            reason = outcome.reason,
+                            persistenceRejectedStage = outcome.stage,
+                        )
+                    }
+                }
+            }
+
+            // Drained: every ordered page reached its terminal. The drained
+            // TRANSLATE record mirrors the AI lane's (counters + stop), then
+            // the SHARED engine-agnostic Stage-7 finalize publishes the run's
+            // single COMPLETE.
+            publishRecord(
+                artifact,
+                translateRecord(
+                    ChapterRunState.TRANSLATE,
+                    translateCounters(
+                        mapOf(
+                            COUNTER_PAGES_TRANSLATED to translatedPages,
+                            COUNTER_STOP to 1,
+                        ),
+                    ),
+                ),
+            )
+            runFinalizeAndComplete(
+                artifact = artifact,
+                runId = runId,
+                orderedPages = orderedPages,
+                corpusFingerprint = corpusFingerprint,
+                baseCounters = translateCounters(mapOf(COUNTER_PAGES_TRANSLATED to translatedPages)),
+            )
+        }
+    }
+
+    /**
+     * The standard tail's translate-time terminal predicate: a page with a
+     * committed translation (READY/PARTIAL), a durable no-text terminal
+     * (SKIPPED — the legacy worker's textless commit) or full textless
+     * terminal, or a rendered result (cross-schedule safety, matching
+     * [t924PageTerminalAtFinalize]) never re-enters the provider. Deliberately
+     * narrower than the finalize predicate — FAILED/PENDING pages re-attempt
+     * (resume-with-retry semantics, the legacy per-page idiom).
+     */
+    private fun standardPageTerminalAtTranslate(page: PageTranslation): Boolean =
+        page.hasRenderedResult ||
+            page.isTextlessTerminal ||
+            page.translationStatus == StageStatus.READY ||
+            page.translationStatus == StageStatus.PARTIAL ||
+            page.translationStatus == StageStatus.SKIPPED
+
+    /**
      * ST-14 resume gates (contracts-state-transactions :188-197) for a
      * durable record already past TRANSLATE, consulted at dispatch entry
      * BEFORE any RUN_SNAPSHOT republication:
@@ -1750,7 +2089,13 @@ internal class ChapterProfileBatchCoordinator(
         artifact: ChapterArtifactStore,
         pageKey: String,
     ): Boolean {
-        val liveTextless = store.state.value[pageKey]?.isTextlessTerminal == true
+        // The durable no-text terminal (the legacy worker's textless commit
+        // AND the OCR-side finalizePostOcrStage both set it): a committed
+        // snapshot carrying no translatable text is exactly as durable as a
+        // translated one (the standard lane's textless evidence shape).
+        fun isNoTextTerminal(page: PageTranslation): Boolean =
+            page.isTextlessTerminal || page.translationStatus == StageStatus.SKIPPED
+        val liveTextless = store.state.value[pageKey]?.let(::isNoTextTerminal) == true
         val record = store.artifactManifest?.pages?.get(pageKey) ?: return liveTextless
         if (record.committed != null) return true
         if (record.displayState.hasCommittedDisplay ||
@@ -1765,7 +2110,8 @@ internal class ChapterProfileBatchCoordinator(
                 (
                     snapshot.hasRenderedResult ||
                         snapshot.isTextlessTerminal ||
-                        snapshot.hasRecognizedTranslation
+                        snapshot.hasRecognizedTranslation ||
+                        isNoTextTerminal(snapshot)
                     )
             ) {
                 return true
@@ -2659,8 +3005,17 @@ internal class ChapterProfileBatchCoordinator(
         /** Legacy progressive coordinator — the FF-01 OFF construction (FF-01b). */
         LEGACY_SEQUENTIAL,
 
-        /** T924 chapter-profile coordinator — the FF-01 ON construction. */
+        /** T924 chapter-profile coordinator — the FF-01 ON construction (AI lane). */
         PROFILE_PIPELINE,
+
+        /**
+         * T924 Phase 4 Wave A: the FF-01 ON construction for a STANDARD engine
+         * — the same coordinator with [standardLane] set: pure FULL OCR
+         * preflight, then per-page legacy-machinery batch translation
+         * (no glossary, no analysis/profile/envelope work) and the shared
+         * engine-agnostic FINALIZE.
+         */
+        STANDARD_PIPELINE,
     }
 
     companion object {
@@ -2694,6 +3049,16 @@ internal class ChapterProfileBatchCoordinator(
             "T924 translation paused: no typed AI text translator wired (CONFIGURATION gate)"
         const val TRANSLATE_STOP_REASON =
             "T924 translation envelopes drained; native/render arrive in Stage 7"
+
+        /**
+         * T924 Phase 4 Wave A: the standard lane's typed CONFIGURATION pause —
+         * the coordinator was constructed with [ChapterProfileBatchCoordinator.standardLane]
+         * but no [ChapterProfileBatchCoordinator.standardTranslateOutcome]
+         * seam. Same discipline as [ANALYSIS_NO_TRANSPORT_REASON]: never run
+         * provider-bound work without a typed transport.
+         */
+        const val STANDARD_NO_SEAM_REASON =
+            "T924 standard translation paused: no typed standard translate seam wired (CONFIGURATION gate)"
 
         /**
          * T924 Stage 7 (D4): the terminal of a drained run. The completion
@@ -2789,13 +3154,24 @@ internal class ChapterProfileBatchCoordinator(
          * run at the `BatchChapterTranslator` coordinator construction; this
          * pure function carries the mapping so the OFF path is provably the
          * unchanged legacy coordinator (FF-01b).
+         *
+         * T924 Phase 4 Wave A: with the flag ON, the engine category picks the
+         * flagged lane — a STANDARD engine dispatches STANDARD_PIPELINE (the
+         * same coordinator, standard tail); an AI_MODEL engine dispatches
+         * PROFILE_PIPELINE only with the contextual translator parity of the
+         * legacy AI lane, otherwise the verbatim legacy coordinator (the
+         * degenerate AI config keeps its F3 semantics).
          */
-        fun dispatchKind(translationBatchProfilePipeline: Boolean): BatchCoordinatorKind =
-            if (translationBatchProfilePipeline) {
-                BatchCoordinatorKind.PROFILE_PIPELINE
-            } else {
-                BatchCoordinatorKind.LEGACY_SEQUENTIAL
-            }
+        fun dispatchKind(
+            translationBatchProfilePipeline: Boolean,
+            engineCategoryIsStandard: Boolean = false,
+            contextualAiParity: Boolean = false,
+        ): BatchCoordinatorKind = when {
+            !translationBatchProfilePipeline -> BatchCoordinatorKind.LEGACY_SEQUENTIAL
+            engineCategoryIsStandard -> BatchCoordinatorKind.STANDARD_PIPELINE
+            contextualAiParity -> BatchCoordinatorKind.PROFILE_PIPELINE
+            else -> BatchCoordinatorKind.LEGACY_SEQUENTIAL
+        }
 
         /**
          * Wave-2 F1 production wiring (T924 Stage 7): the shell consults this

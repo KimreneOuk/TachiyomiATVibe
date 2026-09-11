@@ -179,7 +179,12 @@ class OcrPreflightFlagOffMidRunTest {
     fun `flag off dispatch selects the unchanged legacy coordinator`() {
         ChapterProfileBatchCoordinator.dispatchKind(translationBatchProfilePipeline = false) shouldBe
             ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL
-        ChapterProfileBatchCoordinator.dispatchKind(translationBatchProfilePipeline = true) shouldBe
+        // Wave A: the PROFILE_PIPELINE lane is now explicit in the parity
+        // inputs (flag ON alone no longer implies it).
+        ChapterProfileBatchCoordinator.dispatchKind(
+            translationBatchProfilePipeline = true,
+            contextualAiParity = true,
+        ) shouldBe
             ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE
     }
 

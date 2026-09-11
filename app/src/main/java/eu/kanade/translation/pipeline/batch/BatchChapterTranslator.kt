@@ -5,6 +5,7 @@ import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.util.lang.compareToCaseInsensitiveNaturalOrder
 import eu.kanade.translation.ChapterTranslationStore
+import eu.kanade.translation.LeaseAcquisition
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.ONNX_PHASE_TIMEOUT_MS
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_MS
@@ -19,6 +20,7 @@ import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.inpainting.InpaintingMode
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
+import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.hasRenderedResult
@@ -54,6 +56,7 @@ import tachiyomi.core.common.util.system.logcat
 import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.translation.AiEngine
+import tachiyomi.domain.translation.StandardEngine
 import tachiyomi.domain.translation.TranslationEngineCategory
 import tachiyomi.domain.translation.TranslationPreferences
 import java.io.InputStream
@@ -687,12 +690,78 @@ internal class BatchChapterTranslator(
                     // post-pass completion projection can pick the matching
                     // reconciler (flagged COMPLETED outcomes are
                     // translation-terminal without an in-pass render).
+                    // Phase 4 Wave A: BOTH flagged lanes (AI + standard) end
+                    // translation-terminal, so the projection keys on any
+                    // non-legacy dispatch.
+                    val engineCategoryIsStandard =
+                        translationPreferences.translationEngineCategory().get() ==
+                            TranslationEngineCategory.STANDARD
                     val dispatchKind = profilePipelineDispatchKind(
                         flagOn = profilePipelineEnabled,
+                        engineCategoryIsStandard = engineCategoryIsStandard,
                         contextualAiParity = isAi,
                     )
                     dispatchedFlaggedLane =
-                        dispatchKind == ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE
+                        dispatchKind != ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL
+                    // T924 Phase 4 Wave A: the injected standard translate seam —
+                    // the coordinator's per-page tail calls THIS, and it
+                    // delegates verbatim to `TranslatorLaneWorker.translateOutcome`
+                    // (the SBC per-page bridge; usesChunkAdmission=false
+                    // semantics, exactly the legacy standard path SBC drives).
+                    // ADAPTATION (the one delta vs the legacy schedule): the
+                    // flagged preflight releases each page's lease strictly
+                    // after its checkpoint, so the tail's ref carries durable
+                    // identity but NO live lease — and the legacy worker's
+                    // guarded commit fences against a live BATCH identity. The
+                    // wrapper therefore acquires a fresh BATCH page lease,
+                    // registers the write identity, arms the ref with it, and
+                    // releases the lease in `finally` (TX-06: strictly after
+                    // the page's translate settled). A denied lease (a MANUAL
+                    // owner owns the page) is a SKIP — that origin's outcome
+                    // is authoritative, never preempted (T917 D1).
+                    suspend fun standardTranslateOutcome(
+                        ref: OcrReadyPageRef,
+                    ): ChunkCompletionOutcome {
+                        val pageKey = ref.pageKey
+                        return when (
+                            val acquisition = store.tryAcquirePageStageLease(
+                                pageKey,
+                                PageStage.Translation,
+                                PageWriteOrigin.BATCH,
+                            )
+                        ) {
+                            is LeaseAcquisition.Denied -> {
+                                logcat(LogPriority.INFO) {
+                                    "TachiyomiAT t924 standard translate defers ${acquisition.owner}-owned " +
+                                        "page: pageKey=$pageKey"
+                                }
+                                ChunkCompletionOutcome.Completed(emptySet())
+                            }
+                            is LeaseAcquisition.Granted -> {
+                                val lease = acquisition.lease
+                                batchWriteIdentities[pageKey] = BatchWriteIdentity(
+                                    generation = lease.generation,
+                                    pageVersion = lease.pageVersion,
+                                    leaseToken = lease.token,
+                                    candidateGenerationId = lease.candidateGenerationId,
+                                    dependencyFingerprint = lease.dependencyFingerprint,
+                                    artifactPageVersion = lease.artifactPageVersion,
+                                )
+                                try {
+                                    batchLaneWorkers.translatorWorker.translateOutcome(
+                                        ref.copy(
+                                            leaseToken = lease.token,
+                                            candidateGenerationId = lease.candidateGenerationId,
+                                            dependencyFingerprint = lease.dependencyFingerprint,
+                                            artifactPageVersion = lease.artifactPageVersion,
+                                        ),
+                                    )
+                                } finally {
+                                    releaseBatchPageLease(store, pageKey)
+                                }
+                            }
+                        }
+                    }
                     return when (dispatchKind) {
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE -> {
                             // T924-D4 (wave-3 owed): the run snapshot freezes
@@ -780,6 +849,59 @@ internal class BatchChapterTranslator(
                                 analysisChunkRunner = analysisRunner,
                                 overlapScheduler = overlapScheduler,
                                 renderJoin = renderJoin,
+                            ).runPass1(orderedPages, computeClass)
+                        }
+                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
+                            // T924 Phase 4 Wave A: a STANDARD engine rides the
+                            // SAME flagged coordinator with its per-page
+                            // translate tail (FF-01 ON + STANDARD dispatch).
+                            // The provider identity freezes as
+                            // `standard:<engine>`; DeepL is the only credentialed
+                            // standard engine (one-way signature, never a raw
+                            // key). NO AnalysisChunkExecutor and NO contextual
+                            // translator on this lane — analysis/profile/
+                            // envelope/glossary work never runs here.
+                            val standardEngine = translationPreferences.translationStandardEngine().get()
+                            val credentialSecret = if (standardEngine == StandardEngine.DEEPL) {
+                                translationPreferences.translationDeeplApiKey().get()
+                            } else {
+                                ""
+                            }
+                            val overlapScheduler = OverlapScheduler(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                orderedPageKeys = orderedPages.map { it.first },
+                                batchWriteIdentities = batchWriteIdentities,
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                            )
+                            ChapterProfileBatchCoordinator(
+                                store = store,
+                                nativeWorker = batchLaneWorkers.nativeWorker,
+                                listener = batchScheduleListener,
+                                frozenConfig = ChapterProfileBatchCoordinator.frozenRunConfig(
+                                    sourceLang = fromLang.code,
+                                    targetLang = toLang.code,
+                                    ocrEngine = recognitionEngine::class.java.simpleName,
+                                    inpaintMode = inpaintingModeFromPref().name,
+                                    providerKey = "standard:" + standardEngine.name.lowercase(Locale.ROOT),
+                                    credentialId = credentialSecret.takeIf { it.isNotBlank() }
+                                        ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
+                                        .orEmpty(),
+                                    flagProfilePipeline = profilePipelineEnabled,
+                                ),
+                                orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
+                                    pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
+                                },
+                                flagProfilePipeline = true,
+                                releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
+                                // The plain per-page standard translator rides
+                                // the WIDENED seam type; the envelope path's
+                                // contextual cast never runs on this lane.
+                                textTranslator = textTranslator,
+                                overlapScheduler = overlapScheduler,
+                                renderJoin = renderJoin,
+                                standardLane = true,
+                                standardTranslateOutcome = { ref -> standardTranslateOutcome(ref) },
                             ).runPass1(orderedPages, computeClass)
                         }
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL ->
@@ -1056,26 +1178,30 @@ internal class BatchChapterTranslator(
         }
 
         /**
-         * T924 F3 (wave-2 review R3, gap 8): the FF-01 dispatch decision WITH
-         * engine-category parity. The flagged [ChapterProfileBatchCoordinator]
-         * is constructed only when the flag is ON AND the translator matches
-         * the legacy contextual-AI lane's `isAi` gate
-         * (`translationEngineCategory == AI_MODEL && textTranslator is
-         * ContextualTextTranslator`); every other combination — flag OFF for
-         * any engine, or flag ON with a non-AI/non-contextual engine — runs
-         * the verbatim legacy [SequentialBatchCoordinator] (FF-01b). The
-         * flagged coordinator is preflight-only today; without this gate a
-         * non-AI Batch run under FF-01 would stop after OCR and never
-         * translate (risk R3). Pure and unit-testable; the single dispatch
-         * site in `runBatchPass1` consults this and nothing else
-         * (T924-FF-01a).
+         * T924 F3 (wave-2 review R3, gap 8) + Phase 4 Wave A: the FF-01
+         * dispatch decision WITH engine-category parity. The flagged
+         * [ChapterProfileBatchCoordinator] is constructed when the flag is ON
+         * AND the engine parity matches a lane it can carry:
+         *  - STANDARD engine → STANDARD_PIPELINE (the same coordinator's
+         *    standard tail — pure FULL OCR preflight, then per-page legacy
+         *    batch translation without the glossary);
+         *  - AI_MODEL with the contextual translator parity of the legacy AI
+         *    lane (`contextualAiParity`) → PROFILE_PIPELINE;
+         *  - AI_MODEL without that parity (degenerate AI config) → the
+         *    verbatim legacy [SequentialBatchCoordinator] (FF-01b/F3);
+         *  - flag OFF for any engine → the legacy coordinator, byte-identical.
+         * Pure and unit-testable; the single dispatch site in `runBatchPass1`
+         * consults this and nothing else (T924-FF-01a).
          */
         internal fun profilePipelineDispatchKind(
             flagOn: Boolean,
+            engineCategoryIsStandard: Boolean,
             contextualAiParity: Boolean,
         ): ChapterProfileBatchCoordinator.BatchCoordinatorKind =
             ChapterProfileBatchCoordinator.dispatchKind(
-                translationBatchProfilePipeline = flagOn && contextualAiParity,
+                translationBatchProfilePipeline = flagOn,
+                engineCategoryIsStandard = engineCategoryIsStandard,
+                contextualAiParity = contextualAiParity,
             )
 
         /**
