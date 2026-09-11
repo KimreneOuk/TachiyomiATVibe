@@ -373,6 +373,44 @@ class ChapterArtifactStore(
     }
 
 
+    /**
+     * T924 LI-2: retires the [ChapterArtifactManifest.activeRun] pointer in ONE
+     * CAS'd manifest publication — [manifest.copy](activeRun = null) guarded by
+     * [staleManifestRejection], so a concurrent writer's manifest wins and the
+     * caller retries with fresh state. Retiring an already-null pointer is an
+     * idempotent no-op [TransactionOutcome.Committed] (no publication). The
+     * run-record SIDECAR FILE is left in place: retention owns deletion of the
+     * now-orphaned record — [ArtifactRetention.reachablePaths] retains exactly
+     * the manifest-pointed `activeRun` sidecar, so once the pointer is gone the
+     * next reachability sweep reclaims the orphaned record file.
+     *
+     * Reset semantics (T924 LI-2): a user reset means the recorded run must
+     * never short-circuit a future dispatch — the COMPLETE fast path
+     * (`resumeFinalizeOrComplete` / `resumeCompletedOutcome`) keys on this
+     * pointer, so clearing it forces the next run to start fresh instead of
+     * returning a zero-work finished outcome over demoted displays.
+     */
+    @Synchronized
+    fun retireActiveRun(
+        manifest: ChapterArtifactManifest,
+        reason: String,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome {
+        staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
+        if (manifest.activeRun == null) {
+            return TransactionOutcome.Committed(manifest)
+        }
+        val updated = manifest.copy(activeRun = null, updatedAtEpochMs = nowEpochMs)
+        if (!publishManifestInternal(updated)) {
+            logcat(LogPriority.WARN) {
+                "TachiyomiAT artifact active run retirement publish failed; prior manifest retained: " +
+                    "chapter=${layout.chapterKey} reason=$reason"
+            }
+            return TransactionOutcome.Rejected("manifest publication failed; active run pointer unchanged")
+        }
+        return TransactionOutcome.Committed(updated)
+    }
+
     // ------------------------------------------------------------------
     // T924 Stage 1 Phase 2a: the checkpointOcr transaction (T924-TX-01..).
     // Contract: Plan/active/2026-09-05_T924_chunk-sizing-and-fast-feedback/

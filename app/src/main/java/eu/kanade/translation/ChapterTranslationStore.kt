@@ -2284,6 +2284,42 @@ class ChapterTranslationStore(
         }
     }
 
+    /**
+     * T924 LI-2: retires the artifact manifest's `activeRun` pointer under the
+     * store mutex (the store-side façade over
+     * [ChapterArtifactStore.retireActiveRun], mirroring the
+     * [demoteCommittedDisplay] transaction idiom: CAS against the durable
+     * manifest, façade snapshot refreshed only on Committed). Reserved for user
+     * resets — a reset must retire the recorded run so a future dispatch can
+     * never short-circuit on its COMPLETE record. Returns true when the pointer
+     * is durably gone (or was never set); a rejected transaction keeps the run
+     * record owned and returns false.
+     */
+    suspend fun retireActiveRun(reason: String): Boolean {
+        if (defunct) return false
+        return mutex.withLock {
+            val artifact = artifactStore ?: return@withLock false
+            val manifest = artifactManifest ?: return@withLock false
+            if (manifest.authority != ManifestAuthority.ARTIFACTS) return@withLock false
+            when (val outcome = artifact.retireActiveRun(manifest, reason)) {
+                is ChapterArtifactStore.TransactionOutcome.Committed -> {
+                    artifactManifest = outcome.manifest
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT artifact active run retired: chapter=${manifest.chapterKey} reason=$reason"
+                    }
+                    true
+                }
+                is ChapterArtifactStore.TransactionOutcome.Rejected -> {
+                    logcat(LogPriority.WARN) {
+                        "TachiyomiAT artifact active run retirement rejected: " +
+                            "chapter=${manifest.chapterKey} reject=${outcome.reason} resetReason=$reason"
+                    }
+                    false
+                }
+            }
+        }
+    }
+
     internal fun cancelArtifactCandidateLocked(pageKey: String): Boolean {
         val store = artifactStore ?: return true
         val manifest = artifactManifest ?: return true

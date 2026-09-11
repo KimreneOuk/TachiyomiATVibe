@@ -35,10 +35,13 @@ import eu.kanade.translation.artifact.SidecarPointer
 import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.StageFingerprints
 import eu.kanade.translation.artifact.ToneFlag
+import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
-import eu.kanade.translation.model.isTextlessTerminal
+import eu.kanade.translation.model.hasCommittedDisplay
+import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.model.hasRenderedResult
+import eu.kanade.translation.model.isTextlessTerminal
 import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocrBlockFingerprints
 import eu.kanade.translation.ocrFingerprint
@@ -1646,10 +1649,25 @@ internal class ChapterProfileBatchCoordinator(
      *    of the OFF+COMPLETE decision in [decideResume]/[resumeCompletedOutcome],
      *    which only fires when the flag is OFF).
      *
+     * T924 LI-2 (COMPLETE work-product evidence gate): the `COMPLETE` fast path
+     * additionally demands per-page evidence that the run's page results are
+     * still durably addressable — a committed bundle, an open candidate
+     * snapshot, or a committed/textless display state in the manifest record
+     * — or a durable textless terminal in the live store. This is the flag-ON
+     * mirror of the flag-OFF F-4 gate
+     * (`BatchChapterTranslator.activeRunPagesDisplayCommitted`): user resets
+     * demote committed displays and clear the candidate pointers, and a reset
+     * that leaves behind the COMPLETE run record must never let a later
+     * dispatch return a zero-work finished outcome over pages whose translated
+     * state is gone. Any page lacking evidence supersedes the recorded run —
+     * the gate returns null so the normal run-start path publishes a fresh
+     * RUN_SNAPSHOT and re-derives the missing page state.
+     *
      * Returns null — the normal run-start path proceeds unchanged — when the
      * prior record is in any other state, or its frozen configuration
      * fingerprint / ordered source digest no longer match this dispatch
-     * (ST-15: a mismatch starts a NEW run exactly as before).
+     * (ST-15: a mismatch starts a NEW run exactly as before), or the recorded
+     * COMPLETE lacks per-page display evidence (LI-2 supersession above).
      */
     private suspend fun resumeFinalizeOrComplete(
         artifact: ChapterArtifactStore,
@@ -1666,6 +1684,32 @@ internal class ChapterProfileBatchCoordinator(
             }
             ?: return null
         if (resumable.state == ChapterRunState.COMPLETE) {
+            // T924 LI-2 (the mirror of the flag-OFF F-4 gate in
+            // BatchChapterTranslator.activeRunPagesDisplayCommitted): a recorded
+            // COMPLETE is NOT enough to retire the chapter — the zero-work
+            // finished outcome is authorized only when every ordered page's
+            // translated result is still durably addressable. The flagged lane
+            // keeps the translated page snapshot under the page record's
+            // committed bundle or (before reader adoption) its candidate
+            // pointer; a user reset overwrites the candidate snapshot with the
+            // cleared PENDING page and demotes committed displays without
+            // (previously) retiring the run record, so pointer PRESENCE alone
+            // is not evidence — the snapshot CONTENT must still be a
+            // translation-terminal page. Any page whose record and snapshot
+            // carry no readable translated/textless result must behave the
+            // same way: instead of short-circuiting, the run STARTS FRESH
+            // (ST-15-style supersession — the normal run-start path publishes
+            // a new RUN_SNAPSHOT and re-derives the missing page state).
+            val allPagesWorkProductEvidenced = orderedPages.all { (pageKey, _) ->
+                pageWorkProductResolvable(artifact, pageKey)
+            }
+            if (!allPagesWorkProductEvidenced) {
+                logcat(LogPriority.INFO) {
+                    "TachiyomiAT t924 resume: recorded COMPLETE lacks display evidence; " +
+                        "superseding with a fresh run"
+                }
+                return null
+            }
             logcat(LogPriority.INFO) {
                 "TachiyomiAT t924 resume: recorded run already COMPLETE; finished without re-running work"
             }
@@ -1690,6 +1734,44 @@ internal class ChapterProfileBatchCoordinator(
             corpusFingerprint = corpusFingerprint,
             baseCounters = resumable.phaseCounters,
         )
+    }
+
+    /**
+     * T924 LI-2 helper for the COMPLETE resume gate: true when [pageKey]'s
+     * translated result under the recorded COMPLETE run is still durably
+     * addressable — a committed bundle, a committed/textless display state, or
+     * a candidate snapshot whose CONTENT is still a translation-terminal page
+     * (a user reset persists the cleared PENDING page OVER that snapshot
+     * without clearing the pointer, so pointer presence alone is not
+     * evidence). Falls back to the live store's durable textless terminal for
+     * pages with no readable record sidecar.
+     */
+    private fun pageWorkProductResolvable(
+        artifact: ChapterArtifactStore,
+        pageKey: String,
+    ): Boolean {
+        val liveTextless = store.state.value[pageKey]?.isTextlessTerminal == true
+        val record = store.artifactManifest?.pages?.get(pageKey) ?: return liveTextless
+        if (record.committed != null) return true
+        if (record.displayState.hasCommittedDisplay ||
+            record.displayState == PageDisplayState.TEXTLESS_COMPLETE
+        ) {
+            return true
+        }
+        val snapshotFile = record.candidate?.pageSnapshotFileName
+        if (snapshotFile != null) {
+            val snapshot = artifact.readPageSnapshot(snapshotFile)
+            if (snapshot != null &&
+                (
+                    snapshot.hasRenderedResult ||
+                        snapshot.isTextlessTerminal ||
+                        snapshot.hasRecognizedTranslation
+                    )
+            ) {
+                return true
+            }
+        }
+        return liveTextless
     }
 
     /**

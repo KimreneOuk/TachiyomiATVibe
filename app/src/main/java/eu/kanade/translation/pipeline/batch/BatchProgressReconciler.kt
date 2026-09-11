@@ -127,6 +127,63 @@ object BatchProgressReconciler {
         )
     }
 
+    /**
+     * T924 LI-1: the completion projection for a FLAGGED-lane (FF-01 ON)
+     * COMPLETED outcome. The flagged [ChapterProfileBatchCoordinator] commits
+     * translations WITHOUT an in-pass render — a healthy page ends
+     * translation-terminal (READY/PARTIAL, committed bundle in the artifact
+     * manifest) with `renderStatus == PENDING` and no cleaned image, so the
+     * legacy [reconcile] done-predicate (`hasRenderedResult`) counts every
+     * translatable page stranded and reports the chapter ERROR. At a flagged
+     * COMPLETED outcome the coordinator has already resolved every expected
+     * page to a terminal state per `t924PageTerminalAtFinalize` (unresolved
+     * pages make the chapter a retryable ERROR BEFORE finalize), so the
+     * COMPLETE record itself is the completion authority:
+     *
+     *  - every expected page counts done — including pages MISSING from
+     *    [pageMap] entirely (the run's COMPLETE record covers them; the
+     *    durable per-page evidence lives in the manifest, consumed by the
+     *    run-record-aware `StoreStatusProjector.artifactStatus`);
+     *  - pages with `translationStatus == PARTIAL` count into the partial
+     *    bucket (chapter READY_WITH_WARNINGS) instead of done;
+     *  - no stranded pages and no failures are ever manufactured here.
+     *
+     * NEVER use this for legacy (FF-01 OFF) outcomes — the legacy schedule
+     * renders in-pass and keeps the stricter done-predicate. [activeGeneration]
+     * is accepted for signature parity with [reconcile] and is deliberately
+     * unused: a COMPLETED run is generation-agnostic by definition.
+     */
+    fun reconcileFlaggedCompleted(
+        pageMap: Map<String, PageTranslation>,
+        orderedKeys: List<String>,
+        activeGeneration: Long,
+    ): ReconciliationResult {
+        val expectedKeys = orderedKeys.distinct()
+        val unexpectedPageKeys = pageMap.keys - expectedKeys.toSet()
+        var doneCount = 0
+        var partialCount = 0
+        for (pageKey in expectedKeys) {
+            if (pageMap[pageKey]?.translationStatus == eu.kanade.translation.model.StageStatus.PARTIAL) {
+                partialCount++
+            } else {
+                doneCount++
+            }
+        }
+        return ReconciliationResult(
+            chapterStatus = if (partialCount > 0) {
+                Translation.State.READY_WITH_WARNINGS
+            } else {
+                Translation.State.TRANSLATED
+            },
+            strandedPages = emptyMap(),
+            unexpectedPageKeys = unexpectedPageKeys,
+            doneCount = doneCount,
+            failedCount = 0,
+            partialCount = partialCount,
+            terminalCount = 0,
+        )
+    }
+
     private fun reconcilePaused(
         pageMap: Map<String, PageTranslation>,
         expectedKeys: List<String>,

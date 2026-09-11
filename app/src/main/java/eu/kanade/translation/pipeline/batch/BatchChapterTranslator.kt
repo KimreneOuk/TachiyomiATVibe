@@ -659,6 +659,7 @@ internal class BatchChapterTranslator(
                  * verbatim legacy coordinator — never a preflight-only flagged
                  * run — until the flagged path serves those stages.
                  */
+                var dispatchedFlaggedLane = false
                 suspend fun runBatchPass1(
                     orderedPages: List<PageKey>,
                     computeClass: TranslatorComputeClass,
@@ -682,12 +683,17 @@ internal class BatchChapterTranslator(
                         allPagesDisplayCommitted =
                             activeRunPagesDisplayCommitted(store, orderedPages),
                     )?.let { finished -> return finished }
-                    return when (
-                        profilePipelineDispatchKind(
-                            flagOn = profilePipelineEnabled,
-                            contextualAiParity = isAi,
-                        )
-                    ) {
+                    // T924 LI-1: remember which lane this pass dispatched so the
+                    // post-pass completion projection can pick the matching
+                    // reconciler (flagged COMPLETED outcomes are
+                    // translation-terminal without an in-pass render).
+                    val dispatchKind = profilePipelineDispatchKind(
+                        flagOn = profilePipelineEnabled,
+                        contextualAiParity = isAi,
+                    )
+                    dispatchedFlaggedLane =
+                        dispatchKind == ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE
+                    return when (dispatchKind) {
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.PROFILE_PIPELINE -> {
                             // T924-D4 (wave-3 owed): the run snapshot freezes
                             // the REAL provider/model identity from the active
@@ -899,7 +905,15 @@ internal class BatchChapterTranslator(
                     "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
                 }
 
-                val reconciliation = BatchProgressReconciler.reconcile(
+                // T924 LI-1: the post-pass completion projection is LANE-aware.
+                // A flagged COMPLETED run ends pages translation-terminal
+                // WITHOUT an in-pass render, so the legacy done-predicate would
+                // project every healthy page as stranded and report the chapter
+                // ERROR. Legacy outcomes keep the existing reconcile unchanged
+                // (FF-01 OFF stays byte-identical in behavior).
+                val reconciliation = postPassReconciliation(
+                    flaggedLane = dispatchedFlaggedLane,
+                    status = BatchPass1Status.COMPLETED,
                     pageMap = store.state.value,
                     orderedKeys = orderedStreams.map { it.first },
                     activeGeneration = store.currentGeneration,
@@ -1018,6 +1032,29 @@ internal class BatchChapterTranslator(
     }
 
     internal companion object {
+        /**
+         * T924 LI-1: the pass-1 POST-PASS projection selector. A flagged-lane
+         * (FF-01 ON) COMPLETED outcome projects through
+         * [BatchProgressReconciler.reconcileFlaggedCompleted] — the flagged
+         * pipeline commits translations without an in-pass render, so the
+         * legacy done-predicate would strand every healthy page — while every
+         * other shape (any legacy outcome, and a legacy lane regardless of
+         * status) keeps the existing [BatchProgressReconciler.reconcile]
+         * unchanged. Pure and unit-testable; the single post-pass site in
+         * `translateBatchTraced` consults this and nothing else.
+         */
+        internal fun postPassReconciliation(
+            flaggedLane: Boolean,
+            status: BatchPass1Status,
+            pageMap: Map<String, PageTranslation>,
+            orderedKeys: List<String>,
+            activeGeneration: Long,
+        ): ReconciliationResult = if (flaggedLane && status == BatchPass1Status.COMPLETED) {
+            BatchProgressReconciler.reconcileFlaggedCompleted(pageMap, orderedKeys, activeGeneration)
+        } else {
+            BatchProgressReconciler.reconcile(pageMap, orderedKeys, activeGeneration)
+        }
+
         /**
          * T924 F3 (wave-2 review R3, gap 8): the FF-01 dispatch decision WITH
          * engine-category parity. The flagged [ChapterProfileBatchCoordinator]

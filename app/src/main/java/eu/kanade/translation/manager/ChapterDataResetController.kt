@@ -263,6 +263,9 @@ internal class ChapterDataResetController(
                 activeStore.demoteCommittedDisplay(pageKey, "chapter data reset")
             }
             activeStore.flush()
+            // T924 LI-2: the reset must also retire the recorded run so a
+            // future dispatch can never short-circuit on its COMPLETE record.
+            activeStore.retireActiveRun("chapter data reset")
         } else {
             openExistingChapterTranslationStore(
                 chapterId,
@@ -276,6 +279,8 @@ internal class ChapterDataResetController(
                     store.demoteCommittedDisplay(pageKey, "chapter data reset")
                 }
                 store.flush()
+                // T924 LI-2: same retirement for the persisted-only store.
+                store.retireActiveRun("chapter data reset")
             }
         }
         reconcileBatchProgress(chapterId, chapter.name, chapter.scanlator, manga.title, source)

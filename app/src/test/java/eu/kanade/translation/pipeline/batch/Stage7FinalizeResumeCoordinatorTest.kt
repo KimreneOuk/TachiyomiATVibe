@@ -21,6 +21,7 @@ import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.TranslationBlock
+import eu.kanade.translation.model.hasRecognizedTranslation
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.ocrBlockFingerprints
 import eu.kanade.translation.translator.BatchRequestSublimitGate
@@ -44,6 +45,7 @@ import eu.kanade.translation.translator.providers.AiTranslator
 import io.kotest.matchers.collections.shouldContainExactly
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import io.kotest.matchers.shouldNotBe
 import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.test.runTest
@@ -472,6 +474,94 @@ class Stage7FinalizeResumeCoordinatorTest {
             resumeAnalyzer.chunks.get() shouldBe 0
             resumeTranslator.requests shouldBe emptyList()
             activeRunPointer(store) shouldBe pointerAfterPass1
+            durableRunRecord(store).shouldNotBeNull().state shouldBe ChapterRunState.COMPLETE
+        }
+
+    @Test
+    fun `a recorded COMPLETE lacking per-page display evidence is superseded by a fresh run (LI-2)`() =
+        runTest {
+            val store = lazyStore()
+            val pageKeys = (1..3).map { "p$it" }
+            store.preRegisterPages(pageKeys)
+            val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+
+            // ---- Pass 1: the full happy path through COMPLETE. ----
+            val firstIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val firstTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+            val firstOutcome = coordinator(
+                store,
+                FakePreflightOcrWorker(store),
+                pages,
+                CountingAnalyzer(),
+                firstTranslator,
+                newScheduler(store, pageKeys, firstIdentities, FakeOverlapInpaintLane(store, firstIdentities)),
+            ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+            firstOutcome.status shouldBe BatchPass1Status.COMPLETED
+
+            // Healthy flagged COMPLETE: the translated page snapshots stay
+            // durably addressable through the OPEN candidate pointers — there
+            // is no committed bundle yet (promotion requires a rendered
+            // result). This is the evidence the LI-2 COMPLETE gate accepts.
+            val manifestAfterPass1 = artifactStore().readManifest().shouldNotBeNull()
+            pageKeys.forEach { key ->
+                manifestAfterPass1.pages.getValue(key).candidate.shouldNotBeNull()
+            }
+
+            // ---- The LI-2 hole: a user reset demotes the committed displays ----
+            // ---- (the real reset primitives: live page + manifest pointer) ----
+            // ---- while the COMPLETE run record keeps owning the chapter.   ----
+            pageKeys.forEach { key ->
+                store.updatePageFromCurrentSnapshot(key, "t924 li2 reset") { page ->
+                    page?.copy(
+                        blocks = page.blocks.map { it.copy(translation = "") }.toMutableList(),
+                        translationStatus = StageStatus.PENDING,
+                        renderStatus = StageStatus.PENDING,
+                    ) ?: PageTranslation.EMPTY
+                }
+                store.demoteCommittedDisplay(key, "t924 li2 reset")
+            }
+            store.flush()
+            val manifestAfterReset = artifactStore().readManifest().shouldNotBeNull()
+            pageKeys.forEach { key ->
+                // The reset keeps the candidate POINTER but persists the
+                // cleared PENDING page OVER its snapshot, so the recorded
+                // COMPLETE no longer has any page whose translated result is
+                // readable — the exact LI-2 divergence.
+                val record = manifestAfterReset.pages.getValue(key)
+                record.committed shouldBe null
+                val snapshot = record.candidate?.pageSnapshotFileName
+                    ?.let { artifactStore().readPageSnapshot(it) }
+                (snapshot?.hasRecognizedTranslation ?: false) shouldBe false
+            }
+            (
+                artifactStore().readRunRecord(manifestAfterReset.activeRun.shouldNotBeNull())
+                    as ChapterArtifactStore.RunRecordRead.Usable
+                ).record.state shouldBe ChapterRunState.COMPLETE
+
+            // ---- Pass 2: the flag-ON re-dispatch must NOT return the ----
+            // ---- zero-work finished outcome; it starts a fresh run.  ----
+            val resumeIdentities = ConcurrentHashMap<String, BatchWriteIdentity>()
+            val resumeOcrWorker = FakePreflightOcrWorker(store)
+            val resumeAnalyzer = CountingAnalyzer()
+            val resumeTranslator = FakeTranslator { _, chunk -> responseFor(chunk) }
+            val resumeOutcome = coordinator(
+                store,
+                resumeOcrWorker,
+                pages,
+                resumeAnalyzer,
+                resumeTranslator,
+                newScheduler(store, pageKeys, resumeIdentities, FakeOverlapInpaintLane(store, resumeIdentities)),
+            ).runPass1(pages, TranslatorComputeClass.REMOTE_IO)
+
+            // NOT the zero-work COMPLETE: the fresh run re-plans the demoted
+            // pages, re-translates them (fresh paid work, same envelope plan
+            // as the first pass), and re-closes with the normal completion
+            // reason under a NEW record publication.
+            resumeOutcome.reason shouldNotBe ChapterProfileBatchCoordinator.RESUME_COMPLETE_REASON
+            resumeOutcome.status shouldBe BatchPass1Status.COMPLETED
+            resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+            resumeTranslator.requests.size shouldBe firstTranslator.requests.size
+            activeRunPointer(store) shouldNotBe manifestAfterReset.activeRun
             durableRunRecord(store).shouldNotBeNull().state shouldBe ChapterRunState.COMPLETE
         }
 }

@@ -4,10 +4,16 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.artifact.ArtifactStage
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.ChapterArtifactManifest
+import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterRunState
 import eu.kanade.translation.artifact.DurableFailureMetadata
+import eu.kanade.translation.artifact.ManifestAuthority
 import eu.kanade.translation.pipeline.batch.BatchProgressReconciler
+import eu.kanade.translation.model.PageDisplayProjection
+import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.model.hasCommittedDisplay
 import eu.kanade.translation.model.hasRenderedResult
 import eu.kanade.translation.model.isStageFailed
 import eu.kanade.translation.model.isStageRunning
@@ -53,9 +59,30 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
     fun durableFailuresSnapshot(): Map<String, DurableFailureMetadata> =
         artifactManifest?.durableFailures?.toMap().orEmpty()
 
-    /** Derives durable artifact status without consulting the legacy summary sidecar. */
+    /**
+     * Derives durable artifact status without consulting the legacy summary sidecar.
+     *
+     * T924 LI-1 (durable half): when the manifest authority is ARTIFACTS and a
+     * durably COMPLETE run record owns the chapter ([ChapterArtifactManifest.activeRun]
+     * readable at [ChapterRunState.COMPLETE]), the MANIFEST PAGE RECORDS are the
+     * completion authority and the legacy live-page reconcile is skipped — that
+     * reconcile's done-predicate is the legacy display-committed shape, while a
+     * flagged-lane (FF-01 ON) run commits translations WITHOUT an in-pass
+     * render, so every healthy page misprojected as stranded → chapter ERROR.
+     * Done evidence per page: a committed display bundle, a TEXTLESS_COMPLETE
+     * display state, or an open candidate snapshot (the flagged lane keeps the
+     * translated page snapshot addressable through the candidate pointer —
+     * see [completedRunRecordStatus]); a partial translation stage demotes the
+     * chapter to READY_WITH_WARNINGS; any expected page without such evidence
+     * yields ERROR. A missing/unreadable record, a non-COMPLETE state, or an
+     * empty page record set falls through to the existing legacy projection
+     * unchanged (legacy chapters have no activeRun).
+     */
     fun artifactStatus(): Translation.State? {
         val manifest = artifactManifest ?: return null
+        if (manifest.authority == ManifestAuthority.ARTIFACTS && manifest.activeRun != null) {
+            completedRunRecordStatus(manifest)?.let { return it }
+        }
         val pagesSnapshot = state.value
         val visiblePages = display.value
         val hasReadableOutput = visiblePages.values.any { it.toPageDisplayProjection().displayReady } ||
@@ -130,6 +157,70 @@ internal class StoreStatusProjector(private val store: ChapterTranslationStore) 
             Translation.State.READY_WITH_WARNINGS
         } else {
             reconciliation.chapterStatus
+        }
+    }
+
+    /**
+     * T924 LI-1: projects the chapter status from the MANIFEST PAGE RECORDS
+     * under a durably COMPLETE active run; null whenever the run-record
+     * authority is not provable (pointer missing/unreadable, non-COMPLETE
+     * state, or no page records to project) so the caller keeps the existing
+     * legacy projection. Expected pages beyond the registered records (trusted
+     * baseline shortfall) carry no per-page evidence and count as unevidenced —
+     * the run record claims completion the manifest cannot show.
+     *
+     * Done evidence per page: a committed display bundle
+     * ([eu.kanade.translation.model.PageDisplayProjection.from] displayReady),
+     * a TEXTLESS_COMPLETE display state, or an open candidate snapshot — the
+     * flagged lane keeps the translated page snapshot addressable through the
+     * candidate pointer (promotion to a committed bundle requires a rendered
+     * result and happens later, at reader adoption), so under a COMPLETE run
+     * record the candidate-addressable snapshot is the completed work product
+     * a re-opened chapter lazily loads
+     * ([ChapterTranslationStore.getOrLoadPageSnapshot]). Partial evidence (a
+     * PARTIAL translation stage record, or a live PARTIAL page) demotes the
+     * chapter to READY_WITH_WARNINGS.
+     */
+    private fun completedRunRecordStatus(manifest: ChapterArtifactManifest): Translation.State? {
+        val pointer = manifest.activeRun ?: return null
+        val artifact = store.artifactStore ?: return null
+        val record = when (val read = artifact.readRunRecord(pointer)) {
+            is ChapterArtifactStore.RunRecordRead.Usable -> read.record
+            else -> return null
+        }
+        if (record.state != ChapterRunState.COMPLETE) return null
+        val pagesSnapshot = state.value
+        val pageRecords = manifest.pages.values
+        if (pageRecords.isEmpty()) return null
+        var doneCount = 0
+        var partialCount = 0
+        var unevidencedCount = 0
+        pageRecords.forEach { pageRecord ->
+            val projection = PageDisplayProjection.from(pageRecord)
+            val livePartial = pagesSnapshot[pageRecord.pageKey]?.translationStatus ==
+                eu.kanade.translation.model.StageStatus.PARTIAL
+            val done = projection.displayReady ||
+                projection.isTextless ||
+                pageRecord.candidate != null ||
+                pageRecord.displayState.hasCommittedDisplay ||
+                pageRecord.displayState == PageDisplayState.TEXTLESS_COMPLETE
+            if (done) {
+                doneCount++
+                if (pageRecord.translation?.status == ArtifactStageStatus.PARTIAL || livePartial) {
+                    partialCount++
+                }
+            } else {
+                unevidencedCount++
+            }
+        }
+        manifest.expectedPageCount
+            ?.takeIf { manifest.expectedPageCountTrusted }
+            ?.let { expected -> (expected - pageRecords.size).coerceAtLeast(0) }
+            ?.let { shortfall -> unevidencedCount += shortfall }
+        return when {
+            unevidencedCount > 0 -> Translation.State.ERROR
+            partialCount > 0 -> Translation.State.READY_WITH_WARNINGS
+            else -> Translation.State.TRANSLATED
         }
     }
 }
