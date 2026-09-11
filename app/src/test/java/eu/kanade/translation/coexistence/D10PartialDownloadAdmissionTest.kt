@@ -541,7 +541,10 @@ class D10PartialDownloadAdmissionTest {
                 }
                 withClue("D10: the reopened terminal p0 counts done; the run strands and fails nothing") {
                     val reconciliation = secondRun.reconciliation.await().shouldNotBeNull()
-                    reconciliation.doneCount shouldBe 1
+                    // T924 zero-legacy (D1): the flagged COMPLETED projection
+                    // counts EVERY expected page done — the reopened terminal
+                    // p0 (its run coverage) and the freshly worked p1 alike.
+                    reconciliation.doneCount shouldBe 2
                     reconciliation.failedCount shouldBe 0
                     reconciliation.strandedPages shouldBe emptyMap()
                 }

@@ -109,7 +109,6 @@ class StoreStatusProjectorRunRecordTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "fake:provider",
-            flagProfilePipeline = true,
         )
         val completeRecord = ChapterRunRecord(
             runId = "run-li1-durable-1",

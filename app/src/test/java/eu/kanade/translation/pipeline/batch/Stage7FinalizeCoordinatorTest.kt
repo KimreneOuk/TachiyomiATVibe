@@ -53,8 +53,12 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * T924 Stage 7 (D4, ST-14): the drained TRANSLATE tail — FINALIZE (serial
  * inpaint drain through the overlap scheduler, stranded-page reconciliation,
- * flush, retention), the run's FIRST/ONLY COMPLETE publication, and the
- * wave-2 F1 decideResume production semantics (OFF+COMPLETE ⇒ TreatAsFinished).
+ * flush, retention) and the run's FIRST/ONLY COMPLETE publication.
+ *
+ * T924 zero-legacy (D1): the wave-2 F1 flag-off resume decision tests
+ * (decideResume/resumeCompletedOutcome, OFF+COMPLETE ⇒ TreatAsFinished) were
+ * deleted with the FF-01 flag; the ST-14 COMPLETE resume is covered by
+ * Stage7FinalizeResumeCoordinatorTest and the dispatch-level wiring test.
  */
 class Stage7FinalizeCoordinatorTest {
 
@@ -272,12 +276,10 @@ class Stage7FinalizeCoordinatorTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "fake:provider",
-            flagProfilePipeline = true,
         ).copy(
             envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = 8),
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-        flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
         textTranslator = translator,
@@ -343,24 +345,6 @@ class Stage7FinalizeCoordinatorTest {
         record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_FINALIZE] shouldBe 1
         record.phaseCounters["pagesTranslated"] shouldBe 3
 
-        // Wave-2 F1: the OFF+COMPLETE resume decision tree now applies.
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = false)
-            .shouldBeInstanceOf<ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.TreatAsFinished>()
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = true)
-            .shouldBeInstanceOf<ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.RunFlaggedPath>()
-        val finishedOutcome = ChapterProfileBatchCoordinator.resumeCompletedOutcome(
-            record = record,
-            currentFlagOn = false,
-            orderedPageKeys = pageKeys.toSet(),
-            allPagesDisplayCommitted = true,
-        ).shouldNotBeNull()
-        finishedOutcome.status shouldBe BatchPass1Status.COMPLETED
-        ChapterProfileBatchCoordinator.resumeCompletedOutcome(
-            record = null,
-            currentFlagOn = false,
-            orderedPageKeys = pageKeys.toSet(),
-            allPagesDisplayCommitted = true,
-        ) shouldBe null
     }
 
     @Test

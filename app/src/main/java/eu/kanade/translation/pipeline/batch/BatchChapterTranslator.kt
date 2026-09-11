@@ -160,21 +160,6 @@ internal class BatchChapterTranslator(
         toLang: TextTranslatorLanguage,
     ): BatchExpectedFingerprints = batchExpectedFingerprintsFn(fromLang, toLang)
 
-    /**
-     * Stage-7 review F-4: per-page display evidence for the FF-01e.2a
-     * TreatAsFinished gate — a page counts only when its display is durably
-     * retired: a committed bundle in the artifact manifest OR a durable
-     * textless terminal. A page with neither has no display to retire, so
-     * [ChapterProfileBatchCoordinator.resumeCompletedOutcome] must NOT fire
-     * TreatAsFinished — the chapter is not actually finished.
-     */
-    private fun activeRunPagesDisplayCommitted(
-        store: ChapterTranslationStore,
-        orderedPages: List<Pair<String, Int>>,
-    ): Boolean = orderedPages.all { (pageKey, _) ->
-        store.artifactManifest?.pages?.get(pageKey)?.committed != null ||
-            store.state.value[pageKey]?.isTextlessTerminal == true
-    }
 
     private suspend fun updatePageFromCurrentSnapshot(
         store: ChapterTranslationStore,
@@ -365,7 +350,7 @@ internal class BatchChapterTranslator(
                         "engine=${recognitionEngine::class.simpleName} translator=${textTranslator::class.simpleName}"
                 }
 
-                // SequentialBatchCoordinator owns the phase barriers. AI admission feeds
+                // The batch coordinator owns the phase barriers. AI admission feeds
                 // the token planner without provider calls; one overflow page may be kept
                 // as an OCR-only probe. Each actual chunk OCRs completely before its AI
                 // request and native inpaint branches overlap, and render joins both.
@@ -644,65 +629,35 @@ internal class BatchChapterTranslator(
 
 
                 /**
-                 * T924-FF-01a: THE single FF-01 dispatch point. The flag is
-                 * read ONCE per run here (T924-FF-01d — the value is frozen
-                 * into the flagged run's ChapterRunRecord; mid-run settings
-                 * changes never re-read it, T924-FF-01e/ST-15). Flag ON
-                 * constructs the T924 [ChapterProfileBatchCoordinator] (WP4
-                 * shell: OCR preflight through its stop/diagnostic terminal);
-                 * flag OFF constructs the legacy [SequentialBatchCoordinator]
-                 * unchanged (FF-01b byte-for-byte legacy behavior).
+                 * T924 zero-legacy (D1): THE single dispatch point. The FF-01
+                 * A/B flag completed its lifecycle and is gone — the engine
+                 * category alone picks the lane (FF-01a semantics, minus the
+                 * flag):
+                 *  - STANDARD engine → STANDARD_PIPELINE (the same
+                 *    [ChapterProfileBatchCoordinator] with its per-page
+                 *    standard translate tail);
+                 *  - AI_MODEL → PROFILE_PIPELINE. The degenerate
+                 *    non-contextual AI config no longer falls back to a
+                 *    legacy coordinator: it runs the coordinator's typed
+                 *    CONFIGURATION pause at the envelope seam (wave A added
+                 *    the envelope-path cast + pause).
                  *
-                 * T924 F3 (wave-2 review R3/gap 8): the flagged coordinator
-                 * currently stops at the OCR-preflight terminal, so dispatch
-                 * additionally requires the engine-category parity of the
-                 * legacy contextual-AI lane (`isAi` above):
-                 * `translationEngineCategory == AI_MODEL && textTranslator is
-                 * ContextualTextTranslator`. Any other engine keeps running the
-                 * verbatim legacy coordinator — never a preflight-only flagged
-                 * run — until the flagged path serves those stages.
+                 * Resume goes through the coordinator's
+                 * `resumeFinalizeOrComplete` (ST-14/LI-2) for BOTH lanes;
+                 * the shell-level flag-OFF consultation
+                 * (shell-level OFF+COMPLETE outcome) was deleted with
+                 * the flag — there is no flag-OFF state anymore.
                  */
-                var dispatchedFlaggedLane = false
                 suspend fun runBatchPass1(
                     orderedPages: List<PageKey>,
                     computeClass: TranslatorComputeClass,
                 ): BatchPass1Outcome {
-                    val profilePipelineEnabled = translationPreferences
-                        .translationBatchProfilePipeline()
-                        .get()
-                    // T924 wave-2 F1 (Stage 7): the FIRST COMPLETE publisher
-                    // exists, so the FF-01e resume decision tree wires in. A
-                    // flag-OFF run over a chapter whose recorded run reached
-                    // COMPLETE is treated as finished — the legacy schedule
-                    // never re-runs it. Flag ON / no COMPLETE record keeps the
-                    // dispatch below byte-identical. Stage-7 review F-4: the
-                    // gate also demands per-page display evidence — a COMPLETE
-                    // record over an unrendered page dispatches normally so
-                    // the legacy schedule re-derives the missing display.
-                    ChapterProfileBatchCoordinator.resumeCompletedOutcome(
-                        record = ChapterProfileBatchCoordinator.activeRunRecordOrNull(store),
-                        currentFlagOn = profilePipelineEnabled,
-                        orderedPageKeys = orderedPages.mapTo(mutableSetOf()) { it.first },
-                        allPagesDisplayCommitted =
-                            activeRunPagesDisplayCommitted(store, orderedPages),
-                    )?.let { finished -> return finished }
-                    // T924 LI-1: remember which lane this pass dispatched so the
-                    // post-pass completion projection can pick the matching
-                    // reconciler (flagged COMPLETED outcomes are
-                    // translation-terminal without an in-pass render).
-                    // Phase 4 Wave A: BOTH flagged lanes (AI + standard) end
-                    // translation-terminal, so the projection keys on any
-                    // non-legacy dispatch.
                     val engineCategoryIsStandard =
                         translationPreferences.translationEngineCategory().get() ==
                             TranslationEngineCategory.STANDARD
                     val dispatchKind = profilePipelineDispatchKind(
-                        flagOn = profilePipelineEnabled,
                         engineCategoryIsStandard = engineCategoryIsStandard,
-                        contextualAiParity = isAi,
                     )
-                    dispatchedFlaggedLane =
-                        dispatchKind != ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL
                     // T924 Phase 4 Wave A: the injected standard translate seam —
                     // the coordinator's per-page tail calls THIS, and it
                     // delegates verbatim to `TranslatorLaneWorker.translateOutcome`
@@ -739,6 +694,30 @@ internal class BatchChapterTranslator(
                             }
                             is LeaseAcquisition.Granted -> {
                                 val lease = acquisition.lease
+                                // T917 exactly-once (T924 zero-legacy D1): the
+                                // tail's terminal pre-check ran BEFORE this
+                                // lease acquisition. A concurrent owner (the
+                                // manual/reader lane) can commit its terminal
+                                // stage and release in that window
+                                // (commit-before-release idiom), so the grant
+                                // does not prove the page still needs work.
+                                // Re-evaluate the SAME translate-time terminal
+                                // predicate under the lease: an already-
+                                // terminal page is never re-paid.
+                                val liveUnderLease = store.state.value[pageKey]
+                                if (
+                                    liveUnderLease != null &&
+                                    ChapterProfileBatchCoordinator.standardPageTerminalAtTranslate(
+                                        liveUnderLease,
+                                    )
+                                ) {
+                                    logcat(LogPriority.INFO) {
+                                        "TachiyomiAT t924 standard translate skips re-pay: page went " +
+                                            "terminal before lease use, pageKey=$pageKey"
+                                    }
+                                    releaseBatchPageLease(store, pageKey)
+                                    return ChunkCompletionOutcome.Completed(emptySet())
+                                }
                                 batchWriteIdentities[pageKey] = BatchWriteIdentity(
                                     generation = lease.generation,
                                     pageVersion = lease.pageVersion,
@@ -827,20 +806,17 @@ internal class BatchChapterTranslator(
                                     credentialId = credentialSecret.takeIf { it.isNotBlank() }
                                         ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
                                         .orEmpty(),
-                                    flagProfilePipeline = profilePipelineEnabled,
                                 ),
                                 orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
                                     pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
                                 },
-                                flagProfilePipeline = true,
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 // T924 Stage-6 slice A: the resolved AI text
-                                // translator rides the FF-01 ON branch ONLY —
-                                // the legacy OFF construction below stays
-                                // byte-identical. `null` (non-AI engines are
-                                // already fenced by profilePipelineDispatchKind)
-                                // is the typed CONFIGURATION pause inside the
-                                // coordinator.
+                                // translator rides the profile lane; a
+                                // non-contextual translator on this lane is
+                                // the typed CONFIGURATION pause inside the
+                                // coordinator (the envelope path's local
+                                // cast).
                                 textTranslator = contextualTranslator,
                                 // T924 wave-7c: production analysis transport
                                 // (engine-backed raw completions) feeds the
@@ -887,12 +863,10 @@ internal class BatchChapterTranslator(
                                     credentialId = credentialSecret.takeIf { it.isNotBlank() }
                                         ?.let { ChapterProfileBatchCoordinator.sha256Hex(it).take(16) }
                                         .orEmpty(),
-                                    flagProfilePipeline = profilePipelineEnabled,
                                 ),
                                 orderedSourcePairs = orderedStreams.map { (pageKey, _) ->
                                     pageKey to (sourceFingerprints[pageKey] ?: UNKNOWN_SOURCE_FINGERPRINT)
                                 },
-                                flagProfilePipeline = true,
                                 releaseBatchLease = { pageKey -> releaseBatchPageLease(store, pageKey) },
                                 // The plain per-page standard translator rides
                                 // the WIDENED seam type; the envelope path's
@@ -904,24 +878,6 @@ internal class BatchChapterTranslator(
                                 standardTranslateOutcome = { ref -> standardTranslateOutcome(ref) },
                             ).runPass1(orderedPages, computeClass)
                         }
-                        ChapterProfileBatchCoordinator.BatchCoordinatorKind.LEGACY_SEQUENTIAL ->
-                            SequentialBatchCoordinator(
-                                nativeWorker = batchLaneWorkers.nativeWorker,
-                                translatorWorker = batchLaneWorkers.translatorWorker,
-                                renderJoin = renderJoin,
-                                listener = batchScheduleListener,
-                                scheduleTrace = scheduleTrace,
-                                awaitLeaseHandback = { pageKey ->
-                                    // T917 D3 (design §3.2): the deferring owner commits its
-                                    // terminal stage BEFORE releasing its lease (the manual
-                                    // boundary's finally), so observing the release is
-                                    // sufficient — the terminal state is already published
-                                    // when the rescan re-offers the page and the worker's
-                                    // externally-completed gate routes it to SKIP_ALL.
-                                    store.awaitPageLeaseRelease(pageKey, LEASE_HANDBACK_WAIT_MS)
-                                },
-                                deferredPages = deferredPages,
-                            ).runPass1(orderedPages, computeClass)
                     }
                 }
 
@@ -1027,15 +983,14 @@ internal class BatchChapterTranslator(
                     "TachiyomiAT batch first pass complete chapter=${chapter.name} pages=${orderedStreams.size}"
                 }
 
-                // T924 LI-1: the post-pass completion projection is LANE-aware.
-                // A flagged COMPLETED run ends pages translation-terminal
-                // WITHOUT an in-pass render, so the legacy done-predicate would
-                // project every healthy page as stranded and report the chapter
-                // ERROR. Legacy outcomes keep the existing reconcile unchanged
-                // (FF-01 OFF stays byte-identical in behavior).
-                val reconciliation = postPassReconciliation(
-                    flaggedLane = dispatchedFlaggedLane,
-                    status = BatchPass1Status.COMPLETED,
+                // T924 LI-1 / zero-legacy (D1): BOTH surviving lanes end
+                // COMPLETED runs translation-terminal WITHOUT an in-pass
+                // render, so the post-pass completion projection is ALWAYS
+                // the flagged projection — the legacy done-predicate would
+                // project every healthy page as stranded and report the
+                // chapter ERROR. (Non-COMPLETED stops never reach this site:
+                // the stop branch above keeps the pause-aware reconcile.)
+                val reconciliation = BatchProgressReconciler.reconcileFlaggedCompleted(
                     pageMap = store.state.value,
                     orderedKeys = orderedStreams.map { it.first },
                     activeGeneration = store.currentGeneration,
@@ -1155,63 +1110,23 @@ internal class BatchChapterTranslator(
 
     internal companion object {
         /**
-         * T924 LI-1: the pass-1 POST-PASS projection selector. A flagged-lane
-         * (FF-01 ON) COMPLETED outcome projects through
-         * [BatchProgressReconciler.reconcileFlaggedCompleted] — the flagged
-         * pipeline commits translations without an in-pass render, so the
-         * legacy done-predicate would strand every healthy page — while every
-         * other shape (any legacy outcome, and a legacy lane regardless of
-         * status) keeps the existing [BatchProgressReconciler.reconcile]
-         * unchanged. Pure and unit-testable; the single post-pass site in
-         * `translateBatchTraced` consults this and nothing else.
-         */
-        internal fun postPassReconciliation(
-            flaggedLane: Boolean,
-            status: BatchPass1Status,
-            pageMap: Map<String, PageTranslation>,
-            orderedKeys: List<String>,
-            activeGeneration: Long,
-        ): ReconciliationResult = if (flaggedLane && status == BatchPass1Status.COMPLETED) {
-            BatchProgressReconciler.reconcileFlaggedCompleted(pageMap, orderedKeys, activeGeneration)
-        } else {
-            BatchProgressReconciler.reconcile(pageMap, orderedKeys, activeGeneration)
-        }
-
-        /**
-         * T924 F3 (wave-2 review R3, gap 8) + Phase 4 Wave A: the FF-01
-         * dispatch decision WITH engine-category parity. The flagged
-         * [ChapterProfileBatchCoordinator] is constructed when the flag is ON
-         * AND the engine parity matches a lane it can carry:
+         * T924 zero-legacy (D1): the dispatch decision is ENGINE-CATEGORY
+         * only — the FF-01 flag completed its A/B lifecycle and was removed.
          *  - STANDARD engine → STANDARD_PIPELINE (the same coordinator's
          *    standard tail — pure FULL OCR preflight, then per-page legacy
          *    batch translation without the glossary);
-         *  - AI_MODEL with the contextual translator parity of the legacy AI
-         *    lane (`contextualAiParity`) → PROFILE_PIPELINE;
-         *  - AI_MODEL without that parity (degenerate AI config) → the
-         *    verbatim legacy [SequentialBatchCoordinator] (FF-01b/F3);
-         *  - flag OFF for any engine → the legacy coordinator, byte-identical.
+         *  - anything else (AI_MODEL, contextual or not) → PROFILE_PIPELINE;
+         *    the degenerate non-contextual AI config takes the coordinator's
+         *    typed CONFIGURATION pause at the envelope seam.
          * Pure and unit-testable; the single dispatch site in `runBatchPass1`
-         * consults this and nothing else (T924-FF-01a).
+         * consults this and nothing else (T924-FF-01a, minus the flag).
          */
         internal fun profilePipelineDispatchKind(
-            flagOn: Boolean,
             engineCategoryIsStandard: Boolean,
-            contextualAiParity: Boolean,
         ): ChapterProfileBatchCoordinator.BatchCoordinatorKind =
             ChapterProfileBatchCoordinator.dispatchKind(
-                translationBatchProfilePipeline = flagOn,
                 engineCategoryIsStandard = engineCategoryIsStandard,
-                contextualAiParity = contextualAiParity,
             )
-
-        /**
-         * T917 D3 defer-and-rescan: bound on how long a deferred page's lease
-         * handback wait may suspend before the pass gives up on that page and
-         * lets the reconciler report it. Matches the single-page pipeline's
-         * own stage budget, so a reader-owned page that finishes its work in
-         * reasonable time is always rejoined in-pass.
-         */
-        internal val LEASE_HANDBACK_WAIT_MS: Long = SINGLE_PAGE_TIMEOUT_MS
 
         /**
          * T911 slice 3: pages that are NOT durably terminal when the batch

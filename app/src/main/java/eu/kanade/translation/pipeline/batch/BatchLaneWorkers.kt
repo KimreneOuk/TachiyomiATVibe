@@ -824,7 +824,7 @@ internal class BatchLaneWorkers(
     }
 
     // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
-    // The batch schedule is driven by [SequentialBatchCoordinator] (one
+    // The batch schedule is driven by the batch coordinator pass (one
     // serialized native lane, token-adaptive whole-page AI chunks with one
     // retained OCR-only probe, one ordered translation lane, and a per-page
     // render join). The pipeline supplies the adapter implementations of

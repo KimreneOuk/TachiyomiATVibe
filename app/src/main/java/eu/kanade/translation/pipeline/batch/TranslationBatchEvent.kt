@@ -9,8 +9,8 @@ enum class PhaseStatus { RUNNING, DONE, FAILED, SKIPPED, PARTIAL, PAUSED }
 /**
  * Input to the batch-progress projection. Pipeline/store own all actual page state.
  *
- * CP9: the batch start/resume lifecycle is owned by [SequentialBatchCoordinator] and is not
- * surfaced through this event stream — the projection derives chapter/batch framing
+ * CP9: the batch start/resume lifecycle is owned by the batch coordinator pass
+ * (`runPass1`) and is not surfaced through this event stream — the projection derives chapter/batch framing
  * from the ordered page keys it is constructed with, and from PagePhase/BatchFinished/
  * BatchAborted events. The previous `BatchStarted` / `BatchResumed` event types had no
  * emitter anywhere in `app/src` (verified) and were only ever handled by the reducer's

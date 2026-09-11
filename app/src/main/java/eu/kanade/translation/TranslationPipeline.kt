@@ -383,7 +383,7 @@ class TranslationPipeline(
      * benefit the batch path already derives.
      *
      * Scheduling scope: this single-page path bypasses the batch coordinator
-     * (`SequentialBatchCoordinator.runPass1`) by design — it processes
+     * pass (`runPass1`) by design — it processes
      * exactly one page, so there is no chapter-wide pass to join. The
      * chapter-level "no inpaint before all OCR terminal" invariant only applies
      * to batch/pre-translation; here OCR and inpaint of the same single page run
@@ -745,7 +745,22 @@ class TranslationPipeline(
             withTimeoutOrNull(ATTACH_TIMEOUT_MS) {
                 store.state.first { snapshot ->
                     val page = snapshot[pageKey]
-                    page != null && (page.hasRenderedResult || page.isTextlessTerminal || page.isStageFailed)
+                    // T924 zero-legacy (D1): the surviving batch lanes end runs
+                    // translation-terminal WITHOUT an in-pass render
+                    // (renderStatus stays PENDING — the display rides the live
+                    // overlay + candidate snapshots). A committed
+                    // READY/PARTIAL/SKIPPED translation is therefore the
+                    // durable obligation a reader attach resolves against;
+                    // hasRenderedResult / textless / stage failure remain for
+                    // AUTO and manual owners and legacy textless terminals.
+                    page != null && (
+                        page.hasRenderedResult ||
+                            page.isTextlessTerminal ||
+                            page.isStageFailed ||
+                            page.translationStatus == StageStatus.READY ||
+                            page.translationStatus == StageStatus.PARTIAL ||
+                            page.translationStatus == StageStatus.SKIPPED
+                        )
                 }
             }
         } catch (e: CancellationException) {

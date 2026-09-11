@@ -138,6 +138,9 @@ class D6ForegroundFairnessTest {
         )
         val harness = TranslationCoexistenceHarness.create(
             pageKeys = listOf("p0", "p1"),
+            // T924 zero-legacy (D1): the batch chapter's store needs artifact
+            // authority for the (only) batch pipeline.
+            storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0", "p1")),
             extraStores = mapOf(MANUAL_CHAPTER_ID to manualStore),
         )
         val governor = ProviderRequestGovernor(

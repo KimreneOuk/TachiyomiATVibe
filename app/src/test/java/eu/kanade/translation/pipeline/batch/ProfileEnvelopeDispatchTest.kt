@@ -137,7 +137,6 @@ class ProfileEnvelopeDispatchTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "fake:provider",
-            flagProfilePipeline = true,
         ).copy(
             envelopePolicy = EnvelopePolicySnapshot(
                 maxBlocks = 32,
@@ -145,7 +144,6 @@ class ProfileEnvelopeDispatchTest {
             ),
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-        flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
         textTranslator = translator,

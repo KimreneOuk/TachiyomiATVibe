@@ -125,12 +125,10 @@ class ChapterAnalysisPhaseCoordinatorTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "fake:provider",
-            flagProfilePipeline = true,
         ),
         orderedSourcePairs = pages.map { (pageKey, _) ->
             pageKey to (sourceShaOverride[pageKey] ?: hex64("source-$pageKey"))
         },
-        flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
     )

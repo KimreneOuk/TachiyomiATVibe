@@ -159,8 +159,6 @@ internal class ChapterProfileBatchCoordinator(
     private val frozenConfig: RunConfigSnapshot,
     /** Ordered (pageKey, sourceSha256) pairs; the run's source digest input. */
     private val orderedSourcePairs: List<Pair<String, String>>,
-    /** FF-01d: the flag value read ONCE at dispatch, frozen into the record. */
-    private val flagProfilePipeline: Boolean,
     /** Releases the BATCH page lease (strictly after the checkpoint, TX-06). */
     private val releaseBatchLease: suspend (String) -> Unit,
     private val listener: BatchScheduleListener = BatchScheduleListener.NOOP,
@@ -244,10 +242,10 @@ internal class ChapterProfileBatchCoordinator(
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
 
     /**
-     * Same call shape as [SequentialBatchCoordinator.runPass1] so the FF-01a
-     * dispatch point can branch between the two coordinators without any
-     * other shell change. [computeClass] is accepted for call-shape parity
-     * only — this stage never dispatches a provider lane.
+     * The batch pass-1 entry the shell's dispatch point calls (formerly
+     * call-shape-compatible with the deleted legacy coordinator's
+     * `runPass1`). [computeClass] is accepted for call-shape parity only —
+     * this stage never dispatches a provider lane.
      */
     suspend fun runPass1(
         orderedPages: List<PageKey>,
@@ -303,10 +301,12 @@ internal class ChapterProfileBatchCoordinator(
             COUNTER_TOTAL to total,
             COUNTER_DONE to (reusedPages + checkpointedPages),
             COUNTER_REUSED to reusedPages,
-            // Kept for pre-field record compatibility; the authoritative FF-01d
+            // Kept for pre-field record compatibility; the authoritative
             // freeze is frozenConfig.flagProfilePipeline (participates in the
-            // run-config fingerprint; counters never do, per FP-01).
-            COUNTER_FLAG to if (flagProfilePipeline) 1 else 0,
+            // run-config fingerprint; counters never do, per FP-01). The
+            // FF-01 A/B flag completed its lifecycle — the profile pipeline
+            // is the only pipeline — so the frozen state is always ON.
+            COUNTER_FLAG to 1,
         )
 
         // ---- ST-05/OCR_PLAN skip rule (contracts-state-transactions :114): ----
@@ -383,16 +383,40 @@ internal class ChapterProfileBatchCoordinator(
             if (reusable != null) {
                 // ST-06 resume rule: the page's origin-neutral checkpoint matches
                 // the current source identity — no re-OCR, no lease, no decode.
-                reusedPages++
-                corpusFingerprints += pageKey to reusable
-                logcat(LogPriority.INFO) {
-                    "TachiyomiAT t924 preflight reused checkpoint pageHash=${pageHash(pageKey)}"
+                //
+                // T924 zero-legacy (D1): a reused checkpoint must also BACK the
+                // live store page. A reopened store (real restart, or the
+                // memory-only artifact-authority fixture) holds only a
+                // placeholder page record — its ocrStatus/blocks live in the
+                // durable checkpoint sidecar. Without adoption the translate
+                // tail's dependency gate reads WAIT_FOR_DEPENDENCY /
+                // DEPENDENCY_INCOMPLETE against the placeholder and silently
+                // skips the page's paid translation — the run then "completes"
+                // without paying (D9's resumed-death cycle). Adopt the
+                // checkpointed OCR snapshot into the live store — the SAME
+                // hydration idiom the envelope lane's resume uses — and only
+                // then count the page as reused. If the adoption cannot back
+                // the page (unreadable sidecar, racing owner), fall through to
+                // a fresh OCR run: never plan against fabricated content.
+                val before = store.snapshot(pageKey)
+                val hydrated = before.page != null &&
+                    before.page.ocrStatus == StageStatus.READY &&
+                    before.page.blocks.isNotEmpty()
+                if (hydrated || adoptCheckpointSnapshot(artifact, pageKey, before) != null) {
+                    reusedPages++
+                    corpusFingerprints += pageKey to reusable
+                    logcat(LogPriority.INFO) {
+                        "TachiyomiAT t924 preflight reused checkpoint pageHash=${pageHash(pageKey)}"
+                    }
+                    publishRecord(
+                        artifact,
+                        record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
+                    )
+                    continue
                 }
-                publishRecord(
-                    artifact,
-                    record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
-                )
-                continue
+                logcat(LogPriority.WARN) {
+                    "TachiyomiAT t924 preflight checkpoint adoption failed pageHash=${pageHash(pageKey)} — re-OCRing"
+                }
             }
 
             listener.ocrStarted(pageKey)
@@ -584,8 +608,7 @@ internal class ChapterProfileBatchCoordinator(
      * restarts at the first unpersisted chunk; the validated prefix stays
      * durable and is never re-sent). When every chunk is durable, slice B's
      * [runProfileReconcileAndFreeze] continues into ST-09/ST-10; nothing
-     * here publishes `COMPLETE` and [decideResume] wiring stays untouched
-     * (wave-2 F1).
+     * here publishes `COMPLETE` (wave-2 F1).
      */
     private suspend fun runAnalysisPhase(
         artifact: ChapterArtifactStore,
@@ -1954,22 +1977,6 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     /**
-     * The standard tail's translate-time terminal predicate: a page with a
-     * committed translation (READY/PARTIAL), a durable no-text terminal
-     * (SKIPPED — the legacy worker's textless commit) or full textless
-     * terminal, or a rendered result (cross-schedule safety, matching
-     * [t924PageTerminalAtFinalize]) never re-enters the provider. Deliberately
-     * narrower than the finalize predicate — FAILED/PENDING pages re-attempt
-     * (resume-with-retry semantics, the legacy per-page idiom).
-     */
-    private fun standardPageTerminalAtTranslate(page: PageTranslation): Boolean =
-        page.hasRenderedResult ||
-            page.isTextlessTerminal ||
-            page.translationStatus == StageStatus.READY ||
-            page.translationStatus == StageStatus.PARTIAL ||
-            page.translationStatus == StageStatus.SKIPPED
-
-    /**
      * ST-14 resume gates (contracts-state-transactions :188-197) for a
      * durable record already past TRANSLATE, consulted at dispatch entry
      * BEFORE any RUN_SNAPSHOT republication:
@@ -1984,23 +1991,21 @@ internal class ChapterProfileBatchCoordinator(
      *    closure record. Run identity (corpus fingerprint, progress counters)
      *    rides the durable FINALIZE record — the same run, not a new one.
      *  - `COMPLETE`: the run already closed — an idempotent finished outcome
-     *    with zero work and NO new record publication (the flag-ON complement
-     *    of the OFF+COMPLETE decision in [decideResume]/[resumeCompletedOutcome],
-     *    which only fires when the flag is OFF).
+     *    with zero work and NO new record publication. Since the zero-legacy
+     *    wave (D1) removed the FF-01 flag and its shell-level OFF+COMPLETE
+     *    decision tree, this ST-14 path is the ONLY COMPLETE-resume route
+     *    for both lanes.
      *
      * T924 LI-2 (COMPLETE work-product evidence gate): the `COMPLETE` fast path
      * additionally demands per-page evidence that the run's page results are
      * still durably addressable — a committed bundle, an open candidate
      * snapshot, or a committed/textless display state in the manifest record
-     * — or a durable textless terminal in the live store. This is the flag-ON
-     * mirror of the flag-OFF F-4 gate
-     * (`BatchChapterTranslator.activeRunPagesDisplayCommitted`): user resets
-     * demote committed displays and clear the candidate pointers, and a reset
-     * that leaves behind the COMPLETE run record must never let a later
-     * dispatch return a zero-work finished outcome over pages whose translated
-     * state is gone. Any page lacking evidence supersedes the recorded run —
-     * the gate returns null so the normal run-start path publishes a fresh
-     * RUN_SNAPSHOT and re-derives the missing page state.
+     * — or a durable textless terminal in the live store. This supersedes a
+     * recorded COMPLETE over pages whose translated state is gone (e.g. after
+     * a user reset demoted committed displays and cleared the candidate
+     * pointers): any page lacking evidence returns null so the normal
+     * run-start path publishes a fresh RUN_SNAPSHOT and re-derives the
+     * missing page state.
      *
      * Returns null — the normal run-start path proceeds unchanged — when the
      * prior record is in any other state, or its frozen configuration
@@ -2024,7 +2029,7 @@ internal class ChapterProfileBatchCoordinator(
             ?: return null
         if (resumable.state == ChapterRunState.COMPLETE) {
             // T924 LI-2 (the mirror of the flag-OFF F-4 gate in
-            // BatchChapterTranslator.activeRunPagesDisplayCommitted): a recorded
+            // deleted shell-level F-4 gate): a recorded
             // COMPLETE is NOT enough to retire the chapter — the zero-work
             // finished outcome is authorized only when every ordered page's
             // translated result is still durably addressable. The flagged lane
@@ -2135,22 +2140,31 @@ internal class ChapterProfileBatchCoordinator(
      *    but would lie about the page's state).
      *
      * A page that is none of these (PENDING/RUNNING/CANCELLED with
-     * translatable work, or not owned by the active generation) is stranded:
-     * the drained run expected to reach it and did not.
+     * translatable work) is stranded ONLY while it is owned by the active
+     * generation's expectations — an OPEN page from an older generation is
+     * likewise stranded, while any COMMITTED terminal state above is durable
+     * across generations and never stranded (T924 zero-legacy D1).
      */
     private fun t924PageTerminalAtFinalize(page: PageTranslation?, activeGeneration: Long): Boolean {
         if (page == null) return false
         if (page.hasRenderedResult || page.isTextlessTerminal) return true
-        if (page.runGeneration != activeGeneration) return false
-        return when (page.translationStatus) {
+        // T924 zero-legacy (D1): a COMMITTED terminal stage is durable
+        // regardless of which generation wrote it — a restart after a cancel
+        // or process death must never strand (and durable-fail) a prior
+        // run's committed work (ST-14/LI-2 reuse). Only OPEN states
+        // (PENDING/RUNNING/CANCELLED, below) are generation-owned: a page
+        // still mid-write from a dead run is genuinely stranded.
+        when (page.translationStatus) {
             StageStatus.READY,
             StageStatus.PARTIAL,
             StageStatus.FAILED,
             StageStatus.SKIPPED,
             StageStatus.TEXTLESS,
-            -> true
-            else -> page.blocks.isNotEmpty() && page.blocks.all { it.userEditedAt != null }
+            -> return true
+            else -> {}
         }
+        if (page.runGeneration != activeGeneration) return false
+        return page.blocks.isNotEmpty() && page.blocks.all { it.userEditedAt != null }
     }
 
     /**
@@ -2981,36 +2995,13 @@ internal class ChapterProfileBatchCoordinator(
         return if (height > width) "PORTRAIT" else "LANDSCAPE"
     }
 
-    sealed interface FlaggedRunResumeDecision {
-        /** Current flag ON: run (or continue) the flagged path. */
-        data class RunFlaggedPath(val priorRecord: ChapterRunRecord?) : FlaggedRunResumeDecision
-
-        /**
-         * FF-01e.2b: flag now OFF, no final new-path display committed — drop
-         * to the legacy path using only legacy artifacts; new-path sidecars
-         * stay untouched for a later re-enable.
-         */
-        data object DropToLegacy : FlaggedRunResumeDecision
-
-        /**
-         * FF-01e.2a: flag now OFF and the recorded run already finished on the
-         * new path (final per-page displays committed) — treat as finished.
-         * Unreachable in this slice (preflight never commits final displays);
-         * encoded for the later stages that publish `COMPLETE` runs.
-         */
-        data object TreatAsFinished : FlaggedRunResumeDecision
-    }
-
     enum class BatchCoordinatorKind {
-        /** Legacy progressive coordinator — the FF-01 OFF construction (FF-01b). */
-        LEGACY_SEQUENTIAL,
-
-        /** T924 chapter-profile coordinator — the FF-01 ON construction (AI lane). */
+        /** T924 chapter-profile coordinator — the AI-model lane. */
         PROFILE_PIPELINE,
 
         /**
-         * T924 Phase 4 Wave A: the FF-01 ON construction for a STANDARD engine
-         * — the same coordinator with [standardLane] set: pure FULL OCR
+         * T924 Phase 4 Wave A: the STANDARD-engine lane — the same
+         * coordinator with [standardLane] set: pure FULL OCR
          * preflight, then per-page legacy-machinery batch translation
          * (no glossary, no analysis/profile/envelope work) and the shared
          * engine-agnostic FINALIZE.
@@ -3019,6 +3010,29 @@ internal class ChapterProfileBatchCoordinator(
     }
 
     companion object {
+        /**
+         * The standard tail's translate-time terminal predicate: a page with a
+         * committed translation (READY/PARTIAL), a durable no-text terminal
+         * (SKIPPED — the legacy worker's textless commit) or full textless
+         * terminal, or a rendered result (cross-schedule safety, matching
+         * [t924PageTerminalAtFinalize]) never re-enters the provider. Deliberately
+         * narrower than the finalize predicate — FAILED/PENDING pages re-attempt
+         * (resume-with-retry semantics, the legacy per-page idiom).
+         *
+         * Internal (not private) because the standard seam in
+         * [BatchChapterTranslator] must re-evaluate the SAME predicate AFTER the
+         * page lease is granted: a concurrent owner can commit its terminal
+         * stage in the window between the tail's pre-check and the lease
+         * acquisition, and an already-terminal page is never re-paid (T917
+         * exactly-once).
+         */
+        internal fun standardPageTerminalAtTranslate(page: PageTranslation): Boolean =
+            page.hasRenderedResult ||
+                page.isTextlessTerminal ||
+                page.translationStatus == StageStatus.READY ||
+                page.translationStatus == StageStatus.PARTIAL ||
+                page.translationStatus == StageStatus.SKIPPED
+
         /** Stopped-not-finished diagnostic carried in the paused outcome. */
         const val STOP_REASON =
             "T924 OCR preflight complete; analysis/profile/translation arrive in later stages"
@@ -3150,68 +3164,24 @@ internal class ChapterProfileBatchCoordinator(
         private val oversizedPageRegex = Regex("""^page (\S+) oversized""")
 
         /**
-         * T924-FF-01a dispatch decision. The flag is consulted exactly ONCE per
-         * run at the `BatchChapterTranslator` coordinator construction; this
-         * pure function carries the mapping so the OFF path is provably the
-         * unchanged legacy coordinator (FF-01b).
+         * T924-FF-01a dispatch decision, zero-legacy form (D1): the FF-01 A/B
+         * flag completed its lifecycle and was removed — the engine category
+         * alone picks the lane at the `BatchChapterTranslator` coordinator
+         * construction; this pure function carries the mapping.
          *
-         * T924 Phase 4 Wave A: with the flag ON, the engine category picks the
-         * flagged lane — a STANDARD engine dispatches STANDARD_PIPELINE (the
-         * same coordinator, standard tail); an AI_MODEL engine dispatches
-         * PROFILE_PIPELINE only with the contextual translator parity of the
-         * legacy AI lane, otherwise the verbatim legacy coordinator (the
-         * degenerate AI config keeps its F3 semantics).
+         * A STANDARD engine dispatches STANDARD_PIPELINE (the same
+         * coordinator, standard tail); every other engine (AI_MODEL,
+         * contextual or not) dispatches PROFILE_PIPELINE — the degenerate
+         * non-contextual AI config takes the coordinator's typed
+         * CONFIGURATION pause at the envelope seam.
          */
         fun dispatchKind(
-            translationBatchProfilePipeline: Boolean,
             engineCategoryIsStandard: Boolean = false,
-            contextualAiParity: Boolean = false,
-        ): BatchCoordinatorKind = when {
-            !translationBatchProfilePipeline -> BatchCoordinatorKind.LEGACY_SEQUENTIAL
-            engineCategoryIsStandard -> BatchCoordinatorKind.STANDARD_PIPELINE
-            contextualAiParity -> BatchCoordinatorKind.PROFILE_PIPELINE
-            else -> BatchCoordinatorKind.LEGACY_SEQUENTIAL
-        }
-
-        /**
-         * Wave-2 F1 production wiring (T924 Stage 7): the shell consults this
-         * BEFORE constructing a coordinator. [decideResume] decides; a
-         * TreatAsFinished outcome (flag now OFF + the recorded run reached
-         * COMPLETE — FF-01e.2a) becomes the typed COMPLETED outcome here so
-         * the legacy schedule never re-runs a chapter the flagged path
-         * already finished. `null` = dispatch normally
-         * ([FlaggedRunResumeDecision.RunFlaggedPath] /
-         * [FlaggedRunResumeDecision.DropToLegacy]).
-         *
-         * Stage-7 review F-4: a COMPLETE record alone is not proof the
-         * chapter is retired — [allPagesDisplayCommitted] must carry the
-         * per-page display evidence (REQUIRED, no default: every caller
-         * passes explicit evidence). When the decision is TreatAsFinished
-         * but any page lacks display evidence, this returns `null` so
-         * dispatch proceeds normally (with the flag OFF that maps to
-         * LEGACY_SEQUENTIAL, whose coordinator re-derives the missing
-         * display); the COMPLETE sidecar record stays untouched.
-         */
-        fun resumeCompletedOutcome(
-            record: ChapterRunRecord?,
-            currentFlagOn: Boolean,
-            orderedPageKeys: Set<String>,
-            allPagesDisplayCommitted: Boolean,
-        ): BatchPass1Outcome? =
-            when (decideResume(record, currentFlagOn)) {
-                FlaggedRunResumeDecision.TreatAsFinished ->
-                    if (allPagesDisplayCommitted) {
-                        BatchPass1Outcome(
-                            needsTranslation = emptyList(),
-                            status = BatchPass1Status.COMPLETED,
-                            completedPageKeys = orderedPageKeys,
-                            reason =
-                                "T924 FF-01e.2a: recorded run COMPLETE; flag OFF treats the chapter as finished",
-                        )
-                    } else {
-                        null
-                    }
-                else -> null
+        ): BatchCoordinatorKind =
+            if (engineCategoryIsStandard) {
+                BatchCoordinatorKind.STANDARD_PIPELINE
+            } else {
+                BatchCoordinatorKind.PROFILE_PIPELINE
             }
 
         /** The chapter's active run record, or null when none is readable. */
@@ -3222,26 +3192,16 @@ internal class ChapterProfileBatchCoordinator(
         }
 
         /**
-         * FF-01e resume case analysis (contract §1.3 FF-01e.2/3): the recorded
-         * run's flag provenance is honored only while the CURRENT flag is ON;
-         * flag OFF never re-enters the new path. Takes no queue input — flag
-         * state is re-derived from the run record + current preference only
-         * (T924-FF-10), and queue restore never auto-starts a run.
-         */
-        fun decideResume(
-            record: ChapterRunRecord?,
-            currentFlagOn: Boolean,
-        ): FlaggedRunResumeDecision = when {
-            !currentFlagOn && record?.state == ChapterRunState.COMPLETE ->
-                FlaggedRunResumeDecision.TreatAsFinished
-            !currentFlagOn -> FlaggedRunResumeDecision.DropToLegacy
-            else -> FlaggedRunResumeDecision.RunFlaggedPath(record)
-        }
-
-        /**
          * RUN_SNAPSHOT freeze (ST-03). Identity values that have no stable
          * engine accessor yet are pinned to explicit shell placeholders —
          * recorded, stable, and never silently empty.
+         *
+         * The `flagProfilePipeline` snapshot field keeps its schema position
+         * and fingerprint basis, but the parameter is gone: the FF-01 A/B
+         * flag completed its lifecycle and the field is hardcoded `true`
+         * (flag-ON records — including the A/B evidence records — keep
+         * matching fingerprints and resume correctly). A leftover pref key in
+         * a device DataStore is a harmless orphan.
          */
         fun frozenRunConfig(
             sourceLang: String,
@@ -3253,7 +3213,6 @@ internal class ChapterProfileBatchCoordinator(
             detectorModelHash: String = MODEL_HASH_UNSPECIFIED,
             protocolVersion: Int = 1,
             readingOrderVersion: Int = 1,
-            flagProfilePipeline: Boolean? = null,
             /** Opaque credential signature (one-way hash); never a raw key. */
             credentialId: String = "",
         ): RunConfigSnapshot = RunConfigSnapshot(
@@ -3267,7 +3226,7 @@ internal class ChapterProfileBatchCoordinator(
             credentialId = credentialId,
             protocolVersion = protocolVersion,
             readingOrderVersion = readingOrderVersion,
-            flagProfilePipeline = flagProfilePipeline,
+            flagProfilePipeline = true,
         )
 
         const val MODEL_HASH_UNSPECIFIED = "unspecified"

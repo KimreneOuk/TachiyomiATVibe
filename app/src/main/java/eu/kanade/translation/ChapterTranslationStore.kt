@@ -1920,9 +1920,9 @@ class ChapterTranslationStore(
                 // create a compatibility document as a side effect.
                 return true
             }
-            if (!ensureArtifactStoreLocked()) return false
+            if (!ensureArtifactStoreLocked()) {  return false }
         }
-        val store = artifactStore ?: return false
+        val store = artifactStore ?: run {  return false }
         var manifest = artifactManifest ?: return true
         if (pageKey.isEmpty()) return true
         val firstReaderBaseline = if (
@@ -2033,7 +2033,8 @@ class ChapterTranslationStore(
             }
             artifactManifest = manifest
         }
-        val currentCandidate = manifest.pages.getValue(pageKey).candidate ?: return false
+        val currentCandidate = manifest.pages.getValue(pageKey).candidate
+            ?: run {  return false }
         val expectedPageVersion = manifest.pages.getValue(pageKey).pageVersion
         val persisted = if (durableFailure != null) {
             store.persistLiveCandidateAndFailure(

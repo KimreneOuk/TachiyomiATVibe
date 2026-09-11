@@ -1,681 +1,220 @@
 package eu.kanade.translation.coexistence
 
-import com.hippo.unifile.FakeUniFile
-import com.hippo.unifile.UniFile
-import eu.kanade.translation.ChapterTranslationStore
-import eu.kanade.translation.LeaseAcquisition
-import eu.kanade.translation.OcrStagePatch
-import eu.kanade.translation.PageWriteOrigin
-import eu.kanade.translation.StagePatchResult
-import eu.kanade.translation.artifact.AtomicChapterDocuments
-import eu.kanade.translation.artifact.ChapterArtifactLayout
 import eu.kanade.translation.artifact.ChapterArtifactStore
-import eu.kanade.translation.artifact.ChapterRunRecord
 import eu.kanade.translation.artifact.ChapterRunState
-import eu.kanade.translation.artifact.FakeChapterDocumentIo
-import eu.kanade.translation.artifact.LegacyChapterSnapshot
-import eu.kanade.translation.artifact.ManifestAuthority
-import eu.kanade.translation.artifact.UniFileChapterDocumentIo
-import eu.kanade.translation.model.PageTranslation
-import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
-import eu.kanade.translation.ocrBlockFingerprints
-import eu.kanade.translation.pipeline.batch.BatchPass1Status
 import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
-import eu.kanade.translation.pipeline.batch.NativeLaneWorker
-import eu.kanade.translation.pipeline.batch.OcrReadyPageRef
-import eu.kanade.translation.pipeline.batch.PageKey
-import eu.kanade.translation.translator.TranslatorComputeClass
-import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
-import io.kotest.matchers.types.shouldBeInstanceOf
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.io.TempDir
-import java.io.File
 import java.security.MessageDigest
 
 /**
- * T924 wave-2 F1 / gap 1 — the DISPATCH-LEVEL flag-off-mid-run obligation
- * (gate §2.3 row 3.8): the production SHELL's resume path
- * (`BatchChapterTranslator.runBatchPass1`) consults
- * [ChapterProfileBatchCoordinator.resumeCompletedOutcome] BEFORE constructing
- * any coordinator. Every earlier FF-01e test pins the pure decision only
- * (`OcrPreflightFlagOffMidRunTest`, `ChapterTranslatorQueueRestoreTest`,
- * `Stage7FinalizeCoordinatorTest`); nothing proved the consultation itself —
- * a refactor could silently drop it.
+ * T924 zero-legacy (D1) — the DISPATCH-LEVEL resume wiring through the REAL
+ * production shell (`ChapterTranslator.translateChapterInternal` →
+ * `BatchChapterTranslator.runBatchPass1` → the coordinator's ST-14
+ * `resumeFinalizeOrComplete`), rewritten for the post-flag world.
  *
- * Both tests drive the REAL production shell through
- * `ChapterTranslator.translateChapterInternal` (TranslationCoexistenceHarness)
- * over an artifact store whose manifest carries a durable `activeRun` record.
- * The harness preferences never seed `translation_batch_profile_pipeline`, so
- * the flag reads its production default OFF (`TranslationPreferences.kt`):
- * `currentFlagOn = false` in both runs — exactly the flag-off-mid-run state.
+ * The former flag-OFF wiring cases are gone with the FF-01 flag:
+ *  - the shell-level `resumeCompletedOutcome`/`decideResume` consultation was
+ *    DELETED — there is no flag-OFF state, so ALL resume wiring goes through
+ *    the coordinator (ST-14 FINALIZE/COMPLETE idempotent resume + LI-2
+ *    work-product evidence gate). The pure decision tests
+ *    (`OcrPreflightFlagOffMidRunTest` DropToLegacy/TreatAsFinished) were
+ *    deleted with the behavior.
+ *  - "flag OFF mid-run drops to the legacy schedule" is meaningless: the
+ *    legacy SequentialBatchCoordinator no longer exists. The surviving
+ *    behavior of that case — a mid-run (non-COMPLETE) record re-dispatches
+ *    into a fresh RUN_SNAPSHOT under the SAME run id, with sidecars
+ *    respected — is pinned at the coordinator level in
+ *    `StandardPipelineCoordinatorTest`
+ *    (`re-dispatch over an interrupted standard run continues the same run id
+ *    and completes exactly once`).
+ *  - the COMPLETE-with-missing-evidence supersession is pinned at the
+ *    coordinator level in `Stage7FinalizeResumeCoordinatorTest`
+ *    (`a recorded COMPLETE lacking per-page display evidence is superseded by
+ *    a fresh run (LI-2)`).
+ *
+ * What THIS file pins is the wiring itself — that a plain re-request of a
+ * chapter the pipeline already finished (the Director's device A/B flow,
+ * minus the flag) never re-runs ANY paid work and republishes nothing, and
+ * that a demoted chapter re-dispatches real work in the SAME (new) lane:
+ *
+ *  1. run 1 completes through the real shell on a durable ARTIFACTS-authority
+ *     store (single COMPLETE record, `standard:mlkit` provider identity);
+ *  2. re-dispatch (run 2) over the identical store: zero transport calls, the
+ *     chapter still finishes TRANSLATED, and the durable COMPLETE record is
+ *     byte-untouched (ST-14 idempotent COMPLETE resume);
+ *  3. after a user-style reset demotes one page's translated evidence, the
+ *     re-dispatch starts REAL paid work for that page in the new lane (the
+ *     LI-2 evidence gate supersedes the recorded COMPLETE) while the healthy
+ *     page is not re-paid.
  */
 class BatchDispatchResumeWiringTest {
-
-    @TempDir
-    lateinit var mangaDir: File
 
     private fun hex64(tag: String): String =
         MessageDigest.getInstance("SHA-256")
             .digest(tag.toByteArray(Charsets.UTF_8))
             .joinToString("") { byte -> "%02x".format(byte) }
 
-    // ------------------------------------------------------------------
-    // Case 1 — FF-01e.2a at dispatch: flag OFF over a durable COMPLETE run
-    // finishes the chapter without running ANY schedule.
-    // ------------------------------------------------------------------
-
-    /**
-     * The COMPLETE record is durably real: published through the store's
-     * production sidecar transaction (`publishActiveRun`), not an in-memory
-     * synthetic — the shell's `activeRunRecordOrNull` must READ it back.
-     */
-    @Test
-    fun `flag-off dispatch over a durable COMPLETE run finishes the chapter without running any schedule`() {
-        val pageKeys = listOf("p0", "p1")
-
-        // Durable artifact store over in-memory documents (D5/D9 fresh-chapter
-        // recipe), carrying a durably published COMPLETE run record.
-        val artifact = ChapterArtifactStore(
-            AtomicChapterDocuments(FakeChapterDocumentIo()),
-            ChapterArtifactLayout("Chapter 1"),
-        )
-        var manifest = artifact
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
-            .manifest
-        manifest = manifest.copy(
-            authority = ManifestAuthority.ARTIFACTS,
-            cutoverAtEpochMs = 1L,
-            migratedFromLegacyAtEpochMs = 1L,
-            updatedAtEpochMs = 1L,
-        )
-        check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
-        val durable = artifact.readManifest().shouldNotBeNull()
-
-        val frozen = ChapterProfileBatchCoordinator.frozenRunConfig(
-            sourceLang = "ja",
-            targetLang = "en",
-            ocrEngine = "FakeOcrEngine",
-            inpaintMode = "OFF",
-            providerKey = "fake:provider",
-            flagProfilePipeline = true,
-        )
-        val completeRecord = ChapterRunRecord(
-            runId = "run-dispatch-complete-1",
-            state = ChapterRunState.COMPLETE,
-            frozenConfig = frozen,
-            frozenRunConfigFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozen),
-            orderedSourceDigest = hex64("ordered-source"),
-            analysisPolicyFingerprint = hex64("analysis-policy"),
-            envelopePolicyFingerprint = hex64("envelope-policy"),
-            createdAtEpochMs = 1L,
-            updatedAtEpochMs = 1L,
-        )
-        val publication = artifact.publishActiveRun(
-            manifest = durable,
-            record = completeRecord,
-            contentFingerprint = hex64("complete-run-record"),
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-
-        // The chapter's pages are terminal textless — what a finished chapter's
-        // store holds, so the post-pass reconciliation sees a done chapter
-        // instead of manufacturing stranded-page failures.
-        val store = ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
-            initialPages = pageKeys.associateWith { key -> finishedTextlessPage(key) },
-            artifactStore = artifact,
-            initialArtifactManifest = publication.manifest,
-        )
-
-        val harness = TranslationCoexistenceHarness.create(pageKeys, storeOverride = store)
+    /** Runs the REAL shell once over a fresh durable store; returns the harness. */
+    private fun firstRun(pageKeys: List<String>): TranslationCoexistenceHarness {
+        val harness = TranslationCoexistenceHarness.createStandard(pageKeys)
         try {
             harness.stubChapterPages(pageKeys)
             val batch = harness.launchBatch(pageKeys)
-            val reconciliation = runBlocking {
+            runBlocking {
                 withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
                     batch.reconciliation.await().shouldNotBeNull()
                 }
             }
-
-            // ZERO schedule work: no decode, no native lane, no provider call —
-            // the shell returned the TreatAsFinished COMPLETED outcome before
-            // constructing any coordinator.
-            harness.barrier.arrivals.value shouldBe emptyList()
-            harness.transportCallsFor("p0") shouldBe 0
-            harness.transportCallsFor("p1") shouldBe 0
-
-            // The shell finished the chapter end-to-end (no stranded pages, no
-            // error) — "treated as finished", not "failed short".
-            reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
-            reconciliation.doneCount shouldBe pageKeys.size
-            reconciliation.strandedPages shouldBe emptyMap()
-
-            // The durable COMPLETE record still owns the chapter, untouched.
-            val manifestAfter = artifact.readManifest().shouldNotBeNull()
-            val pointerAfter = manifestAfter.activeRun.shouldNotBeNull()
-            pointerAfter shouldBe publication.manifest.activeRun
-            (
-                artifact.readRunRecord(pointerAfter)
-                    as ChapterArtifactStore.RunRecordRead.Usable
-                ).record shouldBe completeRecord
-        } finally {
+        } catch (t: Throwable) {
             harness.close()
+            throw t
         }
+        return harness
     }
 
-    private fun finishedTextlessPage(pageKey: String) = PageTranslation(
-        sourceFileName = pageKey,
-        blocks = mutableListOf(),
-        ocrStatus = StageStatus.READY,
-        translationStatus = StageStatus.SKIPPED,
-        inpaintStatus = StageStatus.SKIPPED,
-        renderStatus = StageStatus.SKIPPED,
-        sourceFingerprint = hex64("source-$pageKey"),
-    )
-
-    /**
-     * Translation-committed but never displayable: the inpaint failed, so the
-     * reader has nothing to show for this page. The flagged run's COMPLETE
-     * records translation-terminal alone — exactly the F-4 hole.
-     */
-    private fun translatedUnrenderedPage(pageKey: String) = PageTranslation(
-        sourceFileName = pageKey,
-        blocks = mutableListOf(
-            eu.kanade.translation.model.TranslationBlock(
-                blockId = "b1",
-                text = "source",
-                translation = "translated",
-                width = 10f,
-                height = 10f,
-                x = 0f,
-                y = 0f,
-                symHeight = 1f,
-                symWidth = 1f,
-                angle = 0f,
-            ),
-        ),
-        imgWidth = 100f,
-        imgHeight = 160f,
-        decodeSampleSize = 1,
-        ocrStatus = StageStatus.READY,
-        translationStatus = StageStatus.READY,
-        inpaintStatus = StageStatus.FAILED,
-        sourceFingerprint = hex64("source-$pageKey"),
-        detectionFingerprint = hex64("detection-$pageKey"),
-        ocrFingerprint = hex64("ocr-$pageKey"),
-    )
-
-    /**
-     * Shared durable fixture: an ARTIFACTS-authority store whose manifest
-     * carries a durably published run record (real sidecar publication), with
-     * the given page states in memory.
-     */
-    private fun runRecordStore(
-        pageKeys: List<String>,
-        pages: Map<String, PageTranslation>,
-        record: ChapterRunRecord,
-        recordContentFingerprint: String = hex64("complete-run-record"),
-    ): Triple<ChapterArtifactStore, ChapterArtifactStore.TransactionOutcome.Committed, ChapterTranslationStore> {
-        val artifact = ChapterArtifactStore(
-            AtomicChapterDocuments(FakeChapterDocumentIo()),
-            ChapterArtifactLayout("Chapter 1"),
-        )
-        var manifest = artifact
-            .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
-            .manifest
-        manifest = manifest.copy(
-            authority = ManifestAuthority.ARTIFACTS,
-            cutoverAtEpochMs = 1L,
-            migratedFromLegacyAtEpochMs = 1L,
-            updatedAtEpochMs = 1L,
-        )
-        check(artifact.publishManifest(manifest)) { "fixture: authority flip publish failed" }
-        val durable = artifact.readManifest().shouldNotBeNull()
-
-        val publication = artifact.publishActiveRun(
-            manifest = durable,
-            record = record,
-            contentFingerprint = recordContentFingerprint,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-
-        val store = ChapterTranslationStore(
-            translationFile = null as UniFile?,
-            fileCreator = null,
-            initialPages = pages,
-            artifactStore = artifact,
-            initialArtifactManifest = publication.manifest,
-        )
-        return Triple(artifact, publication, store)
-    }
-
-    private fun completeRecordStore(
-        pageKeys: List<String>,
-        pages: Map<String, PageTranslation>,
-    ): Triple<ChapterArtifactStore, ChapterArtifactStore.TransactionOutcome.Committed, ChapterTranslationStore> =
-        runRecordStore(
-            pageKeys = pageKeys,
-            pages = pages,
-            record = ChapterRunRecord(
-                runId = "run-dispatch-complete-1",
-                state = ChapterRunState.COMPLETE,
-                frozenConfig = frozenConfig(),
-                frozenRunConfigFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(frozenConfig()),
-                orderedSourceDigest = hex64("ordered-source"),
-                analysisPolicyFingerprint = hex64("analysis-policy"),
-                envelopePolicyFingerprint = hex64("envelope-policy"),
-                createdAtEpochMs = 1L,
-                updatedAtEpochMs = 1L,
-            ),
-        )
-
-    /**
-     * The frozen configuration a STANDARD-lane flagged run records (Wave A):
-     * `standard:<engine>` provider identity, no AI fields. The wiring tests
-     * below use it so the interrupted/completed records are genuinely the
-     * standard lane's shape, not the AI lane's.
-     */
-    private fun standardFrozenConfig() = ChapterProfileBatchCoordinator.frozenRunConfig(
-        sourceLang = "ja",
-        targetLang = "en",
-        ocrEngine = "FakeOcrEngine",
-        inpaintMode = "OFF",
-        providerKey = "standard:google",
-        flagProfilePipeline = true,
-    )
-
-    /**
-     * F-4 (wave-7c review) at dispatch level: a recorded COMPLETE is NOT
-     * enough to retire the chapter — FF-01e.2a authorizes TreatAsFinished
-     * only when the final per-page displays committed. One translation-
-     * committed page with a FAILED inpaint has nothing to display: the
-     * dispatch must drop to the legacy schedule so that page re-runs, not
-     * return a typed COMPLETED that forever hides it.
-     */
-    @Test
-    fun `flag-off dispatch over a COMPLETE run with an unrendered page does not treat the chapter as finished`() {
-        val pageKeys = listOf("p0", "p1")
-        val (artifact, publication, store) = completeRecordStore(
-            pageKeys,
-            mapOf(
-                "p0" to finishedTextlessPage("p0"),
-                "p1" to translatedUnrenderedPage("p1"),
-            ),
-        )
-
-        val harness = TranslationCoexistenceHarness.create(pageKeys, storeOverride = store)
-        try {
-            harness.stubChapterPages(pageKeys)
-            val batch = harness.launchBatch(pageKeys)
-
-            // The legacy schedule must actually START the unrendered page's
-            // work. Use the same deterministic "schedule is EXECUTING" signal
-            // as Case 2 — the fake transport's start signal, fired at the
-            // identity check before any wait (the contextual native fakes are
-            // not reliable observation points from the standard lane). A
-            // TreatAsFinished short-circuit returns before ANY coordinator
-            // exists, so this await alone disproves it. Whether the legacy
-            // planner then re-inpaints or re-translates the page is its own
-            // decision, outside this dispatch-gate test's scope.
-            runBlocking {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                    harness.transportStarted["p1"].shouldNotBeNull().await()
-                }
-            }
-
-            batch.job.cancel()
-            runBlocking {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.job.join() }
-            }
-
-            // The durable COMPLETE record still owns the chapter, untouched.
-            val manifestAfter = artifact.readManifest().shouldNotBeNull()
-            manifestAfter.activeRun shouldBe publication.manifest.activeRun
-        } finally {
-            harness.close()
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Case 2 — FF-01e.2b at dispatch: flag OFF over an interrupted (non-
-    // COMPLETE) flagged run drops to the legacy schedule, which STARTS.
-    // ------------------------------------------------------------------
-
-    private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
-
-    private fun artifactStore(): ChapterArtifactStore =
-        ChapterArtifactStore(
-            AtomicChapterDocuments(UniFileChapterDocumentIo(root())),
-            ChapterArtifactLayout("Chapter 1"),
-        )
-
-    private fun lazyStore(): ChapterTranslationStore = ChapterTranslationStore.lazy(
-        fileCreator = { root().createFile("Chapter 1.json")!! },
-        artifactParent = root(),
-        artifactFileName = "Chapter 1.json",
-    )
-
-    private fun frozenConfig() = ChapterProfileBatchCoordinator.frozenRunConfig(
-        sourceLang = "ja",
-        targetLang = "en",
-        ocrEngine = "FakeOcrEngine",
-        inpaintMode = "OFF",
-        providerKey = "fake:provider",
-        flagProfilePipeline = true,
-    )
-
-    private fun ocrPage(pageKey: String) = PageTranslation(
-        sourceFileName = pageKey,
-        blocks = mutableListOf(
-            eu.kanade.translation.model.TranslationBlock(
-                blockId = "b1",
-                text = "source",
-                translation = "",
-                width = 10f,
-                height = 10f,
-                x = 0f,
-                y = 0f,
-                symHeight = 1f,
-                symWidth = 1f,
-                angle = 0f,
-            ),
-        ),
-        imgWidth = 100f,
-        imgHeight = 160f,
-        decodeSampleSize = 1,
-        ocrStatus = StageStatus.READY,
-        inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
-        sourceFingerprint = hex64("source-$pageKey"),
-        detectionFingerprint = hex64("detection-$pageKey"),
-        ocrFingerprint = hex64("ocr-$pageKey"),
-        inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 10, 10, 1)),
-    )
-
-    /** Kills the flagged pass at [failAt] so an interrupted, resumable state exists. */
-    private inner class InterruptingOcrWorker(
-        private val store: ChapterTranslationStore,
-        private val failAt: String,
-    ) : NativeLaneWorker {
-        override suspend fun runOcrStage(pageKey: String, pageIndex: Int): OcrReadyPageRef? {
-            if (pageKey == failAt) throw IllegalStateException("simulated mid-preflight death")
-            val lease = store.tryAcquirePageStageLease(pageKey, eu.kanade.translation.model.PageStage.Ocr, PageWriteOrigin.BATCH)
-                .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
-            val before = store.snapshot(pageKey)
-            store.mergeOcr(
-                OcrStagePatch(
-                    pageKey = pageKey,
-                    generation = before.generation,
-                    expectedPageVersion = before.pageVersion,
-                    expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
-                    ocrResult = ocrPage(pageKey),
-                    expectedLeaseToken = lease.token,
-                ),
-                description = "t924 dispatch-resume interrupted ocr",
-            ).shouldBeInstanceOf<StagePatchResult.Accepted>()
-            val after = store.snapshot(pageKey)
-            return OcrReadyPageRef(
-                pageKey = pageKey,
-                pageIndex = pageIndex,
-                generation = after.generation,
-                blockFingerprints = emptyList(),
-                leaseToken = lease.token,
-                candidateGenerationId = after.candidateGenerationId,
-                dependencyFingerprint = after.dependencyFingerprint,
-                artifactPageVersion = after.artifactPageVersion,
-            )
-        }
-
-        override suspend fun runInpaintStage(pageKey: String) {}
-    }
-
-    @Test
-    fun `flag-off dispatch over an interrupted flagged run starts the legacy schedule`() = runBlocking {
-        val pageKeys = listOf("p1", "p2")
-        val store = lazyStore()
-        store.preRegisterPages(pageKeys)
-        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
-        val coordinator = ChapterProfileBatchCoordinator(
-            store = store,
-            // Die on the FIRST page so NO OCR is persisted: the legacy restart
-            // must run real OCR (analyze → NATIVE_RELEASE), a guaranteed first
-            // barrier point (persisted OCR would make legacy correctly skip it).
-            nativeWorker = InterruptingOcrWorker(store, failAt = "p1"),
-            frozenConfig = frozenConfig(),
-            orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-            flagProfilePipeline = true,
-            releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
-        )
-        coordinator.runPass1(pages, TranslatorComputeClass.REMOTE_IO).status shouldBe
-            BatchPass1Status.FAILED
-
-        val durableBefore = artifactStore().readManifest().shouldNotBeNull()
-        val recordBefore = (
-            artifactStore().readRunRecord(durableBefore.activeRun.shouldNotBeNull())
+    private fun durableRecord(
+        artifact: ChapterArtifactStore,
+    ): Pair<String, ChapterRunState> {
+        val manifest = artifact.readManifest().shouldNotBeNull()
+        val record = (
+            artifact.readRunRecord(manifest.activeRun.shouldNotBeNull())
                 as ChapterArtifactStore.RunRecordRead.Usable
             ).record
-        // The record is genuinely resumable, not COMPLETE: TreatAsFinished
-        // must NOT fire at the dispatch.
-        (recordBefore.state == ChapterRunState.COMPLETE) shouldBe false
-
-        val harness = TranslationCoexistenceHarness.create(pageKeys, storeOverride = store)
-        try {
-            harness.stubChapterPages(pageKeys)
-            // The standard lane's legacy path never reaches the contextual
-            // barrier fakes; its deterministic "schedule is EXECUTING" signal
-            // is the fake transport's own start signal (fired at identity
-            // check, before any wait). Awaiting it proves the dispatch did
-            // not short-circuit and did not error: the legacy coordinator is
-            // running real per-page work.
-            val batch = harness.launchBatch(pageKeys)
-            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                harness.transportStarted["p1"].shouldNotBeNull().await()
-            }
-
-            // The legacy start left the new-path sidecars untouched (FF-01c):
-            // the interrupted record is byte-equal and still owns the chapter.
-            val durableAfter = artifactStore().readManifest().shouldNotBeNull()
-            durableAfter.activeRun shouldBe durableBefore.activeRun
-            (
-                artifactStore().readRunRecord(durableAfter.activeRun.shouldNotBeNull())
-                    as ChapterArtifactStore.RunRecordRead.Usable
-                ).record shouldBe recordBefore
-
-            batch.job.cancel()
-            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.job.join() }
-        } finally {
-            harness.close()
-        }
-        Unit
+        return record.runId to record.state
     }
 
-    // ------------------------------------------------------------------
-    // Wave B Task 2a/2b — flag-flip lifecycle parity for STANDARD-lane
-    // records. The standard lane's COMPLETE records translation-terminal
-    // WITHOUT in-pass render (Wave A): a translatable page ends READY with
-    // its work product under an OPEN CANDIDATE pointer — deliberately NOT a
-    // committed display bundle. The resume gates see that shape from two
-    // directions with deliberately different strictness:
-    //   - flag ON (coordinator `pageWorkProductResolvable`): a candidate
-    //     snapshot whose content is translation-terminal IS evidence — the
-    //     zero-work COMPLETE resume fires (StandardPipelineCoordinatorTest T3).
-    //   - flag OFF (shell `activeRunPagesDisplayCommitted`): DELIBERATELY
-    //     STRICT (committed bundle or durable textless only) — dropping to
-    //     legacy re-derives the missing display safely, so a COMPLETE record
-    //     over unrendered pages must NOT TreatAsFinished.
-    // ------------------------------------------------------------------
-
-    /**
-     * The standard lane's normal completion shape for a translatable page:
-     * translation READY, render still PENDING (translation-terminal without
-     * in-pass render), inpaint drained by FINALIZE — and NO committed
-     * display bundle (the work product lives under the open candidate
-     * pointer; only a render promotes it).
-     */
-    private fun standardTranslatedUnrenderedPage(pageKey: String) = PageTranslation(
-        sourceFileName = pageKey,
-        blocks = mutableListOf(
-            eu.kanade.translation.model.TranslationBlock(
-                blockId = "b1",
-                text = "source",
-                translation = "translated",
-                width = 10f,
-                height = 10f,
-                x = 0f,
-                y = 0f,
-                symHeight = 1f,
-                symWidth = 1f,
-                angle = 0f,
-            ),
-        ),
-        imgWidth = 100f,
-        imgHeight = 160f,
-        decodeSampleSize = 1,
-        ocrStatus = StageStatus.READY,
-        translationStatus = StageStatus.READY,
-        inpaintStatus = StageStatus.READY,
-        sourceFingerprint = hex64("source-$pageKey"),
-        detectionFingerprint = hex64("detection-$pageKey"),
-        ocrFingerprint = hex64("ocr-$pageKey"),
-    )
-
     @Test
-    fun `flag-off dispatch over a standard-lane COMPLETE with unrendered pages does not treat the chapter as finished`() {
+    fun `re-dispatch over a finished chapter costs zero work and republishes nothing`() {
         val pageKeys = listOf("p0", "p1")
-        val record = ChapterRunRecord(
-            runId = "run-standard-complete-1",
-            state = ChapterRunState.COMPLETE,
-            frozenConfig = standardFrozenConfig(),
-            frozenRunConfigFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(standardFrozenConfig()),
-            orderedSourceDigest = hex64("ordered-source"),
-            ocrCorpusFingerprint = hex64("ocr-corpus"),
-            analysisPolicyFingerprint = hex64("analysis-policy"),
-            envelopePolicyFingerprint = hex64("envelope-policy"),
-            createdAtEpochMs = 1L,
-            updatedAtEpochMs = 1L,
-        )
-        val (artifact, publication, store) = runRecordStore(
-            pageKeys = pageKeys,
-            pages = mapOf(
-                "p0" to finishedTextlessPage("p0"),
-                "p1" to standardTranslatedUnrenderedPage("p1"),
-            ),
-            record = record,
-        )
-
-        // Pure-decision pins of the DELIBERATE asymmetry: the record alone
-        // (flag OFF) would fire TreatAsFinished, but the F-4 shell gate is
-        // strictly display-based — p1's candidate-only translation-terminal
-        // work product is NOT display evidence for the OFF direction, so the
-        // outcome is null and the dispatch falls through to legacy.
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = false) shouldBe
-            ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.TreatAsFinished
-        ChapterProfileBatchCoordinator.resumeCompletedOutcome(
-            record = record,
-            currentFlagOn = false,
-            orderedPageKeys = pageKeys.toSet(),
-            allPagesDisplayCommitted = false,
-        ).shouldBeNull()
-
-        val harness = TranslationCoexistenceHarness.create(pageKeys, storeOverride = store)
+        val first = firstRun(pageKeys)
         try {
-            harness.stubChapterPages(pageKeys)
-            val batch = harness.launchBatch(pageKeys)
-
-            // The legacy schedule actually STARTS p1's work (same
-            // deterministic signal as Case 2/F-4) — a TreatAsFinished
-            // short-circuit would have returned before any coordinator
-            // existed. Whether legacy re-translates or re-renders is its own
-            // decision, outside this dispatch-gate test's scope.
-            runBlocking {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                    harness.transportStarted["p1"].shouldNotBeNull().await()
-                }
-            }
-
-            batch.job.cancel()
-            runBlocking {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.job.join() }
-            }
-
-            // The standard-lane COMPLETE record still owns the chapter,
-            // byte-untouched (FF-01c).
-            val manifestAfter = artifact.readManifest().shouldNotBeNull()
-            manifestAfter.activeRun shouldBe publication.manifest.activeRun
-            (
-                artifact.readRunRecord(manifestAfter.activeRun.shouldNotBeNull())
+            // Run 1 closed as a real COMPLETE publication.
+            val artifact = first.store.artifactStore.shouldNotBeNull()
+            val manifestBefore = artifact.readManifest().shouldNotBeNull()
+            val pointerBefore = manifestBefore.activeRun.shouldNotBeNull()
+            val recordBefore = (
+                artifact.readRunRecord(pointerBefore)
                     as ChapterArtifactStore.RunRecordRead.Usable
-                ).record shouldBe record
+                ).record
+            recordBefore.state shouldBe ChapterRunState.COMPLETE
+            recordBefore.frozenConfig.providerKey shouldBe "standard:mlkit"
+
+            // Run 2: the same chapter re-requested through the real shell over
+            // the identical store — no flag, no special casing.
+            val second = TranslationCoexistenceHarness.createStandard(
+                pageKeys,
+                storeOverride = first.store,
+            )
+            try {
+                second.stubChapterPages(pageKeys)
+                val batch = second.launchBatch(pageKeys)
+                val reconciliation = runBlocking {
+                    withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                        batch.reconciliation.await().shouldNotBeNull()
+                    }
+                }
+
+                // ZERO paid work: with the flag gone there is no shell-level
+                // short-circuit left — the re-dispatch re-enters the
+                // pipeline and the resume obligation is settled by the
+                // coordinator's ST-14 COMPLETE fast path (LI-2 evidence gate
+                // satisfied by the open candidate work products; pinned at
+                // coordinator level in StandardPipelineCoordinatorTest T3).
+                second.transportCallsFor("p0") shouldBe 0
+                second.transportCallsFor("p1") shouldBe 0
+
+                // The chapter still finishes end-to-end (no stranded pages).
+                reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
+                reconciliation.doneCount shouldBe pageKeys.size
+                reconciliation.strandedPages shouldBe emptyMap()
+
+                // The durable COMPLETE record still owns the chapter,
+                // untouched (idempotent resume republishes nothing).
+                artifact.readManifest().shouldNotBeNull().activeRun shouldBe pointerBefore
+                (
+                    artifact.readRunRecord(pointerBefore)
+                        as ChapterArtifactStore.RunRecordRead.Usable
+                    ).record shouldBe recordBefore
+            } finally {
+                second.close()
+            }
         } finally {
-            harness.close()
+            first.close()
         }
     }
 
     @Test
-    fun `flag-off dispatch over an interrupted standard-lane TRANSLATE record starts the legacy schedule`() {
-        val pageKeys = listOf("p1", "p2")
-        // A standard-lane record interrupted mid-run at TRANSLATE (Wave A's
-        // published shape: corpus fingerprint durable, stop counter set) over
-        // pages that have NO work yet — the legacy restart runs real work.
-        val record = ChapterRunRecord(
-            runId = "run-standard-interrupted-1",
-            state = ChapterRunState.TRANSLATE,
-            frozenConfig = standardFrozenConfig(),
-            frozenRunConfigFingerprint = ChapterProfileBatchCoordinator.runConfigFingerprint(standardFrozenConfig()),
-            orderedSourceDigest = hex64("ordered-source"),
-            ocrCorpusFingerprint = hex64("ocr-corpus"),
-            analysisPolicyFingerprint = hex64("analysis-policy"),
-            envelopePolicyFingerprint = hex64("envelope-policy"),
-            phaseCounters = mapOf(
-                ChapterProfileBatchCoordinator.COUNTER_PAGES_TRANSLATED to 1,
-                ChapterProfileBatchCoordinator.COUNTER_STOP to 1,
-            ),
-            createdAtEpochMs = 1L,
-            updatedAtEpochMs = 1L,
-        )
-        val (artifact, publication, store) = runRecordStore(
-            pageKeys = pageKeys,
-            pages = pageKeys.associateWith { key -> PageTranslation(sourceFileName = key) },
-            record = record,
-        )
-        // The record is genuinely resumable, not COMPLETE: TreatAsFinished
-        // must NOT fire at the dispatch (pure decision pin, mirrors Case 2).
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = false) shouldBe
-            ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.DropToLegacy
-
-        val harness = TranslationCoexistenceHarness.create(pageKeys, storeOverride = store)
+    fun `re-dispatch after a reset demotes real work in the same lane while healthy pages stay retired`() {
+        val pageKeys = listOf("p0", "p1")
+        val first = firstRun(pageKeys)
         try {
-            harness.stubChapterPages(pageKeys)
-            val batch = harness.launchBatch(pageKeys)
+            val artifact = first.store.artifactStore.shouldNotBeNull()
+            val manifestBefore = artifact.readManifest().shouldNotBeNull()
+            val recordBefore = (
+                artifact.readRunRecord(manifestBefore.activeRun.shouldNotBeNull())
+                    as ChapterArtifactStore.RunRecordRead.Usable
+                ).record
+            recordBefore.state shouldBe ChapterRunState.COMPLETE
 
-            // DropToLegacy: the legacy standard schedule is actually running
-            // (transport start signal — see Case 2).
+            // User-style reset of p1 only: clear its live translated state and
+            // demote its durable display/work-product evidence (the real
+            // reset primitives, mirroring the coordinator-level LI-2 test).
             runBlocking {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                    harness.transportStarted["p1"].shouldNotBeNull().await()
+                first.store.updatePageFromCurrentSnapshot("p1", "t924 dispatch reset") { page ->
+                    page?.copy(
+                        blocks = page.blocks.map { it.copy(translation = "") }.toMutableList(),
+                        translationStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                        renderStatus = eu.kanade.translation.model.StageStatus.PENDING,
+                    ) ?: eu.kanade.translation.model.PageTranslation(sourceFileName = "p1")
                 }
+                first.store.demoteCommittedDisplay("p1", "t924 dispatch reset")
+                first.store.flush()
             }
 
-            // The legacy start left the T924 sidecars byte-untouched (FF-01c):
-            // the interrupted TRANSLATE record is byte-equal and still owns
-            // the chapter.
-            val manifestAfter = artifact.readManifest().shouldNotBeNull()
-            manifestAfter.activeRun shouldBe publication.manifest.activeRun
-            (
-                artifact.readRunRecord(manifestAfter.activeRun.shouldNotBeNull())
-                    as ChapterArtifactStore.RunRecordRead.Usable
-                ).record shouldBe record
+            // Re-dispatch through the real shell.
+            val second = TranslationCoexistenceHarness.createStandard(
+                pageKeys,
+                storeOverride = first.store,
+            )
+            try {
+                second.stubChapterPages(pageKeys)
+                val batch = second.launchBatch(pageKeys)
 
-            batch.job.cancel()
-            runBlocking {
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.job.join() }
+                // The LI-2 gate supersedes the recorded COMPLETE: p1 gets REAL
+                // paid work in the SAME (standard) lane — a legacy coordinator
+                // no longer exists to be involved.
+                runBlocking {
+                    withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                        second.transportStarted["p1"].shouldNotBeNull().await()
+                    }
+                }
+
+                batch.job.cancel()
+                runBlocking {
+                    withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.job.join() }
+                }
+
+                // The healthy page was never re-paid; only p1 re-ran.
+                second.transportCallsFor("p0") shouldBe 0
+                (second.transportCallsFor("p1") >= 1) shouldBe true
+
+                // The run record keeps owning the chapter under the SAME run
+                // id (the frozen fingerprint still matches): the fresh
+                // RUN_SNAPSHOT the re-dispatch published carries run 1's id.
+                // (The job was cancelled mid-run, so the record sits at its
+                // last in-run phase, not COMPLETE.)
+                val (runIdAfter, _) = durableRecord(artifact)
+                runIdAfter shouldBe recordBefore.runId
+            } finally {
+                second.close()
             }
         } finally {
-            harness.close()
+            first.close()
         }
-        Unit
     }
 }

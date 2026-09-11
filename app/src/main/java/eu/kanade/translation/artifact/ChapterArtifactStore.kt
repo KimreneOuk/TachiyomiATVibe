@@ -405,9 +405,9 @@ class ChapterArtifactStore(
      *
      * Reset semantics (T924 LI-2): a user reset means the recorded run must
      * never short-circuit a future dispatch — the COMPLETE fast path
-     * (`resumeFinalizeOrComplete` / `resumeCompletedOutcome`) keys on this
-     * pointer, so clearing it forces the next run to start fresh instead of
-     * returning a zero-work finished outcome over demoted displays.
+     * ([eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator.resumeFinalizeOrComplete])
+     * keys on this pointer, so clearing it forces the next run to start fresh
+     * instead of returning a zero-work finished outcome over demoted displays.
      */
     @Synchronized
     fun retireActiveRun(

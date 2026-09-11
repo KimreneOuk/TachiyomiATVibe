@@ -118,7 +118,6 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         ocrEngine = "FakeOcrEngine",
         inpaintMode = "OFF",
         providerKey = "fake:provider",
-        flagProfilePipeline = true,
     )
 
     private fun orderedPages(vararg pageKeys: String): List<PageKey> =
@@ -136,7 +135,6 @@ class OcrPreflightRejectedMidRunDurabilityTest {
         nativeWorker = worker,
         frozenConfig = frozenConfig(),
         orderedSourcePairs = sourcePairs(pages),
-        flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
     )
 

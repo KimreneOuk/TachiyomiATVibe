@@ -8,20 +8,20 @@ import io.kotest.matchers.shouldBe
 import org.junit.jupiter.api.Test
 
 /**
- * T924 LI-1: the flagged-lane COMPLETED completion projection. The flagged
- * [ChapterProfileBatchCoordinator] commits translations WITHOUT an in-pass
- * render — pages end translation-terminal with `renderStatus == PENDING` and
- * no cleaned image — so the legacy done-predicate (`hasRenderedResult`)
- * projected every healthy flagged COMPLETED chapter as fully stranded →
- * chapter ERROR → tracker/queue/manga-screen ERROR, with retry re-entering
- * the zero-work COMPLETE fast path and erroring again.
+ * T924 LI-1: the flagged-lane COMPLETED completion projection
+ * ([BatchProgressReconciler.reconcileFlaggedCompleted]). Both surviving
+ * pipelines commit translations WITHOUT an in-pass render — pages end
+ * translation-terminal with `renderStatus == PENDING` and no cleaned image —
+ * so the legacy done-predicate (`hasRenderedResult`) would project every
+ * healthy COMPLETED chapter as fully stranded → chapter ERROR.
  *
- * Levels tested: [BatchProgressReconciler.reconcileFlaggedCompleted] directly,
- * plus the pure post-pass selector
- * [BatchChapterTranslator.postPassReconciliation] the shell's single post-pass
- * site consults (`translateBatchTraced`). The full shell itself is NOT driven
- * here (the production harness has no flagged-lane wiring); the selector is
- * the complete decision surface extracted from it.
+ * T924 zero-legacy (D1): the former pure selector
+ * `BatchChapterTranslator.postPassReconciliation` was collapsed — dispatch is
+ * always a flagged lane now, so the shell's single post-pass site calls
+ * [BatchProgressReconciler.reconcileFlaggedCompleted] directly and the
+ * selector tests were deleted with it. The legacy
+ * [BatchProgressReconciler.reconcile] stays covered here only as the
+ * bug anchor (and by the stop-branch behavior tests).
  */
 class BatchPostPassProjectionTest {
 
@@ -107,9 +107,10 @@ class BatchPostPassProjectionTest {
 
     @Test
     fun `the legacy projection still strands flagged-shaped unrendered pages (bug anchor)`() {
-        // Characterizes the LI-1 bug the new projection fixes: feeding the
-        // flagged COMPLETED page shapes through the legacy reconcile reports
-        // ERROR with every translatable page stranded.
+        // Characterizes the LI-1 bug the flagged projection fixes: feeding the
+        // COMPLETED page shapes through the legacy reconcile reports ERROR
+        // with every translatable page stranded — which is why the shell's
+        // post-pass site must never use it for a COMPLETED run.
         val result = BatchProgressReconciler.reconcile(
             pageMap = mapOf("p0" to flaggedCommittedPage("p0")),
             orderedKeys = listOf("p0"),
@@ -118,44 +119,5 @@ class BatchPostPassProjectionTest {
 
         result.chapterStatus shouldBe Translation.State.ERROR
         result.strandedPages.keys shouldBe setOf("p0")
-    }
-
-    @Test
-    fun `the post-pass selector picks the flagged projection only for flagged COMPLETED`() {
-        val pageMap = mapOf("p0" to flaggedCommittedPage("p0"))
-        val orderedKeys = listOf("p0")
-
-        // Flagged lane + COMPLETED: the flagged projection (no stranded).
-        val flagged = BatchChapterTranslator.postPassReconciliation(
-            flaggedLane = true,
-            status = BatchPass1Status.COMPLETED,
-            pageMap = pageMap,
-            orderedKeys = orderedKeys,
-            activeGeneration = 0L,
-        )
-        flagged.chapterStatus shouldBe Translation.State.TRANSLATED
-        flagged.strandedPages shouldBe emptyMap()
-
-        // Legacy lane (FF-01 OFF), COMPLETED: the existing reconcile unchanged.
-        val legacy = BatchChapterTranslator.postPassReconciliation(
-            flaggedLane = false,
-            status = BatchPass1Status.COMPLETED,
-            pageMap = pageMap,
-            orderedKeys = orderedKeys,
-            activeGeneration = 0L,
-        )
-        legacy.chapterStatus shouldBe Translation.State.ERROR
-        legacy.strandedPages.keys shouldBe setOf("p0")
-
-        // A flagged lane outcome that is not COMPLETED never uses this
-        // projection (the shell's pause branch keeps the existing reconcile).
-        val nonCompleted = BatchChapterTranslator.postPassReconciliation(
-            flaggedLane = true,
-            status = BatchPass1Status.PAUSED,
-            pageMap = pageMap,
-            orderedKeys = orderedKeys,
-            activeGeneration = 0L,
-        )
-        nonCompleted.chapterStatus shouldBe Translation.State.ERROR
     }
 }

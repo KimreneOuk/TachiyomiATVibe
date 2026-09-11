@@ -709,11 +709,20 @@ class ChapterTranslator(
                 }
                 else -> {
                     val pageStates = store.state.value
-                    val reconciliation = eu.kanade.translation.pipeline.batch.BatchProgressReconciler.reconcile(
-                        pageMap = pageStates,
-                        orderedKeys = batchOrderedPageKeys,
-                        activeGeneration = store.currentGeneration,
-                    )
+                    // T924 zero-legacy (D1): both surviving batch lanes end
+                    // runs translation-terminal WITHOUT an in-pass render, so
+                    // the post-batch queue-status projection must use the
+                    // flagged COMPLETED projection — the legacy done-predicate
+                    // would project every healthy page as stranded and mark
+                    // the queue entry ERROR (same LI-1 class as the pass-1
+                    // post-pass projection).
+                    val reconciliation =
+                        eu.kanade.translation.pipeline.batch.BatchProgressReconciler
+                            .reconcileFlaggedCompleted(
+                                pageMap = pageStates,
+                                orderedKeys = batchOrderedPageKeys,
+                                activeGeneration = store.currentGeneration,
+                            )
                     translation.status = reconciliation.chapterStatus
                 }
             }

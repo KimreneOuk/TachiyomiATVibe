@@ -71,11 +71,11 @@ object SettingsTranslationScreen : SearchableSettings {
     }
 
     /**
-     * T924 debug-build-only experiment switches. Both flags are read at each
-     * translation dispatch (never mid-run), so flipping between chapters is the
-     * supported A/B flow; the flag-aware resume semantics decide how a chapter
-     * touched under the other setting behaves on re-request. Never shown in
-     * release builds.
+     * T924 debug-build-only experiment switches. The remaining flag is read at
+     * each translation commit/render (never mid-run), so flipping between
+     * commits is the supported flow. Never shown in release builds. (FF-01
+     * completed its A/B lifecycle: the profile pipeline is now the only
+     * pipeline and the switch was removed with the flag.)
      */
     @Composable
     private fun getExperimentsGroup(
@@ -83,12 +83,6 @@ object SettingsTranslationScreen : SearchableSettings {
     ): Preference.PreferenceGroup = Preference.PreferenceGroup(
         title = "Experiments (debug)",
         preferenceItems = persistentListOf(
-            Preference.PreferenceItem.SwitchPreference(
-                pref = translationPreferences.translationBatchProfilePipeline(),
-                title = "Profile pipeline (FF-01)",
-                subtitle = "Whole-chapter OCR preflight + frozen profile batch lane " +
-                    "for the AI engine. Takes effect on the NEXT chapter translation, never mid-run.",
-            ),
             Preference.PreferenceItem.SwitchPreference(
                 pref = translationPreferences.translationBatchPersistedLayout(),
                 title = "Persisted layout reader bridge (FF-02)",

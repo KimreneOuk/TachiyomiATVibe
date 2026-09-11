@@ -97,7 +97,6 @@ class ResetRetiresActiveRunTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "fake:provider",
-            flagProfilePipeline = true,
         )
         val completeRecord = ChapterRunRecord(
             runId = "run-li2-reset-1",

@@ -386,10 +386,8 @@ class StandardPipelineCoordinatorTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "standard:google",
-            flagProfilePipeline = true,
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-        flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         textTranslator = seam.translator,
         overlapScheduler = overlapScheduler,
@@ -598,7 +596,6 @@ class StandardPipelineCoordinatorTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "standard:google",
-            flagProfilePipeline = true,
         )
         val deepl = ChapterProfileBatchCoordinator.frozenRunConfig(
             sourceLang = "ja",
@@ -607,7 +604,6 @@ class StandardPipelineCoordinatorTest {
             inpaintMode = "OFF",
             providerKey = "standard:deepl",
             credentialId = deeplCredential,
-            flagProfilePipeline = true,
         )
         deepl.credentialId shouldBe deeplCredential
         deepl.credentialId.length shouldBe 16

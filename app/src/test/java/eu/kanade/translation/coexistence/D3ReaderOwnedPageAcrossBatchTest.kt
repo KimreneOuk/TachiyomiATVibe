@@ -13,34 +13,42 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
 
 /**
- * T917 Phase 1 — D3 coexistence contract (design note §3.2), RED on purpose.
+ * T917 Phase 1 — D3 coexistence contract (design note §3.2), T924 zero-legacy
+ * form (D1).
  *
- * Scenario: the reader owns p1 across a FULL batch (manual parked at
- * PROVIDER_END — lease held, native permit free so the batch runs); p0 is free
- * and must complete all real stages end-to-end (native → provider → real
- * mergeRender COMMIT). p1 is the page BEHIND the batch's first page, so the
- * ordered-wait planner marks it for the reader page position in this fixture.
+ * Scenario: the reader owns p1 across a batch pass (manual parked at
+ * PROVIDER_END — lease held); p0 is free. The reader page is BEHIND the
+ * batch's first page.
  *
- * Target contract (draft §6 D3, defer-and-rescan): the batch defers the
- * reader-owned page and rescans it within the same pass after the lease is
- * free, so p1 ends in exactly one terminal state, the reconciliation strands
- * nothing, the chapter projects TRANSLATED, and the tracker terminal snapshot
- * shows 2/2 with no stranded or errored pages (draft §7 outcome contract).
- *
- * RED today (audit C-02): BatchLaneWorkers.runOcrStage returns null on a denied
- * lease ("rescanned later" is only the log text) and the coordinator records a
- * plain skip, so p1 is never rescanned; reconciliation strands it ("expected
- * page was stranded by a prior run") and the chapter projects ERROR.
+ * Zero-legacy contract: the batch NEVER preempts the reader-owned page and
+ * NEVER runs paid work over an incomplete corpus. The preflight defers p1
+ * (its lease is MANUAL-owned), records the corpus gap, and PAUSES the pass
+ * before the translation tail — p0's OCR checkpoint is durable, zero paid
+ * calls happen while the reader holds the page. When the reader's own intent
+ * completes p1, a follow-up batch run resumes from the checkpoints: p0 gets
+ * its exactly-once paid call, p1 is never re-paid, nothing is stranded, and
+ * the chapter projects TRANSLATED with a 2/2 tracker terminal. (The legacy
+ * in-pass defer-and-rescan re-run was SequentialBatchCoordinator machinery,
+ * deleted with the legacy path; the surviving contract is reader priority +
+ * durable resume.)
  */
 class D3ReaderOwnedPageAcrossBatchTest {
 
     @Test
-    fun `reader-owned page across a full batch is re-translated in the same pass and never stranded`() = runBlocking<Unit> {
+    fun `reader-owned page across a batch is never preempted and a follow-up run completes the chapter`() = runBlocking<Unit> {
         // Production-faithful fresh-chapter state: no page records exist until
         // the batch pre-registers or the manual path creates them (see harness
         // create() doc — pre-registered PENDING entries would make the manual
         // path resume-skip before any barrier).
-        val harness = TranslationCoexistenceHarness.create(preRegisterInStore = false)
+        // T924 zero-legacy (D1): the batch requires artifact authority — and
+        // that authority is what makes run 1's p0 OCR checkpoint resumable.
+        val harness = TranslationCoexistenceHarness.create(
+            preRegisterInStore = false,
+            storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(
+                listOf("p0", "p1"),
+                preRegisterInStore = false,
+            ),
+        )
         harness.installGraphicsShims()
         harness.stubChapterPages(listOf("p0", "p1"))
         harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
@@ -70,54 +78,63 @@ class D3ReaderOwnedPageAcrossBatchTest {
                 harness.store.pageLeaseOwner("p1") shouldBe PageWriteOrigin.MANUAL
             }
 
-            // Full batch runs while the reader holds p1.
+            // The batch runs while the reader holds p1: the preflight decodes
+            // p0 (NATIVE_ACQUIRE proves the run started), then defers the
+            // leased p1 and pauses the pass on the corpus gap.
             val batch = harness.launchBatch(listOf("p0", "p1"))
-
-            // p0 (batch-owned, first page) completes every real stage: native
-            // decode, paid provider call, and the REAL durable render commit.
-            // p1 must NOT be awaited here: the reader holds its lease at
-            // PROVIDER_END, so its render can only land after the manual is
-            // released below (its only pre-release "progress" is the batch's
-            // denied-lease skip).
             harness.barrier.awaitArrivalWithin(
                 CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE,
                 "p0",
                 TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
             )
-            harness.barrier.awaitArrivalWithin(
-                CoexistenceBarrier.BarrierPoint.PROVIDER_START,
-                "p0",
-                TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
-            )
-            harness.barrier.awaitArrivalWithin(
-                CoexistenceBarrier.BarrierPoint.PROVIDER_END,
-                "p0",
-                TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS,
-            )
-            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                harness.store.state.first { it["p0"]?.renderStatus == StageStatus.READY }
-            }
-
-            // The reader releases p1 BEFORE the reconciliation is awaited: the
-            // Phase-2 green path (defer-and-rescan) rescans the reader-owned
-            // page only after the lease is free, so the pass — and its
-            // reconciliation — can only complete after the release (Reviewer
-            // condition 1). Today the batch already finished the pass with a
-            // plain skip, so the same stranded result is observed and the RED
-            // message below is byte-identical, only later in the test body.
-            harness.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p1")
-
-            val reconciliation = checkNotNull(
+            val run1 = checkNotNull(
                 withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.reconciliation.await() },
-            ) { "batch reconciliation missing" }
-            val tracker: TranslationProgressSnapshot =
-                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                    harness.trackerRegistry.terminal.first { it.containsKey(TranslationCoexistenceHarness.CHAPTER_ID) }
-                        .getValue(TranslationCoexistenceHarness.CHAPTER_ID)
-                }
+            ) { "run 1 reconciliation missing" }
 
             withClue(
-                "D3 (C-02): reader-owned page (p1) was skipped and never rescanned, so reconciliation stranded it: " +
+                "D3 (reader priority): the pass must pause on the deferred page, never run paid work " +
+                    "while the reader owns p1",
+            ) {
+                harness.transportCallsFor("p0") shouldBe 0
+                harness.transportCallsFor("p1") shouldBe 1 // the reader's own parked call only
+            }
+            withClue("D3: run 1 strands nothing — the deferred page is not this run's expectation") {
+                run1.strandedPages shouldBe emptyMap()
+            }
+
+            // The reader releases p1; the reader intent completes it (its own
+            // paid call — the one parked above — commits READY).
+            harness.barrier.release(CoexistenceBarrier.BarrierPoint.PROVIDER_END, "p1")
+            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                listOf(batch.job, manualJob).joinAll()
+            }
+            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                harness.store.state.first { it["p1"]?.translationStatus == StageStatus.READY }
+            }
+
+            // The follow-up run (the resume trigger — the sheet Retry/auto
+            // window): same chapter, same store — resumes from run 1's p0
+            // checkpoint, pays p0 exactly once, skips the reader-owned p1.
+            // The tracker's terminal StateFlow conflates: capture run 1's
+            // snapshot BEFORE the run, await a NEWER (reference-different)
+            // one, then read .value.
+            val terminalBefore = harness.trackerRegistry.terminal.value[TranslationCoexistenceHarness.CHAPTER_ID]
+            val restart = harness.launchBatch(listOf("p0", "p1"))
+            val reconciliation = checkNotNull(
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { restart.reconciliation.await() },
+            ) { "follow-up batch reconciliation missing" }
+            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { restart.job.join() }
+            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                harness.trackerRegistry.terminal.first {
+                    it[TranslationCoexistenceHarness.CHAPTER_ID] !== terminalBefore
+                }
+            }
+            val tracker = checkNotNull(
+                harness.trackerRegistry.terminal.value[TranslationCoexistenceHarness.CHAPTER_ID],
+            ) { "tracker terminal snapshot missing after the follow-up run" }
+
+            withClue(
+                "D3: the follow-up run must complete the chapter with nothing stranded: " +
                     "stranded=${reconciliation.strandedPages}",
             ) {
                 reconciliation.strandedPages shouldBe emptyMap()
@@ -132,16 +149,11 @@ class D3ReaderOwnedPageAcrossBatchTest {
                 tracker.donePages shouldBe 2
                 tracker.failedCount shouldBe 0
             }
-
-            withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
-                listOf(batch.job, manualJob).joinAll()
+            withClue("D3: both pages end in exactly one terminal state") {
+                harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.READY
             }
-            // Releasing the reader intent must still leave p1 in exactly one
-            // terminal state.
-            withClue("p1 must end in exactly one terminal state") {
-                harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.READY
-            }
-            withClue("exactly-once paid-call oracle") {
+            withClue("exactly-once paid-call oracle across both runs and the reader intent") {
                 harness.fakeTransport.callsFor("p0") shouldBe 1
                 harness.fakeTransport.callsFor("p1") shouldBe 1
             }

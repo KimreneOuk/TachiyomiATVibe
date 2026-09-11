@@ -41,7 +41,11 @@ class StandardLaneMultiPageCompletionTest {
     @Test
     fun `fresh standard batch translates every page of a multi-page chapter`() = runBlocking<Unit> {
         val pageKeys = listOf("p0", "p1", "p2")
-        val harness = TranslationCoexistenceHarness.create(pageKeys)
+        // T924 zero-legacy (D1): the batch requires artifact authority.
+        val harness = TranslationCoexistenceHarness.create(
+            pageKeys,
+            storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(pageKeys),
+        )
         try {
             harness.installGraphicsShims()
             harness.stubChapterPages(pageKeys)
@@ -77,8 +81,10 @@ class StandardLaneMultiPageCompletionTest {
             pageKeys.forEach { pageKey ->
                 harness.transportCallsFor(pageKey) shouldBe 1
                 val page = harness.store.state.value.getValue(pageKey)
+                // T924 zero-legacy (D1): the standard lane commits every page
+                // translation-terminal WITHOUT an in-pass render.
                 page.translationStatus shouldBe StageStatus.READY
-                page.renderStatus shouldBe StageStatus.READY
+                page.renderStatus shouldBe StageStatus.PENDING
             }
         } finally {
             harness.removeGraphicsShims()
@@ -89,16 +95,17 @@ class StandardLaneMultiPageCompletionTest {
 
     @Test
     fun `failed predecessor keeps successors honestly stranded`() = runBlocking<Unit> {
-        val store = ChapterTranslationStore(
-            translationFile = null as com.hippo.unifile.UniFile?,
-            fileCreator = null,
-            initialPages = mapOf(
-                "p0" to PageTranslation(sourceFileName = "p0").apply {
+        // T924 zero-legacy (D1): the batch requires artifact authority; the
+        // FAILED predecessor is seeded into the durable store post-build.
+        val store = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0", "p1"))
+        kotlinx.coroutines.runBlocking {
+            store.updatePage("p0") { current ->
+                (current ?: PageTranslation(sourceFileName = "p0")).apply {
                     ocrStatus = StageStatus.READY
                     translationStatus = StageStatus.FAILED
-                },
-            ),
-        )
+                }
+            }
+        }
         val harness = TranslationCoexistenceHarness.create(listOf("p0", "p1"), storeOverride = store)
         try {
             harness.installGraphicsShims()
@@ -116,7 +123,10 @@ class StandardLaneMultiPageCompletionTest {
                 false
             }
             p1Started shouldBe false
-            harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.PENDING
+            // T924 zero-legacy (D1): the successor's ordered-context skip is
+            // a TYPED durable failure (predecessor terminally failed), never
+            // a paid call and never a fake success.
+            harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.FAILED
         } finally {
             harness.removeGraphicsShims()
             harness.unstubChapterPages()

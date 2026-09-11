@@ -47,7 +47,6 @@ class ChapterArtifactStoreRetireActiveRunTest {
                 ocrEngine = "FakeOcrEngine",
                 inpaintMode = "OFF",
                 providerKey = "fake:provider",
-                flagProfilePipeline = true,
             ),
             frozenRunConfigFingerprint = hex64("frozen-config"),
             orderedSourceDigest = hex64("ordered-source"),

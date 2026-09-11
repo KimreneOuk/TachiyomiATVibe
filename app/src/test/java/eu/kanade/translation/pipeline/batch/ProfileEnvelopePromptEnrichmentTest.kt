@@ -134,7 +134,6 @@ class ProfileEnvelopePromptEnrichmentTest {
             ocrEngine = "FakeOcrEngine",
             inpaintMode = "OFF",
             providerKey = "fake:provider",
-            flagProfilePipeline = true,
         ).copy(
             envelopePolicy = EnvelopePolicySnapshot(
                 maxBlocks = 32,
@@ -142,7 +141,6 @@ class ProfileEnvelopePromptEnrichmentTest {
             ),
         ),
         orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-        flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         analysisChunkRunner = runner,
         textTranslator = translator,
@@ -391,12 +389,10 @@ class ProfileEnvelopePromptEnrichmentTest {
                 ocrEngine = "FakeOcrEngine",
                 inpaintMode = "OFF",
                 providerKey = "fake:provider",
-                flagProfilePipeline = true,
             ).copy(
                 envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = 8),
             ),
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-            flagProfilePipeline = true,
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
             analysisChunkRunner = FakeAnalyzer(),
             textTranslator = translator,
@@ -485,12 +481,10 @@ class ProfileEnvelopePromptEnrichmentTest {
                 ocrEngine = "FakeOcrEngine",
                 inpaintMode = "OFF",
                 providerKey = "fake:provider",
-                flagProfilePipeline = true,
             ).copy(
                 envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = 8),
             ),
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-            flagProfilePipeline = true,
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
             analysisChunkRunner = FakeAnalyzer(),
             textTranslator = translator,

@@ -34,15 +34,22 @@ import org.junit.jupiter.api.Test
 class D2ManualBatchInterleavingTest {
 
     @Test
-    fun `batch to manual - tap while batch holds the page at provider start end and render`() = runBlocking<Unit> {
+    fun `batch to manual - tap while batch holds the page at provider start and end`() = runBlocking<Unit> {
+        // T924 zero-legacy (D1): the RENDER park point is gone with the legacy
+        // render join — the batch pipeline is translation-terminal without an
+        // in-pass render, so the batch only ever parks the page at the
+        // provider barriers now.
         for (point in listOf(
             CoexistenceBarrier.BarrierPoint.PROVIDER_START,
             CoexistenceBarrier.BarrierPoint.PROVIDER_END,
-            CoexistenceBarrier.BarrierPoint.RENDER,
         )) {
             // Single-page chapter: the page the batch translates is the page
             // the reader taps (no ordered-wait planner involvement).
-            val harness = TranslationCoexistenceHarness.create(listOf("p0"))
+            // T924 zero-legacy (D1): the batch requires artifact authority.
+            val harness = TranslationCoexistenceHarness.create(
+                listOf("p0"),
+                storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0")),
+            )
             harness.installGraphicsShims()
             harness.stubChapterPages(listOf("p0"))
             try {
@@ -102,7 +109,11 @@ class D2ManualBatchInterleavingTest {
                     harness.fakeTransport.callsFor("p0") shouldBe 1
                 }
                 withClue("p0 terminal state at $point") {
-                    harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
+                    // The manual intent (wait-and-attach) re-offers the page
+                    // after the batch commit; it renders the committed
+                    // translation only when the reader displays it — the
+                    // durable obligation is the translation-terminal state.
+                    harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
                 }
             } finally {
                 harness.removeGraphicsShims()
@@ -118,7 +129,15 @@ class D2ManualBatchInterleavingTest {
         // the batch pre-registers or the manual path creates them (see harness
         // create() doc — pre-registered PENDING entries would make the manual
         // path resume-skip before any barrier).
-        val harness = TranslationCoexistenceHarness.create(preRegisterInStore = false)
+        // T924 zero-legacy (D1): the batch requires artifact authority (the
+        // manual-owned page keeps its empty-start fixture semantics).
+        val harness = TranslationCoexistenceHarness.create(
+            preRegisterInStore = false,
+            storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(
+                listOf("p0", "p1"),
+                preRegisterInStore = false,
+            ),
+        )
         harness.installGraphicsShims()
         harness.stubChapterPages(listOf("p0", "p1"))
         harness.registerReaderStream(TranslationCoexistenceHarness.CHAPTER_ID, "p0")
@@ -179,9 +198,14 @@ class D2ManualBatchInterleavingTest {
             withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
                 listOf(batch.job, manualJob).joinAll()
             }
-            withClue("manual must reach its terminal render state") {
-                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
-                harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.READY
+            withClue("both pages must reach their terminal translation state") {
+                // T924 zero-legacy (D1): the batch page (p0) is
+                // translation-terminal WITHOUT an in-pass render; the manual
+                // page's (p1) display commits through the reader boundary.
+                // The durable never-stranded / never-preempted contract is
+                // unchanged.
+                harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.READY
             }
             withClue("exactly-once paid-call oracle: each page translated exactly once (batch p0, manual p1)") {
                 harness.fakeTransport.callsFor("p0") shouldBe 1

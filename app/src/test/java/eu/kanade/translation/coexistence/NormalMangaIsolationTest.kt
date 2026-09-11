@@ -45,7 +45,13 @@ class NormalMangaIsolationTest {
         // ordered-wait planner (WAIT_FOR_DEPENDENCY/PRIOR_PAGE_INCOMPLETE for
         // pages behind a needs-work predecessor) makes a one-page chapter the
         // deterministic "batch completes end-to-end" fixture.
-        val harness = TranslationCoexistenceHarness.create(listOf("p0"))
+        // T924 zero-legacy (D1): the batch pipeline requires artifact
+        // authority, so the batch chapter's store is the durable
+        // ARTIFACTS-authority recipe.
+        val harness = TranslationCoexistenceHarness.create(
+            listOf("p0"),
+            storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0")),
+        )
         harness.installGraphicsShims()
         harness.stubChapterPages(listOf("p0"))
         try {
@@ -61,7 +67,11 @@ class NormalMangaIsolationTest {
             withClue("active batch must complete normally for this gate to be meaningful") {
                 batch.translation.status shouldBe Translation.State.TRANSLATED
                 reconciliation.strandedPages shouldBe emptyMap()
-                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
+                // T924 zero-legacy (D1): the batch is translation-terminal
+                // WITHOUT an in-pass render — the display is re-derived when
+                // the reader opens the page.
+                harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.PENDING
             }
 
             // 1. No arbitration: no reader window update was ever issued for the
@@ -100,8 +110,11 @@ class NormalMangaIsolationTest {
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "disabled-0") shouldBe 0
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "disabled-1") shouldBe 0
             }
-            withClue("positive control: the active chapter page was decoded exactly once") {
-                harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0") shouldBe 1
+            withClue("positive control: the active chapter page was decoded (preflight OCR + inpaint re-decode)") {
+                // T924 zero-legacy (D1): the pipeline decodes the page once
+                // for the OCR preflight and once more for the native inpaint
+                // drain — two real decodes, both on the active chapter.
+                harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0") shouldBe 2
             }
             withClue("positive control: the paid provider call stayed on the active chapter") {
                 harness.fakeTransport.totalCalls() shouldBe 1

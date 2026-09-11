@@ -62,11 +62,13 @@ class ChapterTranslatorQueueRestoreTest {
     }
 
     // -------------------------------------------------------------------------
-    // T924 wave-2 review gap 2 (FF-01e queue-restore obligation): a flagged-run
-    // chapter restored from the persisted queue. The harness mirrors the
-    // interrupted-flagged-run idiom of OcrPreflightFlagOffMidRunTest (real
-    // store, real interrupted pass) so the run record below is a genuine
-    // durable record with checkpoints, not a synthetic one.
+    // T924 wave-2 review gap 2 (queue-restore obligation, zero-legacy form):
+    // a chapter with an interrupted pipeline run restored from the persisted
+    // queue. The harness mirrors the interrupted-run idiom (real store, real
+    // interrupted pass) so the run record below is a genuine durable record
+    // with checkpoints, not a synthetic one. (D1: the FF-01 flag and its
+    // decideResume decision tree are gone — restore never auto-starts a run,
+    // and the durable state stays byte-untouched until explicit admission.)
     // -------------------------------------------------------------------------
 
     @TempDir
@@ -97,7 +99,6 @@ class ChapterTranslatorQueueRestoreTest {
         ocrEngine = "FakeOcrEngine",
         inpaintMode = "OFF",
         providerKey = "fake:provider",
-        flagProfilePipeline = true,
     )
 
     private fun ocrPage(pageKey: String) = PageTranslation(
@@ -184,7 +185,6 @@ class ChapterTranslatorQueueRestoreTest {
             nativeWorker = worker,
             frozenConfig = frozenConfig(),
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
-            flagProfilePipeline = true,
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
         )
         val outcome = coordinator.runPass1(pages, TranslatorComputeClass.REMOTE_IO)
@@ -198,7 +198,7 @@ class ChapterTranslatorQueueRestoreTest {
     }
 
     @Test
-    fun `queue restore of a chapter with an interrupted flagged run never auto starts the flagged path`() = runTest {
+    fun `queue restore of a chapter with an interrupted pipeline run never auto starts the run`() = runTest {
         val (store, record, checkpointedKeys) = interruptedFlaggedRun()
         val manifestBefore = artifactStore().readManifest().shouldNotBeNull()
 
@@ -211,26 +211,20 @@ class ChapterTranslatorQueueRestoreTest {
             liveById = emptyMap(),
         ) shouldContainExactly listOf("restored-flagged-10")
 
-        // Flag now OFF: the resume decision is re-derived from the run record
-        // + current flag only (T924-FF-10, no queue input) and drops the
-        // chapter to the legacy path. The decision is a pure companion
-        // function — it constructs no flagged coordinator, runs no OCR, and
-        // writes no run record: byte-equal manifest, untouched checkpoints,
-        // no lease held.
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = false) shouldBe
-            ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.DropToLegacy
+        // The restore path decides from the durable record + current
+        // settings only (T924-FF-10, no queue input) and — with the flag
+        // gone (D1) — that is the coordinator's own resume machinery, which
+        // only ever fires inside a dispatched run. Restore itself starts
+        // nothing: byte-equal manifest, untouched checkpoints, no lease held.
         artifactStore().readManifest().shouldNotBeNull() shouldBe manifestBefore
         manifestBefore.ocrCheckpoints.keys shouldBe checkpointedKeys
         store.pageLeaseOwner("p1").shouldBeNull()
         store.pageLeaseOwner("p2").shouldBeNull()
-
-        // Flag still ON: the recorded interrupted run is honored as a DECISION
-        // only — executing it requires explicit admission (user Start). The
-        // restore-level lookup itself still publishes nothing durable.
-        ChapterProfileBatchCoordinator.decideResume(record, currentFlagOn = true) shouldBe
-            ChapterProfileBatchCoordinator.FlaggedRunResumeDecision.RunFlaggedPath(record)
-        artifactStore().readManifest().shouldNotBeNull() shouldBe manifestBefore
-        store.pageLeaseOwner("p1").shouldBeNull()
-        store.pageLeaseOwner("p2").shouldBeNull()
+        // D1 zero-legacy: the surviving record IS the resume evidence — the
+        // phase pointer advanced past RUN_SNAPSHOT with p1's checkpointed OCR
+        // (OCR_PLAN, done=1) and p2's mid-preflight death left it there. The
+        // next explicit run resumes from this pointer; restore starts nothing.
+        record.state shouldBe eu.kanade.translation.artifact.ChapterRunState.OCR_PLAN
+        record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_DONE] shouldBe 1
     }
 }

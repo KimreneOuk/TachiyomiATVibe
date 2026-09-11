@@ -105,7 +105,6 @@ class OcrPreflightCoordinatorTest {
         ocrEngine = "FakeOcrEngine",
         inpaintMode = "OFF",
         providerKey = "fake:provider",
-        flagProfilePipeline = true,
     )
 
     private fun orderedPages(vararg pageKeys: String): List<PageKey> =
@@ -124,7 +123,6 @@ class OcrPreflightCoordinatorTest {
         nativeWorker = worker,
         frozenConfig = frozenConfig(),
         orderedSourcePairs = sourcePairsOverride ?: sourcePairs(pages),
-        flagProfilePipeline = true,
         releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
     )
 

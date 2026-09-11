@@ -484,6 +484,16 @@ class TranslationBatchProgressTracker(
         private fun progressStage(page: PageTranslation, committed: PageTranslation? = null): TranslationProgressStage = when {
             page.toPageDisplayProjection(committed).displayReady || page.isTextlessTerminal -> TranslationProgressStage.DONE
             page.isStageFailed -> TranslationProgressStage.FAILED
+            // T924 zero-legacy (D1): both surviving lanes commit translations
+            // WITHOUT an in-pass render — a page whose translation reached a
+            // committed terminal state is this run's DONE even though its
+            // display stays ORIGINAL_ONLY until the reader re-derives it.
+            // Keying DONE solely on displayReady left every healthy page
+            // QUEUED in the terminal snapshot (the deleted legacy render join
+            // used to own this settle via markRenderDone).
+            page.translationStatus == StageStatus.READY ||
+                page.translationStatus == StageStatus.PARTIAL ||
+                page.translationStatus == StageStatus.SKIPPED -> TranslationProgressStage.DONE
             page.renderStatus == StageStatus.RUNNING -> TranslationProgressStage.RENDER
             page.translationStatus == StageStatus.RUNNING -> TranslationProgressStage.TRANSLATE
             page.inpaintStatus == StageStatus.RUNNING -> TranslationProgressStage.INPAINT

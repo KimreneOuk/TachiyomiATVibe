@@ -189,19 +189,15 @@ internal class TranslationCoexistenceHarness private constructor(
             // a sanctioned fake seam; the resume gate's physical-presence check
             // consults it for pages persisted by an earlier batch run.
             cleanedImagesOnDisk: Set<String> = emptySet(),
-            // T924 Phase 4 Wave B (STANDARD_PIPELINE recipe): seeds FF-01
-            // (`translation_batch_profile_pipeline`) ON before any component
-            // reads it, so the REAL shell dispatches the flagged coordinator.
-            flagProfilePipelineOn: Boolean = false,
-            // T924 Phase 4 Wave B (STANDARD_PIPELINE recipe): drop the fake
-            // transport's legacy per-page "native inpaint lands before the
-            // paid call returns" serialization. The flagged lane drains
-            // inpaint through the OverlapScheduler — a page is a candidate
-            // only AFTER its translation commit — so the first page's
-            // translate would wait for its own inpaint, which by design can
-            // only run after that same commit: a harness-invented deadlock,
-            // not a production ordering.
-            transportWaitsForNativeStage: Boolean = true,
+            // T924 zero-legacy (D1): drop the fake transport's per-page
+            // "native inpaint lands before the paid call returns"
+            // serialization. The (only) batch pipeline drains inpaint through
+            // the OverlapScheduler — a page is a candidate only AFTER its
+            // translation commit — so the first page's translate would wait
+            // for its own inpaint, which by design can only run after that
+            // same commit: a harness-invented deadlock, not a production
+            // ordering.
+            transportWaitsForNativeStage: Boolean = false,
         ): TranslationCoexistenceHarness {
             val barrier = CoexistenceBarrier()
 
@@ -209,7 +205,7 @@ internal class TranslationCoexistenceHarness private constructor(
             val context = mockk<Context> {
                 every { getSharedPreferences(any(), any()) } returns InMemorySharedPreferences()
             }
-            val preferences = harnessPreferences(flagProfilePipelineOn = flagProfilePipelineOn)
+            val preferences = harnessPreferences()
             val provider = mockk<eu.kanade.translation.data.TranslationProvider>(relaxed = true)
             if (cleanedImagesOnDisk.isNotEmpty()) {
                 val onDisk = mockk<UniFile> {
@@ -236,6 +232,13 @@ internal class TranslationCoexistenceHarness private constructor(
             // (FakeChapterDocumentIo + production fresh-chapter recipe) replaces
             // the memory-only default so durable sidecars (attempt ledger,
             // manifest) are observable across a simulated process death.
+            // T924 zero-legacy (D1): the (only) batch pipeline REFUSES
+            // chapters without artifact authority, so every batch-driving
+            // suite passes `storeOverride = artifactAuthorityStore(...)` (D9
+            // recipe: FakeChapterDocumentIo + production fresh-chapter
+            // recipe). The default stays the reader-only memory store so
+            // single-page (manual/auto) suites keep their baseline fixture —
+            // the reader per-page path is untouched by D1.
             val store = storeOverride ?: ChapterTranslationStore(
                 translationFile = null,
                 fileCreator = null,
@@ -470,7 +473,7 @@ internal class TranslationCoexistenceHarness private constructor(
                     detectionFingerprint = fingerprints.detection
                     ocrFingerprint = fingerprints.ocr
                     // Decoded geometry, exactly like the real recognition
-                    // engines: the flagged preflight's OCR checkpoint records
+                    // engines: the batch preflight's OCR checkpoint records
                     // a complete SourceIdentity (sha256 + width + height +
                     // orientation), and `orientationOf` derives it from these.
                     imgWidth = 100f
@@ -479,28 +482,25 @@ internal class TranslationCoexistenceHarness private constructor(
                     // (the checkpoint's revision gate rejects stale ones).
                     inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
                 }
-                if (flagProfilePipelineOn) {
-                    // T924 Phase 4 Wave B (STANDARD_PIPELINE recipe): the REAL
-                    // SinglePageOnnxPhase.analyzePage persists the OCR product
-                    // through the store BEFORE inpaint (closing the OCR crash
-                    // window); the legacy harness left persistence to the
-                    // per-page commit. The flagged preflight checkpoints the
-                    // STORE's per-page OCR state, so the recipe performs the
-                    // production OCR merge here, under the OCR lease the real
-                    // native worker is holding (read fresh from the snapshot).
-                    val before = batchStore.snapshot(pageKey)
-                    batchStore.mergeOcr(
-                        OcrStagePatch(
-                            pageKey = pageKey,
-                            generation = before.generation,
-                            expectedPageVersion = before.pageVersion,
-                            expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
-                            ocrResult = analyzed,
-                            expectedLeaseToken = before.leaseToken,
-                        ),
-                        description = "t924 wave-b coexistence preflight ocr",
-                    ).shouldBeInstanceOf<StagePatchResult.Accepted>()
-                }
+                // T924 (now unconditional, D1): the REAL
+                // SinglePageOnnxPhase.analyzePage persists the OCR product
+                // through the store BEFORE inpaint (closing the OCR crash
+                // window). The batch preflight checkpoints the STORE's
+                // per-page OCR state, so the recipe performs the production
+                // OCR merge here, under the OCR lease the real native worker
+                // is holding (read fresh from the snapshot).
+                val before = batchStore.snapshot(pageKey)
+                batchStore.mergeOcr(
+                    OcrStagePatch(
+                        pageKey = pageKey,
+                        generation = before.generation,
+                        expectedPageVersion = before.pageVersion,
+                        expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
+                        ocrResult = analyzed,
+                        expectedLeaseToken = before.leaseToken,
+                    ),
+                    description = "t924 coexistence preflight ocr",
+                ).shouldBeInstanceOf<StagePatchResult.Accepted>()
                 analyzed
             }
             val batchInpaint: suspend (
@@ -518,6 +518,13 @@ internal class TranslationCoexistenceHarness private constructor(
                 println("DBG inpaint $pageKey woke")
                 page.inpaintFingerprint = batchFingerprint
                 page.cleanedBitmap = FakeCoexistence.stubBitmap()
+                // T924 zero-legacy (D1) fake fidelity: the real page inpainter
+                // settles the in-memory page's inpaintStatus to READY on success
+                // (the durable store record is publishCleanedThroughStore's
+                // job). Without this the worker's done-check fails the phase in
+                // the TRACKER only — silently in every test that never asserts
+                // the terminal snapshot, and wrongly in those that do.
+                page.inpaintStatus = StageStatus.READY
                 // Return gate of the fake native inpaint = NATIVE_RELEASE (note §2).
                 barrier.arrive(CoexistenceBarrier.BarrierPoint.NATIVE_RELEASE, pageKey)
                 page
@@ -833,7 +840,7 @@ internal class TranslationCoexistenceHarness private constructor(
         }
 
         /** Real TranslationPreferences over an in-memory PreferenceStore (STANDARD lane, note §1.2.2). */
-        internal fun harnessPreferences(flagProfilePipelineOn: Boolean = false): TranslationPreferences {
+        internal fun harnessPreferences(): TranslationPreferences {
             val seeds: MutableMap<String, Any> = mutableMapOf(
                 "translation_engine_category" to TranslationEngineCategory.STANDARD,
                 "translation_standard_engine" to StandardEngine.MLKIT,
@@ -845,11 +852,6 @@ internal class TranslationCoexistenceHarness private constructor(
                 "translation_ai_output_tokens" to "",
                 "translation_inpainting_mode" to "FAST",
             )
-            // T924 Phase 4 Wave B (STANDARD_PIPELINE recipe): FF-01 ON — the
-            // REAL shell's single dispatch point reads this once per run.
-            if (flagProfilePipelineOn) {
-                seeds["translation_batch_profile_pipeline"] = true
-            }
             val store = InMemoryPreferenceStore(
                 seeds.entries.map { (key, value) -> seed(key, value) }.asSequence(),
             )
@@ -858,18 +860,35 @@ internal class TranslationCoexistenceHarness private constructor(
 
         /**
          * T924 Phase 4 Wave B: the durable artifact-store recipe for the
-         * flagged path. Production establishes chapter artifact authority the
+         * batch pipeline. Production establishes chapter artifact authority the
          * first time a store with an artifact parent persists; tests build the
          * same ARTIFACTS authority directly (the BatchDispatchResumeWiringTest
-         * recipe over in-memory document IO) so the flagged preflight's
+         * recipe over in-memory document IO) so the batch preflight's
          * checkpoint transactions are observable in durable sidecars. Pages
          * start as fresh PENDING records; the real shell pre-registers the
          * ordered page set into the manifest at trigger time.
          */
-        fun artifactAuthorityStore(pageKeys: List<String>): ChapterTranslationStore {
+        fun artifactAuthorityStore(
+            pageKeys: List<String>,
+            preRegisterInStore: Boolean = true,
+        ): ChapterTranslationStore {
+            val documentIo = FakeChapterDocumentIo()
+            val layout = ChapterArtifactLayout("Chapter 1")
+            // T924 zero-legacy (D1) harness deviation: production's manual lane
+            // writes the cleaned companion JPEG into the chapter dir before the
+            // display-ready commit promotes it; the harness stubs that encoder,
+            // so seed the companion bytes and a passing geometry probe (all
+            // fixtures decode 100x100). Without this, a manual commit under
+            // ARTIFACTS authority would be rejected on the display-base probe
+            // (the promotion path batch-only tests never reach) and the page
+            // would be silently re-paid by the batch.
+            for (key in pageKeys) {
+                documentIo.files[layout.legacyCompanionImageFile("$key.cleaned.jpg")] = ByteArray(1)
+            }
             val artifact = ChapterArtifactStore(
-                AtomicChapterDocuments(FakeChapterDocumentIo()),
-                ChapterArtifactLayout("Chapter 1"),
+                AtomicChapterDocuments(documentIo),
+                layout,
+                displayBaseProbe = { eu.kanade.translation.artifact.ProbedImage(100, 100) },
             )
             var manifest = artifact
                 .loadOrMigrate(LegacyChapterSnapshot(migratedAtEpochMs = 1L))
@@ -884,7 +903,11 @@ internal class TranslationCoexistenceHarness private constructor(
             return ChapterTranslationStore(
                 translationFile = null as UniFile?,
                 fileCreator = null,
-                initialPages = pageKeys.associateWith { key -> PageTranslation(sourceFileName = key) },
+                initialPages = if (preRegisterInStore) {
+                    pageKeys.associateWith { key -> PageTranslation(sourceFileName = key) }
+                } else {
+                    emptyMap()
+                },
                 artifactStore = artifact,
                 initialArtifactManifest = checkNotNull(artifact.readManifest()),
             )
@@ -894,20 +917,22 @@ internal class TranslationCoexistenceHarness private constructor(
          * T924 Phase 4 Wave B: the STANDARD_PIPELINE lane recipe — the REAL
          * shell (ChapterTranslator → TranslationPipeline → BatchChapterTranslator
          * → ChapterProfileBatchCoordinator with the injected standard seam)
-         * driven with FF-01 ON and the harness's STANDARD engine seeds. The
+         * driven with the harness's STANDARD engine seeds. The
          * standard translator IS the engine the shell resolves through the
          * normal EngineLane construction path (`textTranslatorFn =
          * { engineLane.textTranslator }` = [FakeTransportTranslator]); no
          * production change. The fake transport drops the legacy per-page
          * native-stage wait — see [create]'s `transportWaitsForNativeStage`.
          * The store is a durable ARTIFACTS-authority store ([artifactAuthorityStore])
-         * because the flagged preflight refuses chapters without artifact
+         * because the batch preflight refuses chapters without artifact
          * authority.
          */
-        fun createStandard(pageKeys: List<String>): TranslationCoexistenceHarness = create(
+        fun createStandard(
+            pageKeys: List<String>,
+            storeOverride: ChapterTranslationStore? = null,
+        ): TranslationCoexistenceHarness = create(
             pageKeys = pageKeys,
-            storeOverride = artifactAuthorityStore(pageKeys),
-            flagProfilePipelineOn = true,
+            storeOverride = storeOverride ?: artifactAuthorityStore(pageKeys),
             transportWaitsForNativeStage = false,
         )
 

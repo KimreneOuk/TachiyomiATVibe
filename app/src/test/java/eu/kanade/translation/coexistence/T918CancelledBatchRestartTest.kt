@@ -43,12 +43,14 @@ import java.io.ByteArrayInputStream
  * suspension point. No sleeps, no polling — barrier gates and bounded
  * state.first{} awaits only.
  *
- * DEVIATION (documented, D5/D10 reuse-fixture recipe): the run-1 page records
- * are re-seeded to the exact engine provenance the resume gate requires before
- * the restart (memory-only store fixture persist is not the durable artifact
- * store this contract assumes; the artifact-store persist chain is outside
- * T918 scope). The cancellation itself, the terminal snapshot, the queue
- * settlement, and the restart's work routing are all the REAL graph.
+ * T924 zero-legacy (D1): the fixture moved to the durable ARTIFACTS-authority
+ * store, so run 1's work products (OCR checkpoints + committed translation
+ * work products) are genuinely durable sidecars and the former re-seed
+ * deviation is DELETED — the restart consults the real artifacts. The lane is
+ * translation-terminal without an in-pass render, so the terminal render
+ * expectations became translation-terminal ones. The cancellation itself, the
+ * terminal snapshot, the queue settlement, and the restart's work routing are
+ * all the REAL graph.
  */
 class T918CancelledBatchRestartTest {
 
@@ -88,8 +90,13 @@ class T918CancelledBatchRestartTest {
         // cleanedImagesOnDisk models the DURABLE cleaned images run 1 persisted
         // (document IO is a sanctioned fake seam): the resume gate's
         // physical-presence check consults it (D10 precedent).
+        // T924 zero-legacy (D1): the batch requires artifact authority — the
+        // durable ARTIFACTS-authority store is also what makes run 1's work
+        // products (OCR checkpoints + candidate work products) genuinely
+        // resumable, so the legacy re-seed deviation is gone.
         val harness = TranslationCoexistenceHarness.create(
             listOf("p0", "p1"),
+            storeOverride = TranslationCoexistenceHarness.artifactAuthorityStore(listOf("p0", "p1")),
             cleanedImagesOnDisk = setOf("p0.cleaned.jpg", "p1.cleaned.jpg"),
         )
         harness.installGraphicsShims()
@@ -158,66 +165,9 @@ class T918CancelledBatchRestartTest {
                 queueEntry.status shouldBe Translation.State.NOT_TRANSLATED
             }
 
-            // Re-seed the run-1 terminal provenance the resume gate requires
-            // (D5/D10 reuse-fixture recipe; see class doc deviation note).
-            val expected = expectedFingerprints()
-            val srcFp0 = realSourceFingerprint("p0")
-            val srcFp1 = realSourceFingerprint("p1")
-            harness.store.updatePage("p0") { current ->
-                (current ?: PageTranslation(sourceFileName = "p0")).apply {
-                    ocrStatus = StageStatus.READY
-                    translationStatus = StageStatus.READY
-                    inpaintStatus = StageStatus.READY
-                    renderStatus = StageStatus.READY
-                    inpaintingModeUsed = "FAST"
-                    inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                    cleanedImageName = "p0.cleaned.jpg"
-                    sourceFingerprint = srcFp0
-                    detectionFingerprint = expected.detection
-                    ocrFingerprint = expected.ocr
-                    inpaintFingerprint = expected.inpaint
-                    translationFingerprint = expected.translation
-                    layoutFingerprint = expected.layout
-                    blocks.clear()
-                    blocks += TranslationBlock(
-                        text = "hello-p0",
-                        translation = "tr-hello-p0",
-                        width = 10f,
-                        height = 10f,
-                        x = 0f,
-                        y = 0f,
-                        symHeight = 1f,
-                        symWidth = 1f,
-                        angle = 0f,
-                    )
-                }
-            }
-            harness.store.updatePage("p1") { current ->
-                // Page 1 is the interrupted remainder: OCR+inpaint work from
-                // run 1 is real and reusable; its translation is missing.
-                (current ?: PageTranslation(sourceFileName = "p1")).apply {
-                    ocrStatus = StageStatus.READY
-                    inpaintStatus = StageStatus.READY
-                    inpaintingModeUsed = "FAST"
-                    inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
-                    cleanedImageName = "p1.cleaned.jpg"
-                    sourceFingerprint = srcFp1
-                    detectionFingerprint = expected.detection
-                    ocrFingerprint = expected.ocr
-                    inpaintFingerprint = expected.inpaint
-                    blocks.clear()
-                    blocks += TranslationBlock(
-                        text = "hello-p1",
-                        width = 10f,
-                        height = 10f,
-                        x = 0f,
-                        y = 0f,
-                        symHeight = 1f,
-                        symWidth = 1f,
-                        angle = 0f,
-                    )
-                }
-            }
+            // (No re-seed: run 1's OCR checkpoints and p0's committed work
+            // product are DURABLY real under the T924 pipeline — the restart
+            // consults the real sidecars.)
 
             // The restart (what the sheet Retry button invokes): same chapter,
             // same store — the resume gate reuses completed work.
@@ -229,14 +179,27 @@ class T918CancelledBatchRestartTest {
             withClue("the restart must complete the chapter") {
                 restart.translation.status shouldBe Translation.State.TRANSLATED
                 reconciliation.nonDurableFailure shouldBe false
-                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.READY
-                harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.READY
+                // T924 zero-legacy (D1): the lane commits translations
+                // WITHOUT an in-pass render — both pages end
+                // translation-terminal and the reader re-derives displays.
+                harness.store.state.value.getValue("p0").translationStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p1").translationStatus shouldBe StageStatus.READY
+                harness.store.state.value.getValue("p0").renderStatus shouldBe StageStatus.PENDING
+                harness.store.state.value.getValue("p1").renderStatus shouldBe StageStatus.PENDING
             }
-            withClue("reuse: neither page may be re-decoded/re-OCR'd by the restart") {
+            withClue("reuse: the completed page 0 may not be re-decoded/re-OCR'd by the restart") {
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p0") shouldBe
                     decodeP0BeforeRestart
+            }
+            withClue("remainder work: page 1's pending inpaint is the restart's own native work") {
+                // T924 zero-legacy (D1): with the re-seed deleted, run 1 parked
+                // p1's paid call BEFORE its inpaint ran, so the restart's
+                // remainder legitimately decodes p1 exactly once for that
+                // inpaint (the translation tail's overlap drain). The durable
+                // OCR checkpoint still prevents any re-OCR: the decode feeds
+                // the inpaint lane, never the recognizer.
                 harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE, "p1") shouldBe
-                    decodeP1BeforeRestart
+                    decodeP1BeforeRestart + 1
             }
             withClue("remainder-only paid work: completed page 0 gets no second paid call") {
                 harness.transportCallsFor("p0") shouldBe 1
