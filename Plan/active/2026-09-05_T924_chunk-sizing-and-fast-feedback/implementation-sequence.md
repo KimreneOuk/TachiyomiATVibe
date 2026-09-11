@@ -637,3 +637,54 @@ the HIGH claims). Full report: `evidence/legacy-interference-audit.md`
   fix) + LI-3 + LI-4, with the three missing tests (flagged-through-shell
   with translatable pages; reset-then-flagged-redispatch; stale-façade
   dispatch), then A/B on that commit.
+
+## Pre-A/B fix waves (2026-09-11) — COMPLETE; gate 5.7 UNBLOCKED at c5a7a1f
+
+Director authorized the pre-A/B wave with subagent delegation. Two
+sequential implementer waves, Main-Leader diff verification, both
+committed on `t924/batch-profile-pipeline`; full sweep at HEAD
+`c5a7a1f`: **242 suites / 1782 tests / 0 failures / 0 errors**
+(independently re-verified by Main Leader).
+
+- **Wave A — LI-1/LI-2, commit `2a9f12f`** (report:
+  `evidence/li-wave-a.md`): lane-aware post-pass projection
+  (`postPassReconciliation` selector + `reconcileFlaggedCompleted` —
+  legacy outcomes byte-identical); run-record-aware durable status
+  (`StoreStatusProjector.completedRunRecordStatus` under ARTIFACTS +
+  COMPLETE activeRun); `retireActiveRun` CAS transaction + store façade
+  + reset-controller wiring (all chapter reset paths retire the run);
+  coordinator COMPLETE fast path gated on per-page work-product
+  evidence (`pageWorkProductResolvable`). KEY DISCOVERY (wave-A
+  deviation, load-bearing for all future display-evidence work): the
+  flagged lane NEVER promotes translatable pages to committed bundles —
+  `persistArtifactMutationLocked` (:2034 pre-wave) promotes only on
+  `hasRenderedResult || isTextlessTerminal` — so evidence predicates
+  must accept the candidate-snapshot work product (snapshot CONTENT,
+  not pointer presence; a reset overwrites the snapshot with the cleared
+  PENDING page). 14 new tests across 4 new files + 1 extended
+  (RED-first for the behavioral ones; sweep 240/1774/0 at that commit).
+- **Wave B — LI-3/LI-4, commit `c5a7a1f`** (report:
+  `evidence/li-wave-b.md`): scheduler cancel writers
+  (`markPageCancelled` — the single helper behind every scheduler cancel
+  site — and `fastCancelInFlightStagesInMemory`) skip pages holding an
+  active BATCH-origin stage lease (new lock-free `hasActiveBatchStageLease`
+  query); chapter-level stop verified to cancel the batch job itself
+  with teardown releasing all BATCH leases. One-shot stale-manifest
+  retry (`retryOnStaleManifest`) inside `publishActiveRun` and
+  `checkpointOcr` — keyed on the exact stale-CAS reason prefix, rebuilds
+  against the freshly re-read manifest, sidecar-then-pointer guarantees
+  intact. 8 new tests (RED-first) + 2 pre-existing seam tests amended to
+  the retry contract (protective fault-injection siblings untouched).
+- **LI-14 skipped deliberately** (`tracker.pause` consumes only the
+  outcome, never the reconciliation — no consumer for a paused-count
+  change); documented in li-wave-a.md.
+- **LI-8 notes for the next code wave** (from li-wave-b.md): the
+  manifest CAS is whole-object equality (no revision counter);
+  `recordDurableFailure` has NO stale check at all; generalizing
+  `retryOnStaleManifest` to `publishSidecarPointers` + the smaller
+  publishers is mechanical (one pinned old-contract test to amend);
+  suggested hardening: monotone `manifestRevision` on the manifest.
+- **A/B operational notes carried forward:** reconcile request counts
+  against per-envelope logcat lines (F-W7-3); no simultaneous legacy +
+  flagged chapters per credential (LI-9); no mid-run preference changes
+  (LI-10); fresh install replaces the stale 19:58 APK.
