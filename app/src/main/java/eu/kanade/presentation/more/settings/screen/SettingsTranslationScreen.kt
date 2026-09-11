@@ -15,6 +15,7 @@ import eu.kanade.presentation.more.settings.widget.ApiKeyPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.EditTextPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.ListPreferenceWidget
 import eu.kanade.presentation.more.settings.widget.SearchableListPreferenceWidget
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.translation.data.TranslationFont
 import eu.kanade.translation.ocr.OcrModelCatalog
 import eu.kanade.translation.ocr.TextRecognizerLanguage
@@ -62,8 +63,40 @@ object SettingsTranslationScreen : SearchableSettings {
             getInpaintingModeGroup(translationPreferences),
             getHardwareAccelerationGroup(translationPreferences),
             getEngineGroup(translationPreferences),
-        )
+        ) + if (BuildConfig.DEBUG) {
+            listOf(getExperimentsGroup(translationPreferences))
+        } else {
+            emptyList()
+        }
     }
+
+    /**
+     * T924 debug-build-only experiment switches. Both flags are read at each
+     * translation dispatch (never mid-run), so flipping between chapters is the
+     * supported A/B flow; the flag-aware resume semantics decide how a chapter
+     * touched under the other setting behaves on re-request. Never shown in
+     * release builds.
+     */
+    @Composable
+    private fun getExperimentsGroup(
+        translationPreferences: TranslationPreferences,
+    ): Preference.PreferenceGroup = Preference.PreferenceGroup(
+        title = "Experiments (debug)",
+        preferenceItems = persistentListOf(
+            Preference.PreferenceItem.SwitchPreference(
+                pref = translationPreferences.translationBatchProfilePipeline(),
+                title = "Profile pipeline (FF-01)",
+                subtitle = "Whole-chapter OCR preflight + frozen profile batch lane " +
+                    "for the AI engine. Takes effect on the NEXT chapter translation, never mid-run.",
+            ),
+            Preference.PreferenceItem.SwitchPreference(
+                pref = translationPreferences.translationBatchPersistedLayout(),
+                title = "Persisted layout reader bridge (FF-02)",
+                subtitle = "Persist translation layouts with committed pages and " +
+                    "hydrate them in the reader. Takes effect on the next commit/render.",
+            ),
+        ),
+    )
 
     @Composable
     private fun getHardwareAccelerationGroup(
