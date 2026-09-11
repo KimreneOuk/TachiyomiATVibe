@@ -77,7 +77,12 @@ class StandardPipelineCoordinatorTest {
         angle = 0f,
     )
 
-    private fun ocrPage(pageKey: String, text: String?, textless: Boolean = false) = PageTranslation(
+    private fun ocrPage(
+        pageKey: String,
+        text: String?,
+        textless: Boolean = false,
+        maskedTextless: Boolean = false,
+    ) = PageTranslation(
         sourceFileName = pageKey,
         // A "no translatable text" page models the real lane's trigger: blocks
         // whose text is BLANK (the worker's textless branch counts
@@ -93,7 +98,12 @@ class StandardPipelineCoordinatorTest {
         sourceFingerprint = hex64("source-$pageKey"),
         detectionFingerprint = hex64("detection-$pageKey"),
         ocrFingerprint = hex64("ocr-$pageKey"),
-        inpaintMaskBoxes = if (textless) emptyList() else listOf(InpaintMaskBox(0, 0, 10, 10, 1)),
+        // finalizePostOcrStage parity: a blank-text page's render is SKIPPED,
+        // and its inpaint is SKIPPED only WITHOUT mask boxes — a masked
+        // blank-text page keeps inpaint PENDING for the inpaint drain.
+        renderStatus = if (textless) StageStatus.SKIPPED else StageStatus.PENDING,
+        inpaintStatus = if (textless && !maskedTextless) StageStatus.SKIPPED else StageStatus.PENDING,
+        inpaintMaskBoxes = if (textless && !maskedTextless) emptyList() else listOf(InpaintMaskBox(0, 0, 10, 10, 1)),
     )
 
     private fun root(): UniFile = FakeUniFile(parent = null, backing = mangaDir)
@@ -110,9 +120,35 @@ class StandardPipelineCoordinatorTest {
         artifactFileName = "Chapter 1.json",
     )
 
+    /**
+     * A GENUINELY blank page (Wave B Task 1): OCR completes with ZERO blocks.
+     * Mirrors the real lane's post-OCR store shape: `mergeOcrLocked` copies
+     * render/inpaint status (so the [finalizePostOcrStage] SKIPPED values
+     * land) but NEVER `translationStatus` — the store page keeps PENDING until
+     * the translate tail's textless commit — and an empty-block write is
+     * transient per `shouldPersistUpdate` (no artifact candidate).
+     */
+    private fun ocrPageWithNoBlocks(pageKey: String) = PageTranslation(
+        sourceFileName = pageKey,
+        blocks = mutableListOf(),
+        imgWidth = 100f,
+        imgHeight = 160f,
+        decodeSampleSize = 1,
+        ocrStatus = StageStatus.READY,
+        inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+        renderStatus = StageStatus.SKIPPED,
+        inpaintStatus = StageStatus.SKIPPED,
+        sourceFingerprint = hex64("source-$pageKey"),
+        detectionFingerprint = hex64("detection-$pageKey"),
+        ocrFingerprint = hex64("ocr-$pageKey"),
+        inpaintMaskBoxes = emptyList(),
+    )
+
     private inner class FakePreflightOcrWorker(
         private val store: ChapterTranslationStore,
         private val textlessPages: Set<String> = emptySet(),
+        private val maskedTextlessPages: Set<String> = emptySet(),
+        private val emptyTextPages: Set<String> = emptySet(),
         private val onFirstOcr: (() -> Unit)? = null,
     ) : NativeLaneWorker {
         val ocrPages = mutableListOf<String>()
@@ -129,11 +165,15 @@ class StandardPipelineCoordinatorTest {
                     generation = before.generation,
                     expectedPageVersion = before.pageVersion,
                     expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
-                    ocrResult = ocrPage(
-                        pageKey,
-                        "source-$pageKey",
-                        textless = pageKey in textlessPages,
-                    ),
+                    ocrResult = when {
+                        pageKey in emptyTextPages -> ocrPageWithNoBlocks(pageKey)
+                        else -> ocrPage(
+                            pageKey,
+                            "source-$pageKey",
+                            textless = pageKey in textlessPages || pageKey in maskedTextlessPages,
+                            maskedTextless = pageKey in maskedTextlessPages,
+                        )
+                    },
                     expectedLeaseToken = lease.token,
                 ),
                 description = "t924 wave-a fake preflight ocr",
@@ -237,6 +277,8 @@ class StandardPipelineCoordinatorTest {
         private val identities: ConcurrentHashMap<String, BatchWriteIdentity>,
         val translator: FakeStandardTranslator,
         private val onFirstInvoke: (() -> Unit)? = null,
+        /** Typed PAUSE before any page work: the interrupted mid-run shape. */
+        private val pauseOnPages: Set<String> = emptySet(),
     ) {
         val invoked = mutableListOf<String>()
 
@@ -244,6 +286,12 @@ class StandardPipelineCoordinatorTest {
             if (invoked.isEmpty()) onFirstInvoke?.invoke()
             val pageKey = ref.pageKey
             invoked += pageKey
+            if (pageKey in pauseOnPages) {
+                return ChunkCompletionOutcome.Paused(
+                    anchorPageKey = pageKey,
+                    reason = "test pause at $pageKey",
+                )
+            }
             val lease = store.tryAcquirePageStageLease(pageKey, PageStage.Translation, PageWriteOrigin.BATCH)
                 .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
             val identity = BatchWriteIdentity(
@@ -640,5 +688,173 @@ class StandardPipelineCoordinatorTest {
             page.translationStatus shouldBe StageStatus.READY
             page.inpaintStatus shouldBe StageStatus.READY
         }
+    }
+
+    // ------------------------------------------------------------------
+    // T6 — genuinely blank pages (Wave B Task 1). Real chapters have them:
+    // a ZERO-block OCR result must checkpoint, complete, and resume — never
+    // fail the preflight. Shared by the AI lane (same preflight loop).
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `genuinely empty textless page checkpoints, completes, and never re-OCRs`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        val identities = ConcurrentHashMap<String, BatchWriteIdentity>()
+        val translator = FakeStandardTranslator()
+        val seam = StandardSeam(store, identities, translator)
+        val ocrWorker = FakePreflightOcrWorker(store, emptyTextPages = setOf("p2"))
+
+        val outcome = standardCoordinator(store, ocrWorker, pages, seam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+
+        // A healthy blank page never fails the preflight. RED (pre-fix): the
+        // empty-block OCR write is transient per shouldPersistUpdate, so p2
+        // opens no candidate; with no committed bundle either, the checkpoint
+        // CLOSE adopt branch rejected and the run died mid-preflight with a
+        // CHECKPOINT_REJECTED failure-ledger charge.
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        val record = durableRunRecord(store).shouldNotBeNull()
+        record.state shouldBe ChapterRunState.COMPLETE
+
+        // p2: the tail's legacy textless commit — SKIPPED terminal, zero
+        // provider calls (parity with the whitespace-textless page of T2).
+        seam.invoked shouldContainExactly pageKeys
+        translator.calls shouldContainExactly listOf("p1")
+        val p2 = store.snapshot("p2").page.shouldNotBeNull()
+        p2.translationStatus shouldBe StageStatus.SKIPPED
+        p2.renderStatus shouldBe StageStatus.SKIPPED
+
+        // The blank page's OCR evidence is durably checkpointed like any other
+        // page — the ST-05/ST-06 reuse shape.
+        val manifest = artifactStore().readManifest().shouldNotBeNull()
+        manifest.ocrCheckpoints.keys shouldBe pageKeys.toSet()
+
+        // ---- Pass 2: zero-work COMPLETE; the blank page is never re-OCRed. ----
+        val resumeOcrWorker = FakePreflightOcrWorker(store)
+        val resumeSeam = StandardSeam(store, ConcurrentHashMap(), FakeStandardTranslator())
+        val resumeOutcome = standardCoordinator(store, resumeOcrWorker, pages, resumeSeam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+        resumeOutcome.status shouldBe BatchPass1Status.COMPLETED
+        resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.RESUME_COMPLETE_REASON
+        resumeOcrWorker.ocrPages shouldBe emptyList()
+        resumeSeam.invoked shouldBe emptyList()
+    }
+
+    // ------------------------------------------------------------------
+    // T7 — flag-ON re-dispatch over a stale non-FINALIZE standard record
+    // (Wave B Task 2c, investigator risk 7): `resumeFinalizeOrComplete`
+    // returns null, the SAME run id continues with a fresh RUN_SNAPSHOT
+    // (ST-15 fingerprint match), the preflight reuses its checkpoints, and
+    // the run closes with exactly ONE COMPLETE. No crash, no double closure.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `re-dispatch over an interrupted standard run continues the same run id and completes exactly once`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2", "p3")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+
+        // Run 1: a typed PAUSE in the middle of the translate tail — the
+        // durable record is a non-FINALIZE TRANSLATE record.
+        val pausingSeam = StandardSeam(
+            store,
+            ConcurrentHashMap(),
+            FakeStandardTranslator(),
+            pauseOnPages = setOf("p2"),
+        )
+        val interrupted = standardCoordinator(store, FakePreflightOcrWorker(store), pages, pausingSeam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+        interrupted.status shouldBe BatchPass1Status.PAUSED
+        val interruptedRecord = durableRunRecord(store).shouldNotBeNull()
+        interruptedRecord.state shouldBe ChapterRunState.TRANSLATE
+        interruptedRecord.runId.shouldNotBeNull()
+        val interruptedRunId = interruptedRecord.runId
+
+        // Run 2: flag-ON re-dispatch under the SAME configuration.
+        val resumeOcrWorker = FakePreflightOcrWorker(store)
+        val resumeSeam = StandardSeam(store, ConcurrentHashMap(), FakeStandardTranslator())
+        val outcome = standardCoordinator(store, resumeOcrWorker, pages, resumeSeam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+
+        outcome.status shouldBe BatchPass1Status.COMPLETED
+        outcome.reason shouldBe ChapterProfileBatchCoordinator.TRANSLATE_COMPLETE_REASON
+        // Checkpoint reuse: the interrupted run's preflight work is never
+        // re-paid.
+        resumeOcrWorker.ocrPages shouldBe emptyList()
+        // Only p2 and p3 needed the seam: p1's committed READY terminal is
+        // never re-entered (standardPageTerminalAtTranslate).
+        resumeSeam.invoked shouldContainExactly listOf("p2", "p3")
+        // Single closure under the SAME run id — no fresh run, no double
+        // COMPLETE.
+        val finalRecord = durableRunRecord(store).shouldNotBeNull()
+        finalRecord.state shouldBe ChapterRunState.COMPLETE
+        finalRecord.runId shouldBe interruptedRunId
+        finalRecord.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE] shouldBe 1
+        pageKeys.forEach { key ->
+            store.snapshot(key).page.shouldNotBeNull().translationStatus shouldBe StageStatus.READY
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // T8 — flag-ON zero-work resume over the SKIPPED no-text evidence shape
+    // (Wave B Task 2d): a masked blank-text page ends translation SKIPPED
+    // with inpaint PENDING — NOT a full `isTextlessTerminal` — so the LI-2
+    // gate must accept it through the `isNoTextTerminal` extension
+    // (translationStatus SKIPPED alone), exactly like the unmasked twin.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `flag-on zero-work resume accepts SKIPPED textless pages that are not full textless terminals`() = runTest {
+        val store = lazyStore()
+        val pageKeys = listOf("p1", "p2", "p3")
+        store.preRegisterPages(pageKeys)
+        val pages: List<PageKey> = pageKeys.mapIndexed { index, key -> key to index }
+        // p2: unmasked blank-text (full textless terminal: inpaint SKIPPED);
+        // p3: masked blank-text (SKIPPED translation, inpaint PENDING).
+        val ocrWorker = FakePreflightOcrWorker(
+            store,
+            textlessPages = setOf("p2"),
+            maskedTextlessPages = setOf("p3"),
+        )
+        val firstSeam = StandardSeam(store, ConcurrentHashMap(), FakeStandardTranslator())
+        val firstOutcome = standardCoordinator(store, ocrWorker, pages, firstSeam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+        firstOutcome.status shouldBe BatchPass1Status.COMPLETED
+
+        // The SKIPPED no-text evidence shapes, pinned: a blank-TEXT page
+        // (whitespace block present) is NEVER a full `isTextlessTerminal`
+        // (that requires ZERO blocks — T6's genuinely blank page) — its
+        // resume evidence is `isNoTextTerminal` (translationStatus SKIPPED
+        // alone), with or without a pending inpaint drain.
+        val p2 = store.snapshot("p2").page.shouldNotBeNull()
+        p2.translationStatus shouldBe StageStatus.SKIPPED
+        p2.inpaintStatus shouldBe StageStatus.SKIPPED
+        p2.isTextlessTerminal shouldBe false
+        val p3 = store.snapshot("p3").page.shouldNotBeNull()
+        p3.translationStatus shouldBe StageStatus.SKIPPED
+        p3.inpaintStatus shouldBe StageStatus.PENDING
+        p3.isTextlessTerminal shouldBe false
+
+        val pointerAfterRun1 = activeRunPointer(store)
+
+        // Flag-ON re-dispatch through `resumeFinalizeOrComplete`: the
+        // COMPLETE record's per-page LI-2 evidence gate accepts p3 through
+        // the isNoTextTerminal extension (and p2 through the textless
+        // terminal) — zero-work COMPLETE.
+        val resumeOcrWorker = FakePreflightOcrWorker(store)
+        val resumeSeam = StandardSeam(store, ConcurrentHashMap(), FakeStandardTranslator())
+        val resumeOutcome = standardCoordinator(store, resumeOcrWorker, pages, resumeSeam, null)
+            .runPass1(pages, TranslatorComputeClass.LOCAL_COMPUTE)
+
+        resumeOutcome.status shouldBe BatchPass1Status.COMPLETED
+        resumeOutcome.reason shouldBe ChapterProfileBatchCoordinator.RESUME_COMPLETE_REASON
+        resumeOcrWorker.ocrPages shouldBe emptyList()
+        resumeSeam.invoked shouldBe emptyList()
+        activeRunPointer(store) shouldBe pointerAfterRun1
     }
 }

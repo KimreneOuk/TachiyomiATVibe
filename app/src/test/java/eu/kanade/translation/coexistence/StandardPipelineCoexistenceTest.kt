@@ -1,0 +1,119 @@
+package eu.kanade.translation.coexistence
+
+import eu.kanade.translation.artifact.ChapterArtifactStore
+import eu.kanade.translation.artifact.ChapterRunState
+import eu.kanade.translation.model.StageStatus
+import eu.kanade.translation.model.Translation
+import eu.kanade.translation.pipeline.batch.ChapterProfileBatchCoordinator
+import io.kotest.matchers.nulls.shouldNotBeNull
+import io.kotest.matchers.shouldBe
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import org.junit.jupiter.api.Test
+
+/**
+ * T924 Phase 4 Wave B — the STANDARD_PIPELINE lane through the REAL shell
+ * (Director contract for the coexistence harness, FF-01 ON + STANDARD engine).
+ *
+ * [TranslationCoexistenceHarness.createStandard] drives
+ * ChapterTranslator → TranslationPipeline → BatchChapterTranslator → the
+ * flagged [ChapterProfileBatchCoordinator] with the injected standard seam
+ * over a durable ARTIFACTS-authority store; the standard translator is the
+ * harness's [FakeTransportTranslator] resolved through the normal EngineLane
+ * construction path. Pinned here (the Director's four points):
+ *
+ *  1. the legacy SequentialBatchCoordinator is NOT constructed — by behavior:
+ *     the transport is called exactly once per page, and the artifact manifest
+ *     gains an activeRun COMPLETE record with providerKey `standard:mlkit`
+ *     (the legacy schedule never publishes run records);
+ *  2. full OCR happens BEFORE any translate call — every batch decode lands
+ *     before the first PROVIDER_START (the legacy page-serial standard lane
+ *     interleaves decode → translate per page and shows exactly one);
+ *  3. a single COMPLETE publication; pages end translationStatus READY with
+ *     renderStatus PENDING (translation-terminal without in-pass render);
+ *  4. the store glossary is never written.
+ */
+class StandardPipelineCoexistenceTest {
+
+    @Test
+    fun `flagged standard lane runs the real shell end-to-end with full OCR before translate`() {
+        val pageKeys = listOf("p0", "p1")
+        val harness = TranslationCoexistenceHarness.createStandard(pageKeys)
+        try {
+            harness.stubChapterPages(pageKeys)
+            val glossaryBefore = harness.store.glossarySnapshot()
+
+            val batch = harness.launchBatch(pageKeys)
+            val reconciliation = runBlocking {
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) {
+                    batch.reconciliation.await().shouldNotBeNull()
+                }
+            }
+
+            // ---- Contract 2: FULL OCR precedes the first paid call. ----
+            val arrivals = harness.barrier.arrivals.value
+            val firstProviderStart =
+                arrivals.indexOfFirst { it.first == CoexistenceBarrier.BarrierPoint.PROVIDER_START }
+            (firstProviderStart >= 0) shouldBe true
+            val decodesBeforeFirstTranslate = arrivals
+                .take(firstProviderStart)
+                .count { it.first == CoexistenceBarrier.BarrierPoint.NATIVE_ACQUIRE }
+            // The flagged preflight decodes EVERY page before any translate.
+            // The legacy page-serial standard schedule (LOCAL_COMPUTE chunk of
+            // one) interleaves decode → translate → inpaint per page and
+            // would show exactly one decode here — this assertion is the
+            // schedule discriminator.
+            decodesBeforeFirstTranslate shouldBe pageKeys.size
+
+            // ---- Contract 1 (behavioral): the legacy schedule never ran. ----
+            // The transport resolved through the normal engine path was called
+            // exactly once per page...
+            pageKeys.forEach { key -> harness.transportCallsFor(key) shouldBe 1 }
+            // ...and the artifact manifest owns the flagged run's COMPLETE
+            // record with the standard provider identity — a sidecar the
+            // legacy coordinator never publishes.
+            val store = harness.store
+            val artifact = store.artifactStore.shouldNotBeNull()
+            val pointer = store.artifactManifest?.activeRun.shouldNotBeNull()
+            val record = (
+                artifact.readRunRecord(pointer)
+                    as ChapterArtifactStore.RunRecordRead.Usable
+                ).record
+            record.state shouldBe ChapterRunState.COMPLETE
+            record.frozenConfig.providerKey shouldBe "standard:mlkit"
+            record.frozenConfig.flagProfilePipeline shouldBe true
+            record.phaseCounters[ChapterProfileBatchCoordinator.COUNTER_RUN_COMPLETE] shouldBe 1
+
+            // ---- Contract 3: single COMPLETE; translation-terminal pages. ----
+            reconciliation.chapterStatus shouldBe Translation.State.TRANSLATED
+            reconciliation.strandedPages shouldBe emptyMap()
+            runBlocking {
+                pageKeys.forEach { key ->
+                    val page = store.snapshot(key).page.shouldNotBeNull()
+                    page.translationStatus shouldBe StageStatus.READY
+                    page.renderStatus shouldBe StageStatus.PENDING
+                    page.blocks.forEach { block ->
+                        block.translation shouldBe "tr-" + block.text
+                    }
+                }
+            }
+            // No in-pass render ever ran — the flagged lane renders later.
+            harness.barrier.arrivalsOf(CoexistenceBarrier.BarrierPoint.RENDER) shouldBe 0
+
+            // ---- Contract 4: the glossary is never written. ----
+            store.glossarySnapshot() shouldBe glossaryBefore
+            store.glossarySnapshot() shouldBe emptyMap()
+
+            // Resume parity rides the preflight checkpoints: every page's OCR
+            // evidence is durably checkpointed.
+            store.artifactManifest?.ocrCheckpoints?.keys shouldBe pageKeys.toSet()
+
+            batch.job.cancel()
+            runBlocking {
+                withTimeout(TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS) { batch.job.join() }
+            }
+        } finally {
+            harness.close()
+        }
+    }
+}

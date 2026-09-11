@@ -6,6 +6,7 @@ import eu.kanade.translation.pipeline.batch.BatchDiagnosticStage
 import eu.kanade.translation.pipeline.batch.BatchTranslationDiagnostics
 import eu.kanade.translation.model.PageDisplayState
 import eu.kanade.translation.model.PageTranslation
+import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.detachedCopy
 import eu.kanade.translation.model.isTextlessTerminal
 import kotlinx.coroutines.Dispatchers
@@ -678,18 +679,37 @@ class ChapterArtifactStore(
                 )
             }
             val committed = page.committed
-                ?: return TransactionOutcome.Rejected(
-                    "committed bundle missing for checkpoint adoption: pageKey=$pageKey",
-                )
-            val committedSnapshotName = committed.pageSnapshotFileName
-                ?: return TransactionOutcome.Rejected("committed bundle snapshot missing: pageKey=$pageKey")
-            val committedSnapshot = documents.readValidated<PageTranslation>(committedSnapshotName)
-                ?: return TransactionOutcome.Rejected("committed bundle snapshot unreadable: pageKey=$pageKey")
-            val committedFingerprint = committedOcrContentFingerprint(committedSnapshot, page.naturalPageIndex, checkpoint)
-            if (committedFingerprint != checkpoint.ocrContentFingerprint) {
-                // Content drift: the durable OCR differs from what the reader
-                // committed under — Batch must re-plan the page, not adopt it.
-                return TransactionOutcome.Rejected("committed OCR content drift: pageKey=$pageKey")
+            if (committed == null) {
+                // T924 Phase 4 Wave B (blank-page CLOSE gap): a genuinely
+                // blank page (OCR READY, ZERO blocks) never opens an artifact
+                // candidate — `shouldPersistUpdate` treats the empty-block
+                // write as transient — so the preflight CLOSE side arrives
+                // with NEITHER a candidate NOR a committed bundle. The OCR
+                // snapshot sidecar published by THIS transaction is the
+                // page's complete OCR content, so adopting without a
+                // committed bundle is exactly as durable as the candidate
+                // CLOSE above (and reachable from BOTH flagged lanes — the
+                // preflight is shared). Every content-bearing page still
+                // requires the committed anchor: fail closed.
+                val blankOcr = ocrSnapshot.ocrStatus == StageStatus.READY &&
+                    ocrSnapshot.blocks.isEmpty()
+                if (!blankOcr) {
+                    return TransactionOutcome.Rejected(
+                        "committed bundle missing for checkpoint adoption: pageKey=$pageKey",
+                    )
+                }
+            } else {
+                val committedSnapshotName = committed.pageSnapshotFileName
+                    ?: return TransactionOutcome.Rejected("committed bundle snapshot missing: pageKey=$pageKey")
+                val committedSnapshot = documents.readValidated<PageTranslation>(committedSnapshotName)
+                    ?: return TransactionOutcome.Rejected("committed bundle snapshot unreadable: pageKey=$pageKey")
+                val committedFingerprint =
+                    committedOcrContentFingerprint(committedSnapshot, page.naturalPageIndex, checkpoint)
+                if (committedFingerprint != checkpoint.ocrContentFingerprint) {
+                    // Content drift: the durable OCR differs from what the reader
+                    // committed under — Batch must re-plan the page, not adopt it.
+                    return TransactionOutcome.Rejected("committed OCR content drift: pageKey=$pageKey")
+                }
             }
             updatedPage = page.copy(ocr = ocrRecord, pageVersion = page.pageVersion + 1)
             updatedActiveCandidateIds = manifest.activeCandidateGenerationIds
