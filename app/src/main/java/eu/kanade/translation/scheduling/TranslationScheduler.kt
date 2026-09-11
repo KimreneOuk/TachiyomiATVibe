@@ -810,6 +810,25 @@ class TranslationScheduler(
         // the write rather than creating a spurious FAILED entry.
         val existing = store.state.value[pageKey] ?: return
         if (existing.hasRenderedResult || existing.isStageFailed) return
+        // T924 LI-3: while a batch run holds this page's BATCH-origin stage
+        // lease, the batch owns the page's stage state. The cancel write below
+        // builds its precondition from the CURRENT snapshot — which carries the
+        // batch's own lease token — and would punch straight through the fence,
+        // bumping the page version mid-OCR/translate: the flagged lane's
+        // `checkpointOcr` then rejects (CHECKPOINT_REJECTED) and charges a
+        // healthy page to the failure ledger, or a mid-TRANSLATE write fails
+        // `mergeTranslation` and pauses the whole run after the provider call
+        // was paid. Skip the write; the chapter-level "stop translation" action
+        // cancels the batch translator job itself (ChapterTranslator.stop →
+        // translationJob.cancel), whose teardown releases every BATCH lease —
+        // so this skip never strands a cancelled page's state.
+        if (store.hasActiveBatchStageLease(pageKey)) {
+            logcat(LogPriority.INFO) {
+                "TachiyomiAT cancel skipped: page holds an active BATCH stage lease " +
+                    "writer=markPageCancelled pageKey=$pageKey"
+            }
+            return
+        }
         // Flip in-flight stages to CANCELLED so the reader clears the overlay and
         // auto can reschedule the page later.
         store.updatePageFromCurrentSnapshot(pageKey, "auto page cancelled") { current ->

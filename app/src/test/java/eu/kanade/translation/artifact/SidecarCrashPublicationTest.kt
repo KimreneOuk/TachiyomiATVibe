@@ -228,7 +228,7 @@ class SidecarCrashPublicationTest {
     }
 
     @Test
-    fun `stale manifest snapshots are rejected before any sidecar is written`() {
+    fun `stale manifest snapshots recover through the one-shot retry`() {
         val io = FakeChapterDocumentIo()
         val store = artifactStore(io)
         val initial = initialManifest(io)
@@ -236,8 +236,13 @@ class SidecarCrashPublicationTest {
 
         val outcome = store.publishActiveRun(stale, runRecord(), hex64)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
-        io.files.keys.none { it.startsWith("${layout.runRecordsRootDirectory}/") } shouldBe true
-        store.readManifest() shouldBe initial
+        // T924 LI-4: a stale caller snapshot (the façade cached the
+        // pre-verify manifest while the background health verify republished)
+        // is retried ONCE against the freshly re-read durable manifest instead
+        // of surfacing a spurious rejection on a healthy chapter.
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        committed.manifest.activeRun.shouldNotBeNull().contentFingerprint shouldBe hex64
+        io.files.containsKey(layout.runRecordFile(hex64)) shouldBe true
+        store.readManifest() shouldBe committed.manifest
     }
 }

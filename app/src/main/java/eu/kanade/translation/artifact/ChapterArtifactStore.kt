@@ -335,8 +335,15 @@ class ChapterArtifactStore(
      * T924-SC-20/SC-22 run-record publication: validates the record, publishes
      * the immutable sidecar into the content-addressed `runs/` directory
      * FIRST, then installs the [ChapterArtifactManifest.activeRun] pointer in
-     * ONE manifest publication. Any failure leaves the prior manifest
+     * ONE atomic manifest publication. Any failure leaves the prior manifest
      * authoritative and at most an orphan sidecar behind.
+     *
+     * T924 LI-4: a stale-manifest CAS rejection (the >8-page open path's
+     * background health verify republishing after the façade cached its copy)
+     * triggers ONE retry against the freshly re-read durable manifest — the
+     * first-publication seam the flagged Batch lane hits must not surface a
+     * spurious rejection on a healthy chapter. Every other rejection reason is
+     * returned as-is.
      */
     @Synchronized
     fun publishActiveRun(
@@ -344,6 +351,17 @@ class ChapterArtifactStore(
         record: ChapterRunRecord,
         contentFingerprint: String,
         nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = retryOnStaleManifest(
+        firstAttempt = publishActiveRunOnce(manifest, record, contentFingerprint, nowEpochMs),
+        callerManifest = manifest,
+        seam = "publishActiveRun",
+    ) { fresh -> publishActiveRunOnce(fresh, record, contentFingerprint, nowEpochMs) }
+
+    private fun publishActiveRunOnce(
+        manifest: ChapterArtifactManifest,
+        record: ChapterRunRecord,
+        contentFingerprint: String,
+        nowEpochMs: Long,
     ): TransactionOutcome {
         record.validationError()?.let { reason ->
             return TransactionOutcome.Rejected("run record invalid: $reason")
@@ -445,9 +463,53 @@ class ChapterArtifactStore(
      *
      * On any precondition or publication failure the prior manifest stays
      * authoritative (TX-11 BX) and at most an orphan sidecar exists (B1-B2).
+     *
+     * T924 LI-4: a stale-manifest CAS rejection (the >8-page open path's
+     * background health verify republishing after the façade cached its copy)
+     * triggers ONE retry against the freshly re-read durable manifest — the
+     * first-publication seam the flagged Batch lane hits must not surface a
+     * spurious CHECKPOINT_REJECTED preflight failure on a healthy chapter. The
+     * whole transaction (identity checks included) re-runs against the FRESH
+     * manifest, so genuine drift still rejects — with a non-stale reason, on
+     * the retry attempt. Every other rejection reason is returned as-is.
      */
     @Synchronized
     fun checkpointOcr(
+        manifest: ChapterArtifactManifest,
+        pageKey: String,
+        expectedPageVersion: Long,
+        expectedDependencyFingerprint: String?,
+        ocrSnapshot: PageTranslation,
+        checkpoint: PageOcrCheckpoint,
+        mode: OcrCheckpointMode = OcrCheckpointMode.CLOSE,
+        nowEpochMs: Long = System.currentTimeMillis(),
+    ): TransactionOutcome = retryOnStaleManifest(
+        firstAttempt = checkpointOcrOnce(
+            manifest,
+            pageKey,
+            expectedPageVersion,
+            expectedDependencyFingerprint,
+            ocrSnapshot,
+            checkpoint,
+            mode,
+            nowEpochMs,
+        ),
+        callerManifest = manifest,
+        seam = "checkpointOcr",
+    ) { fresh ->
+        checkpointOcrOnce(
+            fresh,
+            pageKey,
+            expectedPageVersion,
+            expectedDependencyFingerprint,
+            ocrSnapshot,
+            checkpoint,
+            mode,
+            nowEpochMs,
+        )
+    }
+
+    private fun checkpointOcrOnce(
         manifest: ChapterArtifactManifest,
         pageKey: String,
         expectedPageVersion: Long,
@@ -1547,14 +1609,60 @@ class ChapterArtifactStore(
     private fun newGenerationId(pageKey: String, nowEpochMs: Long): String =
         "g-$nowEpochMs-${layout.pageSegment(pageKey).takeLast(24)}"
 
+    /**
+     * T924 LI-4: stable reason prefix of the stale-manifest CAS rejection. The
+     * one-shot retry on [publishActiveRun] and [checkpointOcr] keys on this
+     * prefix — every OTHER rejection reason (identity drift, publication
+     * failure, future-schema guard) must keep failing the caller exactly as
+     * before.
+     */
+    private val STALE_MANIFEST_REJECTION_REASON = "stale manifest snapshot"
+
     private fun staleManifestRejection(manifest: ChapterArtifactManifest): String? {
         val durable = readManifest()
             ?: return "manifest is not durable: chapter=${layout.chapterKey}"
         return if (durable == manifest) {
             null
         } else {
-            "stale manifest snapshot: chapter=${layout.chapterKey}"
+            "$STALE_MANIFEST_REJECTION_REASON: chapter=${layout.chapterKey}"
         }
+    }
+
+    /** The rejection reason iff [outcome] was rejected BY the stale-manifest CAS specifically. */
+    private fun TransactionOutcome.staleManifestRejectionOrNull(): String? =
+        (this as? TransactionOutcome.Rejected)
+            ?.reason
+            ?.takeIf { it.startsWith(STALE_MANIFEST_REJECTION_REASON) }
+
+    /**
+     * T924 LI-4: one-shot stale-manifest retry for the flagged Batch lane's
+     * first-publication seams. When the >8-page open path's background
+     * `verifyLegacyArtifactHealth` republishes a VERIFIED manifest after the
+     * façade cached the pre-verification copy, a dispatch presenting that stale
+     * copy to its FIRST durable publication was CAS-rejected — a spurious
+     * CHECKPOINT_REJECTED preflight failure or PAUSED run on a healthy chapter.
+     * On a stale-manifest rejection specifically: re-read the durable manifest
+     * ONCE, rebuild the intended mutation against the FRESH manifest (never
+     * re-publish the caller's stale object), and retry the publication once.
+     * A retry that also fails — or a durable manifest that vanished — returns
+     * the original Rejected outcome unchanged, so the caller-visible contract
+     * stays "Committed or Rejected".
+     */
+    private fun retryOnStaleManifest(
+        firstAttempt: TransactionOutcome,
+        callerManifest: ChapterArtifactManifest,
+        seam: String,
+        retry: (ChapterArtifactManifest) -> TransactionOutcome,
+    ): TransactionOutcome {
+        firstAttempt.staleManifestRejectionOrNull() ?: return firstAttempt
+        val fresh = readManifest() ?: return firstAttempt
+        logcat(LogPriority.WARN) {
+            "TachiyomiAT artifact stale manifest retried once: seam=$seam " +
+                "chapter=${layout.chapterKey} " +
+                "staleUpdatedAt=${callerManifest.updatedAtEpochMs} " +
+                "freshUpdatedAt=${fresh.updatedAtEpochMs}"
+        }
+        return retry(fresh)
     }
 
     internal fun stagePayloadIsValid(record: StageArtifactRecord?): Boolean {

@@ -547,6 +547,24 @@ class ChapterTranslationStore(
     fun pageLeaseOwner(pageKey: String): PageWriteOrigin? = pageStageLeaseTable.pageLeaseOwner(pageKey)
 
     /**
+     * T924 LI-3: true while [pageKey] holds an ACTIVE page-stage lease acquired
+     * by [PageWriteOrigin.BATCH] — i.e. a batch run currently owns the page's
+     * stage state and will release the lease itself at the owning stage step or
+     * run teardown. Lock-free reader over the lease table's
+     * `synchronized(pageLeases)` map (same discipline as [pageLeaseOwner]); a
+     * momentary race with a concurrent acquire/release is benign for the
+     * cancel-writer gating this query exists for. Reader/manual cancel writers
+     * must SKIP pages that answer true: a cancel write built from the current
+     * snapshot carries the batch's own lease token, sails through the write
+     * fence, and bumps the page version mid-stage — the flagged batch lane's
+     * `checkpointOcr` then rejects (CHECKPOINT_REJECTED) on a healthy page, or
+     * a mid-TRANSLATE write fails `mergeTranslation` and pauses the whole run
+     * after the provider call was paid.
+     */
+    fun hasActiveBatchStageLease(pageKey: String): Boolean =
+        pageStageLeaseTable.pageLeaseOwner(pageKey) == PageWriteOrigin.BATCH
+
+    /**
      * T917 D3 defer-and-rescan: suspends until the page is lease-free, bounded
      * by [timeoutMs] (true = lease-free at resume, false = timed out or a newer
      * lease appeared). See [PageStageLeaseTable.awaitPageLeaseRelease].
@@ -748,6 +766,14 @@ class ChapterTranslationStore(
      * auto-translation drawer toggle) to clear spinners and dim overlays instantly on the current
      * frame (<16ms) without blocking the Main thread. Durable persistence can follow
      * asynchronously.
+     *
+     * T924 LI-3: pages holding an ACTIVE BATCH-origin stage lease are SKIPPED —
+     * this method mutates in-memory state outside the mutex with no lease
+     * check, and flipping a batch-owned page desyncs the run's version
+     * expectations mid-stage (the flagged lane then fails `checkpointOcr`/
+     * `mergeTranslation` on a healthy page). The batch cancel path owns those
+     * pages until their leases release. The lease query only takes the lease
+     * table's own monitor, never [mutex], so the fast path stays lock-cheap.
      */
     fun fastCancelInFlightStagesInMemory(): Int {
         var flipped = 0
@@ -757,20 +783,32 @@ class ChapterTranslationStore(
         val updatedPages = buildMap {
             current.forEach { (pageKey, page) ->
                 if (page != null && page.isStageRunning && !page.hasRenderedResult && !page.isStageFailed) {
-                    flipped++
-                    put(
-                        pageKey,
-                        page.detachedCopy().apply {
-                            cancelInFlightStages()
-                            ocrError = "Translation cancelled"
-                            updatedAt = System.currentTimeMillis()
-                        },
-                    )
+                    if (hasActiveBatchStageLease(pageKey)) {
+                        logcat(LogPriority.INFO) {
+                            "TachiyomiAT cancel skipped: page holds an active BATCH stage lease " +
+                                "writer=fastCancelInFlightStagesInMemory pageKey=$pageKey"
+                        }
+                        // Preserve the page UNCHANGED — the batch owns its state.
+                        put(pageKey, page)
+                    } else {
+                        flipped++
+                        put(
+                            pageKey,
+                            page.detachedCopy().apply {
+                                cancelInFlightStages()
+                                ocrError = "Translation cancelled"
+                                updatedAt = System.currentTimeMillis()
+                            },
+                        )
+                    }
                 } else if (page != null) {
                     put(pageKey, page)
                 }
             }
         }
+        // Every running page was batch-leased: nothing flipped, keep the
+        // current map/state as-is instead of republishing identical values.
+        if (flipped == 0) return 0
         pages = updatedPages.toPersistentMap()
         _state.value = snapshotPages()
         _display.value = displaySnapshotLocked()

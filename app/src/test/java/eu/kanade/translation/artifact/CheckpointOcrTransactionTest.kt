@@ -478,7 +478,7 @@ class CheckpointOcrTransactionTest {
     }
 
     @Test
-    fun `stale manifest snapshot is rejected before any sidecar is written`() {
+    fun `stale caller snapshot recovers through the one-shot retry and commits the checkpoint`() {
         val io = FakeChapterDocumentIo()
         val fx = fixtureWithActiveCandidate(io)
         val checkpoint = checkpointFor(fx.ocrSnapshot, fx.store, fx.generationId)
@@ -486,10 +486,22 @@ class CheckpointOcrTransactionTest {
 
         val outcome = checkpointTransaction(fx.store, stale, fx.ocrSnapshot, checkpoint)
 
-        outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Rejected>()
-        fx.store.readManifest() shouldBe fx.manifest
-        io.files.keys.none { it.startsWith("${layout.ocrCheckpointsRootDirectory}/") } shouldBe true
-        io.files.keys.none { it.startsWith("${layout.stageArtifactsRootDirectory}/page") && it.endsWith(".json") && it.contains("/ocr/") } shouldBe true
+        // T924 LI-4: a stale caller snapshot (the façade cached the
+        // pre-verify manifest while the background health verify republished)
+        // is retried ONCE against the freshly re-read durable manifest — the
+        // CLOSE rebuilds from the FRESH manifest, so nothing the concurrent
+        // writer published is reverted, and the healthy chapter no longer
+        // sees a spurious CHECKPOINT_REJECTED.
+        val committed = outcome.shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
+        val durable = fx.store.readManifest().shouldNotBeNull()
+        durable shouldBe committed.manifest
+        durable.ocrCheckpoints.getValue("page.jpg").contentFingerprint shouldBe checkpoint.ocrContentFingerprint
+        durable.pages.getValue("page.jpg").candidate shouldBe null
+        durable.pages.getValue("page.jpg").pageVersion shouldBe
+            fx.manifest.pages.getValue("page.jpg").pageVersion + 1
+        // Both sidecars are durable.
+        io.files.containsKey(checkpoint.ocrPageSnapshotPointer.fileName) shouldBe true
+        io.files.containsKey(layout.ocrCheckpointFile("page.jpg", checkpoint.ocrContentFingerprint)) shouldBe true
     }
 
     @Test
