@@ -688,3 +688,26 @@ committed on `t924/batch-profile-pipeline`; full sweep at HEAD
   against per-envelope logcat lines (F-W7-3); no simultaneous legacy +
   flagged chapters per credential (LI-9); no mid-run preference changes
   (LI-10); fresh install replaces the stale 19:58 APK.
+
+## Delivery (2026-09-11) — APK built and installed on the Director device
+
+- **Debug A/B switches, commit `ec7998e`:** FF-01/FF-02 had NO UI
+  switch (the old note's "flip the constant, rebuild, reinstall"
+  workflow). Added a debug-build-only "Experiments (debug)" group to
+  SettingsTranslationScreen with both switches — release builds never
+  see it; flags are read at dispatch, so flipping between chapters is
+  the supported A/B flow.
+- **APK:** `TachiyomiAT-t924-impl/app/build/outputs/apk/standard/debug/app-standard-arm64-v8a-debug.apk`
+  (302 MB) at HEAD `ec7998e`; full test state at `c5a7a1f` =
+  242/1782/0, plus a clean compile of the settings change.
+- **Installed:** `adb install -r` on 192.168.100.223:41647
+  (app.kanade.tachiyomi.at.debug; versionName 0.17.1-417 → 0.17.1-448,
+  2026-09-11 20:20; device idle at install; data preserved).
+- **Gate 5.7 A/B procedure for the Director:** Settings → Translation →
+  Experiments (debug) → "Profile pipeline (FF-01)" ON; translate a
+  chapter with the AI engine. Compare old-vs-new on the same chapter
+  set; reconcile request counts against the per-envelope logcat lines,
+  not the built-chunk counters (F-W7-3). Do not run legacy and flagged
+  chapters simultaneously against one credential (LI-9); do not change
+  engine/inpaint preferences mid-run (LI-10). FF-02 stays OFF for this
+  gate (its device evidence gate 7.8 comes later).
