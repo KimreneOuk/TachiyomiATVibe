@@ -564,14 +564,6 @@ class ChapterTranslationStore(
     fun hasActiveBatchStageLease(pageKey: String): Boolean =
         pageStageLeaseTable.pageLeaseOwner(pageKey) == PageWriteOrigin.BATCH
 
-    /**
-     * T917 D3 defer-and-rescan: suspends until the page is lease-free, bounded
-     * by [timeoutMs] (true = lease-free at resume, false = timed out or a newer
-     * lease appeared). See [PageStageLeaseTable.awaitPageLeaseRelease].
-     */
-    suspend fun awaitPageLeaseRelease(pageKey: String, timeoutMs: Long): Boolean =
-        pageStageLeaseTable.awaitPageLeaseRelease(pageKey, timeoutMs)
-
     suspend fun invalidateGeneration(reason: String): Long = beginGeneration(reason)
 
     suspend fun <T> withGeneration(generation: Long, block: suspend () -> T): T =

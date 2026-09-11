@@ -9,7 +9,6 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -189,32 +188,13 @@ internal class PageStageLeaseTable(private val store: ChapterTranslationStore) {
     }
 
     /**
-     * T917 D3 defer-and-rescan: suspends until the page is lease-free, bounded
-     * by [timeoutMs]. Returns true when the page has no lease at resume time,
-     * false on timeout or if a newer lease was taken between the release and
-     * the wake-up (the caller then simply re-defers the page). Completing the
-     * waiter and removing the lease happen in the same monitor, so a wake-up
-     * always corresponds to a real release.
+     * T917 D3 defer-and-rescan remnant: completes any lease-release waiters.
+     * The only waiter producer (the deleted [awaitPageLeaseRelease] used by
+     * the deleted in-pass re-scan consumer) is gone, so this currently
+     * completes nothing; retained because the release paths still call it
+     * (T924 D2 follow-up: retire together with the defer-and-rescan wiring).
+     * Caller MUST hold `synchronized(pageLeases)` and the page's lease must already be removed.
      */
-    suspend fun awaitPageLeaseRelease(pageKey: String, timeoutMs: Long): Boolean {
-        val waiter = CompletableDeferred<Unit>()
-        val free = synchronized(pageLeases) {
-            val isFree = pageLeases[pageKey] == null
-            if (!isFree) {
-                leaseReleaseWaiters.computeIfAbsent(pageKey) { CopyOnWriteArrayList() }.add(waiter)
-            }
-            isFree
-        }
-        if (free) return true
-        try {
-            withTimeoutOrNull(timeoutMs) { waiter.await() } ?: return false
-        } finally {
-            leaseReleaseWaiters[pageKey]?.remove(waiter)
-        }
-        return synchronized(pageLeases) { pageLeases[pageKey] == null }
-    }
-
-    /** Caller MUST hold `synchronized(pageLeases)` and the page's lease must already be removed. */
     private fun completeLeaseReleaseWaitersLocked(pageKey: String) {
         if (pageLeases[pageKey] != null) return
         leaseReleaseWaiters.remove(pageKey)?.forEach { it.complete(Unit) }

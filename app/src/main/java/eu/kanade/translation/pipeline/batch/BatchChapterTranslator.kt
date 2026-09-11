@@ -30,7 +30,6 @@ import eu.kanade.translation.model.recordAttemptFailure
 import eu.kanade.translation.ocr.TextRecognizerLanguage
 import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.recognition.PageRecognitionEngine
-import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
 import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.analysis.AnalysisChunkExecutor
 import eu.kanade.translation.translator.analysis.AnalysisEngineTransport
@@ -365,14 +364,6 @@ internal class BatchChapterTranslator(
                     TranslationContextChunkPlanner.Profile.DEFAULT
                 }
 
-                // Chapter-level glossary accumulator for cross-chunk name/pronoun continuity.
-                // Seeded from already-translated pairs on batch resume so recurring terms
-                // established before a restart still feed the glossary.
-                val glossaryStats = ChapterGlossaryBuilder.Stats()
-                if (isAi) {
-                    store.translatedPairs().forEach { (s, t) -> glossaryStats.add(s, t) }
-                }
-
                 // T909 Phase 20.1: held-cleaned-bitmap registry moved to
                 // pipeline/batch/HeldBitmapRegistry.kt. The same-name aliases below
                 // keep the not-yet-moved closures reading the same registry state.
@@ -420,8 +411,7 @@ internal class BatchChapterTranslator(
                 // T909 Phase 20.3: resume planning (page plans, provenance stamping,
                 // translation failure fence, context-frontier bookkeeping, resume gate)
                 // moved to pipeline/batch/BatchResumePlanner.kt. The frontier is the SAME
-                // instance the shell and the lane workers hold; same-name local delegates
-                // below keep the not-yet-moved closures' call sites.
+                // instance the shell and the lane workers hold.
                 val resumePlanner = BatchResumePlanner(
                     store = store,
                     provider = provider,
@@ -435,8 +425,6 @@ internal class BatchChapterTranslator(
                     contextFrontier = contextFrontier,
                     inpaintingModeFromPref = inpaintingModeFromPref,
                 )
-                val batchPagePlans by resumePlanner::batchPagePlans
-                val rollingContext by resumePlanner::rollingContext
 
                 // T909 Phase 20.2: the batch write gate moved to
                 // pipeline/batch/BatchWriteGate.kt. It receives the SAME identity-map
@@ -537,9 +525,10 @@ internal class BatchChapterTranslator(
                     }
                 }
 
-                // T909 Phase 20.4: tryRender + the render join moved to
-                // pipeline/batch/BatchRenderJoin.kt (it implements RenderJoinWorker;
-                // bitmap recycle sites stayed with tryRender).
+                // T909 Phase 20.4: the render join lives in
+                // pipeline/batch/BatchRenderJoin.kt — the lane workers call its
+                // tryRender at commit boundaries, and the flagged coordinator
+                // drives its per-page persisted-layout publication (T924-TX-23).
                 val renderJoin = BatchRenderJoin(
                     store = store,
                     manga = manga,
@@ -556,13 +545,11 @@ internal class BatchChapterTranslator(
                     abortBatchCandidateFn = ::abortBatchCandidate,
                 )
 
-                suspend fun tryRender(pageKey: String) = renderJoin.tryRender(pageKey)
-
                 val computeClass = TranslatorComputeClass.forTranslator(textTranslator)
 
                 // T909 Phase 20.5: the lane workers moved to
-                // pipeline/batch/BatchLaneWorkers.kt (nativeWorker, translatorWorker,
-                // translateChunkAi, completeChunklessPage). The closure web became class
+                // pipeline/batch/BatchLaneWorkers.kt (nativeWorker,
+                // translatorWorker). The closure web became class
                 // state; the SAME registry/identity/frontier instances are injected.
                 // T917 D3 defer-and-rescan: shared per-batch deferral record +
                 // typed schedule listener. The native worker records denials
@@ -586,7 +573,6 @@ internal class BatchChapterTranslator(
                     tracker = tracker,
                     batchGeneration = batchGeneration,
                     isAi = isAi,
-                    contextualTranslator = contextualTranslator,
                     textTranslatorFn = { textTranslator },
                     recognitionEngineFn = { recognitionEngine },
                     fromLang = fromLang,
@@ -594,7 +580,6 @@ internal class BatchChapterTranslator(
                     resolvedNaturalPageIndexes = resolvedNaturalPageIndexes,
                     requestedOutputTokens = requestedOutputTokens,
                     chunkProfile = chunkProfile,
-                    glossaryStats = glossaryStats,
                     translationRegistry = translationRegistry,
                     batchWriteIdentities = batchWriteIdentities,
                     aborted = aborted,
@@ -624,7 +609,6 @@ internal class BatchChapterTranslator(
                     abortBatchCandidateFn = ::abortBatchCandidate,
                     scheduleListener = batchScheduleListener,
                     deferredPages = deferredPages,
-                    scheduleTrace = scheduleTrace,
                 )
 
 
@@ -661,8 +645,8 @@ internal class BatchChapterTranslator(
                     // T924 Phase 4 Wave A: the injected standard translate seam —
                     // the coordinator's per-page tail calls THIS, and it
                     // delegates verbatim to `TranslatorLaneWorker.translateOutcome`
-                    // (the SBC per-page bridge; usesChunkAdmission=false
-                    // semantics, exactly the legacy standard path SBC drives).
+                    // (the per-page standard translate path, exactly the
+                    // legacy schedule's semantics).
                     // ADAPTATION (the one delta vs the legacy schedule): the
                     // flagged preflight releases each page's lease strictly
                     // after its checkpoint, so the tail's ref carries durable
@@ -1010,6 +994,17 @@ internal class BatchChapterTranslator(
                     }
                 }
                 store.flush()
+                // T924 zero-legacy (D2): no surviving lane emits render events
+                // for translatable pages, so the tracker's RENDER phase would
+                // stay processed=0 forever and the processed/total fraction
+                // would top out at 4/5 per display-ready page even at terminal.
+                // The completion path settles every expected page's render
+                // phase as skipped terminal work — bounded to this COMPLETED
+                // path (once per page, before the terminal BatchFinished), never
+                // a per-page hot path.
+                tracker?.let { t ->
+                    orderedStreams.forEach { (pageKey, _) -> t.markRenderSkipped(pageKey) }
+                }
                 tracker?.finish(reconciliation)
                 logcat(LogPriority.INFO) {
                     "TachiyomiAT batch complete chapter=${chapter.name} pages=${orderedStreams.size} outcome=${reconciliation.chapterStatus}"

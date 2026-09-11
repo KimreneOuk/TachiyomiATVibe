@@ -3184,13 +3184,6 @@ internal class ChapterProfileBatchCoordinator(
                 BatchCoordinatorKind.PROFILE_PIPELINE
             }
 
-        /** The chapter's active run record, or null when none is readable. */
-        fun activeRunRecordOrNull(store: ChapterTranslationStore): ChapterRunRecord? {
-            val artifact = store.artifactStore ?: return null
-            val pointer = store.artifactManifest?.activeRun ?: return null
-            return (artifact.readRunRecord(pointer) as? ChapterArtifactStore.RunRecordRead.Usable)?.record
-        }
-
         /**
          * RUN_SNAPSHOT freeze (ST-03). Identity values that have no stable
          * engine accessor yet are pinned to explicit shell placeholders —

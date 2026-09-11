@@ -106,15 +106,6 @@ internal class TranslationBatchTrackerRegistry(
         publishLive()
     }
 
-    /** Dispose only the transaction's tracker; never tear down a newer owner. */
-    @Synchronized
-    fun disposeIfCurrent(chapterId: Long, tracker: TranslationBatchProgressTracker) {
-        if (liveTrackers[chapterId] !== tracker) return
-        liveTrackers.remove(chapterId)
-        tracker.close()
-        publishLive()
-    }
-
     @Synchronized
     fun terminalSnapshotCacheSize(): Int = terminalSnapshots.size
 

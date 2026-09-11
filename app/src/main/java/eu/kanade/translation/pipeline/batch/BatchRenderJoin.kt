@@ -40,7 +40,6 @@ import eu.kanade.translation.rendering.PersistedLayoutRuntime
 import eu.kanade.translation.rendering.ProductionTextMeasurer
 import eu.kanade.translation.rendering.RenderColorEstimator
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import logcat.LogPriority
@@ -56,8 +55,13 @@ import java.util.concurrent.ConcurrentHashMap
  * Render join: per-page join of the translation result with its inpaint/render
  * prerequisites. tryRender is idempotent (READY short-circuit) so it is safe to
  * call both at chunk-completion (AI) and here; the per-page render mutex keeps
- * it serialized. This is the join the coordinator awaits for each page.
- * Bitmap recycle sites stay with tryRender.
+ * it serialized. Bitmap recycle sites stay with tryRender.
+ *
+ * T924 zero-legacy (D2): the legacy SBC render-join contract
+ * (RenderJoinWorker: signal/await machinery, awaitAndRender, awaitAndSettle)
+ * died with the sequential coordinator — only [tryRender] (the lane workers'
+ * commit-time render) and [publishPersistedLayoutForCompletedPage] (the
+ * flagged coordinator's per-page layout publication) survive.
  */
 internal class BatchRenderJoin(
     private val store: ChapterTranslationStore,
@@ -73,20 +77,13 @@ internal class BatchRenderJoin(
     private val loadPersistedCleanedBitmapFn: suspend (Manga, Chapter, HttpSource, String) -> Bitmap?,
     private val deleteRetiredCleanedFileFn: suspend (Manga, Chapter, HttpSource, String, ChapterTranslationStore) -> Unit,
     private val abortBatchCandidateFn: suspend (String, String) -> Unit,
-) : RenderJoinWorker {
-
+) {
     private val renderMutexes = ConcurrentHashMap<String, Mutex>()
-
-    private val nativeRenderSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
-    private val translationRenderSignals = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
 
     // Same-name wiring for the injected collaborators: the moved bodies call
     // these as plain named functions / property-style reads.
     private fun plannedRenderNeedsWork(pageKey: String): Boolean =
         resumePlanner.plannedRenderNeedsWork(pageKey)
-
-    private fun translationFailureFence(pageKey: String): Boolean =
-        resumePlanner.translationFailureFence(pageKey)
 
     private suspend fun releaseBatchLease(pageKey: String) =
         writeGate.releaseBatchLease(pageKey)
@@ -620,42 +617,5 @@ internal class BatchRenderJoin(
             }
             false
         }
-    }
-
-    fun signalFor(
-        signals: ConcurrentHashMap<String, CompletableDeferred<Unit>>,
-        pageKey: String,
-    ): CompletableDeferred<Unit> = signals.getOrPut(pageKey) { CompletableDeferred() }
-
-    override fun onNativeBranchDone(pageKey: String) {
-        signalFor(nativeRenderSignals, pageKey).complete(Unit)
-    }
-
-    override fun onTranslationBranchDone(pageKey: String) {
-        signalFor(translationRenderSignals, pageKey).complete(Unit)
-    }
-
-    override suspend fun awaitAndRender(pageKey: String) {
-        signalFor(nativeRenderSignals, pageKey).await()
-        signalFor(translationRenderSignals, pageKey).await()
-        // A resumed retryable/terminal translation candidate owns no
-        // display publication. Its committed bundle remains the reader
-        // authority until an eligible retry succeeds, so never route a
-        // failed candidate through the normal render path.
-        if (!translationFailureFence(pageKey)) {
-            tryRender(pageKey)
-        }
-        nativeRenderSignals.remove(pageKey)
-        translationRenderSignals.remove(pageKey)
-    }
-
-    override suspend fun awaitAndSettle(pageKey: String) {
-        signalFor(nativeRenderSignals, pageKey).await()
-        signalFor(translationRenderSignals, pageKey).await()
-        // A paused/terminal anchor retains the prior committed
-        // display. Do not invoke tryRender on its provisional
-        // candidate or overwrite that display pointer.
-        nativeRenderSignals.remove(pageKey)
-        translationRenderSignals.remove(pageKey)
     }
 }

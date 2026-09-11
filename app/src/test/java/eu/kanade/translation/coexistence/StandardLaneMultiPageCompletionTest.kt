@@ -4,10 +4,12 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
+import eu.kanade.translation.pipeline.batch.BatchPhase
 import io.kotest.matchers.maps.shouldBeEmpty
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
@@ -86,6 +88,17 @@ class StandardLaneMultiPageCompletionTest {
                 page.translationStatus shouldBe StageStatus.READY
                 page.renderStatus shouldBe StageStatus.PENDING
             }
+            // T924 zero-legacy (D2): the shell's COMPLETED path settles every
+            // expected page's RENDER phase as skipped terminal work
+            // (markRenderSkipped per expected page before the terminal finish),
+            // so the terminal snapshot's render arm is processed even though no
+            // lane rendered in-pass.
+            val terminal = withTimeout(AWAIT_TIMEOUT_MS) {
+                harness.trackerRegistry.terminal
+                    .first { it.containsKey(TranslationCoexistenceHarness.CHAPTER_ID) }
+                    .getValue(TranslationCoexistenceHarness.CHAPTER_ID)
+            }
+            terminal.perStage.getValue(BatchPhase.RENDER).processed shouldBe pageKeys.size
         } finally {
             harness.removeGraphicsShims()
             harness.unstubChapterPages()

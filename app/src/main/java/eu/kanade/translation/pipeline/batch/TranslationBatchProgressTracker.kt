@@ -89,11 +89,9 @@ class TranslationBatchProgressTracker(
         pageKey: String,
         reason: String,
     ) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.FAILED, reason)
-    fun markTranslatePartial(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.PARTIAL)
     fun markTranslateSkipped(pageKey: String) = phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.SKIPPED)
     fun markTranslatePaused(pageKey: String, reason: String) =
         phase(pageKey, BatchPhase.TRANSLATE, PhaseStatus.PAUSED, reason)
-    fun markAiPending(pageKey: String) = aiProgress(pageKey, AiPageProgressState.PENDING)
     fun markAiBuffered(pageKey: String) = aiProgress(pageKey, AiPageProgressState.BUFFERED)
     fun markAiRunning(pageKey: String) = aiProgress(pageKey, AiPageProgressState.RUNNING)
     fun markAiSucceeded(pageKey: String) = aiProgress(pageKey, AiPageProgressState.SUCCEEDED)

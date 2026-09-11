@@ -52,33 +52,10 @@ interface NativeLaneWorker {
     fun releaseNativeHandoff(ref: OcrReadyPageRef) {}
 }
 
-/** Result of admitting an OCR-complete page to the current provider-sized chunk. */
-enum class ChunkAdmission {
-    /** The page belongs to the current image chunk. */
-    ACCEPT,
-
-    /** The page is an OCR-only probe for the next image chunk. */
-    PROBE,
-}
-
 interface TranslatorLaneWorker {
-    /** True when [admit] buffers page input for a later chunk completion. */
-    val usesChunkAdmission: Boolean get() = false
-
     /**
-     * Admit one OCR-complete page without releasing its chunk ownership.
-     *
-     * Standard translators use the default per-page path. Contextual AI workers
-     * override this to feed their token planner without making a provider call;
-     * returning [ChunkAdmission.PROBE] retains the page as the single allowed
-     * OCR-only lookahead page.
+     * Translate one page's Pass-1 work item.
      */
-    suspend fun admit(ref: OcrReadyPageRef): ChunkAdmission {
-        translate(ref)
-        return ChunkAdmission.ACCEPT
-    }
-
-    /** Translate one page's Pass-1 work item. */
     suspend fun translate(ref: OcrReadyPageRef)
 
     /**
@@ -96,39 +73,6 @@ interface TranslatorLaneWorker {
         } catch (e: eu.kanade.translation.translator.ProviderFailureException) {
             e.toChunkCompletionOutcome(ref.pageKey)
         }
-
-    /**
-     * Complete the current image chunk. For a buffered AI lane this is the
-     * first point at which queued planner emissions may make provider calls.
-     */
-    /**
-     * Complete the current image chunk. This legacy hook intentionally keeps
-     * its Unit return type so existing lane implementations remain source
-     * compatible; provider-aware lanes override [completeChunkOutcome].
-     */
-    suspend fun completeChunk(finalChunk: Boolean) {}
-
-    /** Typed chunk completion bridge used by the coordinator. */
-    suspend fun completeChunkOutcome(finalChunk: Boolean): ChunkCompletionOutcome {
-        completeChunk(finalChunk)
-        return ChunkCompletionOutcome.Completed()
-    }
-}
-
-interface RenderJoinWorker {
-    fun onNativeBranchDone(pageKey: String)
-    fun onTranslationBranchDone(pageKey: String)
-
-    /** Closes the translation gate without making a paused page renderable. */
-    fun onTranslationBranchPaused(pageKey: String) = onTranslationBranchDone(pageKey)
-    suspend fun awaitAndRender(pageKey: String)
-
-    /**
-     * Settles a page whose translation branch is paused/terminal. A default
-     * no-op keeps the committed display untouched; production joins may still
-     * override it when they need to close an explicit gate.
-     */
-    suspend fun awaitAndSettle(pageKey: String) {}
 }
 
 /** Result of the only live batch coordinator's first pass. */
@@ -227,8 +171,6 @@ open class BatchScheduleListener {
     open fun ocrStarted(pageKey: String) {}
     open fun ocrFinished(pageKey: String) {}
     open fun ocrPublished(pageKey: String) {}
-    open fun inpaintStarted(pageKey: String) {}
-    open fun inpaintFinished(pageKey: String) {}
 
     /**
      * T917 D3 defer-and-rescan: the page's stage lease was DENIED (another
@@ -237,15 +179,6 @@ open class BatchScheduleListener {
      * re-runs the page within the same pass once its lease is free.
      */
     open fun ocrDeferred(pageKey: String, owner: PageWriteOrigin?) {}
-
-    open fun translationRequested(pageKey: String) {}
-    open fun translationFinished(pageKey: String) {}
-    open fun renderStarted(pageKey: String) {}
-    open fun renderFinished(pageKey: String) {}
-    open fun allOcrBarrierReleased() {}
-    open fun pass1BarrierReleased() {}
-    open fun pass2Started() {}
-    open fun batchPaused(outcome: BatchPass1Outcome) {}
 
     companion object {
         val NOOP: BatchScheduleListener = BatchScheduleListener()

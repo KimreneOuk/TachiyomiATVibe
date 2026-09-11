@@ -152,4 +152,86 @@ class TranslationBatchProgressTrackerTotalsTest {
         snapshot.abortedReason shouldBe "Page pre-registration was rejected: store is defunct"
         tracker.awaitTerminalSnapshot().totalPages shouldBe 3
     }
+
+    /**
+     * T924 zero-legacy (D2): no lane renders in-pass, so without the shell's
+     * COMPLETED-path settle the tracker's RENDER arm stays unprocessed forever
+     * and the processed/total fraction tops out at 4/5 per display-ready page.
+     * The shell emits [TranslationBatchProgressTracker.markRenderSkipped] per
+     * expected page before [TranslationBatchProgressTracker.finish]; this test
+     * pins that this sequence completes the 5/5 terminal fraction.
+     */
+    @Test
+    fun `completion render-skip settle completes the 5 of 5 terminal fraction`() = runTest {
+        val store = ChapterTranslationStore(
+            null,
+            null,
+            initialPages = mapOf("p0" to zeroLegacyTerminalPage("p0")),
+        )
+        // The reader re-derived the display: a committed display bundle exists
+        // (promoted from the render-ready update) while the live page keeps the
+        // zero-legacy translation-terminal shape (render PENDING) — flipping the
+        // live page back never demotes the committed display.
+        store.updatePage("p0") { current -> current!!.apply { renderStatus = StageStatus.READY } }
+        store.updatePage("p0") { current -> current!!.apply { renderStatus = StageStatus.PENDING } }
+
+        val tracker = TranslationBatchProgressTracker(1, store, listOf("p0"), this)
+        runCurrent()
+
+        // Pre-settle (the D1-observed gap): OCR/INPAINT/TRANSLATE/DISPLAY are
+        // processed, RENDER is the only arm left — the fraction tops out at 4/5.
+        tracker.snapshot.value.perStage.getValue(BatchPhase.RENDER).processed shouldBe 0
+        tracker.snapshot.value.doneStages shouldBe 4
+        tracker.snapshot.value.totalStages shouldBe 5
+        tracker.snapshot.value.fraction shouldBe 0.8f
+
+        // The zero-legacy COMPLETED-path sequence: markRenderSkipped per
+        // expected page, then the terminal finish.
+        tracker.markRenderSkipped("p0")
+        tracker.finish(
+            ReconciliationResult(
+                chapterStatus = Translation.State.TRANSLATED,
+                strandedPages = emptyMap(),
+                unexpectedPageKeys = emptySet(),
+                doneCount = 1,
+                failedCount = 0,
+                partialCount = 0,
+            ),
+        )
+        runCurrent()
+
+        val terminal = tracker.awaitTerminalSnapshot()
+        terminal.perStage.getValue(BatchPhase.RENDER).processed shouldBe 1
+        terminal.perStage.getValue(BatchPhase.RENDER).skipped shouldBe 1
+        terminal.doneStages shouldBe 5
+        terminal.totalStages shouldBe 5
+        terminal.fraction shouldBe 1f
+        tracker.close()
+    }
+
+    /** Zero-legacy terminal page: committed translation, NO in-pass render. */
+    private fun zeroLegacyTerminalPage(key: String) = PageTranslation(
+        sourceFileName = key,
+        ocrStatus = StageStatus.READY,
+        translationStatus = StageStatus.READY,
+        inpaintStatus = StageStatus.READY,
+        renderStatus = StageStatus.PENDING,
+        cleanedImageName = "$key.cleaned.jpg",
+        inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION,
+        imgWidth = 100f,
+        imgHeight = 100f,
+        blocks = mutableListOf(
+            TranslationBlock(
+                text = "source",
+                translation = "target",
+                width = 10f,
+                height = 10f,
+                x = 0f,
+                y = 0f,
+                symHeight = 1f,
+                symWidth = 1f,
+                angle = 0f,
+            ),
+        ),
+    )
 }

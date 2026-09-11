@@ -1,6 +1,4 @@
 package eu.kanade.translation.pipeline.batch
-import eu.kanade.translation.translator.retry.AiChunkOutcome
-import eu.kanade.translation.translator.retry.translateAiChunkWithAdaptiveRetry
 
 import android.graphics.Bitmap
 import com.hippo.unifile.UniFile
@@ -12,11 +10,9 @@ import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_TIMEOUT_M
 import eu.kanade.translation.artifact.ArtifactStageStatus
 import eu.kanade.translation.artifact.AttemptOrigin
 import eu.kanade.translation.data.TranslationProvider
-import eu.kanade.translation.diagnostics.TranslationScheduleTrace
 import eu.kanade.translation.diagnostics.TranslationTrace
 import eu.kanade.translation.diagnostics.TranslationTraceLane
 import eu.kanade.translation.diagnostics.TranslationTraceOutcome
-import eu.kanade.translation.diagnostics.TranslationTraceProvider
 import eu.kanade.translation.diagnostics.TranslationTraceStage
 import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.BatchStage
@@ -31,8 +27,6 @@ import eu.kanade.translation.pipeline.DecodedPage
 import eu.kanade.translation.pipeline.LowMemoryDecodeDeferredException
 import eu.kanade.translation.pipeline.LowMemoryRecognitionDeferredException
 import eu.kanade.translation.recognition.PageRecognitionEngine
-import eu.kanade.translation.translator.contextual.ChapterGlossaryBuilder
-import eu.kanade.translation.translator.contextual.ContextualTextTranslator
 import eu.kanade.translation.translator.ProviderFailure
 import eu.kanade.translation.translator.ProviderFailureException
 import eu.kanade.translation.translator.ProviderFailureKind
@@ -41,10 +35,7 @@ import eu.kanade.translation.translator.contextual.StableBlockIds
 import eu.kanade.translation.translator.contextual.StreamingChunkPlanner
 import eu.kanade.translation.translator.TextTranslator
 import eu.kanade.translation.translator.TranslationBlockValidation
-import eu.kanade.translation.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
-import eu.kanade.translation.translator.contextual.TranslationResponseFaithfulness
-import eu.kanade.translation.translator.retry.applyAiChunkOutcomeToPages
 import eu.kanade.translation.translator.retry.classifyProviderFailure
 import eu.kanade.translation.util.ShortHash
 import kotlinx.coroutines.CancellationException
@@ -81,11 +72,16 @@ interface NativeLaneRunner {
 /**
  * T909 Phase 20.5: the batch lane workers moved verbatim from
  * `TranslationPipeline.translateBatch` (T909 phase 20): `nativeWorker`,
- * `translatorWorker`, `translateChunkAi`, `completeChunklessPage`. The closure
- * web became class state — every captured registry/identity/frontier instance
- * is injected here as the SAME instance the batch shell holds; pipeline-provided
- * collaborators (native lane, OCR/inpaint/decode/persist helpers, abort) arrive
- * as constructor lambdas behind same-name private members.
+ * `translatorWorker`. The closure web became class state — every captured
+ * registry/identity/frontier instance is injected here as the SAME instance
+ * the batch shell holds; pipeline-provided collaborators (native lane,
+ * OCR/inpaint/decode/persist helpers, abort) arrive as constructor lambdas
+ * behind same-name private members.
+ *
+ * T924 zero-legacy (D2): the legacy AI-chunk engine (`translateChunkAi`,
+ * `completeChunklessPage`, the chunk-completion bridge) had no surviving
+ * caller after the SequentialBatchCoordinator deletion — the PROFILE lane
+ * translates through [ProfileEnvelopeExecutor] — and was removed.
  */
 internal class BatchLaneWorkers(
     private val store: ChapterTranslationStore,
@@ -97,7 +93,6 @@ internal class BatchLaneWorkers(
     private val tracker: TranslationBatchProgressTracker?,
     private val batchGeneration: Long,
     private val isAi: Boolean,
-    private val contextualTranslator: ContextualTextTranslator?,
     private val textTranslatorFn: () -> TextTranslator,
     private val recognitionEngineFn: () -> PageRecognitionEngine,
     private val fromLang: TextRecognizerLanguage,
@@ -105,7 +100,6 @@ internal class BatchLaneWorkers(
     private val resolvedNaturalPageIndexes: Map<String, Int>,
     private val requestedOutputTokens: Int,
     private val chunkProfile: TranslationContextChunkPlanner.Profile,
-    private val glossaryStats: ChapterGlossaryBuilder.Stats,
     private val translationRegistry: ConcurrentHashMap<String, PageTranslation>,
     private val batchWriteIdentities: ConcurrentHashMap<String, BatchWriteIdentity>,
     private val aborted: AtomicBoolean,
@@ -152,13 +146,6 @@ internal class BatchLaneWorkers(
     private val scheduleListener: BatchScheduleListener = BatchScheduleListener.NOOP,
     private val deferredPages: MutableMap<String, PageWriteOrigin?>? = null,
 
-    /**
-     * T922 Phase 4: the shared batch schedule. Provider-envelope work is
-     * measured ONCE at schedule scope here (plan §4.4 batch, §9) — never
-     * multiplied into page runs; per-page provider waiting is attributed
-     * separately by the coordinator. Null when tracing is off → fail-open.
-     */
-    private val scheduleTrace: TranslationScheduleTrace? = null,
 ) {
 
     val chunkCounter = AtomicLong(0L)
@@ -166,10 +153,6 @@ internal class BatchLaneWorkers(
     private val ensureCompanionDir: suspend () -> UniFile? = {
         provider.getCompanionImageDir(manga.title, source, chapter.name, chapter.scanlator)
     }
-
-    // Same-name wiring for the injected collaborators: the moved bodies call
-    // these as plain named functions / property-style reads.
-    private val rollingContext get() = resumePlanner.rollingContext
 
     private val batchPagePlans get() = resumePlanner.batchPagePlans
 
@@ -318,520 +301,15 @@ internal class BatchLaneWorkers(
     )
 
 
-    /**
-     * Translates one AI envelope and commits its completed pages in
-     * natural order. The rolling context is the bounded window of
-     * recent source=>target pairs (voice/terminology continuity);
-     * a page whose output is a structural refusal fails alone — it
-     * never cascades to later pages of the envelope.
-     *
-     * T922 Phase 4: the envelope duration is measured ONCE at SCHEDULE scope
-     * (a stage=translate lane=provider schedule event carrying the existing
-     * opaque envelope ID) — it is never multiplied into page runs. Per-page
-     * provider waiting is attributed separately by the coordinator's
-     * translate spans. The span settles with a typed outcome on every exit.
-     */
-    suspend fun translateChunkAi(
-        chunk: TranslationContextChunk,
-        rolling: String,
-    ): ChunkCompletionOutcome {
-        val envelopeSpan = scheduleTrace?.beginStage(
-            TranslationTraceStage.TRANSLATE,
-            lane = TranslationTraceLane.PROVIDER,
-            provider = TranslationTraceProvider.REMOTE,
-            items = chunk.blockCount,
-        )
-        val envelopeToken = BatchTranslationDiagnostics.traceEnvelopeToken(chunk.pages.keys)
-        val outcome = try {
-            translateChunkAiTraced(chunk, rolling)
-        } catch (t: Throwable) {
-            envelopeSpan?.end(
-                outcome = if (t is CancellationException) {
-                    TranslationTraceOutcome.CANCELLED
-                } else {
-                    TranslationTraceOutcome.FAILURE
-                },
-                error = t,
-                envelope = envelopeToken,
-            )
-            throw t
-        }
-        envelopeSpan?.end(
-            outcome = when (outcome) {
-                is ChunkCompletionOutcome.Completed -> TranslationTraceOutcome.SUCCESS
-                is ChunkCompletionOutcome.Paused -> TranslationTraceOutcome.PAUSE
-                is ChunkCompletionOutcome.Failed -> TranslationTraceOutcome.FAILURE
-                is ChunkCompletionOutcome.Unexpected -> TranslationTraceOutcome.FAILURE
-                is ChunkCompletionOutcome.PersistenceRejected -> TranslationTraceOutcome.PERSISTENCE_REJECTED
-            },
-            envelope = envelopeToken,
-        )
-        return outcome
-    }
-
-    private suspend fun translateChunkAiTraced(
-        chunk: TranslationContextChunk,
-        rolling: String,
-    ): ChunkCompletionOutcome {
-        coroutineContext.ensureActive()
-        val ct = contextualTranslator ?: return ChunkCompletionOutcome.Completed()
-
-        fun firstUnresolved(completed: Set<String>): String? = chunk.pages.keys
-            .sortedBy { resolvedNaturalPageIndexes[it] ?: Int.MAX_VALUE }
-            .firstOrNull { it !in completed }
-
-        fun protocolFailure(reason: String): ProviderFailure = ProviderFailure(
-            kind = ProviderFailureKind.PROTOCOL,
-            retryability = ProviderFailureRetryability.TERMINAL,
-            safeSummary = reason,
-            requestId = BatchTranslationDiagnostics.envelopeId(chunk.pages.keys),
-        )
-
-        contextFrontier.gapIndex?.let { gapIndex ->
-            val blocked = chunk.pages.keys.sortedBy { resolvedNaturalPageIndexes[it] ?: Int.MAX_VALUE }.filter { pageKey ->
-                contextFrontier.blocksLaterAi(pageKey)
-            }
-            if (blocked.isNotEmpty()) {
-                val reason = "blocked by non-textless terminal context gap at index $gapIndex"
-                val anchor = blocked.first()
-                // The terminal predecessor already owns the durable error. This
-                // later page is only the first blocked admission; recording another
-                // failure here would synthesize a tail error and make the user fix a
-                // page that was never sent to the provider.
-                return ChunkCompletionOutcome.Failed(
-                    anchorPageKey = anchor,
-                    terminalPageKeys = emptySet(),
-                    failure = protocolFailure(reason),
-                    reason = reason,
-                )
-            }
-        }
-
-        val glossaryText = ChapterGlossaryBuilder.formatGlossary(glossaryStats.build())
-        val contextualChunk = TranslationContextChunkPlanner.withRollingContext(
-            chunk = chunk,
-            rollingContext = rolling,
-            requestedOutputTokens = requestedOutputTokens,
-            profile = chunkProfile,
-            glossary = glossaryText,
-        )
-        var admissionFailure: String? = null
-        var admissionFailurePageKey: String? = null
-        admission@ for (pk in chunk.pages.keys) {
-            val p = translationRegistry[pk] ?: continue
-            val running = guardedBatchUpdate(pk, "batch translation running", BatchStage.TRANSLATION) {
-                (it ?: p).apply {
-                    translationStatus = StageStatus.RUNNING
-                    errorMessage = null
-                    updatedAt = System.currentTimeMillis()
-                }
-            }
-            if (running is ChapterTranslationStore.PatchResult.Rejected) {
-                // T924 device fix: STOP at the first rejection — the envelope
-                // is not admissible, and continuing burns one serialized store
-                // write (≈1s SAF publication each) per remaining page while
-                // the outcome is already decided.
-                admissionFailure = "translation admission rejected for $pk: ${running.reason}"
-                admissionFailurePageKey = pk
-                break@admission
-            }
-            tracker?.markTranslateRunning(pk)
-            tracker?.markAiRunning(pk)
-        }
-        admissionFailure?.let { reason ->
-            // T924 device fix: an admission rejection is a local CAS conflict
-            // (stale write identity, or a foreign writer holding the page) —
-            // never a provider protocol failure. The guarded-write heal in
-            // BatchWriteGate already absorbs same-lease drift, so reaching
-            // here means the page is genuinely contended: classify it as a
-            // retryable PAUSE (T918 affordance on the anchor, siblings keep
-            // their committed work for the next pass) instead of the previous
-            // TERMINAL failure that durably failed the anchor and cancelled
-            // every sibling without a single provider call.
-            val failure = protocolFailure(reason).copy(
-                retryability = ProviderFailureRetryability.PAUSE,
-            )
-            val anchor = admissionFailurePageKey ?: firstUnresolved(emptySet()) ?: return ChunkCompletionOutcome.Failed(
-                failure = failure,
-                reason = reason,
-            )
-            val page = translationRegistry[anchor]
-            if (page != null) {
-                persistAiFailureOrThrow(
-                    pageKey = anchor,
-                    page = page,
-                    failure = failure,
-                    retryable = true,
-                    partialCandidate = false,
-                    envelopeId = null,
-                    missingBlockIds = emptySet(),
-                )
-            }
-            tracker?.markTranslatePaused(anchor, reason)
-            tracker?.markAiPaused(anchor, reason)
-            return ChunkCompletionOutcome.Paused(
-                anchorPageKey = anchor,
-                retryablePageKeys = setOf(anchor),
-                failure = failure,
-                reason = reason,
-            )
-        }
-        BatchTranslationDiagnostics.envelopeLifecycle(
-            phase = BatchEnvelopeLifecycle.ADMITTED,
-            pageKeys = chunk.pages.keys,
-            expectedItemCount = chunk.blockCount,
-        )
-        try {
-            val adaptiveOutcome = translateAiChunkWithAdaptiveRetry(
-                translator = ct,
-                chunk = contextualChunk,
-                requestedOutputTokens = requestedOutputTokens,
-                profile = chunkProfile,
-                label = "stream-${chunkCounter.incrementAndGet()}",
-                retryDepth = 0,
-            )
-            val orderedChunkKeys = chunk.pages.keys.sortedBy {
-                resolvedNaturalPageIndexes[it] ?: Int.MAX_VALUE
-            }
-            val reportedCompletedKeys = adaptiveOutcome.completedPageKeys
-                .filter { it in chunk.pages }
-                .toSet()
-            // The provider outcome may contain accepted blocks from a later page,
-            // but natural context and durable promotion are prefix-only. Never
-            // publish a later page across the first unresolved anchor.
-            val completedKeys = orderedChunkKeys
-                .takeWhile(reportedCompletedKeys::contains)
-                .toSet()
-            val anchor = when (adaptiveOutcome) {
-                is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete -> null
-                is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused,
-                is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal,
-                -> firstUnresolved(completedKeys)
-            }
-            val applyKeys = if (anchor == null) {
-                completedKeys
-            } else {
-                completedKeys + anchor
-            }
-            applyAiChunkOutcomeToPages(
-                outcome = adaptiveOutcome,
-                pages = translationRegistry,
-                pageIndexes = resolvedNaturalPageIndexes,
-                pageKeys = applyKeys,
-            )
-            val orderedCompletion = orderedChunkKeys.filter { it in completedKeys }
-            val committedPages = linkedMapOf<String, PageTranslation>()
-            for (pk in orderedCompletion) {
-                val p = translationRegistry[pk] ?: continue
-                val refused = p.blocks.any { block ->
-                    block.text.isNotBlank() &&
-                        TranslationResponseFaithfulness.isStructuralRefusal(block.translation)
-                }
-                if (refused) {
-                    val failure = ProviderFailure(
-                        kind = ProviderFailureKind.REFUSAL,
-                        retryability = ProviderFailureRetryability.TERMINAL,
-                        safeSummary = "provider refused translation",
-                        requestId = adaptiveOutcome.envelopeId,
-                    )
-                    persistAiFailureOrThrow(
-                        pageKey = pk,
-                        page = p,
-                        failure = failure,
-                        retryable = false,
-                        partialCandidate = false,
-                        envelopeId = adaptiveOutcome.envelopeId,
-                        missingBlockIds = emptySet(),
-                    )
-                    tracker?.markTranslateFailed(pk, "provider refusal")
-                    tracker?.markAiFailed(pk, "provider refusal")
-                    return ChunkCompletionOutcome.Failed(
-                        anchorPageKey = pk,
-                        completedPageKeys = committedPages.keys,
-                        terminalPageKeys = setOf(pk),
-                        failure = failure,
-                        reason = failure.safeSummary,
-                    )
-                }
-                val status = TranslationBlockValidation.applyTo(p)
-                when (status) {
-                    StageStatus.READY -> {
-                        tracker?.markTranslateDone(pk)
-                    }
-                    StageStatus.PARTIAL -> {
-                        val failure = protocolFailure("translation output remained partial")
-                        persistAiFailureOrThrow(
-                            pageKey = pk,
-                            page = p,
-                            failure = failure,
-                            retryable = true,
-                            partialCandidate = true,
-                            envelopeId = adaptiveOutcome.envelopeId,
-                            missingBlockIds = adaptiveOutcome.missingBlockIds,
-                        )
-                        tracker?.markTranslatePaused(pk, failure.safeSummary)
-                        tracker?.markAiPaused(pk, failure.safeSummary)
-                        return ChunkCompletionOutcome.Paused(
-                            anchorPageKey = pk,
-                            completedPageKeys = committedPages.keys,
-                            retryablePageKeys = setOf(pk),
-                            failure = failure,
-                            reason = failure.safeSummary,
-                        )
-                    }
-                    StageStatus.FAILED -> {
-                        // Validation details may include provider/user text. Keep the
-                        // durable diagnostic provider-neutral and safe to persist.
-                        val failure = protocolFailure("translation output failed validation")
-                        persistAiFailureOrThrow(
-                            pageKey = pk,
-                            page = p,
-                            failure = failure,
-                            retryable = false,
-                            partialCandidate = false,
-                            envelopeId = adaptiveOutcome.envelopeId,
-                            missingBlockIds = adaptiveOutcome.missingBlockIds,
-                        )
-                        tracker?.markTranslateFailed(pk, failure.safeSummary)
-                        tracker?.markAiFailed(pk, failure.safeSummary)
-                        return ChunkCompletionOutcome.Failed(
-                            anchorPageKey = pk,
-                            completedPageKeys = committedPages.keys,
-                            terminalPageKeys = setOf(pk),
-                            failure = failure,
-                            reason = failure.safeSummary,
-                        )
-                    }
-                }
-                val persisted = guardedBatchUpdate(pk, "batch translation chunk commit", BatchStage.TRANSLATION) {
-                    (it ?: p).apply {
-                        translationStatus = p.translationStatus
-                        if (status == StageStatus.FAILED) {
-                            translationError = p.translationError
-                            retryCount = p.retryCount
-                            attemptCount = p.attemptCount
-                        }
-                        if (it != null && it !== p) {
-                            blocks = p.blocks.toMutableList()
-                        }
-                        updatedAt = System.currentTimeMillis()
-                    }
-                }
-                if (persisted is ChapterTranslationStore.PatchResult.Rejected) {
-                    val reason = "translation commit rejected: ${persisted.reason}"
-                    tracker?.markTranslateFailed(pk, reason)
-                    tracker?.markAiFailed(pk, reason)
-                    abortBatchCandidate(pk, "translation commit rejected: ${persisted.reason}")
-                    throw BatchPersistenceRejectedException(
-                        pageKey = pk,
-                        stage = BatchDiagnosticStage.TRANSLATION,
-                    )
-                }
-                if (status == StageStatus.READY || status == StageStatus.PARTIAL) {
-                    tracker?.markAiSucceeded(pk)
-                }
-                if (status == StageStatus.READY) recordContextPage(pk, p)
-                committedPages[pk] = p
-                tryRender(pk)
-            }
-            // Accumulate this envelope's committed pairs into the chapter
-            // glossary and persist it.
-            var translatedPairs = 0
-            committedPages.values.forEach { page ->
-                page.blocks.forEach { b ->
-                    glossaryStats.add(b.text, b.translation)
-                    if (b.translation.isNotBlank()) translatedPairs++
-                }
-            }
-            val newGlossary = glossaryStats.build()
-            store.updateGlossary(newGlossary)
-            logcat(LogPriority.INFO) {
-                "TachiyomiAT batch stage2-AI chunk: translatedPairs=$translatedPairs " +
-                    "glossaryEntries=${newGlossary.size} committed=${committedPages.size} " +
-                    "of ${orderedCompletion.size}"
-            }
-            BatchTranslationDiagnostics.envelopeLifecycle(
-                phase = when (adaptiveOutcome) {
-                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete ->
-                        BatchEnvelopeLifecycle.SUCCEEDED
-                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused,
-                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal,
-                    -> BatchEnvelopeLifecycle.FAILED
-                },
-                pageKeys = chunk.pages.keys,
-                expectedItemCount = chunk.blockCount,
-                receivedItemCount = committedPages.values.sumOf { page ->
-                    page.blocks.count { block -> block.translation.isNotBlank() }
-                },
-                reason = when (adaptiveOutcome) {
-                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete ->
-                        BatchDiagnosticReason.SUCCESS
-                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused ->
-                        BatchDiagnosticReason.TRANSIENT_FAILURE
-                    is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal ->
-                        BatchDiagnosticReason.TERMINAL_FAILURE
-                },
-            )
-            when (adaptiveOutcome) {
-                is eu.kanade.translation.translator.retry.AiChunkOutcome.Complete -> {
-                    return ChunkCompletionOutcome.Completed(committedPages.keys)
-                }
-                is eu.kanade.translation.translator.retry.AiChunkOutcome.Paused -> {
-                    val unresolved = anchor ?: firstUnresolved(committedPages.keys)
-                    if (unresolved == null) return ChunkCompletionOutcome.Completed(committedPages.keys)
-                    val page = translationRegistry[unresolved]
-                    if (page != null) {
-                        persistAiFailureOrThrow(
-                            pageKey = unresolved,
-                            page = page,
-                            failure = adaptiveOutcome.failure,
-                            retryable = true,
-                            partialCandidate = adaptiveOutcome.partialCandidate,
-                            envelopeId = adaptiveOutcome.envelopeId,
-                            missingBlockIds = adaptiveOutcome.missingBlockIds,
-                        )
-                        tracker?.markTranslatePaused(unresolved, adaptiveOutcome.failure.safeSummary)
-                        tracker?.markAiPaused(unresolved, adaptiveOutcome.failure.safeSummary)
-                    }
-                    return ChunkCompletionOutcome.Paused(
-                        anchorPageKey = unresolved,
-                        completedPageKeys = committedPages.keys,
-                        retryablePageKeys = setOf(unresolved),
-                        failure = adaptiveOutcome.failure,
-                        nextEligibleRetryAtEpochMs = adaptiveOutcome.nextEligibleRetryAtEpochMs,
-                        reason = adaptiveOutcome.failure.safeSummary,
-                    )
-                }
-                is eu.kanade.translation.translator.retry.AiChunkOutcome.Terminal -> {
-                    val unresolved = anchor ?: firstUnresolved(committedPages.keys)
-                    if (unresolved == null) return ChunkCompletionOutcome.Completed(committedPages.keys)
-                    val page = translationRegistry[unresolved]
-                    if (page != null) {
-                        persistAiFailureOrThrow(
-                            pageKey = unresolved,
-                            page = page,
-                            failure = adaptiveOutcome.failure,
-                            retryable = false,
-                            partialCandidate = adaptiveOutcome.acceptedBlockIds.isNotEmpty(),
-                            envelopeId = adaptiveOutcome.envelopeId,
-                            missingBlockIds = adaptiveOutcome.missingBlockIds,
-                        )
-                        tracker?.markTranslateFailed(unresolved, adaptiveOutcome.failure.safeSummary)
-                        tracker?.markAiFailed(unresolved, adaptiveOutcome.failure.safeSummary)
-                    }
-                    return ChunkCompletionOutcome.Failed(
-                        anchorPageKey = unresolved,
-                        completedPageKeys = committedPages.keys,
-                        terminalPageKeys = setOf(unresolved),
-                        failure = adaptiveOutcome.failure,
-                        reason = adaptiveOutcome.failure.safeSummary,
-                    )
-                }
-            }
-        } catch (e: BatchPersistenceRejectedException) {
-            throw e
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            val failure = if (e is ProviderFailureException) {
-                e.failure
-            } else {
-                eu.kanade.translation.translator.retry.classifyProviderFailure(e)
-            }
-            val reason = failure.safeSummary
-            val anchor = firstUnresolved(emptySet())
-            val page = anchor?.let(translationRegistry::get)
-            if (page != null) {
-                val retryable = failure.retryability != ProviderFailureRetryability.TERMINAL
-                persistAiFailureOrThrow(
-                    pageKey = anchor,
-                    page = page,
-                    failure = failure,
-                    retryable = retryable,
-                    partialCandidate = false,
-                    envelopeId = null,
-                    missingBlockIds = emptySet(),
-                )
-                if (retryable) {
-                    tracker?.markTranslatePaused(anchor, reason)
-                    tracker?.markAiPaused(anchor, reason)
-                } else {
-                    tracker?.markTranslateFailed(anchor, reason)
-                    tracker?.markAiFailed(anchor, reason)
-                }
-            }
-            logcat(LogPriority.ERROR, e) {
-                "TachiyomiAT contextual batch translate failed: envelope=${
-                    BatchTranslationDiagnostics.envelopeId(chunk.pages.keys)
-                }"
-            }
-            BatchTranslationDiagnostics.envelopeLifecycle(
-                phase = BatchEnvelopeLifecycle.FAILED,
-                pageKeys = chunk.pages.keys,
-                expectedItemCount = chunk.blockCount,
-                reason = if (failure.retryability == ProviderFailureRetryability.TERMINAL) {
-                    BatchDiagnosticReason.TERMINAL_FAILURE
-                } else {
-                    BatchDiagnosticReason.TRANSIENT_FAILURE
-                },
-            )
-            if (anchor != null && failure.retryability != ProviderFailureRetryability.TERMINAL) {
-                return ChunkCompletionOutcome.Paused(
-                    anchorPageKey = anchor,
-                    retryablePageKeys = setOf(anchor),
-                    failure = failure,
-                    reason = reason,
-                )
-            }
-            return ChunkCompletionOutcome.Failed(
-                anchorPageKey = anchor,
-                terminalPageKeys = anchor?.let(::setOf).orEmpty(),
-                failure = failure,
-                reason = reason,
-            )
-        }
-    }
-
-    suspend fun completeChunklessPage(pk: String): ChunkCompletionOutcome {
-        val p = translationRegistry[pk] ?: return ChunkCompletionOutcome.Completed()
-        TranslationBlockValidation.applyTo(p)
-        p.translationStatus = StageStatus.READY
-        val persisted = guardedBatchUpdate(pk, "batch chunkless translation commit", BatchStage.TRANSLATION) {
-            (it ?: p).apply {
-                translationStatus = StageStatus.READY
-                translationError = null
-                if (it != null && it !== p) {
-                    blocks = p.blocks.toMutableList()
-                }
-                updatedAt = System.currentTimeMillis()
-            }
-        }
-        if (persisted is ChapterTranslationStore.PatchResult.Rejected) {
-            val reason = "chunkless translation commit rejected: ${persisted.reason}"
-            tracker?.markTranslateFailed(pk, reason)
-            tracker?.markAiFailed(pk, reason)
-            abortBatchCandidate(pk, reason)
-            return ChunkCompletionOutcome.PersistenceRejected(
-                anchorPageKey = pk,
-                stage = BatchDiagnosticStage.TRANSLATION,
-                reason = "Batch persistence publication rejected",
-            )
-        }
-        tracker?.markTranslateDone(pk)
-        tracker?.markAiSucceeded(pk)
-        recordContextPage(pk, p)
-        tryRender(pk)
-        return ChunkCompletionOutcome.Completed(setOf(pk))
-    }
 
     // ---- TachiyomiAT Phase 5: consolidated sequential coordinator ----
-    // The batch schedule is driven by the batch coordinator pass (one
-    // serialized native lane, token-adaptive whole-page AI chunks with one
-    // retained OCR-only probe, one ordered translation lane, and a per-page
-    // render join). The pipeline supplies the adapter implementations of
-    // [NativeLaneWorker] / [TranslatorLaneWorker] / [RenderJoinWorker] that
+    // The batch schedule is driven by the coordinator pass (one serialized
+    // native lane and one ordered translation lane; T924 zero-legacy D2
+    // removed the SBC AI-chunk machinery). The pipeline supplies the adapter
+    // implementations of [NativeLaneWorker] / [TranslatorLaneWorker] that
     // reuse the existing OCR/inpaint/persist/translate/render helpers above,
     // so the heavy Android/ONNX/HTTP logic is unchanged — only the schedule
-    // is centralized. Both AI and standard translators use this schedule.
+    // is centralized.
     //
     // TranslatorComputeClass drives lane routing: ML Kit (LOCAL_COMPUTE) is kept
     // inline on the native lane so its on-device inference never overlaps native
@@ -1269,14 +747,12 @@ internal class BatchLaneWorkers(
         }
     }
 
-    // The translator lane owns the streaming AI chunk planner (contextual path) or
-    // performs per-page translation (standard path). Either way it is a SINGLE
-    // serialized lane so only one provider request is in flight at a time. AI pages
-    // are admitted into the token planner during OCR, but planner emissions remain
-    // buffered until the coordinator's chunk barrier calls completeChunk.
+    // The translator lane performs per-page translation (standard path) as a
+    // SINGLE serialized lane so only one provider request is in flight at a
+    // time. T924 zero-legacy (D2): the legacy SBC AI-chunk machinery (streaming
+    // chunk completion, admission/probe buffering) had no surviving caller and
+    // was deleted — the PROFILE lane translates through ProfileEnvelopeExecutor.
     val translatorWorker = object : TranslatorLaneWorker {
-        override val usesChunkAdmission: Boolean = isAi
-
         // AI contextual streaming state, owned by this lane.
         val planner: StreamingChunkPlanner? =
             if (isAi) {
@@ -1290,16 +766,8 @@ internal class BatchLaneWorkers(
             }
 
         private val pendingAiEmissions = mutableListOf<StreamingChunkPlanner.Emission>()
-        private val handledRejectedPages = mutableSetOf<String>()
         private val contextBlockedPages = linkedSetOf<String>()
-        private var lastAdmission: ChunkAdmission = ChunkAdmission.ACCEPT
         private var standardOutcome: ChunkCompletionOutcome? = null
-
-        override suspend fun admit(ref: OcrReadyPageRef): ChunkAdmission {
-            lastAdmission = ChunkAdmission.ACCEPT
-            translate(ref)
-            return lastAdmission
-        }
 
         override suspend fun translateOutcome(ref: OcrReadyPageRef): ChunkCompletionOutcome {
             standardOutcome = null
@@ -1446,7 +914,6 @@ internal class BatchLaneWorkers(
                     // rejection at the chunk barrier, after the
                     // already-admitted prefix has settled.
                     contextBlockedPages += pageKey
-                    lastAdmission = ChunkAdmission.PROBE
                     tracker?.markAiPaused(pageKey, reason)
                     tracker?.markTranslatePaused(pageKey, reason)
                     return
@@ -1462,13 +929,6 @@ internal class BatchLaneWorkers(
                 }
                 emission?.let { emission ->
                     pendingAiEmissions += emission
-                    if (emission.chunk != null) {
-                        // The page that caused the prior whole-page envelope to
-                        // flush is the one allowed OCR-only probe. It has already
-                        // been admitted to the planner, but cannot enter any later
-                        // stage until the coordinator starts the next chunk.
-                        lastAdmission = ChunkAdmission.PROBE
-                    }
                 }
             } else {
                 // Standard (per-page) path: translate, validate, persist, render.
@@ -1618,143 +1078,6 @@ internal class BatchLaneWorkers(
                         standardOutcome = ChunkCompletionOutcome.Completed(setOf(pageKey))
                     }
                 }
-            }
-        }
-
-        private suspend fun processAiEmission(
-            emission: StreamingChunkPlanner.Emission,
-        ): ChunkCompletionOutcome {
-            if (emission.chunk != null) {
-                return translateChunkAi(
-                    emission.chunk,
-                    rollingContext,
-                )
-            } else {
-                val completed = linkedSetOf<String>()
-                for (pk in emission.completedPages.sortedBy {
-                    resolvedNaturalPageIndexes[it] ?: Int.MAX_VALUE
-                }) {
-                    when (val result = completeChunklessPage(pk)) {
-                        is ChunkCompletionOutcome.Completed -> completed += result.completedPageKeys
-                        is ChunkCompletionOutcome.Paused -> return result.copy(
-                            completedPageKeys = completed + result.completedPageKeys,
-                        )
-                        is ChunkCompletionOutcome.Failed -> return result.copy(
-                            completedPageKeys = completed + result.completedPageKeys,
-                        )
-                        is ChunkCompletionOutcome.Unexpected -> return result.copy(
-                            completedPageKeys = completed + result.completedPageKeys,
-                        )
-                        is ChunkCompletionOutcome.PersistenceRejected -> return result.copy(
-                            completedPageKeys = completed + result.completedPageKeys,
-                        )
-                    }
-                }
-                return ChunkCompletionOutcome.Completed(completed)
-            }
-        }
-
-        override suspend fun completeChunkOutcome(finalChunk: Boolean): ChunkCompletionOutcome {
-            val planner = planner ?: return ChunkCompletionOutcome.Completed()
-            fun ChunkCompletionOutcome.completedKeys(): Set<String> = when (this) {
-                is ChunkCompletionOutcome.Completed -> completedPageKeys
-                is ChunkCompletionOutcome.Paused -> completedPageKeys
-                is ChunkCompletionOutcome.Failed -> completedPageKeys
-                is ChunkCompletionOutcome.Unexpected -> completedPageKeys
-                is ChunkCompletionOutcome.PersistenceRejected -> completedPageKeys
-            }
-            var completed = linkedSetOf<String>()
-            var result: ChunkCompletionOutcome = ChunkCompletionOutcome.Completed()
-            try {
-                pendingAiEmissions.toList().forEach { emission ->
-                    if (result !is ChunkCompletionOutcome.Completed) return@forEach
-                    val processed = processAiEmission(emission)
-                    result = processed
-                    completed += processed.completedKeys()
-                }
-            } finally {
-                pendingAiEmissions.clear()
-            }
-
-            if (result is ChunkCompletionOutcome.Completed && finalChunk) {
-                val flush = planner.flushRemaining()
-                if (flush.finalChunk != null) {
-                    val processed = processAiEmission(
-                        StreamingChunkPlanner.Emission(
-                            chunk = flush.finalChunk,
-                            completedPages = flush.completedPages,
-                        ),
-                    )
-                    result = processed
-                    completed += processed.completedKeys()
-                } else {
-                    val completedFlush = linkedSetOf<String>()
-                    flush.completedPages
-                        .sortedBy { pk -> resolvedNaturalPageIndexes[pk] ?: Int.MAX_VALUE }
-                        .forEach { pk ->
-                            if (result !is ChunkCompletionOutcome.Completed) return@forEach
-                            val processed = completeChunklessPage(pk)
-                            result = processed
-                            if (processed is ChunkCompletionOutcome.Completed) {
-                                completedFlush += processed.completedPageKeys
-                            }
-                        }
-                    completed += completedFlush
-                }
-            }
-
-            if (result is ChunkCompletionOutcome.Completed && contextBlockedPages.isNotEmpty()) {
-                val blocked = contextBlockedPages.minByOrNull {
-                    resolvedNaturalPageIndexes[it] ?: Int.MAX_VALUE
-                }!!
-                contextBlockedPages.clear()
-                result = ChunkCompletionOutcome.Failed(
-                    anchorPageKey = blocked,
-                    completedPageKeys = completed,
-                    terminalPageKeys = emptySet(),
-                    reason = "blocked by non-textless terminal context gap",
-                )
-            }
-
-            if (result is ChunkCompletionOutcome.Completed) {
-                planner.rejectedPages
-                    .filterKeys { it !in handledRejectedPages }
-                    .forEach { (pk, reason) ->
-                        handledRejectedPages += pk
-                        val rejectedPage = translationRegistry[pk] ?: return@forEach
-                        val failure = ProviderFailure(
-                            kind = ProviderFailureKind.PROTOCOL,
-                            retryability = ProviderFailureRetryability.TERMINAL,
-                            safeSummary = reason,
-                            requestId = BatchTranslationDiagnostics.envelopeId(setOf(pk)),
-                        )
-                        persistAiFailureOrThrow(
-                            pageKey = pk,
-                            page = rejectedPage,
-                            failure = failure,
-                            retryable = false,
-                            partialCandidate = false,
-                            envelopeId = failure.requestId,
-                            missingBlockIds = emptySet(),
-                        )
-                        tracker?.markTranslateFailed(pk, reason)
-                        tracker?.markAiFailed(pk, reason)
-                        result = ChunkCompletionOutcome.Failed(
-                            anchorPageKey = pk,
-                            completedPageKeys = completed,
-                            terminalPageKeys = setOf(pk),
-                            failure = failure,
-                            reason = reason,
-                        )
-                    }
-            }
-            val finalResult = result
-            return when (finalResult) {
-                is ChunkCompletionOutcome.Completed -> finalResult.copy(completedPageKeys = completed)
-                is ChunkCompletionOutcome.Paused -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
-                is ChunkCompletionOutcome.Failed -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
-                is ChunkCompletionOutcome.Unexpected -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
-                is ChunkCompletionOutcome.PersistenceRejected -> finalResult.copy(completedPageKeys = completed + finalResult.completedPageKeys)
             }
         }
     }

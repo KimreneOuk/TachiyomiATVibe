@@ -1,12 +1,10 @@
 package eu.kanade.translation.coexistence
 
-import eu.kanade.translation.model.BatchExpectedFingerprints
 import eu.kanade.translation.model.PageTranslation
 import eu.kanade.translation.model.StageStatus
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationBatchPhase
 import eu.kanade.translation.model.TranslationBlock
-import eu.kanade.translation.pipeline.PageDecode
 import io.kotest.assertions.withClue
 import io.kotest.matchers.shouldBe
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,7 +12,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Test
-import java.io.ByteArrayInputStream
 
 /**
  * T918 — batch retry affordance, pipeline leg (the exact ChapterTranslator.kt
@@ -57,32 +54,6 @@ class T918CancelledBatchRestartTest {
     companion object {
         private const val AWAIT_TIMEOUT_MS = TranslationCoexistenceHarness.AWAIT_TIMEOUT_MS
         private const val CHAPTER_ID = TranslationCoexistenceHarness.CHAPTER_ID
-
-        /** The real engine identity the harness graph runs under (D10 recipe). */
-        private fun expectedFingerprints(): BatchExpectedFingerprints {
-            val probe = TranslationCoexistenceHarness.create(listOf("p0"))
-            try {
-                val lane = probe.engineLane
-                val signature = lane.currentTranslatorSignature
-                return PageDecode.batchExpectedFingerprints(
-                    signature,
-                    lane.currentOcrModel,
-                    lane.currentReadingOrder,
-                    lane.currentInpaintingMode,
-                    signature.fromLang,
-                    signature.toLang,
-                )
-            } finally {
-                probe.close()
-            }
-        }
-
-        /** The source fingerprint the REAL batch computes for the fixture stream (D10 recipe). */
-        private suspend fun realSourceFingerprint(pageKey: String): String = checkNotNull(
-            PageDecode.computeSourceFingerprint {
-                ByteArrayInputStream("page-$pageKey".toByteArray())
-            },
-        ) { "T918 fixture: computeSourceFingerprint returned null" }
     }
 
     @Test
