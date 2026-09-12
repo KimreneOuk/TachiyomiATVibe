@@ -1,5 +1,14 @@
 # Master Implementation Plan — Translation Quality & Performance
 
+> **SUPERSEDED (2026-09-12):** historical July-era proposal pack — NOT the
+> current plan. The Batch translation architecture it reasoned about was
+> replaced by T924's chapter-profile pipeline, and the legacy
+> SequentialBatchCoordinator it targets has been deleted. The current plan
+> of record is `Plan/active/2026-09-05_T924_chunk-sizing-and-fast-feedback/`
+> (start at its `README.md` and `implementation-sequence.md`). Some
+> investigation material in this pack (AOT/inpainting/efficiency analyses)
+> may retain background value; nothing here is implementation guidance.
+
 **Date:** 2026-07-12
 **Scope:** Implementation. Sequenced execution plan across all four design docs, with git checkpoints at every safe-to-review boundary.
 **Source designs:**
