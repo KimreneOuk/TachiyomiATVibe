@@ -589,4 +589,30 @@ class CheckpointOcrTransactionTest {
         outcome.manifest.durableFailures.keys shouldBe setOf("page.jpg:TRANSLATION")
         fx.store.readManifest().shouldNotBeNull().durableFailures.keys shouldBe setOf("page.jpg:TRANSLATION")
     }
+
+    // ------------------------------------------------------------------
+    // Read-side revision gate: a persisted checkpoint whose
+    // inpaintMaskRevision is below the current revision is never Usable
+    // evidence for planning.
+    // ------------------------------------------------------------------
+
+    @Test
+    fun `stale inpaintMaskRevision checkpoint fails validation and reads back as absent`() {
+        val io = FakeChapterDocumentIo()
+        val fx = fixtureWithActiveCandidate(io)
+        val stale = checkpointFor(fx.ocrSnapshot, fx.store, fx.generationId)
+            .copy(inpaintMaskRevision = PageTranslation.CURRENT_INPAINT_REVISION - 1)
+
+        stale.validationError().shouldNotBeNull() shouldContain "stale inpaintMaskRevision"
+
+        val fileName = layout.ocrCheckpointFile("page.jpg", stale.ocrContentFingerprint)
+        io.write(fileName, ArtifactDocumentJson.encodeToString(stale).toByteArray())
+        fx.store.readOcrCheckpoint(
+            SidecarPointer(
+                fileName = fileName,
+                schemaVersion = 1,
+                contentFingerprint = stale.ocrContentFingerprint,
+            ),
+        ) shouldBe ChapterArtifactStore.OcrCheckpointRead.Absent
+    }
 }

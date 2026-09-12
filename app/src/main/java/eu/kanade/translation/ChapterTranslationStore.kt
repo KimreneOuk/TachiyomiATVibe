@@ -1072,6 +1072,16 @@ class ChapterTranslationStore(
             }
             if (rejection != null) return@withLock rejectedCheckpoint(description, rejection)
             val live = current ?: return@withLock rejectedCheckpoint(description, "page missing")
+            // A never-inpainted page's revision stays at its 0 default (the OCR
+            // preflight never inpaints), but the checkpoint gate requires
+            // CURRENT_INPAINT_REVISION. The stamp must precede the snapshot
+            // fingerprint, the content fingerprint, and the DTO build so the
+            // published sidecar, the checkpoint claim, and the TX-03.1
+            // committed-side comparison canonicalize on one value
+            // (CleanedPublication stamps the same field at inpaint publication).
+            if (live.inpaintRevision < PageTranslation.CURRENT_INPAINT_REVISION) {
+                live.inpaintRevision = PageTranslation.CURRENT_INPAINT_REVISION
+            }
             val resolvedSourceSha256 = sourceSha256 ?: live.sourceFingerprint
             val sourceIdentity = SourceIdentity(
                 pageKey = pageKey,

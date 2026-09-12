@@ -132,6 +132,67 @@ class OcrCheckpointRestartReuseTest {
     }
 
     @Test
+    fun `fresh ocr snapshot with default inpaintRevision commits at current revision`() = runTest {
+        val store = lazyStore()
+        store.preRegisterPages(listOf("p1"))
+        // Production shape: a fresh OCR result keeps the never-inpainted
+        // revision default (only inpaint publication stamps
+        // CURRENT_INPAINT_REVISION); the checkpoint must canonicalize the live
+        // revision, not reject the page.
+        val lease = store.tryAcquirePageStageLease("p1", PageStage.Ocr, PageWriteOrigin.BATCH)
+            .shouldBeInstanceOf<LeaseAcquisition.Granted>().lease
+        val before = store.snapshot("p1")
+        store.mergeOcr(
+            OcrStagePatch(
+                pageKey = "p1",
+                generation = before.generation,
+                expectedPageVersion = before.pageVersion,
+                expectedPriorOcrFingerprints = before.page?.ocrBlockFingerprints().orEmpty(),
+                ocrResult = PageTranslation(
+                    sourceFileName = "p1",
+                    blocks = mutableListOf(block("source")),
+                    imgWidth = 100f,
+                    imgHeight = 100f,
+                    decodeSampleSize = 1,
+                    ocrStatus = StageStatus.READY,
+                    sourceFingerprint = hex64("source-p1"),
+                    detectionFingerprint = hex64("detection-p1"),
+                    ocrFingerprint = hex64("ocr-p1"),
+                    inpaintMaskBoxes = listOf(eu.kanade.translation.model.InpaintMaskBox(0, 0, 10, 10, 1)),
+                ),
+                expectedLeaseToken = lease.token,
+            ),
+            description = "fresh ocr persist",
+        ).shouldBeInstanceOf<StagePatchResult.Accepted>()
+        val after = store.snapshot("p1")
+        after.page?.inpaintRevision shouldBe 0
+
+        store.checkpointOcr(
+            pageKey = "p1",
+            generation = after.generation,
+            expectedPageVersion = after.pageVersion,
+            expectedLeaseToken = lease.token,
+            expectedCandidateGenerationId = after.candidateGenerationId.shouldNotBeNull(),
+            expectedArtifactPageVersion = after.artifactPageVersion,
+            expectedDependencyFingerprint = after.dependencyFingerprint.shouldNotBeNull(),
+            sourceSha256 = hex64("source-p1"),
+            sourceOrientation = "PORTRAIT",
+        ).shouldBeInstanceOf<CheckpointOcrResult.Committed>()
+
+        // The persisted checkpoint sidecar carries the canonical revision and
+        // therefore reads back Usable.
+        val artifact = artifactStore()
+        val pointer = artifact.readManifest().shouldNotBeNull().ocrCheckpoints.getValue("p1")
+        val read = artifact.readOcrCheckpoint(pointer)
+            .shouldBeInstanceOf<ChapterArtifactStore.OcrCheckpointRead.Usable>()
+        read.checkpoint.inpaintMaskRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
+        // The published OCR snapshot sidecar carries the same canonical revision.
+        artifact.readPageSnapshot(read.checkpoint.ocrPageSnapshotPointer.fileName)
+            .shouldNotBeNull().inpaintRevision shouldBe PageTranslation.CURRENT_INPAINT_REVISION
+        store.releasePageStageLease("p1", PageWriteOrigin.BATCH)
+    }
+
+    @Test
     fun `m1_ checkpointed ocr survives a process restart and is reused by reader and batch origins`() = runTest {
         val store = lazyStore()
         store.preRegisterPages(listOf("p1"))
