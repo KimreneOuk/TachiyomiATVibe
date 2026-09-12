@@ -84,8 +84,11 @@ import tachiyomi.core.common.util.system.logcat
 import java.security.MessageDigest
 
 /**
- * T924 Stage 3 + Stage 5 slice A (WP4 + WP5a) — the FF-01 flagged
- * chapter-profile Batch coordinator. Stage 3 landed the durable machine
+ * T924 — the chapter-profile Batch coordinator: THE Batch coordinator for
+ * BOTH engine lanes since the zero-legacy wave (the FF-01 A/B flag completed
+ * its lifecycle and the legacy SequentialBatchCoordinator was deleted).
+ * STANDARD engines run its per-page standard tail; AI engines run the
+ * analysis/profile/envelope phases below. Stage 3 landed the durable machine
  * through OCR_PREFLIGHT (T924-ST-02..06); Stage-5 slice A continues after a
  * COMPLETE preflight into:
  *

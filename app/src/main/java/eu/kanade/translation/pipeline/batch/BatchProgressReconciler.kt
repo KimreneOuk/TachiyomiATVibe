@@ -128,13 +128,13 @@ object BatchProgressReconciler {
     }
 
     /**
-     * T924 LI-1: the completion projection for a FLAGGED-lane (FF-01 ON)
-     * COMPLETED outcome. The flagged [ChapterProfileBatchCoordinator] commits
-     * translations WITHOUT an in-pass render — a healthy page ends
+     * T924 LI-1: the completion projection for a COMPLETED batch outcome
+     * (both engine lanes since the zero-legacy wave). [ChapterProfileBatchCoordinator]
+     * commits translations WITHOUT an in-pass render — a healthy page ends
      * translation-terminal (READY/PARTIAL, committed bundle in the artifact
      * manifest) with `renderStatus == PENDING` and no cleaned image, so the
-     * legacy [reconcile] done-predicate (`hasRenderedResult`) counts every
-     * translatable page stranded and reports the chapter ERROR. At a flagged
+     * stricter [reconcile] done-predicate (`hasRenderedResult`) counts every
+     * translatable page stranded and reports the chapter ERROR. At a
      * COMPLETED outcome the coordinator has already resolved every expected
      * page to a terminal state per `t924PageTerminalAtFinalize` (unresolved
      * pages make the chapter a retryable ERROR BEFORE finalize), so the
@@ -148,10 +148,12 @@ object BatchProgressReconciler {
      *    bucket (chapter READY_WITH_WARNINGS) instead of done;
      *  - no stranded pages and no failures are ever manufactured here.
      *
-     * NEVER use this for legacy (FF-01 OFF) outcomes — the legacy schedule
-     * renders in-pass and keeps the stricter done-predicate. [activeGeneration]
-     * is accepted for signature parity with [reconcile] and is deliberately
-     * unused: a COMPLETED run is generation-agnostic by definition.
+     * Use ONLY for COMPLETED outcomes — the strict [reconcile] remains the
+     * projection for non-terminal shapes (the pause branch and the durable
+     * status projector when no COMPLETE run record owns the chapter).
+     * [activeGeneration] is accepted for signature parity with [reconcile]
+     * and is deliberately unused: a COMPLETED run is generation-agnostic
+     * by definition.
      */
     fun reconcileFlaggedCompleted(
         pageMap: Map<String, PageTranslation>,

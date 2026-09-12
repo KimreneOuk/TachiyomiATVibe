@@ -812,9 +812,8 @@ internal class BatchChapterTranslator(
                             ).runPass1(orderedPages, computeClass)
                         }
                         ChapterProfileBatchCoordinator.BatchCoordinatorKind.STANDARD_PIPELINE -> {
-                            // T924 Phase 4 Wave A: a STANDARD engine rides the
-                            // SAME flagged coordinator with its per-page
-                            // translate tail (FF-01 ON + STANDARD dispatch).
+                            // T924 Phase 4: a STANDARD engine rides the SAME
+                            // coordinator with its per-page translate tail.
                             // The provider identity freezes as
                             // `standard:<engine>`; DeepL is the only credentialed
                             // standard engine (one-way signature, never a raw

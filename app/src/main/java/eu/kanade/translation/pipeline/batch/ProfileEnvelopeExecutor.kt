@@ -49,7 +49,7 @@ import tachiyomi.core.common.util.system.logcat
 
 /**
  * T924 Stage-6 slice A (WP6, T924-ST-12 + T924-TX-21/TX-20 + DR-A Option 1):
- * the serial per-envelope translation executor behind FF-01.
+ * the serial per-envelope translation executor of the AI profile lane.
  *
  * Invariants enforced here (gates 5.1-5.8 basis):
  *  - ONE provider envelope in flight, chapter-wide (hard serial loop — there

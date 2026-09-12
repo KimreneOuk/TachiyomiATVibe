@@ -58,12 +58,15 @@ data class RunConfigSnapshot(
     val envelopePolicy: EnvelopePolicySnapshot = EnvelopePolicySnapshot(),
     val readingOrderVersion: Int,
     /**
-     * T924-FF-01d: the FF-01 value read once at dispatch and frozen into the
-     * run snapshot. Optional so pre-field records (written with the flag as a
-     * phaseCounters key only) decode unchanged; it participates in
-     * frozenRunConfigFingerprint by construction (a flag flip is a config
-     * change, so ST-03.1 starts a new run — per-page checkpoint reuse is
-     * unaffected, being keyed by content fingerprints).
+     * T924-FF-01d: historical A/B flag value, once read at dispatch and
+     * frozen into the run snapshot. The flag completed its lifecycle
+     * (zero-legacy wave) and every new snapshot freezes `true`; the field
+     * stays in the schema — nullable so pre-field records (written with the
+     * flag as a phaseCounters key only) decode unchanged — and it still
+     * participates in frozenRunConfigFingerprint by construction, so
+     * flag-era records keep their original fingerprints and resume
+     * unchanged (per-page checkpoint reuse is unaffected, being keyed by
+     * content fingerprints).
      */
     val flagProfilePipeline: Boolean? = null,
 )
