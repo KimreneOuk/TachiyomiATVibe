@@ -1,0 +1,10 @@
+# lab runtime outputs
+work/
+results/
+__pycache__/
+*.pyc
+
+# user-supplied device content — never committed (export-failure writes <id>/ dirs)
+test_crops/real/*
+!test_crops/real/.gitkeep
+test_crops/previous_failures/*/
