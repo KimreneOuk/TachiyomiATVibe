@@ -823,3 +823,35 @@ Director authorized the final step after the A/B window. Two waves:
   lease-waiter machinery now orphaned-but-referenced (D2 kept-with-note);
   plus standing T924 debts (LI-5/LI-6/LI-7, LI-8 façade/CAS hardening,
   F-W6-3 strict mode, gate 7.8 FF-02 device evidence, DB-10).
+
+## Post-delivery hotfix H1 — fresh-OCR checkpoint revision stamp (2026-09-12)
+
+- **Trigger:** Director's first live batch run on the installed
+  `0.17.1-452` build failed every never-translated chapter at page 1 of
+  the preflight ("1/24 Detection and OCR → completed+paused"). Logcat
+  (`translation_trace_v1` + WARN lines): `t924 preflight checkpoint
+  rejected ... reason=checkpoint invalid: stale inpaintMaskRevision: 0`
+  → ST-06 phase-terminal → `batch stopped before tail reconciliation
+  status=FAILED`; the UI projected the torn-down run as completed.
+- **Root cause:** a fresh OCR snapshot keeps `inpaintRevision` at its 0
+  default (only `CleanedPublication` and the inpaint-reuse copy stamp
+  it; the preflight never inpaints by the Never rules), while
+  `PageOcrCheckpoint.validationError()` requires
+  `>= CURRENT_INPAINT_REVISION` (10) — so every fresh-OCR checkpoint
+  write was rejected at `ChapterArtifactStore.checkpointOcrOnce`.
+  Test sweep missed it: all fixtures set the revision explicitly.
+- **Fix — commit `88a7265`:** `ChapterTranslationStore.checkpointOcr`
+  canonicalizes `live.inpaintRevision` to CURRENT immediately after the
+  live-page guard, BEFORE the snapshot fingerprint, content fingerprint,
+  and DTO build, so the published sidecar, the checkpoint claim, and the
+  TX-03.1 committed-side comparison canonicalize on one value (mirror of
+  CleanedPublication). Read-side stale gate for legacy checkpoints
+  unchanged, now pinned by a rejection test. Tests: production-shape
+  commit test (default-revision page → Committed, sidecars carry
+  CURRENT) + read-side stale rejection; targeted 182/0.
+- **Secondary observations (recorded, not fixed):** (a) two overlapping
+  batch starts for the same chapter 10s apart advanced the store
+  generation mid-OCR and the first writer was stale-rejected — no
+  same-chapter start guard; (b) the UI projects a FAILED batch outcome
+  as completed+paused and no log line covers that projection step.
+- **Implementer report:** `evidence/hotfix-inpaint-revision-stamp.md`.
