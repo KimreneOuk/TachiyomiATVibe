@@ -262,6 +262,17 @@ private fun TranslatingIndicator(
         )
 
         DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
+            // T924 hotfix: a PAUSED queue entry has no work to cancel — offer
+            // the explicit resume instead.
+            if (translationState == Translation.State.PAUSED) {
+                DropdownMenuItem(
+                    text = { Text(text = stringResource(MR.strings.action_resume)) },
+                    onClick = {
+                        onClick(ChapterTranslationAction.START)
+                        isMenuExpanded = false
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(text = stringResource(MR.strings.action_cancel)) },
                 onClick = {
@@ -372,6 +383,7 @@ private fun ErrorIndicator(
     onClick: (ChapterTranslationAction) -> Unit,
     translationState: Translation.State = Translation.State.ERROR,
 ) {
+    var isMenuExpanded by remember { mutableStateOf(false) }
     Box(
         modifier = modifier
             .size(IconButtonTokens.StateLayerSize)
@@ -379,8 +391,10 @@ private fun ErrorIndicator(
                 enabled = enabled,
                 hapticFeedback = LocalHapticFeedback.current,
                 // T911 slice 1: tap opens the progress drawer with the failure
-                // detail; retry stays available on long-press.
-                onLongClick = { onClick(ChapterTranslationAction.START) },
+                // detail; retry and delete live in the long-press menu
+                // (T924 hotfix: documented affordances instead of a bare
+                // long-press that silently routed START).
+                onLongClick = { isMenuExpanded = true },
                 onClick = {
                     onClick(
                         translationIndicatorTapAction(
@@ -402,6 +416,22 @@ private fun ErrorIndicator(
             modifier = Modifier.size(IndicatorSize),
             tint = MaterialTheme.colorScheme.error,
         )
+        DropdownMenu(expanded = isMenuExpanded, onDismissRequest = { isMenuExpanded = false }) {
+            DropdownMenuItem(
+                text = { Text(text = stringResource(ATMR.strings.manga_translate)) },
+                onClick = {
+                    onClick(ChapterTranslationAction.START)
+                    isMenuExpanded = false
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(text = stringResource(MR.strings.action_delete)) },
+                onClick = {
+                    onClick(ChapterTranslationAction.DELETE)
+                    isMenuExpanded = false
+                },
+            )
+        }
     }
 }
 

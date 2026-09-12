@@ -141,6 +141,22 @@ class TranslationManager(
     private val downloadAttachGenerations = ConcurrentHashMap<Long, Long>()
     private val pendingGroupIdSequence = AtomicLong(0)
 
+    // T924 hotfix: one-shot marks for pending requests the startup reconciler
+    // admitted (process-local is sufficient — the reconciler and the later
+    // download handoff run in the same process; a crash mid-download re-runs
+    // the reconciler next process). A restore-admitted request must not
+    // auto-start translation when its download completes (Director policy: no
+    // OCR/LLM after a restart without an explicit user action); a live
+    // in-session request never carries the mark and starts unchanged.
+    // Nullable backing + self-heal: reflection-built test fixtures skip field
+    // initializers, so an absent set simply means "no marks".
+    @Volatile
+    private var restoreAdmittedChapterIds: MutableSet<Long>? = null
+
+    private fun restoreAdmittedMarks(): MutableSet<Long> =
+        restoreAdmittedChapterIds ?: ConcurrentHashMap.newKeySet<Long>()
+            .also { restoreAdmittedChapterIds = it }
+
     // T911 slice 2 (R9): startup reconciliation readiness barrier. The pass
     // runs once, after BOTH the downloader queue restore and the translation
     // queue restore have completed.
@@ -166,8 +182,8 @@ class TranslationManager(
             queueStateProvider = { queueState },
             translatorProvider = { translator },
             getQueuedTranslationOrNull = { chapterId -> getQueuedTranslationOrNull(chapterId) },
-            translateChapter = { manga, chapter, expectedRequestGeneration ->
-                translateChapter(manga, chapter, expectedRequestGeneration)
+            translateChapter = { manga, chapter, expectedRequestGeneration, autoStart ->
+                translateChapter(manga, chapter, expectedRequestGeneration, autoStart = autoStart)
             },
             pendingRequestGenerationCountersProvider = { pendingRequestGenerationCounters },
             downloadAttachGenerationsProvider = { downloadAttachGenerations },
@@ -316,6 +332,8 @@ class TranslationManager(
     // same-signature stubs keep the manager's public (and reflection-tested) seams.
 
     fun queueTranslationAfterDownload(manga: Manga, chapter: Chapter) {
+        // T924 hotfix: a live request supersedes any restore-admitted mark.
+        chapter.id?.let { chapterId -> restoreAdmittedMarks().remove(chapterId) }
         requestCoordinator.queueTranslationAfterDownload(manga, chapter)
     }
 
@@ -327,6 +345,10 @@ class TranslationManager(
     ): Boolean = requestCoordinator.queueTranslationAfterDownloadIfCurrent(manga, chapter, expectedGeneration)
 
     fun acknowledgeTranslationRequests(chapters: List<Chapter>) {
+        // T924 hotfix: live acknowledgements supersede restore-admitted marks.
+        chapters.forEach { chapter ->
+            chapter.id?.let { chapterId -> restoreAdmittedMarks().remove(chapterId) }
+        }
         requestCoordinator.acknowledgeTranslationRequests(chapters)
     }
 
@@ -431,7 +453,12 @@ class TranslationManager(
         }
 
     suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) {
-        requestCoordinator.startTranslationAfterDownloadIfRequested(manga, chapter)
+        // T924 hotfix: one-shot gate. A pending request the startup reconciler
+        // admitted is enqueued PAUSED when its download completes in this
+        // process; live requests carry no mark and auto-start unchanged.
+        val chapterId = chapter.id
+        val restoreAdmitted = chapterId != null && restoreAdmittedMarks().remove(chapterId)
+        requestCoordinator.startTranslationAfterDownloadIfRequested(manga, chapter, !restoreAdmitted)
     }
 
     // T911 slice 2 (R9): startup reconciliation ------------------------------
@@ -528,6 +555,10 @@ class TranslationManager(
                     clearPendingTranslationRequest(chapterId)
                 }
                 chapterId in downloadQueueChapterIds -> {
+                    // T924 hotfix: restore-admitted WAITING request — mark it
+                    // one-shot so the download handoff in this process enqueues
+                    // PAUSED instead of auto-starting translation.
+                    restoreAdmittedMarks().add(chapterId)
                     if (current.phase != TranslationRequestPhase.WAITING_FOR_DOWNLOAD) {
                         setPendingTranslationRequest(
                             chapterId,
@@ -625,6 +656,9 @@ class TranslationManager(
             markTranslationRequestPreparing(chapterId)
             translator.queueChapter(manga, chapter)
             if (queueState.value.any { it.chapter.id == chapterId }) {
+                // T924 hotfix: mark the admission one-shot so any later
+                // handoff for this chapter cannot auto-start it either.
+                restoreAdmittedMarks().add(chapterId)
                 clearPendingTranslationRequest(chapterId)
             } else {
                 markTranslationQueueFailureIfAcknowledged(manga, chapterId)
@@ -749,6 +783,9 @@ class TranslationManager(
         // T917 Phase 4 (D10): the trigger's admission-probe cross-check; null
         // keeps the legacy no-cross-check path byte-identical.
         admissionContext: eu.kanade.translation.pipeline.batch.BatchAdmissionContext? = null,
+        // T924 hotfix: false for a restore-admitted request handed over by the
+        // download completion — enqueue without starting.
+        autoStart: Boolean = true,
     ) {
         val chapterId = chapters.id ?: return
         synchronized(pendingRequestMutationLock) {
@@ -777,7 +814,27 @@ class TranslationManager(
                 markTranslationQueueFailureIfAcknowledged(manga, chapterId)
             }
         }
-        startTranslation()
+        if (autoStart) {
+            // T924 hotfix: an explicit per-chapter request is the only gate
+            // that re-arms a PAUSED/ERROR queue entry (queueChapter is a no-op
+            // for an existing entry); a generic queue start must not resurrect
+            // that work.
+            queueState.value.firstOrNull {
+                it.chapter.id == chapterId &&
+                    (
+                        it.status == Translation.State.PAUSED ||
+                            it.status == Translation.State.ERROR
+                        )
+            }?.status = Translation.State.QUEUE
+            startTranslation()
+        } else {
+            // T924 hotfix: restore-admitted work is enqueued but stays paused —
+            // the UI shows paused, not a fake-active spinner, and no OCR/LLM
+            // runs without an explicit user action.
+            queueState.value.firstOrNull {
+                it.chapter.id == chapterId && it.status == Translation.State.QUEUE
+            }?.status = Translation.State.PAUSED
+        }
     }
 
     fun translateChapters(manga: Manga, chapters: List<Chapter>) {
@@ -837,6 +894,16 @@ class TranslationManager(
                 )
                 if (queueState.value.any { it.chapter.id == chapterId }) {
                     clearPendingTranslationRequest(chapterId)
+                    // T924 hotfix: an explicit selection re-arms a PAUSED/ERROR
+                    // queue entry (queueChapter is a no-op for an existing
+                    // entry); a generic queue start must not resurrect that work.
+                    queueState.value.firstOrNull {
+                        it.chapter.id == chapterId &&
+                            (
+                                it.status == Translation.State.PAUSED ||
+                                    it.status == Translation.State.ERROR
+                                )
+                    }?.status = Translation.State.QUEUE
                     admitted += chapter
                 } else {
                     markTranslationQueueFailureIfAcknowledged(manga, chapterId)

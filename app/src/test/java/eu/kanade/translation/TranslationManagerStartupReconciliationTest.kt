@@ -1,6 +1,7 @@
 package eu.kanade.translation
 
 import android.content.Context
+import eu.kanade.tachiyomi.data.translation.TranslationForegroundService
 import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.translation.model.Translation
 import eu.kanade.translation.model.TranslationRequestFailureKind
@@ -10,7 +11,11 @@ import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.mockkObject
+import io.mockk.runs
+import io.mockk.unmockkObject
 import io.mockk.verify
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -271,6 +276,109 @@ class TranslationManagerStartupReconciliationTest {
         verify(exactly = 0) { translator.queueChapter(any(), any()) }
         manager.pendingTranslationRequests.value.containsKey(10L) shouldBe false
         store().record(10L).shouldBeNull()
+    }
+
+    // -------------------------------------------------------------------------
+    // T924 hotfix: restore-admitted requests must never auto-start work. The
+    // reconciler marks the chapters it admits (process-local, one-shot) and
+    // the gated admission path enqueues them PAUSED instead of starting.
+    // -------------------------------------------------------------------------
+
+    @Test
+    fun `startup reconciler marks both restored admission branches`() = runBlocking<Unit> {
+        seedPending(10L, 11L)
+        val translator = translatorWithQueue()
+        val manager = newManager(translator)
+
+        manager.reconcilePendingRequestsForStartup(
+            downloadQueueChapterIds = setOf(10L),
+            resolveTranslation = { Translation(httpSource, manga, chapter(it)) },
+            hasDownloadedFiles = { it.chapter.id == 11L },
+        )
+
+        val marks = (getField(manager, "restoreAdmittedChapterIds") as? Set<Long>)
+            ?: emptySet<Long>()
+        // 10L: restored WAITING request (download handoff later in-process);
+        // 11L: admitted straight into the translation queue. Both one-shot.
+        // Set equality — the ConcurrentHashMap key set has no stable order.
+        marks shouldBe setOf(10L, 11L)
+    }
+
+    @Test
+    fun `gated admission enqueues a restore-admitted chapter paused without auto start`() = runBlocking<Unit> {
+        seedPending(10L)
+        val translator = translatorWithQueue()
+        val queue = MutableStateFlow<List<Translation>>(emptyList())
+        every { translator.queueState } returns queue
+        // Mirror the real queueChapter admission: a QUEUE-status entry.
+        every { translator.queueChapter(any(), any(), any(), any()) } answers {
+            if (queue.value.none { it.chapter.id == secondArg<Chapter>().id }) {
+                queue.value = queue.value +
+                    Translation(httpSource, manga, secondArg<Chapter>())
+                        .also { it.status = Translation.State.QUEUE }
+            }
+        }
+        val manager = newManager(translator)
+
+        manager.translateChapter(manga, chapter(10L), autoStart = false)
+
+        val entry = queue.value.single { it.chapter.id == 10L }
+        // Paused, not a fake-active spinner; no OCR/LLM without a user action.
+        entry.status shouldBe Translation.State.PAUSED
+        verify(exactly = 0) { translator.start() }
+    }
+
+    @Test
+    fun `explicit translate re-arms a PAUSED queue entry and starts`() = runBlocking<Unit> {
+        val translator = translatorWithQueue(listOf(queuedTranslation(10L, Translation.State.PAUSED)))
+        // The chapter is already a queue member: queueChapter is a no-op.
+        every { translator.queueChapter(any(), any(), any(), any()) } answers { }
+        val manager = newManager(translator)
+
+        mockkObject(TranslationForegroundService.Companion)
+        every { TranslationForegroundService.start(any()) } just runs
+        try {
+            manager.translateChapter(manga, chapter(10L))
+        } finally {
+            unmockkObject(TranslationForegroundService.Companion)
+        }
+
+        val entry = manager.queueState.value.single { it.chapter.id == 10L }
+        entry.status shouldBe Translation.State.QUEUE
+        verify(exactly = 1) { translator.start() }
+    }
+
+    @Test
+    fun `explicit translate re-arms an ERROR queue entry and starts`() = runBlocking<Unit> {
+        val translator = translatorWithQueue(listOf(queuedTranslation(10L, Translation.State.ERROR)))
+        every { translator.queueChapter(any(), any(), any(), any()) } answers { }
+        val manager = newManager(translator)
+
+        mockkObject(TranslationForegroundService.Companion)
+        every { TranslationForegroundService.start(any()) } just runs
+        try {
+            manager.translateChapter(manga, chapter(10L))
+        } finally {
+            unmockkObject(TranslationForegroundService.Companion)
+        }
+
+        val entry = manager.queueState.value.single { it.chapter.id == 10L }
+        entry.status shouldBe Translation.State.QUEUE
+        verify(exactly = 1) { translator.start() }
+    }
+
+    private fun getField(target: Any, fieldName: String): Any? {
+        var cls: Class<*>? = target.javaClass
+        while (cls != null) {
+            try {
+                val field: Field = cls.getDeclaredField(fieldName)
+                field.isAccessible = true
+                return field.get(target)
+            } catch (_: NoSuchFieldException) {
+                cls = cls.superclass
+            }
+        }
+        throw NoSuchFieldException("Field $fieldName not found on ${target.javaClass}")
     }
 
     private fun store(): TranslationPendingRequestStore =

@@ -20,6 +20,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -47,6 +48,7 @@ import tachiyomi.i18n.at.ATMR
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import java.io.InputStream
+import java.util.concurrent.ConcurrentHashMap
 
 internal fun <T> mergeRestoredQueueEntries(
     durableIds: List<Long>,
@@ -84,6 +86,11 @@ class ChapterTranslator(
         // On timeout the file delete proceeds and the defunct-store guard
         // (ChapterTranslationStore.markDefunct) neutralizes any late write.
         const val BATCH_JOIN_TIMEOUT_MS = 2_000L
+
+        // T924 hotfix: poll interval while a per-chapter batch coroutine waits
+        // for the chapter's previous batch to finish unwinding (see
+        // [inFlightChapterIds]).
+        const val IN_FLIGHT_CLAIM_RETRY_MS = 100L
 
         // TachiyomiAT: reader page streams now live in [TranslationStreamRegistry]
         // (a dedicated DI singleton). These companions are thin delegates kept so
@@ -271,21 +278,45 @@ class ChapterTranslator(
     @Volatile
     var isPaused: Boolean = false
 
+    // T924 hotfix: serializes the check-and-launch of the translator job so
+    // concurrent admissions cannot each observe isRunning == false and launch
+    // a second translator job over the same queue head.
+    private val translatorLaunchLock = Any()
+
+    // T924 hotfix: chapters whose batch is still in flight — launched, and
+    // possibly still unwinding uncancellable native work after a cancel. An
+    // admission for one of these chapters must be a no-op for the running
+    // work (no cancel, no restart, no second schedule): two live schedules
+    // for one chapter make each store generation advance cancel the prior run.
+    private val inFlightChapterIds: MutableSet<Long> = ConcurrentHashMap.newKeySet()
+
     fun start(): Boolean {
-        if (isRunning || queueState.value.isEmpty()) {
+        if (queueState.value.isEmpty()) {
             return false
         }
 
-        val pending = queueState.value.filter {
-            it.status != Translation.State.TRANSLATED && it.status != Translation.State.PAUSED
+        synchronized(translatorLaunchLock) {
+            if (isRunning) {
+                return false
+            }
+
+            // T924 hotfix: ERROR entries are excluded too — a generic queue
+            // start must not resurrect failed/restored work after a restart.
+            // An ERROR chapter re-enters work only via an explicit per-chapter
+            // request (translateChapter re-arms it) or requeueExisting.
+            val pending = queueState.value.filter {
+                it.status != Translation.State.TRANSLATED &&
+                    it.status != Translation.State.PAUSED &&
+                    it.status != Translation.State.ERROR
+            }
+            if (pending.isEmpty()) {
+                return false
+            }
+            pending.forEach { if (it.status != Translation.State.QUEUE) it.status = Translation.State.QUEUE }
+            isPaused = false
+            launchTranslatorJob()
+            return pending.isNotEmpty()
         }
-        if (pending.isEmpty()) {
-            return false
-        }
-        pending.forEach { if (it.status != Translation.State.QUEUE) it.status = Translation.State.QUEUE }
-        isPaused = false
-        launchTranslatorJob()
-        return pending.isNotEmpty()
     }
 
     fun stop(reason: String? = null, closeEngines: Boolean = false) {
@@ -366,9 +397,10 @@ class ChapterTranslator(
     }
 
     private fun launchTranslatorJob() {
-        if (isRunning) return
+        synchronized(translatorLaunchLock) {
+            if (isRunning) return
 
-        translationJob = scope.launch {
+            translationJob = scope.launch {
             val activeTranslationFlow = queueState.transformLatest { queue ->
                 if (queue.isEmpty()) return@transformLatest
                 // Translation.status is mutable state inside each queue item, so observing only
@@ -409,11 +441,28 @@ class ChapterTranslator(
                     }
                 }
             }
+            }
         }
     }
 
     private fun CoroutineScope.launchTranslationJob(translation: Translation) = launchIO {
+        val chapterId = translation.chapter.id
+        var claimed = false
         try {
+            if (chapterId != null) {
+                // T924 hotfix: one live schedule per chapter. Set.add is the
+                // atomic check-and-claim; a previous batch for this chapter may
+                // still be unwinding uncancellable native work after a
+                // pause/stop cancel, so wait for it to release the chapter
+                // instead of scheduling a second concurrent batch whose store
+                // generation advance cancels the prior run. The claim is
+                // released only in the finally below, after this coroutine has
+                // fully unwound.
+                while (!inFlightChapterIds.add(chapterId)) {
+                    delay(IN_FLIGHT_CLAIM_RETRY_MS)
+                }
+                claimed = true
+            }
             val reconciliation = translateChapterInternal(translation)
             if (translation.status == Translation.State.TRANSLATED ||
                 (
@@ -439,6 +488,13 @@ class ChapterTranslator(
             translation.status = Translation.State.ERROR
             if (areAllTranslationsFinished()) {
                 stop()
+            }
+        } finally {
+            // T924 hotfix: release the in-flight claim only once this batch
+            // coroutine has fully unwound (the claim held off overlapping
+            // admissions for the same chapter while it was still running).
+            if (claimed) {
+                inFlightChapterIds.remove(chapterId)
             }
         }
     }

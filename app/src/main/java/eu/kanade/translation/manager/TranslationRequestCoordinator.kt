@@ -53,7 +53,7 @@ internal class TranslationRequestCoordinator(
     private val queueStateProvider: () -> StateFlow<List<Translation>>,
     private val translatorProvider: () -> ChapterTranslator,
     private val getQueuedTranslationOrNull: (Long) -> Translation?,
-    private val translateChapter: (Manga, Chapter, Long?) -> Unit,
+    private val translateChapter: (Manga, Chapter, Long?, Boolean) -> Unit,
     private val pendingRequestGenerationCountersProvider: () -> ConcurrentHashMap<Long, AtomicLong>,
     private val downloadAttachGenerationsProvider: () -> ConcurrentHashMap<Long, Long>,
     private val groupIdSequenceProvider: () -> AtomicLong,
@@ -496,7 +496,13 @@ internal class TranslationRequestCoordinator(
      * stale callback (request cancelled, re-requested, or cleared) is dropped
      * with a log line — it never admits, and never recreates a request.
      */
-    suspend fun startTranslationAfterDownloadIfRequested(manga: Manga, chapter: Chapter) {
+    suspend fun startTranslationAfterDownloadIfRequested(
+        manga: Manga,
+        chapter: Chapter,
+        // T924 hotfix: false for a pending request the startup reconciler
+        // admitted — the handoff enqueues PAUSED instead of auto-starting.
+        autoStart: Boolean = true,
+    ) {
         val chapterId = chapter.id ?: return
         // Atomic fence (post-review fix): the generation check and the
         // PREPARING write happen under the SAME mutation lock, so a cancel
@@ -522,7 +528,7 @@ internal class TranslationRequestCoordinator(
             setPendingTranslationRequest(chapterId, TranslationRequestPhase.PREPARING)
             current.generation
         }
-        translateChapter(manga, chapter, generation)
+        translateChapter(manga, chapter, generation, autoStart)
     }
 
     private data class PendingAcknowledgement(
