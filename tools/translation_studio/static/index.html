@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Translation Studio</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- ============================================================ top bar -->
+<header id="topbar">
+  <div class="brand">Translation Studio</div>
+
+  <button id="btnOpen" class="tb-btn">Open Chapter</button>
+  <div id="chapterInfo" class="chapter-info"></div>
+
+  <div class="spacer"></div>
+
+  <div id="progressChip" class="progress-chip hidden">
+    <span class="spin"></span>
+    <span class="pc-text" id="pcText">Processing…</span>
+    <div class="pc-bar"><div class="pc-fill" id="pcFill"></div></div>
+    <span class="pc-stage" id="pcStage"></span>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="seg" id="modeSeg" title="View mode (1 / 2 / 3 / C)">
+    <button data-mode="original">Original</button>
+    <button data-mode="goal">Goal</button>
+    <button data-mode="ours" class="active">Ours</button>
+    <button data-mode="compare">Compare</button>
+  </div>
+
+  <div class="dd">
+    <button id="btnLayers" class="tb-btn" title="Visualization layers (L)">View ▾</button>
+    <div class="dd-menu hidden" id="layersMenu">
+      <div class="dd-title">Visualization</div>
+      <div id="vizList"></div>
+      <div class="dd-title">Overlays</div>
+      <label class="dd-chk"><input type="checkbox" id="lyRegions"> Regions</label>
+      <label class="dd-chk"><input type="checkbox" id="lyOcr"> OCR text</label>
+      <label class="dd-chk"><input type="checkbox" id="lyMasks" disabled> Masks</label>
+      <div class="dd-title">Detection confidence</div>
+      <div class="dd-row"><input type="range" id="confSlider" min="0.05" max="0.95" step="0.05">
+        <span id="confVal" class="mono"></span></div>
+    </div>
+  </div>
+
+  <button id="btnOverview" class="tb-btn" title="Chapter overview">Overview</button>
+  <button id="btnInspector" class="tb-btn" title="Toggle inspector (I)">Inspector</button>
+
+  <div class="dd">
+    <button id="btnProcess" class="tb-btn" title="Run one stage on the current page">Process ▾</button>
+    <div class="dd-menu hidden" id="processMenu">
+      <button class="dd-item" data-stage="detect">Detect</button>
+      <button class="dd-item" data-stage="ocr">OCR</button>
+      <button class="dd-item" data-stage="translate">Translate</button>
+      <button class="dd-item" data-stage="render">Render</button>
+      <button class="dd-item" data-stage="all">Full pipeline — this page</button>
+      <div class="dd-sep"></div>
+      <button class="dd-item disabled" disabled title="Inpainting is not produced by this desktop harness">Inpaint — n/a in harness</button>
+    </div>
+  </div>
+
+  <button id="btnProcessChapter" class="primary" title="Full pipeline over every page">Process Chapter</button>
+  <label class="chk" title="Fill missing translations via endpoint while processing">
+    <input type="checkbox" id="chkTranslate"> translate</label>
+
+  <button id="btnSettings" class="tb-btn icon" title="Settings">⚙</button>
+</header>
+
+<!-- ============================================================== main -->
+<div id="main">
+  <nav id="rail">
+    <div id="railInner"></div>
+    <div id="railEmpty" class="muted pad">no chapter</div>
+  </nav>
+  <button id="railToggle" title="Collapse navigator"></button>
+
+  <section id="viewer">
+    <div id="strip"></div>
+    <div id="emptyState" class="hidden">
+      <div class="empty-card">
+        <h2>Translation Studio</h2>
+        <p>Open a chapter folder of page images to begin.<br>
+           Optionally point at a reference ("goal") folder to compare against.</p>
+        <button id="btnOpenEmpty" class="primary">Open Chapter</button>
+      </div>
+    </div>
+
+    <div id="focusView" class="hidden">
+      <div class="focus-bar">
+        <button id="focusBack" class="tb-btn">‹ Chapter</button>
+        <span id="focusTitle" class="mono"></span>
+        <span class="spacer"></span>
+        <span class="muted">Ctrl+wheel zoom · Space+drag pan · F fit</span>
+      </div>
+      <div id="focusStage">
+        <div id="focusInner"></div>
+      </div>
+    </div>
+  </section>
+
+  <aside id="inspector" class="hidden">
+    <div class="insp-head">
+      <span id="inspTitle">Inspector</span>
+      <span class="spacer"></span>
+      <button id="inspClose" class="tb-btn icon" title="Close (Esc)">×</button>
+    </div>
+    <div id="inspBody">
+      <div class="muted pad">Click a text region on a page to inspect it.</div>
+    </div>
+  </aside>
+</div>
+
+<!-- compare options bar -->
+<div id="compareBar" class="hidden">
+  <span class="muted">Compare</span>
+  <div class="seg small" id="cmpSeg">
+    <button data-cmp="orig-ours" class="active">Original | Ours</button>
+    <button data-cmp="goal-ours">Goal | Ours</button>
+    <button data-cmp="all">All three</button>
+    <button data-cmp="overlay">Overlay</button>
+  </div>
+  <span id="overlayCtl" class="hidden">
+    <span class="muted">opacity</span>
+    <input type="range" id="ovOpacity" min="0" max="100" value="55">
+    <button id="ovFlip" class="tb-btn" title="Hold to show source">A/B</button>
+  </span>
+</div>
+
+<!-- ============================================================ status -->
+<div id="consolePanel" class="hidden">
+  <div id="consoleDrag"><span>Logs</span><span class="spacer"></span>
+    <button id="consoleClear" class="tb-btn">clear</button></div>
+  <div id="console"></div>
+</div>
+<footer id="statusbar">
+  <span id="sbLeft" class="mono">—</span>
+  <span class="spacer"></span>
+  <span id="sbRight" class="muted"></span>
+  <button id="btnLogs" class="tb-btn">Show Logs</button>
+</footer>
+
+<!-- =========================================================== dialogs -->
+<dialog id="openDlg">
+  <h3>Open chapter</h3>
+  <label>Chapter folder (page images)
+    <div class="row"><input id="chapterDir" style="flex:1">
+      <button id="browseChapter" class="tb-btn">Browse…</button></div></label>
+  <label>Reference / goal folder (optional)
+    <div class="row"><input id="referenceDir" style="flex:1">
+      <button id="browseReference" class="tb-btn">Browse…</button></div></label>
+  <div class="row end">
+    <button id="btnDoOpen" class="primary">Open</button>
+    <button id="openCancel">Cancel</button></div>
+</dialog>
+
+<dialog id="folderDlg">
+  <h3 id="folderTitle">Pick folder</h3>
+  <div class="row" id="folderQuick" style="margin-bottom:8px"></div>
+  <div class="row" style="margin-bottom:8px">
+    <input id="folderPath" style="flex:1"><button id="folderGo">Go</button><button id="folderUp">Up</button>
+  </div>
+  <ul id="folderList"></ul>
+  <div class="row"><span id="folderCurrent" class="muted"></span><span class="spacer"></span>
+    <button id="folderSelect" class="primary">Use this folder</button><button id="folderCancel">Cancel</button></div>
+</dialog>
+
+<dialog id="settingsDlg">
+  <h3>Engines (Android parity)</h3>
+  <label>OCR engine <select id="setOcrEngine">
+    <option value="mangaocr">manga-ocr (T927 lab stack)</option>
+    <option value="paddle">PaddleOCR v6 small (det+rec)</option>
+  </select></label>
+  <label>Inpaint mode <select id="setInpaintMode">
+    <option value="fast">FAST — classical fill</option>
+    <option value="quality">QUALITY — AOT-512 neural</option>
+  </select></label>
+  <label>Translate backend <select id="setTranslateBackend">
+    <option value="google">Google Translate (cached)</option>
+    <option value="lm-studio">LM Studio (OpenAI-compatible)</option>
+  </select></label>
+  <h3>Detector &amp; render</h3>
+  <label>Detector confidence <input id="setConf" type="number" min="0.05" max="0.95" step="0.05"></label>
+  <label>OCR max batch <input id="setMaxBatch" type="number" min="1" max="32"></label>
+  <label>Erase fill <select id="setErase"><option value="auto">auto (background)</option><option value="white">white</option></select></label>
+  <label>Font file (optional) <input id="setFont" placeholder="C:/Windows/Fonts/arial.ttf"></label>
+  <label>Font scale <input id="setFontScale" type="number" step="0.1" min="0.5" max="2"></label>
+  <h3>Translation endpoint (LM Studio)</h3>
+  <label>Base URL <input id="setEndpoint" placeholder="http://127.0.0.1:1234/v1"></label>
+  <label>Model <input id="setModel"></label>
+  <label>Target language <input id="setLang"></label>
+  <div class="row"><button id="setSave" class="primary">Save</button><button id="setClose">Close</button></div>
+</dialog>
+
+<dialog id="overviewDlg">
+  <h3>Chapter overview</h3>
+  <div id="ovBody"></div>
+  <div class="row end"><button id="ovClose">Close</button></div>
+</dialog>
+
+<dialog id="gotoDlg">
+  <h3>Go to page</h3>
+  <div class="row"><input id="gotoInput" type="number" min="1" style="width:90px">
+    <button id="gotoGo" class="primary">Go</button></div>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
