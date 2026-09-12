@@ -855,3 +855,30 @@ Director authorized the final step after the A/B window. Two waves:
   same-chapter start guard; (b) the UI projects a FAILED batch outcome
   as completed+paused and no log line covers that projection step.
 - **Implementer report:** `evidence/hotfix-inpaint-revision-stamp.md`.
+
+## Post-delivery hotfix H2 — restart consent gate (2026-09-12)
+
+- **Trigger:** after the H1 reinstall (`install -r` PRESERVES app data),
+  batch OCR started on its own: `restored 2/2 queued translations` →
+  restore-admitted pending request (chapter 6466) auto-started its
+  download → completion handoff `translateChapter` → unconditional
+  `startTranslation()` un-paused the whole queue → `start()`'s pending
+  scan (excluded only TRANSLATED/PAUSED) resurrected the ERROR-restored
+  Chapter 21 as queue head. Two further same-chapter schedules overlapped
+  the in-flight run (each store-generation advance cancelled its
+  predecessor). UI: a PAUSED entry's indicator menu offered only Cancel;
+  an ERROR entry's retry was a bare undocumented long-press.
+- **Fix — commit `d3464d8`:** (1) `start()` excludes ERROR and takes the
+  launch lock around the isRunning check; (2) per-chapter in-flight
+  claim — a second admission for a running chapter waits for unwind
+  instead of double-scheduling; (3) one-shot restore-admitted marks —
+  the download handoff enqueues PAUSED without starting; live in-session
+  requests start unchanged; explicit per-chapter requests re-arm
+  PAUSED/ERROR entries; (4) PAUSED menu gains Resume, ERROR gains a
+  long-press Translate/Delete menu. Tests: 3 new guard tests
+  (double-schedule test proven failing pre-fix), startup-reconciliation
+  restore-gating tests; targeted 167/0.
+- **Policy (Director, binding):** after an app/process restart, no OCR/
+  LLM work without an explicit user action. Downloads (Mihon domain) may
+  still auto-resume.
+- **Implementer report:** `evidence/hotfix-consent-autostart.md`.
