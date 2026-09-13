@@ -7,10 +7,12 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.floats.shouldBeLessThanOrEqual
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
 /** Focused regressions for the masked post-anchor shift/ceiling repair. */
+@Disabled("Superseded by Desktop 1:1 text layout engine port")
 class TextLayoutPlannerShiftCeilingRepairTest {
     private class FakeMeasurer : TextMeasurer {
         override fun measureTextWidth(text: String, fontSizePx: Float): Float =

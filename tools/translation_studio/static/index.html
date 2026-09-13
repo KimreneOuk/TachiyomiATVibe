@@ -10,65 +10,160 @@
 
 <!-- ============================================================ top bar -->
 <header id="topbar">
-  <div class="brand">Translation Studio</div>
+  <div class="tb-left">
+    <div class="brand">
+      <span class="brand-badge">TS</span>
+      <span class="brand-text">Translation Studio</span>
+    </div>
 
-  <button id="btnOpen" class="tb-btn">Open Chapter</button>
-  <div id="chapterInfo" class="chapter-info"></div>
+    <!-- Chapter Selector Pill & Sleek Inline Flyout -->
+    <div class="chapter-picker-wrap" id="chapterPickerWrap">
+      <button id="btnOpen" class="chapter-pill" title="Switch or open chapter (Ctrl+O)">
+        <span class="cp-icon">📁</span>
+        <span id="chapterInfo" class="cp-name">Open Chapter…</span>
+        <span class="cp-arrow">▾</span>
+      </button>
 
-  <div class="spacer"></div>
+      <!-- Sleek Inline Chapter Switcher Flyout -->
+      <div id="chapterFlyout" class="chapter-flyout hidden">
+        <div class="cf-header">
+          <span class="cf-title">SWITCH CHAPTER</span>
+          <button id="cfClose" class="cf-close-btn" title="Close (Esc)">✕</button>
+        </div>
 
-  <div id="progressChip" class="progress-chip hidden">
-    <span class="spin"></span>
-    <span class="pc-text" id="pcText">Processing…</span>
-    <div class="pc-bar"><div class="pc-fill" id="pcFill"></div></div>
-    <span class="pc-stage" id="pcStage"></span>
-  </div>
+        <!-- Sibling Chapters (auto-detected from parent folder) -->
+        <div id="cfSiblingSection" class="cf-section hidden">
+          <div class="cf-label">Sibling Chapters</div>
+          <div id="siblingChapters" class="sibling-chips"></div>
+        </div>
 
-  <div class="spacer"></div>
+        <!-- Recent Chapters -->
+        <div id="cfRecentSection" class="cf-section">
+          <div class="cf-label">Recent Chapters</div>
+          <div id="flyoutRecent" class="recent-chips"></div>
+        </div>
 
-  <div class="seg" id="modeSeg" title="View mode (1 / 2 / 3 / C)">
-    <button data-mode="original">Original</button>
-    <button data-mode="goal">Goal</button>
-    <button data-mode="ours" class="active">Ours</button>
-    <button data-mode="compare">Compare</button>
-  </div>
+        <!-- Folder Path & Inline Browser -->
+        <div class="cf-section">
+          <div class="cf-label">Open Folder Path</div>
+          <div class="cf-row">
+            <input id="flyoutChapterPath" class="cf-input" placeholder="Paste or enter folder path…" spellcheck="false">
+            <button id="btnFlyoutOpen" class="pipe-btn pipe-primary">Open</button>
+            <button id="btnFlyoutBrowse" class="pipe-btn">Browse</button>
+          </div>
 
-  <div class="dd">
-    <button id="btnLayers" class="tb-btn" title="Visualization layers (L)">View ▾</button>
-    <div class="dd-menu hidden" id="layersMenu">
-      <div class="dd-title">Visualization</div>
-      <div id="vizList"></div>
-      <div class="dd-title">Overlays</div>
-      <label class="dd-chk"><input type="checkbox" id="lyRegions"> Regions</label>
-      <label class="dd-chk"><input type="checkbox" id="lyOcr"> OCR text</label>
-      <label class="dd-chk"><input type="checkbox" id="lyMasks" disabled> Masks</label>
-      <div class="dd-title">Detection confidence</div>
-      <div class="dd-row"><input type="range" id="confSlider" min="0.05" max="0.95" step="0.05">
-        <span id="confVal" class="mono"></span></div>
+          <!-- Expandable Inline Directory Browser -->
+          <div id="inlineBrowser" class="inline-browser hidden">
+            <div class="cf-row roots" id="browserRoots"></div>
+            <div class="cf-browser-nav">
+              <button id="browserUp" class="tb-btn small" title="Parent folder">⬆ Up</button>
+              <span id="browserCurPath" class="browser-path mono muted"></span>
+            </div>
+            <ul id="browserList" class="browser-list"></ul>
+            <div class="cf-row end">
+              <button id="browserSelectThis" class="pipe-btn pipe-accent small">Open This Folder</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reference / Goal Folder (Collapsible) -->
+        <details class="cf-details">
+          <summary>Reference / Goal Folder (Optional)</summary>
+          <div class="cf-row pad-top">
+            <input id="flyoutReferencePath" class="cf-input" placeholder="Reference folder for compare mode…" spellcheck="false">
+          </div>
+        </details>
+      </div>
     </div>
   </div>
 
-  <button id="btnOverview" class="tb-btn" title="Chapter overview">Overview</button>
-  <button id="btnInspector" class="tb-btn" title="Toggle inspector (I)">Inspector</button>
+  <div class="tb-center">
+    <!-- 1. Primary Workflow: Run Controls -->
+    <div class="deck-group run-deck" title="Full pipeline execution">
+      <button class="pipe-btn pipe-accent" data-stage="all" id="btnProcessPage" title="Run full pipeline on current page (Detect → OCR → Clean → Translate → Render)">
+        <span class="btn-icon">⚡</span> <span class="btn-text">Run Page</span>
+      </button>
+      <button id="btnProcessChapter" class="pipe-btn pipe-primary" title="Run full pipeline on all pages in chapter">
+        <span class="btn-icon">⚡</span> <span class="btn-text">Run Chapter</span>
+      </button>
+      
+      <!-- Sleek Auto-Translate Toggle Switch -->
+      <button id="btnToggleTranslate" class="toggle-pill active" title="Toggle automatic translation on/off during pipeline runs (T)">
+        <span class="toggle-dot"></span>
+        <span class="toggle-label">Translate</span>
+      </button>
+      <input type="checkbox" id="chkTranslate" checked style="display:none">
+    </div>
 
-  <div class="dd">
-    <button id="btnProcess" class="tb-btn" title="Run one stage on the current page">Process ▾</button>
-    <div class="dd-menu hidden" id="processMenu">
-      <button class="dd-item" data-stage="detect">Detect</button>
-      <button class="dd-item" data-stage="ocr">OCR</button>
-      <button class="dd-item" data-stage="translate">Translate</button>
-      <button class="dd-item" data-stage="render">Render</button>
-      <button class="dd-item" data-stage="all">Full pipeline — this page</button>
-      <div class="dd-sep"></div>
-      <button class="dd-item disabled" disabled title="Inpainting is not produced by this desktop harness">Inpaint — n/a in harness</button>
+    <div class="pipe-sep-vert"></div>
+
+    <!-- 2. Debug & Inspection: Granular Step Stepper -->
+    <div class="deck-group stepper-deck" id="stepperDeck" title="Run individual stage on current page">
+      <button class="pipe-btn" data-stage="detect" title="Run Detector (v4) on current page">Detect</button>
+      <button class="pipe-btn" data-stage="ocr" title="Run OCR on detected boxes">OCR</button>
+      <button class="pipe-btn" data-stage="inpaint" title="Clean background (Bubble Fill + PaddleDet + AOT)">Clean</button>
+      <button class="pipe-btn" data-stage="translate" title="Translate OCR text on current page">Translate</button>
+      <button class="pipe-btn" data-stage="render" title="Render translated typography on current page">Render</button>
+      <button id="btnRerender" class="pipe-btn pipe-btn-subtle icon-only" title="Recalculate layout &amp; re-render from cached translations [R]">↻</button>
+    </div>
+
+    <!-- Compact Stages Dropdown for Narrow Viewports -->
+    <div class="dd stepper-dropdown-wrap hidden" id="stepperDropdownWrap">
+      <button id="btnStepperMenu" class="pipe-btn dropdown-btn" title="Inspect individual pipeline stages">Stages ▾</button>
+      <div id="stepperDropdown" class="dd-menu hidden">
+        <div class="dd-title">Individual Stages (Page)</div>
+        <button class="dd-item" data-stage="detect">1. Detect Text & Bubbles</button>
+        <button class="dd-item" data-stage="ocr">2. OCR Text Recognition</button>
+        <button class="dd-item" data-stage="inpaint">3. Clean Background (Inpaint)</button>
+        <button class="dd-item" data-stage="translate">4. Translate OCR Text</button>
+        <button class="dd-item" data-stage="render">5. Render Typography</button>
+        <div class="dd-sep"></div>
+        <button class="dd-item" id="btnRerenderDropdown">↻ Quick Re-render (Cached)</button>
+      </div>
+    </div>
+
+    <div class="pipe-sep-vert"></div>
+
+    <!-- 3. Maintenance / Reset Dropdown -->
+    <div class="dd reset-dd">
+      <button id="btnResetMenu" class="pipe-btn pipe-btn-danger dropdown-btn" title="Reset cached pipeline artifacts">
+        <span class="btn-icon">🗑</span> <span class="btn-text">Reset ▾</span>
+      </button>
+      <div id="resetDropdown" class="dd-menu hidden">
+        <div class="dd-title">Reset Cached Artifacts</div>
+        <button id="btnResetPage" class="dd-item danger-item" title="Clear Detect, OCR, Inpaint & Render for current page">
+          <span class="dd-icon">📄</span> Reset Current Page
+          <span class="sub">Clears Detect, OCR, Clean & Render</span>
+        </button>
+        <button id="btnResetChapter" class="dd-item danger-item" title="Clear cached artifacts across all pages">
+          <span class="dd-icon">📚</span> Reset Entire Chapter
+          <span class="sub">Clears all pages' cached artifacts</span>
+        </button>
+        <div class="dd-sep"></div>
+        <label class="dd-chk" title="When checked, also deletes translated text files">
+          <input type="checkbox" id="chkResetIncludeTr">
+          <span>Also delete translations</span>
+        </label>
+      </div>
     </div>
   </div>
 
-  <button id="btnProcessChapter" class="primary" title="Full pipeline over every page">Process Chapter</button>
-  <label class="chk" title="Fill missing translations via endpoint while processing">
-    <input type="checkbox" id="chkTranslate"> translate</label>
+  <div class="tb-right">
+    <div id="progressChip" class="progress-chip hidden">
+      <span class="spin"></span>
+      <span class="pc-text" id="pcText">Processing…</span>
+      <div class="pc-bar"><div class="pc-fill" id="pcFill"></div></div>
+      <span class="pc-stage" id="pcStage"></span>
+    </div>
 
-  <button id="btnSettings" class="tb-btn icon" title="Settings">⚙</button>
+    <button id="btnOverview" class="tb-btn" title="Chapter metrics & overview">
+      <span class="btn-icon">📊</span> <span class="btn-text">Overview</span>
+    </button>
+    <button id="btnSettings" class="tb-btn icon" title="Advanced Settings">⚙</button>
+    <button id="btnSidebarToggle" class="tb-btn active" title="Toggle Visualization & Inspector Sidebar (V)">
+      <span class="sidebar-icon">👁</span> <span class="sidebar-text">Visuals</span>
+    </button>
+  </div>
 </header>
 
 <!-- ============================================================== main -->
@@ -80,6 +175,14 @@
   <button id="railToggle" title="Collapse navigator"></button>
 
   <section id="viewer">
+    <!-- Floating Quick Zoom Bar -->
+    <div id="stripZoomBar" class="strip-zoom-bar">
+      <button id="btnStripZoomOut" class="tb-btn icon small" title="Zoom Out (-)">−</button>
+      <span id="stripZoomVal" class="mono small">100%</span>
+      <button id="btnStripZoomIn" class="tb-btn icon small" title="Zoom In (+)">+</button>
+      <button id="btnStripZoomFit" class="tb-btn small" title="Reset Zoom">Fit</button>
+    </div>
+
     <div id="strip"></div>
     <div id="emptyState" class="hidden">
       <div class="empty-card">
@@ -94,6 +197,12 @@
       <div class="focus-bar">
         <button id="focusBack" class="tb-btn">‹ Chapter</button>
         <span id="focusTitle" class="mono"></span>
+        <div class="zoom-controls">
+          <button id="btnZoomOut" class="tb-btn small" title="Zoom Out (-)">−</button>
+          <button id="btnZoomReset" class="tb-btn small" title="Reset Zoom (100%)">100%</button>
+          <button id="btnZoomFit" class="tb-btn small" title="Fit to Screen (F)">Fit</button>
+          <button id="btnZoomIn" class="tb-btn small" title="Zoom In (+)">+</button>
+        </div>
         <span class="spacer"></span>
         <span class="muted">Ctrl+wheel zoom · Space+drag pan · F fit</span>
       </div>
@@ -103,32 +212,230 @@
     </div>
   </section>
 
-  <aside id="inspector" class="hidden">
-    <div class="insp-head">
-      <span id="inspTitle">Inspector</span>
-      <span class="spacer"></span>
-      <button id="inspClose" class="tb-btn icon" title="Close (Esc)">×</button>
+  <!-- Right Sidebar: Visualization Cockpit & Region Inspector -->
+  <aside id="sidebar">
+    <div class="sb-header">
+      <div class="sb-tabs">
+        <button id="tabViz" class="sb-tab active" title="Visualization & Overlays (V)">Visualization</button>
+        <button id="tabInsp" class="sb-tab" title="Region Inspector (I)">Inspector <span id="inspBadge" class="insp-badge hidden">0</span></button>
+      </div>
+      <button id="sbClose" class="tb-btn icon" title="Collapse sidebar (⇥)">⇥</button>
     </div>
-    <div id="inspBody">
-      <div class="muted pad">Click a text region on a page to inspect it.</div>
+
+    <!-- Pane: Visualization -->
+    <div id="paneViz" class="sb-pane">
+      <!-- View Modes -->
+      <div class="sb-card">
+        <div class="sb-label">View Mode</div>
+        <div class="seg seg-grid" id="modeSeg">
+          <button data-mode="ours" class="active" title="3: Ours (Translated render)">Ours</button>
+          <button data-mode="original" title="1: Original image">Original</button>
+          <button data-mode="inpainted" title="2: Inpainted background">Inpainted</button>
+          <button data-mode="goal" title="4: Reference / Goal">Goal</button>
+          <button data-mode="compare" title="C: Side-by-side compare">Compare</button>
+        </div>
+      </div>
+
+      <!-- Overlays & Visibility Tree -->
+      <div class="sb-card">
+        <div class="sb-label-row">
+          <span class="sb-label">Layer Visualization Tree</span>
+          <button id="btnTreeReset" class="sb-mini-btn" title="Reset all layers to default">Reset</button>
+        </div>
+        <div class="viz-tree" id="vizTree">
+          <!-- Group: Bounding Boxes -->
+          <div class="tree-branch" data-branch="boxes">
+            <div class="tree-header">
+              <span class="tree-twist">▾</span>
+              <label class="tree-node-label">
+                <input type="checkbox" id="treeBoxAll" checked>
+                <span class="tree-name">Bounding Boxes</span>
+              </label>
+              <span class="tree-badge-count" id="treeBoxCount">3</span>
+            </div>
+            <div class="tree-children">
+              <label class="tree-leaf">
+                <input type="checkbox" id="treeBoxBubble" checked>
+                <span class="tree-pill pill-bubble">Bubble</span>
+                <span class="tree-desc">Speech bubble frame</span>
+              </label>
+              <label class="tree-leaf">
+                <input type="checkbox" id="treeBoxBubbleText" checked>
+                <span class="tree-pill pill-text">Bubble Text</span>
+                <span class="tree-desc">Dialogue inside bubble</span>
+              </label>
+              <label class="tree-leaf">
+                <input type="checkbox" id="treeBoxFreeText" checked>
+                <span class="tree-pill pill-freetext">Free Text</span>
+                <span class="tree-desc">SFX / free dialogue</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Group: Segmentation & Inpaint Masks -->
+          <div class="tree-branch" data-branch="masks">
+            <div class="tree-header">
+              <span class="tree-twist">▾</span>
+              <label class="tree-node-label">
+                <input type="checkbox" id="treeMaskAll" checked>
+                <span class="tree-name">Segmentation &amp; Masks</span>
+              </label>
+              <span class="tree-badge-count" id="treeMaskCount">2</span>
+            </div>
+            <div class="tree-children">
+              <label class="tree-leaf">
+                <input type="checkbox" id="treeMaskSeg" checked>
+                <span class="tree-pill pill-segmask">Bubble Seg Mask</span>
+                <span class="tree-desc">YOLO11-seg contour</span>
+              </label>
+              <label class="tree-leaf">
+                <input type="checkbox" id="treeMaskInpaint">
+                <span class="tree-pill pill-inpaint">Inpaint Erase Mask</span>
+                <span class="tree-desc">Cleaned erase area</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Group: Labels & Text Badges -->
+          <div class="tree-branch" data-branch="labels">
+            <div class="tree-header">
+              <span class="tree-twist">▾</span>
+              <label class="tree-node-label">
+                <input type="checkbox" id="treeLabelAll" checked>
+                <span class="tree-name">Labels &amp; Typography</span>
+              </label>
+              <span class="tree-badge-count" id="treeLabelCount">2</span>
+            </div>
+            <div class="tree-children">
+              <label class="tree-leaf">
+                <input type="checkbox" id="treeTypeBadges" checked>
+                <span class="tree-pill pill-type">Type Badges</span>
+                <span class="tree-desc">Contrasting box labels</span>
+              </label>
+              <label class="tree-leaf">
+                <input type="checkbox" id="treeTextBadges" checked>
+                <span class="tree-pill pill-ocrtext">OCR &amp; Translation</span>
+                <span class="tree-desc">Interactive snippets</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pipeline Configuration (Directly Visible & Adjustable) -->
+      <div class="sb-card">
+        <div class="sb-label">Pipeline Configuration</div>
+        
+        <!-- OCR Engine -->
+        <div class="sb-ctrl-row">
+          <div class="sb-ctrl-label">
+            <span>OCR Engine</span>
+            <span class="sb-badge-tag" id="cfgOcrTag">mangaocr</span>
+          </div>
+          <div class="seg seg-2" id="cfgOcrSeg">
+            <button data-engine="mangaocr" class="active" title="ViT + Autoregressive decoder (Manga text specialist)">MangaOCR</button>
+            <button data-engine="paddle" title="PaddleOCR v6 mobile det+rec (high speed)">PaddleOCR</button>
+          </div>
+        </div>
+
+        <!-- Inpaint Mode -->
+        <div class="sb-ctrl-row">
+          <div class="sb-ctrl-label">
+            <span>Inpaint Mode</span>
+            <span class="sb-badge-tag" id="cfgInpaintTag">fast</span>
+          </div>
+          <div class="seg seg-2" id="cfgInpaintSeg">
+            <button data-inpaint="fast" class="active" title="Classical color fill (instant)">Fast</button>
+            <button data-inpaint="quality" title="Neural AOT-512 inpainting">Quality</button>
+          </div>
+        </div>
+
+        <!-- Translation Backend -->
+        <div class="sb-ctrl-row">
+          <div class="sb-ctrl-label">
+            <span>Translate Backend</span>
+            <span class="sb-badge-tag" id="cfgTranslateTag">google</span>
+          </div>
+          <div class="seg seg-2" id="cfgTranslateSeg">
+            <button data-backend="google" class="active" title="Google Translate (cached)">Google</button>
+            <button data-backend="lm-studio" title="Local LLM (LM Studio / OpenAI API)">LM Studio</button>
+          </div>
+        </div>
+
+        <!-- Detector v4 Conf -->
+        <div class="sb-slider-row">
+          <div class="sb-slider-meta">
+            <span>Detector v4 Conf</span>
+            <span id="confVal" class="mono">0.45</span>
+          </div>
+          <input type="range" id="confSlider" min="0.05" max="0.95" step="0.05" value="0.45">
+        </div>
+
+        <!-- Bubble Mask Edge Inset -->
+        <div class="sb-slider-row">
+          <div class="sb-slider-meta">
+            <span>Bubble Edge Inset</span>
+            <span id="erosionVal" class="mono">5 px</span>
+          </div>
+          <input type="range" id="erosionSlider" min="0" max="20" step="1" value="5">
+        </div>
+
+        <!-- Font Scale -->
+        <div class="sb-slider-row">
+          <div class="sb-slider-meta">
+            <span>Font Scale</span>
+            <span id="fontScaleVal" class="mono">1.0x</span>
+          </div>
+          <input type="range" id="fontScaleSlider" min="0.5" max="2.0" step="0.1" value="1.0">
+        </div>
+
+        <!-- Mask Opacity -->
+        <div class="sb-slider-row">
+          <div class="sb-slider-meta">
+            <span>Mask Opacity</span>
+            <span id="maskOpacityVal" class="mono">85%</span>
+          </div>
+          <input type="range" id="maskOpacitySlider" min="10" max="100" step="5" value="85">
+        </div>
+      </div>
+
+      <!-- Compare Controls (visible in compare mode) -->
+      <div class="sb-card" id="sbCompareCard">
+        <div class="sb-label">Compare Options</div>
+        <div class="seg seg-grid small" id="cmpSeg">
+          <button data-cmp="orig-ours" class="active">Orig | Ours</button>
+          <button data-cmp="goal-ours">Goal | Ours</button>
+          <button data-cmp="all">All 3</button>
+          <button data-cmp="overlay">A/B Overlay</button>
+        </div>
+        <div id="overlayCtl" class="hidden sb-subpanel">
+          <div class="sb-slider-row">
+            <div class="sb-slider-meta"><span>Overlay Blend</span></div>
+            <input type="range" id="ovOpacity" min="0" max="100" value="55">
+          </div>
+          <button id="ovFlip" class="tb-btn sb-action-btn" title="Hold to show source">Hold for Source (A/B)</button>
+        </div>
+      </div>
+
+      <!-- Raw Model Artifacts -->
+      <div class="sb-card">
+        <div class="sb-label">Raw Model Artifacts</div>
+        <div class="seg small" id="advViewsSeg">
+          <button data-viz="render" class="active">Render</button>
+          <button data-viz="segmentation">Seg Mask</button>
+          <button data-viz="inpaint_mask">Erase Mask</button>
+          <button data-viz="detection">Boxes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pane: Inspector -->
+    <div id="paneInsp" class="sb-pane hidden">
+      <div id="inspBody">
+        <div class="muted pad">Click a text region on a page to inspect it.</div>
+      </div>
     </div>
   </aside>
-</div>
-
-<!-- compare options bar -->
-<div id="compareBar" class="hidden">
-  <span class="muted">Compare</span>
-  <div class="seg small" id="cmpSeg">
-    <button data-cmp="orig-ours" class="active">Original | Ours</button>
-    <button data-cmp="goal-ours">Goal | Ours</button>
-    <button data-cmp="all">All three</button>
-    <button data-cmp="overlay">Overlay</button>
-  </div>
-  <span id="overlayCtl" class="hidden">
-    <span class="muted">opacity</span>
-    <input type="range" id="ovOpacity" min="0" max="100" value="55">
-    <button id="ovFlip" class="tb-btn" title="Hold to show source">A/B</button>
-  </span>
 </div>
 
 <!-- ============================================================ status -->
@@ -139,38 +446,15 @@
 </div>
 <footer id="statusbar">
   <span id="sbLeft" class="mono">—</span>
+  <div id="sbSpeedMetrics" class="sb-speed-metrics"></div>
   <span class="spacer"></span>
   <span id="sbRight" class="muted"></span>
   <button id="btnLogs" class="tb-btn">Show Logs</button>
 </footer>
 
 <!-- =========================================================== dialogs -->
-<dialog id="openDlg">
-  <h3>Open chapter</h3>
-  <label>Chapter folder (page images)
-    <div class="row"><input id="chapterDir" style="flex:1">
-      <button id="browseChapter" class="tb-btn">Browse…</button></div></label>
-  <label>Reference / goal folder (optional)
-    <div class="row"><input id="referenceDir" style="flex:1">
-      <button id="browseReference" class="tb-btn">Browse…</button></div></label>
-  <div class="row end">
-    <button id="btnDoOpen" class="primary">Open</button>
-    <button id="openCancel">Cancel</button></div>
-</dialog>
-
-<dialog id="folderDlg">
-  <h3 id="folderTitle">Pick folder</h3>
-  <div class="row" id="folderQuick" style="margin-bottom:8px"></div>
-  <div class="row" style="margin-bottom:8px">
-    <input id="folderPath" style="flex:1"><button id="folderGo">Go</button><button id="folderUp">Up</button>
-  </div>
-  <ul id="folderList"></ul>
-  <div class="row"><span id="folderCurrent" class="muted"></span><span class="spacer"></span>
-    <button id="folderSelect" class="primary">Use this folder</button><button id="folderCancel">Cancel</button></div>
-</dialog>
-
 <dialog id="settingsDlg">
-  <h3>Engines (Android parity)</h3>
+  <h3>Advanced Settings (Android parity)</h3>
   <label>OCR engine <select id="setOcrEngine">
     <option value="mangaocr">manga-ocr (T927 lab stack)</option>
     <option value="paddle">PaddleOCR v6 small (det+rec)</option>
@@ -189,6 +473,7 @@
   <label>Erase fill <select id="setErase"><option value="auto">auto (background)</option><option value="white">white</option></select></label>
   <label>Font file (optional) <input id="setFont" placeholder="C:/Windows/Fonts/arial.ttf"></label>
   <label>Font scale <input id="setFontScale" type="number" step="0.1" min="0.5" max="2"></label>
+  <label>Bubble mask edge reduction (px) <input id="setBubbleErosion" type="number" step="1" min="0" max="20" value="5"></label>
   <h3>Translation endpoint (LM Studio)</h3>
   <label>Base URL <input id="setEndpoint" placeholder="http://127.0.0.1:1234/v1"></label>
   <label>Model <input id="setModel"></label>

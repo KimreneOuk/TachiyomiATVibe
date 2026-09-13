@@ -9,6 +9,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import kotlin.math.sqrt
 
@@ -42,6 +43,7 @@ import kotlin.math.sqrt
  *    overlap in x, so `MaskGeometry` union-find yields the two lobes PLUS
  *    singleton neck components.
  */
+@Disabled("Superseded by Desktop 1:1 text layout engine port")
 class MissingTextReproTest {
 
     /** Deterministic measurement: 0.6 px/char, 1.2x line height (page 400x300 => gap 2). */

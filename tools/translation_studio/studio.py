@@ -31,11 +31,19 @@ def main():
         from pipeline import PIPELINE
         PIPELINE.open_folders(args.chapter, args.reference)
     else:
-        # Director-locked test chapter: auto-open when it exists so no folder
-        # picking is needed. An explicit --chapter always wins; the UI Open
-        # Chapter button still works.
+        # Load most recent chapter (pre-seeded with DEFAULT_CHAPTER)
         from pipeline import PIPELINE, DEFAULT_CHAPTER
-        if Path(DEFAULT_CHAPTER).is_dir():
+        recents = PIPELINE.get_recent()
+        opened = False
+        if recents:
+            first = recents[0].get("chapter")
+            if first and Path(first).is_dir():
+                try:
+                    PIPELINE.open_folders(first, recents[0].get("reference"))
+                    opened = True
+                except Exception as e:
+                    print(f"Warning: could not open recent chapter {first}: {e}")
+        if not opened and Path(DEFAULT_CHAPTER).is_dir():
             PIPELINE.open_folders(DEFAULT_CHAPTER, args.reference)
     serve(args.port, open_browser=not args.no_browser)
 

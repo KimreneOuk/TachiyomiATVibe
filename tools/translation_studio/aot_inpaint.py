@@ -57,6 +57,7 @@ REPORT_PUSH_PULL_CONTEXT = 64   # AOTInpainting.REPORT_PUSH_PULL_CONTEXT
 MASK_PAD = 8                    # AOTInpainting.MASK_PAD (inpaintReportBubbles)
 REPORT_BUBBLE_SMOOTH_PASSES = 12  # AOTInpainting.REPORT_BUBBLE_SMOOTH_PASSES
 FEATHER_RAMP_PX = 12            # AOTInpainting.FEATHER_RAMP_PX
+BUBBLE_SEG_MASK_EROSION = 5     # Edge erosion for bubble segmentation mask inpainting
 
 # ---- PushPullGradient.kt ----
 DEFAULT_RING = 8            # PushPullGradient.DEFAULT_RING
@@ -284,20 +285,61 @@ def fill_and_blend(px: np.ndarray, mask: np.ndarray,
     px[:] = blend_pixel(original, px, alpha)
 
 
-def inpaint_report_bubbles(page: Image.Image, boxes) -> Image.Image:
-    """AOTInpainting.inpaintReportBubbles for bubble-route boxes WITHOUT a
-    segmentation mask: buildDynamicPillMask(MASK_PAD=8) over the page, then
-    AotReportBubbleFill.fillAndBlend(smooth 12, feather 12)."""
-    if not boxes:
-        return page
+def inpaint_report_bubbles(page: Image.Image, boxes, seg_masks=None,
+                           erosion: int = BUBBLE_SEG_MASK_EROSION) -> tuple[Image.Image, np.ndarray]:
+    """AOTInpainting.inpaintReportBubbles matching Android:
+    1. Rasterize bubble segmentation masks from manga109 YOLO11-seg model.
+    2. Erode segmentation mask by `erosion` px (default 5) to protect bubble stroke boundaries.
+    3. For bubble boxes not covered by existing segmentation masks, build dynamic pill mask (MASK_PAD=8).
+    4. Run AotReportBubbleFill.fillAndBlend(smooth=12, feather=12).
+    Returns (page, bubble_mask)."""
     w, h = page.size
-    mask = build_dynamic_pill_mask(boxes, w, h, MASK_PAD)
+    mask = np.zeros((h, w), bool)
+    if seg_masks:
+        for m in seg_masks:
+            if hasattr(m, "labels"):
+                mask |= (m.labels > 0)
+            elif hasattr(m, "component_mask"):
+                for c in getattr(m, "components", [1]):
+                    mask |= m.component_mask(c)
+            elif isinstance(m, np.ndarray):
+                mask |= m.astype(bool)
+
+    if mask.any() and erosion > 0:
+        eroded = ndimage.binary_erosion(mask, iterations=erosion)
+        if eroded.any():
+            # If any individual component completely vanished, restore it with a milder erosion or original
+            labels, n = ndimage.label(mask, structure=np.ones((3, 3), bool))
+            eroded_labels = set(np.unique(labels[eroded]))
+            for comp in range(1, n + 1):
+                if comp not in eroded_labels:
+                    comp_m = labels == comp
+                    e = ndimage.binary_erosion(comp_m, iterations=max(1, erosion // 2))
+                    eroded |= (e if e.any() else comp_m)
+            mask = eroded
+
+    remaining_boxes = []
+    for b in (boxes or []):
+        x1, y1 = max(0, int(b[0])), max(0, int(b[1]))
+        x2, y2 = min(w, int(b[2])), min(h, int(b[3]))
+        if x2 > x1 and y2 > y1:
+            box_area = (x2 - x1) * (y2 - y1)
+            if mask.any() and mask[y1:y2, x1:x2].sum() > 0.35 * box_area:
+                continue
+        remaining_boxes.append(b)
+
+    if remaining_boxes:
+        pill_mask = build_dynamic_pill_mask(remaining_boxes, w, h, MASK_PAD)
+        mask |= pill_mask
+
     if not mask.any():
-        return page
+        return page, mask
+
     px = np.asarray(page).copy()
     fill_and_blend(px, mask, REPORT_BUBBLE_SMOOTH_PASSES, FEATHER_RAMP_PX)
     page.paste(Image.fromarray(px))
-    return page
+    return page, mask
+
 
 
 def _scan_lr(row: np.ndarray, step: int = 3) -> np.ndarray:
@@ -692,14 +734,17 @@ class AotInpainter:
 
 
 def inpaint_free_text(page: Image.Image, detector_boxes, mode: str,
-                      paddle_det, aot: "AotInpainter | None" = None) -> dict:
+                      paddle_det, aot: "AotInpainter | None" = None) -> tuple[dict, np.ndarray]:
     """AOTInpainting.inpaintRegions free-text leg: refine -> cluster ->
     per group neural (QUALITY with a session) else push/pull. mode is
-    "QUALITY" | "FAST" (the InpaintingMode enum name). Never raises."""
+    "QUALITY" | "FAST" (the InpaintingMode enum name). Never raises.
+    Returns (stats, free_text_mask)."""
+    w, h = page.size
+    free_mask = np.zeros((h, w), bool)
     if not detector_boxes:
         return {"freeDets": 0, "rawGroups": 0, "clusteredGroups": 0,
                 "paddleLines": 0, "fallback": 0, "neural": 0, "push_pull": 0,
-                "detMs": 0.0}
+                "detMs": 0.0}, free_mask
     if paddle_det is not None:
         groups, paddle_lines, fallback, det_ms = refine_free_text_groups(
             page, detector_boxes, paddle_det)
@@ -727,6 +772,14 @@ def inpaint_free_text(page: Image.Image, detector_boxes, mode: str,
     for group in clustered:
         if not group:
             continue
+        # Record mask for this group
+        bnds = padded_union_bounds(group, w, h, REPORT_PUSH_PULL_CONTEXT)
+        if bnds is not None:
+            cw, ch = bnds[2] - bnds[0], bnds[3] - bnds[1]
+            if cw > 0 and ch > 0:
+                loc = [lb for lb in (localize_box(b, bnds[0], bnds[1], cw, ch) for b in group) if lb is not None]
+                m = build_fixed_pill_mask(loc, cw, ch, REPORT_FREE_TEXT_PAD, REPORT_FREE_TEXT_DILATE)
+                free_mask[bnds[1]:bnds[3], bnds[0]:bnds[2]] |= m
         if neural:
             stats["neural"] += len(group)
             aot.inpaint_report_free_text_neural(page, group)
@@ -735,4 +788,82 @@ def inpaint_free_text(page: Image.Image, detector_boxes, mode: str,
             _log(f"[inpaint] route=push_pull reason={reason} boxes={len(group)}")
             stats["push_pull"] += len(group)
             inpaint_report_free_text_fast(page, group)
-    return stats
+    return stats, free_mask
+
+
+def inpaint_page_pipeline(
+    page: Image.Image,
+    regions: list[dict],
+    raw_detections: list[list] | None = None,
+    seg_masks: list | None = None,
+    mode: str = "FAST",
+    paddle_det = None,
+    aot: "AotInpainter | None" = None,
+    bubble_erosion: int = BUBBLE_SEG_MASK_EROSION,
+) -> tuple[Image.Image, np.ndarray, dict]:
+    """Constant-for-constant port of Android PageInpaintingEngine + AOTInpainting:
+    1. Extracts bubble boxes (raw label 0 boxes + parent bubbles).
+    2. Classifies text regions into bubble text vs free text using BoxGeometry.
+    3. Inpaints speech bubbles with AotReportBubbleFill over segmentation masks (or dynamic pill masks).
+    4. Refines free text with PaddleOCR det lines -> clusters -> PushPullGradient (FAST) or AOT-512 (QUALITY).
+    Returns (cleaned_image, combined_mask, stats)."""
+    import boxgeom
+    result = page.copy()
+    w, h = page.size
+
+    raw_boxes = raw_detections or []
+    bubble_dets = [boxgeom.Box(*[int(v) for v in r[2:]])
+                   for r in raw_boxes if len(r) >= 6 and int(r[0]) == 0]
+
+    bubble_boxes_to_erase = []
+    free_boxes_to_erase = []
+
+    # Also check overlap with seg_masks
+    def overlaps_seg(b: boxgeom.Box) -> bool:
+        if not seg_masks:
+            return False
+        for m in seg_masks:
+            if hasattr(m, "labels"):
+                gy1, gx1 = max(0, b.y1), max(0, b.x1)
+                gy2, gx2 = min(h, b.y2), min(w, b.x2)
+                if gy2 > gy1 and gx2 > gx1:
+                    if (m.labels[gy1:gy2, gx1:gx2] > 0).any():
+                        return True
+        return False
+
+    for r in regions:
+        box = [int(v) for v in r["box"]]
+        lbl = int(r.get("label", 2))
+        b = boxgeom.Box(*box)
+        parent = boxgeom.select_parent(b, bubble_dets)
+        if parent is not None or boxgeom.overlaps_any_bubble(b, bubble_dets) or overlaps_seg(b):
+            bubble_boxes_to_erase.append(box)
+        elif lbl == 2 or lbl == 1:
+            # Render-aware erase (PageInpaintingPlanner.kt:74-86):
+            # If OCR has run and read blank/whitespace text, do not erase to preserve original art.
+            if "text" in r and not (r["text"] or "").strip():
+                continue
+            free_boxes_to_erase.append(box)
+        else:
+            bubble_boxes_to_erase.append(box)
+
+    # Extra detector bubbles
+    for bb in bubble_dets:
+        bubble_boxes_to_erase.append(bb.as_list())
+
+    # 1. Inpaint bubbles via AotReportBubbleFill and segmentation masks (with edge erosion)
+    result, bubble_mask = inpaint_report_bubbles(result, bubble_boxes_to_erase, seg_masks=seg_masks, erosion=bubble_erosion)
+
+    # 2. Inpaint free text via PushPull / AOT-512
+    free_stats, free_mask = inpaint_free_text(result, free_boxes_to_erase, mode=mode,
+                                              paddle_det=paddle_det, aot=aot)
+
+    total_mask = bubble_mask | free_mask
+    stats = {
+        "bubbleBoxes": len(bubble_boxes_to_erase),
+        "freeBoxes": len(free_boxes_to_erase),
+        "mode": mode,
+        **free_stats,
+    }
+    return result, total_mask, stats
+

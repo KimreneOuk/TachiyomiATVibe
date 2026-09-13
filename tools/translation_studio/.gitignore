@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 work_smoke/
 demo_chapter/.studio/
+.recent.json

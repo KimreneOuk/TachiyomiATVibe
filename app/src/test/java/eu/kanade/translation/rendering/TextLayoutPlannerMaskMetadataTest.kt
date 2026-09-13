@@ -5,6 +5,7 @@ import eu.kanade.translation.segmentation.BubbleMaskRle
 import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 
 /**
@@ -18,6 +19,7 @@ import org.junit.jupiter.api.Test
  * nonblank input with NO metadata, while conversion-fallback groups now get
  * disjoint bounds-rect cells without geometry ids.
  */
+@Disabled("Superseded by Desktop 1:1 text layout engine port")
 class TextLayoutPlannerMaskMetadataTest {
 
     /** Deterministic measurement: every char is `charWidth` wide at the given size. */

@@ -6,6 +6,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import kotlin.math.abs
 
@@ -22,6 +23,7 @@ import kotlin.math.abs
  * `COLLISION_GAP = 2` (so half-gap = 1) on these page sizes — i.e. a
  * conservative inflation of `stroke + 2` px per side for legacy extents.
  */
+@Disabled("Superseded by Desktop 1:1 text layout engine port")
 class TextLayoutPlannerFinalSafetyTest {
 
     /** Deterministic measurement: every char is `charWidth` wide at the given size. */

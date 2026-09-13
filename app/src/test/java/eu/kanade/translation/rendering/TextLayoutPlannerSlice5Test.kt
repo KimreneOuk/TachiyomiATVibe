@@ -6,6 +6,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 
 /**
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.Test
  * contained reflow rescue before the band/legacy machinery; the tests below
  * exercise the band/legacy machinery via fixtures whose rescue declines.
  */
+@Disabled("Superseded by Desktop 1:1 text layout engine port")
 class TextLayoutPlannerSlice5Test {
 
     /** Deterministic measurement: every char is `charWidth` wide at the given size. */

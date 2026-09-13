@@ -135,6 +135,55 @@ class AotReportBubbleFillTest {
         }
     }
 
+    @Test
+    fun `erodeBinaryMask erodes borders by radius protecting stroke edges`() {
+        val width = 30
+        val height = 30
+        val mask = ByteArray(width * height)
+        // Solid rectangle from (5,5) to (25,25)
+        for (y in 5 until 25) {
+            for (x in 5 until 25) {
+                mask[y * width + x] = 1
+            }
+        }
+        val inpainter = AOTInpainting()
+        val bounds = listOf(listOf(5, 5, 25, 25))
+        val eroded = inpainter.erodeBinaryMask(mask, width, height, bounds, radius = 3)
+
+        // Outer border (5, 6, 7) must be eroded (value 0) to protect stroke borders
+        for (y in 5..7) {
+            for (x in 5 until 25) {
+                eroded[y * width + x] shouldBe 0.toByte()
+            }
+        }
+        // Interior (e.g. 10 to 20) must still be 1
+        for (y in 10..20) {
+            for (x in 10..20) {
+                eroded[y * width + x] shouldBe 1.toByte()
+            }
+        }
+    }
+
+    @Test
+    fun `erodeBinaryMask falls back to milder radius if small component would vanish`() {
+        val width = 20
+        val height = 20
+        val mask = ByteArray(width * height)
+        // Small 4x4 bubble at (8,8) to (12,12)
+        for (y in 8 until 12) {
+            for (x in 8 until 12) {
+                mask[y * width + x] = 1
+            }
+        }
+        val inpainter = AOTInpainting()
+        val bounds = listOf(listOf(8, 8, 12, 12))
+        // Radius 5 would completely wipe a 4x4 component
+        val eroded = inpainter.erodeBinaryMask(mask, width, height, bounds, radius = 5)
+
+        // Must not be empty due to automatic fallback to milder radius/original
+        eroded.any { it != 0.toByte() } shouldBe true
+    }
+
     private fun index(x: Int, y: Int, width: Int): Int = y * width + x
 
     private fun argb(r: Int, g: Int, b: Int): Int =

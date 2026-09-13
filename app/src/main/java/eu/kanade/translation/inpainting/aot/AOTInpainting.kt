@@ -51,6 +51,7 @@ class AOTInpainting(
         private const val REPORT_FREE_TEXT_FEATHER = 3
         private const val REPORT_BUBBLE_SMOOTH_PASSES = 12
         private const val REPORT_PUSH_PULL_CONTEXT = 64
+        internal const val BUBBLE_SEG_MASK_EROSION = 5
 
         // TachiyomiAT: distance-field feather ramp (px) blending the neural
         // output with the page. Replaces the earlier 2–6px box-blur cliff that
@@ -506,10 +507,22 @@ class AOTInpainting(
         val h = image.height
         val mask = ByteArray(w * h)
 
-        // 1. Rasterize segmentation masks from blocks that have one
+        // 1. Rasterize segmentation masks from blocks that have one and apply edge erosion
         val blocksWithSegMask = blocks?.filter { it.segmentationMask != null } ?: emptyList()
-        for (block in blocksWithSegMask) {
-            block.segmentationMask?.rasterizeOnto(mask)
+        if (blocksWithSegMask.isNotEmpty()) {
+            val rawSegMask = ByteArray(w * h)
+            val boundsList = ArrayList<List<Int>>(blocksWithSegMask.size)
+            for (block in blocksWithSegMask) {
+                val seg = block.segmentationMask ?: continue
+                seg.rasterizeOnto(rawSegMask)
+                boundsList.add(seg.bounds)
+            }
+            val erodedSegMask = erodeBinaryMask(rawSegMask, w, h, boundsList, BUBBLE_SEG_MASK_EROSION)
+            for (i in mask.indices) {
+                if (erodedSegMask[i] != 0.toByte()) {
+                    mask[i] = 1
+                }
+            }
         }
 
         // 2. For all boxes that are NOT covered by an existing segmentation mask, build a dynamic pill mask
@@ -539,6 +552,105 @@ class AOTInpainting(
         AotReportBubbleFill.fillAndBlend(pixels, mask, w, h, REPORT_BUBBLE_SMOOTH_PASSES, FEATHER_RAMP_PX)
         image.setPixels(pixels, 0, w, 0, 0, w, h)
         return image
+    }
+
+    /**
+     * Morphological binary erosion for segmentation masks.
+     * Erodes by [radius] px (default [BUBBLE_SEG_MASK_EROSION]) within component bounds
+     * to protect hand-drawn stroke borders of speech bubbles from being erased.
+     * If a small bubble completely vanishes from erosion, falls back to a milder
+     * radius (radius / 2) or retains original pixels.
+     */
+    internal fun erodeBinaryMask(
+        mask: ByteArray,
+        width: Int,
+        height: Int,
+        boundsList: List<List<Int>>,
+        radius: Int = BUBBLE_SEG_MASK_EROSION,
+    ): ByteArray {
+        if (radius <= 0) return mask
+        val eroded = ByteArray(width * height)
+        val r2 = radius * radius
+        for (bounds in boundsList) {
+            val minX = bounds[0].coerceIn(0, width)
+            val minY = bounds[1].coerceIn(0, height)
+            val maxX = bounds[2].coerceIn(minX, width)
+            val maxY = bounds[3].coerceIn(minY, height)
+            var erodedCount = 0
+            for (y in minY until maxY) {
+                val rowOffset = y * width
+                for (x in minX until maxX) {
+                    if (mask[rowOffset + x] == 0.toByte()) continue
+                    var keep = true
+                    for (dy in -radius..radius) {
+                        val ny = y + dy
+                        if (ny < 0 || ny >= height) {
+                            keep = false
+                            break
+                        }
+                        val nRowOffset = ny * width
+                        for (dx in -radius..radius) {
+                            if (dx * dx + dy * dy <= r2) {
+                                val nx = x + dx
+                                if (nx < 0 || nx >= width || mask[nRowOffset + nx] == 0.toByte()) {
+                                    keep = false
+                                    break
+                                }
+                            }
+                        }
+                        if (!keep) break
+                    }
+                    if (keep) {
+                        eroded[rowOffset + x] = 1
+                        erodedCount++
+                    }
+                }
+            }
+            if (erodedCount == 0) {
+                val milderRadius = max(1, radius / 2)
+                val m2 = milderRadius * milderRadius
+                for (y in minY until maxY) {
+                    val rowOffset = y * width
+                    for (x in minX until maxX) {
+                        if (mask[rowOffset + x] == 0.toByte()) continue
+                        var keep = true
+                        for (dy in -milderRadius..milderRadius) {
+                            val ny = y + dy
+                            if (ny < 0 || ny >= height) {
+                                keep = false
+                                break
+                            }
+                            val nRowOffset = ny * width
+                            for (dx in -milderRadius..milderRadius) {
+                                if (dx * dx + dy * dy <= m2) {
+                                    val nx = x + dx
+                                    if (nx < 0 || nx >= width || mask[nRowOffset + nx] == 0.toByte()) {
+                                        keep = false
+                                        break
+                                    }
+                                }
+                            }
+                            if (!keep) break
+                        }
+                        if (keep) {
+                            eroded[rowOffset + x] = 1
+                            erodedCount++
+                        }
+                    }
+                }
+                if (erodedCount == 0) {
+                    for (y in minY until maxY) {
+                        val rowOffset = y * width
+                        for (x in minX until maxX) {
+                            if (mask[rowOffset + x] != 0.toByte()) {
+                                eroded[rowOffset + x] = 1
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return eroded
     }
 
     private fun inpaintReportFreeTextFast(image: Bitmap, boxes: List<IntArray>): Bitmap {

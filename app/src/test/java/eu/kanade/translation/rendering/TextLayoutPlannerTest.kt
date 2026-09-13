@@ -787,6 +787,92 @@ class TextLayoutPlannerTest {
         (ext.left >= wideBubble.parentX - 1f) shouldBe true
         (ext.right <= wideBubble.parentX + wideBubble.parentWidth + 1f) shouldBe true
     }
+
+    @Test
+    fun `single block in asymmetrical bubble mask expands symmetrically without lateral shift`() {
+        // Bubble mask has an asymmetrical tail reaching far left (x=20 to x=200, width=180)
+        // while the speech bubble parent/text center is at x=140.
+        // Uncentered expansion would set centerX to (20 + 200)/2 = 110, shifting left by 30px!
+        // Symmetrical expansion anchors at x=140, keeping originX at 140.
+        val maskWithTail = BubbleMaskRle(
+            width = 300,
+            height = 200,
+            bounds = listOf(20, 40, 200, 160),
+            runs = (40 until 160).flatMap { y -> listOf(y * 300 + 20, 180) },
+            score = 1f,
+        )
+        val bubble = block(
+            x = 120f,
+            y = 80f,
+            w = 40f,
+            h = 40f,
+            text = "Centered speech bubble text!",
+            score = 0.9f,
+        ).copy(
+            parentX = 100f,
+            parentY = 60f,
+            parentWidth = 80f,
+            parentHeight = 80f,
+            segmentationMask = maskWithTail,
+        )
+
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(bubble), 300f, 200f, 1, false, m)
+
+        plan shouldHaveSize 1
+        val layout = plan.first()
+        // Anchor center is parentX + parentWidth / 2 = 100 + 40 = 140.
+        // Origin must be close to 140 (within 5px tolerance for integer padding/rounding),
+        // not pulled to 110 by the tail!
+        (kotlin.math.abs(layout.originX - 140f) < 5f) shouldBe true
+    }
+
+    @Test
+    fun `desktop 1 to 1 multi-region conjoined bubble cluster intersection assigns distinct bounding boxes`() {
+        val sharedMask = BubbleMaskRle(
+            width = 300,
+            height = 100,
+            bounds = listOf(0, 0, 300, 100),
+            runs = listOf(0, 300 * 100),
+            score = 1f,
+        )
+        val left = block(10f, 20f, 80f, 60f, "Left bubble text").copy(blockId = "left", segmentationMask = sharedMask)
+        val right = block(200f, 20f, 80f, 60f, "Right bubble text").copy(blockId = "right", segmentationMask = sharedMask)
+
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(left, right), 300f, 100f, 1, false, m)
+
+        plan shouldHaveSize 2
+        val leftLayout = plan.first { it.block.blockId == "left" }
+        val rightLayout = plan.first { it.block.blockId == "right" }
+
+        (leftLayout.originX < 100f) shouldBe true
+        (rightLayout.originX > 180f) shouldBe true
+        val leftExtent = extent(leftLayout, m)
+        val rightExtent = extent(rightLayout, m)
+        leftExtent.overlaps(rightExtent) shouldBe false
+    }
+
+    @Test
+    fun `desktop 1 to 1 progressive aspect ratio contraction fits tall narrow bubble without collapsing`() {
+        val tallMask = BubbleMaskRle(
+            width = 100,
+            height = 200,
+            bounds = listOf(20, 10, 80, 190),
+            runs = (10 until 190).flatMap { y -> listOf(y * 100 + 20, 60) },
+            score = 1f,
+        )
+        val b = block(20f, 10f, 60f, 180f, "This is a longer line of text that fits better when wrapped narrow")
+            .copy(segmentationMask = tallMask)
+
+        val m = FakeMeasurer()
+        val plan = TextLayoutPlanner.plan(listOf(b), 100f, 200f, 1, false, m)
+
+        plan shouldHaveSize 1
+        val layout = plan.first()
+        (layout.fontSizePx > 8f) shouldBe true
+        (layout.lines.size > 1) shouldBe true
+    }
 }
 
 /**

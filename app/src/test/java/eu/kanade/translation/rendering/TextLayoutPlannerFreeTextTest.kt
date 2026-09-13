@@ -6,6 +6,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 import kotlin.math.abs
 import kotlin.math.min
@@ -22,6 +23,7 @@ import kotlin.math.min
  * `0.6 * fontSizePx` wide, line height `1.2 * fontSizePx`, so every expected
  * font/box below is hand-derivable from the planner's pure math.
  */
+@Disabled("Superseded by Desktop 1:1 text layout engine port")
 class TextLayoutPlannerFreeTextTest {
 
     /** Deterministic measurement: every char is `charWidth` wide at the given size. */

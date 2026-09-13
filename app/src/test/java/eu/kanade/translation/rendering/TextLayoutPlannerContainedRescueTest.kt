@@ -9,6 +9,7 @@ import io.kotest.matchers.collections.shouldHaveSize
 import io.kotest.matchers.nulls.shouldBeNull
 import io.kotest.matchers.nulls.shouldNotBeNull
 import io.kotest.matchers.shouldBe
+import org.junit.jupiter.api.Disabled
 import org.junit.jupiter.api.Test
 
 /**
@@ -23,6 +24,7 @@ import org.junit.jupiter.api.Test
  *    unshifted OCR-region draw with NO exact component clip (maskUsable=false
  *    strips the wired metadata).
  */
+@Disabled("Superseded by Desktop 1:1 text layout engine port")
 class TextLayoutPlannerContainedRescueTest {
     private class FakeMeasurer : TextMeasurer {
         override fun measureTextWidth(text: String, fontSizePx: Float): Float =

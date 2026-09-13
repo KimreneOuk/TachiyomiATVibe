@@ -155,3 +155,19 @@ def reading_order_rtl(texts: list[Box], page_height: int) -> list[int]:
         band = min(int(b.cy // band_h), n_bands - 1)
         return (band, -b.cx)
     return sorted(range(len(texts)), key=key)
+
+
+def overlaps_any_bubble(text: Box, bubbles: list[Box], min_overlap_fraction: float = 0.12) -> bool:
+    """Port of AotBoxGeometry.overlapsAnyBubble: checks if text box overlaps
+    any bubble by at least min_overlap_fraction of text's area."""
+    if not bubbles or text.area <= 0:
+        return False
+    for b in bubbles:
+        ia = intersection_area(text, b)
+        if ia / text.area >= min_overlap_fraction:
+            return True
+    return False
+
+
+find_parent_bubble = select_parent
+

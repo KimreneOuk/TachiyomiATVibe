@@ -625,6 +625,127 @@ object TextLayoutPlanner {
      * evaluated candidate count (e.g. 8 when every finite candidate failed,
      * or k when the k-th evaluated candidate won).
      */
+    data class FitResult(
+        val fontSize: Float,
+        val lines: List<String>,
+        val lineHeight: Float,
+        val strokeWidth: Float,
+    )
+
+    fun fitTextInMask(
+        text: String,
+        box: FloatRect,
+        geometry: MaskGeometry,
+        componentId: Int,
+        scale: Float,
+        measurer: TextMeasurer,
+    ): FitResult {
+        val margin = 6f * scale
+        val maxW = max(10f * scale, box.width() - 2f * margin)
+        val maxH = max(10f * scale, box.height() - 2f * margin)
+        val startSize = max(8f * scale, min(maxH / 1.15f, 72f * scale))
+        var size = startSize
+        val step = 1f * scale
+        val minSize = 8f * scale
+        val fractions = floatArrayOf(1.0f, 0.92f, 0.85f, 0.78f, 0.70f, 0.62f, 0.55f)
+        val boxCx = box.left + box.width() / 2f
+        val boxCy = box.top + box.height() / 2f
+
+        while (size >= minSize) {
+            val lineH = measurer.lineHeight(size)
+            val sw = computeStrokeWidth(size, scale)
+            for (frac in fractions) {
+                val wrapW = maxW * frac
+                val lines = TextLineBreaker.prewrap(text, size, wrapW, measurer)
+                val totalH = lines.size * lineH + 2f * sw
+                if (totalH > maxH) {
+                    break
+                }
+                val maxTextW = lines.maxOfOrNull { measurer.measureTextWidth(it, size) } ?: 0f
+                val blockW = maxTextW + 2f * sw
+                val rx1 = floor(boxCx - blockW / 2f).toInt()
+                val ry1 = floor(boxCy - totalH / 2f).toInt()
+                val rx2 = ceil(boxCx + blockW / 2f).toInt()
+                val ry2 = ceil(boxCy + totalH / 2f).toInt()
+                if (geometry.containsRectangleInComponent(rx1, ry1, rx2, ry2, componentId)) {
+                    return FitResult(size, lines, lineH, sw)
+                }
+            }
+            size -= step
+        }
+        val fallbackSize = minSize
+        val fallbackLines = TextLineBreaker.prewrap(text, fallbackSize, maxW, measurer)
+        val fallbackLineH = measurer.lineHeight(fallbackSize)
+        val fallbackSw = computeStrokeWidth(fallbackSize, scale)
+        return FitResult(fallbackSize, fallbackLines, fallbackLineH, fallbackSw)
+    }
+
+    fun fitTextUnmasked(
+        text: String,
+        box: FloatRect,
+        scale: Float,
+        measurer: TextMeasurer,
+    ): FitResult {
+        val margin = 6f * scale
+        val maxW = max(10f * scale, box.width() - 2f * margin)
+        val maxH = max(10f * scale, box.height() - 2f * margin)
+        val startSize = max(8f * scale, min(maxH / 1.15f, 72f * scale))
+        var size = startSize
+        val step = 1f * scale
+        val minSize = 8f * scale
+
+        while (size >= minSize) {
+            val lineH = measurer.lineHeight(size)
+            val lines = TextLineBreaker.prewrap(text, size, maxW, measurer)
+            val sw = computeStrokeWidth(size, scale)
+            if (lines.size * lineH + 2f * sw <= maxH) {
+                return FitResult(size, lines, lineH, sw)
+            }
+            size -= step
+        }
+        val fallbackSize = minSize
+        val fallbackLines = TextLineBreaker.prewrap(text, fallbackSize, maxW, measurer)
+        val fallbackLineH = measurer.lineHeight(fallbackSize)
+        val fallbackSw = computeStrokeWidth(fallbackSize, scale)
+        return FitResult(fallbackSize, fallbackLines, fallbackLineH, fallbackSw)
+    }
+
+    fun fitTextVertical(
+        text: String,
+        box: FloatRect,
+        scale: Float,
+        measurer: TextMeasurer,
+    ): FitResult {
+        val margin = 6f * scale
+        val maxW = max(10f * scale, box.width() - 2f * margin)
+        val maxH = max(10f * scale, box.height() - 2f * margin)
+        val startSize = max(8f * scale, min(maxH / 1.15f, 72f * scale))
+        var size = startSize
+        val step = 1f * scale
+        val minSize = 8f * scale
+
+        val chars = text.filterNot { it == '\r' || it == '\n' || it == ' ' }
+        while (size >= minSize) {
+            val charStep = size * VERTICAL_CHAR_STEP
+            val colStep = size * VERTICAL_COL_STEP
+            val charsPerCol = max(1, (maxH / charStep).toInt())
+            val cols = (chars.length + charsPerCol - 1) / charsPerCol
+            val totalW = cols * colStep
+            if (totalW <= maxW) {
+                return FitResult(size, listOf(text), charStep, computeStrokeWidth(size, scale))
+            }
+            size -= step
+        }
+        val fallbackSize = minSize
+        return FitResult(fallbackSize, listOf(text), fallbackSize * VERTICAL_CHAR_STEP, computeStrokeWidth(fallbackSize, scale))
+    }
+
+    /**
+     * Desktop 1:1 text layout engine:
+     * - Symmetrical mask expansion for single-bubble regions
+     * - Natural cluster intersection for multi-region conjoined bubbles
+     * - Progressive aspect-ratio contraction fitting into bubble contours
+     */
     internal fun planPageInternal(
         blocks: List<TranslationBlock>,
         pageWidth: Float,
@@ -635,82 +756,42 @@ object TextLayoutPlanner {
     ): PagePlanWithAttempts {
         if (blocks.isEmpty()) return PagePlanWithAttempts(PageLayoutPlan(emptyList(), emptyList()), 0)
         val scale = 1f / sampleSize
-        val minLegible = minLegibleFont(pageWidth, pageHeight, scale)
 
-        // Highest score first: most confident box places first and becomes a fixed
-        // obstacle for lower-score boxes; ties keep reading order for determinism.
         val ordered = blocks.withIndex().sortedWith(
             compareByDescending<IndexedValue<TranslationBlock>> { it.value.score }
                 .thenBy { it.index },
         )
 
         val maskGrouping = buildMaskRegions(blocks)
-        val maskRegions = maskGrouping.regions
-        // Slice 3: disjoint shared-cell plans per (group, componentId), built
-        // BEFORE placement because the fit region is the placement override.
-        val cellPlans = buildSharedCellPlans(blocks, maskGrouping, pageWidth, pageHeight, scale, renderSourceText)
-
         val resultsByInput = arrayOfNulls<LayoutResult>(blocks.size)
         val drawable = ArrayList<BlockLayout>(blocks.size)
-        // T912 slice 7: collision footprints of the accepted Draw layouts, in
-        // placement (score) order.
-        val placed = ArrayList<PlacedFootprint>(blocks.size)
-        var finalPlacementAttempts = 0
-        // T912 contained-fit rescue: page-wide band-fit budget (entry-cost guard).
-        val rescueBudget = RescueBudget()
-        val collisionGap = MaskTextRegionPlanner.collisionGapPx(min(pageWidth, pageHeight), scale)
-        val gapHalf = collisionGap / 2f
-        // Ceiling conversions for blocks without cell spans share one page
-        // budget so containment-first conversion work stays bounded too.
-        val rescueConversionBudgets = MaskConversionBudgets()
-        // One rescue attempt per masked block per page (null = attempted, no
-        // contained fit / no ceiling): the resolver reuses the cached result
-        // instead of recomputing and double-spending the band-fit budget.
-        val rescueCache = HashMap<Int, BlockLayout?>()
-        fun cachedContainmentRescue(
-            inputIndex: Int,
-            block: TranslationBlock,
-            text: String,
-            cellPlan: SharedCellPlan?,
-            legacyFitW: Float,
-            legacyFitH: Float,
-        ): BlockLayout? {
-            if (rescueCache.containsKey(inputIndex)) return rescueCache[inputIndex]
-            val ceiling = rescueCeilingSpans(
-                block,
-                cellPlan,
-                maskGrouping,
-                inputIndex,
-                pageWidth,
-                pageHeight,
-                rescueConversionBudgets,
-            )?.let { dilateSpans(it, TextLayoutTuning.CONTAINMENT_CEILING_MARGIN_PX) }
-            val result = if (ceiling.isNullOrEmpty()) {
-                null
-            } else {
-                containedReflowRescue(
-                    block = block,
-                    text = text,
-                    cellPlan = cellPlan,
-                    ceilingSpans = ceiling,
-                    legacyFitW = legacyFitW,
-                    legacyFitH = legacyFitH,
-                    scale = scale,
-                    collisionGap = collisionGap,
-                    measurer = measurer,
-                    budget = rescueBudget,
-                )
-            }
-            rescueCache[inputIndex] = result
-            return result
-        }
-        val componentAssignments = HashSet<Long>()
         var planningOrdinal = 0
-        // Slice 5 page budgets, reserved deterministically in placement order:
-        // legacy horizontal block = 2 StaticLayouts; each positioned line = 2;
-        // vertical = 0.
-        var positionedLinesUsed = 0
-        var staticLayoutsUsed = 0
+
+        // Step 1: Assign blocks to components (1:1 with desktop assignment loop)
+        val assignments = HashMap<Int, Pair<Int, Int>>()
+        for ((groupId, members) in maskGrouping.groups) {
+            if (groupId < 0) continue
+            val geometry = maskGrouping.session.geometryFor(groupId) ?: continue
+            for (item in members) {
+                val text = chosenText(item.value, renderSourceText)
+                if (text.isBlank()) continue
+                val componentId = resolveComponentId(geometry, item.value) ?: continue
+                assignments[item.index] = Pair(groupId, componentId)
+            }
+        }
+
+        // Step 2: Count regions per component (1:1 with desktop comp_counts)
+        val compCounts = HashMap<Pair<Int, Int>, Int>()
+        for (indexed in ordered) {
+            val text = chosenText(indexed.value, renderSourceText)
+            if (text.isBlank()) continue
+            val a = assignments[indexed.index]
+            if (a != null) {
+                compCounts[a] = (compCounts[a] ?: 0) + 1
+            }
+        }
+
+        // Step 3: Layout each block
         for (indexed in ordered) {
             val inputIndex = indexed.index
             val block = indexed.value
@@ -719,51 +800,7 @@ object TextLayoutPlanner {
             val ordinal = planningOrdinal++
             val identity = InputIdentity(inputIndex, block.blockId)
 
-            // T912 repair (R1): an optimized member whose cell is empty or
-            // degenerate (inverted slab, span mode with no owned pixels) is no
-            // longer dropped. The identity falls back to the block's own
-            // pre-slice-3 region path (parent box if valid, else the legacy
-            // mask region / OCR rectangle) with NO cellRect/hardClip, so it
-            // draws exactly like the legacy renderer did.
-            // EMPTY_SHARED_CELL stays declared but is never emitted.
-            val rawCellPlan = cellPlans[inputIndex]
-            val cellPlan = if (rawCellPlan?.empty == true) null else rawCellPlan
-
-            val regionOverride = when {
-                cellPlan != null && cellPlan.optimized -> cellPlan.fitRegion
-                // Beyond MAX_SHARED_BLOCKS_OPTIMIZED (R4b: hard slab cell, no
-                // fit override) and empty cells (R1: handled above by nulling
-                // the plan) keep their own legacy rectangle.
-                cellPlan != null -> null
-                else -> maskRegions[inputIndex]
-            }
-
-            val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
-            val placedObstacles = drawable.map { extentOf(it, measurer) }
-
-            // T912 slice 6: bounded long `text_free` widening. Evaluated BEFORE
-            // the legacy rect so an ELIGIBLE block never reaches the legacy
-            // reshape branch; null (ineligible / no fit pressure) keeps the
-            // exact legacy path below — including the reshape for ineligible
-            // tall boxes.
-            val freeText = if (!isVertical) {
-                boundedFreeTextWideningPlan(
-                    block = block,
-                    text = text,
-                    isVertical = isVertical,
-                    sampleSize = sampleSize,
-                    obstacles = placedObstacles,
-                    pageWidth = pageWidth,
-                    pageHeight = pageHeight,
-                    minLegible = minLegible,
-                    scale = scale,
-                    measurer = measurer,
-                )
-            } else {
-                null
-            }
-            val rect = if (freeText == null) computeRects(block, sampleSize, regionOverride) else freeText.rect
-            if (rect.safeW < 1f || rect.safeH < 1f) {
+            if (block.width <= 0f || block.height <= 0f || block.width.isNaN() || block.height.isNaN()) {
                 resultsByInput[inputIndex] = LayoutResult(
                     identity,
                     block,
@@ -775,108 +812,104 @@ object TextLayoutPlanner {
                 continue
             }
 
-            // Slice 5: adaptive bands REPLACE placeBlock for eligible blocks —
-            // horizontal text in an optimized SPAN-MODE cell. Everything else
-            // (unmasked, vertical, bounds-mode cells, groupless, beyond-8)
-            // goes legacy exactly as before. On band failure or a page budget
-            // overflow the EXISTING legacy single-layout form is retried.
-            // T912 containment-first: EVERY horizontal masked block is placed
-            // by contained reflow from its OCR home BEFORE the shift/reshape
-            // machinery — the Director-validated model (OCR box is the home,
-            // the mask is the ceiling). Legacy placement stays the fallback
-            // when the rescue returns null or overflows the page line budget.
-            // Vertical blocks keep the rescue cached for the collision
-            // resolver (its pre-existing masked tail) but never adopt it as
-            // their layout.
-            val rescueForBlock = if (block.segmentationMask != null) {
-                cachedContainmentRescue(
-                    inputIndex,
-                    block,
-                    text,
-                    cellPlan,
-                    rect.safeW,
-                    rect.safeH,
-                )
+            val effectiveW = max(1f, block.width)
+            val effectiveH = max(1f, block.height)
+            val rbox = FloatRect(block.x, block.y, block.x + effectiveW, block.y + effectiveH)
+
+            val hasParent = block.parentWidth > 0f && block.parentHeight > 0f
+            val pbox = if (hasParent) {
+                FloatRect(block.parentX, block.parentY, block.parentX + block.parentWidth, block.parentY + block.parentHeight)
             } else {
                 null
             }
-            val containmentFirst = if (!isVertical) rescueForBlock else null
-            var layout: BlockLayout? = null
-            var adaptive: AdaptiveResult? = null
-            if (containmentFirst != null) {
-                val rescueLineCount = containmentFirst.positionedLines?.size ?: 0
-                // Positioned lines are drawn via drawText, never StaticLayout —
-                // they consume ONLY the positioned-line lane. Charging the
-                // StaticLayout lane here starves later UNMASKED blocks'
-                // placement budgets and breaks the byte-identical legacy
-                // contract (observed on real page-15 data).
-                if (positionedLinesUsed + rescueLineCount <= TextLayoutTuning.MAX_POSITIONED_LINES_PER_PAGE) {
-                    positionedLinesUsed += rescueLineCount
-                    layout = containmentFirst
-                }
-                // Budget overflow → containment layout discarded; the cached
-                // rescue still feeds the resolver's masked tail below.
-            }
-            val adaptiveEligible = layout == null &&
-                !isVertical &&
-                cellPlan != null &&
-                cellPlan.optimized &&
-                cellPlan.componentId != null &&
-                cellPlan.spans.isNotEmpty()
-            if (adaptiveEligible) {
-                val slab = cellPlan.slab
-                val adaptiveFit = if (slab != null) {
-                    AdaptiveBandPlanner.fitAdaptiveBands(
-                        text = text,
-                        cellSpans = cellPlan.spans,
-                        slab = slab,
-                        scale = scale,
-                        collisionGapPx = collisionGap,
-                        measurer = measurer,
-                        minFontPx = FIT_MIN_FONT_PX * scale,
-                        maxFontPx = FIT_MAX_FONT_PX * scale,
-                        blockCenterX = block.x + block.width / 2f,
-                        blockCenterY = block.y + block.height / 2f,
-                    )
-                } else {
-                    null
-                }
-                val lineCount = adaptiveFit?.lines?.size ?: 0
-                // T912 quality repair (Fix 2): bands are accepted only when
-                // they MEANINGFULLY beat the conservative rectangle layout of
-                // the same cell. A rejected fit reserves NOTHING — the budget
-                // accounting below runs on acceptance only — and the block
-                // falls through to the existing legacy placeBlock path with
-                // the same fit region.
-                val beatsRectangle = adaptiveFit != null &&
-                    bandBeatsRectangleFit(text, adaptiveFit, cellPlan, scale, measurer)
-                if (beatsRectangle &&
-                    positionedLinesUsed + lineCount <= TextLayoutTuning.MAX_POSITIONED_LINES_PER_PAGE &&
-                    staticLayoutsUsed + 2 * lineCount <= TextLayoutTuning.MAX_STATIC_LAYOUTS_PER_PAGE
-                ) {
-                    positionedLinesUsed += lineCount
-                    staticLayoutsUsed += 2 * lineCount
-                    adaptive = adaptiveFit
-                    layout = adaptiveBlockLayout(block, text, slab!!, adaptiveFit!!, scale)
-                }
-                // adaptive == null → band failure: legacy fallback below.
-                // Budget overflow → legacy single-layout retry below.
-            }
-            if (layout == null) {
-                if (!isVertical) {
-                    if (staticLayoutsUsed + 2 > TextLayoutTuning.MAX_STATIC_LAYOUTS_PER_PAGE) {
-                        resultsByInput[inputIndex] = LayoutResult(
-                            identity,
-                            block,
-                            text,
-                            ordinal,
-                            null,
-                            LayoutOutcome.NonDraw(NonDrawReason.STATIC_LAYOUT_BUDGET_EXHAUSTED),
+            val anchorCx = if (pbox != null) pbox.left + pbox.width() / 2f else rbox.left + rbox.width() / 2f
+            val anchorCy = if (pbox != null) pbox.top + pbox.height() / 2f else rbox.top + rbox.height() / 2f
+
+            val a = assignments[inputIndex]
+            val fitBox: FloatRect
+            val geometry: MaskGeometry?
+            val componentId: Int?
+            val groupId: Int?
+
+            if (a != null) {
+                groupId = a.first
+                componentId = a.second
+                geometry = maskGrouping.session.geometryFor(groupId)
+                val cb = geometry?.componentBoundingBox(componentId)
+                if (geometry != null && cb != null) {
+                    val count = compCounts[a] ?: 1
+                    if (count == 1) {
+                        // Symmetrical expansion from anchor center within component bounds
+                        val halfW = max(rbox.width() / 2f, min(anchorCx - cb[0], cb[2] - anchorCx))
+                        val halfH = max(rbox.height() / 2f, min(anchorCy - cb[1], cb[3] - anchorCy))
+                        fitBox = FloatRect(
+                            max(cb[0].toFloat(), anchorCx - halfW),
+                            max(cb[1].toFloat(), anchorCy - halfH),
+                            min(cb[2].toFloat(), anchorCx + halfW),
+                            min(cb[3].toFloat(), anchorCy + halfH),
                         )
-                        continue
+                    } else {
+                        // Conjoined / multi-region inside one component: intersect rbox with component
+                        val inter = geometry.intersectComponentWithRect(
+                            componentId,
+                            floor(rbox.left).toInt(),
+                            floor(rbox.top).toInt(),
+                            ceil(rbox.right).toInt(),
+                            ceil(rbox.bottom).toInt(),
+                        )
+                        fitBox = if (inter != null) {
+                            FloatRect(inter[0].toFloat(), inter[1].toFloat(), inter[2].toFloat(), inter[3].toFloat())
+                        } else {
+                            rbox
+                        }
                     }
-                    staticLayoutsUsed += 2
+                } else {
+                    fitBox = pbox ?: rbox
                 }
+            } else {
+                groupId = null
+                componentId = null
+                geometry = null
+                fitBox = pbox ?: rbox
+            }
+
+            val isVertical = block.direction == "TTB" && shouldRenderVertical(text)
+            val isMasked = a != null && geometry != null && componentId != null
+            val layout: BlockLayout
+            if (isMasked) {
+                val fitResult = if (isVertical) {
+                    fitTextVertical(text, fitBox, scale, measurer)
+                } else {
+                    fitTextInMask(text, fitBox, geometry!!, componentId!!, scale, measurer)
+                }
+                val originX = fitBox.left + fitBox.width() / 2f
+                val originY = fitBox.top + fitBox.height() / 2f
+                layout = BlockLayout(
+                    block = block,
+                    text = text,
+                    isVertical = isVertical,
+                    originX = originX,
+                    originY = originY,
+                    safeW = fitBox.width(),
+                    safeH = fitBox.height(),
+                    fontSizePx = fitResult.fontSize,
+                    strokeWidth = fitResult.strokeWidth,
+                    drawAlign = TextAlign.CENTER,
+                    clipRect = null,
+                    lines = fitResult.lines,
+                    maskGeometry = geometry,
+                    planGeometryId = groupId,
+                    maskComponentId = componentId,
+                    cellRect = null,
+                    positionedLines = null,
+                    conservativeOccupancy = emptyList(),
+                    hardClip = HardClip(groupId, componentId, null),
+                    maskUsable = true,
+                )
+            } else {
+                val placedObstacles = drawable.map { extentOf(it, measurer) }
+                val minLegible = minLegibleFont(pageWidth, pageHeight, scale)
+                val rect = computeRects(block, sampleSize, pbox)
                 layout = placeBlock(
                     block = block,
                     text = text,
@@ -888,99 +921,24 @@ object TextLayoutPlanner {
                     minLegible = minLegible,
                     scale = scale,
                     measurer = measurer,
-                    regionOverride = if (freeText != null) freeText.regionOverride else regionOverride,
+                    regionOverride = pbox,
                 )
             }
-            // T912 slice 7: the final no-overlap check runs AFTER every anchor
-            // branch, on the conservative (stroke/AA/half-gap inflated,
-            // un-clipped) occupancy, against every already-accepted footprint.
-            // A pair whose hard cells are BOTH present and non-overlapping is
-            // structurally pixel-separated and exempt. Non-colliding blocks —
-            // the overwhelmingly common case — are accepted unchanged.
-            val hardCell = if (cellPlan != null && cellPlan.optimized) cellPlan.slab else null
-            val occupancy = conservativeOccupancyOf(layout, measurer, scale, gapHalf)
-            val resolution = if (footprintCollides(occupancy, hardCell, placed)) {
-                resolvePostAnchorPlacement(
-                    layout = layout,
-                    occupancy = occupancy,
-                    hardCell = hardCell,
-                    block = block,
-                    text = text,
-                    isVertical = isVertical,
-                    rect = rect,
-                    regionOverride = if (freeText != null) freeText.regionOverride else regionOverride,
-                    obstacles = placedObstacles,
-                    adaptive = adaptive,
-                    cellPlan = cellPlan,
-                    placed = placed,
-                    positionedLinesUsed = positionedLinesUsed,
-                    staticLayoutsUsed = staticLayoutsUsed,
-                    collisionGap = collisionGap,
-                    gapHalf = gapHalf,
-                    pageWidth = pageWidth,
-                    pageHeight = pageHeight,
-                    minLegible = minLegible,
-                    scale = scale,
-                    sampleSize = sampleSize,
-                    measurer = measurer,
-                    rescueBudget = rescueBudget,
-                    precomputedRescue = rescueForBlock,
-                )
-            } else {
-                null
-            }
-            finalPlacementAttempts += resolution?.attempts ?: 0
-            // T912 repair (R2): the eight-candidate ladder no longer drops the
-            // block. resolvePostAnchorPlacement ALWAYS returns an accepted
-            // layout now — a clipped draw when the ladder was exhausted (see
-            // its tail). NO_DISJOINT_POST_ANCHOR_PLACEMENT stays declared but
-            // is never emitted.
-            val chosen = resolution?.layout ?: layout
-            // Metadata is wired AFTER placement and never changes placement,
-            // font, or text — it only lets the renderer clip structurally.
-            // The hard clip mirrors the wired metadata 1:1 (same values on
-            // every path; no behavior change).
-            val wired = withSharedCellMetadata(chosen, cellPlan, maskGrouping, inputIndex, componentAssignments)
-            val final = wired.copy(
-                hardClip = HardClip(wired.planGeometryId, wired.maskComponentId, wired.cellRect),
-            )
-            drawable.add(final)
-            placed.add(
-                PlacedFootprint(
-                    cellRect = final.cellRect,
-                    occupancy = conservativeOccupancyOf(final, measurer, scale, gapHalf),
-                ),
-            )
+
+            drawable.add(layout)
             resultsByInput[inputIndex] = LayoutResult(
-                identity,
-                block,
-                text,
-                ordinal,
-                drawable.size - 1,
-                LayoutOutcome.Draw(final),
+                identity = identity,
+                block = block,
+                chosenText = text,
+                planningOrdinal = ordinal,
+                renderOrdinal = drawable.size - 1,
+                outcome = LayoutOutcome.Draw(layout),
             )
         }
-        // T912 quality repair (Fix 3): font harmony for same-component
-        // siblings, applied AFTER placement. Capped members only shrink, so
-        // the accepted collision set needs no re-validation.
-        applySiblingFontHarmony(
-            drawable = drawable,
-            resultsByInput = resultsByInput,
-            blocks = blocks,
-            cellPlans = cellPlans,
-            grouping = maskGrouping,
-            collisionGap = collisionGap,
-            sampleSize = sampleSize,
-            scale = scale,
-            minLegible = minLegible,
-            pageWidth = pageWidth,
-            pageHeight = pageHeight,
-            measurer = measurer,
-        )
-        // Results in INPUT order: one explicit result per nonblank input.
+
         val results = ArrayList<LayoutResult>(blocks.size)
         for (i in blocks.indices) resultsByInput[i]?.let { results.add(it) }
-        return PagePlanWithAttempts(PageLayoutPlan(results, drawable), finalPlacementAttempts)
+        return PagePlanWithAttempts(PageLayoutPlan(results, drawable), 0)
     }
 
     /**
@@ -1536,14 +1494,25 @@ object TextLayoutPlanner {
         }
         val fitMinFont = FIT_MIN_FONT_PX * scale
         val regions = ArrayList<FloatRect>(TextLayoutTuning.OCR_GROW_FACTORS.size + 1)
-        // Containment-first (T912 repair): tiers grow from the OCR box with
-        // NO slab clamp — the rig-validated model. Slabs are disjoint-cell
-        // optimization artifacts (often far smaller than the OCR box) and
-        // shrank real-page fonts back down after the cap raise; the mask
-        // ceiling alone governs how far a tier may grow.
+        // T912 multi-block fix: when the assigned cell's fitRegion is wider than
+        // the raw OCR column (common for multi-block bubbles where OCR detects a
+        // narrow vertical Japanese column), use that wider x-range as the base for
+        // the vertical-growth tiers. This prevents English text from being trapped
+        // in a 40px-wide corridor because it was transcribed from a 40px-wide
+        // vertical Japanese column.
+        val tierLeft: Float
+        val tierRight: Float
+        val fitReg = cellPlan?.fitRegion
+        if (fitReg != null && fitReg.width() > ocrW) {
+            tierLeft = fitReg.left
+            tierRight = fitReg.right
+        } else {
+            tierLeft = ocrLeft
+            tierRight = ocrRight
+        }
         for (factor in TextLayoutTuning.OCR_GROW_FACTORS) {
             val halfH = ocrH * factor / 2f
-            regions += FloatRect(ocrLeft, centerY - halfH, ocrRight, centerY + halfH)
+            regions += FloatRect(tierLeft, centerY - halfH, tierRight, centerY + halfH)
         }
         // The unbounded cell-content tier exists ONLY for a real assigned
         // component cell — the mask is a ceiling, never a region supplier.
@@ -3143,7 +3112,20 @@ object TextLayoutPlanner {
                 bounds[3].toFloat(),
             )
             if (indexedBlocks.size == 1) {
-                regions[indexedBlocks.single().index] = maskRect
+                val single = indexedBlocks.single()
+                val block = single.value
+                if (block.parentWidth > 0f && block.parentHeight > 0f) {
+                    val anchorX = block.parentX + block.parentWidth / 2f
+                    val halfW = max(block.width / 2f, min(anchorX - maskRect.left, maskRect.right - anchorX))
+                    regions[single.index] = FloatRect(
+                        max(maskRect.left, anchorX - halfW),
+                        maskRect.top,
+                        min(maskRect.right, anchorX + halfW),
+                        maskRect.bottom,
+                    )
+                } else {
+                    regions[single.index] = maskRect
+                }
                 continue
             }
 
@@ -3319,9 +3301,14 @@ object TextLayoutPlanner {
                             )
                             continue
                         }
+                        val fitRegion = if (indexes.size == 1) {
+                            symmetricFitRegion(blocks[cell.inputIndex], cell.fitRegion)
+                        } else {
+                            cell.fitRegion
+                        }
                         plans[cell.inputIndex] = SharedCellPlan(
                             slab = cell.slab,
-                            fitRegion = cell.fitRegion,
+                            fitRegion = fitRegion,
                             optimized = cell.optimized,
                             componentId = if (cell.optimized) componentId else null,
                             empty = cell.empty,
@@ -3365,9 +3352,14 @@ object TextLayoutPlanner {
                         )
                         continue
                     }
+                    val fitRegion = if (nonblank.size == 1) {
+                        symmetricFitRegion(blocks[cell.inputIndex], cell.fitRegion)
+                    } else {
+                        cell.fitRegion
+                    }
                     plans[cell.inputIndex] = SharedCellPlan(
                         slab = cell.slab,
-                        fitRegion = cell.fitRegion,
+                        fitRegion = fitRegion,
                         optimized = cell.optimized,
                         componentId = null,
                         empty = cell.empty,
@@ -3376,6 +3368,31 @@ object TextLayoutPlanner {
             }
         }
         return plans
+    }
+
+    /**
+     * Symmetrically expands a block's fit region from its parent bubble
+     * center within the raw component/mask bounds, preventing lateral
+     * shifting caused by asymmetric bubble tails.
+     *
+     * When there is no parent (parentWidth ≤ 0), the rawFit is returned
+     * unchanged — the full component/mask pixel bbox is the best fitRegion
+     * for a standalone block.
+     */
+    private fun symmetricFitRegion(
+        block: TranslationBlock,
+        rawFit: FloatRect?,
+    ): FloatRect? {
+        if (rawFit == null) return null
+        if (block.parentWidth <= 0f) return rawFit
+        val anchorX = block.parentX + block.parentWidth / 2f
+        val halfW = max(block.width / 2f, min(anchorX - rawFit.left, rawFit.right - anchorX))
+        return FloatRect(
+            max(rawFit.left, anchorX - halfW),
+            rawFit.top,
+            min(rawFit.right, anchorX + halfW),
+            rawFit.bottom,
+        )
     }
 
     /**

@@ -52,6 +52,62 @@ class MaskGeometry private constructor(
         return true
     }
 
+    /** Checks if [left, top, right, bottom) lies fully inside the specified component. */
+    fun containsRectangleInComponent(left: Int, top: Int, right: Int, bottom: Int, componentId: Int): Boolean {
+        if (left < 0 || top < 0 || right > width || bottom > height || right <= left || bottom <= top) return false
+        if (componentId !in components.indices) return false
+        for (y in top until bottom) {
+            val index = firstSpanEndingAfter(y, left)
+            if (index >= rowOffsets[y + 1]) return false
+            val span = spans[index]
+            if (span.start > left || span.endExclusive < right || componentBySpan[index] != componentId) return false
+        }
+        return true
+    }
+
+    /** Returns [minX, minY, maxX, maxY] bounding box of [componentId], or null if invalid/empty. */
+    fun componentBoundingBox(componentId: Int): IntArray? {
+        if (componentId !in components.indices) return null
+        val comp = components[componentId]
+        if (comp.spans.isEmpty()) return null
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        var maxY = Int.MIN_VALUE
+        for (span in comp.spans) {
+            if (span.start < minX) minX = span.start
+            if (span.endExclusive > maxX) maxX = span.endExclusive
+            if (span.y < minY) minY = span.y
+            if (span.y + 1 > maxY) maxY = span.y + 1
+        }
+        return intArrayOf(minX, minY, maxX, maxY)
+    }
+
+    /** Intersects [componentId] with [left, top, right, bottom) and returns the bounding box of surviving pixels. */
+    fun intersectComponentWithRect(componentId: Int, left: Int, top: Int, right: Int, bottom: Int): IntArray? {
+        if (componentId !in components.indices || right <= left || bottom <= top) return null
+        val comp = components[componentId]
+        var minX = Int.MAX_VALUE
+        var minY = Int.MAX_VALUE
+        var maxX = Int.MIN_VALUE
+        var maxY = Int.MIN_VALUE
+        var hit = false
+        for (span in comp.spans) {
+            if (span.y in top until bottom) {
+                val start = maxOf(span.start, left)
+                val end = minOf(span.endExclusive, right)
+                if (end > start) {
+                    hit = true
+                    if (start < minX) minX = start
+                    if (end > maxX) maxX = end
+                    if (span.y < minY) minY = span.y
+                    if (span.y + 1 > maxY) maxY = span.y + 1
+                }
+            }
+        }
+        return if (hit) intArrayOf(minX, minY, maxX, maxY) else null
+    }
+
     fun componentForRectangle(left: Int, top: Int, right: Int, bottom: Int): Int? {
         if (right <= left || bottom <= top || components.isEmpty()) return null
         val overlapByComponent = IntArray(components.size)

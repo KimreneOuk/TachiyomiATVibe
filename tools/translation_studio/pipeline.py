@@ -31,6 +31,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from scipy import ndimage
 
 STUDIO_DIR = Path(__file__).resolve().parent
 TOOLS_DIR = STUDIO_DIR.parent
@@ -48,7 +49,8 @@ from lab.preprocessing import preprocess as lab_preprocess  # noqa: E402
 
 from boxgeom import (Box, DET_THRESHOLDS, greedy_dedup,  # noqa: E402
                      intersection_area, dedupe_within_parents,
-                     reading_order_rtl, select_parent, suppress_cross_label)
+                     reading_order_rtl, select_parent, suppress_cross_label,
+                     overlaps_any_bubble)
 
 DETECTOR_PATH = (REPO_ROOT / "app/src/main/assets/models/detection"
                  / "detector-v4-s_int8.onnx")
@@ -58,10 +60,11 @@ CONF_FLOOR = 0.05           # what we persist (slider re-filters above this)
 N_CLASSES = {0: "bubble", 1: "text_bubble", 2: "text_free"}
 CLASS_COLORS = {0: (150, 150, 160), 1: (70, 200, 120), 2: (240, 170, 60)}
 
-# Director-locked test chapter: opened automatically unless --chapter overrides.
+# Director-locked test chapter: pre-seeded as a recent chapter in the UI.
 DEFAULT_CHAPTER = (r"C:\Users\User\Downloads\manga_test_chapters"
                    r"\ore-ni-trauma-wo-ataeta-joshitachi-ga-chirachira-"
                    r"mitekuru-kedo-zannen-desu-ga-teokure-desu_ch16")
+RECENT_FILE = Path(__file__).resolve().parent / ".recent.json"
 
 
 def log(msg: str) -> None:
@@ -83,6 +86,11 @@ class Pipeline:
         self._paddle_det_unavailable = False
         self._aot = None         # AotInpainter, lazy
         self._segmenter = None   # BubbleSegmenter, lazy (manga109 YOLO11-seg)
+        self._bubble_mask_cache: dict[str, list] = {}
+        self._load_times: dict[str, float] = {}
+        self._seg_times: dict[str, float] = {}
+        self._inpaint_times: dict[str, float] = {}
+        self._render_times: dict[str, float] = {}
         self._cache: dict = {}
         self._render_dirty: dict[str, bool] = {}
         self._crop_cache: dict = {}
@@ -119,6 +127,33 @@ class Pipeline:
                      encoding="utf-8")
 
     # ---------------------------------------------------------------- folders
+    def get_recent(self) -> list[dict]:
+        recents: list[dict] = []
+        if RECENT_FILE.exists():
+            try:
+                with open(RECENT_FILE, "r", encoding="utf-8") as f:
+                    recents = json.load(f)
+            except Exception:
+                recents = []
+        # Pre-seed with DEFAULT_CHAPTER if not already present
+        existing = {r.get("chapter") for r in recents if isinstance(r, dict)}
+        if DEFAULT_CHAPTER not in existing and Path(DEFAULT_CHAPTER).is_dir():
+            recents.append({"chapter": DEFAULT_CHAPTER, "reference": None})
+        return recents
+
+    def record_recent(self, chapter: str | Path, reference: str | Path | None = None) -> list[dict]:
+        ch_str = str(Path(chapter).resolve())
+        ref_str = str(Path(reference).resolve()) if reference else None
+        recents = [r for r in self.get_recent() if r.get("chapter") != ch_str]
+        recents.insert(0, {"chapter": ch_str, "reference": ref_str})
+        recents = recents[:15]
+        try:
+            with open(RECENT_FILE, "w", encoding="utf-8") as f:
+                json.dump(recents, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.log(f"warning: failed to save recent chapters: {e}")
+        return recents
+
     def open_folders(self, chapter: str, reference: str | None) -> dict:
         with self.lock:
             ch = Path(chapter)
@@ -126,6 +161,7 @@ class Pipeline:
                 raise ValueError(f"chapter folder not found: {chapter}")
             self.chapter = ch
             self.reference = Path(reference) if reference and Path(reference).is_dir() else None
+            self.record_recent(ch, self.reference)
             self.pages = sorted(
                 p.relative_to(ch).as_posix() for p in ch.rglob("*")
                 if p.suffix.lower() in IMAGE_EXTS and p.is_file()
@@ -145,6 +181,7 @@ class Pipeline:
             }
             self._dims = {}
             self._crop_cache = {}
+            self._bubble_mask_cache = {}
             self.settings = dict(DEFAULT_SETTINGS)
             self.settings.update(self._load_json("settings.json", {}))
             self._render_dirty = {p: True for p in self.pages}
@@ -154,9 +191,107 @@ class Pipeline:
 
     def save_settings(self, patch: dict) -> dict:
         with self.lock:
-            self.settings.update(patch)
+            for k, v in patch.items():
+                if k == "conf" and v is not None:
+                    self.settings[k] = float(v)
+                elif k == "bubble_mask_erosion" and v is not None:
+                    self.settings[k] = int(v)
+                elif k == "font_scale" and v is not None:
+                    self.settings[k] = float(v)
+                elif k == "max_batch" and v is not None:
+                    self.settings[k] = int(v)
+                else:
+                    self.settings[k] = v
             self._save_json("settings.json", self.settings)
             return self.settings
+
+    def reset_artifacts(self, page: str | None = None,
+                        keep_translations: bool = False) -> dict:
+        """Delete cached artifacts so the pipeline re-runs from scratch.
+
+        Args:
+            page: If given, reset only that page's data. Otherwise reset all.
+            keep_translations: When True, preserve translations.json so manual
+                               or API translations are not lost.
+
+        Returns a summary of what was deleted.
+        """
+        with self.lock:
+            if not self.studio_dir:
+                raise ValueError("No chapter open")
+            deleted: list[str] = []
+            stem = Path(page).stem if page else None
+
+            def _rm(p: Path) -> None:
+                if p.exists():
+                    p.unlink()
+                    deleted.append(p.name)
+
+            def _rm_tree(d: Path) -> None:
+                """Delete every file in a subdirectory (or only the page's file)."""
+                if not d.is_dir():
+                    return
+                if stem:
+                    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+                        _rm(d / (stem + ext))
+                else:
+                    for f in list(d.iterdir()):
+                        if f.is_file():
+                            f.unlink()
+                            deleted.append(f.name)
+
+            if stem:
+                # Per-page reset: remove this page's entries from JSON caches
+                # and its rendered/inpainted/segmentation images.
+                for key in ("detections", "ocr"):
+                    if page in self._cache.get(key, {}):
+                        del self._cache[key][page]
+                        self._save_json(f"{key}.json", self._cache[key])
+                        deleted.append(f"{key}.json[{page}]")
+                if not keep_translations and page in self._cache.get("translations", {}):
+                    del self._cache["translations"][page]
+                    self._save_json("translations.json", self._cache["translations"])
+                    deleted.append(f"translations.json[{page}]")
+                _rm_tree(self.studio_dir / "render")
+                _rm_tree(self.studio_dir / "inpaint")
+                _rm_tree(self.studio_dir / "inpaint_mask")
+                _rm_tree(self.studio_dir / "segmentation")
+                _rm_tree(self.studio_dir / "seg_overlay")
+                _rm_tree(self.studio_dir / "thumbs")
+                self._render_dirty[page] = True
+                self._bubble_mask_cache.pop(page, None)
+                self._crop_cache.pop(page, None)
+                self._seg_times.pop(page, None)
+                self._inpaint_times.pop(page, None)
+                self._render_times.pop(page, None)
+            else:
+                # Full chapter reset
+                _rm(self.studio_dir / "detections.json")
+                _rm(self.studio_dir / "ocr.json")
+                if not keep_translations:
+                    _rm(self.studio_dir / "translations.json")
+                _rm_tree(self.studio_dir / "render")
+                _rm_tree(self.studio_dir / "inpaint")
+                _rm_tree(self.studio_dir / "inpaint_mask")
+                _rm_tree(self.studio_dir / "segmentation")
+                _rm_tree(self.studio_dir / "seg_overlay")
+                _rm_tree(self.studio_dir / "thumbs")
+                self._cache["detections"] = {}
+                self._cache["ocr"] = {}
+                if not keep_translations:
+                    self._cache["translations"] = {}
+                self._crop_cache = {}
+                self._bubble_mask_cache = {}
+                self._seg_times = {}
+                self._inpaint_times = {}
+                self._render_times = {}
+                self._render_dirty = {p: True for p in self.pages}
+
+            self.log(f"reset_artifacts(page={page!r}, keep_translations={keep_translations}): "
+                     f"removed {len(deleted)} items")
+            return {"deleted": deleted, "count": len(deleted)}
+
+
 
     def state(self) -> dict:
         return {
@@ -164,6 +299,7 @@ class Pipeline:
             "reference": str(self.reference) if self.reference else None,
             "pages": self.pages,
             "settings": self.settings,
+            "recent": self.get_recent(),
             "dims": {p: self.page_dims(p) for p in self.pages},
             "models": {
                 "detector_ready": self._detector is not None,
@@ -189,8 +325,8 @@ class Pipeline:
             self._dims[page] = d
         return d
 
-    def thumbnail(self, page: str, size: int = 160) -> Image.Image:
-        """Small cached JPEG for the navigator rail / overview."""
+    def thumbnail_path(self, page: str, size: int = 160) -> Path:
+        """Cached thumbnail file path on disk."""
         assert self.studio_dir is not None
         tdir = self.studio_dir / "thumbs"
         out = tdir / f"{Path(page).stem}_{size}.jpg"
@@ -201,7 +337,11 @@ class Pipeline:
             tmp = out.with_suffix(".tmp.jpg")
             img.save(tmp, "JPEG", quality=80)
             tmp.replace(out)
-        return Image.open(out).convert("RGB")
+        return out
+
+    def thumbnail(self, page: str, size: int = 160) -> Image.Image:
+        """Small cached JPEG for the navigator rail / overview."""
+        return Image.open(self.thumbnail_path(page, size)).convert("RGB")
 
     def ocr_input_image(self, page: str, region_id: str) -> Image.Image:
         """The EXACT 224x224 normalized tensor OCR consumed, un-normalized
@@ -230,37 +370,86 @@ class Pipeline:
         return img
 
     def overview(self) -> dict:
-        """Chapter-level aggregate computed from the existing caches only."""
+        """Chapter-level aggregate computed from the existing caches & timings."""
         rows = []
+        total_regions_count = 0
+        total_chapter_infer_ms = 0.0
+        pages_with_data = 0
+
+        conf = float(self.settings.get("conf", 0.45))
         for p in self.pages:
-            det = self._cache["detections"].get(p) is not None
+            det = self._cache["detections"].get(p)
             ocr = self._cache["ocr"].get(p)
-            regs = (ocr or {}).get("regions", [])
+            if ocr and "regions" in ocr:
+                regs = [r for r in ocr["regions"] if r.get("score", 1.0) >= conf]
+            elif det:
+                regs = self._regions_at_conf(p, conf).get("regions", [])
+            else:
+                regs = []
             tr = self.translations(p)
             translated = sum(1 for r in regs if (tr.get(r["id"]) or "").strip())
             rendered = False
+            inpainted = False
             if self.studio_dir is not None:
                 out = self.studio_dir / "render" / (Path(p).stem + ".png")
-                # Status display: a rendered PNG exists. (Re-opening the chapter
-                # marks pages re-render-dirty, but that must not flip the UI
-                # status back to "not rendered" — /img/render still regenerates
-                # those on demand via _render_dirty.)
                 rendered = out.exists()
+                inp_path = self.studio_dir / "inpaint" / (Path(p).stem + ".png")
+                inpainted = inp_path.exists()
+
+            det_ms = (det or {}).get("infer_ms", (det or {}).get("model_ms", 0)) or 0
+            ocr_ms = (ocr or {}).get("infer_ms", (ocr or {}).get("ms", 0)) or 0
+            seg_ms = self._seg_times.get(p, 0)
+            inp_ms = self._inpaint_times.get(p, 0)
+            ren_ms = self._render_times.get(p, 0)
+            page_infer_total = det_ms + ocr_ms + seg_ms + inp_ms + ren_ms
+            if page_infer_total > 0 or len(regs) > 0:
+                pages_with_data += 1
+                total_chapter_infer_ms += page_infer_total
+                total_regions_count += len(regs)
+
             rows.append({
                 "page": p,
-                "detected": det,
+                "detected": det is not None,
                 "ocr": ocr is not None,
                 "regions": len(regs),
                 "translated": translated,
+                "inpainted": inpainted,
                 "rendered": rendered,
-                "ocr_ms": (ocr or {}).get("ms", 0) or 0,
+                "det_ms": det_ms,
+                "ocr_ms": ocr_ms,
+                "seg_ms": seg_ms,
+                "inp_ms": inp_ms,
+                "ren_ms": ren_ms,
+                "total_infer_ms": round(page_infer_total, 1),
                 "position_limit": any(r.get("position_limit") for r in regs),
             })
+
         errors = [{"page": r["page"], "reason": "OCR position limit"}
                   for r in rows if r["position_limit"]]
         slowest = max(rows, key=lambda r: r["ocr_ms"], default=None)
-        return {"chapter": str(self.chapter) if self.chapter else None,
-                "pages": rows, "errors": errors, "slowest": slowest}
+
+        avg_page_infer_ms = round(total_chapter_infer_ms / max(1, pages_with_data), 1)
+        avg_regions = round(total_regions_count / max(1, pages_with_data), 2)
+        total_model_load_ms = round(sum(self._load_times.values()), 1)
+
+        summary = {
+            "total_pages": len(self.pages),
+            "pages_with_data": pages_with_data,
+            "total_regions": total_regions_count,
+            "avg_regions_per_page": avg_regions,
+            "total_chapter_infer_ms": round(total_chapter_infer_ms, 1),
+            "avg_page_infer_ms": avg_page_infer_ms,
+            "total_model_load_ms": total_model_load_ms,
+            "model_load_times": dict(self._load_times),
+        }
+
+        return {
+            "chapter": str(self.chapter) if self.chapter else None,
+            "summary": summary,
+            "pages": rows,
+            "errors": errors,
+            "slowest": slowest,
+        }
 
     # ------------------------------------------------------------------ image
     def page_image(self, page: str) -> Image.Image:
@@ -278,8 +467,11 @@ class Pipeline:
     # --------------------------------------------------------------- detection
     def _detector_model(self):
         if self._detector is None:
+            t0 = time.perf_counter()
             self.log(f"loading detector: {DETECTOR_PATH.name}")
             self._detector = Detector(DETECTOR_PATH)
+            self._load_times["detector"] = round((time.perf_counter() - t0) * 1000, 1)
+            self.log(f"detector loaded in {self._load_times['detector']}ms")
         return self._detector
 
     def detect_page(self, page: str, conf: float | None = None,
@@ -289,20 +481,26 @@ class Pipeline:
             conf = self.settings["conf"] if conf is None else conf
             raw = self._cache["detections"].get(page)
             if raw is None or force:
+                det = self._detector_model()
                 t0 = time.perf_counter()
                 img = self.page_image(page)
-                raw_all = self._detector_model().detect(img)
+                raw_all = det.detect(img)
+                infer_ms = round((time.perf_counter() - t0) * 1000, 1)
                 raw = {"boxes": [[d["label"], round(d["score"], 4), *d["box"]]
                                  for d in raw_all],
                        "page_wh": [img.width, img.height],
-                       "model_ms": round((time.perf_counter() - t0) * 1000, 1)}
+                       "model_ms": infer_ms,
+                       "infer_ms": infer_ms,
+                       "load_ms": self._load_times.get("detector", 0)}
                 self._cache["detections"][page] = raw
                 self._save_json("detections.json", self._cache["detections"])
                 self.log(f"detect {page}: {len(raw['boxes'])} raw "
-                         f"({raw['model_ms']}ms)")
+                         f"(infer {raw['infer_ms']}ms, load {raw['load_ms']}ms)")
             regions = self._regions_at_conf(page, conf)
             return {"page": page, "conf": conf, **regions,
-                    "model_ms": raw["model_ms"]}
+                    "model_ms": raw.get("infer_ms", raw.get("model_ms", 0)),
+                    "infer_ms": raw.get("infer_ms", raw.get("model_ms", 0)),
+                    "load_ms": raw.get("load_ms", self._load_times.get("detector", 0))}
 
     def _regions_at_conf(self, page: str, conf: float) -> dict:
         """Filter + dedupe raw detections exactly like the app's stages."""
@@ -344,10 +542,12 @@ class Pipeline:
     # --------------------------------------------------------------------- OCR
     def _ocr_engine(self):
         if self._ocr is None:
+            t0 = time.perf_counter()
             log("initializing OCR (derived graphs + B=1 gate)…")
             self._ocr = OcrEngine()
+            self._load_times["ocr_mangaocr"] = round((time.perf_counter() - t0) * 1000, 1)
             g = self._ocr.gate
-            log(f"OCR ready — gate {'PASS' if g['pass'] else 'FAILED'} "
+            log(f"OCR ready in {self._load_times['ocr_mangaocr']}ms — gate {'PASS' if g['pass'] else 'FAILED'} "
                 f"(enc {g['encoder_max_abs_diff']:.1e}, dec "
                 f"{g['decoder_max_abs_diff']:.1e})")
         return self._ocr
@@ -355,10 +555,12 @@ class Pipeline:
     def _paddle_engines(self):
         """PaddleOCR v6 small det+rec (desktop port of the Android engines)."""
         if self._paddle is None:
+            t0 = time.perf_counter()
             import paddle_ocr
             log("initializing PaddleOCR v6 small (det + rec)…")
             self._paddle = (paddle_ocr.PaddleDet(), paddle_ocr.PaddleRec())
-            log(f"PaddleOCR ready — dict={len(self._paddle[1].dictionary)} "
+            self._load_times["ocr_paddle"] = round((time.perf_counter() - t0) * 1000, 1)
+            log(f"PaddleOCR ready in {self._load_times['ocr_paddle']}ms — dict={len(self._paddle[1].dictionary)} "
                 f"classes")
         return self._paddle
 
@@ -425,14 +627,16 @@ class Pipeline:
                     if iou_at_least(r["box"], p["box"], 0.7):
                         r["carried_from"] = pid
                         break
+            load_ms = self._load_times.get(f"ocr_{engine_name}", 0)
             self._cache["ocr"][page] = {"regions": regions, "runs": runs,
-                                        "ms": ms, "engine": engine_name}
+                                        "ms": ms, "infer_ms": ms, "load_ms": load_ms,
+                                        "engine": engine_name}
             self._save_json("ocr.json", self._cache["ocr"])
             self._render_dirty[page] = True
             texts = [r.get("text", "") for r in regions]
             self.log(f"ocr[{engine_name}] {page}: {len(regions)} regions, "
-                     f"{ms}ms ({sum(1 for t in texts if t)} non-empty)")
-            return {"page": page, "regions": regions, "runs": runs, "ms": ms}
+                     f"infer {ms}ms (load {load_ms}ms, {sum(1 for t in texts if t)} non-empty)")
+            return {"page": page, "regions": regions, "runs": runs, "ms": ms, "infer_ms": ms, "load_ms": load_ms}
 
     # -------------------------------------------------------------- translate
     def translations(self, page: str) -> dict:
@@ -477,16 +681,19 @@ class Pipeline:
                 return {"page": page, "translated": 0, "message": "nothing to translate"}
             backend = self.settings.get("translate_backend", "lm-studio")
             out = []
-            for r in targets:
-                if backend == "google":
-                    text = translate_google(r["text"],
-                                            self.settings["target_lang"])
-                else:
+            if backend == "google":
+                texts = [r["text"] for r in targets]
+                translated = translate_google_batch(texts, self.settings.get("target_lang", "English"))
+                for r, text in zip(targets, translated):
+                    tr[r["id"]] = text
+                    out.append({"id": r["id"], "text": text})
+            else:
+                for r in targets:
                     text = translate_one(
                         r["text"], self.settings["target_lang"],
                         self.settings["endpoint"], self.settings["model"])
-                tr[r["id"]] = text
-                out.append({"id": r["id"], "text": text})
+                    tr[r["id"]] = text
+                    out.append({"id": r["id"], "text": text})
             self._save_json("translations.json", self._cache["translations"])
             self._render_dirty[page] = True
             self.log(f"translate {page}: {len(out)} regions via {backend}")
@@ -518,8 +725,11 @@ class Pipeline:
             import aot_inpaint
             if not aot_inpaint.AotInpainter().ready:
                 return None
+            t0 = time.perf_counter()
             log("loading AOT-512 inpainting model (QUALITY mode)…")
             self._aot = aot_inpaint.AotInpainter()
+            self._load_times["aot"] = round((time.perf_counter() - t0) * 1000, 1)
+            log(f"AOT loaded in {self._load_times['aot']}ms")
         return self._aot if self._aot.ready else None
 
     def _bubble_segmenter(self):
@@ -535,9 +745,153 @@ class Pipeline:
                         f"({segmentation.SEGMENTER_MODEL.name}) — rect-fill "
                         f"fallback")
                 return None
+            t0 = time.perf_counter()
             log("loading bubble segmenter (manga109 YOLO11-seg, 640 int8)…")
             self._segmenter = segmentation.BubbleSegmenter()
+            self._load_times["segmenter"] = round((time.perf_counter() - t0) * 1000, 1)
+            log(f"bubble segmenter loaded in {self._load_times['segmenter']}ms")
         return self._segmenter
+
+    def bubble_masks(self, page: str) -> list:
+        """Cached bubble masks for a page, run on the PRISTINE page_image.
+        Sharing the mask across inpaint, segmentation viewer, and render
+        avoids redundant ONNX passes and guarantees render sees the same
+        bubble boundaries as inpaint (running segmentation on an already-
+        inpainted image fails to detect smoothed bubbles)."""
+        if not self.settings.get("bubble_segmentation", True):
+            return []
+        with self.lock:
+            if page not in self._bubble_mask_cache:
+                segmenter = self._bubble_segmenter()
+                if segmenter is None:
+                    return []
+                try:
+                    img = self.page_image(page)
+                    t0 = time.perf_counter()
+                    masks = segmenter.segment(img)
+                    ms = round((time.perf_counter() - t0) * 1000, 1)
+                    self._seg_times[page] = ms
+                    self.log(f"segment {page}: {len(masks)} bubble masks ({ms}ms)")
+                    self._bubble_mask_cache[page] = masks
+                except Exception as e:
+                    self.log(f"!! bubble segmentation error {page}: {e}")
+                    self._bubble_mask_cache[page] = []
+                    self._seg_times[page] = 0
+            return self._bubble_mask_cache[page]
+
+    def inpaint_page(self, page: str, force: bool = False, mode: str | None = None) -> dict:
+        with self.lock:
+            mode = (mode or self.settings.get("inpaint_mode", "quality")).upper()
+            det_data = self._cache["detections"].get(page) or {}
+            raw_boxes = det_data.get("boxes", [])
+            ocr_data = self._cache["ocr"].get(page) or {}
+            regions = ocr_data.get("regions", [])
+            if not regions and not raw_boxes:
+                self.detect_page(page)
+                det_data = self._cache["detections"].get(page) or {}
+                raw_boxes = det_data.get("boxes", [])
+                conf = self.settings.get("conf", 0.45)
+                regions = self._regions_at_conf(page, conf).get("regions", [])
+
+            out_dir = self.studio_dir / "inpaint"
+            mask_dir = self.studio_dir / "inpaint_mask"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            mask_dir.mkdir(parents=True, exist_ok=True)
+            stem = Path(page).stem
+            out_path = out_dir / (stem + ".png")
+            mask_path = mask_dir / (stem + ".png")
+
+            if force or not out_path.exists() or not mask_path.exists():
+                img = self.page_image(page)
+                # 1. Bubble segmentation model (YOLO11-seg manga109)
+                seg_masks = self.bubble_masks(page)
+
+                # 2. Paddle Det line refinement
+                paddle_det = self._inpaint_paddle_det()
+
+                # 3. AOT neural inpainter (if QUALITY)
+                aot = self._aot_inpainter() if mode == "QUALITY" else None
+
+                # 4. Inpaint pipeline (AotReportBubbleFill + PushPull/AOT)
+                import aot_inpaint
+                bubble_erosion = int(self.settings.get("bubble_mask_erosion", 5))
+                t0 = time.perf_counter()
+                cleaned, mask, stats = aot_inpaint.inpaint_page_pipeline(
+                    img, regions, raw_detections=raw_boxes,
+                    seg_masks=seg_masks, mode=mode,
+                    paddle_det=paddle_det, aot=aot,
+                    bubble_erosion=bubble_erosion,
+                )
+                inp_ms = round((time.perf_counter() - t0) * 1000, 1)
+                self._inpaint_times[page] = inp_ms
+
+                cleaned.save(out_path)
+                mask_img = Image.fromarray((mask.astype(np.uint8) * 255), mode="L")
+                mask_img.save(mask_path)
+                self._render_dirty[page] = True
+                self.log(f"inpaint[{mode.lower()}] {page}: {stats.get('bubbleBoxes', 0)} bubbles, "
+                         f"{stats.get('freeBoxes', 0)} free boxes -> {out_path.name} ({inp_ms}ms)")
+            return {"page": page, "path": str(out_path), "mask_path": str(mask_path),
+                    "infer_ms": self._inpaint_times.get(page, 0)}
+
+    def inpainted_image(self, page: str) -> Image.Image:
+        out_path = self.studio_dir / "inpaint" / (Path(page).stem + ".png")
+        if not out_path.exists():
+            self.inpaint_page(page)
+        return Image.open(out_path).convert("RGB")
+
+    def inpaint_mask_image(self, page: str) -> Image.Image:
+        mask_path = self.studio_dir / "inpaint_mask" / (Path(page).stem + ".png")
+        if mask_path.exists():
+            return Image.open(mask_path).convert("L")
+        w, h = self.page_dims(page)
+        return Image.new("L", (w, h), 0)
+
+
+    def segmentation_overlay_image(self, page: str) -> Image.Image:
+        w, h = self.page_dims(page)
+        masks = self.bubble_masks(page)
+        overlay_np = np.zeros((h, w, 4), dtype=np.uint8)
+        colors = [
+            (56, 189, 248, 110),   # cyan
+            (168, 85, 247, 110),   # purple
+            (52, 211, 153, 110),   # emerald
+            (251, 146, 60, 110),   # orange
+            (244, 114, 182, 110),  # pink
+        ]
+        border_colors = [
+            (56, 189, 248, 240),
+            (168, 85, 247, 240),
+            (52, 211, 153, 240),
+            (251, 146, 60, 240),
+            (244, 114, 182, 240),
+        ]
+        for idx, m in enumerate(masks):
+            c_fill = colors[idx % len(colors)]
+            c_border = border_colors[idx % len(border_colors)]
+            for comp in getattr(m, "components", [1]):
+                cid = getattr(comp, "id", comp)
+                c_mask = m.component_mask(cid)
+                overlay_np[c_mask] = c_fill
+                dilated = ndimage.binary_dilation(c_mask, structure=np.ones((3, 3), bool))
+                border = dilated & (~c_mask)
+                overlay_np[border] = c_border
+        return Image.fromarray(overlay_np, "RGBA")
+
+    def segmentation_overlay_path(self, page: str) -> Path | None:
+        assert self.studio_dir is not None
+        sdir = self.studio_dir / "seg_overlay"
+        out = sdir / (Path(page).stem + ".png")
+        if out.exists():
+            return out
+        return None
+
+
+    def segmentation_image(self, page: str) -> Image.Image:
+        img = self.page_image(page).convert("RGBA")
+        overlay_img = self.segmentation_overlay_image(page)
+        result = Image.alpha_composite(img, overlay_img)
+        return result.convert("RGB")
 
     def render_page(self, page: str, force: bool = False) -> dict:
         with self.lock:
@@ -548,22 +902,38 @@ class Pipeline:
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = out_dir / (Path(page).stem + ".png")
             if force or self._render_dirty.get(page, True) or not out_path.exists():
-                img = self.page_image(page)
+                t0 = time.perf_counter()
+                # Start from clean inpainted background
+                img = self.inpainted_image(page).copy()
                 img.studio_page = page      # for bubble lookups in render_regions
                 tr = self.translations(page)
                 n = render_regions(img, ocr["regions"], tr,
-                                   self.settings, self)
+                                   self.settings, self, page=page)
                 img.save(out_path)
                 self._render_dirty[page] = False
+                render_ms = round((time.perf_counter() - t0) * 1000, 1)
+                self._render_times[page] = render_ms
                 self.log(f"render {page}: {n}/{len(ocr['regions'])} regions "
-                         f"translated -> {out_path.name}")
-            return {"page": page, "path": str(out_path)}
+                         f"translated -> {out_path.name} ({render_ms}ms)")
+            return {"page": page, "path": str(out_path),
+                    "render_ms": self._render_times.get(page, 0)}
 
     def overlay_image(self, page: str, conf: float | None = None) -> Image.Image:
         conf = self.settings["conf"] if conf is None else conf
         regions = self._regions_at_conf(page, conf)["regions"]
+        raw = self._cache["detections"].get(page) or {}
+        raw_boxes = raw.get("boxes", [])
         img = self.page_image(page)
         draw = ImageDraw.Draw(img)
+
+        # Draw raw bubble boxes first in subtle cyan/gray
+        for r in raw_boxes:
+            lbl = int(r[0])
+            score = float(r[1])
+            if lbl == 0 and len(r) >= 6 and score >= conf:
+                b = Box(int(r[2]), int(r[3]), int(r[4]), int(r[5]))
+                draw.rectangle(b.as_list(), outline=(120, 140, 160), width=2)
+
         for r in regions:
             b = Box(*r["box"])
             color = CLASS_COLORS.get(r["label"], (255, 255, 255))
@@ -591,29 +961,89 @@ class Pipeline:
 
     # ---------------------------------------------------------------- process
     def process_page(self, page: str, conf: float | None = None,
-                     translate: bool = False) -> dict:
+                     translate: bool = True) -> dict:
         t0 = time.perf_counter()
         det = self.detect_page(page, conf)
         ocr = self.ocr_page(page, conf)
+        inpaint = self.inpaint_page(page)
         self.carry_translations(page)
         if translate:
             try:
                 self.translate_page(page)
             except Exception as e:
                 self.log(f"!! translate skipped: {e}")
-        self.render_page(page)
+        rend = self.render_page(page)
         return {"page": page, "detections": det, "ocr": {
             "regions": ocr["regions"], "runs": ocr["runs"], "ms": ocr["ms"]},
+            "inpaint": inpaint["path"],
+            "render": rend["path"],
             "translations": self.translations(page),
             "total_ms": round((time.perf_counter() - t0) * 1000, 1)}
 
     def page_data(self, page: str) -> dict:
+        conf = float(self.settings.get("conf", 0.45))
         ocr = self._cache["ocr"].get(page, {})
         det = self._cache["detections"].get(page)
+        raw_boxes = []
+        if det and "boxes" in det:
+            for b in det["boxes"]:
+                score = float(b[1])
+                if score >= conf:
+                    raw_boxes.append({
+                        "label": int(b[0]),
+                        "score": round(score, 3),
+                        "box": [int(v) for v in b[2:6]],
+                        "class": N_CLASSES.get(int(b[0]), "unknown"),
+                    })
+
+        # Regions: if OCR data exists, filter it by conf.
+        # If OCR hasn't run yet, but detection has run, provide filtered detector regions!
+        if ocr and "regions" in ocr:
+            regions = [r for r in ocr["regions"] if r.get("score", 1.0) >= conf]
+        elif det:
+            regions = self._regions_at_conf(page, conf).get("regions", [])
+        else:
+            regions = []
+
+        det_infer = det.get("infer_ms", det.get("model_ms", 0)) if det else 0
+        ocr_infer = ocr.get("infer_ms", ocr.get("ms", 0)) if ocr else 0
+        seg_infer = self._seg_times.get(page, 0)
+        inp_infer = self._inpaint_times.get(page, 0)
+        ren_infer = self._render_times.get(page, 0)
+
+        ocr_engine_name = ocr.get("engine", self._ocr_engine_name())
+        metrics = {
+            "load_times": dict(self._load_times),
+            "detector": {
+                "load_ms": self._load_times.get("detector", 0),
+                "infer_ms": det_infer,
+            },
+            "ocr": {
+                "load_ms": self._load_times.get(f"ocr_{ocr_engine_name}", 0),
+                "infer_ms": ocr_infer,
+                "regions_count": len(regions),
+                "engine": ocr_engine_name,
+            },
+            "segmenter": {
+                "load_ms": self._load_times.get("segmenter", 0),
+                "infer_ms": seg_infer,
+            },
+            "inpaint": {
+                "load_ms": self._load_times.get("aot", 0),
+                "infer_ms": inp_infer,
+            },
+            "render": {
+                "render_ms": ren_infer,
+            },
+            "total_infer_ms": round(det_infer + ocr_infer + seg_infer + inp_infer + ren_infer, 1)
+        }
+
         return {"page": page,
-                "regions": ocr.get("regions", []),
+                "regions": regions,
+                "raw_boxes": raw_boxes,
                 "runs": ocr.get("runs", {}),
                 "ocr_ms": ocr.get("ms", 0),
+                "metrics": metrics,
                 "detected": det is not None,
                 "translations": self.translations(page),
                 "has_reference": (self.reference is not None
@@ -716,8 +1146,19 @@ class OcrEngine:
 
 
 # =================================================================== render
+APP_DIR = Path(__file__).resolve().parents[2]
+ANIMEACE_PATH = APP_DIR / "app" / "src" / "main" / "res" / "font" / "animeace.ttf"
+MANGA_MASTER_PATH = APP_DIR / "app" / "src" / "main" / "res" / "font" / "manga_master_bb.ttf"
+
+
 def _load_font(size: int, settings: dict):
-    candidates = [settings.get("font_path")] if settings.get("font_path") else []
+    candidates = []
+    if settings.get("font_path"):
+        candidates.append(settings["font_path"])
+    if ANIMEACE_PATH.exists():
+        candidates.append(str(ANIMEACE_PATH))
+    if MANGA_MASTER_PATH.exists():
+        candidates.append(str(MANGA_MASTER_PATH))
     candidates += ["C:/Windows/Fonts/arial.ttf", "C:/Windows/Fonts/msyh.ttc",
                    "C:/Windows/Fonts/msgothic.ttc",
                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
@@ -733,248 +1174,126 @@ def _ui_font():
     return _load_font(14, {})
 
 
-def _median_ring_color(img: Image.Image, box: Box, band: int = 4) -> tuple:
-    w, h = img.size
-    strips = []
-    x1, y1 = max(0, box.x1 - band), max(0, box.y1 - band)
-    x2, y2 = min(w, box.x2 + band), min(h, box.y2 + band)
-    if x2 - x1 < 2 or y2 - y1 < 2:
-        return (255, 255, 255)
-    ring = np.asarray(img.crop((x1, y1, x2, y2)))
-    inner = np.asarray(img.crop(box.as_list()))
-    mask = np.ones(ring.shape[:2], bool)
-    mask[band:band + inner.shape[0] if inner.shape[0] else band,
-         band:band + inner.shape[1] if inner.shape[1] else band] = False
-    sel = ring[mask]
-    if sel.size == 0:
-        return (255, 255, 255)
-    med = np.median(sel.reshape(-1, sel.shape[-1]), axis=0)
-    return tuple(int(v) for v in med)
+def _is_cjk(ch: str) -> bool:
+    cp = ord(ch)
+    return ((0x4E00 <= cp <= 0x9FFF) or
+            (0x3400 <= cp <= 0x4DBF) or
+            (0x20000 <= cp <= 0x2A6DF) or
+            (0x2A700 <= cp <= 0x2B73F) or
+            (0x2B740 <= cp <= 0x2B81F) or
+            (0xF900 <= cp <= 0xFAFF) or
+            (0x2F800 <= cp <= 0x2FA1F) or
+            (0x3000 <= cp <= 0x303F) or
+            (0x3040 <= cp <= 0x309F) or
+            (0x30A0 <= cp <= 0x30FF) or
+            (0x31F0 <= cp <= 0x31FF) or
+            (0xAC00 <= cp <= 0xD7AF) or
+            (0xFF00 <= cp <= 0xFFEF) or
+            (0xFE30 <= cp <= 0xFE4F))
 
 
-def _wrap(draw, text: str, font, max_w: float) -> list[str]:
-    words = text.split(" ")
-    use_words = len(words) > 1
-    tokens = words if use_words else list(text)
-    lines, cur = [], ""
-    for t in tokens:
-        cand = (cur + " " + t).strip() if use_words else cur + t
-        if draw.textlength(cand, font=font) <= max_w or not cur:
-            cur = cand
+def _tokenize(text: str) -> list[tuple[str, str]]:
+    """Tokenize matching Android TextLineBreaker:
+    contract:
+      1. forced newline stays forced
+      2. whitespace separates
+      3. CJK graphemes are breakable individually
+      4. Latin runs end after a '-' (source hyphen stays with the run)
+    """
+    tokens = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        if ch == '\n':
+            tokens.append(('NL', '\n'))
+            i += 1
+        elif ch.isspace():
+            tokens.append(('WS', ' '))
+            i += 1
+        elif _is_cjk(ch):
+            tokens.append(('WORD', ch))
+            i += 1
         else:
-            lines.append(cur)
-            cur = t
-    if cur:
-        lines.append(cur)
-    return lines or [""]
+            start = i
+            while i < n and not _is_cjk(text[i]) and not text[i].isspace() and text[i] != '\n':
+                if text[i] == '-' and i > start:
+                    i += 1
+                    break
+                i += 1
+            tokens.append(('WORD', text[start:i]))
+    return tokens
+
+
+def _prewrap(draw: ImageDraw.ImageDraw, text: str, font, max_w: float) -> list[str]:
+    """Greedy line wrap matching Android TextLineBreaker.prewrap."""
+    tokens = _tokenize(text)
+    lines = []
+    current = ""
+    for kind, val in tokens:
+        if kind == 'NL':
+            lines.append(current.rstrip())
+            current = ""
+        elif kind == 'WS':
+            cand = current + " "
+            if draw.textlength(cand, font=font) > max_w and current:
+                lines.append(current.rstrip())
+                current = ""
+            else:
+                current = cand
+        elif kind == 'WORD':
+            cand = current + val
+            if draw.textlength(cand, font=font) > max_w:
+                if current:
+                    lines.append(current.rstrip())
+                    current = ""
+                # Only break long words (>= 8 chars) that cannot fit within max_w
+                if len(val) >= 8 and draw.textlength(val, font=font) > max_w:
+                    sub = ""
+                    for ch in val:
+                        hyphen_cand = sub + ch + "-"
+                        if len(sub) >= 3 and draw.textlength(hyphen_cand, font=font) > max_w:
+                            lines.append(sub + "-")
+                            sub = ch
+                        else:
+                            sub += ch
+                    current = sub
+                else:
+                    current = val
+            else:
+                current = cand
+    if current:
+        lines.append(current.rstrip())
+    return [l for l in lines if l] or [""]
 
 
 def _fit_text(draw, text: str, box: Box, settings: dict):
     margin = 6
-    max_w, max_h = box.w - 2 * margin, box.h - 2 * margin
-    size = max(9, min(int(max_h / 1.25), 40))
-    while size >= 9:
-        font = _load_font(int(size * settings.get("font_scale", 1.0))
-                          if settings.get("font_scale", 1.0) != 1.0 else size,
-                          settings)
-        lines = _wrap(draw, text, font, max_w)
-        line_h = size * 1.2
-        if len(lines) * line_h <= max_h:
+    max_w, max_h = max(10, box.w - 2 * margin), max(10, box.h - 2 * margin)
+    font_scale = float(settings.get("font_scale", 1.0))
+    size = max(8, min(int(max_h / 1.15), 48))
+    while size >= 8:
+        scaled_size = max(8, int(round(size * font_scale)))
+        font = _load_font(scaled_size, settings)
+        lines = _prewrap(draw, text, font, max_w)
+        try:
+            ascent, descent = font.getmetrics()
+            line_h = max(scaled_size, ascent + descent)
+        except Exception:
+            line_h = scaled_size * 1.25
+        total_h = len(lines) * line_h
+        max_lw = max(draw.textlength(l, font=font) for l in lines) if lines else 0
+        if total_h <= max_h and max_lw <= max_w:
             return font, lines, line_h
         size -= 1
-    font = _load_font(9, settings)
-    return font, _wrap(draw, text, font, max_w), 11.0
-
-
-def _erase_fill_color(img: Image.Image, box: Box, settings: dict) -> tuple:
-    if settings.get("erase", "auto") == "white":
-        return (255, 255, 255)
-    return _median_ring_color(img, box)
-
-
-def render_regions(img: Image.Image, regions: list[dict],
-                   translations: dict[str, str], settings: dict,
-                   pipe: "Pipeline | None" = None) -> int:
-    """Draw translated text.
-
-    Erase routing mirrors Android AOTInpainting.inpaintRegions: bubble text
-    ALWAYS uses the classical cleaner (inpaintReportBubbles -> the ported
-    SmartBubbleTextCleaner in segmentation.py, mask-constrained to the
-    bubble component); only free text (label 2 outside bubbles) gets the
-    AOT-512 neural model in QUALITY mode; FAST and every neural fallback use
-    the PushPullGradient push/pull fill over Paddle line-refined masks
-    (aot_inpaint.inpaint_free_text — the app's inpaintRegions free-text leg).
-
-    When bubble segmentation is active (settings.bubble_segmentation and the
-    manga109 model loads), each region is assigned to a bubble component
-    (MaskGeometry.componentForRectangleDeterministic); erase is limited to
-    that component's pixels, text is fitted into the component's bounding
-    geometry and clipped to the component mask (Phase A layout fidelity).
-    Text color is estimated AFTER erase via RenderColorEstimator (seeded
-    2-means, pure black/white fill, luma-inverse stroke of width
-    max(2, 0.12 * font)) — the app re-derives post-inpaint.
-    """
-    todo = [r for r in regions if (translations.get(r["id"]) or "").strip()]
-    if not todo:
-        return 0
-
-    bubbles = []
-    if pipe is not None:
-        raw = pipe._cache["detections"].get(_page_of(img)) or {}
-        bubbles = [Box(*[int(v) for v in r[2:]])
-                   for r in raw.get("boxes", []) if int(r[0]) == 0]
-
-    def is_free_text(r: dict) -> bool:
-        if r.get("label") != 2:
-            return False
-        b = Box(*r["box"])
-        return not any(intersection_area(b, bub) > 0 for bub in bubbles)
-
-    quality = settings.get("inpaint_mode", "fast") == "quality"
-
-    # ---- bubble segmentation: once per page, reused for erase and layout.
-    _seg = _seg_module()
-    seg_masks: list | None = None
-    if pipe is not None and settings.get("bubble_segmentation", True):
-        segmenter = pipe._bubble_segmenter()
-        if segmenter is not None:
-            try:
-                t0 = time.perf_counter()
-                seg_masks = segmenter.segment(img)
-                ms = round((time.perf_counter() - t0) * 1000, 1)
-                ncomp = sum(len(m.components) for m in seg_masks)
-                log(f"segment {_page_of(img)}: {len(seg_masks)} bubble "
-                    f"masks, {ncomp} usable components ({ms}ms)")
-            except Exception as e:
-                log(f"!! bubble segmentation failed ({e}) — rect-fill "
-                    f"fallback for bubble regions")
-                seg_masks = None
-
-    assignment: dict[str, tuple] = {}
-    if seg_masks:
-        for r in todo:
-            a = _seg.assign_region_component(seg_masks,
-                                             Box(*r["box"]).as_list())
-            if a is not None:
-                assignment[r["id"]] = a
-        log(f"segment {_page_of(img)}: {len(assignment)}/{len(todo)} "
-            f"regions matched to bubble components")
-
-    # ---- bubble-route text with no segmentation component: Android never
-    # rect-fills these — inpaintReportBubbles gives them a dynamic pill mask
-    # (pad MASK_PAD=8, radius clamp(shortSide/8, 2, 16)) + AotReportBubbleFill
-    # fillAndBlend (smooth 12, feather 12). The solid rect fill remains only
-    # when the segmenter is unavailable entirely, or for erase=white.
-    import aot_inpaint
-    free_regions = [r for r in todo if is_free_text(r)]
-    free_ids = {r["id"] for r in free_regions}
-    unassigned = [r for r in todo
-                  if r["id"] not in free_ids and r["id"] not in assignment]
-    if settings.get("erase", "auto") == "white":
-        pill_regions, rect_regions = [], unassigned
-    elif seg_masks is not None:
-        pill_regions, rect_regions = unassigned, []
-    else:
-        pill_regions, rect_regions = [], unassigned
-    if pill_regions:
-        try:
-            aot_inpaint.inpaint_report_bubbles(
-                img, [Box(*r["box"]).as_list() for r in pill_regions])
-            log(f"erase: {len(pill_regions)} bubble-route regions -> "
-                f"report pill fill (smooth=12, feather=12)")
-        except Exception as e:
-            log(f"!! report pill fill failed ({e}) — rect fallback")
-            rect_regions = pill_regions
-    for r in rect_regions:
-        _erase_one(img, Box(*r["box"]), settings)
-
-    # ---- free text: Paddle line refinement -> clustered groups -> neural
-    # (QUALITY) or push/pull (FAST + all neural fallbacks) per group. Mirrors
-    # AOTInpainting.inpaintRegions' free-text leg; the solid rect fill is
-    # never used for free text.
-    if free_regions:
-        aot = pipe._aot_inpainter() if quality and pipe is not None else None
-        if quality and aot is None:
-            log("inpaint[quality]: AOT-512 model unavailable — push/pull fallback")
-        paddle_det = pipe._inpaint_paddle_det() if pipe is not None else None
-        stats = aot_inpaint.inpaint_free_text(
-            img, [Box(*r["box"]).as_list() for r in free_regions],
-            mode="QUALITY" if quality else "FAST",
-            paddle_det=paddle_det, aot=aot)
-        log(f"inpaint[{'quality' if quality else 'fast'}]: "
-            f"{stats['neural']} neural / {stats['push_pull']} push-pull "
-            f"({stats['clusteredGroups']} groups, {stats['paddleLines']} "
-            f"paddle lines, {stats['fallback']} box fallbacks); "
-            f"bubble text classical")
-
-    np_page = np.asarray(img).copy()
-    if seg_masks:
-        cleaner = _seg.SmartBubbleCleaner()
-        cleaned = 0
-        for r in todo:
-            a = assignment.get(r["id"])
-            if a is None or r["id"] in free_ids:
-                continue
-            mask, comp = a
-            msg = cleaner.clean_region(
-                np_page, Box(*r["box"]).as_list(),
-                component_mask=mask.component_mask(comp))
-            cleaned += 1
-            log(f"erase[{r['id']}] bubble-clean {msg}")
-        if cleaned and settings.get("erase", "auto") == "white":
-            log("note: erase=white applies to rect fallback only; bubble "
-                "clean derives the fill from the bubble interior")
-        img.paste(Image.fromarray(np_page))
-
-    # ---- draw. Color is estimated against the POST-ERASE bitmap
-    # (RenderColorEstimator.recomputeFor ordering).
-    draw = ImageDraw.Draw(img)
-    for r in todo:
-        text = (translations.get(r["id"]) or "").strip()
-        rbox = Box(*r["box"])
-        a = assignment.get(r["id"])
-        if a is not None:
-            mask, comp = a
-            # Phase A usable area = component ∩ region box. Bounding the
-            # component alone lets two regions of a merged bubble instance
-            # collapse onto one center; intersecting with the detector box
-            # keeps each region's text in its own area (the role
-            # MaskTextRegionPlanner plays in the app) while the clip below
-            # still forbids ink outside the bubble shape.
-            gx1, gy1 = max(0, rbox.x1), max(0, rbox.y1)
-            inter = mask.labels[gy1:rbox.y2, gx1:rbox.x2] == comp
-            if inter.any():
-                ys, xs = np.where(inter)
-                fit_box = Box(gx1 + int(xs.min()), gy1 + int(ys.min()),
-                              gx1 + int(xs.max()) + 1, gy1 + int(ys.max()) + 1)
-            else:
-                fit_box = rbox
-        else:
-            mask, comp = None, 0
-            fit_box = rbox
-        font, lines, line_h = _fit_text(draw, text, fit_box, settings)
-        if mask is not None:
-            font, lines, line_h = _fit_text_in_mask(
-                draw, text, fit_box, mask.component_mask(comp), settings)
-        stroke_w = max(0, int(round(_seg.compute_stroke_width(font.size))))
-        fill, stroke, bg_luma = _seg_estimate_color(
-            np_page, rbox.as_list(),
-            mask.bounds if mask is not None else None)
-        log(f"color[{r['id']}] bgLuma={bg_luma:.0f} -> "
-            f"{'white' if fill[0] > 0 else 'black'} fill, "
-            f"stroke w={stroke_w}")
-        if mask is not None:
-            _draw_text_clipped(img, mask, comp, fit_box, font, lines,
-                               line_h, fill, stroke, stroke_w)
-        else:
-            y = fit_box.y1 + 6
-            for line in lines:
-                lw = draw.textlength(line, font=font)
-                draw.text((fit_box.cx - lw / 2, y), line, font=font,
-                          fill=fill, stroke_width=stroke_w,
-                          stroke_fill=stroke)
-                y += line_h
-    return len(todo)
+    scaled_size = max(8, int(round(8 * font_scale)))
+    font = _load_font(scaled_size, settings)
+    try:
+        ascent, descent = font.getmetrics()
+        line_h = max(scaled_size, ascent + descent)
+    except Exception:
+        line_h = scaled_size * 1.25
+    return font, _prewrap(draw, text, font, max_w), line_h
 
 
 def _fit_text_in_mask(draw, text: str, box: Box, comp_mask, settings: dict):
@@ -985,23 +1304,24 @@ def _fit_text_in_mask(draw, text: str, box: Box, comp_mask, settings: dict):
     progressively narrower — an oval fits narrow tall blocks that a wide
     wrap would reject, keeping the font size up."""
     margin = 6
-    max_w, max_h = box.w - 2 * margin, box.h - 2 * margin
-    size = max(9, min(int(max_h / 1.25), 40))
-    while size >= 9:
-        font = _load_font(int(size * settings.get("font_scale", 1.0))
-                          if settings.get("font_scale", 1.0) != 1.0 else size,
-                          settings)
-        line_h = size * 1.2
-        sw = int(round(_seg_module().compute_stroke_width(font.size)))
-        for frac in (1.0, 0.9, 0.8, 0.72, 0.64, 0.56, 0.5):
-            lines = _wrap(draw, text, font, max_w * frac)
+    max_w, max_h = max(10, box.w - 2 * margin), max(10, box.h - 2 * margin)
+    font_scale = float(settings.get("font_scale", 1.0))
+    size = max(8, min(int(max_h / 1.15), 48))
+    while size >= 8:
+        scaled_size = max(8, int(round(size * font_scale)))
+        font = _load_font(scaled_size, settings)
+        try:
+            ascent, descent = font.getmetrics()
+            line_h = max(scaled_size, ascent + descent)
+        except Exception:
+            line_h = scaled_size * 1.25
+        sw = max(2, int(round(font.size * 0.12)))
+        for frac in (1.0, 0.92, 0.85, 0.78, 0.70, 0.62, 0.55):
+            lines = _prewrap(draw, text, font, max_w * frac)
             total_h = len(lines) * line_h + 2 * sw
             if total_h > max_h:
-                break          # narrower wraps are taller: stop this size
-            block_w = max(draw.textlength(l, font=font) for l in lines) \
-                + 2 * sw
-            # comp_mask is PAGE-space; check the block rect in absolute page
-            # coordinates (box.cx/cy are already page-absolute).
+                break
+            block_w = max(draw.textlength(l, font=font) for l in lines) + 2 * sw
             rx1 = int(box.cx - block_w / 2)
             ry1 = int(box.cy - total_h / 2)
             sub = comp_mask[max(0, ry1):ry1 + int(total_h) + 1,
@@ -1009,8 +1329,14 @@ def _fit_text_in_mask(draw, text: str, box: Box, comp_mask, settings: dict):
             if sub.size and bool(sub.all()):
                 return font, lines, line_h
         size -= 1
-    font = _load_font(9, settings)
-    return font, _wrap(draw, text, font, max_w), 11.0
+    scaled_size = max(8, int(round(8 * font_scale)))
+    font = _load_font(scaled_size, settings)
+    try:
+        ascent, descent = font.getmetrics()
+        line_h = max(scaled_size, ascent + descent)
+    except Exception:
+        line_h = scaled_size * 1.25
+    return font, _prewrap(draw, text, font, max_w), line_h
 
 
 def _draw_text_clipped(img: Image.Image, mask, comp: int, box: Box,
@@ -1025,31 +1351,151 @@ def _draw_text_clipped(img: Image.Image, mask, comp: int, box: Box,
     ld0 = ImageDraw.Draw(img)
     block_w = max(ld0.textlength(l, font=font) for l in lines) + 2 * stroke_w
     total_h = len(lines) * line_h + 2 * stroke_w
-    lw_ = int(block_w) + 2
-    lh_ = int(total_h) + 2
+    lw_ = int(block_w) + 4
+    lh_ = int(total_h) + 4
     lx1 = int(box.cx - lw_ / 2)
     ly1 = int(box.cy - lh_ / 2)
-    # keep the window inside the page
+    # keep inside image boundaries
     ox = max(0, -lx1); oy = max(0, -ly1)
     lx1, ly1 = lx1 + ox, ly1 + oy
     layer = Image.new("RGBA", (lw_, lh_), (0, 0, 0, 0))
     ld = ImageDraw.Draw(layer)
-    y = oy + max(0, (lh_ - oy) - total_h) / 2.0 + stroke_w
+    y = oy + max(0.0, (lh_ - oy - total_h) / 2.0) + stroke_w
     for line in lines:
         lw = ld.textlength(line, font=font)
-        ld.text((lw_ / 2.0 - lw / 2, y), line, font=font,
+        x = lw_ / 2.0 - lw / 2.0
+        ld.text((x, y), line, font=font,
                 fill=fill + (255,), stroke_width=stroke_w,
                 stroke_fill=stroke + (255,))
         y += line_h
     h, w = mask.labels.shape
     wy1, wx1 = max(0, ly1), max(0, lx1)
     wy2, wx2 = min(h, ly1 + lh_), min(w, lx1 + lw_)
-    comp_crop = Image.fromarray(
-        (mask.labels[wy1:wy2, wx1:wx2] == comp).astype(np.uint8) * 255, "L")
-    full = Image.new("L", (lw_, lh_), 0)
-    full.paste(comp_crop, (wx1 - lx1, wy1 - ly1))
-    layer.putalpha(ImageChops.multiply(layer.getchannel("A"), full))
-    img.paste(layer, (lx1, ly1), layer)
+    if wy2 > wy1 and wx2 > wx1:
+        comp_crop = Image.fromarray(
+            (mask.labels[wy1:wy2, wx1:wx2] == comp).astype(np.uint8) * 255, "L")
+        full = Image.new("L", (lw_, lh_), 0)
+        full.paste(comp_crop, (wx1 - lx1, wy1 - ly1))
+        layer.putalpha(ImageChops.multiply(layer.getchannel("A"), full))
+        img.paste(layer, (lx1, ly1), layer)
+
+
+def render_regions(img: Image.Image, regions: list[dict],
+                   translations: dict[str, str], settings: dict,
+                   pipe: "Pipeline | None" = None,
+                   page: str | None = None) -> int:
+    """Draw translated text onto the pre-inpainted image.
+
+    Layout and rendering mirror Android's TextLineBreaker and TextLayoutPlanner:
+    - Font: Anime Ace (app/src/main/res/font/animeace.ttf)
+    - Line wrapping: deterministic prewrap with CJK grapheme breakability & Latin token atoms
+    - Inscribed mask fitting: centered text blocks constrained to bubble contours
+    - Color: RenderColorEstimator 2-means post-erase luma polarity + font-proportional stroke
+    - Drawing: direct stroke-then-fill clipped to bubble component mask
+    """
+    todo = [r for r in regions if (translations.get(r["id"]) or "").strip()]
+    if not todo:
+        return 0
+
+    _seg = _seg_module()
+    seg_masks: list | None = None
+    if pipe is not None and settings.get("bubble_segmentation", True):
+        p = page or getattr(img, "studio_page", None)
+        if p:
+            seg_masks = pipe.bubble_masks(p)
+        else:
+            segmenter = pipe._bubble_segmenter()
+            if segmenter is not None:
+                try:
+                    seg_masks = segmenter.segment(img)
+                except Exception as e:
+                    log(f"!! bubble segmentation lookup error: {e}")
+                    seg_masks = None
+
+    assignment: dict[str, tuple] = {}
+    if seg_masks:
+        for r in todo:
+            a = _seg.assign_region_component(seg_masks, Box(*r["box"]).as_list())
+            if a is not None:
+                assignment[r["id"]] = a
+
+    p = page or getattr(img, "studio_page", None)
+    bubbles: list[Box] = []
+    if pipe is not None and p:
+        det_data = pipe._cache["detections"].get(p) or {}
+        raw_b = det_data.get("boxes", [])
+        bubbles = [Box(int(b[2]), int(b[3]), int(b[4]), int(b[5]))
+                   for b in raw_b if int(b[0]) == 0 and len(b) >= 6]
+
+    comp_counts: dict[tuple, int] = {}
+    for r in todo:
+        a = assignment.get(r["id"])
+        if a is not None:
+            comp_counts[a] = comp_counts.get(a, 0) + 1
+
+    np_page = np.asarray(img)
+    draw = ImageDraw.Draw(img)
+
+    for r in todo:
+        text = (translations.get(r["id"]) or "").strip()
+        rbox = Box(*r["box"])
+        pbox = select_parent(rbox, bubbles) if bubbles else None
+        anchor_cx = pbox.cx if pbox is not None else rbox.cx
+        anchor_cy = pbox.cy if pbox is not None else rbox.cy
+        a = assignment.get(r["id"])
+        if a is not None:
+            mask, comp = a
+            c_obj = next((c for c in mask.components if c.id == comp), None)
+            if c_obj is not None:
+                cb = c_obj.bounds
+            else:
+                cys, cxs = np.where(mask.labels == comp)
+                cb = (int(cxs.min()), int(cys.min()), int(cxs.max()) + 1, int(cys.max()) + 1)
+
+            if comp_counts.get(a, 0) == 1:
+                # Expand symmetrically from the anchor center within the bubble mask bounds
+                half_w = max(rbox.w / 2.0, min(anchor_cx - cb[0], cb[2] - anchor_cx))
+                half_h = max(rbox.h / 2.0, min(anchor_cy - cb[1], cb[3] - anchor_cy))
+                fit_box = Box(int(anchor_cx - half_w), int(anchor_cy - half_h),
+                              int(anchor_cx + half_w), int(anchor_cy + half_h))
+            else:
+                gx1, gy1 = max(0, rbox.x1), max(0, rbox.y1)
+                inter = mask.labels[gy1:rbox.y2, gx1:rbox.x2] == comp
+                if inter.any():
+                    ys, xs = np.where(inter)
+                    fit_box = Box(gx1 + int(xs.min()), gy1 + int(ys.min()),
+                                  gx1 + int(xs.max()) + 1, gy1 + int(ys.max()) + 1)
+                else:
+                    fit_box = rbox
+        else:
+            mask, comp = None, 0
+            fit_box = pbox if pbox is not None else rbox
+
+        if mask is not None:
+            font, lines, line_h = _fit_text_in_mask(
+                draw, text, fit_box, mask.component_mask(comp), settings)
+        else:
+            font, lines, line_h = _fit_text(draw, text, fit_box, settings)
+
+        stroke_w = max(2, int(round(font.size * 0.12)))
+        fill, stroke, bg_luma = _seg_estimate_color(
+            np_page, rbox.as_list(),
+            mask.bounds if mask is not None else None)
+
+        if mask is not None:
+            _draw_text_clipped(img, mask, comp, fit_box, font, lines,
+                               line_h, fill, stroke, stroke_w)
+        else:
+            total_h = len(lines) * line_h
+            y = fit_box.cy - total_h / 2.0
+            for line in lines:
+                lw = draw.textlength(line, font=font)
+                draw.text((fit_box.cx - lw / 2.0, y), line, font=font,
+                          fill=fill, stroke_width=stroke_w,
+                          stroke_fill=stroke)
+                y += line_h
+
+    return len(todo)
 
 
 def _seg_module():
@@ -1075,22 +1521,88 @@ def _erase_one(img: Image.Image, box: Box, settings: dict) -> None:
 
 
 # ================================================================ translate
-def translate_google(text: str, target_lang: str) -> str:
-    """Free Google web endpoint (client=gtx). Best-effort language mapping —
-    manga OCR text is Japanese source; target follows the studio setting."""
+def translate_google_batch(texts: list[str], target_lang: str = "English") -> list[str]:
+    """Robust multi-endpoint Google Translate client with page-level batching.
+    Batches texts using delimiters to reduce HTTP requests by 90-95%, avoiding 429s,
+    and falls back across multiple endpoints (clients5 Chrome dict proxy, gtx, and MyMemory)."""
+    if not texts:
+        return []
     lang_map = {"English": "en", "Japanese": "ja", "Spanish": "es",
                 "French": "fr", "German": "de", "Portuguese": "pt",
                 "Italian": "it", "Russian": "ru", "Korean": "ko",
                 "Chinese": "zh-CN"}
     tl = lang_map.get(target_lang, "en")
-    quoted = urllib.parse.quote(text)
-    url = ("https://translate.googleapis.com/translate_a/single"
-           f"?client=gtx&sl=ja&tl={tl}&dt=t&q={quoted}")
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read().decode("utf-8"))
-    return "".join(seg[0] for seg in data[0] if seg and seg[0]).strip()
+    cleaned_texts = [t.replace("\n", " ").strip() for t in texts]
+
+    # Strategy 1: Batch translation via clients5 (Chrome dict endpoint) with ||| delimiter
+    if len(cleaned_texts) > 1:
+        delim = " ||| "
+        combined = delim.join(cleaned_texts)
+        try:
+            q = urllib.parse.quote(combined)
+            url = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ja&tl={tl}&q={q}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                res_str = data[0] if isinstance(data, list) and data else str(data)
+                parts = [p.strip() for p in res_str.split("|||")]
+                if len(parts) == len(texts):
+                    return parts
+        except Exception:
+            pass
+
+    # Strategy 2: Per-item fallback with multi-endpoint failover
+    results = []
+    for t in cleaned_texts:
+        if not t:
+            results.append("")
+            continue
+        res = None
+        q = urllib.parse.quote(t)
+        # Attempt A: clients5
+        try:
+            url = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=ja&tl={tl}&q={q}"
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                res = data[0] if isinstance(data, list) and data else str(data)
+        except Exception:
+            pass
+
+        # Attempt B: gtx endpoint
+        if not res:
+            try:
+                url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=ja&tl={tl}&dt=t&q={q}"
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    res = "".join(seg[0] for seg in data[0] if seg and seg[0]).strip()
+            except Exception:
+                pass
+
+        # Attempt C: MyMemory free API fallback
+        if not res:
+            try:
+                url = f"https://api.mymemory.translated.net/get?q={q}&langpair=ja|{tl}"
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    res = data.get("responseData", {}).get("translatedText", "")
+            except Exception:
+                pass
+
+        results.append(res or t)
+        time.sleep(0.04)
+
+    return results
+
+
+def translate_google(text: str, target_lang: str) -> str:
+    res = translate_google_batch([text], target_lang)
+    return res[0] if res else text
 
 
 def translate_one(text: str, target_lang: str, endpoint: str, model: str) -> str:
@@ -1123,9 +1635,10 @@ DEFAULT_SETTINGS = {
     "font_scale": 1.0,
     "erase": "auto",
     "ocr_engine": "mangaocr",        # "mangaocr" | "paddle"
-    "inpaint_mode": "fast",          # "fast" (classical) | "quality" (AOT-512)
+    "inpaint_mode": "quality",       # "quality" (AOT-512) | "fast" (classical)
     "translate_backend": "google",   # "google" | "lm-studio"
     "bubble_segmentation": True,     # manga109 YOLO11-seg (on when model loads)
+    "bubble_mask_erosion": 5,        # px erosion for bubble seg mask edge reduction
 }
 
 PIPELINE = Pipeline()
