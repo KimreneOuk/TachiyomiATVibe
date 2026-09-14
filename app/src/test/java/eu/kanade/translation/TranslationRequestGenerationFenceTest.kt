@@ -30,8 +30,8 @@ import tachiyomi.domain.chapter.model.Chapter
 import tachiyomi.domain.manga.model.Manga
 import tachiyomi.domain.source.service.SourceManager
 import java.lang.reflect.Field
-import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -189,7 +189,7 @@ class TranslationRequestGenerationFenceTest {
     }
 
     @Test
-    fun `cancel racing a fenced WAITING write never resurrects the request`() = runBlocking {
+    fun `cancel racing a fenced WAITING write never resurrects the request`() = runBlocking<Unit> {
         repeat(64) {
             manager.acknowledgeTranslationRequests(listOf(chapter))
             val generation = manager.pendingRequestGeneration(10L)!!

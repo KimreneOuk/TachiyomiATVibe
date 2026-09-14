@@ -33,7 +33,7 @@ class D8StallWatchdogTest {
     }
 
     @Test
-    fun `parked native lane emits stall, rejects new tap, then clears and admits next tap`(): Unit = runBlocking {
+    fun `parked native lane emits stall, rejects new tap, then clears and admits next tap`() = runBlocking<Unit> {
         val h = TranslationCoexistenceHarness.create(
             pageKeys = listOf("p0", "p1"),
             stallThresholdMs = 100L,
@@ -106,7 +106,7 @@ class D8StallWatchdogTest {
     }
 
     @Test
-    fun `native timeout reports typed failure and truthful timer while residual call rejects re tap`(): Unit = runBlocking {
+    fun `native timeout reports typed failure and truthful timer while residual call rejects re tap`() = runBlocking<Unit> {
         val h = TranslationCoexistenceHarness.create(
             pageKeys = listOf("p0"),
             nativeTimeoutMs = 100L,
@@ -176,7 +176,7 @@ class D8StallWatchdogTest {
     }
 
     @Test
-    fun `normal native call below threshold never emits stall`() = runBlocking {
+    fun `normal native call below threshold never emits stall`() = runBlocking<Unit> {
         val h = TranslationCoexistenceHarness.create(
             pageKeys = listOf("p0"),
             stallThresholdMs = 500L,
