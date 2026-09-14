@@ -36,7 +36,7 @@ class GroupCommitSliceBTest {
 
     @AfterEach
     fun tearDown() {
-        GroupCommitConfiguration.enabled = true
+        GroupCommitConfiguration.enabled = false
         ActiveChapterStoreRegistry.clearGlobalWriters()
         ChapterTranslationStore.artifactImageProbe = BitmapFactoryCleanedImageProbe
     }

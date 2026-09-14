@@ -6,7 +6,7 @@ package eu.kanade.translation.artifact
  */
 object GroupCommitConfiguration {
     @Volatile
-    var enabled: Boolean = true
+    var enabled: Boolean = false
 
     const val DEBOUNCE_MS: Long = 250L
 
