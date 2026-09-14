@@ -228,10 +228,16 @@ internal class DurableChapterStatusResolver(
         if (result.created) {
             durableStatusCache.clear()
         }
+        val statusWriter = ActiveChapterStoreRegistry.registerWriter(
+            chapterId = chapterId,
+            chapterKey = document.registryKey,
+            origin = eu.kanade.translation.WriterOrigin.STATUS_RESOLVER,
+        )
         val probeStage = ReaderEntryTrace.begin("probe.status", chapterId)
         return try {
             block(result.store)
         } finally {
+            statusWriter.close()
             probeStage.end()
             if (result.owned && activeStores.releaseProbe(document.registryKey, result.store)) {
                 val flushStage = ReaderEntryTrace.begin("probe.closeAndFlush", chapterId)

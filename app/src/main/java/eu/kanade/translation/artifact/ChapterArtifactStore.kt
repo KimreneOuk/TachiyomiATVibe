@@ -80,7 +80,7 @@ sealed interface SidecarRead<out T : Any> {
 
 class ChapterArtifactStore(
     private val documents: AtomicChapterDocuments,
-    private val layout: ChapterArtifactLayout,
+    internal val layout: ChapterArtifactLayout,
     private val displayBaseProbe: CleanedImageProbe = BitmapFactoryCleanedImageProbe,
 ) {
     private val io: ChapterDocumentIo get() = documents.rawIo()
@@ -1786,8 +1786,18 @@ class ChapterArtifactStore(
         currentVersionCode: Long,
         hasActiveLease: Boolean = false,
         nowEpochMs: Long = System.currentTimeMillis(),
-    ): LegacyArtifactHealthResult =
-        legacyRescue.verifyLegacyArtifactHealth(manifest, currentVersionCode, hasActiveLease, nowEpochMs)
+    ): LegacyArtifactHealthResult {
+        val healthWriter = eu.kanade.translation.ActiveChapterStoreRegistry.registerWriter(
+            chapterKey = layout.chapterKey,
+            origin = eu.kanade.translation.WriterOrigin.HEALTH_VERIFY,
+            nowEpochMs = nowEpochMs,
+        )
+        try {
+            return legacyRescue.verifyLegacyArtifactHealth(manifest, currentVersionCode, hasActiveLease, nowEpochMs)
+        } finally {
+            healthWriter.close()
+        }
+    }
 
     private fun futureBackupPresent(): Boolean =
         readManifestDocument(backupName())?.schemaVersion?.let { it > ChapterArtifactManifest.SCHEMA_VERSION }

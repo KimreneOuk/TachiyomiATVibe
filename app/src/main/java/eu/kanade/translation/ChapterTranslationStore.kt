@@ -115,6 +115,9 @@ class ChapterTranslationStore(
 ) {
     internal val mutex = Mutex()
 
+    internal val chapterKey: String?
+        get() = artifactStore?.layout?.chapterKey ?: translationFile?.name?.substringBeforeLast('.')
+
     @Volatile
     internal var pages: PersistentMap<String, PageTranslation> = persistentMapOf()
     private val _state = MutableStateFlow<Map<String, PageTranslation>>(emptyMap())

@@ -133,20 +133,28 @@ internal class ChapterGlossaryStore(private val store: ChapterTranslationStore) 
             val artifact = store.artifactStore
             val manifest = store.artifactManifest
             if (artifact != null && manifest?.authority == ManifestAuthority.ARTIFACTS) {
-                val pointer = artifact.publishGlossary(glossary)
-                if (pointer != null) {
-                    val next = manifest.copy(
-                        glossary = pointer,
-                        updatedAtEpochMs = System.currentTimeMillis(),
-                    )
-                    if (artifact.publishManifest(next)) {
-                        store.artifactManifest = next
-                        glossaryDirty = false
+                val glossaryWriter = eu.kanade.translation.ActiveChapterStoreRegistry.registerWriter(
+                    chapterKey = store.chapterKey,
+                    origin = eu.kanade.translation.WriterOrigin.GLOSSARY_LANE,
+                )
+                try {
+                    val pointer = artifact.publishGlossary(glossary)
+                    if (pointer != null) {
+                        val next = manifest.copy(
+                            glossary = pointer,
+                            updatedAtEpochMs = System.currentTimeMillis(),
+                        )
+                        if (artifact.publishManifest(next)) {
+                            store.artifactManifest = next
+                            glossaryDirty = false
+                        } else {
+                            glossaryDirty = true
+                        }
                     } else {
                         glossaryDirty = true
                     }
-                } else {
-                    glossaryDirty = true
+                } finally {
+                    glossaryWriter.close()
                 }
             } else {
                 glossaryDirty = true

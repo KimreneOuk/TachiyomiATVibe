@@ -166,6 +166,10 @@ internal object LegacyChapterMigrationSource {
         )
         val startMs = System.currentTimeMillis()
         val layout = ChapterArtifactLayout.fromTranslationFileName(fileName)
+        val migrationWriter = eu.kanade.translation.ActiveChapterStoreRegistry.registerWriter(
+            chapterKey = layout.chapterKey,
+            origin = eu.kanade.translation.WriterOrigin.MIGRATION_SOURCE,
+        )
         val documents = AtomicChapterDocuments(UniFileChapterDocumentIo(parent))
         val artifactStore = ChapterArtifactStore(documents, layout, artifactImageProbe)
         val identity = legacyIdentityOf(legacyBytes, translationFile?.lastModified() ?: 0L)
@@ -306,6 +310,7 @@ internal object LegacyChapterMigrationSource {
             pageKey to setOf(name)
         }.toMap()
         val elapsed = System.currentTimeMillis() - startMs
+        migrationWriter.close()
         logcat(LogPriority.INFO) {
             "TachiyomiAT chapter open completed in ${elapsed}ms: pages=${manifest.pages.size} " +
                 "eagerSnapshots=$eagerCommittedLoaded authority=${manifest.authority}"

@@ -22,6 +22,8 @@ internal class ActiveChapterStoreRegistry {
     private val fileStores = LinkedHashMap<String, ChapterTranslationStore>()
     private val probeStores = LinkedHashMap<String, ChapterTranslationStore>()
     private val openingLocks = LinkedHashMap<String, Mutex>()
+    private val storeWriterRegistrations = LinkedHashMap<Long, AutoCloseable>()
+    private val probeWriterRegistrations = LinkedHashMap<String, AutoCloseable>()
     private val _snapshots = MutableStateFlow<Map<Long, ChapterTranslationStore>>(emptyMap())
     val snapshots: StateFlow<Map<Long, ChapterTranslationStore>> = _snapshots.asStateFlow()
 
@@ -35,6 +37,11 @@ internal class ActiveChapterStoreRegistry {
     fun register(chapterId: Long, store: ChapterTranslationStore): Boolean {
         if (stores.containsKey(chapterId)) return false
         stores[chapterId] = store
+        storeWriterRegistrations[chapterId] = registerWriter(
+            chapterId = chapterId,
+            chapterKey = store.chapterKey,
+            origin = WriterOrigin.MAIN_STORE,
+        )
         publish()
         return true
     }
@@ -135,6 +142,10 @@ internal class ActiveChapterStoreRegistry {
             }
             val created = create() ?: return@withLock null
             probeStores[fileKey] = created
+            probeWriterRegistrations[fileKey] = registerWriter(
+                chapterKey = fileKey,
+                origin = WriterOrigin.PROBE_STORE,
+            )
             ProbeResult(created, owned = true, created = true)
         }
     }
@@ -149,12 +160,14 @@ internal class ActiveChapterStoreRegistry {
         if (probeStores[fileKey] !== store) return false
         val active = stores.values.any { it === store } || fileStores[fileKey] === store
         probeStores.remove(fileKey)
+        probeWriterRegistrations.remove(fileKey)?.close()
         return !active
     }
 
     @Synchronized
     fun remove(chapterId: Long): ChapterTranslationStore? {
         val removed = stores.remove(chapterId) ?: return null
+        storeWriterRegistrations.remove(chapterId)?.close()
         fileStores.entries.removeIf { it.value === removed }
         publish()
         return removed
@@ -195,5 +208,72 @@ internal class ActiveChapterStoreRegistry {
     )
 
     @Synchronized
-    private fun takeProbe(fileKey: String): ChapterTranslationStore? = probeStores.remove(fileKey)
+    private fun takeProbe(fileKey: String): ChapterTranslationStore? {
+        probeWriterRegistrations.remove(fileKey)?.close()
+        return probeStores.remove(fileKey)
+    }
+
+    companion object {
+        private val globalWriters = LinkedHashSet<ActiveWriter>()
+        private val globalMutex = Any()
+
+        /**
+         * T930 Slice A2: Registers an active writer process-wide.
+         *
+         * Observability-only while flag OFF: registers and returns an AutoCloseable
+         * token to unregister, but excludes nothing.
+         *
+         * Under Slice B (flag ON), second writers use this registry to identify
+         * the active store and request a staged buffer force-flush before publication.
+         */
+        fun registerWriter(
+            chapterId: Long? = null,
+            chapterKey: String? = null,
+            origin: WriterOrigin,
+            tag: String? = null,
+            nowEpochMs: Long = System.currentTimeMillis(),
+        ): AutoCloseable = synchronized(globalMutex) {
+            val writer = ActiveWriter(
+                chapterId = chapterId,
+                chapterKey = chapterKey,
+                origin = origin,
+                tag = tag,
+                registeredAtEpochMs = nowEpochMs,
+            )
+            globalWriters.add(writer)
+            AutoCloseable {
+                synchronized(globalMutex) {
+                    globalWriters.remove(writer)
+                }
+            }
+        }
+
+        fun getActiveWriters(chapterId: Long? = null, chapterKey: String? = null): List<ActiveWriter> =
+            synchronized(globalMutex) {
+                globalWriters.filter {
+                    (chapterId != null && it.chapterId == chapterId) ||
+                        (chapterKey != null && it.chapterKey == chapterKey)
+                }
+            }
+
+        fun hasActiveWriter(
+            chapterId: Long? = null,
+            chapterKey: String? = null,
+            origin: WriterOrigin,
+        ): Boolean = synchronized(globalMutex) {
+            globalWriters.any {
+                ((chapterId != null && it.chapterId == chapterId) ||
+                    (chapterKey != null && it.chapterKey == chapterKey)) &&
+                    it.origin == origin
+            }
+        }
+
+        fun allActiveWriters(): List<ActiveWriter> = synchronized(globalMutex) {
+            globalWriters.toList()
+        }
+
+        fun clearGlobalWriters() = synchronized(globalMutex) {
+            globalWriters.clear()
+        }
+    }
 }
