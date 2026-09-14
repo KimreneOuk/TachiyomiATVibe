@@ -94,7 +94,7 @@ internal class BatchResumePlanner(
                 pageKey = pageKey,
                 page = store.state.value[pageKey],
                 expectedFingerprints = expectedBatchFingerprints,
-                sourceFingerprint = sourceFingerprints[pageKey],
+                sourceFingerprint = if (store.state.value[pageKey] != null) sourceFingerprints[pageKey] else null,
                 durableFailure = store.durableFailure(pageKey),
                 // T917 D5 (phase3-design §1.2): AI lane only — the standard
                 // engine lane passes null so its decisions are byte-identical

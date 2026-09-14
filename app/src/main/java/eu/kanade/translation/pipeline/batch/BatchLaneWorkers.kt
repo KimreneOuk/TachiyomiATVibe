@@ -393,6 +393,84 @@ internal class BatchLaneWorkers(
             }
             var producedTarget: PageTranslation? = null
             var producedDecoded: DecodedPage? = null
+
+            val latest = store.state.value[pageKey]
+            val innerGate = resumeGate(latest)
+            if (innerGate == BatchResumeGate.SKIP_ALL) {
+                val p = latest!!
+                translationRegistry[pageKey] = p
+                if (!plannedTranslationNeedsWork(pageKey) && !translationFailureFence(pageKey)) {
+                    tryRender(pageKey)
+                    recordReusableContextPage(pageKey, p)
+                }
+                val persisted = store.snapshot(pageKey)
+                refreshBatchIdentity(pageKey, persisted)
+                return OcrReadyPageRef(
+                    pageKey = pageKey,
+                    pageIndex = pageIndex,
+                    generation = batchGeneration,
+                    blockFingerprints = persisted.blockFingerprints,
+                    leaseToken = batchWriteIdentities[pageKey]?.leaseToken,
+                    candidateGenerationId = persisted.candidateGenerationId,
+                    dependencyFingerprint = persisted.dependencyFingerprint,
+                    artifactPageVersion = persisted.artifactPageVersion,
+                )
+            }
+            if (innerGate == BatchResumeGate.INPAINT_ONLY) {
+                val p = latest ?: PageTranslation(sourceFileName = pageKey)
+                translationRegistry[pageKey] = p
+                val persisted = store.snapshot(pageKey)
+                refreshBatchIdentity(pageKey, persisted)
+                return OcrReadyPageRef(
+                    pageKey = pageKey,
+                    pageIndex = pageIndex,
+                    generation = batchGeneration,
+                    blockFingerprints = persisted.blockFingerprints,
+                    leaseToken = batchWriteIdentities[pageKey]?.leaseToken,
+                    candidateGenerationId = persisted.candidateGenerationId,
+                    dependencyFingerprint = persisted.dependencyFingerprint,
+                    artifactPageVersion = persisted.artifactPageVersion,
+                )
+            }
+
+            // S2: Decode off the native permit (F.2)
+            val decoded = try {
+                decodePageBitmapForTranslation(pageKey, streamFn)
+            } catch (deferred: LowMemoryDecodeDeferredException) {
+                tracker?.markOcrFailed(pageKey, deferred.message ?: "Decode deferred")
+                val deferredWrite = guardedBatchUpdate(pageKey, "batch decode deferred", BatchStage.OCR) {
+                    (it ?: PageTranslation()).apply {
+                        sourceFileName = pageKey
+                        ocrStatus = StageStatus.FAILED
+                        errorMessage = deferred.message
+                        retryCount = (it?.retryCount ?: 0) + 1
+                        attemptCount = (it?.attemptCount ?: 0) + 1
+                        updatedAt = System.currentTimeMillis()
+                    }
+                }
+                if (deferredWrite is ChapterTranslationStore.PatchResult.Rejected) {
+                    abortBatchCandidate(pageKey, "decode deferral rejected: ${deferredWrite.reason}")
+                }
+                return null
+            } ?: run {
+                tracker?.markOcrFailed(pageKey, "Failed to decode page: null bitmap")
+                val failedWrite = guardedBatchUpdate(pageKey, "batch decode failed", BatchStage.OCR) {
+                    (it ?: PageTranslation()).apply {
+                        sourceFileName = pageKey
+                        ocrStatus = StageStatus.FAILED
+                        errorMessage = "Failed to decode page: null bitmap"
+                        retryCount = (it?.retryCount ?: 0) + 1
+                        attemptCount = (it?.attemptCount ?: 0) + 1
+                        updatedAt = System.currentTimeMillis()
+                    }
+                }
+                if (failedWrite is ChapterTranslationStore.PatchResult.Rejected) {
+                    abortBatchCandidate(pageKey, "decode failure rejected: ${failedWrite.reason}")
+                }
+                return null
+            }
+            producedDecoded = decoded
+
             // T922 Phase 4: page queueing on the pipeline native lane. The
             // span settles when admission grants (first statement inside the
             // lane) and is re-settled (idempotently) on timeout/failure.
@@ -406,91 +484,30 @@ internal class BatchLaneWorkers(
                     onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                 ) {
                     nativeQueueSpan.end()
-                val latest = store.state.value[pageKey]
-                val innerGate = resumeGate(latest)
-                if (innerGate == BatchResumeGate.SKIP_ALL) {
-                    val p = latest!!
-                    translationRegistry[pageKey] = p
-                    if (!plannedTranslationNeedsWork(pageKey) && !translationFailureFence(pageKey)) {
-                        tryRender(pageKey)
-                        recordReusableContextPage(pageKey, p)
+                    try {
+                        tracker?.markOcrRunning(pageKey)
+                        val analyzed = analyzePage(
+                            pageKey,
+                            decoded.bitmap,
+                            decoded,
+                            store,
+                            expectedBatchFingerprints,
+                        )
+                        tracker?.markOcrDone(pageKey)
+                        translationRegistry[pageKey] = analyzed
+                        producedTarget = translationRegistry[pageKey]
+                    } catch (deferred: LowMemoryRecognitionDeferredException) {
+                        val t = translationRegistry[pageKey]
+                        if (t != null) {
+                            t.inpaintStatus = StageStatus.FAILED
+                            t.errorMessage = deferred.message
+                        }
+                        tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
+                    } catch (rejected: BatchPersistenceRejectedException) {
+                        tracker?.markOcrFailed(pageKey, rejected.message ?: "OCR persistence rejected")
+                        abortBatchCandidate(pageKey, rejected.message ?: "OCR persistence rejected")
+                        throw rejected
                     }
-                    producedTarget = p
-                    return@withNativeLane
-                }
-                if (innerGate == BatchResumeGate.INPAINT_ONLY) {
-                    // OCR artifacts are planned for reuse: no decode or
-                    // recognition runs here. The page's single remaining
-                    // decode happens in the inpaint stage.
-                    translationRegistry[pageKey] = latest ?: PageTranslation(sourceFileName = pageKey)
-                    producedTarget = translationRegistry[pageKey]
-                    return@withNativeLane
-                }
-                try {
-                    val decoded = try {
-                        decodePageBitmapForTranslation(pageKey, streamFn)
-                    } catch (deferred: LowMemoryDecodeDeferredException) {
-                        tracker?.markOcrFailed(pageKey, deferred.message ?: "Decode deferred")
-                        val deferredWrite = guardedBatchUpdate(pageKey, "batch decode deferred", BatchStage.OCR) {
-                            (it ?: PageTranslation()).apply {
-                                sourceFileName = pageKey
-                                ocrStatus = StageStatus.FAILED
-                                errorMessage = deferred.message
-                                retryCount = (it?.retryCount ?: 0) + 1
-                                attemptCount = (it?.attemptCount ?: 0) + 1
-                                updatedAt = System.currentTimeMillis()
-                            }
-                        }
-                        if (deferredWrite is ChapterTranslationStore.PatchResult.Rejected) {
-                            abortBatchCandidate(pageKey, "decode deferral rejected: ${deferredWrite.reason}")
-                        }
-                        return@withNativeLane
-                    } ?: run {
-                        tracker?.markOcrFailed(pageKey, "Failed to decode page: null bitmap")
-                        val failedWrite = guardedBatchUpdate(pageKey, "batch decode failed", BatchStage.OCR) {
-                            (it ?: PageTranslation()).apply {
-                                sourceFileName = pageKey
-                                ocrStatus = StageStatus.FAILED
-                                errorMessage = "Failed to decode page: null bitmap"
-                                retryCount = (it?.retryCount ?: 0) + 1
-                                attemptCount = (it?.attemptCount ?: 0) + 1
-                                updatedAt = System.currentTimeMillis()
-                            }
-                        }
-                        if (failedWrite is ChapterTranslationStore.PatchResult.Rejected) {
-                            abortBatchCandidate(pageKey, "decode failure rejected: ${failedWrite.reason}")
-                        }
-                        return@withNativeLane
-                    }
-                    producedDecoded = decoded
-                    // Decode succeeds: the bitmap is owned by this handle until
-                    // [releaseNativeResources]. OCR persistence runs here (analyzePage
-                    // persists blocks + ocrStatus BEFORE inpaint), closing the OCR crash
-                    // window first and producing the immutable work item offered to the
-                    // translation lane below.
-                    tracker?.markOcrRunning(pageKey)
-                    val analyzed = analyzePage(
-                        pageKey,
-                        decoded.bitmap,
-                        decoded,
-                        store,
-                        expectedBatchFingerprints,
-                    )
-                    tracker?.markOcrDone(pageKey)
-                    translationRegistry[pageKey] = analyzed
-                    producedTarget = translationRegistry[pageKey]
-                } catch (deferred: LowMemoryRecognitionDeferredException) {
-                    val t = translationRegistry[pageKey]
-                    if (t != null) {
-                        t.inpaintStatus = StageStatus.FAILED
-                        t.errorMessage = deferred.message
-                    }
-                    tracker?.markInpaintFailed(pageKey, deferred.message ?: "Recognition deferred")
-                } catch (rejected: BatchPersistenceRejectedException) {
-                    tracker?.markOcrFailed(pageKey, rejected.message ?: "OCR persistence rejected")
-                    abortBatchCandidate(pageKey, rejected.message ?: "OCR persistence rejected")
-                    throw rejected
-                }
                 }
             } catch (t: Throwable) {
                 nativeQueueSpan.end(
@@ -575,6 +592,18 @@ internal class BatchLaneWorkers(
                 target.cleanedBitmap = null
                 return
             }
+            val handedOffDecoded = nativeHandoff as? DecodedPage
+            var decoded: DecodedPage? = handedOffDecoded
+            // S2: Decode off the native permit (F.2)
+            if (decoded == null) {
+                val streamFn = streamsByKey[pageKey] ?: return
+                decoded = decodePageBitmapForTranslation(pageKey, streamFn)
+            }
+            if (decoded == null) {
+                tracker?.markInpaintFailed(pageKey, "Null bitmap for inpaint")
+                return
+            }
+
             // T922 Phase 4: page queueing on the pipeline native lane for the
             // inpaint pass. The span settles on admission (first statement in
             // the lane) and is re-settled (idempotently) on timeout/failure.
@@ -589,18 +618,8 @@ internal class BatchLaneWorkers(
                     onTimeout = { markPageTimedOut(manga, chapter, source, pageKey) },
                 ) {
                     inpaintQueueSpan.end()
-                    val handedOffDecoded = nativeHandoff as? DecodedPage
-                    var decoded: DecodedPage? = handedOffDecoded
                     try {
                         tracker?.markInpaintRunning(pageKey)
-                        if (decoded == null) {
-                            val streamFn = streamsByKey[pageKey] ?: return@withNativeLane
-                            decoded = decodePageBitmapForTranslation(pageKey, streamFn)
-                        }
-                        if (decoded == null) {
-                            tracker?.markInpaintFailed(pageKey, "Null bitmap for inpaint")
-                            return@withNativeLane
-                        }
                         preflightInpaintGate(decoded.bitmap, pageKey)
                         inpaintPage(
                             fileName = pageKey,

@@ -412,10 +412,14 @@ internal class ChapterProfileBatchCoordinator(
                     logcat(LogPriority.INFO) {
                         "TachiyomiAT t924 preflight reused checkpoint pageHash=${pageHash(pageKey)}"
                     }
-                    publishRecord(
-                        artifact,
-                        record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
-                    )
+                    // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
+                    val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
+                    if (shouldPublishProgress) {
+                        publishRecord(
+                            artifact,
+                            record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
+                        )
+                    }
                     continue
                 }
                 logcat(LogPriority.WARN) {
@@ -477,11 +481,14 @@ internal class ChapterProfileBatchCoordinator(
                             )
                         }
                     }
-                    // Advisory progress counters ride their own M1 pointer move.
-                    publishRecord(
-                        artifact,
-                        record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
-                    )
+                    // M3: Batched advisory progress records: publish on first page, every 5 pages, or last page
+                    val shouldPublishProgress = (pageIndex == 0) || ((pageIndex + 1) % 5 == 0) || ((pageIndex + 1) == total)
+                    if (shouldPublishProgress) {
+                        publishRecord(
+                            artifact,
+                            record(runId, ChapterRunState.OCR_PLAN, frozenFingerprint, sourceDigest, counters()),
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e

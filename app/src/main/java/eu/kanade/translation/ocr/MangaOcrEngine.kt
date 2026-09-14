@@ -209,6 +209,27 @@ class MangaOcrEngine : RoiOcrEngine {
                 }
             }
 
+            // N1-5: Consume init logits directly for token 1 (BOS at position 1)
+            val initLogitsTensor = initResult[0] as OnnxTensor
+            val initLogitsBuf = initLogitsTensor.floatBuffer
+            val initVocabSize = initLogitsBuf.remaining()
+            var initMaxVal = Float.NEGATIVE_INFINITY
+            var initMaxIdx = 0
+            for (vi in 0 until initVocabSize) {
+                val v = initLogitsBuf.get(vi)
+                if (v > initMaxVal) {
+                    initMaxVal = v
+                    initMaxIdx = vi
+                }
+            }
+
+            if (initMaxIdx == END_TOKEN) {
+                return ""
+            }
+
+            val tokenIds = mutableListOf<Int>()
+            tokenIds.add(initMaxIdx)
+
             selfKCacheTensor = OnnxTensor.createTensor(
                 OnnxRuntimeProvider.environment,
                 selfKCacheBuf,
@@ -238,9 +259,8 @@ class MangaOcrEngine : RoiOcrEngine {
                 longArrayOf(1, 1),
             )
 
-            val tokenIds = mutableListOf<Int>()
-            var pos = 1
-            var currentInputId = START_TOKEN.toLong()
+            var pos = 2
+            var currentInputId = initMaxIdx.toLong()
             var currentPositionId = pos.toLong()
 
             val stepInputs = mapOf(
@@ -278,8 +298,9 @@ class MangaOcrEngine : RoiOcrEngine {
                         }
                     }
 
-                    writeCacheAtPos(stepResult[1] as OnnxTensor, selfKCacheBuf, pos)
-                    writeCacheAtPos(stepResult[2] as OnnxTensor, selfVCacheBuf, pos)
+                    // N1-5: Graph convention writes KV slice at slot = pos - 1
+                    writeCacheAtSlot(stepResult[1] as OnnxTensor, selfKCacheBuf, pos - 1)
+                    writeCacheAtSlot(stepResult[2] as OnnxTensor, selfVCacheBuf, pos - 1)
 
                     if (maxIdx == END_TOKEN) {
                         break
@@ -397,7 +418,7 @@ class MangaOcrEngine : RoiOcrEngine {
         }
     }
 
-    private fun writeCacheAtPos(updatedTensor: OnnxTensor, dstBuf: FloatBuffer, pos: Int) {
+    internal fun writeCacheAtSlot(updatedTensor: OnnxTensor, dstBuf: FloatBuffer, slot: Int) {
         val srcBuf = updatedTensor.floatBuffer
         val totalElements = dstBuf.capacity()
         val cacheShape4 = MAX_LEN * 64
@@ -406,7 +427,7 @@ class MangaOcrEngine : RoiOcrEngine {
             for (j in 0 until 1) {
                 for (k in 0 until 4) {
                     val srcOffset = ((i * 1 + j) * 4 + k) * 64
-                    val dstOffset = ((i * 1 + j) * 4 + k) * cacheShape4 + pos * 64
+                    val dstOffset = ((i * 1 + j) * 4 + k) * cacheShape4 + slot * 64
                     if (dstOffset + 64 <= totalElements) {
                         for (s in 0 until 64) {
                             dstBuf.put(dstOffset + s, srcBuf.get(srcOffset + s))
@@ -415,6 +436,10 @@ class MangaOcrEngine : RoiOcrEngine {
                 }
             }
         }
+    }
+
+    internal fun writeCacheAtPos(updatedTensor: OnnxTensor, dstBuf: FloatBuffer, pos: Int) {
+        writeCacheAtSlot(updatedTensor, dstBuf, pos)
     }
 
     private fun postprocess(text: String): String {

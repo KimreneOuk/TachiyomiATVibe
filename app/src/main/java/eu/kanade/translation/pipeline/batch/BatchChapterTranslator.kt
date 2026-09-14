@@ -387,22 +387,13 @@ internal class BatchChapterTranslator(
                 // This is an I/O-only preflight; no detector/OCR/inpaint or
                 // translator work is invoked for a matching completed page.
                 // T922 Phase 4: schedule-scoped source_fingerprint stage.
+                // M3: Lazy per-page source fingerprinting eliminates the whole-chapter
+                // I/O barrier before planning and starting page 1.
                 val fingerprintSpan = scheduleTrace.beginStage(
                     TranslationTraceStage.SOURCE_FINGERPRINT,
                     items = orderedStreams.size,
                 )
-                val sourceFingerprints = try {
-                    coroutineScope {
-                        orderedStreams.map { (pageKey, streamFn) ->
-                            async(Dispatchers.IO) {
-                                pageKey to (computeSourceFingerprint(streamFn) ?: UNKNOWN_SOURCE_FINGERPRINT)
-                            }
-                        }.awaitAll().toMap()
-                    }
-                } catch (t: Throwable) {
-                    fingerprintSpan.end(TranslationTraceOutcome.FAILURE, error = t)
-                    throw t
-                }
+                val sourceFingerprints: Map<String, String> = LazySourceFingerprints(orderedStreams.toMap(), computeSourceFingerprintFn)
                 fingerprintSpan.end(
                     TranslationTraceOutcome.SUCCESS,
                     items = sourceFingerprints.size,
@@ -1137,6 +1128,38 @@ internal class BatchChapterTranslator(
                 page.hasRenderedResult || page.isTextlessTerminal || page.isStageFailed
             }.keys
             return orderedStreams.mapTo(mutableSetOf()) { it.first } - durablyTerminal
+        }
+    }
+}
+
+/**
+ * M3: Computes and caches page source fingerprints on-demand rather than
+ * blocking upfront on a whole-chapter parallel I/O barrier.
+ */
+internal class LazySourceFingerprints(
+    private val streams: Map<String, () -> InputStream>,
+    private val computeFn: suspend (() -> InputStream) -> String?,
+) : Map<String, String> {
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    override val size: Int get() = streams.size
+    override val keys: Set<String> get() = streams.keys
+    override val values: Collection<String> get() = keys.mapNotNull { get(it) }
+    override val entries: Set<Map.Entry<String, String>>
+        get() = keys.map { key ->
+            java.util.AbstractMap.SimpleImmutableEntry(key, get(key) ?: UNKNOWN_SOURCE_FINGERPRINT)
+        }.toSet()
+
+    override fun isEmpty(): Boolean = streams.isEmpty()
+    override fun containsKey(key: String): Boolean = streams.containsKey(key)
+    override fun containsValue(value: String): Boolean = values.contains(value)
+
+    override fun get(key: String): String? {
+        val streamFn = streams[key] ?: return null
+        return cache.computeIfAbsent(key) {
+            kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+                computeFn(streamFn) ?: UNKNOWN_SOURCE_FINGERPRINT
+            }
         }
     }
 }

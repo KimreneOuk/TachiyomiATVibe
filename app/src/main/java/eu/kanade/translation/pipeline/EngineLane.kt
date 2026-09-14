@@ -417,8 +417,9 @@ internal class EngineLane(
     internal suspend fun ensureEnginesBuiltFor(
         fromLang: TextRecognizerLanguage,
         toLang: TextTranslatorLanguage,
+        runScopedOcrModel: OcrModel? = null,
     ) {
-        val selectedOcrModel = OcrModelCatalog.selectedModel(translationPreferences, fromLang)
+        val selectedOcrModel = runScopedOcrModel ?: OcrModelCatalog.selectedModel(translationPreferences, fromLang)
         val desiredInpaintingMode = inpaintingModeFromPref()
         val desiredReadingOrder = translationPreferences.translationReadingOrder().get()
         val rebuildClosedEngines = enginesClosed
