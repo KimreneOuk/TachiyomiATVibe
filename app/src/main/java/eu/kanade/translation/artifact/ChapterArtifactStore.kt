@@ -1746,6 +1746,23 @@ class ChapterArtifactStore(
     }.getOrNull()?.normalizeSupportedSchema()
 
     /**
+     * T930 Slice A3 (Amendment A): cache for schema normalization decisions.
+     * Maps schemaVersion -> boolean indicating whether schema normalization is required.
+     * Future-schema guard reads at :130 and :230 (and CAS at :1642) are NEVER cached:
+     * always fresh from disk.
+     */
+    private val schemaNormalizationDecisionCache = java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+
+    internal fun isNormalizationRequired(schemaVersion: Int): Boolean =
+        schemaNormalizationDecisionCache.getOrPut(schemaVersion) {
+            schemaVersion in 1 until ChapterArtifactManifest.SCHEMA_VERSION
+        }
+
+    internal fun invalidateSchemaGuardCache() {
+        schemaNormalizationDecisionCache.clear()
+    }
+
+    /**
      * T924-SC-04: new code reads manifest schema versions 2 and 3 and writes
      * v3. Older supported manifests load with the additive pointer fields
      * defaulted and are normalized in memory to the current schema version so
@@ -1754,7 +1771,7 @@ class ChapterArtifactStore(
      * schemas stay untouched (the `>` guard must still see and refuse them).
      */
     private fun ChapterArtifactManifest.normalizeSupportedSchema(): ChapterArtifactManifest =
-        if (schemaVersion in 1 until ChapterArtifactManifest.SCHEMA_VERSION) {
+        if (isNormalizationRequired(schemaVersion)) {
             copy(schemaVersion = ChapterArtifactManifest.SCHEMA_VERSION)
         } else {
             this
