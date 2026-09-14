@@ -240,6 +240,7 @@ internal class ChapterProfileBatchCoordinator(
      * CONFIGURATION-class pause (same discipline as the analysis runner).
      */
     private val standardTranslateOutcome: (suspend (OcrReadyPageRef) -> ChunkCompletionOutcome)? = null,
+    private val envelopePlannerPolicy: EnvelopePlannerPolicy? = null,
 ) {
 
     private val sourceShaByPageKey: Map<String, String> = orderedSourcePairs.toMap()
@@ -2257,7 +2258,7 @@ internal class ChapterProfileBatchCoordinator(
                 "T924 envelope plan deferred: corpus checkpoints changed under the run",
             )
         val sceneStarts = frozenProfileSceneStartIndexes(artifact)
-        val policy = EnvelopePlannerPolicy(
+        val policy = envelopePlannerPolicy ?: EnvelopePlannerPolicy(
             maxBlocksPerEnvelope = frozenConfig.envelopePolicy.maxBlocks,
             maxContributingPages = frozenConfig.envelopePolicy.maxPages,
         )

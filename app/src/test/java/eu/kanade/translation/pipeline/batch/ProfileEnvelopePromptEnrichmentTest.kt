@@ -40,6 +40,7 @@ import eu.kanade.translation.translator.analysis.ValidatedTerm
 import eu.kanade.translation.translator.contextual.ContextualRequestBuilder
 import eu.kanade.translation.translator.contextual.ContextualTranslationBatch
 import eu.kanade.translation.translator.contextual.ContextualTranslationResult
+import eu.kanade.translation.translator.contextual.EnvelopePlannerPolicy
 import eu.kanade.translation.translator.contextual.PlannedAnalysisChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunk
 import eu.kanade.translation.translator.contextual.TranslationContextChunkPlanner
@@ -392,6 +393,12 @@ class ProfileEnvelopePromptEnrichmentTest {
             ).copy(
                 envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = 8),
             ),
+            envelopePlannerPolicy = EnvelopePlannerPolicy(
+                maxBlocksPerEnvelope = 32,
+                maxContributingPages = 8,
+                maxEstimatedInputTokens = 16_384,
+                maxEstimatedOutputTokens = 8_192,
+            ),
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },
             analysisChunkRunner = FakeAnalyzer(),
@@ -483,6 +490,12 @@ class ProfileEnvelopePromptEnrichmentTest {
                 providerKey = "fake:provider",
             ).copy(
                 envelopePolicy = EnvelopePolicySnapshot(maxBlocks = 32, maxPages = 8),
+            ),
+            envelopePlannerPolicy = EnvelopePlannerPolicy(
+                maxBlocksPerEnvelope = 32,
+                maxContributingPages = 8,
+                maxEstimatedInputTokens = 16_384,
+                maxEstimatedOutputTokens = 8_192,
             ),
             orderedSourcePairs = pages.map { (pageKey, _) -> pageKey to hex64("source-$pageKey") },
             releaseBatchLease = { pageKey -> store.releasePageStageLease(pageKey, PageWriteOrigin.BATCH) },

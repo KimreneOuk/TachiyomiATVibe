@@ -266,7 +266,7 @@ class AnalysisChunkPlannerGoldenTest {
 
     @Test
     fun `golden small-corpus fixture is byte-stable`() {
-        val success = success(AnalysisChunkPlanner.plan(goldenPages(), AnalysisChunkPolicy()))
+        val success = success(AnalysisChunkPlanner.plan(goldenPages(), AnalysisChunkPolicy(maxEstimatedInputTokens = 16_384)))
         val goldenBytes = javaClass.getResourceAsStream(GOLDEN_RESOURCE)?.use { it.readBytes() }
             ?: error("missing golden fixture $GOLDEN_RESOURCE")
         val actual = Json
