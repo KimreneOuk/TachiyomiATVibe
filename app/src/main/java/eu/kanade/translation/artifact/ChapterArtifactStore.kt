@@ -388,6 +388,7 @@ class ChapterArtifactStore(
                 )
             },
             nowEpochMs = nowEpochMs,
+            commitPoint = CommitPoint.CHAPTER_PHASE_RECORD,
         )
     }
 
@@ -417,7 +418,7 @@ class ChapterArtifactStore(
     ): TransactionOutcome {
         staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         if (manifest.activeRun == null) {
-            return TransactionOutcome.Committed(manifest)
+            return TransactionOutcome.Committed(manifest, commitPoint = CommitPoint.CHAPTER_PHASE_RECORD)
         }
         val updated = manifest.copy(activeRun = null, updatedAtEpochMs = nowEpochMs)
         if (!publishManifestInternal(updated)) {
@@ -427,7 +428,7 @@ class ChapterArtifactStore(
             }
             return TransactionOutcome.Rejected("manifest publication failed; active run pointer unchanged")
         }
-        return TransactionOutcome.Committed(updated)
+        return TransactionOutcome.Committed(updated, commitPoint = CommitPoint.CHAPTER_PHASE_RECORD)
     }
 
     // ------------------------------------------------------------------
@@ -739,6 +740,7 @@ class ChapterArtifactStore(
             updatePointers = { updated },
             nowEpochMs = nowEpochMs,
         )
+        val point = if (mode == OcrCheckpointMode.CLOSE) CommitPoint.OCR_CHECKPOINT_CLOSE else null
         return when (outcome) {
             is TransactionOutcome.Committed ->
                 if (sweepAfterCommit) {
@@ -747,9 +749,10 @@ class ChapterArtifactStore(
                         outcome.manifest,
                         successorGenerationId ?: outcome.generationId,
                         retention.deletedNames,
+                        commitPoint = point,
                     )
                 } else {
-                    outcome
+                    outcome.copy(commitPoint = point)
                 }
             is TransactionOutcome.Rejected -> outcome
         }
@@ -822,6 +825,7 @@ class ChapterArtifactStore(
             val manifest: ChapterArtifactManifest,
             val generationId: String? = null,
             val deletedFiles: List<String> = emptyList(),
+            val commitPoint: CommitPoint? = null,
         ) : TransactionOutcome
 
         data class Rejected(val reason: String) : TransactionOutcome
@@ -858,6 +862,7 @@ class ChapterArtifactStore(
         sidecars: List<SidecarPublication>,
         updatePointers: (ChapterArtifactManifest) -> ChapterArtifactManifest,
         nowEpochMs: Long = System.currentTimeMillis(),
+        commitPoint: CommitPoint? = null,
     ): TransactionOutcome {
         staleManifestRejection(manifest)?.let { return TransactionOutcome.Rejected(it) }
         sidecars.forEach { sidecar ->
@@ -877,7 +882,7 @@ class ChapterArtifactStore(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; prior manifest remains authoritative")
         }
-        return TransactionOutcome.Committed(updated)
+        return TransactionOutcome.Committed(updated, commitPoint = commitPoint)
     }
 
     /** Outcome of reading an OCR checkpoint through its manifest pointer. */
@@ -1314,7 +1319,7 @@ class ChapterArtifactStore(
         if (!publishManifestInternal(updated)) {
             return TransactionOutcome.Rejected("manifest publication failed; committed pointer unchanged")
         }
-        return TransactionOutcome.Committed(updated, generationId)
+        return TransactionOutcome.Committed(updated, generationId, commitPoint = CommitPoint.PAGE_TERMINAL_PROMOTION)
     }
 
     /** Cancels a live candidate while retaining the committed pointer. */
