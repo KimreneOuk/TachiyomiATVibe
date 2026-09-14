@@ -29,14 +29,14 @@ class GroupCommitSliceBTest {
 
     @BeforeEach
     fun setUp() {
-        GroupCommitConfiguration.enabled = false
+        GroupCommitConfiguration.enabled = true
         ActiveChapterStoreRegistry.clearGlobalWriters()
         ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 100) }
     }
 
     @AfterEach
     fun tearDown() {
-        GroupCommitConfiguration.enabled = false
+        GroupCommitConfiguration.enabled = true
         ActiveChapterStoreRegistry.clearGlobalWriters()
         ChapterTranslationStore.artifactImageProbe = BitmapFactoryCleanedImageProbe
     }
@@ -77,47 +77,47 @@ class GroupCommitSliceBTest {
 
     @Test
     fun `flag OFF preserves exact synchronous candidate and promotion writes`() {
-        GroupCommitConfiguration.enabled shouldBe false
+        GroupCommitConfiguration.withFlag(false) {
+            val io = FakeChapterDocumentIo().apply { fileBacked = true }
+            val store = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
+            val initialManifest = ChapterArtifactManifest(
+                chapterKey = layout.chapterKey,
+                authority = ManifestAuthority.ARTIFACTS,
+                pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
+            )
+            AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
 
-        val io = FakeChapterDocumentIo().apply { fileBacked = true }
-        val store = ChapterArtifactStore(AtomicChapterDocuments(io), layout, displayBaseProbe = CleanedImageProbe { ProbedImage(100, 100) })
-        val initialManifest = ChapterArtifactManifest(
-            chapterKey = layout.chapterKey,
-            authority = ManifestAuthority.ARTIFACTS,
-            pages = mapOf("0001.jpg" to PageArtifactRecord(pageKey = "0001.jpg")),
-        )
-        AtomicChapterDocuments(io).publishJson(layout.manifestFileName, initialManifest)
+            // Opening candidate
+            val openRes = store.openCandidate(
+                manifest = initialManifest,
+                pageKey = "0001.jpg",
+                origin = ArtifactOrigin.READER_ADHOC,
+                expectedPageVersion = 0L,
+                dependencyFingerprint = "dep-1",
+            )
+            val openedManifest = (openRes as ChapterArtifactStore.TransactionOutcome.Committed).manifest
 
-        // Opening candidate
-        val openRes = store.openCandidate(
-            manifest = initialManifest,
-            pageKey = "0001.jpg",
-            origin = ArtifactOrigin.READER_ADHOC,
-            expectedPageVersion = 0L,
-            dependencyFingerprint = "dep-1",
-        )
-        val openedManifest = (openRes as ChapterArtifactStore.TransactionOutcome.Committed).manifest
+            // When flag is OFF, promoteLiveCandidate requires candidate snapshot file
+            val page = displayReadyPage()
+            io.write(layout.legacyCompanionImageFile("0001.cleaned.jpg"), byteArrayOf(1, 2, 3))
 
-        // When flag is OFF, promoteLiveCandidate requires candidate snapshot file
-        val page = displayReadyPage()
-        io.write(layout.legacyCompanionImageFile("0001.cleaned.jpg"), byteArrayOf(1, 2, 3))
+            val promoteRes = store.promoteLiveCandidate(
+                manifest = openedManifest,
+                pageKey = "0001.jpg",
+                generationId = openedManifest.pages.getValue("0001.jpg").candidate!!.generationId,
+                expectedPageVersion = openedManifest.pages.getValue("0001.jpg").pageVersion,
+                expectedDependencyFingerprint = "dep-1",
+                pageSnapshot = page,
+                origin = ArtifactOrigin.READER_ADHOC,
+            ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
 
-        val promoteRes = store.promoteLiveCandidate(
-            manifest = openedManifest,
-            pageKey = "0001.jpg",
-            generationId = openedManifest.pages.getValue("0001.jpg").candidate!!.generationId,
-            expectedPageVersion = openedManifest.pages.getValue("0001.jpg").pageVersion,
-            expectedDependencyFingerprint = "dep-1",
-            pageSnapshot = page,
-            origin = ArtifactOrigin.READER_ADHOC,
-        ).shouldBeInstanceOf<ChapterArtifactStore.TransactionOutcome.Committed>()
-
-        // When flag is OFF, candidate file was written
-        val candidateFile = layout.candidatePageSnapshotFile(
-            "0001.jpg",
-            openedManifest.pages.getValue("0001.jpg").candidate!!.generationId,
-        )
-        io.files.containsKey(candidateFile) shouldBe true
+            // When flag is OFF, candidate file was written
+            val candidateFile = layout.candidatePageSnapshotFile(
+                "0001.jpg",
+                openedManifest.pages.getValue("0001.jpg").candidate!!.generationId,
+            )
+            io.files.containsKey(candidateFile) shouldBe true
+        }
     }
 
     @Test

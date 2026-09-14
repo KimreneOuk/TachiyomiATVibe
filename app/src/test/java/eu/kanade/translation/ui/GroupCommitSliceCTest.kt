@@ -46,13 +46,13 @@ class GroupCommitSliceCTest {
 
     @BeforeEach
     fun setUp() {
-        GroupCommitConfiguration.enabled = false
+        GroupCommitConfiguration.enabled = true
         ChapterTranslationStore.artifactImageProbe = CleanedImageProbe { ProbedImage(100, 100) }
     }
 
     @AfterEach
     fun tearDown() {
-        GroupCommitConfiguration.enabled = false
+        GroupCommitConfiguration.enabled = true
         ChapterTranslationStore.artifactImageProbe = eu.kanade.translation.artifact.BitmapFactoryCleanedImageProbe
         tempDir.deleteRecursively()
     }
