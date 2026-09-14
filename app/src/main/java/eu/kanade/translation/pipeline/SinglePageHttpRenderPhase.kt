@@ -9,6 +9,8 @@ import eu.kanade.translation.ChapterTranslationStore
 import eu.kanade.translation.PageWriteOrigin
 import eu.kanade.translation.TranslationPipeline.Companion.SINGLE_PAGE_PARTIAL_MAX_RETRIES
 import eu.kanade.translation.artifact.AttemptOrigin
+import eu.kanade.translation.context.ContextRequest
+import eu.kanade.translation.context.LaneCapability
 import eu.kanade.translation.toArtifactOrigin
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticDecision
 import eu.kanade.translation.pipeline.batch.BatchDiagnosticReason
@@ -293,7 +295,13 @@ internal class SinglePageHttpRenderPhase(
             }
             val ct = activeTranslator as? ContextualTextTranslator
             if (ct != null) {
-                val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
+                val targetLang = translationPreferences.translateToLanguage().get()
+                val sourceLang = translationPreferences.translateFromLanguage().get()
+                val laneCap = if (origin == PageWriteOrigin.AUTO) {
+                    LaneCapability.AUTO
+                } else {
+                    LaneCapability.MANUAL
+                }
                 val estPrompt = TranslationContextChunkPlanner.PROMPT_OVERHEAD_TOKENS +
                     targetPage.blocks.sumOf { TranslationContextChunkPlanner.estimateTokens(it.text) }
                 val baseChunk = TranslationContextChunk(
@@ -313,12 +321,26 @@ internal class SinglePageHttpRenderPhase(
                     }
                     .takeLast(TranslationContextChunkPlanner.MAX_ROLLING_PAIRS)
                     .joinToString("\n")
+                val glossaryText = ChapterGlossaryBuilder.formatGlossary(store.glossarySnapshot())
+                val prepared = store.contextService.prepare(
+                    ContextRequest(
+                        pageKeys = listOf(pageKey),
+                        targetLang = targetLang,
+                        sourceLang = sourceLang,
+                        requestedOutputTokens = requestedOutputTokens,
+                        profile = singlePageProfile(activeTranslator),
+                        laneCapability = laneCap,
+                        rollingPairs = recentPairs,
+                    ),
+                )
+                val effectiveGlossary = prepared.characterAndTermSheet.ifBlank { glossaryText }
+                val effectiveRolling = prepared.rollingContext.ifBlank { recentPairs }
                 val chunk = TranslationContextChunkPlanner.withRollingContext(
                     chunk = baseChunk,
-                    rollingContext = recentPairs,
+                    rollingContext = effectiveRolling,
                     requestedOutputTokens = requestedOutputTokens,
                     profile = singlePageProfile(activeTranslator),
-                    glossary = glossaryText,
+                    glossary = effectiveGlossary,
                 )
                 ct.translateContextual(chunk)
             } else {

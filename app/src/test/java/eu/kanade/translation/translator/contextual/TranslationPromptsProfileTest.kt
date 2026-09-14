@@ -63,7 +63,7 @@ class TranslationPromptsProfileTest {
             ),
             truncated = false,
         )
-        val text = TranslationPrompts.profileAwareGlossaryPrefix(subset)
+        val text = TranslationPrompts.characterAndTermSheetPrefix(subset)
 
         text shouldContain "CHARACTER & TERM SHEET"
         text shouldContain "[e001]"
@@ -74,7 +74,7 @@ class TranslationPromptsProfileTest {
         text shouldContain "opening fight"
 
         // Scene toggle: lexical guidance is droppable, never a replacement rule.
-        val withoutScenes = TranslationPrompts.profileAwareGlossaryPrefix(subset, includeScenes = false)
+        val withoutScenes = TranslationPrompts.characterAndTermSheetPrefix(subset, includeScenes = false)
         (withoutScenes.contains("Scene [s001]")) shouldBe false
         withoutScenes shouldContain "[e001]"
     }

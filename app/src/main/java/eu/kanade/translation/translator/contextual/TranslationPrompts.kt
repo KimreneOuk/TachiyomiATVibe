@@ -141,7 +141,7 @@ object TranslationPrompts {
      * Empty when the subset is empty and there are no rules to carry, so an
      * unmatched envelope adds no framing noise.
      */
-    fun profileAwareGlossaryPrefix(
+    fun characterAndTermSheetPrefix(
         subset: ProfileSubsetMatcher.ProfileSubset,
         includeScenes: Boolean = true,
     ): String {
@@ -174,6 +174,15 @@ object TranslationPrompts {
         }
         return sb.toString().trimEnd() + "\n"
     }
+
+    @Deprecated(
+        message = "renamed to characterAndTermSheetPrefix per T933",
+        replaceWith = ReplaceWith("characterAndTermSheetPrefix(subset, includeScenes)"),
+    )
+    fun profileAwareGlossaryPrefix(
+        subset: ProfileSubsetMatcher.ProfileSubset,
+        includeScenes: Boolean = true,
+    ): String = characterAndTermSheetPrefix(subset, includeScenes)
 
     private fun renderSubsetEntry(entry: ProfileSubsetMatcher.SubsetEntry): String {
         val sb = StringBuilder("[${entry.factId}] ")

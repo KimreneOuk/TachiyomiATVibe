@@ -1075,6 +1075,16 @@ internal class BatchLaneWorkers(
                             reason = "Batch persistence publication rejected",
                         )
                     } else {
+                        if (!isAi) {
+                            val pairs = p.blocks.mapNotNull { block ->
+                                val s = block.text.trim()
+                                val t = block.translation?.trim().orEmpty()
+                                if (s.isBlank() || t.isBlank() || t == s) null else s to t
+                            }
+                            if (pairs.isNotEmpty()) {
+                                store.foldPageContribution(pageKey, pairs)
+                            }
+                        }
                         standardOutcome = ChunkCompletionOutcome.Completed(setOf(pageKey))
                     }
                 }

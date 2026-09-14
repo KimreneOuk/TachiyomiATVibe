@@ -513,7 +513,7 @@ internal class ProfileEnvelopeExecutor(
         val profile = frozenProfile
             ?: return if (rollingContext.isBlank()) 0 else TranslationContextChunkPlanner.estimateTokens(rollingContext.trim())
         val subset = ProfileSubsetMatcher.match(profile, envelopeSourcesOf(held))
-        val glossary = TranslationPrompts.profileAwareGlossaryPrefix(subset)
+        val glossary = TranslationPrompts.characterAndTermSheetPrefix(subset)
         val rolling = TranslationPrompts.profileAwareRollingPrefix(
             rollingPairs = rollingContext,
             resolvedEntityLines = ProfileSubsetMatcher.resolvedEntityLines(profile, rollingContext),
@@ -903,35 +903,30 @@ internal class ProfileEnvelopeExecutor(
         var resolvedLines = ProfileSubsetMatcher.resolvedEntityLines(profile, rollingContext)
         var unresolvedLines = ProfileSubsetMatcher.unresolvedReferenceLines(profile)
         var pairLines = rollingContext
-        var glossary = TranslationPrompts.profileAwareGlossaryPrefix(subset, includeScenes)
+        var glossary = TranslationPrompts.characterAndTermSheetPrefix(subset, includeScenes)
         var rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
         var contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
             TranslationContextChunkPlanner.estimateTokens(rolling)
 
-        // Deterministic bounded trim (design §8 tail: bounded context, never
-        // unbounded): drop scene narratives, then unresolved state, then
-        // resolved-entity lines, then halve the recent pairs, then drop the
-        // pairs entirely, then trim the subset tail. The frontier keeps the
-        // full history — trimming affects THIS prompt only.
+        // Deterministic bounded trim per T933 allocator order (terms 320 ->
+        // safeguards 96 -> pairs 288 -> scene/style 96):
+        // 1. Drop scene narratives
+        // 2. Halve recent pairs, then drop pairs entirely
+        // 3. Drop safeguards (unresolved and resolved entity lines)
+        // 4. Halve terms subset tail, then drop terms subset
         fun rebuild() {
-            glossary = TranslationPrompts.profileAwareGlossaryPrefix(subset, includeScenes)
+            glossary = TranslationPrompts.characterAndTermSheetPrefix(subset, includeScenes)
             rolling = TranslationPrompts.profileAwareRollingPrefix(pairLines, resolvedLines, unresolvedLines)
             contextTokens = TranslationContextChunkPlanner.estimateTokens(glossary) +
                 TranslationContextChunkPlanner.estimateTokens(rolling)
         }
         fun pairLineCount(): Int = pairLines.lineSequence().count { it.isNotBlank() }
+        // 1. Scene / style
         if (contextTokens > constraints.maxRollingContextTokens) {
             includeScenes = false
             rebuild()
         }
-        if (contextTokens > constraints.maxRollingContextTokens) {
-            unresolvedLines = emptyList()
-            rebuild()
-        }
-        if (contextTokens > constraints.maxRollingContextTokens) {
-            resolvedLines = emptyList()
-            rebuild()
-        }
+        // 2. Predecessor pairs (halve, then drop)
         while (contextTokens > constraints.maxRollingContextTokens && pairLineCount() > 1) {
             val keep = (pairLineCount() + 1) / 2
             pairLines = pairLines
@@ -946,6 +941,16 @@ internal class ProfileEnvelopeExecutor(
             pairLines = ""
             rebuild()
         }
+        // 3. Safeguards (unresolved reference & resolved entity lines)
+        if (contextTokens > constraints.maxRollingContextTokens) {
+            unresolvedLines = emptyList()
+            rebuild()
+        }
+        if (contextTokens > constraints.maxRollingContextTokens) {
+            resolvedLines = emptyList()
+            rebuild()
+        }
+        // 4. Terms / sheet entries kept last
         while (contextTokens > constraints.maxRollingContextTokens && subset.entries.size > 1) {
             subset = subset.copy(entries = subset.entries.take((subset.entries.size + 1) / 2))
             rebuild()

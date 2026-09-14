@@ -23,9 +23,12 @@ import eu.kanade.translation.artifact.PartialBatchInfo
 import eu.kanade.translation.artifact.LegacyChapterMigrationSource
 import eu.kanade.translation.artifact.LegacyChapterSnapshot
 import eu.kanade.translation.artifact.ManifestAuthority
+import eu.kanade.translation.artifact.ChapterTranslationProfile
 import eu.kanade.translation.artifact.SidecarPointer
+import eu.kanade.translation.artifact.SidecarRead
 import eu.kanade.translation.artifact.SourceIdentity
 import eu.kanade.translation.artifact.StageFingerprints
+import eu.kanade.translation.context.ChapterContextService
 import eu.kanade.translation.artifact.UniFileChapterDocumentIo
 import eu.kanade.translation.model.PageStage
 import eu.kanade.translation.model.PageTranslation
@@ -2488,6 +2491,34 @@ class ChapterTranslationStore(
      * inside the guarded patch lambda).
      */
     internal fun currentGlossaryVersion(): Int? = glossaryStore.currentGlossaryVersion()
+
+    val contextService: ChapterContextService = ChapterContextService(this)
+
+    fun readReusableProfile(): ChapterTranslationProfile? {
+        val artifact = artifactStore ?: return null
+        val manifest = artifact.readManifest() ?: return null
+        val pointer = manifest.profile ?: return null
+        if (!pointer.isWellFormed()) return null
+        val read = artifact.readSidecarDocument(
+            pointer = pointer.toSidecarPointer(),
+            serializer = ChapterTranslationProfile.serializer(),
+            currentSchemaVersion = ChapterTranslationProfile.SCHEMA_VERSION,
+            expectedKind = ChapterTranslationProfile.KIND,
+            schemaVersionOf = { it.schemaVersion },
+            kindOf = { it.kind },
+            isValid = { it.isSemanticallyValid },
+        )
+        val profile = (read as? SidecarRead.Usable<*>)?.document as? ChapterTranslationProfile ?: return null
+        if (pointer.contentFingerprint != profile.contentFingerprint ||
+            pointer.version != profile.version
+        ) {
+            return null
+        }
+        if (StageFingerprints.profileContentFingerprint(profile) != profile.contentFingerprint) {
+            return null
+        }
+        return profile
+    }
 
     internal fun loadGlossary() {
         glossaryStore.loadGlossary()
